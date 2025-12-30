@@ -1,22 +1,22 @@
 // src/stmt/assignment.rs
 //
-// assignment: name = expr
+// x = expr
 
-use crate::ast::{Control, StmtNode};
+use crate::ast::{Control, ExprNode, StmtNode};
 use crate::lexer::Token;
 use crate::parser::Parser;
 use crate::registry::{err_at, LumenResult, StmtHandler};
-use crate::runtime::Env;
+use crate::runtime::{Env, Value};
 
 #[derive(Debug)]
 struct AssignStmt {
     name: String,
-    expr: Box<dyn crate::ast::ExprNode>,
+    expr: Box<dyn ExprNode>,
 }
 
 impl StmtNode for AssignStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
-        let val = self.expr.eval(env)?;
+        let val: Value = self.expr.eval(env)?;
         env.set(self.name.clone(), val);
         Ok(Control::None)
     }
@@ -26,17 +26,20 @@ pub struct AssignStmtHandler;
 
 impl StmtHandler for AssignStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Ident(_))
+        matches!(
+            (parser.peek(), parser.peek_n(1)),
+            (Token::Ident(_), Some(Token::Equals))
+        )
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
         let name = match parser.advance() {
             Token::Ident(s) => s,
-            _ => return Err(err_at(parser, "Expected identifier")),
+            _ => return Err(err_at(parser, "Expected identifier in assignment")),
         };
 
         match parser.advance() {
-            Token::Eq => {}
+            Token::Equals => {}
             _ => return Err(err_at(parser, "Expected '=' in assignment")),
         }
 
