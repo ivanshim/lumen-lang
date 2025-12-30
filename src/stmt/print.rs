@@ -1,23 +1,20 @@
 // src/stmt/print.rs
-//
-// print(expr) statement.
-// Fully removable language feature.
 
-use crate::ast::{Control, ExprNode, StmtNode};
+use crate::ast::{Control, StmtNode};
 use crate::lexer::Token;
 use crate::parser::Parser;
-use crate::registry::{LumenResult, StmtHandler};
+use crate::registry::{err_at, LumenResult, StmtHandler};
 use crate::runtime::Env;
 
 #[derive(Debug)]
 struct PrintStmt {
-    expr: Box<dyn ExprNode>,
+    expr: Box<dyn crate::ast::ExprNode>,
 }
 
 impl StmtNode for PrintStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
-        let value = self.expr.eval(env)?;
-        println!("{value}");
+        let val = self.expr.eval(env)?;
+        println!("{val}");
         Ok(Control::None)
     }
 }
@@ -26,25 +23,22 @@ pub struct PrintStmtHandler;
 
 impl StmtHandler for PrintStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Ident(name) if name == "print")
+        matches!(parser.peek(), Token::Print)
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
-        // consume 'print'
-        parser.advance();
+        parser.advance(); // consume 'print'
 
-        // expect '('
         match parser.advance() {
             Token::LParen => {}
-            _ => return Err(parser.error("Expected '(' after print")),
+            _ => return Err(err_at(parser, "Expected '(' after print")),
         }
 
         let expr = parser.parse_expr()?;
 
-        // expect ')'
         match parser.advance() {
             Token::RParen => {}
-            _ => return Err(parser.error("Expected ')' after expression")),
+            _ => return Err(err_at(parser, "Expected ')' after expression")),
         }
 
         Ok(Box::new(PrintStmt { expr }))
