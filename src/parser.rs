@@ -79,6 +79,12 @@ fn parse_expr(input: &str) -> Expr {
             CmpOp::Eq,
             Box::new(parse_expr(r.trim())),
         )
+    } else if let Some((l, r)) = input.split_once("!=") {
+        Expr::Compare(
+            Box::new(parse_expr(l.trim())),
+            CmpOp::Ne,
+            Box::new(parse_expr(r.trim())),
+        )
     } else if let Some((l, r)) = input.split_once('<') {
         Expr::Compare(
             Box::new(parse_expr(l.trim())),
