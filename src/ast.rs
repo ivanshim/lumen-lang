@@ -1,10 +1,8 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     None,
     Bool(bool),
-    Number(f64),
-    Str(String),
-    List(Vec<Value>),
+    Int(i64),
 }
 
 #[derive(Debug, Clone)]
@@ -28,24 +26,12 @@ pub enum Expr {
         op: CmpOp,
         right: Box<Expr>,
     },
-
-    Call {
-        callee: Box<Expr>,
-        args: Vec<Expr>,
-    },
-
-    Index {
-        base: Box<Expr>,
-        index: Box<Expr>,
-    },
-
-    List(Vec<Expr>),
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum UnOp {
-    Neg,
-    Not,
+    Neg, // -x
+    Not, // not x
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -70,40 +56,17 @@ pub enum CmpOp {
 
 #[derive(Debug, Clone)]
 pub enum Stmt {
-    Assign {
-        name: String,
-        value: Expr,
-    },
-
-    ExprStmt(Expr),
-
-    Print {
-        expr: Expr,
-    },
+    Assign { name: String, value: Expr },
+    Print { expr: Expr },
 
     If {
-        // if/elif/elif/... chain
-        branches: Vec<(Expr, Vec<Stmt>)>,
+        cond: Expr,
+        then_block: Vec<Stmt>,
         else_block: Option<Vec<Stmt>>,
     },
 
-    While {
-        cond: Expr,
-        body: Vec<Stmt>,
-    },
+    While { cond: Expr, body: Vec<Stmt> },
 
-    ForRange {
-        name: String,
-        start: Expr,
-        end: Expr, // half-open [start, end)
-        body: Vec<Stmt>,
-    },
-
-    FnDef {
-        name: String,
-        params: Vec<String>,
-        body: Vec<Stmt>,
-    },
-
-    Return(Option<Expr>),
+    Break,
+    Continue,
 }
