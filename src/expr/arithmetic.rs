@@ -1,6 +1,6 @@
 // src/expr/arithmetic.rs
 //
-// +  -  *  /
+// + - * / % and unary minus
 
 use crate::ast::ExprNode;
 use crate::lexer::Token;
@@ -9,13 +9,41 @@ use crate::registry::{ExprInfix, ExprPrefix, LumenResult, Precedence};
 use crate::runtime::{Env, Value};
 
 #[derive(Debug)]
-struct BinaryExpr {
+struct UnaryMinusExpr {
+    expr: Box<dyn ExprNode>,
+}
+
+impl ExprNode for UnaryMinusExpr {
+    fn eval(&self, env: &mut Env) -> LumenResult<Value> {
+        match self.expr.eval(env)? {
+            Value::Number(n) => Ok(Value::Number(-n)),
+            _ => Err("Invalid operand for unary '-'".into()),
+        }
+    }
+}
+
+pub struct UnaryMinusPrefix;
+
+impl ExprPrefix for UnaryMinusPrefix {
+    fn matches(&self, parser: &Parser) -> bool {
+        matches!(parser.peek(), Token::Minus)
+    }
+
+    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
+        parser.advance(); // '-'
+        let expr = parser.parse_expr_prec(Precedence::Unary)?;
+        Ok(Box::new(UnaryMinusExpr { expr }))
+    }
+}
+
+#[derive(Debug)]
+struct ArithmeticExpr {
     left: Box<dyn ExprNode>,
     op: Token,
     right: Box<dyn ExprNode>,
 }
 
-impl ExprNode for BinaryExpr {
+impl ExprNode for ArithmeticExpr {
     fn eval(&self, env: &mut Env) -> LumenResult<Value> {
         let l = self.left.eval(env)?;
         let r = self.right.eval(env)?;
@@ -25,6 +53,7 @@ impl ExprNode for BinaryExpr {
             (Value::Number(a), Value::Number(b), Token::Minus) => Ok(Value::Number(a - b)),
             (Value::Number(a), Value::Number(b), Token::Star) => Ok(Value::Number(a * b)),
             (Value::Number(a), Value::Number(b), Token::Slash) => Ok(Value::Number(a / b)),
+            (Value::Number(a), Value::Number(b), Token::Percent) => Ok(Value::Number(a % b)),
             _ => Err("Invalid arithmetic operation".into()),
         }
     }
@@ -50,43 +79,9 @@ impl ExprInfix for ArithmeticInfix {
         self.prec
     }
 
-    fn parse(
-        &self,
-        parser: &mut Parser,
-        left: Box<dyn ExprNode>,
-    ) -> LumenResult<Box<dyn ExprNode>> {
+    fn parse(&self, parser: &mut Parser, left: Box<dyn ExprNode>) -> LumenResult<Box<dyn ExprNode>> {
         let op = parser.advance();
-        let right = parser.parse_expr_prec(self.prec + 1)?;
-        Ok(Box::new(BinaryExpr { left, op, right }))
-    }
-}
-
-// Unary minus
-
-#[derive(Debug)]
-struct NegExpr {
-    expr: Box<dyn ExprNode>,
-}
-
-impl ExprNode for NegExpr {
-    fn eval(&self, env: &mut Env) -> LumenResult<Value> {
-        match self.expr.eval(env)? {
-            Value::Number(n) => Ok(Value::Number(-n)),
-            _ => Err("Unary '-' expects a number".into()),
-        }
-    }
-}
-
-pub struct UnaryMinusPrefix;
-
-impl ExprPrefix for UnaryMinusPrefix {
-    fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Minus)
-    }
-
-    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
-        parser.advance();
-        let expr = parser.parse_expr_prec(Precedence::Unary)?;
-        Ok(Box::new(NegExpr { expr }))
+        let right = parser.parse_expr_prec(self.precedence() + 1)?;
+        Ok(Box::new(ArithmeticExpr { left, op, right }))
     }
 }
