@@ -297,7 +297,7 @@ impl Parser {
         }
 
         // assignment: name '=' expr
-        if let Some((Tok::Ident(name), _, _)) = self.peek().cloned() {
+        if let (Tok::Ident(name), _, _) = self.peek().clone() {
             if self.peek_n(1).map(|t| &t.0) == Some(&Tok::Assign) {
                 self.advance(); // name
                 self.advance(); // =
