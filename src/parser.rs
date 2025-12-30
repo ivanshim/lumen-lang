@@ -43,6 +43,10 @@ impl<'a> Parser<'a> {
         }
     }
 
+    // --------------------
+    // Program
+    // --------------------
+
     pub fn parse_program(&mut self) -> LumenResult<Program> {
         let mut stmts = Vec::new();
         self.consume_newlines();
@@ -61,11 +65,18 @@ impl<'a> Parser<'a> {
         Ok(Program::new(stmts))
     }
 
+    // --------------------
+    // Expressions
+    // --------------------
+
     pub fn parse_expr(&mut self) -> LumenResult<Box<dyn ExprNode>> {
-        self.parse_expr_prec(0)
+        self.parse_expr_prec(Precedence::Lowest)
     }
 
-    pub fn parse_expr_prec(&mut self, min_prec: Precedence) -> LumenResult<Box<dyn ExprNode>> {
+    pub fn parse_expr_prec(
+        &mut self,
+        min_prec: Precedence,
+    ) -> LumenResult<Box<dyn ExprNode>> {
         let prefix = self
             .reg
             .find_prefix(self)
@@ -89,6 +100,10 @@ impl<'a> Parser<'a> {
         Ok(left)
     }
 
+    // --------------------
+    // Blocks
+    // --------------------
+
     pub fn parse_block(&mut self) -> LumenResult<Vec<Box<dyn StmtNode>>> {
         match self.advance() {
             Token::Indent => {}
@@ -99,12 +114,13 @@ impl<'a> Parser<'a> {
         let mut stmts = Vec::new();
 
         while !matches!(self.peek(), Token::Dedent | Token::Eof) {
-            let s = self
+            let stmt = self
                 .reg
                 .find_stmt(self)
                 .ok_or_else(|| err_at(self, "Unknown statement in block"))?
                 .parse(self)?;
-            stmts.push(s);
+
+            stmts.push(stmt);
             self.consume_newlines();
         }
 
