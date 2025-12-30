@@ -46,6 +46,7 @@ use crate::stmt::while_loop::WhileStmtHandler;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+
     if args.len() != 2 {
         eprintln!("Usage: lumen <file.lm>");
         std::process::exit(1);
@@ -57,13 +58,12 @@ fn main() {
     // --------------------
     // Registry wiring
     // --------------------
-
     let mut registry = Registry::new();
 
     // ---- expression prefixes ----
     registry.register_prefix(Box::new(NumberLiteralPrefix));
-    registry.register_prefix(Box::new(GroupingPrefix));
     registry.register_prefix(Box::new(UnaryMinusPrefix));
+    registry.register_prefix(Box::new(GroupingPrefix));
     registry.register_prefix(Box::new(NotPrefix));
 
     // ---- arithmetic infix ----
@@ -79,16 +79,49 @@ fn main() {
     registry.register_infix(Box::new(
         ArithmeticInfix::new(Token::Slash, Precedence::Factor),
     ));
-    registry.register_infix(Box::new(
-        ArithmeticInfix::new(Token::Percent, Precedence::Factor),
-    ));
 
-    // ---- comparison infix (THIS FIXES YOUR ERROR) ----
+    // ---- comparison infix ----
+    registry.register_infix(Box::new(ComparisonInfix::new(Token::EqEq)));
+    registry.register_infix(Box::new(ComparisonInfix::new(Token::NotEq)));
     registry.register_infix(Box::new(ComparisonInfix::new(Token::Lt)));
     registry.register_infix(Box::new(ComparisonInfix::new(Token::Gt)));
     registry.register_infix(Box::new(ComparisonInfix::new(Token::LtEq)));
     registry.register_infix(Box::new(ComparisonInfix::new(Token::GtEq)));
-    registry.register_infix(Box::new(ComparisonInfix::new(Token::EqEq)));
-    registry.register_infix(Box::new(ComparisonInfix::new(Token::NotEq)));
 
     // ---- logical infix ----
+    registry.register_infix(Box::new(LogicInfix::new(Token::And)));
+    registry.register_infix(Box::new(LogicInfix::new(Token::Or)));
+
+    // ---- statements ----
+    registry.register_stmt(Box::new(PrintStmtHandler));
+    registry.register_stmt(Box::new(AssignStmtHandler));
+    registry.register_stmt(Box::new(IfStmtHandler));
+    registry.register_stmt(Box::new(WhileStmtHandler));
+
+    // --------------------
+    // Parse
+    // --------------------
+    let mut parser = match Parser::new(&registry, &source) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    };
+
+    let program = match parser.parse_program() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    };
+
+    // --------------------
+    // Execute
+    // --------------------
+    if let Err(e) = eval::eval(&program) {
+        eprintln!("RuntimeError: {e}");
+        std::process::exit(1);
+    }
+}
