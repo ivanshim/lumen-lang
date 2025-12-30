@@ -1,19 +1,40 @@
 // src/lexer.rs
-//
-// Pure lexical analysis + indentation handling.
-// NO language semantics.
-// NO operators.
-// NO keywords.
 
 use crate::registry::LumenResult;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
-    Word(String),
+    // atoms
+    Ident(String),
     Number(f64),
     String(String),
-    Punct(char),
 
+    // keywords
+    If,
+    Else,
+    While,
+    Print,
+    And,
+    Or,
+    Not,
+
+    // operators / syntax
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Eq,
+    EqEq,
+    NotEq,
+    Lt,
+    Gt,
+    LtEq,
+    GtEq,
+    LParen,
+    RParen,
+    Colon,
+
+    // layout
     Newline,
     Indent,
     Dedent,
@@ -33,58 +54,14 @@ impl SpannedToken {
     }
 }
 
-pub fn lex(source: &str) -> LumenResult<Vec<SpannedToken>> {
-    let mut out = Vec::new();
-    let mut indents = vec![0usize];
-    let mut line_no = 1;
+// ... keep lex() as you have it ...
 
-    for raw in source.lines() {
-        let mut col = 1;
-        let mut chars = raw.chars().peekable();
-
-        // Count leading spaces
-        let mut spaces = 0;
-        while let Some(' ') = chars.peek() {
-            chars.next();
-            spaces += 1;
-            col += 1;
-        }
-
-        let rest: String = chars.collect();
-        if rest.trim().is_empty() {
-            line_no += 1;
-            continue;
-        }
-
-        let current = *indents.last().unwrap();
-        if spaces > current {
-            if (spaces - current) % 4 != 0 {
-                return Err(format!("Invalid indentation at line {line_no}"));
-            }
-            indents.push(spaces);
-            out.push(SpannedToken::new(Token::Indent, line_no, 1));
-        } else if spaces < current {
-            while *indents.last().unwrap() > spaces {
-                indents.pop();
-                out.push(SpannedToken::new(Token::Dedent, line_no, 1));
-            }
-        }
-
-        lex_line(&rest.trim(), line_no, col, &mut out)?;
-        out.push(SpannedToken::new(Token::Newline, line_no, col));
-        line_no += 1;
-    }
-
-    while indents.len() > 1 {
-        indents.pop();
-        out.push(SpannedToken::new(Token::Dedent, line_no, 1));
-    }
-
-    out.push(SpannedToken::new(Token::Eof, line_no, 1));
-    Ok(out)
-}
-
-fn lex_line(s: &str, line: usize, base_col: usize, out: &mut Vec<SpannedToken>) -> LumenResult<()> {
+fn lex_line(
+    s: &str,
+    line: usize,
+    base_col: usize,
+    out: &mut Vec<SpannedToken>,
+) -> LumenResult<()> {
     let mut i = 0;
     let bytes = s.as_bytes();
 
@@ -96,6 +73,7 @@ fn lex_line(s: &str, line: usize, base_col: usize, out: &mut Vec<SpannedToken>) 
             continue;
         }
 
+        // strings: "..."
         if bytes[i] == b'"' {
             i += 1;
             let start = i;
@@ -111,6 +89,7 @@ fn lex_line(s: &str, line: usize, base_col: usize, out: &mut Vec<SpannedToken>) 
             continue;
         }
 
+        // numbers: 123 or 12.34
         if bytes[i].is_ascii_digit() {
             let start = i;
             while i < bytes.len() && bytes[i].is_ascii_digit() {
@@ -127,24 +106,98 @@ fn lex_line(s: &str, line: usize, base_col: usize, out: &mut Vec<SpannedToken>) 
             continue;
         }
 
+        // identifiers / keywords
         if is_word_start(bytes[i]) {
             let start = i;
             i += 1;
             while i < bytes.len() && is_word_continue(bytes[i]) {
                 i += 1;
             }
-            out.push(SpannedToken::new(
-                Token::Word(s[start..i].to_string()),
-                line,
-                col,
-            ));
+            let w = &s[start..i];
+            let tok = match w {
+                "if" => Token::If,
+                "else" => Token::Else,
+                "while" => Token::While,
+                "print" => Token::Print,
+                "and" => Token::And,
+                "or" => Token::Or,
+                "not" => Token::Not,
+                _ => Token::Ident(w.to_string()),
+            };
+            out.push(SpannedToken::new(tok, line, col));
             continue;
         }
 
-        // Single-character punctuation ONLY
-        let ch = bytes[i] as char;
-        i += 1;
-        out.push(SpannedToken::new(Token::Punct(ch), line, col));
+        // operators / punctuation (multi-char first)
+        match bytes[i] {
+            b'=' => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                    i += 2;
+                    out.push(SpannedToken::new(Token::EqEq, line, col));
+                } else {
+                    i += 1;
+                    out.push(SpannedToken::new(Token::Eq, line, col));
+                }
+            }
+            b'!' => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                    i += 2;
+                    out.push(SpannedToken::new(Token::NotEq, line, col));
+                } else {
+                    return Err(format!("Unexpected '!' at line {line}, col {col}"));
+                }
+            }
+            b'<' => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                    i += 2;
+                    out.push(SpannedToken::new(Token::LtEq, line, col));
+                } else {
+                    i += 1;
+                    out.push(SpannedToken::new(Token::Lt, line, col));
+                }
+            }
+            b'>' => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                    i += 2;
+                    out.push(SpannedToken::new(Token::GtEq, line, col));
+                } else {
+                    i += 1;
+                    out.push(SpannedToken::new(Token::Gt, line, col));
+                }
+            }
+            b'+' => {
+                i += 1;
+                out.push(SpannedToken::new(Token::Plus, line, col));
+            }
+            b'-' => {
+                i += 1;
+                out.push(SpannedToken::new(Token::Minus, line, col));
+            }
+            b'*' => {
+                i += 1;
+                out.push(SpannedToken::new(Token::Star, line, col));
+            }
+            b'/' => {
+                i += 1;
+                out.push(SpannedToken::new(Token::Slash, line, col));
+            }
+            b'(' => {
+                i += 1;
+                out.push(SpannedToken::new(Token::LParen, line, col));
+            }
+            b')' => {
+                i += 1;
+                out.push(SpannedToken::new(Token::RParen, line, col));
+            }
+            b':' => {
+                i += 1;
+                out.push(SpannedToken::new(Token::Colon, line, col));
+            }
+            _ => {
+                let ch = bytes[i] as char;
+                return Err(format!("Unexpected character '{ch}' at line {line}, col {col}"));
+            }
+        }
     }
 
     Ok(())
