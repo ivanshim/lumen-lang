@@ -53,6 +53,7 @@ fn eval_cond(expr: &Expr, env: &HashMap<String, f64>) -> bool {
                 CmpOp::Eq => l == r,
                 CmpOp::Lt => l < r,
                 CmpOp::Gt => l > r,
+                CmpOp::Ne => l != r,
             }
         }
         _ => eval_expr(expr, env) != 0.0,
