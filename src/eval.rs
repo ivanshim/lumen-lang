@@ -73,11 +73,7 @@ fn eval_expr(expr: &Expr, env: &HashMap<String, f64>) -> f64 {
             }
         }
         Expr::Compare(_, _, _) => {
-            if eval_cond(expr, env) {
-                1.0
-            } else {
-                0.0
-            }
+            if eval_cond(expr, env) { 1.0 } else { 0.0 }
         }
     }
 }
