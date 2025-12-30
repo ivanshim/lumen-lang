@@ -27,25 +27,18 @@ mod stmt {
 use std::env;
 use std::fs;
 
+use crate::lexer::Token;
 use crate::parser::Parser;
 use crate::registry::{Precedence, Registry};
-use crate::lexer::Token;
 
-// --------------------
-// Expr features
-// --------------------
-
+// ---- expr features ----
 use crate::expr::literals::NumberLiteralPrefix;
 use crate::expr::grouping::GroupingPrefix;
-
 use crate::expr::arithmetic::{UnaryMinusPrefix, ArithmeticInfix};
 use crate::expr::comparison::ComparisonInfix;
 use crate::expr::logic::{LogicInfix, NotPrefix};
 
-// --------------------
-// Stmt features
-// --------------------
-
+// ---- stmt features ----
 use crate::stmt::print::PrintStmtHandler;
 use crate::stmt::assignment::AssignStmtHandler;
 use crate::stmt::if_else::IfStmtHandler;
@@ -53,7 +46,6 @@ use crate::stmt::while_loop::WhileStmtHandler;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-
     if args.len() != 2 {
         eprintln!("Usage: lumen <file.lm>");
         std::process::exit(1);
@@ -68,13 +60,13 @@ fn main() {
 
     let mut registry = Registry::new();
 
-    // ---- prefix expressions ----
+    // --- expression prefixes ---
     registry.register_prefix(Box::new(NumberLiteralPrefix));
     registry.register_prefix(Box::new(GroupingPrefix));
     registry.register_prefix(Box::new(UnaryMinusPrefix));
     registry.register_prefix(Box::new(NotPrefix));
 
-    // ---- arithmetic infix ----
+    // --- arithmetic infix ---
     registry.register_infix(Box::new(
         ArithmeticInfix::new(Token::Plus, Precedence::Term),
     ));
@@ -88,23 +80,19 @@ fn main() {
         ArithmeticInfix::new(Token::Slash, Precedence::Factor),
     ));
 
-    // ---- comparison infix ----
+    // --- comparison infix ---
+    registry.register_infix(Box::new(ComparisonInfix::new(Token::EqEq)));
+    registry.register_infix(Box::new(ComparisonInfix::new(Token::NotEq)));
     registry.register_infix(Box::new(ComparisonInfix::new(Token::Lt)));
     registry.register_infix(Box::new(ComparisonInfix::new(Token::Gt)));
     registry.register_infix(Box::new(ComparisonInfix::new(Token::LtEq)));
     registry.register_infix(Box::new(ComparisonInfix::new(Token::GtEq)));
-    registry.register_infix(Box::new(ComparisonInfix::new(Token::EqEq)));
-    registry.register_infix(Box::new(ComparisonInfix::new(Token::NotEq)));
 
-    // ---- logical infix ----
-    registry.register_infix(Box::new(
-        LogicInfix::new(Token::And, Precedence::Logic),
-    ));
-    registry.register_infix(Box::new(
-        LogicInfix::new(Token::Or, Precedence::Logic),
-    ));
+    // --- logical infix ---
+    registry.register_infix(Box::new(LogicInfix::new(Token::And)));
+    registry.register_infix(Box::new(LogicInfix::new(Token::Or)));
 
-    // ---- statements ----
+    // --- statements ---
     registry.register_stmt(Box::new(PrintStmtHandler));
     registry.register_stmt(Box::new(AssignStmtHandler));
     registry.register_stmt(Box::new(IfStmtHandler));
