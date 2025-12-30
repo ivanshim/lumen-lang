@@ -19,18 +19,16 @@ impl StmtNode for WhileStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
         loop {
             let v = self.cond.eval(env)?;
-            match v {
-                crate::runtime::Value::Bool(true) => {
-                    for stmt in &self.body {
-                        match stmt.exec(env)? {
-                            Control::None => {}
-                            Control::Break => return Ok(Control::None),
-                            Control::Continue => break,
-                        }
-                    }
+            if !matches!(v, crate::runtime::Value::Bool(true)) {
+                break;
+            }
+
+            for stmt in &self.body {
+                match stmt.exec(env)? {
+                    Control::None => {}
+                    Control::Break => return Ok(Control::None),
+                    Control::Continue => break,
                 }
-                crate::runtime::Value::Bool(false) => break,
-                _ => return Err("while condition must be boolean".into()),
             }
         }
         Ok(Control::None)
@@ -51,10 +49,9 @@ impl StmtHandler for WhileStmtHandler {
         // parse condition expression
         let cond = parser.parse_expr()?;
 
-        // expect newline
-        match parser.advance() {
-            Token::Newline => {}
-            _ => return Err("Expected newline after while condition".into()),
+        // NEWLINE is optional but common
+        if matches!(parser.peek(), Token::Newline) {
+            parser.advance();
         }
 
         // parse indented block
