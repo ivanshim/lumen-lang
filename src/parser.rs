@@ -4,8 +4,7 @@
 // Knows NOTHING about operators, keywords, or language features.
 
 use crate::ast::{ExprNode, Program, StmtNode};
-use crate::lexer::{SpannedToken, Token};
-use crate::lexer::lex;
+use crate::lexer::{lex, SpannedToken, Token};
 use crate::registry::{err_at, LumenResult, Precedence, Registry};
 
 pub struct Parser<'a> {
@@ -30,6 +29,10 @@ impl<'a> Parser<'a> {
 
     pub fn peek(&self) -> &Token {
         &self.toks[self.i].tok
+    }
+
+    pub fn peek_n(&self, n: usize) -> Option<&Token> {
+        self.toks.get(self.i + n).map(|t| &t.tok)
     }
 
     pub fn advance(&mut self) -> Token {
@@ -63,13 +66,10 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse_expr(&mut self) -> LumenResult<Box<dyn ExprNode>> {
-        self.parse_expr_prec(0)
+        self.parse_expr_prec(Precedence::Lowest)
     }
 
-    pub fn parse_expr_prec(
-        &mut self,
-        min_prec: Precedence,
-    ) -> LumenResult<Box<dyn ExprNode>> {
+    pub fn parse_expr_prec(&mut self, min_prec: Precedence) -> LumenResult<Box<dyn ExprNode>> {
         let prefix = self
             .reg
             .find_prefix(self)
@@ -100,6 +100,7 @@ impl<'a> Parser<'a> {
         }
 
         self.consume_newlines();
+
         let mut stmts = Vec::new();
 
         while !matches!(self.peek(), Token::Dedent | Token::Eof) {
