@@ -11,15 +11,15 @@ use crate::runtime::Env;
 
 #[derive(Debug)]
 struct WhileStmt {
-    cond: Box<dyn ExprNode>,
+    condition: Box<dyn ExprNode>,
     body: Vec<Box<dyn StmtNode>>,
 }
 
 impl StmtNode for WhileStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
         loop {
-            let v = self.cond.eval(env)?;
-            if !matches!(v, crate::runtime::Value::Bool(true)) {
+            let cond = self.condition.eval(env)?;
+            if !cond.is_truthy() {
                 break;
             }
 
@@ -31,6 +31,7 @@ impl StmtNode for WhileStmt {
                 }
             }
         }
+
         Ok(Control::None)
     }
 }
@@ -47,16 +48,19 @@ impl StmtHandler for WhileStmtHandler {
         parser.advance();
 
         // parse condition expression
-        let cond = parser.parse_expr()?;
+        let condition = parser.parse_expr()?;
 
-        // NEWLINE is optional but common
-        if matches!(parser.peek(), Token::Newline) {
-            parser.advance();
+        // condition must end at newline
+        match parser.peek() {
+            Token::Newline => {
+                parser.advance();
+            }
+            _ => return Err("Expected newline after while condition".into()),
         }
 
-        // parse indented block
+        // parse indented body
         let body = parser.parse_block()?;
 
-        Ok(Box::new(WhileStmt { cond, body }))
+        Ok(Box::new(WhileStmt { condition, body }))
     }
 }
