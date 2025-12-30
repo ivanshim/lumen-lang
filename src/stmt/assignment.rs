@@ -1,6 +1,6 @@
 // src/stmt/assignment.rs
 //
-// assignment:  name = expr
+// assignment: name = expr
 
 use crate::ast::{Control, StmtNode};
 use crate::lexer::Token;
@@ -17,7 +17,7 @@ struct AssignStmt {
 impl StmtNode for AssignStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
         let val = self.expr.eval(env)?;
-        env.set(&self.name, val);
+        env.set(self.name.clone(), val);
         Ok(Control::None)
     }
 }
@@ -30,21 +30,17 @@ impl StmtHandler for AssignStmtHandler {
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
-        // identifier
         let name = match parser.advance() {
             Token::Ident(s) => s,
             _ => return Err(err_at(parser, "Expected identifier")),
         };
 
-        // =
         match parser.advance() {
             Token::Eq => {}
             _ => return Err(err_at(parser, "Expected '=' in assignment")),
         }
 
-        // expression
         let expr = parser.parse_expr()?;
-
         Ok(Box::new(AssignStmt { name, expr }))
     }
 }
