@@ -1,113 +1,100 @@
-use crate::ast::{Expr, Stmt, BinOp, CmpOp};
+use crate::ast::*;
+use std::str::Lines;
 
-pub fn parse_program(src: &str) -> Vec<Stmt> {
-    let mut lines: Vec<&str> = src.lines().collect();
-    parse_block(&mut lines, 0)
+pub struct Parser<'a> {
+    lines: Lines<'a>,
 }
 
-fn parse_block(lines: &mut Vec<&str>, indent: usize) -> Vec<Stmt> {
-    let mut stmts = Vec::new();
-    while !lines.is_empty() {
-        let line = lines[0];
-        let trimmed = line.trim_start();
-        let current_indent = line.len() - trimmed.len();
-        if current_indent < indent {
-            break;
-        }
-        if current_indent > indent {
-            // skip deeper indentation (should be handled by recursion)
-        }
-        // consume the line
-        lines.remove(0);
-        if trimmed.is_empty() {
-            continue;
-        }
-        if trimmed.starts_with("while ") {
-            // parse while condition followed by colon
-            let rest = trimmed.trim_start_matches("while ").trim();
-            if let Some((cond_str, _)) = rest.split_once(':') {
-                let body = parse_block(lines, indent + 4);
-                stmts.push(Stmt::While(parse_cond(cond_str), body));
+impl<'a> Parser<'a> {
+    pub fn new(src: &'a str) -> Self {
+        Self { lines: src.lines() }
+    }
+
+    pub fn parse(&mut self) -> Vec<Stmt> {
+        let mut stmts = Vec::new();
+
+        while let Some(line) = self.lines.next() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
             }
-        } else if trimmed.starts_with("if ") {
-            let rest = trimmed.trim_start_matches("if ").trim();
-            if let Some((cond_str, _)) = rest.split_once(':') {
-                let then_block = parse_block(lines, indent + 4);
-                // check for else
-                let mut else_block = Vec::new();
-                if !lines.is_empty() {
-                    let next_line = lines[0];
-                    let next_trimmed = next_line.trim_start();
-                    let next_indent = next_line.len() - next_trimmed.len();
-                    if next_indent == indent && next_trimmed.starts_with("else:") {
-                        // consume else line
-                        lines.remove(0);
-                        else_block = parse_block(lines, indent + 4);
+
+            if line.starts_with("while ") {
+                let cond = self.parse_condition(&line[6..line.len() - 1]);
+                let mut body = Vec::new();
+
+                while let Some(next) = self.lines.next() {
+                    if !next.starts_with("    ") {
+                        break;
                     }
+                    body.push(self.parse_line(next.trim()));
                 }
-                stmts.push(Stmt::If(parse_cond(cond_str), then_block, else_block));
+
+                stmts.push(Stmt::While { cond, body });
+            } else {
+                stmts.push(self.parse_line(line));
             }
-        } else if trimmed.starts_with("print(") && trimmed.ends_with(')') {
-            let inner = &trimmed["print(".len()..trimmed.len() - 1];
-            stmts.push(Stmt::Print(parse_expr(inner.trim())));
-        } else if let Some((var, expr)) = trimmed.split_once('=') {
-            let var = var.trim();
-            let expr = parse_expr(expr.trim());
-            stmts.push(Stmt::Assign(var.to_string(), expr));
+        }
+
+        stmts
+    }
+
+    fn parse_line(&self, line: &str) -> Stmt {
+        if line.starts_with("print(") {
+            let inner = &line[6..line.len() - 1];
+            Stmt::Print {
+                expr: self.parse_expr(inner),
+            }
+        } else if line.contains('=') {
+            let parts: Vec<_> = line.split('=').map(str::trim).collect();
+            Stmt::Assign {
+                name: parts[0].to_string(),
+                value: self.parse_expr(parts[1]),
+            }
+        } else {
+            panic!("Unknown statement: {}", line);
         }
     }
-    stmts
-}
 
-fn parse_cond(s: &str) -> Expr {
-    // handle ==, <, >
-    if let Some((left, right)) = s.split_once("==") {
-        return Expr::Compare(
-            Box::new(parse_expr(left.trim())),
-            CmpOp::Eq,
-            Box::new(parse_expr(right.trim())),
-        );
+    fn parse_expr(&self, src: &str) -> Expr {
+        if let Ok(n) = src.parse::<f64>() {
+            Expr::Number(n)
+        } else if src.contains('+') {
+            let parts: Vec<_> = src.split('+').map(str::trim).collect();
+            Expr::Binary {
+                left: Box::new(self.parse_expr(parts[0])),
+                op: BinOp::Add,
+                right: Box::new(self.parse_expr(parts[1])),
+            }
+        } else if src.contains('-') {
+            let parts: Vec<_> = src.split('-').map(str::trim).collect();
+            Expr::Binary {
+                left: Box::new(self.parse_expr(parts[0])),
+                op: BinOp::Sub,
+                right: Box::new(self.parse_expr(parts[1])),
+            }
+        } else {
+            Expr::Var(src.to_string())
+        }
     }
-    if let Some((left, right)) = s.split_once("<") {
-        return Expr::Compare(
-            Box::new(parse_expr(left.trim())),
-            CmpOp::Lt,
-            Box::new(parse_expr(right.trim())),
-        );
-    }
-    if let Some((left, right)) = s.split_once(">") {
-        return Expr::Compare(
-            Box::new(parse_expr(left.trim())),
-            CmpOp::Gt,
-            Box::new(parse_expr(right.trim())),
-        );
-    }
-    parse_expr(s.trim())
-}
 
-fn parse_expr(s: &str) -> Expr {
-    // parse addition or subtraction, right-associative
-    // search for last '+' or '-' not within parentheses (not supported)
-    if let Some(pos) = s.rfind('+') {
-        let (left, right) = s.split_at(pos);
-        return Expr::BinOp(
-            Box::new(parse_expr(left.trim())),
-            BinOp::Add,
-            Box::new(parse_expr(right[1..].trim())),
-        );
+    fn parse_condition(&self, src: &str) -> Expr {
+        if src.contains('<') {
+            let parts: Vec<_> = src.split('<').map(str::trim).collect();
+            Expr::Compare {
+                left: Box::new(self.parse_expr(parts[0])),
+                op: CmpOp::Lt,
+                right: Box::new(self.parse_expr(parts[1])),
+            }
+        } else if src.contains('>') {
+            let parts: Vec<_> = src.split('>').map(str::trim).collect();
+            Expr::Compare {
+                left: Box::new(self.parse_expr(parts[0])),
+                op: CmpOp::Gt,
+                right: Box::new(self.parse_expr(parts[1])),
+            }
+        } else {
+            panic!("Invalid condition: {}", src);
+        }
     }
-    if let Some(pos) = s.rfind('-') {
-        let (left, right) = s.split_at(pos);
-        return Expr::BinOp(
-            Box::new(parse_expr(left.trim())),
-            BinOp::Sub,
-            Box::new(parse_expr(right[1..].trim())),
-        );
-    }
-    // numeric
-    if let Ok(num) = s.parse::<f64>() {
-        return Expr::Number(num);
-    }
-    // variable
-    Expr::Var(s.trim().to_string())
 }
