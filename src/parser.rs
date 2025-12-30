@@ -1,100 +1,111 @@
 use crate::ast::*;
+use std::iter::Peekable;
 use std::str::Lines;
 
-pub struct Parser<'a> {
-    lines: Lines<'a>,
+pub fn parse(source: &str) -> Vec<Stmt> {
+    let mut lines = source.lines().peekable();
+    parse_block(&mut lines)
 }
 
-impl<'a> Parser<'a> {
-    pub fn new(src: &'a str) -> Self {
-        Self { lines: src.lines() }
+fn parse_block(lines: &mut Peekable<Lines>) -> Vec<Stmt> {
+    let mut stmts = Vec::new();
+
+    while let Some(&line) = lines.peek() {
+        if line.trim().is_empty() {
+            lines.next();
+            continue;
+        }
+
+        if !line.starts_with("    ") && !stmts.is_empty() {
+            break;
+        }
+
+        let line = lines.next().unwrap().trim_start();
+        stmts.push(parse_stmt(line, lines));
     }
 
-    pub fn parse(&mut self) -> Vec<Stmt> {
-        let mut stmts = Vec::new();
+    stmts
+}
 
-        while let Some(line) = self.lines.next() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
+fn parse_stmt(line: &str, lines: &mut Peekable<Lines>) -> Stmt {
+    if line.starts_with("while ") {
+        let cond = parse_expr(line.strip_prefix("while ").unwrap().trim_end_matches(':'));
+        let body = parse_block(lines);
+        Stmt::While { cond, body }
+    } else if line.starts_with("if ") {
+        let cond = parse_expr(line.strip_prefix("if ").unwrap().trim_end_matches(':'));
+        let then_block = parse_block(lines);
 
-            if line.starts_with("while ") {
-                let cond = self.parse_condition(&line[6..line.len() - 1]);
-                let mut body = Vec::new();
-
-                while let Some(next) = self.lines.next() {
-                    if !next.starts_with("    ") {
-                        break;
-                    }
-                    body.push(self.parse_line(next.trim()));
-                }
-
-                stmts.push(Stmt::While { cond, body });
+        let else_block = if let Some(&next) = lines.peek() {
+            if next.trim_start().starts_with("else:") {
+                lines.next();
+                Some(parse_block(lines))
             } else {
-                stmts.push(self.parse_line(line));
-            }
-        }
-
-        stmts
-    }
-
-    fn parse_line(&self, line: &str) -> Stmt {
-        if line.starts_with("print(") {
-            let inner = &line[6..line.len() - 1];
-            Stmt::Print {
-                expr: self.parse_expr(inner),
-            }
-        } else if line.contains('=') {
-            let parts: Vec<_> = line.split('=').map(str::trim).collect();
-            Stmt::Assign {
-                name: parts[0].to_string(),
-                value: self.parse_expr(parts[1]),
+                None
             }
         } else {
-            panic!("Unknown statement: {}", line);
-        }
-    }
+            None
+        };
 
-    fn parse_expr(&self, src: &str) -> Expr {
-        if let Ok(n) = src.parse::<f64>() {
-            Expr::Number(n)
-        } else if src.contains('+') {
-            let parts: Vec<_> = src.split('+').map(str::trim).collect();
-            Expr::Binary {
-                left: Box::new(self.parse_expr(parts[0])),
-                op: BinOp::Add,
-                right: Box::new(self.parse_expr(parts[1])),
-            }
-        } else if src.contains('-') {
-            let parts: Vec<_> = src.split('-').map(str::trim).collect();
-            Expr::Binary {
-                left: Box::new(self.parse_expr(parts[0])),
-                op: BinOp::Sub,
-                right: Box::new(self.parse_expr(parts[1])),
-            }
-        } else {
-            Expr::Var(src.to_string())
+        Stmt::If {
+            cond,
+            then_block,
+            else_block,
         }
+    } else if line.starts_with("print(") {
+        let expr = line
+            .strip_prefix("print(")
+            .unwrap()
+            .strip_suffix(")")
+            .unwrap();
+        Stmt::Print {
+            expr: parse_expr(expr),
+        }
+    } else if line.contains('=') {
+        let (name, expr) = line.split_once('=').unwrap();
+        Stmt::Assign {
+            name: name.trim().to_string(),
+            value: parse_expr(expr.trim()),
+        }
+    } else {
+        panic!("Unknown statement: {}", line);
     }
+}
 
-    fn parse_condition(&self, src: &str) -> Expr {
-        if src.contains('<') {
-            let parts: Vec<_> = src.split('<').map(str::trim).collect();
-            Expr::Compare {
-                left: Box::new(self.parse_expr(parts[0])),
-                op: CmpOp::Lt,
-                right: Box::new(self.parse_expr(parts[1])),
-            }
-        } else if src.contains('>') {
-            let parts: Vec<_> = src.split('>').map(str::trim).collect();
-            Expr::Compare {
-                left: Box::new(self.parse_expr(parts[0])),
-                op: CmpOp::Gt,
-                right: Box::new(self.parse_expr(parts[1])),
-            }
-        } else {
-            panic!("Invalid condition: {}", src);
-        }
+fn parse_expr(input: &str) -> Expr {
+    if let Some((l, r)) = input.split_once("==") {
+        Expr::Compare(
+            Box::new(parse_expr(l.trim())),
+            CmpOp::Eq,
+            Box::new(parse_expr(r.trim())),
+        )
+    } else if let Some((l, r)) = input.split_once('<') {
+        Expr::Compare(
+            Box::new(parse_expr(l.trim())),
+            CmpOp::Lt,
+            Box::new(parse_expr(r.trim())),
+        )
+    } else if let Some((l, r)) = input.split_once('>') {
+        Expr::Compare(
+            Box::new(parse_expr(l.trim())),
+            CmpOp::Gt,
+            Box::new(parse_expr(r.trim())),
+        )
+    } else if let Some((l, r)) = input.split_once('+') {
+        Expr::Binary(
+            Box::new(parse_expr(l.trim())),
+            BinOp::Add,
+            Box::new(parse_expr(r.trim())),
+        )
+    } else if let Some((l, r)) = input.split_once('-') {
+        Expr::Binary(
+            Box::new(parse_expr(l.trim())),
+            BinOp::Sub,
+            Box::new(parse_expr(r.trim())),
+        )
+    } else if let Ok(n) = input.parse::<f64>() {
+        Expr::Number(n)
+    } else {
+        Expr::Var(input.to_string())
     }
 }
