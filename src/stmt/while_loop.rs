@@ -1,4 +1,7 @@
-// while loop
+// src/stmt/while_loop.rs
+//
+// while <expr>
+//     <block>
 
 use crate::ast::{Control, ExprNode, StmtNode};
 use crate::lexer::Token;
@@ -15,11 +18,15 @@ struct WhileStmt {
 impl StmtNode for WhileStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
         loop {
-            let c = self.cond.eval(env)?;
-            match c {
+            let v = self.cond.eval(env)?;
+            match v {
                 crate::runtime::Value::Bool(true) => {
-                    for s in &self.body {
-                        s.exec(env)?;
+                    for stmt in &self.body {
+                        match stmt.exec(env)? {
+                            Control::None => {}
+                            Control::Break => return Ok(Control::None),
+                            Control::Continue => break,
+                        }
                     }
                 }
                 crate::runtime::Value::Bool(false) => break,
@@ -38,9 +45,21 @@ impl StmtHandler for WhileStmtHandler {
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
-        parser.advance(); // while
+        // consume `while`
+        parser.advance();
+
+        // parse condition expression
         let cond = parser.parse_expr()?;
+
+        // expect newline
+        match parser.advance() {
+            Token::Newline => {}
+            _ => return Err("Expected newline after while condition".into()),
+        }
+
+        // parse indented block
         let body = parser.parse_block()?;
+
         Ok(Box::new(WhileStmt { cond, body }))
     }
 }
