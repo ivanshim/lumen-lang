@@ -1,27 +1,25 @@
-// Logical operators: and / or / not
-
 use crate::ast::ExprNode;
 use crate::lexer::Token;
 use crate::parser::Parser;
-use crate::registry::{ExprInfix, ExprPrefix, LumenResult, Precedence};
+use crate::registry::{InfixHandler, PrefixHandler, LumenResult, Precedence};
 use crate::runtime::{Env, Value};
 
 #[derive(Debug)]
-struct LogicExpr {
-    left: Box<dyn ExprNode>,
+pub struct LogicExpr {
     op: Token,
+    left: Box<dyn ExprNode>,
     right: Box<dyn ExprNode>,
 }
 
 impl ExprNode for LogicExpr {
-    fn eval(&self, env: &mut Env) -> LumenResult<Value> {
+    fn eval(&self, env: &mut Env) -> Result<Value, String> {
         let l = self.left.eval(env)?;
         let r = self.right.eval(env)?;
 
-        match (l, r, &self.op) {
-            (Value::Bool(a), Value::Bool(b), Token::And) => Ok(Value::Bool(a && b)),
-            (Value::Bool(a), Value::Bool(b), Token::Or) => Ok(Value::Bool(a || b)),
-            _ => Err("Invalid logical operation".into()),
+        match (self.op.clone(), l, r) {
+            (Token::And, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a && b)),
+            (Token::Or, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a || b)),
+            _ => Err("Invalid logic operation".into()),
         }
     }
 }
@@ -36,7 +34,7 @@ impl LogicInfix {
     }
 }
 
-impl ExprInfix for LogicInfix {
+impl InfixHandler for LogicInfix {
     fn matches(&self, parser: &Parser) -> bool {
         parser.peek() == &self.op
     }
@@ -50,38 +48,40 @@ impl ExprInfix for LogicInfix {
         parser: &mut Parser,
         left: Box<dyn ExprNode>,
     ) -> LumenResult<Box<dyn ExprNode>> {
-        let op = parser.advance();
-        let right = parser.parse_expr_prec(self.precedence() + 1)?;
-        Ok(Box::new(LogicExpr { left, op, right }))
-    }
-}
-
-// Unary NOT
-
-#[derive(Debug)]
-struct NotExpr {
-    expr: Box<dyn ExprNode>,
-}
-
-impl ExprNode for NotExpr {
-    fn eval(&self, env: &mut Env) -> LumenResult<Value> {
-        match self.expr.eval(env)? {
-            Value::Bool(b) => Ok(Value::Bool(!b)),
-            _ => Err("Invalid operand for 'not'".into()),
-        }
+        parser.advance();
+        let right = parser.parse_expr_prec(self.precedence())?;
+        Ok(Box::new(LogicExpr {
+            op: self.op.clone(),
+            left,
+            right,
+        }))
     }
 }
 
 pub struct NotPrefix;
 
-impl ExprPrefix for NotPrefix {
+impl PrefixHandler for NotPrefix {
     fn matches(&self, parser: &Parser) -> bool {
         matches!(parser.peek(), Token::Not)
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
         parser.advance();
-        let expr = parser.parse_expr_prec(Precedence::Unary)?;
-        Ok(Box::new(NotExpr { expr }))
+        let expr = parser.parse_expr_prec(Precedence::Prefix)?;
+        Ok(Box::new(UnaryNot { expr }))
+    }
+}
+
+#[derive(Debug)]
+struct UnaryNot {
+    expr: Box<dyn ExprNode>,
+}
+
+impl ExprNode for UnaryNot {
+    fn eval(&self, env: &mut Env) -> Result<Value, String> {
+        match self.expr.eval(env)? {
+            Value::Bool(b) => Ok(Value::Bool(!b)),
+            _ => Err("Expected boolean".into()),
+        }
     }
 }
