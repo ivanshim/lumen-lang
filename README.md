@@ -1,3 +1,5 @@
+For language philosophy and evolution constraints, see DESIGN.md.
+
 # Lumen-Lang
 
 Lumen is a minimal, experimental programming language and interpreter.
