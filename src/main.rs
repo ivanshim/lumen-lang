@@ -1,18 +1,21 @@
 mod ast;
-mod parser;
 mod eval;
+mod parser;
 
 use std::env;
 use std::fs;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        println!("Usage: lumen <file.lm>");
-        return;
+
+    if args.len() != 2 {
+        eprintln!("Usage: lumen <file.lm>");
+        std::process::exit(1);
     }
-    let filename = &args[1];
-    let src = fs::read_to_string(filename).expect("Unable to read file");
-    let stmts = parser::parse_program(&src);
-    eval::eval_program(&stmts);
+
+    let source = fs::read_to_string(&args[1])
+        .expect("Failed to read source file");
+
+    let program = parser::parse(&source);
+    eval::eval(&program);
 }
