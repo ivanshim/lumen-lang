@@ -4,7 +4,8 @@
 // Knows NOTHING about operators, keywords, or language features.
 
 use crate::ast::{ExprNode, Program, StmtNode};
-use crate::lexer::{lex, SpannedToken, Token};
+use crate::lexer::{SpannedToken, Token};
+use crate::lexer::lex;
 use crate::registry::{err_at, LumenResult, Precedence, Registry};
 
 pub struct Parser<'a> {
@@ -43,10 +44,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // --------------------
-    // Program
-    // --------------------
-
     pub fn parse_program(&mut self) -> LumenResult<Program> {
         let mut stmts = Vec::new();
         self.consume_newlines();
@@ -65,12 +62,8 @@ impl<'a> Parser<'a> {
         Ok(Program::new(stmts))
     }
 
-    // --------------------
-    // Expressions
-    // --------------------
-
     pub fn parse_expr(&mut self) -> LumenResult<Box<dyn ExprNode>> {
-        self.parse_expr_prec(Precedence::Lowest)
+        self.parse_expr_prec(0)
     }
 
     pub fn parse_expr_prec(
@@ -100,10 +93,6 @@ impl<'a> Parser<'a> {
         Ok(left)
     }
 
-    // --------------------
-    // Blocks
-    // --------------------
-
     pub fn parse_block(&mut self) -> LumenResult<Vec<Box<dyn StmtNode>>> {
         match self.advance() {
             Token::Indent => {}
@@ -114,13 +103,13 @@ impl<'a> Parser<'a> {
         let mut stmts = Vec::new();
 
         while !matches!(self.peek(), Token::Dedent | Token::Eof) {
-            let stmt = self
+            let s = self
                 .reg
                 .find_stmt(self)
                 .ok_or_else(|| err_at(self, "Unknown statement in block"))?
                 .parse(self)?;
 
-            stmts.push(stmt);
+            stmts.push(s);
             self.consume_newlines();
         }
 
