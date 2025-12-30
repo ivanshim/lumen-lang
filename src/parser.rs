@@ -65,7 +65,7 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize, usize)>, ParseError> {
 
     for raw_line in src.lines() {
         line_no += 1;
-        let mut col = 1;
+        let mut col;
 
         // Strip trailing whitespace
         let line = raw_line.trim_end_matches(|c: char| c == ' ' || c == '\t');
