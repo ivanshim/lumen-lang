@@ -1,7 +1,4 @@
 // src/main.rs
-//
-// CLI entry point + feature wiring.
-// No language logic lives here — only registration.
 
 mod ast;
 mod eval;
@@ -34,93 +31,79 @@ use crate::parser::Parser;
 use crate::registry::{Precedence, Registry};
 use crate::lexer::Token;
 
-// ─────────────────────────────
-// Expression features
-// ─────────────────────────────
+// ---- expr handlers ----
+use crate::expr::literals::NumberLiteralPrefix;
+use crate::expr::grouping::GroupingPrefix;
+use crate::expr::arithmetic::{UnaryMinusPrefix, ArithmeticInfix};
+use crate::expr::comparison::ComparisonInfix;
+use crate::expr::logic::{LogicInfix, NotPrefix};
 
-use crate::expr::literals::NumberLiteral;
-use crate::expr::grouping::Grouping;
-use crate::expr::arithmetic::{UnaryMinus, Arithmetic};
-use crate::expr::comparison::Comparison;
-use crate::expr::logic::{Logic, Not};
-
-// ─────────────────────────────
-// Statement features
-// ─────────────────────────────
-
-use crate::stmt::print::PrintStmt;
-use crate::stmt::assignment::AssignStmt;
-use crate::stmt::if_else::IfStmt;
-use crate::stmt::while_loop::WhileStmt;
+// ---- stmt handlers ----
+use crate::stmt::print::PrintStmtHandler;
+use crate::stmt::assignment::AssignStmtHandler;
+use crate::stmt::if_else::IfStmtHandler;
+use crate::stmt::while_loop::WhileStmtHandler;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-
     if args.len() != 2 {
         eprintln!("Usage: lumen <file.lm>");
         std::process::exit(1);
     }
 
-    let source = match fs::read_to_string(&args[1]) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Failed to read file: {e}");
-            std::process::exit(1);
-        }
-    };
+    let source = fs::read_to_string(&args[1])
+        .expect("Failed to read source file");
 
-    // ─────────────────────────────
+    // --------------------
     // Registry wiring
-    // ─────────────────────────────
-
+    // --------------------
     let mut registry = Registry::new();
 
-    // ----- expression prefixes -----
-    registry.register_prefix(Box::new(NumberLiteral));
-    registry.register_prefix(Box::new(Grouping));
-    registry.register_prefix(Box::new(UnaryMinus));
-    registry.register_prefix(Box::new(Not));
+    // ---- expression prefixes ----
+    registry.register_prefix(Box::new(NumberLiteralPrefix));
+    registry.register_prefix(Box::new(GroupingPrefix));
+    registry.register_prefix(Box::new(UnaryMinusPrefix));
+    registry.register_prefix(Box::new(NotPrefix));
 
-    // ----- arithmetic infix -----
-    registry.register_infix(Box::new(Arithmetic::new(
-        Token::Plus,
-        Precedence::Term,
-    )));
-    registry.register_infix(Box::new(Arithmetic::new(
-        Token::Minus,
-        Precedence::Term,
-    )));
-    registry.register_infix(Box::new(Arithmetic::new(
-        Token::Star,
-        Precedence::Factor,
-    )));
-    registry.register_infix(Box::new(Arithmetic::new(
-        Token::Slash,
-        Precedence::Factor,
-    )));
+    // ---- arithmetic infix ----
+    registry.register_infix(Box::new(
+        ArithmeticInfix::new(Token::Plus, Precedence::Term),
+    ));
+    registry.register_infix(Box::new(
+        ArithmeticInfix::new(Token::Minus, Precedence::Term),
+    ));
+    registry.register_infix(Box::new(
+        ArithmeticInfix::new(Token::Star, Precedence::Factor),
+    ));
+    registry.register_infix(Box::new(
+        ArithmeticInfix::new(Token::Slash, Precedence::Factor),
+    ));
 
-    // ----- comparison infix -----
-    registry.register_infix(Box::new(Comparison::new(Token::EqEq)));
-    registry.register_infix(Box::new(Comparison::new(Token::NotEq)));
-    registry.register_infix(Box::new(Comparison::new(Token::Lt)));
-    registry.register_infix(Box::new(Comparison::new(Token::Gt)));
-    registry.register_infix(Box::new(Comparison::new(Token::LtEq)));
-    registry.register_infix(Box::new(Comparison::new(Token::GtEq)));
+    // ---- comparison infix ----
+    registry.register_infix(Box::new(ComparisonInfix::new(Token::Lt)));
+    registry.register_infix(Box::new(ComparisonInfix::new(Token::Gt)));
+    registry.register_infix(Box::new(ComparisonInfix::new(Token::LtEq)));
+    registry.register_infix(Box::new(ComparisonInfix::new(Token::GtEq)));
+    registry.register_infix(Box::new(ComparisonInfix::new(Token::EqEq)));
+    registry.register_infix(Box::new(ComparisonInfix::new(Token::NotEq)));
 
-    // ----- logical infix -----
-    registry.register_infix(Box::new(Logic::new(Token::And)));
-    registry.register_infix(Box::new(Logic::new(Token::Or)));
+    // ---- logical infix ----
+    registry.register_infix(Box::new(
+        LogicInfix::new(Token::And),
+    ));
+    registry.register_infix(Box::new(
+        LogicInfix::new(Token::Or),
+    ));
 
-    // ----- statements -----
-    registry.register_stmt(Box::new(PrintStmt));
-    registry.register_stmt(Box::new(AssignStmt));
-    registry.register_stmt(Box::new(IfStmt));
-    registry.register_stmt(Box::new(WhileStmt));
+    // ---- statements ----
+    registry.register_stmt(Box::new(PrintStmtHandler));
+    registry.register_stmt(Box::new(AssignStmtHandler));
+    registry.register_stmt(Box::new(IfStmtHandler));
+    registry.register_stmt(Box::new(WhileStmtHandler));
 
-    // ─────────────────────────────
+    // --------------------
     // Parse
-    // ─────────────────────────────
-
+    // --------------------
     let mut parser = match Parser::new(&registry, &source) {
         Ok(p) => p,
         Err(e) => {
@@ -137,10 +120,9 @@ fn main() {
         }
     };
 
-    // ─────────────────────────────
+    // --------------------
     // Execute
-    // ─────────────────────────────
-
+    // --------------------
     if let Err(e) = eval::eval(&program) {
         eprintln!("RuntimeError: {e}");
         std::process::exit(1);
