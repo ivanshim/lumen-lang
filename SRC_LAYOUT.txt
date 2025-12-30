@@ -1,0 +1,23 @@
+src/
+├── main.rs              # CLI entry point
+├── core.rs              # registry + dispatch
+├── ast.rs               # AST spine (stable)
+├── parser.rs            # tokenizer + indentation + delegation
+├── eval.rs              # evaluator dispatcher
+
+├── expr/
+│   ├── arithmetic.rs    # + - * / %
+│   ├── comparison.rs    # == != < > <= >=
+│   ├── logic.rs         # and or not xor
+│   ├── literals.rs      # numbers strings booleans
+│   └── grouping.rs     # ( ... )
+
+├── stmt/
+│   ├── assignment.rs
+│   ├── if_else.rs
+│   ├── while_loop.rs
+│   └── print.rs
+
+└── runtime/
+    ├── env.rs
+    └── value.rs
