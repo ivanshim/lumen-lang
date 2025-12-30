@@ -1,23 +1,38 @@
-src/
-├── main.rs              # CLI entry point
-├── core.rs              # registry + dispatch
-├── ast.rs               # AST spine (stable)
-├── parser.rs            # tokenizer + indentation + delegation
-├── eval.rs              # evaluator dispatcher
+/
+├── README.md              # Project entry point (what this is, how to run it)
+├── LICENSE
+├── Cargo.toml
+├── Cargo.lock
 
-├── expr/
-│   ├── arithmetic.rs    # + - * / %
-│   ├── comparison.rs    # == != < > <= >=
-│   ├── logic.rs         # and or not xor
-│   ├── literals.rs      # numbers strings booleans
-│   └── grouping.rs     # ( ... )
+├── docs/                  # All documentation (flat, no subdirectories)
+│   ├── DESIGN_CORE.md     # Non-negotiable design principles
+│   ├── DESIGN.md          # Language philosophy and intent
+│   ├── GRAMMAR_CORE.md    # Minimal, frozen grammar
+│   ├── GRAMMAR.md         # Extended / current grammar
+│   ├── ROADMAP.md         # Planned evolution toward a usable language
+│   └── SRC_LAYOUT.txt     # Canonical directory and file map (this file)
 
-├── stmt/
-│   ├── assignment.rs
-│   ├── if_else.rs
-│   ├── while_loop.rs
-│   └── print.rs
+└── src/                   # All compilable source code
+    ├── main.rs            # CLI entry point (file loading, run invocation)
+    ├── core.rs            # Core orchestration (initialization, registry wiring)
+    ├── ast.rs             # Minimal AST spine (stable, feature-agnostic)
+    ├── parser.rs          # Tokenization, indentation handling, delegation only
+    ├── eval.rs            # Evaluation dispatcher (no feature semantics)
+    ├── registry.rs        # Feature registration API (expr / stmt hooks)
 
-└── runtime/
-    ├── env.rs
-    └── value.rs
+    ├── expr/              # Expression-level language features
+    │   ├── literals.rs    # number, string, boolean literals
+    │   ├── grouping.rs    # parenthesized expressions: ( ... )
+    │   ├── arithmetic.rs # +  -  *  /  %
+    │   ├── comparison.rs # ==  !=  <  >  <=  >=
+    │   └── logic.rs       # and  or  not  xor
+
+    ├── stmt/              # Statement-level language features
+    │   ├── assignment.rs # x = expr
+    │   ├── if_else.rs    # if / else
+    │   ├── while_loop.rs # while loops
+    │   └── print.rs      # print(expr)
+
+    └── runtime/           # Execution support (non-syntax)
+        ├── env.rs         # variable environment, scopes, bindings
+        └── value.rs       # runtime Value representation
