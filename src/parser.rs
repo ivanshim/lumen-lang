@@ -3,38 +3,30 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
 enum Tok {
-    // structure
     Newline,
     Indent,
     Dedent,
     Eof,
 
-    // literals / identifiers
     Ident(String),
-    Number(f64),
-    Str(String),
+    Int(i64),
 
-    // punctuation
     LParen,
     RParen,
-    LBracket,
-    RBracket,
-    Comma,
     Colon,
 
-    // operators
-    Assign,      // =
-    Plus,        // +
-    Minus,       // -
-    Star,        // *
-    Slash,       // /
-    EqEq,        // ==
-    NotEq,       // !=
-    Lt,          // <
-    Le,          // <=
-    Gt,          // >
-    Ge,          // >=
-    DotDot,      // ..
+    Assign, // =
+    Plus,
+    Minus,
+    Star,
+    Slash,
+
+    EqEq,  // ==
+    NotEq, // !=
+    Lt,    // <
+    Le,    // <=
+    Gt,    // >
+    Ge,    // >=
 }
 
 #[derive(Debug)]
@@ -57,25 +49,23 @@ pub fn parse(src: &str) -> Result<Vec<Stmt>, ParseError> {
 }
 
 fn lex(src: &str) -> Result<Vec<(Tok, usize, usize)>, ParseError> {
-    // Returns (token, line, col)
     let mut out: Vec<(Tok, usize, usize)> = Vec::new();
-
     let mut indent_stack: Vec<usize> = vec![0];
+
     let mut line_no = 0;
 
     for raw_line in src.lines() {
         line_no += 1;
-        let mut col;
 
-        // Strip trailing whitespace
-        let line = raw_line.trim_end_matches(|c: char| c == ' ' || c == '\t');
+        // strip trailing whitespace
+        let line_trimmed = raw_line.trim_end_matches(|c: char| c == ' ' || c == '\t');
 
-        // Skip blank lines
-        if line.trim().is_empty() {
+        // skip blank lines
+        if line_trimmed.trim().is_empty() {
             continue;
         }
 
-        // Count leading spaces
+        // count leading spaces
         let leading = raw_line.chars().take_while(|c| *c == ' ').count();
         let current = *indent_stack.last().unwrap();
 
@@ -96,18 +86,15 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize, usize)>, ParseError> {
             }
         }
 
-        // Lex the non-indented slice
-        let mut i = leading;
         let chars: Vec<char> = raw_line.chars().collect();
+        let mut i = leading;
 
-        // helper closures
-        let mut push = |t: Tok, c: usize| out.push((t, line_no, c));
+        let mut push = |t: Tok, col: usize| out.push((t, line_no, col));
 
         while i < chars.len() {
             let ch = chars[i];
-            col = i + 1;
+            let col = i + 1;
 
-            // whitespace inside line
             if ch == ' ' || ch == '\t' {
                 i += 1;
                 continue;
@@ -118,45 +105,24 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize, usize)>, ParseError> {
                 break;
             }
 
-            // strings
-            if ch == '"' {
-                i += 1;
-                let start_col = col;
-                let mut s = String::new();
-                while i < chars.len() && chars[i] != '"' {
-                    s.push(chars[i]);
-                    i += 1;
-                }
-                if i >= chars.len() || chars[i] != '"' {
-                    return Err(ParseError {
-                        msg: "Unterminated string literal".into(),
-                        line: line_no,
-                        col: start_col,
-                    });
-                }
-                i += 1;
-                push(Tok::Str(s), start_col);
-                continue;
-            }
-
-            // numbers
+            // integer
             if ch.is_ascii_digit() {
                 let start = i;
                 let start_col = col;
-                while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+                while i < chars.len() && chars[i].is_ascii_digit() {
                     i += 1;
                 }
                 let s: String = chars[start..i].iter().collect();
-                let n = s.parse::<f64>().map_err(|_| ParseError {
-                    msg: format!("Invalid number: {s}"),
+                let n = s.parse::<i64>().map_err(|_| ParseError {
+                    msg: format!("Invalid integer: {s}"),
                     line: line_no,
                     col: start_col,
                 })?;
-                push(Tok::Number(n), start_col);
+                push(Tok::Int(n), start_col);
                 continue;
             }
 
-            // identifiers / keywords
+            // identifier / keyword
             if ch.is_ascii_alphabetic() || ch == '_' {
                 let start = i;
                 let start_col = col;
@@ -171,7 +137,7 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize, usize)>, ParseError> {
                 continue;
             }
 
-            // two-char operators
+            // two-char ops
             if i + 1 < chars.len() {
                 let two = (chars[i], chars[i + 1]);
                 match two {
@@ -195,11 +161,6 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize, usize)>, ParseError> {
                         i += 2;
                         continue;
                     }
-                    ('.', '.') => {
-                        push(Tok::DotDot, col);
-                        i += 2;
-                        continue;
-                    }
                     _ => {}
                 }
             }
@@ -208,9 +169,6 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize, usize)>, ParseError> {
             match ch {
                 '(' => push(Tok::LParen, col),
                 ')' => push(Tok::RParen, col),
-                '[' => push(Tok::LBracket, col),
-                ']' => push(Tok::RBracket, col),
-                ',' => push(Tok::Comma, col),
                 ':' => push(Tok::Colon, col),
                 '=' => push(Tok::Assign, col),
                 '+' => push(Tok::Plus, col),
@@ -227,13 +185,13 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize, usize)>, ParseError> {
                     })
                 }
             }
+
             i += 1;
         }
 
         out.push((Tok::Newline, line_no, raw_line.len().max(1)));
     }
 
-    // close indentation
     while indent_stack.len() > 1 {
         indent_stack.pop();
         out.push((Tok::Dedent, line_no.max(1), 1));
@@ -283,20 +241,27 @@ impl Parser {
     }
 
     fn parse_stmt(&mut self) -> Result<Stmt, ParseError> {
-        // keyword dispatch by Ident(...)
-        if let Some(word) = self.peek_ident() {
-            match word.as_str() {
-                "print" => return self.parse_print(),
-                "if" => return self.parse_if(),
-                "while" => return self.parse_while(),
-                "for" => return self.parse_for(),
-                "fn" => return self.parse_fn(),
-                "return" => return self.parse_return(),
-                _ => {}
-            }
+        if self.peek_ident_is("print") {
+            return self.parse_print();
+        }
+        if self.peek_ident_is("if") {
+            return self.parse_if();
+        }
+        if self.peek_ident_is("while") {
+            return self.parse_while();
+        }
+        if self.peek_ident_is("break") {
+            self.advance();
+            self.consume_newline();
+            return Ok(Stmt::Break);
+        }
+        if self.peek_ident_is("continue") {
+            self.advance();
+            self.consume_newline();
+            return Ok(Stmt::Continue);
         }
 
-        // assignment: name '=' expr
+        // assignment: IDENT '=' Expr
         if let (Tok::Ident(name), _, _) = self.peek().clone() {
             if self.peek_n(1).map(|t| &t.0) == Some(&Tok::Assign) {
                 self.advance(); // name
@@ -307,10 +272,13 @@ impl Parser {
             }
         }
 
-        // expression statement
-        let expr = self.parse_expr()?;
-        self.consume_newline();
-        Ok(Stmt::ExprStmt(expr))
+        // no expression statements in v0.1 (keeps language honest & small)
+        let (_, line, col) = self.peek().clone();
+        Err(ParseError {
+            msg: "Expected statement (assignment, print, if, while, break, continue)".into(),
+            line,
+            col,
+        })
     }
 
     fn parse_print(&mut self) -> Result<Stmt, ParseError> {
@@ -328,30 +296,19 @@ impl Parser {
         self.expect(Tok::Colon, "Expected ':' after if condition")?;
         let then_block = self.parse_block()?;
 
-        let mut branches = vec![(cond, then_block)];
-        let mut else_block: Option<Vec<Stmt>> = None;
+        let else_block = if self.peek_ident_is("else") {
+            self.advance();
+            self.expect(Tok::Colon, "Expected ':' after else")?;
+            Some(self.parse_block()?)
+        } else {
+            None
+        };
 
-        while let Some(word) = self.peek_ident() {
-            if word == "elif" {
-                self.advance();
-                let c = self.parse_expr()?;
-                self.expect(Tok::Colon, "Expected ':' after elif condition")?;
-                let b = self.parse_block()?;
-                branches.push((c, b));
-            } else {
-                break;
-            }
-        }
-
-        if let Some(word) = self.peek_ident() {
-            if word == "else" {
-                self.advance();
-                self.expect(Tok::Colon, "Expected ':' after else")?;
-                else_block = Some(self.parse_block()?);
-            }
-        }
-
-        Ok(Stmt::If { branches, else_block })
+        Ok(Stmt::If {
+            cond,
+            then_block,
+            else_block,
+        })
     }
 
     fn parse_while(&mut self) -> Result<Stmt, ParseError> {
@@ -362,60 +319,7 @@ impl Parser {
         Ok(Stmt::While { cond, body })
     }
 
-    fn parse_for(&mut self) -> Result<Stmt, ParseError> {
-        self.expect_ident("for")?;
-        let name = self.expect_any_ident("Expected loop variable after 'for'")?;
-        self.expect_ident("in")?;
-
-        // range: expr '..' expr
-        let start = self.parse_expr()?;
-        self.expect(Tok::DotDot, "Expected '..' in range")?;
-        let end = self.parse_expr()?;
-
-        self.expect(Tok::Colon, "Expected ':' after for range")?;
-        let body = self.parse_block()?;
-        Ok(Stmt::ForRange { name, start, end, body })
-    }
-
-    fn parse_fn(&mut self) -> Result<Stmt, ParseError> {
-        self.expect_ident("fn")?;
-        let name = self.expect_any_ident("Expected function name")?;
-        self.expect(Tok::LParen, "Expected '(' after function name")?;
-
-        let mut params = Vec::new();
-        if !self.check(&Tok::RParen) {
-            loop {
-                let p = self.expect_any_ident("Expected parameter name")?;
-                params.push(p);
-                if self.check(&Tok::Comma) {
-                    self.advance();
-                    continue;
-                }
-                break;
-            }
-        }
-
-        self.expect(Tok::RParen, "Expected ')' after parameter list")?;
-        self.expect(Tok::Colon, "Expected ':' after function header")?;
-        let body = self.parse_block()?;
-        Ok(Stmt::FnDef { name, params, body })
-    }
-
-    fn parse_return(&mut self) -> Result<Stmt, ParseError> {
-        self.expect_ident("return")?;
-        if self.check(&Tok::Newline) {
-            self.advance();
-            return Ok(Stmt::Return(None));
-        }
-        if self.check(&Tok::Dedent) || self.check(&Tok::Eof) {
-            return Ok(Stmt::Return(None));
-        }
-        let expr = self.parse_expr()?;
-        self.consume_newline();
-        Ok(Stmt::Return(Some(expr)))
-    }
-
-    // ---------- Expressions (precedence climbing) ----------
+    // ---------------- expressions (precedence) ----------------
 
     fn parse_expr(&mut self) -> Result<Expr, ParseError> {
         self.parse_or()
@@ -436,10 +340,10 @@ impl Parser {
     }
 
     fn parse_and(&mut self) -> Result<Expr, ParseError> {
-        let mut expr = self.parse_cmp()?;
+        let mut expr = self.parse_eq()?;
         while self.peek_ident_is("and") {
             self.advance();
-            let right = self.parse_cmp()?;
+            let right = self.parse_eq()?;
             expr = Expr::Binary {
                 left: Box::new(expr),
                 op: BinOp::And,
@@ -449,12 +353,33 @@ impl Parser {
         Ok(expr)
     }
 
-    fn parse_cmp(&mut self) -> Result<Expr, ParseError> {
-        let mut expr = self.parse_add()?;
+    fn parse_eq(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.parse_cmp()?;
         loop {
             let op = match self.peek().0 {
                 Tok::EqEq => Some(CmpOp::Eq),
                 Tok::NotEq => Some(CmpOp::Ne),
+                _ => None,
+            };
+            if let Some(op) = op {
+                self.advance();
+                let right = self.parse_cmp()?;
+                expr = Expr::Compare {
+                    left: Box::new(expr),
+                    op,
+                    right: Box::new(right),
+                };
+            } else {
+                break;
+            }
+        }
+        Ok(expr)
+    }
+
+    fn parse_cmp(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.parse_add()?;
+        loop {
+            let op = match self.peek().0 {
                 Tok::Lt => Some(CmpOp::Lt),
                 Tok::Le => Some(CmpOp::Le),
                 Tok::Gt => Some(CmpOp::Gt),
@@ -523,7 +448,7 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> Result<Expr, ParseError> {
-        if self.peek().0 == Tok::Minus {
+        if self.check(&Tok::Minus) {
             self.advance();
             let expr = self.parse_unary()?;
             return Ok(Expr::Unary {
@@ -539,102 +464,35 @@ impl Parser {
                 expr: Box::new(expr),
             });
         }
-        self.parse_postfix()
-    }
-
-    fn parse_postfix(&mut self) -> Result<Expr, ParseError> {
-        let mut expr = self.parse_primary()?;
-        loop {
-            // call
-            if self.check(&Tok::LParen) {
-                self.advance();
-                let mut args = Vec::new();
-                if !self.check(&Tok::RParen) {
-                    loop {
-                        args.push(self.parse_expr()?);
-                        if self.check(&Tok::Comma) {
-                            self.advance();
-                            continue;
-                        }
-                        break;
-                    }
-                }
-                self.expect(Tok::RParen, "Expected ')' after arguments")?;
-                expr = Expr::Call {
-                    callee: Box::new(expr),
-                    args,
-                };
-                continue;
-            }
-
-            // index
-            if self.check(&Tok::LBracket) {
-                self.advance();
-                let idx = self.parse_expr()?;
-                self.expect(Tok::RBracket, "Expected ']'")?;
-                expr = Expr::Index {
-                    base: Box::new(expr),
-                    index: Box::new(idx),
-                };
-                continue;
-            }
-
-            break;
-        }
-        Ok(expr)
+        self.parse_primary()
     }
 
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {
         let (tok, line, col) = self.peek().clone();
-
         match tok {
-            Tok::Number(n) => {
+            Tok::Int(n) => {
                 self.advance();
-                Ok(Expr::Literal(Value::Number(n)))
+                Ok(Expr::Literal(Value::Int(n)))
             }
-            Tok::Str(s) => {
-                self.advance();
-                Ok(Expr::Literal(Value::Str(s)))
-            }
-            Tok::Ident(name) => {
-                // keywords as literals
-                if name == "true" {
+            Tok::Ident(s) => {
+                // bool literals
+                if s == "true" {
                     self.advance();
                     return Ok(Expr::Literal(Value::Bool(true)));
                 }
-                if name == "false" {
+                if s == "false" {
                     self.advance();
                     return Ok(Expr::Literal(Value::Bool(false)));
                 }
-                if name == "None" {
-                    self.advance();
-                    return Ok(Expr::Literal(Value::None));
-                }
 
                 self.advance();
-                Ok(Expr::Var(name))
+                Ok(Expr::Var(s))
             }
             Tok::LParen => {
                 self.advance();
                 let e = self.parse_expr()?;
                 self.expect(Tok::RParen, "Expected ')'")?;
                 Ok(e)
-            }
-            Tok::LBracket => {
-                self.advance();
-                let mut items = Vec::new();
-                if !self.check(&Tok::RBracket) {
-                    loop {
-                        items.push(self.parse_expr()?);
-                        if self.check(&Tok::Comma) {
-                            self.advance();
-                            continue;
-                        }
-                        break;
-                    }
-                }
-                self.expect(Tok::RBracket, "Expected ']' after list")?;
-                Ok(Expr::List(items))
             }
             _ => Err(ParseError {
                 msg: format!("Unexpected token: {:?}.", tok),
@@ -644,7 +502,7 @@ impl Parser {
         }
     }
 
-    // ---------- helpers ----------
+    // ---------------- helpers ----------------
 
     fn peek(&self) -> &(Tok, usize, usize) {
         &self.toks[self.pos]
@@ -684,14 +542,6 @@ impl Parser {
         }
     }
 
-    fn peek_ident(&self) -> Option<String> {
-        if let Tok::Ident(s) = &self.peek().0 {
-            Some(s.clone())
-        } else {
-            None
-        }
-    }
-
     fn peek_ident_is(&self, s: &str) -> bool {
         matches!(&self.peek().0, Tok::Ident(x) if x == s)
     }
@@ -704,21 +554,6 @@ impl Parser {
             let (_, line, col) = self.peek().clone();
             Err(ParseError {
                 msg: format!("Expected keyword '{s}'"),
-                line,
-                col,
-            })
-        }
-    }
-
-    fn expect_any_ident(&mut self, msg: &str) -> Result<String, ParseError> {
-        if let Tok::Ident(s) = &self.peek().0 {
-            let s = s.clone();
-            self.advance();
-            Ok(s)
-        } else {
-            let (_, line, col) = self.peek().clone();
-            Err(ParseError {
-                msg: msg.into(),
                 line,
                 col,
             })
