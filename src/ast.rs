@@ -1,31 +1,49 @@
 #[derive(Debug, Clone)]
 pub enum Expr {
-    Number(i64),
+    Number(f64),
     Var(String),
-    Binary(Box<Expr>, BinOp, Box<Expr>),
-    Compare(Box<Expr>, CmpOp, Box<Expr>),
+    Binary {
+        left: Box<Expr>,
+        op: BinOp,
+        right: Box<Expr>,
+    },
+    Compare {
+        left: Box<Expr>,
+        op: CmpOp,
+        right: Box<Expr>,
+    },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum BinOp {
     Add,
     Sub,
-    Mul,
-    Div,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum CmpOp {
+    Eq,
+    Ne,
+    Lt,
+    Gt,
 }
 
 #[derive(Debug, Clone)]
-pub enum CmpOp {
-    Lt,
-    Gt,
-    Eq,
-    Ne,
-}
-
-#[derive(Debug)]
 pub enum Stmt {
-    Assign(String, Expr),
-    While { cond: Expr, body: Vec<Stmt> },
-    If { cond: Expr, then_branch: Vec<Stmt>, else_branch: Vec<Stmt> },
-    Print(Expr),
+    Assign {
+        name: String,
+        value: Expr,
+    },
+    While {
+        cond: Expr,
+        body: Vec<Stmt>,
+    },
+    If {
+        cond: Expr,
+        then_block: Vec<Stmt>,
+        else_block: Option<Vec<Stmt>>,
+    },
+    Print {
+        expr: Expr,
+    },
 }
