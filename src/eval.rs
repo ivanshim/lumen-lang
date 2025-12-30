@@ -1,58 +1,52 @@
+use crate::ast::*;
 use std::collections::HashMap;
-use crate::ast::{Expr, Stmt, BinOp, CmpOp};
 
-pub fn eval_program(stmts: &[Stmt]) {
-    let mut env: HashMap<String, f64> = HashMap::new();
-    eval_block(stmts, &mut env);
+pub struct Env {
+    vars: HashMap<String, f64>,
 }
 
-fn eval_block(stmts: &[Stmt], env: &mut HashMap<String, f64>) {
+impl Env {
+    pub fn new() -> Self {
+        Self {
+            vars: HashMap::new(),
+        }
+    }
+}
+
+pub fn eval(stmts: &[Stmt], env: &mut Env) {
     for stmt in stmts {
-        match stmt {
-            Stmt::Assign(name, expr) => {
-                let val = eval_expr(expr, env);
-                env.insert(name.clone(), val);
-            }
-            Stmt::Print(expr) => {
-                let val = eval_expr(expr, env);
-                println!("{}", val);
-            }
-            Stmt::While(cond, body) => {
-                while eval_cond(cond, env) {
-                    eval_block(body, env);
+        eval_stmt(stmt, env);
+    }
+}
+
+fn eval_stmt(stmt: &Stmt, env: &mut Env) {
+    match stmt {
+        Stmt::Assign { name, value } => {
+            let v = eval_expr(value, env);
+            env.vars.insert(name.clone(), v);
+        }
+        Stmt::Print { expr } => {
+            let v = eval_expr(expr, env);
+            println!("{}", v);
+        }
+        Stmt::While { cond, body } => {
+            while eval_cond(cond, env) {
+                for stmt in body {
+                    eval_stmt(stmt, env);
                 }
             }
-            Stmt::If(cond, then_block, else_block) => {
-                if eval_cond(cond, env) {
-                    eval_block(then_block, env);
-                } else {
-                    eval_block(else_block, env);
-                }
-            }
+        }
+        Stmt::If { .. } => {
+            unimplemented!("if/else not in v0.0.1")
         }
     }
 }
 
-fn eval_cond(expr: &Expr, env: &mut HashMap<String, f64>) -> bool {
-    match expr {
-        Expr::Compare(left, op, right) => {
-            let l = eval_expr(left, env);
-            let r = eval_expr(right, env);
-            match op {
-                CmpOp::Eq => l == r,
-                CmpOp::Lt => l < r,
-                CmpOp::Gt => l > r,
-            }
-        }
-        _ => eval_expr(expr, env) != 0.0,
-    }
-}
-
-fn eval_expr(expr: &Expr, env: &mut HashMap<String, f64>) -> f64 {
+fn eval_expr(expr: &Expr, env: &Env) -> f64 {
     match expr {
         Expr::Number(n) => *n,
-        Expr::Var(name) => *env.get(name).unwrap_or(&0.0),
-        Expr::BinOp(left, op, right) => {
+        Expr::Var(name) => *env.vars.get(name).unwrap_or(&0.0),
+        Expr::Binary { left, op, right } => {
             let l = eval_expr(left, env);
             let r = eval_expr(right, env);
             match op {
@@ -60,8 +54,24 @@ fn eval_expr(expr: &Expr, env: &mut HashMap<String, f64>) -> f64 {
                 BinOp::Sub => l - r,
             }
         }
-        Expr::Compare(left, op, right) => {
-            if eval_cond(expr, env) { 1.0 } else { 0.0 }
+        Expr::Compare { .. } => {
+            panic!("Comparison used as value")
         }
+    }
+}
+
+fn eval_cond(expr: &Expr, env: &Env) -> bool {
+    match expr {
+        Expr::Compare { left, op, right } => {
+            let l = eval_expr(left, env);
+            let r = eval_expr(right, env);
+            match op {
+                CmpOp::Eq => l == r,
+                CmpOp::Ne => l != r,
+                CmpOp::Lt => l < r,
+                CmpOp::Gt => l > r,
+            }
+        }
+        _ => panic!("Invalid condition"),
     }
 }
