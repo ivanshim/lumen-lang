@@ -1,6 +1,6 @@
 // src/stmt/while_loop.rs
 //
-// while <expr>
+// while <condition>
 //     <block>
 
 use crate::ast::{Control, ExprNode, StmtNode};
@@ -19,19 +19,20 @@ impl StmtNode for WhileStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
         loop {
             let cond = self.condition.eval(env)?;
-            if !cond.is_truthy() {
-                break;
-            }
-
-            for stmt in &self.body {
-                match stmt.exec(env)? {
-                    Control::None => {}
-                    Control::Break => return Ok(Control::None),
-                    Control::Continue => break,
+            match cond {
+                crate::runtime::Value::Bool(true) => {
+                    for stmt in &self.body {
+                        match stmt.exec(env)? {
+                            Control::None => {}
+                            Control::Break => return Ok(Control::None),
+                            Control::Continue => break,
+                        }
+                    }
                 }
+                crate::runtime::Value::Bool(false) => break,
+                _ => return Err("while condition must be boolean".into()),
             }
         }
-
         Ok(Control::None)
     }
 }
@@ -50,15 +51,10 @@ impl StmtHandler for WhileStmtHandler {
         // parse condition expression
         let condition = parser.parse_expr()?;
 
-        // condition must end at newline
-        match parser.peek() {
-            Token::Newline => {
-                parser.advance();
-            }
-            _ => return Err("Expected newline after while condition".into()),
-        }
+        // allow newline before block
+        parser.consume_newlines();
 
-        // parse indented body
+        // parse indented block
         let body = parser.parse_block()?;
 
         Ok(Box::new(WhileStmt { condition, body }))
