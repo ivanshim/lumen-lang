@@ -4,10 +4,10 @@ use std::str::Lines;
 
 pub fn parse(source: &str) -> Vec<Stmt> {
     let mut lines = source.lines().peekable();
-    parse_block(&mut lines)
+    parse_block(&mut lines, 0)
 }
 
-fn parse_block(lines: &mut Peekable<Lines>) -> Vec<Stmt> {
+fn parse_block(lines: &mut Peekable<Lines>, indent: usize) -> Vec<Stmt> {
     let mut stmts = Vec::new();
 
     while let Some(&line) = lines.peek() {
@@ -16,30 +16,36 @@ fn parse_block(lines: &mut Peekable<Lines>) -> Vec<Stmt> {
             continue;
         }
 
-        if !line.starts_with("    ") && !stmts.is_empty() {
+        let current_indent = count_indent(line);
+
+        if current_indent < indent {
             break;
         }
 
+        if current_indent > indent {
+            panic!("Unexpected indentation");
+        }
+
         let line = lines.next().unwrap().trim_start();
-        stmts.push(parse_stmt(line, lines));
+        stmts.push(parse_stmt(line, lines, indent));
     }
 
     stmts
 }
 
-fn parse_stmt(line: &str, lines: &mut Peekable<Lines>) -> Stmt {
+fn parse_stmt(line: &str, lines: &mut Peekable<Lines>, indent: usize) -> Stmt {
     if line.starts_with("while ") {
         let cond = parse_expr(line.strip_prefix("while ").unwrap().trim_end_matches(':'));
-        let body = parse_block(lines);
+        let body = parse_block(lines, indent + 4);
         Stmt::While { cond, body }
     } else if line.starts_with("if ") {
         let cond = parse_expr(line.strip_prefix("if ").unwrap().trim_end_matches(':'));
-        let then_block = parse_block(lines);
+        let then_block = parse_block(lines, indent + 4);
 
         let else_block = if let Some(&next) = lines.peek() {
-            if next.trim_start().starts_with("else:") {
+            if count_indent(next) == indent && next.trim_start().starts_with("else:") {
                 lines.next();
-                Some(parse_block(lines))
+                Some(parse_block(lines, indent + 4))
             } else {
                 None
             }
@@ -114,4 +120,8 @@ fn parse_expr(input: &str) -> Expr {
     } else {
         Expr::Var(input.to_string())
     }
+}
+
+fn count_indent(line: &str) -> usize {
+    line.chars().take_while(|c| *c == ' ').count()
 }
