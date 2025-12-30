@@ -18,34 +18,42 @@ mod expr {
 
 // statement modules
 mod stmt {
+    pub mod print;
     pub mod assignment;
     pub mod if_else;
     pub mod while_loop;
-    pub mod print;
 }
 
 use std::env;
 use std::fs;
 
-use crate::lexer::Token;
 use crate::parser::Parser;
 use crate::registry::{Precedence, Registry};
+use crate::lexer::Token;
 
-// ---- expr handlers ----
+// --------------------
+// Expr features
+// --------------------
+
 use crate::expr::literals::NumberLiteralPrefix;
 use crate::expr::grouping::GroupingPrefix;
+
 use crate::expr::arithmetic::{UnaryMinusPrefix, ArithmeticInfix};
 use crate::expr::comparison::ComparisonInfix;
 use crate::expr::logic::{LogicInfix, NotPrefix};
 
-// ---- stmt handlers ----
+// --------------------
+// Stmt features
+// --------------------
+
+use crate::stmt::print::PrintStmtHandler;
 use crate::stmt::assignment::AssignStmtHandler;
 use crate::stmt::if_else::IfStmtHandler;
 use crate::stmt::while_loop::WhileStmtHandler;
-use crate::stmt::print::PrintStmtHandler;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+
     if args.len() != 2 {
         eprintln!("Usage: lumen <file.lm>");
         std::process::exit(1);
@@ -54,18 +62,19 @@ fn main() {
     let source = fs::read_to_string(&args[1])
         .expect("Failed to read source file");
 
-    // ----------------------------
-    // Registry
-    // ----------------------------
+    // --------------------
+    // Registry wiring
+    // --------------------
+
     let mut registry = Registry::new();
 
-    // ----- prefixes -----
+    // ---- prefix expressions ----
     registry.register_prefix(Box::new(NumberLiteralPrefix));
     registry.register_prefix(Box::new(GroupingPrefix));
     registry.register_prefix(Box::new(UnaryMinusPrefix));
     registry.register_prefix(Box::new(NotPrefix));
 
-    // ----- arithmetic infix -----
+    // ---- arithmetic infix ----
     registry.register_infix(Box::new(
         ArithmeticInfix::new(Token::Plus, Precedence::Term),
     ));
@@ -79,7 +88,7 @@ fn main() {
         ArithmeticInfix::new(Token::Slash, Precedence::Factor),
     ));
 
-    // ----- comparison infix (THIS WAS THE BUG) -----
+    // ---- comparison infix ----
     registry.register_infix(Box::new(ComparisonInfix::new(Token::Lt)));
     registry.register_infix(Box::new(ComparisonInfix::new(Token::Gt)));
     registry.register_infix(Box::new(ComparisonInfix::new(Token::LtEq)));
@@ -87,34 +96,44 @@ fn main() {
     registry.register_infix(Box::new(ComparisonInfix::new(Token::EqEq)));
     registry.register_infix(Box::new(ComparisonInfix::new(Token::NotEq)));
 
-    // ----- logical infix -----
-    registry.register_infix(Box::new(LogicInfix::new(Token::And)));
-    registry.register_infix(Box::new(LogicInfix::new(Token::Or)));
+    // ---- logical infix ----
+    registry.register_infix(Box::new(
+        LogicInfix::new(Token::And, Precedence::Logic),
+    ));
+    registry.register_infix(Box::new(
+        LogicInfix::new(Token::Or, Precedence::Logic),
+    ));
 
-    // ----- statements -----
+    // ---- statements ----
+    registry.register_stmt(Box::new(PrintStmtHandler));
     registry.register_stmt(Box::new(AssignStmtHandler));
     registry.register_stmt(Box::new(IfStmtHandler));
     registry.register_stmt(Box::new(WhileStmtHandler));
-    registry.register_stmt(Box::new(PrintStmtHandler));
 
-    // ----------------------------
+    // --------------------
     // Parse
-    // ----------------------------
-    let mut parser = Parser::new(&registry, &source)
-        .unwrap_or_else(|e| {
+    // --------------------
+
+    let mut parser = match Parser::new(&registry, &source) {
+        Ok(p) => p,
+        Err(e) => {
             eprintln!("{e}");
             std::process::exit(1);
-        });
+        }
+    };
 
-    let program = parser.parse_program()
-        .unwrap_or_else(|e| {
+    let program = match parser.parse_program() {
+        Ok(p) => p,
+        Err(e) => {
             eprintln!("{e}");
             std::process::exit(1);
-        });
+        }
+    };
 
-    // ----------------------------
+    // --------------------
     // Execute
-    // ----------------------------
+    // --------------------
+
     if let Err(e) = eval::eval(&program) {
         eprintln!("RuntimeError: {e}");
         std::process::exit(1);
