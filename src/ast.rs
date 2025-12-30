@@ -17,6 +17,7 @@ pub enum CmpOp {
     Eq,
     Lt,
     Gt,
+    Ne,
 }
 
 #[derive(Debug, Clone)]
