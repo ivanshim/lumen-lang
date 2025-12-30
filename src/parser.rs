@@ -127,9 +127,7 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize, usize)>, ParseError> {
                 let start = i;
                 let start_col = col;
                 i += 1;
-                while i < chars.len()
-                    && (chars[i].is_ascii_alphanumeric() || chars[i] == '_')
-                {
+                while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
                     i += 1;
                 }
                 let s: String = chars[start..i].iter().collect();
