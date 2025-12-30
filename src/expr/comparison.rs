@@ -1,32 +1,32 @@
+// Comparison operators: == != < > <= >=
+
 use crate::ast::ExprNode;
 use crate::lexer::Token;
 use crate::parser::Parser;
-use crate::registry::{InfixHandler, LumenResult, Precedence};
+use crate::registry::{ExprInfix, LumenResult, Precedence};
 use crate::runtime::{Env, Value};
 
 #[derive(Debug)]
-pub struct ComparisonExpr {
-    op: Token,
+struct ComparisonExpr {
     left: Box<dyn ExprNode>,
+    op: Token,
     right: Box<dyn ExprNode>,
 }
 
 impl ExprNode for ComparisonExpr {
-    fn eval(&self, env: &mut Env) -> Result<Value, String> {
+    fn eval(&self, env: &mut Env) -> LumenResult<Value> {
         let l = self.left.eval(env)?;
         let r = self.right.eval(env)?;
 
-        let result = match (&self.op, l, r) {
-            (Token::EqEq, Value::Number(a), Value::Number(b)) => a == b,
-            (Token::NotEq, Value::Number(a), Value::Number(b)) => a != b,
-            (Token::Lt, Value::Number(a), Value::Number(b)) => a < b,
-            (Token::Gt, Value::Number(a), Value::Number(b)) => a > b,
-            (Token::LtEq, Value::Number(a), Value::Number(b)) => a <= b,
-            (Token::GtEq, Value::Number(a), Value::Number(b)) => a >= b,
-            _ => return Err("Invalid comparison".into()),
-        };
-
-        Ok(Value::Bool(result))
+        match (l, r, &self.op) {
+            (Value::Number(a), Value::Number(b), Token::EqEq) => Ok(Value::Bool(a == b)),
+            (Value::Number(a), Value::Number(b), Token::NotEq) => Ok(Value::Bool(a != b)),
+            (Value::Number(a), Value::Number(b), Token::Lt) => Ok(Value::Bool(a < b)),
+            (Value::Number(a), Value::Number(b), Token::Gt) => Ok(Value::Bool(a > b)),
+            (Value::Number(a), Value::Number(b), Token::LtEq) => Ok(Value::Bool(a <= b)),
+            (Value::Number(a), Value::Number(b), Token::GtEq) => Ok(Value::Bool(a >= b)),
+            _ => Err("Invalid comparison".into()),
+        }
     }
 }
 
@@ -40,7 +40,7 @@ impl ComparisonInfix {
     }
 }
 
-impl InfixHandler for ComparisonInfix {
+impl ExprInfix for ComparisonInfix {
     fn matches(&self, parser: &Parser) -> bool {
         parser.peek() == &self.op
     }
@@ -54,12 +54,8 @@ impl InfixHandler for ComparisonInfix {
         parser: &mut Parser,
         left: Box<dyn ExprNode>,
     ) -> LumenResult<Box<dyn ExprNode>> {
-        parser.advance();
-        let right = parser.parse_expr_prec(self.precedence())?;
-        Ok(Box::new(ComparisonExpr {
-            op: self.op.clone(),
-            left,
-            right,
-        }))
+        let op = parser.advance();
+        let right = parser.parse_expr_prec(self.precedence() + 1)?;
+        Ok(Box::new(ComparisonExpr { left, op, right }))
     }
 }
