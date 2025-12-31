@@ -1,11 +1,11 @@
-// src/runtime/env.rs
+// src/framework/runtime/env.rs
 //
 // Runtime environment: variable bindings and lexical scopes.
 // This file is core infrastructure and must remain stable.
 
 use std::collections::HashMap;
 
-use crate::runtime::Value;
+use crate::framework::runtime::Value;
 
 #[derive(Debug, Clone)]
 pub struct Env {

@@ -2,11 +2,11 @@
 //
 // x = expr
 
-use crate::ast::{Control, ExprNode, StmtNode};
-use crate::lexer::Token;
-use crate::parser::Parser;
-use crate::registry::{err_at, LumenResult, Registry, StmtHandler};
-use crate::runtime::{Env, Value};
+use crate::framework::ast::{Control, ExprNode, StmtNode};
+use crate::framework::lexer::Token;
+use crate::framework::parser::Parser;
+use crate::framework::registry::{err_at, LumenResult, Registry, StmtHandler};
+use crate::framework::runtime::{Env, Value};
 
 // --------------------
 // Token definitions

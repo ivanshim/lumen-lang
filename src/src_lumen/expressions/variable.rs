@@ -2,11 +2,11 @@
 //
 // Variable reference expression: `x`
 
-use crate::ast::ExprNode;
-use crate::lexer::Token;
-use crate::parser::Parser;
-use crate::registry::{ExprPrefix, LumenResult, Registry};
-use crate::runtime::{Env, Value};
+use crate::framework::ast::ExprNode;
+use crate::framework::lexer::Token;
+use crate::framework::parser::Parser;
+use crate::framework::registry::{ExprPrefix, LumenResult, Registry};
+use crate::framework::runtime::{Env, Value};
 
 #[derive(Debug)]
 struct VarExpr {

@@ -1,10 +1,10 @@
-// src/eval.rs
+// src/framework/eval.rs
 //
 // Core execution loop.
 // No language semantics live here.
 
-use crate::ast::{Control, Program};
-use crate::runtime::env::Env;
+use crate::framework::ast::{Control, Program};
+use crate::framework::runtime::env::Env;
 
 pub fn eval(program: &Program) -> Result<(), String> {
     let mut env = Env::new();

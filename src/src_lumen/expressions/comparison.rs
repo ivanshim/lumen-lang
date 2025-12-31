@@ -1,10 +1,10 @@
 // Comparison operators: == != < > <= >=
 
-use crate::ast::ExprNode;
-use crate::lexer::Token;
-use crate::parser::Parser;
-use crate::registry::{ExprInfix, LumenResult, Precedence, Registry};
-use crate::runtime::{Env, Value};
+use crate::framework::ast::ExprNode;
+use crate::framework::lexer::Token;
+use crate::framework::parser::Parser;
+use crate::framework::registry::{ExprInfix, LumenResult, Precedence, Registry};
+use crate::framework::runtime::{Env, Value};
 
 // --------------------
 // Token definitions
