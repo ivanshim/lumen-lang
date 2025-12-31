@@ -22,6 +22,12 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Create parser with pre-tokenized token stream.
+    /// Used when language-specific token processing is needed (e.g., indentation).
+    pub fn new_with_tokens(reg: &'a Registry, toks: Vec<SpannedToken>) -> LumenResult<Self> {
+        Ok(Self { reg, toks, i: 0 })
+    }
+
     pub fn position(&self) -> (usize, usize) {
         let t = self.toks.get(self.i).unwrap();
         (t.line, t.col)
@@ -42,9 +48,10 @@ impl<'a> Parser<'a> {
     }
 
     pub fn consume_newlines(&mut self) {
-        let newline = self.reg.tokens.newline();
-        while matches!(self.peek(), Token::Feature(k) if *k == newline) {
-            self.advance();
+        if let Some(newline) = self.reg.tokens.newline {
+            while matches!(self.peek(), Token::Feature(k) if *k == newline) {
+                self.advance();
+            }
         }
     }
 
@@ -52,7 +59,7 @@ impl<'a> Parser<'a> {
         let mut stmts = Vec::new();
         self.consume_newlines();
 
-        let eof = self.reg.tokens.eof();
+        let eof = self.reg.tokens.eof.unwrap_or("EOF");
         while !matches!(self.peek(), Token::Feature(k) if *k == eof) {
             let stmt = self
                 .reg
@@ -98,7 +105,7 @@ impl<'a> Parser<'a> {
     pub fn parse_block(&mut self) -> LumenResult<Vec<Box<dyn StmtNode>>> {
         self.consume_newlines();
 
-        let indent = self.reg.tokens.indent();
+        let indent = self.reg.tokens.indent.unwrap_or("INDENT");
         match self.advance() {
             Token::Feature(k) if k == indent => {}
             _ => return Err(err_at(self, "Expected INDENT")),
@@ -108,8 +115,8 @@ impl<'a> Parser<'a> {
 
         let mut stmts = Vec::new();
 
-        let dedent = self.reg.tokens.dedent();
-        let eof = self.reg.tokens.eof();
+        let dedent = self.reg.tokens.dedent.unwrap_or("DEDENT");
+        let eof = self.reg.tokens.eof.unwrap_or("EOF");
         while !matches!(self.peek(), Token::Feature(k) if k == &dedent || k == &eof) {
             let s = self
                 .reg
