@@ -64,7 +64,8 @@ fn main() {
     // --------------------
     // Parse
     // --------------------
-    let mut parser = match Parser::new_with_tokens(&registry, processed_tokens) {
+    // Create parser with Lumen's structural token configuration
+    let mut parser = match Parser::new_with_tokens(&registry, processed_tokens, structural::tokens()) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");
