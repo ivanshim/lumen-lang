@@ -64,8 +64,8 @@ fn main() {
     // --------------------
     // Parse
     // --------------------
-    // Create parser with Lumen's structural token configuration
-    let mut parser = match Parser::new_with_tokens(&registry, processed_tokens, structural::tokens()) {
+    // Create framework parser with Lumen's token stream
+    let mut parser = match Parser::new_with_tokens(&registry, processed_tokens) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");
@@ -73,7 +73,8 @@ fn main() {
         }
     };
 
-    let program = match parser.parse_program() {
+    // Use Lumen-specific parser (handles newlines, blocks, etc.)
+    let program = match structural::parse_program(&mut parser) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");

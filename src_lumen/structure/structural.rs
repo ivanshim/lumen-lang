@@ -1,12 +1,13 @@
 // src_lumen/structure/structural.rs
 //
-// Lumen structural tokens and indentation processing.
+// Lumen structural tokens and language-specific parsing.
 // Handles Python-style indentation: 4-space indents, INDENT/DEDENT tokens.
-// Completely language-specific - registers all structural tokens here.
+// Completely language-specific - ALL structural concepts defined here.
 
+use crate::framework::ast::{Program, StmtNode};
 use crate::framework::lexer::{Token, SpannedToken};
-use crate::framework::parser::StructuralTokens;
-use crate::framework::registry::{LumenResult, Registry};
+use crate::framework::parser::Parser;
+use crate::framework::registry::{err_at, LumenResult, Registry};
 
 // --------------------
 // Lumen Token Definitions
@@ -24,15 +25,92 @@ pub const DEDENT: &str = "DEDENT";
 // End of file
 pub const EOF: &str = "EOF";
 
-/// Lumen's structural tokens configuration.
-/// Languages define this entirely - not known to framework.
-pub fn tokens() -> StructuralTokens {
-    StructuralTokens {
-        newline: NEWLINE,
-        indent: INDENT,
-        dedent: DEDENT,
-        eof: EOF,
+// --------------------
+// Structural Tokens Configuration
+// --------------------
+
+/// Lumen's structural tokens - COMPLETELY language-specific.
+/// Framework has zero knowledge of these.
+#[derive(Clone, Copy)]
+pub struct StructuralTokens {
+    pub newline: &'static str,
+    pub indent: &'static str,
+    pub dedent: &'static str,
+    pub eof: &'static str,
+}
+
+impl StructuralTokens {
+    pub fn lumen() -> Self {
+        StructuralTokens {
+            newline: NEWLINE,
+            indent: INDENT,
+            dedent: DEDENT,
+            eof: EOF,
+        }
     }
+}
+
+// --------------------
+// Lumen-specific Parsing Helpers
+// --------------------
+
+/// Consume newline tokens - Lumen-specific syntax handling.
+pub fn consume_newlines(parser: &mut Parser) {
+    while matches!(parser.peek(), Token::Feature(k) if *k == NEWLINE) {
+        parser.advance();
+    }
+}
+
+/// Parse Lumen block (indented statements) - Lumen-specific syntax handling.
+pub fn parse_block(parser: &mut Parser) -> LumenResult<Vec<Box<dyn StmtNode>>> {
+    consume_newlines(parser);
+
+    // Expect INDENT
+    match parser.advance() {
+        Token::Feature(k) if k == INDENT => {}
+        _ => return Err(err_at(parser, "Expected INDENT")),
+    }
+
+    consume_newlines(parser);
+
+    let mut stmts = Vec::new();
+
+    // Parse statements until DEDENT or EOF
+    while !matches!(parser.peek(), Token::Feature(k) if *k == DEDENT || *k == EOF) {
+        let s = parser
+            .reg
+            .find_stmt(parser)
+            .ok_or_else(|| err_at(parser, "Unknown statement in block"))?
+            .parse(parser)?;
+
+        stmts.push(s);
+        consume_newlines(parser);
+    }
+
+    // Expect DEDENT
+    match parser.advance() {
+        Token::Feature(k) if k == DEDENT => Ok(stmts),
+        _ => Err(err_at(parser, "Expected DEDENT")),
+    }
+}
+
+/// Lumen-specific program parsing with newline handling.
+pub fn parse_program(parser: &mut Parser) -> LumenResult<Program> {
+    let mut stmts = Vec::new();
+    consume_newlines(parser);
+
+    while !matches!(parser.peek(), Token::Feature(k) if *k == EOF) {
+        let stmt = parser
+            .reg
+            .find_stmt(parser)
+            .ok_or_else(|| err_at(parser, "Unknown statement"))?
+            .parse(parser)?;
+
+        stmts.push(stmt);
+        consume_newlines(parser);
+    }
+
+    Ok(Program::new(stmts))
 }
 
 // --------------------
