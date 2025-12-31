@@ -7,6 +7,7 @@ use crate::framework::lexer::Token;
 use crate::framework::parser::Parser;
 use crate::framework::registry::{LumenResult, Registry, StmtHandler};
 use crate::framework::runtime::Env;
+use crate::src_lumen::structure::structural::{LPAREN, RPAREN};
 
 #[derive(Debug)]
 struct PrintStmt {
@@ -36,18 +37,16 @@ impl StmtHandler for PrintStmtHandler {
         parser.advance();
 
         // expect '('
-        let lparen = parser.reg.tokens.lparen();
         match parser.advance() {
-            Token::Feature(k) if k == lparen => {}
+            Token::Feature(k) if k == LPAREN => {}
             _ => return Err("Expected '(' after print".into()),
         }
 
         let expr = parser.parse_expr()?;
 
         // expect ')'
-        let rparen = parser.reg.tokens.rparen();
         match parser.advance() {
-            Token::Feature(k) if k == rparen => {}
+            Token::Feature(k) if k == RPAREN => {}
             _ => return Err("Expected ')' after expression".into()),
         }
 

@@ -1,8 +1,9 @@
 // src/framework/lexer.rs
 //
-// Pure lexical analysis + indentation handling.
-// No AST. No evaluation.
-// Converts source text -> tokens (including INDENT/DEDENT like Python).
+// Pure lexical analysis - framework level.
+// No indentation handling. No language assumptions.
+// Converts source text -> tokens (strings, numbers, identifiers, operators).
+// Language modules handle structural tokens (INDENT/DEDENT, NEWLINE, EOF, parens, etc.)
 
 use crate::framework::registry::{LumenResult, TokenRegistry};
 
@@ -31,60 +32,17 @@ impl SpannedToken {
     }
 }
 
+/// Tokenize source code without any indentation or structural processing.
+/// Language modules are responsible for adding INDENT/DEDENT/NEWLINE/EOF tokens.
 pub fn lex(source: &str, token_reg: &TokenRegistry) -> LumenResult<Vec<SpannedToken>> {
     let mut out = Vec::new();
-    let mut indents = vec![0usize];
-
     let mut line_no = 1usize;
 
     for raw in source.lines() {
-        // count leading spaces
-        let mut spaces = 0usize;
-        for ch in raw.chars() {
-            if ch == ' ' {
-                spaces += 1;
-            } else {
-                break;
-            }
-        }
-
-        let rest = &raw[spaces..];
-
-        // skip blank / whitespace-only lines (do not emit NEWLINE)
-        if rest.trim().is_empty() {
-            line_no += 1;
-            continue;
-        }
-
-        // indentation handling (4-space indents)
-        let current = *indents.last().unwrap();
-        if spaces > current {
-            if (spaces - current) % 4 != 0 {
-                return Err(format!("Invalid indentation at line {line_no}"));
-            }
-            indents.push(spaces);
-            out.push(SpannedToken::new(Token::Feature(token_reg.indent()), line_no, 1));
-        } else if spaces < current {
-            while *indents.last().unwrap() > spaces {
-                indents.pop();
-                out.push(SpannedToken::new(Token::Feature(token_reg.dedent()), line_no, 1));
-            }
-            if *indents.last().unwrap() != spaces {
-                return Err(format!("Indentation mismatch at line {line_no}"));
-            }
-        }
-
-        lex_line(rest, line_no, spaces + 1, token_reg, &mut out)?;
-        out.push(SpannedToken::new(Token::Feature(token_reg.newline()), line_no, spaces + rest.len() + 1));
+        lex_line(raw, line_no, 1, token_reg, &mut out)?;
         line_no += 1;
     }
 
-    while indents.len() > 1 {
-        indents.pop();
-        out.push(SpannedToken::new(Token::Feature(token_reg.dedent()), line_no, 1));
-    }
-
-    out.push(SpannedToken::new(Token::Feature(token_reg.eof()), line_no, 1));
     Ok(out)
 }
 
@@ -95,7 +53,7 @@ fn lex_line(s: &str, line: usize, base_col: usize, token_reg: &TokenRegistry, ou
     while i < bytes.len() {
         let col = base_col + i;
 
-        // whitespace
+        // whitespace (skip)
         if bytes[i].is_ascii_whitespace() {
             i += 1;
             continue;
@@ -161,21 +119,14 @@ fn lex_line(s: &str, line: usize, base_col: usize, token_reg: &TokenRegistry, ou
         // single-char operators / punctuation
         let ch = bytes[i] as char;
 
-        // Check structural tokens first (always recognized)
-        let tok = match ch {
-            '(' => Token::Feature(token_reg.lparen()),
-            ')' => Token::Feature(token_reg.rparen()),
-            _ => {
-                // Try to lookup operator in registry
-                if let Some(t) = token_reg.lookup_single_char(ch) {
-                    t
-                } else {
-                    return Err(format!("Unexpected character '{ch}' at line {line}, col {col}"));
-                }
-            }
-        };
-        out.push(SpannedToken::new(tok, line, col));
-        i += 1;
+        // Try to lookup operator in registry (no hardcoded tokens)
+        if let Some(t) = token_reg.lookup_single_char(ch) {
+            out.push(SpannedToken::new(t, line, col));
+            i += 1;
+            continue;
+        }
+
+        return Err(format!("Unexpected character '{ch}' at line {line}, col {col}"));
     }
 
     Ok(())
@@ -184,6 +135,7 @@ fn lex_line(s: &str, line: usize, base_col: usize, token_reg: &TokenRegistry, ou
 fn is_word_start(b: u8) -> bool {
     b.is_ascii_alphabetic() || b == b'_'
 }
+
 fn is_word_continue(b: u8) -> bool {
     is_word_start(b) || b.is_ascii_digit()
 }

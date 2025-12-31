@@ -3,15 +3,19 @@
 // Currently running Lumen language
 
 mod framework;
+
+#[path = "../src_lumen/mod.rs"]
 mod src_lumen;
 
 use std::env;
 use std::fs;
 
+use crate::framework::lexer::lex;
 use crate::framework::parser::Parser;
 use crate::framework::registry::Registry;
 use crate::framework::eval;
 use crate::src_lumen::dispatcher;
+use crate::src_lumen::structure::structural;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -35,9 +39,32 @@ fn main() {
     dispatcher::register_all(&mut registry);
 
     // --------------------
+    // Tokenize (Framework Lexer - pure tokenization)
+    // --------------------
+    let raw_tokens = match lex(&source, &registry.tokens) {
+        Ok(toks) => toks,
+        Err(e) => {
+            eprintln!("LexError: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    // --------------------
+    // Post-process Tokens (Language-Specific)
+    // --------------------
+    // For Lumen: add INDENT/DEDENT/NEWLINE/EOF tokens based on indentation
+    let processed_tokens = match structural::process_indentation(&source, raw_tokens) {
+        Ok(toks) => toks,
+        Err(e) => {
+            eprintln!("IndentationError: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    // --------------------
     // Parse
     // --------------------
-    let mut parser = match Parser::new(&registry, &source) {
+    let mut parser = match Parser::new_with_tokens(&registry, processed_tokens) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");
