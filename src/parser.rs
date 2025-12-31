@@ -6,7 +6,6 @@
 use crate::ast::{ExprNode, Program, StmtNode};
 use crate::lexer::{lex, SpannedToken, Token};
 use crate::registry::{err_at, LumenResult, Precedence, Registry};
-use crate::syntax::structural::{DEDENT, EOF, INDENT, NEWLINE};
 
 pub struct Parser<'a> {
     pub reg: &'a Registry,
@@ -43,7 +42,8 @@ impl<'a> Parser<'a> {
     }
 
     pub fn consume_newlines(&mut self) {
-        while matches!(self.peek(), Token::Feature(NEWLINE)) {
+        let newline = self.reg.tokens.newline();
+        while matches!(self.peek(), Token::Feature(k) if *k == newline) {
             self.advance();
         }
     }
@@ -52,7 +52,8 @@ impl<'a> Parser<'a> {
         let mut stmts = Vec::new();
         self.consume_newlines();
 
-        while !matches!(self.peek(), Token::Feature(EOF)) {
+        let eof = self.reg.tokens.eof();
+        while !matches!(self.peek(), Token::Feature(k) if *k == eof) {
             let stmt = self
                 .reg
                 .find_stmt(self)
@@ -97,8 +98,9 @@ impl<'a> Parser<'a> {
     pub fn parse_block(&mut self) -> LumenResult<Vec<Box<dyn StmtNode>>> {
         self.consume_newlines();
 
+        let indent = self.reg.tokens.indent();
         match self.advance() {
-            Token::Feature(INDENT) => {}
+            Token::Feature(k) if k == indent => {}
             _ => return Err(err_at(self, "Expected INDENT")),
         }
 
@@ -106,7 +108,9 @@ impl<'a> Parser<'a> {
 
         let mut stmts = Vec::new();
 
-        while !matches!(self.peek(), Token::Feature(DEDENT) | Token::Feature(EOF)) {
+        let dedent = self.reg.tokens.dedent();
+        let eof = self.reg.tokens.eof();
+        while !matches!(self.peek(), Token::Feature(k) if k == &dedent || k == &eof) {
             let s = self
                 .reg
                 .find_stmt(self)
@@ -118,7 +122,7 @@ impl<'a> Parser<'a> {
         }
 
         match self.advance() {
-            Token::Feature(DEDENT) => Ok(stmts),
+            Token::Feature(k) if k == dedent => Ok(stmts),
             _ => Err(err_at(self, "Expected DEDENT")),
         }
     }

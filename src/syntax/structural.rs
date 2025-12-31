@@ -25,14 +25,13 @@ pub const EOF: &str = "EOF";
 // Registration
 // --------------------
 
-pub fn register(_reg: &mut Registry) {
-    // Note: These tokens are recognized directly by the lexer
-    // and don't need registry entries. This function exists
-    // for consistency with the modular architecture.
-    //
-    // The lexer hardcodes recognition of:
-    // - '(' and ')' as LPAREN/RPAREN
-    // - Indentation as INDENT/DEDENT
-    // - Line breaks as NEWLINE
-    // - End of input as EOF
+pub fn register(reg: &mut Registry) {
+    // Register structural tokens with the registry
+    // The lexer and parser will retrieve these dynamically
+    reg.tokens.set_lparen(LPAREN);
+    reg.tokens.set_rparen(RPAREN);
+    reg.tokens.set_newline(NEWLINE);
+    reg.tokens.set_indent(INDENT);
+    reg.tokens.set_dedent(DEDENT);
+    reg.tokens.set_eof(EOF);
 }
