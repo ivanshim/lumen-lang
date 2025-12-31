@@ -5,7 +5,7 @@
 use crate::ast::{Control, ExprNode, StmtNode};
 use crate::lexer::Token;
 use crate::parser::Parser;
-use crate::registry::{LumenResult, StmtHandler};
+use crate::registry::{LumenResult, Registry, StmtHandler};
 use crate::runtime::Env;
 
 #[derive(Debug)]
@@ -51,4 +51,15 @@ impl StmtHandler for PrintStmtHandler {
 
         Ok(Box::new(PrintStmt { expr }))
     }
+}
+
+// --------------------
+// Registration
+// --------------------
+
+pub fn register(reg: &mut Registry) {
+    // No tokens to register (uses "print" as identifier)
+
+    // Register handlers
+    reg.register_stmt(Box::new(PrintStmtHandler));
 }

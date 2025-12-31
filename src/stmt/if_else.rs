@@ -3,7 +3,7 @@
 use crate::ast::{Control, ExprNode, StmtNode};
 use crate::lexer::Token;
 use crate::parser::Parser;
-use crate::registry::{LumenResult, StmtHandler};
+use crate::registry::{LumenResult, Registry, StmtHandler};
 use crate::runtime::Env;
 
 #[derive(Debug)]
@@ -60,4 +60,17 @@ impl StmtHandler for IfStmtHandler {
             else_block,
         }))
     }
+}
+
+// --------------------
+// Registration
+// --------------------
+
+pub fn register(reg: &mut Registry) {
+    // Register tokens
+    reg.tokens.add_keyword("if", Token::If);
+    reg.tokens.add_keyword("else", Token::Else);
+
+    // Register handlers
+    reg.register_stmt(Box::new(IfStmtHandler));
 }

@@ -3,7 +3,7 @@
 use crate::ast::ExprNode;
 use crate::lexer::Token;
 use crate::parser::Parser;
-use crate::registry::{ExprInfix, LumenResult, Precedence};
+use crate::registry::{ExprInfix, LumenResult, Precedence, Registry};
 use crate::runtime::{Env, Value};
 
 #[derive(Debug)]
@@ -58,4 +58,26 @@ impl ExprInfix for ComparisonInfix {
         let right = parser.parse_expr_prec(self.precedence() + 1)?;
         Ok(Box::new(ComparisonExpr { left, op, right }))
     }
+}
+
+// --------------------
+// Registration
+// --------------------
+
+pub fn register(reg: &mut Registry) {
+    // Register tokens
+    reg.tokens.add_two_char("==", Token::EqEq);
+    reg.tokens.add_two_char("!=", Token::NotEq);
+    reg.tokens.add_two_char("<=", Token::LtEq);
+    reg.tokens.add_two_char(">=", Token::GtEq);
+    reg.tokens.add_single_char('<', Token::Lt);
+    reg.tokens.add_single_char('>', Token::Gt);
+
+    // Register handlers
+    reg.register_infix(Box::new(ComparisonInfix::new(Token::EqEq)));
+    reg.register_infix(Box::new(ComparisonInfix::new(Token::NotEq)));
+    reg.register_infix(Box::new(ComparisonInfix::new(Token::Lt)));
+    reg.register_infix(Box::new(ComparisonInfix::new(Token::Gt)));
+    reg.register_infix(Box::new(ComparisonInfix::new(Token::LtEq)));
+    reg.register_infix(Box::new(ComparisonInfix::new(Token::GtEq)));
 }

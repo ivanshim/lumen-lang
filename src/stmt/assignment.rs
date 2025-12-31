@@ -5,7 +5,7 @@
 use crate::ast::{Control, ExprNode, StmtNode};
 use crate::lexer::Token;
 use crate::parser::Parser;
-use crate::registry::{err_at, LumenResult, StmtHandler};
+use crate::registry::{err_at, LumenResult, Registry, StmtHandler};
 use crate::runtime::{Env, Value};
 
 #[derive(Debug)]
@@ -46,4 +46,16 @@ impl StmtHandler for AssignStmtHandler {
         let expr = parser.parse_expr()?;
         Ok(Box::new(AssignStmt { name, expr }))
     }
+}
+
+// --------------------
+// Registration
+// --------------------
+
+pub fn register(reg: &mut Registry) {
+    // Register tokens
+    reg.tokens.add_single_char('=', Token::Equals);
+
+    // Register handlers
+    reg.register_stmt(Box::new(AssignStmtHandler));
 }

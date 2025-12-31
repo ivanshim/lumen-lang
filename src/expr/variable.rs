@@ -5,7 +5,7 @@
 use crate::ast::ExprNode;
 use crate::lexer::Token;
 use crate::parser::Parser;
-use crate::registry::{ExprPrefix, LumenResult};
+use crate::registry::{ExprPrefix, LumenResult, Registry};
 use crate::runtime::{Env, Value};
 
 #[derive(Debug)]
@@ -32,4 +32,15 @@ impl ExprPrefix for VariablePrefix {
             _ => unreachable!(),
         }
     }
+}
+
+// --------------------
+// Registration
+// --------------------
+
+pub fn register(reg: &mut Registry) {
+    // No tokens to register (uses Token::Ident from lexer)
+
+    // Register handlers
+    reg.register_prefix(Box::new(VariablePrefix));
 }

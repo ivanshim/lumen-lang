@@ -17,7 +17,7 @@ impl<'a> Parser<'a> {
     pub fn new(reg: &'a Registry, source: &str) -> LumenResult<Self> {
         Ok(Self {
             reg,
-            toks: lex(source)?,
+            toks: lex(source, &reg.tokens)?,
             i: 0,
         })
     }

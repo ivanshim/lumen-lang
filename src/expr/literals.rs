@@ -3,12 +3,12 @@
 use crate::ast::ExprNode;
 use crate::lexer::Token;
 use crate::parser::Parser;
-use crate::registry::{ExprPrefix, LumenResult};
+use crate::registry::{ExprPrefix, LumenResult, Registry};
 use crate::runtime::{Env, Value};
 
 #[derive(Debug)]
-struct NumberLiteral {
-    value: f64,
+pub struct NumberLiteral {
+    pub value: f64,
 }
 
 impl ExprNode for NumberLiteral {
@@ -59,4 +59,18 @@ impl ExprPrefix for BoolLiteralPrefix {
             _ => unreachable!(),
         }
     }
+}
+
+// --------------------
+// Registration
+// --------------------
+
+pub fn register(reg: &mut Registry) {
+    // Register tokens
+    reg.tokens.add_keyword("true", Token::True);
+    reg.tokens.add_keyword("false", Token::False);
+
+    // Register handlers
+    reg.register_prefix(Box::new(NumberLiteralPrefix));
+    reg.register_prefix(Box::new(BoolLiteralPrefix));
 }
