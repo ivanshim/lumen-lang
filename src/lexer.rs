@@ -29,13 +29,15 @@ pub enum Token {
     LtEq,
     GtEq,
 
-    // keywords (still “lexical”, not semantic)
+    // keywords (still "lexical", not semantic)
     If,
     Else,
     While,
     And,
     Or,
     Not,
+    True,
+    False,
 
     // layout
     Newline,
@@ -175,6 +177,8 @@ fn lex_line(s: &str, line: usize, base_col: usize, out: &mut Vec<SpannedToken>) 
                 "and" => Token::And,
                 "or" => Token::Or,
                 "not" => Token::Not,
+                "true" => Token::True,
+                "false" => Token::False,
                 _ => Token::Ident(word.to_string()),
             };
             out.push(SpannedToken::new(tok, line, col));

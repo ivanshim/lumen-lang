@@ -18,10 +18,10 @@ impl ExprNode for LogicExpr {
         let l = self.left.eval(env)?;
         let r = self.right.eval(env)?;
 
-        match (l, r, &self.op) {
-            (Value::Bool(a), Value::Bool(b), Token::And) => Ok(Value::Bool(a && b)),
-            (Value::Bool(a), Value::Bool(b), Token::Or) => Ok(Value::Bool(a || b)),
-            _ => Err("Invalid logical operation".into()),
+        match (&l, &r, &self.op) {
+            (Value::Bool(a), Value::Bool(b), Token::And) => Ok(Value::Bool(*a && *b)),
+            (Value::Bool(a), Value::Bool(b), Token::Or) => Ok(Value::Bool(*a || *b)),
+            _ => Err(format!("Invalid logical operation: {:?} {:?} {:?}", l, self.op, r)),
         }
     }
 }
