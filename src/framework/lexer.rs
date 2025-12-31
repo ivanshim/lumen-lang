@@ -1,10 +1,10 @@
-// src/lexer.rs
+// src/framework/lexer.rs
 //
 // Pure lexical analysis + indentation handling.
 // No AST. No evaluation.
 // Converts source text -> tokens (including INDENT/DEDENT like Python).
 
-use crate::registry::{LumenResult, TokenRegistry};
+use crate::framework::registry::{LumenResult, TokenRegistry};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {

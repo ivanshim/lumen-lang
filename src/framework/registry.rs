@@ -1,11 +1,11 @@
-// src/registry.rs
+// src/framework/registry.rs
 //
 // Feature registration + lookup.
 // Parser knows nothing about language features; it consults the Registry.
 
-use crate::ast::{ExprNode, StmtNode};
-use crate::lexer::Token;
-use crate::parser::Parser;
+use crate::framework::ast::{ExprNode, StmtNode};
+use crate::framework::lexer::Token;
+use crate::framework::parser::Parser;
 use std::collections::HashMap;
 
 pub type LumenResult<T> = Result<T, String>;

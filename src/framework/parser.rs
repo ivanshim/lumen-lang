@@ -1,11 +1,11 @@
-// src/parser.rs
+// src/framework/parser.rs
 //
 // Syntax delegation only.
 // Knows NOTHING about operators, keywords, or language features.
 
-use crate::ast::{ExprNode, Program, StmtNode};
-use crate::lexer::{lex, SpannedToken, Token};
-use crate::registry::{err_at, LumenResult, Precedence, Registry};
+use crate::framework::ast::{ExprNode, Program, StmtNode};
+use crate::framework::lexer::{lex, SpannedToken, Token};
+use crate::framework::registry::{err_at, LumenResult, Precedence, Registry};
 
 pub struct Parser<'a> {
     pub reg: &'a Registry,

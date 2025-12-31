@@ -1,10 +1,10 @@
 // if / else statement
 
-use crate::ast::{Control, ExprNode, StmtNode};
-use crate::lexer::Token;
-use crate::parser::Parser;
-use crate::registry::{LumenResult, Registry, StmtHandler};
-use crate::runtime::Env;
+use crate::framework::ast::{Control, ExprNode, StmtNode};
+use crate::framework::lexer::Token;
+use crate::framework::parser::Parser;
+use crate::framework::registry::{LumenResult, Registry, StmtHandler};
+use crate::framework::runtime::Env;
 
 // --------------------
 // Token definitions
@@ -24,7 +24,7 @@ impl StmtNode for IfStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
         let cond = self.cond.eval(env)?;
         let branch_taken = match cond {
-            crate::runtime::Value::Bool(b) => b,
+            crate::framework::runtime::Value::Bool(b) => b,
             _ => return Err("Condition must be a boolean".into()),
         };
 

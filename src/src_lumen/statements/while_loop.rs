@@ -3,11 +3,11 @@
 // while <expr>
 //     <block>
 
-use crate::ast::{Control, ExprNode, StmtNode};
-use crate::lexer::Token;
-use crate::parser::Parser;
-use crate::registry::{LumenResult, Registry, StmtHandler};
-use crate::runtime::Env;
+use crate::framework::ast::{Control, ExprNode, StmtNode};
+use crate::framework::lexer::Token;
+use crate::framework::parser::Parser;
+use crate::framework::registry::{LumenResult, Registry, StmtHandler};
+use crate::framework::runtime::Env;
 
 // --------------------
 // Token definitions
@@ -26,7 +26,7 @@ impl StmtNode for WhileStmt {
         loop {
             let cond = self.condition.eval(env)?;
             match cond {
-                crate::runtime::Value::Bool(true) => {
+                crate::framework::runtime::Value::Bool(true) => {
                     for stmt in &self.body {
                         match stmt.exec(env)? {
                             Control::Break => return Ok(Control::None),
@@ -35,7 +35,7 @@ impl StmtNode for WhileStmt {
                         }
                     }
                 }
-                crate::runtime::Value::Bool(false) => break,
+                crate::framework::runtime::Value::Bool(false) => break,
                 _ => return Err("while condition must be boolean".into()),
             }
         }

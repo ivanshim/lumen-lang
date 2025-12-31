@@ -3,7 +3,7 @@
 // Core structural tokens that define the syntax system.
 // These are not optional "features" but fundamental syntax elements.
 
-use crate::registry::Registry;
+use crate::framework::registry::Registry;
 
 // --------------------
 // Token definitions

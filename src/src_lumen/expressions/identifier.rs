@@ -1,10 +1,10 @@
 // Variable reference expression
 
-use crate::ast::ExprNode;
-use crate::lexer::Token;
-use crate::parser::Parser;
-use crate::registry::{LumenResult, PrefixHandler};
-use crate::runtime::{Env, Value};
+use crate::framework::ast::ExprNode;
+use crate::framework::lexer::Token;
+use crate::framework::parser::Parser;
+use crate::framework::registry::{LumenResult, ExprPrefix};
+use crate::framework::runtime::{Env, Value};
 
 #[derive(Debug)]
 struct IdentExpr {
@@ -19,7 +19,7 @@ impl ExprNode for IdentExpr {
 
 pub struct IdentPrefix;
 
-impl PrefixHandler for IdentPrefix {
+impl ExprPrefix for IdentPrefix {
     fn matches(&self, parser: &Parser) -> bool {
         matches!(parser.peek(), Token::Ident(_))
     }

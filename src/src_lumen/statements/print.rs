@@ -2,11 +2,11 @@
 //
 // print(expr)
 
-use crate::ast::{Control, ExprNode, StmtNode};
-use crate::lexer::Token;
-use crate::parser::Parser;
-use crate::registry::{LumenResult, Registry, StmtHandler};
-use crate::runtime::Env;
+use crate::framework::ast::{Control, ExprNode, StmtNode};
+use crate::framework::lexer::Token;
+use crate::framework::parser::Parser;
+use crate::framework::registry::{LumenResult, Registry, StmtHandler};
+use crate::framework::runtime::Env;
 
 #[derive(Debug)]
 struct PrintStmt {

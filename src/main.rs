@@ -1,51 +1,17 @@
 // src/main.rs
+// Language-agnostic interpreter framework
+// Currently running Lumen language
 
-mod ast;
-mod eval;
-mod lexer;
-mod parser;
-mod registry;
-mod runtime;
-
-// Syntax structure modules
-mod syntax {
-    pub mod structural;    // Core structural tokens (parens, indent, etc.)
-}
+mod framework;
+mod src_lumen;
 
 use std::env;
 use std::fs;
 
-use crate::parser::Parser;
-use crate::registry::Registry;
-
-// ============================================================================
-// AI DIRECTIVE: MODULAR LANGUAGE FEATURE SYSTEM
-// ============================================================================
-// To disable a feature:
-//   1. Comment out its module declaration below
-//   2. Comment out its register() call in main()
-// Both must be synchronized for the system to compile.
-// ============================================================================
-
-// Expression modules
-mod expr {
-    pub mod literals;      // Number and boolean literals (true, false)
-    pub mod variable;      // Variable references (x, y, foo)
-    pub mod grouping;      // Parenthesized expressions (...)
-    pub mod arithmetic;    // Arithmetic operators (+, -, *, /, %)
-    pub mod comparison;    // Comparison operators (==, !=, <, >, <=, >=)
-    pub mod logic;         // Logical operators (and, or, not)
-}
-
-// Statement modules
-mod stmt {
-    pub mod print;         // print() statement
-    pub mod assignment;    // Assignment (x = expr)
-    pub mod if_else;       // if/else statements
-    pub mod while_loop;    // while loops
-    pub mod break_stmt;    // break statement
-    pub mod continue_stmt; // continue statement
-}
+use crate::framework::parser::Parser;
+use crate::framework::registry::Registry;
+use crate::framework::eval;
+use crate::src_lumen::dispatcher;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -60,28 +26,13 @@ fn main() {
 
     // ========================================================================
     // LANGUAGE FEATURE REGISTRATION
-    // Keep synchronized with module declarations at the top of this file
+    // All language features are registered by the language dispatcher
+    // To change languages, change which dispatcher is called
     // ========================================================================
     let mut registry = Registry::new();
 
-    // Core syntax (structural tokens - parentheses, indentation, etc.)
-    syntax::structural::register(&mut registry);
-
-    // Expression features
-    expr::literals::register(&mut registry);      // Number and boolean literals
-    expr::variable::register(&mut registry);      // Variable references
-    expr::grouping::register(&mut registry);      // Parenthesized expressions
-    expr::arithmetic::register(&mut registry);    // Arithmetic operators
-    expr::comparison::register(&mut registry);    // Comparison operators
-    expr::logic::register(&mut registry);         // Logical operators
-
-    // Statement features
-    stmt::print::register(&mut registry);         // print() statement
-    stmt::assignment::register(&mut registry);    // Assignment
-    stmt::if_else::register(&mut registry);       // if/else statements
-    stmt::while_loop::register(&mut registry);    // while loops
-    stmt::break_stmt::register(&mut registry);    // break statement
-    stmt::continue_stmt::register(&mut registry); // continue statement
+    // Register all Lumen language features
+    dispatcher::register_all(&mut registry);
 
     // --------------------
     // Parse
