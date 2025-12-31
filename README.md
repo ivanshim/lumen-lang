@@ -140,9 +140,8 @@ lumen-lang/
 │   │   └── demo_v0_1.lm
 │   └── docs/                     # Lumen design documentation
 │       ├── DESIGN.md
-│       ├── GRAMMAR.md
+│       ├── BNF.md
 │       ├── ROADMAP.md
-│       └── SRC_LAYOUT.txt
 ├── Cargo.toml
 └── README.md
 ```
