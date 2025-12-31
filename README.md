@@ -83,7 +83,7 @@ cargo build
 #### Step 5: Run the example program
 
 ```bash
-cargo run examples/loop.lm
+cargo run src_lumen/examples/loop.lm
 ```
 
 ---
@@ -101,7 +101,7 @@ cargo run examples/loop.lm
 git clone https://github.com/ivanshim/lumen-lang.git
 cd lumen-lang
 cargo build
-cargo run examples/loop.lm
+cargo run src_lumen/examples/loop.lm
 ```
 
 ---
@@ -110,16 +110,58 @@ cargo run examples/loop.lm
 
 ```
 lumen-lang/
-├── examples/
-│   └── loop.lm        # Sample Lumen program
-├── src/
-│   ├── ast.rs         # Abstract Syntax Tree definitions
-│   ├── parser.rs      # Indentation-aware parser
-│   ├── eval.rs        # Interpreter / evaluator
-│   └── main.rs        # Entry point
+├── src/                           # Language-agnostic framework
+│   ├── framework/
+│   │   ├── lexer.rs              # Pure tokenization
+│   │   ├── parser.rs             # Generic dispatch parser
+│   │   ├── registry.rs           # Token/operator registration
+│   │   ├── ast.rs                # Generic AST traits
+│   │   └── runtime/              # Evaluation engine
+│   │       ├── env.rs            # Scoping and variables
+│   │       └── value.rs          # Runtime values
+│   └── main.rs                   # Entry point
+├── src_lumen/                     # Lumen language implementation
+│   ├── dispatcher.rs             # Lumen handler registration
+│   ├── structure/
+│   │   └── structural.rs         # Indentation, newlines, block parsing
+│   ├── statements/               # Lumen statement implementations
+│   │   ├── assignment.rs
+│   │   ├── if_else.rs
+│   │   ├── print.rs
+│   │   └── while_loop.rs
+│   ├── expressions/              # Lumen expression implementations
+│   │   ├── arithmetic.rs
+│   │   ├── comparison.rs
+│   │   ├── grouping.rs
+│   │   └── identifier.rs
+│   ├── examples/
+│   │   ├── loop.lm
+│   │   ├── fibonacci.lm
+│   │   └── demo_v0_1.lm
+│   └── docs/                     # Lumen design documentation
+│       ├── DESIGN.md
+│       ├── GRAMMAR.md
+│       ├── ROADMAP.md
+│       └── SRC_LAYOUT.txt
 ├── Cargo.toml
 └── README.md
 ```
+
+### Architecture Philosophy
+
+The codebase is split into two layers:
+
+1. **Framework (`src/framework/`)**: Language-agnostic infrastructure
+   - Pure tokenization, AST representation, evaluation
+   - Zero knowledge of language-specific syntax (colons, indentation, newlines, etc.)
+   - Provides trait-based dispatch for extensible parsing and evaluation
+
+2. **Language Module (`src_lumen/`)**: Lumen-specific implementation
+   - Defines tokens, operators, and syntax rules
+   - Implements indentation-based block parsing
+   - Registers handlers for all Lumen statements and expressions
+
+This design allows the framework to support multiple languages with different syntaxes and semantics.
 
 ---
 
