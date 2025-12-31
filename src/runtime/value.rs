@@ -17,6 +17,7 @@ pub enum Value {
 }
 
 impl Value {
+    #[allow(dead_code)]
     pub fn is_truthy(&self) -> bool {
         match self {
             Value::Bool(b) => *b,
