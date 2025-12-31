@@ -6,6 +6,13 @@ use crate::parser::Parser;
 use crate::registry::{LumenResult, Registry, StmtHandler};
 use crate::runtime::Env;
 
+// --------------------
+// Token definitions
+// --------------------
+
+pub const IF: &str = "IF";
+pub const ELSE: &str = "ELSE";
+
 #[derive(Debug)]
 struct IfStmt {
     cond: Box<dyn ExprNode>,
@@ -16,21 +23,27 @@ struct IfStmt {
 impl StmtNode for IfStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
         let cond = self.cond.eval(env)?;
-        match cond {
-            crate::runtime::Value::Bool(true) => {
-                for s in &self.then_block {
-                    s.exec(env)?;
+        let branch_taken = match cond {
+            crate::runtime::Value::Bool(b) => b,
+            _ => return Err("Condition must be a boolean".into()),
+        };
+
+        if branch_taken {
+            for stmt in &self.then_block {
+                let ctl = stmt.exec(env)?;
+                if !matches!(ctl, Control::None) {
+                    return Ok(ctl);
                 }
             }
-            crate::runtime::Value::Bool(false) => {
-                if let Some(block) = &self.else_block {
-                    for s in block {
-                        s.exec(env)?;
-                    }
+        } else if let Some(ref else_block) = self.else_block {
+            for stmt in else_block {
+                let ctl = stmt.exec(env)?;
+                if !matches!(ctl, Control::None) {
+                    return Ok(ctl);
                 }
             }
-            _ => return Err("if condition must be boolean".into()),
         }
+
         Ok(Control::None)
     }
 }
@@ -39,16 +52,19 @@ pub struct IfStmtHandler;
 
 impl StmtHandler for IfStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::If)
+        matches!(parser.peek(), Token::Feature(IF))
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
-        parser.advance(); // if
+        parser.advance(); // consume 'if'
+
         let cond = parser.parse_expr()?;
         let then_block = parser.parse_block()?;
 
-        let else_block = if matches!(parser.peek(), Token::Else) {
-            parser.advance();
+        parser.consume_newlines();
+
+        let else_block = if matches!(parser.peek(), Token::Feature(ELSE)) {
+            parser.advance(); // consume 'else'
             Some(parser.parse_block()?)
         } else {
             None
@@ -68,8 +84,8 @@ impl StmtHandler for IfStmtHandler {
 
 pub fn register(reg: &mut Registry) {
     // Register tokens
-    reg.tokens.add_keyword("if", Token::If);
-    reg.tokens.add_keyword("else", Token::Else);
+    reg.tokens.add_keyword("if", IF);
+    reg.tokens.add_keyword("else", ELSE);
 
     // Register handlers
     reg.register_stmt(Box::new(IfStmtHandler));

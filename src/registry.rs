@@ -60,16 +60,16 @@ impl TokenRegistry {
         }
     }
 
-    pub fn add_keyword(&mut self, word: &str, token: Token) {
-        self.keywords.insert(word.to_string(), token);
+    pub fn add_keyword(&mut self, word: &str, token_kind: &'static str) {
+        self.keywords.insert(word.to_string(), Token::Feature(token_kind));
     }
 
-    pub fn add_single_char(&mut self, ch: char, token: Token) {
-        self.single_char.insert(ch, token);
+    pub fn add_single_char(&mut self, ch: char, token_kind: &'static str) {
+        self.single_char.insert(ch, Token::Feature(token_kind));
     }
 
-    pub fn add_two_char(&mut self, chars: &str, token: Token) {
-        self.two_char.insert(chars.to_string(), token);
+    pub fn add_two_char(&mut self, chars: &str, token_kind: &'static str) {
+        self.two_char.insert(chars.to_string(), Token::Feature(token_kind));
     }
 
     pub fn lookup_keyword(&self, word: &str) -> Option<Token> {

@@ -8,42 +8,22 @@ use crate::registry::{LumenResult, TokenRegistry};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
-    // atoms
+    // Data-carrying tokens (always recognized)
     Ident(String),
     Number(f64),
     String(String),
 
-    // punctuation / operators
+    // Structural tokens (always recognized)
     LParen,
     RParen,
-    Plus,
-    Minus,
-    Star,
-    Slash,
-    Percent,
-    Equals,
-    EqEq,
-    NotEq,
-    Lt,
-    Gt,
-    LtEq,
-    GtEq,
-
-    // keywords (still "lexical", not semantic)
-    If,
-    Else,
-    While,
-    And,
-    Or,
-    Not,
-    True,
-    False,
-
-    // layout
     Newline,
     Indent,
     Dedent,
     Eof,
+
+    // Feature-defined tokens (registered by modules)
+    // Each module defines its own token constants as &'static str
+    Feature(&'static str),
 }
 
 #[derive(Debug, Clone)]

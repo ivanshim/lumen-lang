@@ -6,10 +6,21 @@ use crate::parser::Parser;
 use crate::registry::{ExprInfix, LumenResult, Precedence, Registry};
 use crate::runtime::{Env, Value};
 
+// --------------------
+// Token definitions
+// --------------------
+
+pub const EQ_EQ: &str = "EQ_EQ";
+pub const NOT_EQ: &str = "NOT_EQ";
+pub const LT: &str = "LT";
+pub const GT: &str = "GT";
+pub const LT_EQ: &str = "LT_EQ";
+pub const GT_EQ: &str = "GT_EQ";
+
 #[derive(Debug)]
 struct ComparisonExpr {
     left: Box<dyn ExprNode>,
-    op: Token,
+    op: &'static str,
     right: Box<dyn ExprNode>,
 }
 
@@ -18,31 +29,37 @@ impl ExprNode for ComparisonExpr {
         let l = self.left.eval(env)?;
         let r = self.right.eval(env)?;
 
-        match (l, r, &self.op) {
-            (Value::Number(a), Value::Number(b), Token::EqEq) => Ok(Value::Bool(a == b)),
-            (Value::Number(a), Value::Number(b), Token::NotEq) => Ok(Value::Bool(a != b)),
-            (Value::Number(a), Value::Number(b), Token::Lt) => Ok(Value::Bool(a < b)),
-            (Value::Number(a), Value::Number(b), Token::Gt) => Ok(Value::Bool(a > b)),
-            (Value::Number(a), Value::Number(b), Token::LtEq) => Ok(Value::Bool(a <= b)),
-            (Value::Number(a), Value::Number(b), Token::GtEq) => Ok(Value::Bool(a >= b)),
-            _ => Err("Invalid comparison".into()),
+        match (l, r) {
+            (Value::Number(a), Value::Number(b)) => {
+                let result = match self.op {
+                    EQ_EQ => a == b,
+                    NOT_EQ => a != b,
+                    LT => a < b,
+                    GT => a > b,
+                    LT_EQ => a <= b,
+                    GT_EQ => a >= b,
+                    _ => return Err("Invalid comparison operator".into()),
+                };
+                Ok(Value::Bool(result))
+            }
+            _ => Err("Invalid comparison operands".into()),
         }
     }
 }
 
 pub struct ComparisonInfix {
-    op: Token,
+    op: &'static str,
 }
 
 impl ComparisonInfix {
-    pub fn new(op: Token) -> Self {
+    pub fn new(op: &'static str) -> Self {
         Self { op }
     }
 }
 
 impl ExprInfix for ComparisonInfix {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek() == &self.op
+        matches!(parser.peek(), Token::Feature(kind) if *kind == self.op)
     }
 
     fn precedence(&self) -> Precedence {
@@ -54,9 +71,9 @@ impl ExprInfix for ComparisonInfix {
         parser: &mut Parser,
         left: Box<dyn ExprNode>,
     ) -> LumenResult<Box<dyn ExprNode>> {
-        let op = parser.advance();
+        parser.advance(); // consume operator
         let right = parser.parse_expr_prec(self.precedence() + 1)?;
-        Ok(Box::new(ComparisonExpr { left, op, right }))
+        Ok(Box::new(ComparisonExpr { left, op: self.op, right }))
     }
 }
 
@@ -66,18 +83,18 @@ impl ExprInfix for ComparisonInfix {
 
 pub fn register(reg: &mut Registry) {
     // Register tokens
-    reg.tokens.add_two_char("==", Token::EqEq);
-    reg.tokens.add_two_char("!=", Token::NotEq);
-    reg.tokens.add_two_char("<=", Token::LtEq);
-    reg.tokens.add_two_char(">=", Token::GtEq);
-    reg.tokens.add_single_char('<', Token::Lt);
-    reg.tokens.add_single_char('>', Token::Gt);
+    reg.tokens.add_two_char("==", EQ_EQ);
+    reg.tokens.add_two_char("!=", NOT_EQ);
+    reg.tokens.add_two_char("<=", LT_EQ);
+    reg.tokens.add_two_char(">=", GT_EQ);
+    reg.tokens.add_single_char('<', LT);
+    reg.tokens.add_single_char('>', GT);
 
     // Register handlers
-    reg.register_infix(Box::new(ComparisonInfix::new(Token::EqEq)));
-    reg.register_infix(Box::new(ComparisonInfix::new(Token::NotEq)));
-    reg.register_infix(Box::new(ComparisonInfix::new(Token::Lt)));
-    reg.register_infix(Box::new(ComparisonInfix::new(Token::Gt)));
-    reg.register_infix(Box::new(ComparisonInfix::new(Token::LtEq)));
-    reg.register_infix(Box::new(ComparisonInfix::new(Token::GtEq)));
+    reg.register_infix(Box::new(ComparisonInfix::new(EQ_EQ)));
+    reg.register_infix(Box::new(ComparisonInfix::new(NOT_EQ)));
+    reg.register_infix(Box::new(ComparisonInfix::new(LT)));
+    reg.register_infix(Box::new(ComparisonInfix::new(GT)));
+    reg.register_infix(Box::new(ComparisonInfix::new(LT_EQ)));
+    reg.register_infix(Box::new(ComparisonInfix::new(GT_EQ)));
 }

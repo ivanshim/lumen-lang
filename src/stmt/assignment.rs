@@ -8,6 +8,12 @@ use crate::parser::Parser;
 use crate::registry::{err_at, LumenResult, Registry, StmtHandler};
 use crate::runtime::{Env, Value};
 
+// --------------------
+// Token definitions
+// --------------------
+
+pub const EQUALS: &str = "EQUALS";
+
 #[derive(Debug)]
 struct AssignStmt {
     name: String,
@@ -28,18 +34,18 @@ impl StmtHandler for AssignStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
         matches!(
             (parser.peek(), parser.peek_n(1)),
-            (Token::Ident(_), Some(Token::Equals))
+            (Token::Ident(_), Some(Token::Feature(EQUALS)))
         )
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
         let name = match parser.advance() {
             Token::Ident(s) => s,
-            _ => return Err(err_at(parser, "Expected identifier in assignment")),
+            _ => unreachable!(),
         };
 
         match parser.advance() {
-            Token::Equals => {}
+            Token::Feature(EQUALS) => {}
             _ => return Err(err_at(parser, "Expected '=' in assignment")),
         }
 
@@ -54,7 +60,7 @@ impl StmtHandler for AssignStmtHandler {
 
 pub fn register(reg: &mut Registry) {
     // Register tokens
-    reg.tokens.add_single_char('=', Token::Equals);
+    reg.tokens.add_single_char('=', EQUALS);
 
     // Register handlers
     reg.register_stmt(Box::new(AssignStmtHandler));

@@ -6,6 +6,13 @@ use crate::parser::Parser;
 use crate::registry::{ExprPrefix, LumenResult, Registry};
 use crate::runtime::{Env, Value};
 
+// --------------------
+// Token definitions
+// --------------------
+
+pub const TRUE: &str = "TRUE";
+pub const FALSE: &str = "FALSE";
+
 #[derive(Debug)]
 pub struct NumberLiteral {
     pub value: f64,
@@ -49,13 +56,13 @@ pub struct BoolLiteralPrefix;
 
 impl ExprPrefix for BoolLiteralPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::True | Token::False)
+        matches!(parser.peek(), Token::Feature(TRUE) | Token::Feature(FALSE))
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
         match parser.advance() {
-            Token::True => Ok(Box::new(BoolLiteral { value: true })),
-            Token::False => Ok(Box::new(BoolLiteral { value: false })),
+            Token::Feature(TRUE) => Ok(Box::new(BoolLiteral { value: true })),
+            Token::Feature(FALSE) => Ok(Box::new(BoolLiteral { value: false })),
             _ => unreachable!(),
         }
     }
@@ -67,8 +74,8 @@ impl ExprPrefix for BoolLiteralPrefix {
 
 pub fn register(reg: &mut Registry) {
     // Register tokens
-    reg.tokens.add_keyword("true", Token::True);
-    reg.tokens.add_keyword("false", Token::False);
+    reg.tokens.add_keyword("true", TRUE);
+    reg.tokens.add_keyword("false", FALSE);
 
     // Register handlers
     reg.register_prefix(Box::new(NumberLiteralPrefix));
