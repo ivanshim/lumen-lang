@@ -7,6 +7,11 @@ mod parser;
 mod registry;
 mod runtime;
 
+// Syntax structure modules
+mod syntax {
+    pub mod structural;    // Core structural tokens (parens, indent, etc.)
+}
+
 use std::env;
 use std::fs;
 
@@ -58,6 +63,9 @@ fn main() {
     // Keep synchronized with module declarations at the top of this file
     // ========================================================================
     let mut registry = Registry::new();
+
+    // Core syntax (structural tokens - parentheses, indentation, etc.)
+    syntax::structural::register(&mut registry);
 
     // Expression features
     expr::literals::register(&mut registry);      // Number and boolean literals

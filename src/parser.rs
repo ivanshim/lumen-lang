@@ -6,6 +6,7 @@
 use crate::ast::{ExprNode, Program, StmtNode};
 use crate::lexer::{lex, SpannedToken, Token};
 use crate::registry::{err_at, LumenResult, Precedence, Registry};
+use crate::syntax::structural::{DEDENT, EOF, INDENT, NEWLINE};
 
 pub struct Parser<'a> {
     pub reg: &'a Registry,
@@ -42,7 +43,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn consume_newlines(&mut self) {
-        while matches!(self.peek(), Token::Newline) {
+        while matches!(self.peek(), Token::Feature(NEWLINE)) {
             self.advance();
         }
     }
@@ -51,7 +52,7 @@ impl<'a> Parser<'a> {
         let mut stmts = Vec::new();
         self.consume_newlines();
 
-        while !matches!(self.peek(), Token::Eof) {
+        while !matches!(self.peek(), Token::Feature(EOF)) {
             let stmt = self
                 .reg
                 .find_stmt(self)
@@ -97,7 +98,7 @@ impl<'a> Parser<'a> {
         self.consume_newlines();
 
         match self.advance() {
-            Token::Indent => {}
+            Token::Feature(INDENT) => {}
             _ => return Err(err_at(self, "Expected INDENT")),
         }
 
@@ -105,7 +106,7 @@ impl<'a> Parser<'a> {
 
         let mut stmts = Vec::new();
 
-        while !matches!(self.peek(), Token::Dedent | Token::Eof) {
+        while !matches!(self.peek(), Token::Feature(DEDENT) | Token::Feature(EOF)) {
             let s = self
                 .reg
                 .find_stmt(self)
@@ -117,7 +118,7 @@ impl<'a> Parser<'a> {
         }
 
         match self.advance() {
-            Token::Dedent => Ok(stmts),
+            Token::Feature(DEDENT) => Ok(stmts),
             _ => Err(err_at(self, "Expected DEDENT")),
         }
     }

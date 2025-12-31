@@ -4,12 +4,13 @@ use crate::ast::ExprNode;
 use crate::lexer::Token;
 use crate::parser::Parser;
 use crate::registry::{ExprPrefix, LumenResult, Registry};
+use crate::syntax::structural::{LPAREN, RPAREN};
 
 pub struct GroupingPrefix;
 
 impl ExprPrefix for GroupingPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::LParen)
+        matches!(parser.peek(), Token::Feature(LPAREN))
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
@@ -17,7 +18,7 @@ impl ExprPrefix for GroupingPrefix {
         let expr = parser.parse_expr()?;
 
         match parser.advance() {
-            Token::RParen => Ok(expr),
+            Token::Feature(RPAREN) => Ok(expr),
             _ => Err("Expected ')'".into()),
         }
     }
