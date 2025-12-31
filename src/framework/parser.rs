@@ -7,10 +7,21 @@ use crate::framework::ast::{ExprNode, Program, StmtNode};
 use crate::framework::lexer::{lex, SpannedToken, Token};
 use crate::framework::registry::{err_at, LumenResult, Precedence, Registry};
 
+/// Structural tokens configuration for a language.
+/// Languages pass these to the parser to define what tokens represent structure.
+#[derive(Clone, Copy)]
+pub struct StructuralTokens {
+    pub newline: &'static str,
+    pub indent: &'static str,
+    pub dedent: &'static str,
+    pub eof: &'static str,
+}
+
 pub struct Parser<'a> {
     pub reg: &'a Registry,
     pub toks: Vec<SpannedToken>,
     pub i: usize,
+    pub structural: Option<StructuralTokens>,
 }
 
 impl<'a> Parser<'a> {
@@ -19,13 +30,14 @@ impl<'a> Parser<'a> {
             reg,
             toks: lex(source, &reg.tokens)?,
             i: 0,
+            structural: None,
         })
     }
 
-    /// Create parser with pre-tokenized token stream.
+    /// Create parser with pre-tokenized token stream and structural token config.
     /// Used when language-specific token processing is needed (e.g., indentation).
-    pub fn new_with_tokens(reg: &'a Registry, toks: Vec<SpannedToken>) -> LumenResult<Self> {
-        Ok(Self { reg, toks, i: 0 })
+    pub fn new_with_tokens(reg: &'a Registry, toks: Vec<SpannedToken>, structural: StructuralTokens) -> LumenResult<Self> {
+        Ok(Self { reg, toks, i: 0, structural: Some(structural) })
     }
 
     pub fn position(&self) -> (usize, usize) {
@@ -48,8 +60,8 @@ impl<'a> Parser<'a> {
     }
 
     pub fn consume_newlines(&mut self) {
-        if let Some(newline) = self.reg.tokens.newline {
-            while matches!(self.peek(), Token::Feature(k) if *k == newline) {
+        if let Some(st) = self.structural {
+            while matches!(self.peek(), Token::Feature(k) if *k == st.newline) {
                 self.advance();
             }
         }
@@ -59,7 +71,7 @@ impl<'a> Parser<'a> {
         let mut stmts = Vec::new();
         self.consume_newlines();
 
-        let eof = self.reg.tokens.eof.unwrap_or("EOF");
+        let eof = self.structural.map(|st| st.eof).unwrap_or("EOF");
         while !matches!(self.peek(), Token::Feature(k) if *k == eof) {
             let stmt = self
                 .reg
@@ -105,9 +117,10 @@ impl<'a> Parser<'a> {
     pub fn parse_block(&mut self) -> LumenResult<Vec<Box<dyn StmtNode>>> {
         self.consume_newlines();
 
-        let indent = self.reg.tokens.indent.unwrap_or("INDENT");
+        let st = self.structural.ok_or_else(|| err_at(self, "Structural tokens not configured for language"))?;
+
         match self.advance() {
-            Token::Feature(k) if k == indent => {}
+            Token::Feature(k) if k == st.indent => {}
             _ => return Err(err_at(self, "Expected INDENT")),
         }
 
@@ -115,9 +128,7 @@ impl<'a> Parser<'a> {
 
         let mut stmts = Vec::new();
 
-        let dedent = self.reg.tokens.dedent.unwrap_or("DEDENT");
-        let eof = self.reg.tokens.eof.unwrap_or("EOF");
-        while !matches!(self.peek(), Token::Feature(k) if k == &dedent || k == &eof) {
+        while !matches!(self.peek(), Token::Feature(k) if *k == st.dedent || *k == st.eof) {
             let s = self
                 .reg
                 .find_stmt(self)
@@ -129,7 +140,7 @@ impl<'a> Parser<'a> {
         }
 
         match self.advance() {
-            Token::Feature(k) if k == dedent => Ok(stmts),
+            Token::Feature(k) if k == st.dedent => Ok(stmts),
             _ => Err(err_at(self, "Expected DEDENT")),
         }
     }

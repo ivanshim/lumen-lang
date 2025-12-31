@@ -49,12 +49,6 @@ pub struct TokenRegistry {
     keywords: HashMap<String, Token>,
     single_char: HashMap<char, Token>,
     two_char: HashMap<String, Token>,
-
-    // Structural tokens (optional, set by languages)
-    pub newline: Option<&'static str>,
-    pub indent: Option<&'static str>,
-    pub dedent: Option<&'static str>,
-    pub eof: Option<&'static str>,
 }
 
 impl TokenRegistry {
@@ -63,28 +57,7 @@ impl TokenRegistry {
             keywords: HashMap::new(),
             single_char: HashMap::new(),
             two_char: HashMap::new(),
-            newline: None,
-            indent: None,
-            dedent: None,
-            eof: None,
         }
-    }
-
-    // Structural token configuration (set by languages)
-    pub fn set_newline(&mut self, token: &'static str) {
-        self.newline = Some(token);
-    }
-
-    pub fn set_indent(&mut self, token: &'static str) {
-        self.indent = Some(token);
-    }
-
-    pub fn set_dedent(&mut self, token: &'static str) {
-        self.dedent = Some(token);
-    }
-
-    pub fn set_eof(&mut self, token: &'static str) {
-        self.eof = Some(token);
     }
 
     pub fn add_keyword(&mut self, word: &str, token_kind: &'static str) {
