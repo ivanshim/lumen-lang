@@ -1,0 +1,172 @@
+================================================================================
+LUMEN-LANG: LANGUAGE-AGNOSTIC FRAMEWORK ARCHITECTURE
+================================================================================
+
+This document describes the directory structure for the language-agnostic
+interpreter framework and language implementations.
+
+================================================================================
+DIRECTORY STRUCTURE
+================================================================================
+
+lumen-lang/
+│
+├── src/
+│   ├── main.rs                          # Entry point - loads language dispatcher
+│   │
+│   └── framework/                       # LANGUAGE-AGNOSTIC FRAMEWORK CORE
+│       ├── mod.rs                       # Framework module organization
+│       ├── lexer.rs                     # Tokenization (no language assumptions)
+│       ├── parser.rs                    # Expression/statement parsing (generic)
+│       ├── ast.rs                       # AST traits (ExprNode, StmtNode, Control)
+│       ├── eval.rs                      # Evaluation loop (no semantics)
+│       ├── registry.rs                  # Feature registration system
+│       └── runtime/
+│           ├── mod.rs
+│           ├── env.rs                   # Environment/scope management
+│           └── value.rs                 # Runtime value type (shared by all languages)
+│
+├── src_lumen/                           # LUMEN LANGUAGE DEFINITION
+│   ├── mod.rs                           # Language module root
+│   ├── src_lumen.rs                     # Dispatcher - registers all Lumen features
+│   │
+│   ├── expressions/                     # Lumen expression features
+│   │   ├── mod.rs
+│   │   ├── literals.rs
+│   │   ├── arithmetic.rs
+│   │   ├── comparison.rs
+│   │   ├── logic.rs
+│   │   ├── variable.rs
+│   │   ├── grouping.rs
+│   │   └── identifier.rs
+│   │
+│   ├── statements/                      # Lumen statement features
+│   │   ├── mod.rs
+│   │   ├── print.rs
+│   │   ├── assignment.rs
+│   │   ├── if_else.rs
+│   │   ├── while_loop.rs
+│   │   ├── break_stmt.rs
+│   │   └── continue_stmt.rs
+│   │
+│   ├── structure/                       # Lumen syntactic structure
+│   │   ├── mod.rs
+│   │   └── structural.rs                # INDENT/DEDENT, parens, newlines (Lumen-specific)
+│   │
+│   ├── docs/                            # Lumen language documentation
+│   │   ├── README.md                    # Lumen language overview
+│   │   ├── syntax.md                    # Syntax specification
+│   │   └── examples.md                  # Usage examples
+│   │
+│   └── examples/                        # Lumen example programs
+│       ├── loop.lm
+│       ├── fibonacci.lm
+│       └── demo_v0_1.lm
+│
+├── src_mini_python/                     # MINI-PYTHON LANGUAGE (FUTURE)
+│   ├── mod.rs
+│   ├── src_mini_python.rs               # Dispatcher
+│   ├── expressions/
+│   ├── statements/
+│   ├── structure/
+│   ├── docs/
+│   └── examples/
+│
+├── src_mini_c/                          # MINI-C LANGUAGE (FUTURE)
+│   ├── mod.rs
+│   ├── src_mini_c.rs                    # Dispatcher
+│   ├── expressions/
+│   ├── statements/
+│   ├── structure/
+│   ├── docs/
+│   └── examples/
+│
+├── Cargo.toml
+├── README.md                            # Project overview
+└── DIR_STRUCTURE.txt                    # This file
+
+================================================================================
+FRAMEWORK vs LANGUAGE MODULES
+================================================================================
+
+FRAMEWORK (src/framework/):
+  - Zero language-specific knowledge
+  - Generic AST, lexer, parser, evaluator
+  - Provides traits and infrastructure for languages to implement
+  - Responsible for: tokenization, syntax parsing, AST evaluation, scoping
+
+LANGUAGE MODULES (src_lumen/, src_mini_python/, etc.):
+  - Complete language definitions
+  - Each language directory mirrors the same structure
+  - Registers tokens, operators, precedence, and semantics
+  - Defines syntactic structure (indentation rules, brackets, etc.)
+  - Includes documentation and examples specific to that language
+
+================================================================================
+KEY DESIGN PRINCIPLES
+================================================================================
+
+1. FRAMEWORK AGNOSTICISM:
+   - Framework knows nothing about operators, keywords, or syntax rules
+   - Framework provides infrastructure; languages define semantics
+   - Each language can have completely different syntax/semantics
+
+2. MODULAR FEATURES:
+   - Each language feature (statement, expression) is independent
+   - Features register themselves with the framework registry
+   - Features can be enabled/disabled by commenting out registrations
+
+3. SHARED VALUE SYSTEM:
+   - All languages use the same runtime Value type (Number, Bool)
+   - Allows cross-language interop and simplifies framework
+   - Languages can extend/wrap values as needed
+
+4. LANGUAGE SWAPPABLE:
+   - To run a different language, change dispatcher in main.rs
+   - Framework reused completely, only language changes
+
+================================================================================
+ADDING A NEW LANGUAGE
+================================================================================
+
+To add a new language (e.g., mini-Rust):
+
+1. Create src_mini_rust/ directory structure matching src_lumen/
+2. Create src_mini_rust/src_mini_rust.rs dispatcher
+3. Create feature modules in:
+   - src_mini_rust/expressions/
+   - src_mini_rust/statements/
+   - src_mini_rust/structure/
+4. Register all features in dispatcher
+5. Update main.rs to load src_mini_rust dispatcher
+6. Create docs/ and examples/ in src_mini_rust/
+
+The framework layer (src/framework/) needs NO changes.
+
+================================================================================
+REFACTORING NOTES
+================================================================================
+
+LEXER.rs:
+  Current: Has INDENT/DEDENT tokenization (Python-style)
+  Target: Should be purely language-agnostic
+  Action: Move indentation logic to language-specific modules
+          Lexer should only handle character→token conversion
+
+PARSER.rs:
+  Current: Generic but may have block-parsing assumptions
+  Target: Fully generic expression/statement parsing
+  Action: Review for language-specific assumptions
+          Ensure all syntax rules come from registry
+
+VALUE.rs:
+  Current: In framework/runtime/
+  Decision: Shared across languages OR language-specific?
+  Note: Currently shared for simplicity
+           Can be moved to language modules if needed
+
+DOCS & EXAMPLES:
+  Current: In project root
+  Target: Moved to src_lumen/ (language-specific)
+  Action: docs/ → src_lumen/docs/
+          examples/ → src_lumen/examples/
