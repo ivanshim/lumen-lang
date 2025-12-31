@@ -8,6 +8,7 @@ use crate::framework::lexer::Token;
 use crate::framework::parser::Parser;
 use crate::framework::registry::{LumenResult, Registry, StmtHandler};
 use crate::framework::runtime::Env;
+use crate::src_lumen::structure::structural;
 
 // --------------------
 // Token definitions
@@ -57,7 +58,7 @@ impl StmtHandler for WhileStmtHandler {
         let condition = parser.parse_expr()?;
 
         // parse indented body
-        let body = parser.parse_block()?;
+        let body = structural::parse_block(parser)?;
 
         Ok(Box::new(WhileStmt { condition, body }))
     }

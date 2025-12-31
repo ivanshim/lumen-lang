@@ -5,6 +5,7 @@ use crate::framework::lexer::Token;
 use crate::framework::parser::Parser;
 use crate::framework::registry::{LumenResult, Registry, StmtHandler};
 use crate::framework::runtime::Env;
+use crate::src_lumen::structure::structural;
 
 // --------------------
 // Token definitions
@@ -59,13 +60,13 @@ impl StmtHandler for IfStmtHandler {
         parser.advance(); // consume 'if'
 
         let cond = parser.parse_expr()?;
-        let then_block = parser.parse_block()?;
+        let then_block = structural::parse_block(parser)?;
 
-        parser.consume_newlines();
+        structural::consume_newlines(parser);
 
         let else_block = if matches!(parser.peek(), Token::Feature(ELSE)) {
             parser.advance(); // consume 'else'
-            Some(parser.parse_block()?)
+            Some(structural::parse_block(parser)?)
         } else {
             None
         };
