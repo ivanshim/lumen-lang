@@ -6,10 +6,18 @@ use crate::parser::Parser;
 use crate::registry::{ExprInfix, ExprPrefix, LumenResult, Precedence, Registry};
 use crate::runtime::{Env, Value};
 
+// --------------------
+// Token definitions
+// --------------------
+
+pub const AND: &str = "AND";
+pub const OR: &str = "OR";
+pub const NOT: &str = "NOT";
+
 #[derive(Debug)]
 struct LogicExpr {
     left: Box<dyn ExprNode>,
-    op: Token,
+    op: &'static str,
     right: Box<dyn ExprNode>,
 }
 
@@ -18,27 +26,33 @@ impl ExprNode for LogicExpr {
         let l = self.left.eval(env)?;
         let r = self.right.eval(env)?;
 
-        match (&l, &r, &self.op) {
-            (Value::Bool(a), Value::Bool(b), Token::And) => Ok(Value::Bool(*a && *b)),
-            (Value::Bool(a), Value::Bool(b), Token::Or) => Ok(Value::Bool(*a || *b)),
-            _ => Err(format!("Invalid logical operation: {:?} {:?} {:?}", l, self.op, r)),
+        match (&l, &r) {
+            (Value::Bool(a), Value::Bool(b)) => {
+                let result = match self.op {
+                    AND => *a && *b,
+                    OR => *a || *b,
+                    _ => return Err(format!("Invalid logical operator: {}", self.op)),
+                };
+                Ok(Value::Bool(result))
+            }
+            _ => Err(format!("Invalid logical operation: {:?} {} {:?}", l, self.op, r)),
         }
     }
 }
 
 pub struct LogicInfix {
-    op: Token,
+    op: &'static str,
 }
 
 impl LogicInfix {
-    pub fn new(op: Token) -> Self {
+    pub fn new(op: &'static str) -> Self {
         Self { op }
     }
 }
 
 impl ExprInfix for LogicInfix {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek() == &self.op
+        matches!(parser.peek(), Token::Feature(kind) if *kind == self.op)
     }
 
     fn precedence(&self) -> Precedence {
@@ -50,9 +64,9 @@ impl ExprInfix for LogicInfix {
         parser: &mut Parser,
         left: Box<dyn ExprNode>,
     ) -> LumenResult<Box<dyn ExprNode>> {
-        let op = parser.advance();
+        parser.advance(); // consume operator
         let right = parser.parse_expr_prec(self.precedence() + 1)?;
-        Ok(Box::new(LogicExpr { left, op, right }))
+        Ok(Box::new(LogicExpr { left, op: self.op, right }))
     }
 }
 
@@ -76,7 +90,7 @@ pub struct NotPrefix;
 
 impl ExprPrefix for NotPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Not)
+        matches!(parser.peek(), Token::Feature(NOT))
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
@@ -92,12 +106,12 @@ impl ExprPrefix for NotPrefix {
 
 pub fn register(reg: &mut Registry) {
     // Register tokens
-    reg.tokens.add_keyword("and", Token::And);
-    reg.tokens.add_keyword("or", Token::Or);
-    reg.tokens.add_keyword("not", Token::Not);
+    reg.tokens.add_keyword("and", AND);
+    reg.tokens.add_keyword("or", OR);
+    reg.tokens.add_keyword("not", NOT);
 
     // Register handlers
-    reg.register_infix(Box::new(LogicInfix::new(Token::And)));
-    reg.register_infix(Box::new(LogicInfix::new(Token::Or)));
+    reg.register_infix(Box::new(LogicInfix::new(AND)));
+    reg.register_infix(Box::new(LogicInfix::new(OR)));
     reg.register_prefix(Box::new(NotPrefix));
 }
