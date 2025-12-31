@@ -50,13 +50,8 @@ pub struct TokenRegistry {
     single_char: HashMap<char, Token>,
     two_char: HashMap<String, Token>,
 
-    // Structural tokens (set by syntax::structural module)
-    lparen: Option<&'static str>,
-    rparen: Option<&'static str>,
-    newline: Option<&'static str>,
-    indent: Option<&'static str>,
-    dedent: Option<&'static str>,
-    eof: Option<&'static str>,
+    // Generic structural token storage
+    structural: HashMap<&'static str, &'static str>,
 }
 
 impl TokenRegistry {
@@ -65,12 +60,7 @@ impl TokenRegistry {
             keywords: HashMap::new(),
             single_char: HashMap::new(),
             two_char: HashMap::new(),
-            lparen: None,
-            rparen: None,
-            newline: None,
-            indent: None,
-            dedent: None,
-            eof: None,
+            structural: HashMap::new(),
         }
     }
 
@@ -98,54 +88,15 @@ impl TokenRegistry {
         self.two_char.get(chars).cloned()
     }
 
-    // Structural token setters (called by syntax::structural module)
-    pub fn set_lparen(&mut self, token_kind: &'static str) {
-        self.lparen = Some(token_kind);
+    // Generic structural token management
+    pub fn add_structural(&mut self, name: &'static str, token_kind: &'static str) {
+        self.structural.insert(name, token_kind);
     }
 
-    pub fn set_rparen(&mut self, token_kind: &'static str) {
-        self.rparen = Some(token_kind);
-    }
-
-    pub fn set_newline(&mut self, token_kind: &'static str) {
-        self.newline = Some(token_kind);
-    }
-
-    pub fn set_indent(&mut self, token_kind: &'static str) {
-        self.indent = Some(token_kind);
-    }
-
-    pub fn set_dedent(&mut self, token_kind: &'static str) {
-        self.dedent = Some(token_kind);
-    }
-
-    pub fn set_eof(&mut self, token_kind: &'static str) {
-        self.eof = Some(token_kind);
-    }
-
-    // Structural token getters (used by lexer and parser)
-    pub fn lparen(&self) -> &'static str {
-        self.lparen.expect("LPAREN token not registered")
-    }
-
-    pub fn rparen(&self) -> &'static str {
-        self.rparen.expect("RPAREN token not registered")
-    }
-
-    pub fn newline(&self) -> &'static str {
-        self.newline.expect("NEWLINE token not registered")
-    }
-
-    pub fn indent(&self) -> &'static str {
-        self.indent.expect("INDENT token not registered")
-    }
-
-    pub fn dedent(&self) -> &'static str {
-        self.dedent.expect("DEDENT token not registered")
-    }
-
-    pub fn eof(&self) -> &'static str {
-        self.eof.expect("EOF token not registered")
+    pub fn get_structural(&self, name: &'static str) -> &'static str {
+        self.structural.get(name)
+            .copied()
+            .unwrap_or_else(|| panic!("Structural token '{}' not registered", name))
     }
 }
 

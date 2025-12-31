@@ -9,7 +9,7 @@ pub struct GroupingPrefix;
 
 impl ExprPrefix for GroupingPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        let lparen = parser.reg.tokens.lparen();
+        let lparen = parser.reg.tokens.get_structural("lparen");
         matches!(parser.peek(), Token::Feature(k) if *k == lparen)
     }
 
@@ -17,7 +17,7 @@ impl ExprPrefix for GroupingPrefix {
         parser.advance(); // consume '('
         let expr = parser.parse_expr()?;
 
-        let rparen = parser.reg.tokens.rparen();
+        let rparen = parser.reg.tokens.get_structural("rparen");
         match parser.advance() {
             Token::Feature(k) if k == rparen => Ok(expr),
             _ => Err("Expected ')'".into()),

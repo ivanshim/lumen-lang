@@ -63,11 +63,11 @@ pub fn lex(source: &str, token_reg: &TokenRegistry) -> LumenResult<Vec<SpannedTo
                 return Err(format!("Invalid indentation at line {line_no}"));
             }
             indents.push(spaces);
-            out.push(SpannedToken::new(Token::Feature(token_reg.indent()), line_no, 1));
+            out.push(SpannedToken::new(Token::Feature(token_reg.get_structural("indent")), line_no, 1));
         } else if spaces < current {
             while *indents.last().unwrap() > spaces {
                 indents.pop();
-                out.push(SpannedToken::new(Token::Feature(token_reg.dedent()), line_no, 1));
+                out.push(SpannedToken::new(Token::Feature(token_reg.get_structural("dedent")), line_no, 1));
             }
             if *indents.last().unwrap() != spaces {
                 return Err(format!("Indentation mismatch at line {line_no}"));
@@ -75,16 +75,16 @@ pub fn lex(source: &str, token_reg: &TokenRegistry) -> LumenResult<Vec<SpannedTo
         }
 
         lex_line(rest, line_no, spaces + 1, token_reg, &mut out)?;
-        out.push(SpannedToken::new(Token::Feature(token_reg.newline()), line_no, spaces + rest.len() + 1));
+        out.push(SpannedToken::new(Token::Feature(token_reg.get_structural("newline")), line_no, spaces + rest.len() + 1));
         line_no += 1;
     }
 
     while indents.len() > 1 {
         indents.pop();
-        out.push(SpannedToken::new(Token::Feature(token_reg.dedent()), line_no, 1));
+        out.push(SpannedToken::new(Token::Feature(token_reg.get_structural("dedent")), line_no, 1));
     }
 
-    out.push(SpannedToken::new(Token::Feature(token_reg.eof()), line_no, 1));
+    out.push(SpannedToken::new(Token::Feature(token_reg.get_structural("eof")), line_no, 1));
     Ok(out)
 }
 
@@ -163,8 +163,8 @@ fn lex_line(s: &str, line: usize, base_col: usize, token_reg: &TokenRegistry, ou
 
         // Check structural tokens first (always recognized)
         let tok = match ch {
-            '(' => Token::Feature(token_reg.lparen()),
-            ')' => Token::Feature(token_reg.rparen()),
+            '(' => Token::Feature(token_reg.get_structural("lparen")),
+            ')' => Token::Feature(token_reg.get_structural("rparen")),
             _ => {
                 // Try to lookup operator in registry
                 if let Some(t) = token_reg.lookup_single_char(ch) {

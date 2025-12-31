@@ -28,10 +28,10 @@ pub const EOF: &str = "EOF";
 pub fn register(reg: &mut Registry) {
     // Register structural tokens with the registry
     // The lexer and parser will retrieve these dynamically
-    reg.tokens.set_lparen(LPAREN);
-    reg.tokens.set_rparen(RPAREN);
-    reg.tokens.set_newline(NEWLINE);
-    reg.tokens.set_indent(INDENT);
-    reg.tokens.set_dedent(DEDENT);
-    reg.tokens.set_eof(EOF);
+    reg.tokens.add_structural("lparen", LPAREN);
+    reg.tokens.add_structural("rparen", RPAREN);
+    reg.tokens.add_structural("newline", NEWLINE);
+    reg.tokens.add_structural("indent", INDENT);
+    reg.tokens.add_structural("dedent", DEDENT);
+    reg.tokens.add_structural("eof", EOF);
 }
