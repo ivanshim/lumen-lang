@@ -4,7 +4,6 @@
 // Parser knows nothing about language features; it consults the Registry.
 
 use crate::ast::{ExprNode, StmtNode};
-use crate::lexer::Token;
 use crate::parser::Parser;
 
 pub type LumenResult<T> = Result<T, String>;
@@ -104,7 +103,3 @@ impl Registry {
     }
 }
 
-// Small helper used by some handlers (optional)
-pub fn is_ident(tok: &Token, s: &str) -> bool {
-    matches!(tok, Token::Ident(name) if name == s)
-}

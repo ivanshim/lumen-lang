@@ -21,11 +21,13 @@ impl Env {
     }
 
     /// Enter a new lexical scope.
+    #[allow(dead_code)]
     pub fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
     }
 
     /// Exit the current lexical scope.
+    #[allow(dead_code)]
     pub fn pop_scope(&mut self) {
         if self.scopes.len() == 1 {
             // Global scope must always exist.
@@ -43,6 +45,7 @@ impl Env {
 
     /// Assign to an existing variable.
     /// Walks outward through scopes.
+    #[allow(dead_code)]
     pub fn assign(&mut self, name: &str, value: Value) -> Result<(), String> {
         for scope in self.scopes.iter_mut().rev() {
             if scope.contains_key(name) {

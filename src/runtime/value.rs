@@ -10,7 +10,9 @@ use std::fmt;
 pub enum Value {
     Number(f64),
     Bool(bool),
+    #[allow(dead_code)]
     String(String),
+    #[allow(dead_code)]
     Null,
 }
 
@@ -24,6 +26,7 @@ impl Value {
         }
     }
 
+    #[allow(dead_code)]
     pub fn as_number(&self) -> Result<f64, String> {
         match self {
             Value::Number(n) => Ok(*n),
@@ -31,6 +34,7 @@ impl Value {
         }
     }
 
+    #[allow(dead_code)]
     pub fn as_bool(&self) -> Result<bool, String> {
         match self {
             Value::Bool(b) => Ok(*b),
@@ -38,6 +42,7 @@ impl Value {
         }
     }
 
+    #[allow(dead_code)]
     pub fn as_string(&self) -> Result<&str, String> {
         match self {
             Value::String(s) => Ok(s.as_str()),
@@ -45,6 +50,7 @@ impl Value {
         }
     }
 
+    #[allow(dead_code)]
     pub fn type_name(&self) -> &'static str {
         match self {
             Value::Number(_) => "number",
