@@ -7,6 +7,7 @@ use crate::lexer::Token;
 use crate::parser::Parser;
 use crate::registry::{LumenResult, Registry, StmtHandler};
 use crate::runtime::Env;
+use crate::syntax::structural::{LPAREN, RPAREN};
 
 #[derive(Debug)]
 struct PrintStmt {
@@ -37,7 +38,7 @@ impl StmtHandler for PrintStmtHandler {
 
         // expect '('
         match parser.advance() {
-            Token::LParen => {}
+            Token::Feature(LPAREN) => {}
             _ => return Err("Expected '(' after print".into()),
         }
 
@@ -45,7 +46,7 @@ impl StmtHandler for PrintStmtHandler {
 
         // expect ')'
         match parser.advance() {
-            Token::RParen => {}
+            Token::Feature(RPAREN) => {}
             _ => return Err("Expected ')' after expression".into()),
         }
 
