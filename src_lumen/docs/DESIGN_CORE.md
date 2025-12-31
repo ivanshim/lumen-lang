@@ -1,49 +1,53 @@
-Lumen v0.1 — Core Grammar
+# Lumen v0.1 — Core Language Design
 
-Program        ::= Stmt*
+This document defines the minimal, non-negotiable structure of Lumen.
+It is the authoritative specification: if this breaks, the language has drifted.
 
-Stmt           ::= SimpleStmt NEWLINE
-                 | CompoundStmt
+## Structure
 
-SimpleStmt    ::= Assignment
-                 | Print
-                 | Break
-                 | Continue
+A Lumen program is a sequence of statements executed top-to-bottom.
 
-CompoundStmt  ::= IfStmt
-                 | WhileStmt
+## Statements
 
-Assignment    ::= IDENT "=" Expr
+Simple statements occupy a single line and end with a newline:
+- `Assignment` - bind a value to an identifier
+- `Print` - output a value
+- `Break` - exit a loop
+- `Continue` - skip to next loop iteration
 
-Print         ::= "print" "(" Expr ")"
+Compound statements introduce indented blocks:
+- `IfStmt` - conditional execution with optional else
+- `WhileStmt` - loop while condition is true
 
-Break         ::= "break"
-Continue      ::= "continue"
+```
+assignment  → IDENT "=" Expr
+print       → "print" "(" Expr ")"
+break       → "break"
+continue    → "continue"
+if          → "if" Expr NEWLINE INDENT Stmt+ DEDENT ("else" NEWLINE INDENT Stmt+ DEDENT)?
+while       → "while" Expr NEWLINE INDENT Stmt+ DEDENT
+```
 
-IfStmt        ::= "if" Expr ":" NEWLINE INDENT Stmt+ DEDENT
-                   ( "else" ":" NEWLINE INDENT Stmt+ DEDENT )?
+## Expressions
 
-WhileStmt     ::= "while" Expr ":" NEWLINE INDENT Stmt+ DEDENT
+Expressions evaluate to values and follow operator precedence.
 
-Expr          ::= OrExpr
+```
+Expr          → OrExpr
+OrExpr        → AndExpr ("or" AndExpr)*
+AndExpr       → EqualityExpr ("and" EqualityExpr)*
+EqualityExpr  → CompareExpr (("==" | "!=") CompareExpr)*
+CompareExpr   → AddExpr (("<" | "<=" | ">" | ">=") AddExpr)*
+AddExpr       → MulExpr (("+" | "-") MulExpr)*
+MulExpr       → UnaryExpr (("*" | "/") UnaryExpr)*
+UnaryExpr     → ("-" | "not") UnaryExpr | Primary
+Primary       → NUMBER | "true" | "false" | IDENT | "(" Expr ")"
+```
 
-OrExpr        ::= AndExpr ( "or" AndExpr )*
+## Lexical Rules
 
-AndExpr       ::= EqualityExpr ( "and" EqualityExpr )*
-
-EqualityExpr ::= CompareExpr ( ("==" | "!=") CompareExpr )*
-
-CompareExpr  ::= AddExpr ( ("<" | "<=" | ">" | ">=") AddExpr )*
-
-AddExpr      ::= MulExpr ( ("+" | "-") MulExpr )*
-
-MulExpr      ::= UnaryExpr ( ("*" | "/") UnaryExpr )*
-
-UnaryExpr    ::= ("-" | "not") UnaryExpr
-                 | Primary
-
-Primary      ::= NUMBER
-                 | "true"
-                 | "false"
-                 | IDENT
-                 | "(" Expr ")"
+- Indentation defines blocks (exactly 4 spaces per level)
+- Newlines separate statements
+- Identifiers are sequences of alphanumeric characters and underscores
+- Comments are not supported in v0.1
+- Whitespace is insignificant except for indentation
