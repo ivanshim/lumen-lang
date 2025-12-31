@@ -94,6 +94,8 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse_block(&mut self) -> LumenResult<Vec<Box<dyn StmtNode>>> {
+        self.consume_newlines();
+
         match self.advance() {
             Token::Indent => {}
             _ => return Err(err_at(self, "Expected INDENT")),

@@ -1,4 +1,4 @@
-// Number literals
+// Number and boolean literals
 
 use crate::ast::ExprNode;
 use crate::lexer::Token;
@@ -27,6 +27,35 @@ impl ExprPrefix for NumberLiteralPrefix {
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
         match parser.advance() {
             Token::Number(n) => Ok(Box::new(NumberLiteral { value: n })),
+            _ => unreachable!(),
+        }
+    }
+}
+
+// Boolean literals
+
+#[derive(Debug)]
+struct BoolLiteral {
+    value: bool,
+}
+
+impl ExprNode for BoolLiteral {
+    fn eval(&self, _env: &mut Env) -> LumenResult<Value> {
+        Ok(Value::Bool(self.value))
+    }
+}
+
+pub struct BoolLiteralPrefix;
+
+impl ExprPrefix for BoolLiteralPrefix {
+    fn matches(&self, parser: &Parser) -> bool {
+        matches!(parser.peek(), Token::True | Token::False)
+    }
+
+    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
+        match parser.advance() {
+            Token::True => Ok(Box::new(BoolLiteral { value: true })),
+            Token::False => Ok(Box::new(BoolLiteral { value: false })),
             _ => unreachable!(),
         }
     }

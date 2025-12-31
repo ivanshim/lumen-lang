@@ -10,6 +10,7 @@ mod runtime;
 // expression modules
 mod expr {
     pub mod literals;
+    pub mod variable;
     pub mod grouping;
     pub mod arithmetic;
     pub mod comparison;
@@ -22,6 +23,8 @@ mod stmt {
     pub mod assignment;
     pub mod if_else;
     pub mod while_loop;
+    pub mod break_stmt;
+    pub mod continue_stmt;
 }
 
 use std::env;
@@ -32,7 +35,8 @@ use crate::registry::{Precedence, Registry};
 use crate::lexer::Token;
 
 // ---- expr handlers ----
-use crate::expr::literals::NumberLiteralPrefix;
+use crate::expr::literals::{NumberLiteralPrefix, BoolLiteralPrefix};
+use crate::expr::variable::VariablePrefix;
 use crate::expr::grouping::GroupingPrefix;
 use crate::expr::arithmetic::{UnaryMinusPrefix, ArithmeticInfix};
 use crate::expr::comparison::ComparisonInfix;
@@ -43,6 +47,8 @@ use crate::stmt::print::PrintStmtHandler;
 use crate::stmt::assignment::AssignStmtHandler;
 use crate::stmt::if_else::IfStmtHandler;
 use crate::stmt::while_loop::WhileStmtHandler;
+use crate::stmt::break_stmt::BreakStmtHandler;
+use crate::stmt::continue_stmt::ContinueStmtHandler;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -62,6 +68,8 @@ fn main() {
 
     // ---- expression prefixes ----
     registry.register_prefix(Box::new(NumberLiteralPrefix));
+    registry.register_prefix(Box::new(BoolLiteralPrefix));
+    registry.register_prefix(Box::new(VariablePrefix));
     registry.register_prefix(Box::new(UnaryMinusPrefix));
     registry.register_prefix(Box::new(GroupingPrefix));
     registry.register_prefix(Box::new(NotPrefix));
@@ -97,6 +105,8 @@ fn main() {
     registry.register_stmt(Box::new(AssignStmtHandler));
     registry.register_stmt(Box::new(IfStmtHandler));
     registry.register_stmt(Box::new(WhileStmtHandler));
+    registry.register_stmt(Box::new(BreakStmtHandler));
+    registry.register_stmt(Box::new(ContinueStmtHandler));
 
     // --------------------
     // Parse
