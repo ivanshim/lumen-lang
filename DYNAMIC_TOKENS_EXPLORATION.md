@@ -1,6 +1,12 @@
 # Dynamic Token System - Architectural Options
 
-## Current System (Enum-Based)
+**STATUS: ✅ IMPLEMENTED (Hybrid String-Based Approach)**
+
+We implemented a hybrid approach inspired by Option 1, using `Token::Feature(&'static str)` for all operator and keyword tokens while keeping structural tokens as enum variants. This achieves complete modularity: lexer.rs has zero knowledge of language features, and all tokens are defined in their respective modules.
+
+---
+
+## Current System (Enum-Based) - OBSOLETE
 
 ```rust
 // lexer.rs
