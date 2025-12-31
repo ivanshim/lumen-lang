@@ -4,7 +4,9 @@
 // Parser knows nothing about language features; it consults the Registry.
 
 use crate::ast::{ExprNode, StmtNode};
+use crate::lexer::Token;
 use crate::parser::Parser;
+use std::collections::HashMap;
 
 pub type LumenResult<T> = Result<T, String>;
 
@@ -40,6 +42,50 @@ pub fn err_at(parser: &Parser, msg: &str) -> String {
 }
 
 // --------------------
+// Token Registry
+// --------------------
+
+pub struct TokenRegistry {
+    keywords: HashMap<String, Token>,
+    single_char: HashMap<char, Token>,
+    two_char: HashMap<String, Token>,
+}
+
+impl TokenRegistry {
+    pub fn new() -> Self {
+        Self {
+            keywords: HashMap::new(),
+            single_char: HashMap::new(),
+            two_char: HashMap::new(),
+        }
+    }
+
+    pub fn add_keyword(&mut self, word: &str, token: Token) {
+        self.keywords.insert(word.to_string(), token);
+    }
+
+    pub fn add_single_char(&mut self, ch: char, token: Token) {
+        self.single_char.insert(ch, token);
+    }
+
+    pub fn add_two_char(&mut self, chars: &str, token: Token) {
+        self.two_char.insert(chars.to_string(), token);
+    }
+
+    pub fn lookup_keyword(&self, word: &str) -> Option<Token> {
+        self.keywords.get(word).cloned()
+    }
+
+    pub fn lookup_single_char(&self, ch: char) -> Option<Token> {
+        self.single_char.get(&ch).cloned()
+    }
+
+    pub fn lookup_two_char(&self, chars: &str) -> Option<Token> {
+        self.two_char.get(chars).cloned()
+    }
+}
+
+// --------------------
 // Expression features
 // --------------------
 
@@ -64,6 +110,7 @@ pub trait StmtHandler {
 }
 
 pub struct Registry {
+    pub tokens: TokenRegistry,
     prefixes: Vec<Box<dyn ExprPrefix>>,
     infixes: Vec<Box<dyn ExprInfix>>,
     stmts: Vec<Box<dyn StmtHandler>>,
@@ -72,6 +119,7 @@ pub struct Registry {
 impl Registry {
     pub fn new() -> Self {
         Self {
+            tokens: TokenRegistry::new(),
             prefixes: Vec::new(),
             infixes: Vec::new(),
             stmts: Vec::new(),

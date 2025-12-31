@@ -3,7 +3,7 @@
 use crate::ast::ExprNode;
 use crate::lexer::Token;
 use crate::parser::Parser;
-use crate::registry::{ExprInfix, ExprPrefix, LumenResult, Precedence};
+use crate::registry::{ExprInfix, ExprPrefix, LumenResult, Precedence, Registry};
 use crate::runtime::{Env, Value};
 
 #[derive(Debug)]
@@ -84,4 +84,20 @@ impl ExprPrefix for NotPrefix {
         let expr = parser.parse_expr_prec(Precedence::Unary)?;
         Ok(Box::new(NotExpr { expr }))
     }
+}
+
+// --------------------
+// Registration
+// --------------------
+
+pub fn register(reg: &mut Registry) {
+    // Register tokens
+    reg.tokens.add_keyword("and", Token::And);
+    reg.tokens.add_keyword("or", Token::Or);
+    reg.tokens.add_keyword("not", Token::Not);
+
+    // Register handlers
+    reg.register_infix(Box::new(LogicInfix::new(Token::And)));
+    reg.register_infix(Box::new(LogicInfix::new(Token::Or)));
+    reg.register_prefix(Box::new(NotPrefix));
 }

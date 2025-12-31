@@ -5,7 +5,7 @@
 use crate::ast::{Control, StmtNode};
 use crate::lexer::Token;
 use crate::parser::Parser;
-use crate::registry::{LumenResult, StmtHandler};
+use crate::registry::{LumenResult, Registry, StmtHandler};
 use crate::runtime::Env;
 
 #[derive(Debug)]
@@ -28,4 +28,15 @@ impl StmtHandler for ContinueStmtHandler {
         parser.advance(); // consume 'continue'
         Ok(Box::new(ContinueStmt))
     }
+}
+
+// --------------------
+// Registration
+// --------------------
+
+pub fn register(reg: &mut Registry) {
+    // No tokens to register (uses "continue" as identifier)
+
+    // Register handlers
+    reg.register_stmt(Box::new(ContinueStmtHandler));
 }

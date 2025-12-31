@@ -4,7 +4,7 @@
 // No AST. No evaluation.
 // Converts source text -> tokens (including INDENT/DEDENT like Python).
 
-use crate::registry::LumenResult;
+use crate::registry::{LumenResult, TokenRegistry};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
@@ -59,7 +59,7 @@ impl SpannedToken {
     }
 }
 
-pub fn lex(source: &str) -> LumenResult<Vec<SpannedToken>> {
+pub fn lex(source: &str, token_reg: &TokenRegistry) -> LumenResult<Vec<SpannedToken>> {
     let mut out = Vec::new();
     let mut indents = vec![0usize];
 
@@ -102,7 +102,7 @@ pub fn lex(source: &str) -> LumenResult<Vec<SpannedToken>> {
             }
         }
 
-        lex_line(rest, line_no, spaces + 1, &mut out)?;
+        lex_line(rest, line_no, spaces + 1, token_reg, &mut out)?;
         out.push(SpannedToken::new(Token::Newline, line_no, spaces + rest.len() + 1));
         line_no += 1;
     }
@@ -116,7 +116,7 @@ pub fn lex(source: &str) -> LumenResult<Vec<SpannedToken>> {
     Ok(out)
 }
 
-fn lex_line(s: &str, line: usize, base_col: usize, out: &mut Vec<SpannedToken>) -> LumenResult<()> {
+fn lex_line(s: &str, line: usize, base_col: usize, token_reg: &TokenRegistry, out: &mut Vec<SpannedToken>) -> LumenResult<()> {
     let bytes = s.as_bytes();
     let mut i = 0usize;
 
@@ -170,17 +170,8 @@ fn lex_line(s: &str, line: usize, base_col: usize, out: &mut Vec<SpannedToken>) 
                 i += 1;
             }
             let word = &s[start..i];
-            let tok = match word {
-                "if" => Token::If,
-                "else" => Token::Else,
-                "while" => Token::While,
-                "and" => Token::And,
-                "or" => Token::Or,
-                "not" => Token::Not,
-                "true" => Token::True,
-                "false" => Token::False,
-                _ => Token::Ident(word.to_string()),
-            };
+            let tok = token_reg.lookup_keyword(word)
+                .unwrap_or_else(|| Token::Ident(word.to_string()));
             out.push(SpannedToken::new(tok, line, col));
             continue;
         }
@@ -188,15 +179,8 @@ fn lex_line(s: &str, line: usize, base_col: usize, out: &mut Vec<SpannedToken>) 
         // two-char operators
         if i + 1 < bytes.len() {
             let two = &s[i..i + 2];
-            let tok2 = match two {
-                "==" => Some(Token::EqEq),
-                "!=" => Some(Token::NotEq),
-                "<=" => Some(Token::LtEq),
-                ">=" => Some(Token::GtEq),
-                _ => None,
-            };
-            if let Some(t) = tok2 {
-                out.push(SpannedToken::new(t, line, col));
+            if let Some(tok) = token_reg.lookup_two_char(two) {
+                out.push(SpannedToken::new(tok, line, col));
                 i += 2;
                 continue;
             }
@@ -204,18 +188,19 @@ fn lex_line(s: &str, line: usize, base_col: usize, out: &mut Vec<SpannedToken>) 
 
         // single-char operators / punctuation
         let ch = bytes[i] as char;
+
+        // Check structural tokens first (always recognized)
         let tok = match ch {
             '(' => Token::LParen,
             ')' => Token::RParen,
-            '+' => Token::Plus,
-            '-' => Token::Minus,
-            '*' => Token::Star,
-            '/' => Token::Slash,
-            '%' => Token::Percent,
-            '=' => Token::Equals,
-            '<' => Token::Lt,
-            '>' => Token::Gt,
-            _ => return Err(format!("Unexpected character '{ch}' at line {line}, col {col}")),
+            _ => {
+                // Try to lookup operator in registry
+                if let Some(t) = token_reg.lookup_single_char(ch) {
+                    t
+                } else {
+                    return Err(format!("Unexpected character '{ch}' at line {line}, col {col}"));
+                }
+            }
         };
         out.push(SpannedToken::new(tok, line, col));
         i += 1;

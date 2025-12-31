@@ -5,7 +5,7 @@
 use crate::ast::ExprNode;
 use crate::lexer::Token;
 use crate::parser::Parser;
-use crate::registry::{ExprInfix, ExprPrefix, LumenResult, Precedence};
+use crate::registry::{ExprInfix, ExprPrefix, LumenResult, Precedence, Registry};
 use crate::runtime::{Env, Value};
 
 #[derive(Debug)]
@@ -84,4 +84,25 @@ impl ExprInfix for ArithmeticInfix {
         let right = parser.parse_expr_prec(self.precedence() + 1)?;
         Ok(Box::new(ArithmeticExpr { left, op, right }))
     }
+}
+
+// --------------------
+// Registration
+// --------------------
+
+pub fn register(reg: &mut Registry) {
+    // Register tokens
+    reg.tokens.add_single_char('+', Token::Plus);
+    reg.tokens.add_single_char('-', Token::Minus);
+    reg.tokens.add_single_char('*', Token::Star);
+    reg.tokens.add_single_char('/', Token::Slash);
+    reg.tokens.add_single_char('%', Token::Percent);
+
+    // Register handlers
+    reg.register_prefix(Box::new(UnaryMinusPrefix));
+    reg.register_infix(Box::new(ArithmeticInfix::new(Token::Plus, Precedence::Term)));
+    reg.register_infix(Box::new(ArithmeticInfix::new(Token::Minus, Precedence::Term)));
+    reg.register_infix(Box::new(ArithmeticInfix::new(Token::Star, Precedence::Factor)));
+    reg.register_infix(Box::new(ArithmeticInfix::new(Token::Slash, Precedence::Factor)));
+    reg.register_infix(Box::new(ArithmeticInfix::new(Token::Percent, Precedence::Factor)));
 }

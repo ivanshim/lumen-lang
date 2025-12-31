@@ -3,7 +3,7 @@
 use crate::ast::ExprNode;
 use crate::lexer::Token;
 use crate::parser::Parser;
-use crate::registry::{ExprPrefix, LumenResult};
+use crate::registry::{ExprPrefix, LumenResult, Registry};
 
 pub struct GroupingPrefix;
 
@@ -21,4 +21,15 @@ impl ExprPrefix for GroupingPrefix {
             _ => Err("Expected ')'".into()),
         }
     }
+}
+
+// --------------------
+// Registration
+// --------------------
+
+pub fn register(reg: &mut Registry) {
+    // No tokens to register (parentheses are structural tokens always recognized by lexer)
+
+    // Register handlers
+    reg.register_prefix(Box::new(GroupingPrefix));
 }

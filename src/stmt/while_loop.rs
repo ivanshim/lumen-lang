@@ -6,7 +6,7 @@
 use crate::ast::{Control, ExprNode, StmtNode};
 use crate::lexer::Token;
 use crate::parser::Parser;
-use crate::registry::{LumenResult, StmtHandler};
+use crate::registry::{LumenResult, Registry, StmtHandler};
 use crate::runtime::Env;
 
 #[derive(Debug)]
@@ -56,4 +56,16 @@ impl StmtHandler for WhileStmtHandler {
 
         Ok(Box::new(WhileStmt { condition, body }))
     }
+}
+
+// --------------------
+// Registration
+// --------------------
+
+pub fn register(reg: &mut Registry) {
+    // Register tokens
+    reg.tokens.add_keyword("while", Token::While);
+
+    // Register handlers
+    reg.register_stmt(Box::new(WhileStmtHandler));
 }
