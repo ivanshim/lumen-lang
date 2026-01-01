@@ -2,11 +2,17 @@
 //
 // Pure lossless ASCII segmentation - kernel level.
 // No semantic token classification. No language assumptions.
-// Converts source text -> tokens (raw lexeme strings with position info).
+// Converts source text -> tokens (raw lexeme strings with byte span).
 // Language modules handle all interpretation of lexemes.
 //
+// AUTHORITY:
+// - Span { start, end } (byte offsets) is the AUTHORITATIVE source-location coordinate system
+// - All parsing, AST construction, and evaluation logic must rely on Span
+// - line/col are DIAGNOSTIC-ONLY (derived metadata, used only for error messages)
+//
 // ARCHITECTURE:
-// - Token is just { lexeme: String, span: Span } - no semantic categories
+// - Token is { lexeme: String, span: Span } - no semantic categories
+// - SpannedToken also carries line/col for diagnostic formatting only
 // - Lexer performs maximal-munch segmentation using language-provided multi-char sequences
 // - All semantic interpretation (keywords, operators, types) happens in language layer
 

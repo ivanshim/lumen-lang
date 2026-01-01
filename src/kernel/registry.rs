@@ -3,7 +3,12 @@
 // Feature registration + lookup.
 // Parser knows nothing about language features; it consults the Registry.
 //
-// ARCHITECTURE CHANGE:
+// AUTHORITY:
+// - Span { start, end } (byte offsets) is the AUTHORITATIVE source-location mechanism
+// - All parsing and AST construction must use Span
+// - line/col are DIAGNOSTIC-ONLY (derived metadata, only for error messages)
+//
+// ARCHITECTURE:
 // - TokenRegistry no longer holds semantic mappings (keywords, operators)
 // - Instead, it only stores multi-character lexeme sequences for maximal-munch
 // - ALL semantic interpretation happens in language modules
@@ -39,6 +44,9 @@ impl std::ops::Add<i32> for Precedence {
     }
 }
 
+/// Format a parse error with diagnostic position information.
+/// DIAGNOSTIC FUNCTION: Uses line/col (derived from source) only for human-readable error messages.
+/// line/col are NOT used by parsing logic - all core logic uses Span.
 pub fn err_at(parser: &Parser, msg: &str) -> String {
     let (line, col) = parser.position();
     format!("ParseError at {line}:{col}: {msg}")
