@@ -3,7 +3,7 @@ For language philosophy and evolution constraints, see DESIGN.md.
 # Lumen-Lang
 
 Lumen is a minimal, experimental programming language and interpreter.
-This repository contains **Lumen v0.0.1**, a working proof-of-concept implemented in Rust.
+This repository contains **Lumen v0.0.3**, a multi-language kernel with support for 7 different language implementations.
 
 The goal of Lumen is not to be a production language, but to explore language design, parsing, and execution semantics in the smallest possible form that still feels *real*.
 
@@ -110,76 +110,55 @@ cargo run src_lumen/examples/loop.lm
 
 ```
 lumen-lang/
-├── src/                           # Language-agnostic framework
-│   ├── framework/
-│   │   ├── lexer.rs              # Pure tokenization
-│   │   ├── parser.rs             # Generic dispatch parser
-│   │   ├── registry.rs           # Token/operator registration
-│   │   ├── ast.rs                # Generic AST traits
-│   │   └── runtime/              # Evaluation engine
-│   │       ├── env.rs            # Scoping and variables
-│   │       └── value.rs          # Runtime values
-│   └── main.rs                   # Entry point
-├── src_lumen/                     # Lumen language implementation
-│   ├── dispatcher.rs             # Lumen handler registration
+├── src/                                # Lumen kernel (language-agnostic framework)
+│   ├── kernel/                         # Core framework
+│   │   ├── lexer.rs                    # Pure tokenization
+│   │   ├── parser.rs                   # Generic dispatch parser
+│   │   ├── registry.rs                 # Token/operator registration
+│   │   ├── ast.rs                      # Generic AST traits
+│   │   └── runtime/                    # Evaluation engine
+│   │       ├── env.rs                  # Scoping and variables
+│   │       └── value.rs                # Runtime values
+│   └── main.rs                         # Entry point & language dispatcher
+├── src_lumen/                          # Lumen language implementation
+│   ├── src_lumen.rs                    # Dispatcher
 │   ├── structure/
-│   │   └── structural.rs         # Indentation, newlines, block parsing
-│   ├── statements/               # Lumen statement implementations
-│   │   ├── assignment.rs
-│   │   ├── if_else.rs
-│   │   ├── print.rs
-│   │   └── while_loop.rs
-│   ├── expressions/              # Lumen expression implementations
-│   │   ├── arithmetic.rs
-│   │   ├── comparison.rs
-│   │   ├── grouping.rs
-│   │   └── identifier.rs
-│   ├── examples/
-│   │   ├── loop.lm
-│   │   ├── fibonacci.lm
-│   │   └── demo_v0_1.lm
-│   └── docs/                     # Lumen design documentation
-│       ├── DESIGN.md
-│       ├── BNF.md
-│       ├── ROADMAP.md
+│   │   └── structural.rs               # Indentation, newlines, block parsing
+│   ├── statements/ & expressions/      # Lumen statement/expression handlers
+│   └── examples/                       # Example programs
+├── src_mini_rust/                      # Mini-Rust implementation
+├── src_mini_php/                       # Mini-PHP implementation
+├── src_mini_sh/                        # Mini-Shell implementation
+├── src_mini_c/                         # Mini-C implementation
+├── src_mini_apple_pascal/              # Mini-Pascal implementation
+├── src_mini_apple_basic/               # Mini-Basic implementation
+├── test_all.sh                         # Comprehensive test suite
 ├── Cargo.toml
 └── README.md
 ```
 
 ### Architecture Philosophy
 
-The codebase is split into two layers:
+The codebase is split into three layers:
 
-1. **Framework (`src/framework/`)**: Language-agnostic infrastructure
+1. **Kernel (`src/kernel/`)**: Language-agnostic infrastructure
    - Pure tokenization, AST representation, evaluation
-   - Zero knowledge of language-specific syntax (colons, indentation, newlines, etc.)
+   - Zero knowledge of language-specific syntax
    - Provides trait-based dispatch for extensible parsing and evaluation
 
-2. **Language Module (`src_lumen/`)**: Lumen-specific implementation
+2. **Language Modules (`src_*/`)**: Language-specific implementations
+   - Each module implements one language variant
    - Defines tokens, operators, and syntax rules
-   - Implements indentation-based block parsing
-   - Registers handlers for all Lumen statements and expressions
+   - Registers handlers for all statements and expressions
+   - Includes language-specific example programs
 
-This design allows the framework to support multiple languages with different syntaxes and semantics.
+3. **Dispatcher (`src/main.rs`)**: Multi-language runtime
+   - Detects language from `--lang` parameter (priority 1) or file extension (priority 2)
+   - Routes program to appropriate language module
+   - Supports simultaneous operation of all 7 languages
+
+This design allows the kernel to support multiple languages with different syntaxes and semantics, making it easy to add new language implementations without modifying the core framework.
 
 ---
 
 ## Version History
-
-For a detailed version history and contributor credits, see [VERSION_HISTORY.md](VERSION_HISTORY.md).
-
----
-
-## Design Notes
-
-* Indentation is significant (4 spaces per level)
-* Tabs are not currently supported
-* Error handling is intentionally minimal in v0.0.1
-* The AST is the single source of truth for language semantics
-
----
-
-## License
-
-MIT License.
-This project is intended for learning, experimentation, and exploration.
