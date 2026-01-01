@@ -56,18 +56,18 @@ run_test() {
     if timeout 5s $BINARY "$file" > /tmp/test_output.txt 2>&1; then
         echo -e "${GREEN}✓${NC}"
         PASSED_TESTS=$((PASSED_TESTS + 1))
-        # Show output (first 5 lines)
+        # Show full output
         if [ -s /tmp/test_output.txt ]; then
-            echo "  Output (first 5 lines):"
-            head -5 /tmp/test_output.txt | sed 's/^/    /'
+            echo "  Output:"
+            sed 's/^/    /' /tmp/test_output.txt
         fi
         return 0
     else
         echo -e "${RED}✗${NC}"
         FAILED_TESTS=$((FAILED_TESTS + 1))
-        # Show error
+        # Show full error output
         echo "  Error:"
-        head -3 /tmp/test_output.txt | sed 's/^/    /'
+        sed 's/^/    /' /tmp/test_output.txt
         return 1
     fi
 }
