@@ -4,10 +4,10 @@
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::lexer::Token;
-use crate::kernel::numeric;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{ExprInfix, ExprPrefix, LumenResult, Precedence, Registry};
 use crate::kernel::runtime::{Env, Value};
+use crate::src_lumen::numeric;
 
 // --------------------
 // Token definitions
