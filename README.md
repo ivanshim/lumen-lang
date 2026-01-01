@@ -25,7 +25,7 @@ The goal of Lumen is not to be a production language, but to explore language de
 
 ```lm
 x = 0
-while x < 5:
+while x < 5
     print(x)
     x = x + 1
 ```
