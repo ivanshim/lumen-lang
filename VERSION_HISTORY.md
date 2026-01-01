@@ -5,7 +5,7 @@ Each entry is intentionally self-contained so that it remains meaningful even if
 
 ---
 
-### v0.0.1 - 2025-12-31 - Ivan Shim & Claude Code Haiku 4.5 - Language-agnostic framework architecture
+### v0.0.2 - 2025-12-31 - Ivan Shim & Claude Code Haiku 4.5 - Language-agnostic framework architecture
 
 **Ivan Shim**
 
