@@ -13,10 +13,10 @@ impl ExprPrefix for GroupingPrefix {
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
         parser.advance();
         let expr = parser.parse_expr()?;
-        match parser.advance() {
-            _ if parser.peek().lexeme == RPAREN => Ok(expr),
-            _ => Err(err_at(parser, "Expected ')'")),
+        if parser.advance().lexeme != RPAREN {
+            return Err(err_at(parser, "Expected ')'"));
         }
+        Ok(expr)
     }
 }
 
