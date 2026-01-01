@@ -88,6 +88,18 @@ pub fn parse_program(parser: &mut Parser) -> LumenResult<Program> {
     Ok(Program::new(statements))
 }
 
+/// Add EOF token to raw tokens (no indentation processing for mini-rust)
+pub fn process_tokens(raw_tokens: Vec<crate::kernel::lexer::SpannedToken>) -> LumenResult<Vec<crate::kernel::lexer::SpannedToken>> {
+    let mut tokens = raw_tokens;
+    let line = tokens.last().map(|t| t.line).unwrap_or(1);
+    tokens.push(crate::kernel::lexer::SpannedToken {
+        tok: Token::Feature(EOF),
+        line,
+        col: 1,
+    });
+    Ok(tokens)
+}
+
 // --------------------
 // Registration
 // --------------------

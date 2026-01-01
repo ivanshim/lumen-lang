@@ -39,16 +39,6 @@ declare -A LANG_MAP=(
     ["basic"]="mini-basic"
 )
 
-# Languages with EOF issues that need special handling
-declare -A SKIP_LANGS=(
-    ["mini-rust"]=1
-    ["mini-php"]=1
-    ["mini-sh"]=1
-    ["mini-c"]=1
-    ["mini-pascal"]=1
-    ["mini-basic"]=1
-)
-
 # Function to run a test
 run_test() {
     local file="$1"
@@ -58,13 +48,6 @@ run_test() {
     if [ -z "$language" ]; then
         echo -e "${YELLOW}⊘${NC} Unknown extension: $extension ($file)"
         return 1
-    fi
-
-    # Check if we should skip this language
-    if [ "${SKIP_LANGS[$language]}" = "1" ] && [ "$language" != "lumen" ]; then
-        echo -e "${BLUE}⊘${NC} Skipping $file (needs EOF token implementation)"
-        SKIPPED_TESTS=$((SKIPPED_TESTS + 1))
-        return 0
     fi
 
     echo -n "Testing $(basename $file) ... "
@@ -121,9 +104,6 @@ echo "Total tests:   $TOTAL_TESTS"
 echo -e "Passed:        ${GREEN}$PASSED_TESTS${NC}"
 echo -e "Failed:        ${RED}$FAILED_TESTS${NC}"
 echo -e "Skipped:       ${BLUE}$SKIPPED_TESTS${NC}"
-echo ""
-echo "Note: Mini-language examples are currently skipped as they require"
-echo "EOF token handling. Lumen examples are fully tested."
 echo ""
 
 if [ $FAILED_TESTS -eq 0 ]; then
