@@ -6,7 +6,7 @@ use crate::kernel::registry::{err_at, LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::Env;
 use crate::src_mini_apple_pascal::structure::structural;
 
-pub const WHILE: &str = "WHILE";
+pub const WHILE: &str = "while";
 
 #[derive(Debug)]
 struct WhileStmt {
@@ -38,25 +38,21 @@ impl StmtNode for WhileStmt {
 pub struct WhileStmtHandler;
 impl StmtHandler for WhileStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(WHILE))
+        parser.peek().lexeme == WHILE
     }
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'while'
-        match parser.advance() {
-            Token::Feature(structural::LPAREN) => {}
-            _ => return Err(err_at(parser, "Expected '(' after 'while'")),
+        if parser.advance().lexeme != structural::LPAREN {
+            return Err(err_at(parser, "Expected '(' after 'while'"));
         }
         let condition = parser.parse_expr()?;
-        match parser.advance() {
-            Token::Feature(structural::RPAREN) => {}
-            _ => return Err(err_at(parser, "Expected ')' after condition")),
+        if parser.advance().lexeme != structural::RPAREN {
+            return Err(err_at(parser, "Expected ')' after condition"));
         }
         let body = structural::parse_block(parser)?;
         Ok(Box::new(WhileStmt { condition, body }))
     }
 }
 
-pub fn register(reg: &mut Registry) {
-    reg.tokens.add_keyword("while", WHILE);
-    reg.register_stmt(Box::new(WhileStmtHandler));
+pub fn register(reg: &mut Registry) {    reg.register_stmt(Box::new(WhileStmtHandler));
 }

@@ -3,21 +3,10 @@
 // + - * / % and unary minus
 
 use crate::kernel::ast::ExprNode;
-use crate::kernel::lexer::Token;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{ExprInfix, ExprPrefix, LumenResult, Precedence, Registry};
 use crate::kernel::runtime::{Env, Value};
 use crate::src_lumen::numeric;
-
-// --------------------
-// Token definitions
-// --------------------
-
-pub const PLUS: &str = "PLUS";
-pub const MINUS: &str = "MINUS";
-pub const STAR: &str = "STAR";
-pub const SLASH: &str = "SLASH";
-pub const PERCENT: &str = "PERCENT";
 
 #[derive(Debug)]
 struct UnaryMinusExpr {
@@ -40,7 +29,7 @@ pub struct UnaryMinusPrefix;
 
 impl ExprPrefix for UnaryMinusPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(MINUS))
+        parser.peek().lexeme == "-"
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
@@ -53,7 +42,7 @@ impl ExprPrefix for UnaryMinusPrefix {
 #[derive(Debug)]
 struct ArithmeticExpr {
     left: Box<dyn ExprNode>,
-    op: &'static str,
+    op: String,
     right: Box<dyn ExprNode>,
 }
 
@@ -64,12 +53,12 @@ impl ExprNode for ArithmeticExpr {
 
         match (l, r) {
             (Value::Number(a), Value::Number(b)) => {
-                let result = match self.op {
-                    PLUS => numeric::add(&a, &b)?,
-                    MINUS => numeric::subtract(&a, &b)?,
-                    STAR => numeric::multiply(&a, &b)?,
-                    SLASH => numeric::divide(&a, &b)?,
-                    PERCENT => numeric::modulo(&a, &b)?,
+                let result = match self.op.as_str() {
+                    "+" => numeric::add(&a, &b)?,
+                    "-" => numeric::subtract(&a, &b)?,
+                    "*" => numeric::multiply(&a, &b)?,
+                    "/" => numeric::divide(&a, &b)?,
+                    "%" => numeric::modulo(&a, &b)?,
                     _ => return Err("Invalid arithmetic operator".into()),
                 };
                 Ok(Value::Number(result))
@@ -80,19 +69,19 @@ impl ExprNode for ArithmeticExpr {
 }
 
 pub struct ArithmeticInfix {
-    op: &'static str,
+    op: String,
     prec: Precedence,
 }
 
 impl ArithmeticInfix {
-    pub fn new(op: &'static str, prec: Precedence) -> Self {
-        Self { op, prec }
+    pub fn new(op: &str, prec: Precedence) -> Self {
+        Self { op: op.to_string(), prec }
     }
 }
 
 impl ExprInfix for ArithmeticInfix {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(kind) if *kind == self.op)
+        parser.peek().lexeme == self.op
     }
 
     fn precedence(&self) -> Precedence {
@@ -102,7 +91,7 @@ impl ExprInfix for ArithmeticInfix {
     fn parse(&self, parser: &mut Parser, left: Box<dyn ExprNode>) -> LumenResult<Box<dyn ExprNode>> {
         parser.advance(); // consume operator
         let right = parser.parse_expr_prec(self.precedence() + 1)?;
-        Ok(Box::new(ArithmeticExpr { left, op: self.op, right }))
+        Ok(Box::new(ArithmeticExpr { left, op: self.op.clone(), right }))
     }
 }
 
@@ -111,18 +100,12 @@ impl ExprInfix for ArithmeticInfix {
 // --------------------
 
 pub fn register(reg: &mut Registry) {
-    // Register tokens
-    reg.tokens.add_single_char('+', PLUS);
-    reg.tokens.add_single_char('-', MINUS);
-    reg.tokens.add_single_char('*', STAR);
-    reg.tokens.add_single_char('/', SLASH);
-    reg.tokens.add_single_char('%', PERCENT);
-
+    // No token registration needed - kernel handles all segmentation
     // Register handlers
     reg.register_prefix(Box::new(UnaryMinusPrefix));
-    reg.register_infix(Box::new(ArithmeticInfix::new(PLUS, Precedence::Term)));
-    reg.register_infix(Box::new(ArithmeticInfix::new(MINUS, Precedence::Term)));
-    reg.register_infix(Box::new(ArithmeticInfix::new(STAR, Precedence::Factor)));
-    reg.register_infix(Box::new(ArithmeticInfix::new(SLASH, Precedence::Factor)));
-    reg.register_infix(Box::new(ArithmeticInfix::new(PERCENT, Precedence::Factor)));
+    reg.register_infix(Box::new(ArithmeticInfix::new("+", Precedence::Term)));
+    reg.register_infix(Box::new(ArithmeticInfix::new("-", Precedence::Term)));
+    reg.register_infix(Box::new(ArithmeticInfix::new("*", Precedence::Factor)));
+    reg.register_infix(Box::new(ArithmeticInfix::new("/", Precedence::Factor)));
+    reg.register_infix(Box::new(ArithmeticInfix::new("%", Precedence::Factor)));
 }

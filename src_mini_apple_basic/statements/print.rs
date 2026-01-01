@@ -26,24 +26,20 @@ impl StmtNode for PrintStmt {
 pub struct PrintStmtHandler;
 impl StmtHandler for PrintStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(PRINT))
+        parser.peek().lexeme == PRINT
     }
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume keyword
-        match parser.advance() {
-            Token::Feature(LPAREN) => {}
-            _ => return Err(err_at(parser, "Expected '(' after 'PRINT'")),
+        if parser.advance().lexeme != LPAREN {
+            return Err(err_at(parser, "Expected '(' after 'PRINT'"));
         }
         let expr = parser.parse_expr()?;
-        match parser.advance() {
-            Token::Feature(RPAREN) => {}
-            _ => return Err(err_at(parser, "Expected ')'")),
+        if parser.advance().lexeme != RPAREN {
+            return Err(err_at(parser, "Expected ')'"));
         }
         Ok(Box::new(PrintStmt { expr }))
     }
 }
 
-pub fn register(reg: &mut Registry) {
-    reg.tokens.add_keyword("PRINT", PRINT);
-    reg.register_stmt(Box::new(PrintStmtHandler));
+pub fn register(reg: &mut Registry) {    reg.register_stmt(Box::new(PrintStmtHandler));
 }

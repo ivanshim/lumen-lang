@@ -2,11 +2,14 @@
 //
 // Feature registration + lookup.
 // Parser knows nothing about language features; it consults the Registry.
+//
+// ARCHITECTURE CHANGE:
+// - TokenRegistry no longer holds semantic mappings (keywords, operators)
+// - Instead, it only stores multi-character lexeme sequences for maximal-munch
+// - ALL semantic interpretation happens in language modules
 
 use crate::kernel::ast::{ExprNode, StmtNode};
-use crate::kernel::lexer::Token;
 use crate::kernel::parser::Parser;
-use std::collections::HashMap;
 
 pub type LumenResult<T> = Result<T, String>;
 
@@ -42,46 +45,34 @@ pub fn err_at(parser: &Parser, msg: &str) -> String {
 }
 
 // --------------------
-// Token Registry
+// Token Registry (Pure Transport Layer)
 // --------------------
 
 pub struct TokenRegistry {
-    keywords: HashMap<String, Token>,
-    single_char: HashMap<char, Token>,
-    two_char: HashMap<String, Token>,
+    // Multi-character lexeme sequences for maximal-munch segmentation
+    // Stored in descending length order for proper maximal-munch
+    multichar_lexemes: Vec<&'static str>,
 }
 
 impl TokenRegistry {
     pub fn new() -> Self {
         Self {
-            keywords: HashMap::new(),
-            single_char: HashMap::new(),
-            two_char: HashMap::new(),
+            multichar_lexemes: Vec::new(),
         }
     }
 
-    pub fn add_keyword(&mut self, word: &str, token_kind: &'static str) {
-        self.keywords.insert(word.to_string(), Token::Feature(token_kind));
+    /// Set the multi-character lexeme sequences that the language uses.
+    /// The lexer will use these for maximal-munch segmentation.
+    /// Sequences will be sorted by descending length automatically.
+    pub fn set_multichar_lexemes(&mut self, mut lexemes: Vec<&'static str>) {
+        // Sort by descending length for proper maximal-munch
+        lexemes.sort_by(|a, b| b.len().cmp(&a.len()));
+        self.multichar_lexemes = lexemes;
     }
 
-    pub fn add_single_char(&mut self, ch: char, token_kind: &'static str) {
-        self.single_char.insert(ch, Token::Feature(token_kind));
-    }
-
-    pub fn add_two_char(&mut self, chars: &str, token_kind: &'static str) {
-        self.two_char.insert(chars.to_string(), Token::Feature(token_kind));
-    }
-
-    pub fn lookup_keyword(&self, word: &str) -> Option<Token> {
-        self.keywords.get(word).cloned()
-    }
-
-    pub fn lookup_single_char(&self, ch: char) -> Option<Token> {
-        self.single_char.get(&ch).cloned()
-    }
-
-    pub fn lookup_two_char(&self, chars: &str) -> Option<Token> {
-        self.two_char.get(chars).cloned()
+    /// Get the multi-character lexemes in descending length order
+    pub fn multichar_lexemes(&self) -> &[&'static str] {
+        &self.multichar_lexemes
     }
 }
 
@@ -150,4 +141,3 @@ impl Registry {
         self.stmts.iter().map(|b| b.as_ref()).find(|h| h.matches(parser))
     }
 }
-

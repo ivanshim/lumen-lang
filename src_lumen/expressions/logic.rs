@@ -1,23 +1,14 @@
 // Logical operators: and / or / not
 
 use crate::kernel::ast::ExprNode;
-use crate::kernel::lexer::Token;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{ExprInfix, ExprPrefix, LumenResult, Precedence, Registry};
 use crate::kernel::runtime::{Env, Value};
 
-// --------------------
-// Token definitions
-// --------------------
-
-pub const AND: &str = "AND";
-pub const OR: &str = "OR";
-pub const NOT: &str = "NOT";
-
 #[derive(Debug)]
 struct LogicExpr {
     left: Box<dyn ExprNode>,
-    op: &'static str,
+    op: String,
     right: Box<dyn ExprNode>,
 }
 
@@ -28,9 +19,9 @@ impl ExprNode for LogicExpr {
 
         match (&l, &r) {
             (Value::Bool(a), Value::Bool(b)) => {
-                let result = match self.op {
-                    AND => *a && *b,
-                    OR => *a || *b,
+                let result = match self.op.as_str() {
+                    "and" => *a && *b,
+                    "or" => *a || *b,
                     _ => return Err(format!("Invalid logical operator: {}", self.op)),
                 };
                 Ok(Value::Bool(result))
@@ -41,18 +32,18 @@ impl ExprNode for LogicExpr {
 }
 
 pub struct LogicInfix {
-    op: &'static str,
+    op: String,
 }
 
 impl LogicInfix {
-    pub fn new(op: &'static str) -> Self {
-        Self { op }
+    pub fn new(op: &str) -> Self {
+        Self { op: op.to_string() }
     }
 }
 
 impl ExprInfix for LogicInfix {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(kind) if *kind == self.op)
+        parser.peek().lexeme == self.op
     }
 
     fn precedence(&self) -> Precedence {
@@ -66,7 +57,7 @@ impl ExprInfix for LogicInfix {
     ) -> LumenResult<Box<dyn ExprNode>> {
         parser.advance(); // consume operator
         let right = parser.parse_expr_prec(self.precedence() + 1)?;
-        Ok(Box::new(LogicExpr { left, op: self.op, right }))
+        Ok(Box::new(LogicExpr { left, op: self.op.clone(), right }))
     }
 }
 
@@ -90,7 +81,7 @@ pub struct NotPrefix;
 
 impl ExprPrefix for NotPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(NOT))
+        parser.peek().lexeme == "not"
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
@@ -105,13 +96,9 @@ impl ExprPrefix for NotPrefix {
 // --------------------
 
 pub fn register(reg: &mut Registry) {
-    // Register tokens
-    reg.tokens.add_keyword("and", AND);
-    reg.tokens.add_keyword("or", OR);
-    reg.tokens.add_keyword("not", NOT);
-
+    // No token registration needed - kernel handles all segmentation
     // Register handlers
-    reg.register_infix(Box::new(LogicInfix::new(AND)));
-    reg.register_infix(Box::new(LogicInfix::new(OR)));
+    reg.register_infix(Box::new(LogicInfix::new("and")));
+    reg.register_infix(Box::new(LogicInfix::new("or")));
     reg.register_prefix(Box::new(NotPrefix));
 }

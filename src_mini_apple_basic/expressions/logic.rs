@@ -1,6 +1,5 @@
 // Logical operations
 use crate::kernel::ast::ExprNode;
-use crate::kernel::lexer::Token;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{ExprInfix, ExprPrefix, LumenResult, Precedence, Registry};
 use crate::kernel::runtime::{Env, Value};
@@ -41,7 +40,7 @@ impl LogicInfix {
 }
 impl ExprInfix for LogicInfix {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(kind) if *kind == self.op)
+        parser.peek().lexeme == self.op
     }
     fn precedence(&self) -> Precedence { Precedence::Logic }
     fn parse(&self, parser: &mut Parser, left: Box<dyn ExprNode>) -> LumenResult<Box<dyn ExprNode>> {
@@ -65,7 +64,7 @@ impl ExprNode for NotExpr {
 pub struct NotPrefix;
 impl ExprPrefix for NotPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(NOT))
+        parser.peek().lexeme == NOT
     }
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
         parser.advance();
@@ -74,11 +73,7 @@ impl ExprPrefix for NotPrefix {
     }
 }
 
-pub fn register(reg: &mut Registry) {
-    reg.tokens.add_keyword("and", AND);
-    reg.tokens.add_keyword("or", OR);
-    reg.tokens.add_keyword("not", NOT);
-    reg.register_infix(Box::new(LogicInfix::new(AND)));
+pub fn register(reg: &mut Registry) {    reg.register_infix(Box::new(LogicInfix::new(AND)));
     reg.register_infix(Box::new(LogicInfix::new(OR)));
     reg.register_prefix(Box::new(NotPrefix));
 }

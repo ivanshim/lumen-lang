@@ -1,12 +1,11 @@
 // Mini-PHP: continue statement
 
 use crate::kernel::ast::{Control, StmtNode};
-use crate::kernel::lexer::Token;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::Env;
 
-pub const CONTINUE: &str = "CONTINUE";
+pub const CONTINUE: &str = "continue";
 
 #[derive(Debug)]
 struct ContinueStmt;
@@ -21,7 +20,7 @@ pub struct ContinueStmtHandler;
 
 impl StmtHandler for ContinueStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(CONTINUE))
+        parser.peek().lexeme == CONTINUE
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
@@ -30,7 +29,5 @@ impl StmtHandler for ContinueStmtHandler {
     }
 }
 
-pub fn register(reg: &mut Registry) {
-    reg.tokens.add_keyword("continue", CONTINUE);
-    reg.register_stmt(Box::new(ContinueStmtHandler));
+pub fn register(reg: &mut Registry) {    reg.register_stmt(Box::new(ContinueStmtHandler));
 }

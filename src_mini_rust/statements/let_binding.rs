@@ -1,7 +1,6 @@
 // let binding statement for mini-rust
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
-use crate::kernel::lexer::Token;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::{Env, Value};
@@ -10,8 +9,8 @@ use crate::kernel::runtime::{Env, Value};
 // Token definitions
 // --------------------
 
-pub const LET: &str = "LET";
-pub const EQUALS: &str = "EQUALS";
+pub const LET: &str = "let";
+pub const EQUALS: &str = "=";
 
 #[derive(Debug)]
 struct LetStmt {
@@ -31,19 +30,16 @@ pub struct LetStmtHandler;
 
 impl StmtHandler for LetStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(LET))
+        parser.peek().lexeme == LET
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'let'
 
-        let name = match parser.advance() {
-            Token::Ident(s) => s,
-            _ => return Err("Expected identifier after 'let'".into()),
-        };
+        let name = parser.advance().lexeme;
 
         match parser.advance() {
-            Token::Feature(EQUALS) => {}
+            _ if parser.peek().lexeme == EQUALS => {}
             _ => return Err("Expected '=' after identifier".into()),
         }
 
@@ -57,9 +53,8 @@ impl StmtHandler for LetStmtHandler {
 // --------------------
 
 pub fn register(reg: &mut Registry) {
-    // Register tokens
-    reg.tokens.add_keyword("let", LET);
-    // EQUALS is registered in assignment.rs
+    // No token registration needed - kernel handles all segmentation
+    // Register tokens    // EQUALS is registered in assignment.rs
 
     // Register handlers
     reg.register_stmt(Box::new(LetStmtHandler));

@@ -1,7 +1,6 @@
 // Parenthesized expressions: ( ... )
 
 use crate::kernel::ast::ExprNode;
-use crate::kernel::lexer::Token;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{ExprPrefix, LumenResult, Registry};
 use crate::src_mini_rust::structure::structural::{LPAREN, RPAREN};
@@ -10,17 +9,17 @@ pub struct GroupingPrefix;
 
 impl ExprPrefix for GroupingPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(k) if *k == LPAREN)
+        parser.peek().lexeme == LPAREN
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
         parser.advance(); // consume '('
         let expr = parser.parse_expr()?;
 
-        match parser.advance() {
-            Token::Feature(k) if k == RPAREN => Ok(expr),
-            _ => Err("Expected ')'".into()),
+        if parser.advance().lexeme != RPAREN {
+            return Err("Expected ')'".into());
         }
+        Ok(expr)
     }
 }
 
@@ -29,6 +28,7 @@ impl ExprPrefix for GroupingPrefix {
 // --------------------
 
 pub fn register(reg: &mut Registry) {
+    // No token registration needed - kernel handles all segmentation
     // No tokens to register (parentheses are structural tokens)
 
     // Register handlers

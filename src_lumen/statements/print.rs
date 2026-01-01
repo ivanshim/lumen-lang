@@ -3,7 +3,6 @@
 // print(expr)
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
-use crate::kernel::lexer::Token;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::Env;
@@ -26,10 +25,7 @@ pub struct PrintStmtHandler;
 
 impl StmtHandler for PrintStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(
-            parser.peek(),
-            Token::Ident(name) if name == "print"
-        )
+        parser.peek().lexeme == "print"
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
@@ -37,17 +33,15 @@ impl StmtHandler for PrintStmtHandler {
         parser.advance();
 
         // expect '('
-        match parser.advance() {
-            Token::Feature(k) if k == LPAREN => {}
-            _ => return Err("Expected '(' after print".into()),
+        if parser.advance().lexeme != LPAREN {
+            return Err("Expected '(' after print".into());
         }
 
         let expr = parser.parse_expr()?;
 
         // expect ')'
-        match parser.advance() {
-            Token::Feature(k) if k == RPAREN => {}
-            _ => return Err("Expected ')' after expression".into()),
+        if parser.advance().lexeme != RPAREN {
+            return Err("Expected ')' after expression".into());
         }
 
         Ok(Box::new(PrintStmt { expr }))
@@ -59,8 +53,7 @@ impl StmtHandler for PrintStmtHandler {
 // --------------------
 
 pub fn register(reg: &mut Registry) {
-    // No tokens to register (uses "print" as identifier)
-
+    // No tokens to register (uses "print" keyword registered in dispatcher)
     // Register handlers
     reg.register_stmt(Box::new(PrintStmtHandler));
 }

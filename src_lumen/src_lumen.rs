@@ -11,6 +11,17 @@ use super::structure;
 
 /// Register all Lumen language features
 pub fn register_all(registry: &mut Registry) {
+    // Register multi-character lexemes for maximal-munch segmentation
+    // The kernel lexer will use these for pure lossless ASCII segmentation
+    registry.tokens.set_multichar_lexemes(vec![
+        // Two-char operators
+        "==", "!=", "<=", ">=",
+        // Keywords (multi-char word sequences)
+        "and", "or", "not",
+        "if", "else", "while", "break", "continue", "print",
+        "true", "false",
+    ]);
+
     // Core syntax (structural tokens - parentheses, indentation, etc.)
     structure::structural::register(registry);
 

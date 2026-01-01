@@ -1,7 +1,6 @@
 // Variable reference expression
 
 use crate::kernel::ast::ExprNode;
-use crate::kernel::lexer::Token;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{LumenResult, ExprPrefix};
 use crate::kernel::runtime::{Env, Value};
@@ -21,13 +20,11 @@ pub struct IdentPrefix;
 
 impl ExprPrefix for IdentPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Ident(_))
+        parser.peek().lexeme.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_')
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
-        match parser.advance() {
-            Token::Ident(name) => Ok(Box::new(IdentExpr { name })),
-            _ => unreachable!(),
-        }
+        let name = parser.advance().lexeme;
+        Ok(Box::new(IdentExpr { name }))
     }
 }

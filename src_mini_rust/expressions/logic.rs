@@ -1,7 +1,6 @@
 // Logical operators: && || !
 
 use crate::kernel::ast::ExprNode;
-use crate::kernel::lexer::Token;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{ExprInfix, ExprPrefix, LumenResult, Precedence, Registry};
 use crate::kernel::runtime::{Env, Value};
@@ -10,9 +9,9 @@ use crate::kernel::runtime::{Env, Value};
 // Token definitions
 // --------------------
 
-pub const AND: &str = "AND";
-pub const OR: &str = "OR";
-pub const NOT: &str = "NOT";
+pub const AND: &str = "and";
+pub const OR: &str = "or";
+pub const NOT: &str = "not";
 
 #[derive(Debug)]
 struct LogicExpr {
@@ -52,7 +51,7 @@ impl LogicInfix {
 
 impl ExprInfix for LogicInfix {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(kind) if *kind == self.op)
+        parser.peek().lexeme == self.op
     }
 
     fn precedence(&self) -> Precedence {
@@ -90,7 +89,7 @@ pub struct NotPrefix;
 
 impl ExprPrefix for NotPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(NOT))
+        parser.peek().lexeme == NOT
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
@@ -105,12 +104,8 @@ impl ExprPrefix for NotPrefix {
 // --------------------
 
 pub fn register(reg: &mut Registry) {
-    // Register tokens
-    reg.tokens.add_two_char("&&", AND);
-    reg.tokens.add_two_char("||", OR);
-    reg.tokens.add_single_char('!', NOT);
-
-    // Register handlers
+    // No token registration needed - kernel handles all segmentation
+    // Register tokens    // Register handlers
     reg.register_infix(Box::new(LogicInfix::new(AND)));
     reg.register_infix(Box::new(LogicInfix::new(OR)));
     reg.register_prefix(Box::new(NotPrefix));

@@ -10,7 +10,7 @@ use crate::kernel::runtime::{Env, Value};
 // Token definitions
 // --------------------
 
-pub const EQUALS: &str = "EQUALS";
+pub const EQUALS: &str = "=";
 
 #[derive(Debug)]
 struct AssignStmt {
@@ -32,18 +32,15 @@ impl StmtHandler for AssignStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
         matches!(
             (parser.peek(), parser.peek_n(1)),
-            (Token::Ident(_), Some(Token::Feature(EQUALS)))
+            (tok, Some(next)) if tok.lexeme.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_') && next.lexeme == EQUALS
         )
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
-        let name = match parser.advance() {
-            Token::Ident(s) => s,
-            _ => unreachable!(),
-        };
+        let name = parser.advance().lexeme;
 
         match parser.advance() {
-            Token::Feature(EQUALS) => {}
+            _ if parser.peek().lexeme == EQUALS => {}
             _ => return Err(err_at(parser, "Expected '=' in assignment")),
         }
 
@@ -57,9 +54,8 @@ impl StmtHandler for AssignStmtHandler {
 // --------------------
 
 pub fn register(reg: &mut Registry) {
+    // No token registration needed - kernel handles all segmentation
     // Register tokens
-    reg.tokens.add_single_char('=', EQUALS);
-
     // Register handlers
     reg.register_stmt(Box::new(AssignStmtHandler));
 }

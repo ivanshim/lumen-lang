@@ -3,23 +3,23 @@ PRINT(1 + 2 * 3);
 LET x = 0;
 LET y = 5;
 
-if (x < y and y == 5) {
+IF (x < y AND y == 5) {
     PRINT(100)
-} else {
+} ELSE {
     PRINT(200)
 }
 
 LET i = 0;
 LET sum = 0;
 
-while (i < 10) {
-    if (i == 5) {
+WHILE (i < 10) {
+    IF (i == 5) {
         LET i = i + 1;
-        continue
+        CONTINUE
     }
 
-    if (i == 8) {
-        break
+    IF (i == 8) {
+        BREAK
     }
 
     LET sum = sum + i;
@@ -28,7 +28,7 @@ while (i < 10) {
 }
 
 PRINT(sum);
-PRINT(true);
-PRINT(false);
-PRINT(not false);
+PRINT(TRUE);
+PRINT(FALSE);
+PRINT(NOT FALSE);
 PRINT(-10 + 3)
