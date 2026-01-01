@@ -3,6 +3,12 @@
 // Pure generic syntax parsing.
 // Zero language-specific assumptions.
 // Delegates all parsing decisions to registered handlers.
+//
+// ARCHITECTURE:
+// Span { start, end } (byte offsets) is the AUTHORITATIVE source-location mechanism.
+// All parsing, AST construction, and evaluation logic must use Span.
+// line/col are DIAGNOSTIC-ONLY metadata (for error messages).
+// This parser is language-agnostic and makes no semantic assumptions.
 
 use crate::kernel::ast::{ExprNode, Program};
 use crate::kernel::lexer::{lex, SpannedToken, Token, Span};
@@ -29,6 +35,15 @@ impl<'a> Parser<'a> {
         Ok(Self { reg, toks, i: 0 })
     }
 
+    /// Get the byte span of the current token (AUTHORITATIVE position).
+    /// Span is the canonical coordinate system for all core logic.
+    pub fn current_span(&self) -> Span {
+        let t = self.toks.get(self.i).unwrap();
+        t.tok.span
+    }
+
+    /// Get diagnostic line/column position of current token.
+    /// DIAGNOSTIC ONLY - derived from source; not used by parsing logic.
     pub fn position(&self) -> (usize, usize) {
         let t = self.toks.get(self.i).unwrap();
         (t.line, t.col)
