@@ -154,7 +154,23 @@ fn run_mini_rust(source: &str) {
     let mut registry = Registry::new();
     src_mini_rust::register_all(&mut registry);
 
-    let mut parser = match Parser::new(&registry, source) {
+    let raw_tokens = match lex(source, &registry.tokens) {
+        Ok(toks) => toks,
+        Err(e) => {
+            eprintln!("LexError: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let processed_tokens = match structural::process_tokens(raw_tokens) {
+        Ok(toks) => toks,
+        Err(e) => {
+            eprintln!("TokenError: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let mut parser = match Parser::new_with_tokens(&registry, processed_tokens) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");
@@ -183,7 +199,23 @@ fn run_mini_php(source: &str) {
     let mut registry = Registry::new();
     src_mini_php::register_all(&mut registry);
 
-    let mut parser = match Parser::new(&registry, source) {
+    let raw_tokens = match lex(source, &registry.tokens) {
+        Ok(toks) => toks,
+        Err(e) => {
+            eprintln!("LexError: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let processed_tokens = match structural::process_tokens(raw_tokens) {
+        Ok(toks) => toks,
+        Err(e) => {
+            eprintln!("TokenError: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let mut parser = match Parser::new_with_tokens(&registry, processed_tokens) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");
@@ -212,7 +244,23 @@ fn run_mini_sh(source: &str) {
     let mut registry = Registry::new();
     src_mini_sh::register_all(&mut registry);
 
-    let mut parser = match Parser::new(&registry, source) {
+    let raw_tokens = match lex(source, &registry.tokens) {
+        Ok(toks) => toks,
+        Err(e) => {
+            eprintln!("LexError: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let processed_tokens = match structural::process_tokens(raw_tokens) {
+        Ok(toks) => toks,
+        Err(e) => {
+            eprintln!("TokenError: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let mut parser = match Parser::new_with_tokens(&registry, processed_tokens) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");
@@ -241,7 +289,23 @@ fn run_mini_c(source: &str) {
     let mut registry = Registry::new();
     src_mini_c::register_all(&mut registry);
 
-    let mut parser = match Parser::new(&registry, source) {
+    let raw_tokens = match lex(source, &registry.tokens) {
+        Ok(toks) => toks,
+        Err(e) => {
+            eprintln!("LexError: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let processed_tokens = match structural::process_tokens(raw_tokens) {
+        Ok(toks) => toks,
+        Err(e) => {
+            eprintln!("TokenError: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let mut parser = match Parser::new_with_tokens(&registry, processed_tokens) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");
@@ -270,7 +334,23 @@ fn run_mini_pascal(source: &str) {
     let mut registry = Registry::new();
     src_mini_apple_pascal::register_all(&mut registry);
 
-    let mut parser = match Parser::new(&registry, source) {
+    let raw_tokens = match lex(source, &registry.tokens) {
+        Ok(toks) => toks,
+        Err(e) => {
+            eprintln!("LexError: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let processed_tokens = match structural::process_tokens(raw_tokens) {
+        Ok(toks) => toks,
+        Err(e) => {
+            eprintln!("TokenError: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let mut parser = match Parser::new_with_tokens(&registry, processed_tokens) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");
@@ -299,7 +379,23 @@ fn run_mini_basic(source: &str) {
     let mut registry = Registry::new();
     src_mini_apple_basic::register_all(&mut registry);
 
-    let mut parser = match Parser::new(&registry, source) {
+    let raw_tokens = match lex(source, &registry.tokens) {
+        Ok(toks) => toks,
+        Err(e) => {
+            eprintln!("LexError: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let processed_tokens = match structural::process_tokens(raw_tokens) {
+        Ok(toks) => toks,
+        Err(e) => {
+            eprintln!("TokenError: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let mut parser = match Parser::new_with_tokens(&registry, processed_tokens) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");
