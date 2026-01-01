@@ -1,7 +1,7 @@
 // src_mini_apple_pascal/src_mini_apple_pascal.rs
 // mini-apple-pascal language dispatcher
 
-use crate::framework::registry::Registry;
+use crate::kernel::registry::Registry;
 
 use super::expressions;
 use super::statements;

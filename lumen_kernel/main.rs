@@ -1,8 +1,8 @@
-// src/main.rs
-// Language-agnostic interpreter framework
+// lumen_kernel/main.rs
+// Language-agnostic interpreter kernel
 // Supports multiple language implementations
 
-mod framework;
+mod kernel;
 
 #[path = "../src_lumen/mod.rs"]
 mod src_lumen;
@@ -27,11 +27,12 @@ mod src_mini_apple_basic;
 
 use std::env;
 use std::fs;
+use std::path::Path;
 
-use crate::framework::lexer::lex;
-use crate::framework::parser::Parser;
-use crate::framework::registry::Registry;
-use crate::framework::eval;
+use crate::kernel::lexer::lex;
+use crate::kernel::parser::Parser;
+use crate::kernel::registry::Registry;
+use crate::kernel::eval;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -39,22 +40,24 @@ fn main() {
     if args.len() < 2 {
         eprintln!("Usage: lumen-lang [--lang <language>] <file>");
         eprintln!("\nSupported languages:");
-        eprintln!("  lumen         (Python-like with indentation)");
-        eprintln!("  mini-rust     (Rust-like with curly braces)");
-        eprintln!("  mini-php      (PHP-like with $ variables)");
-        eprintln!("  mini-sh       (Shell-like syntax)");
-        eprintln!("  mini-c        (C-like syntax)");
-        eprintln!("  mini-pascal   (Pascal-like with BEGIN/END)");
-        eprintln!("  mini-basic    (BASIC-like syntax)");
-        eprintln!("\nExample: lumen-lang --lang mini-rust program.mr");
-        eprintln!("         lumen-lang program.lm  (defaults to lumen)");
+        eprintln!("  lumen         (Python-like with indentation)        [.lm]");
+        eprintln!("  mini-rust     (Rust-like with curly braces)         [.rs]");
+        eprintln!("  mini-php      (PHP-like with $ variables)           [.php]");
+        eprintln!("  mini-sh       (Shell-like syntax)                   [.sh, .ms]");
+        eprintln!("  mini-c        (C-like syntax)                       [.c, .mc]");
+        eprintln!("  mini-pascal   (Pascal-like with BEGIN/END)          [.p, .mp]");
+        eprintln!("  mini-basic    (BASIC-like syntax)                   [.mb, .basic]");
+        eprintln!("\nExamples:");
+        eprintln!("  lumen-lang --lang mini-rust program.rs     (explicit language)");
+        eprintln!("  lumen-lang program.lm                      (auto-detect via extension)");
         std::process::exit(1);
     }
 
     let (language, filepath) = if args.len() >= 3 && args[1] == "--lang" {
         (args[2].to_lowercase(), args[3].clone())
     } else {
-        ("lumen".to_string(), args[1].clone())
+        let file = &args[1];
+        (detect_language_from_extension(file).unwrap_or_else(|| "lumen".to_string()), file.clone())
     };
 
     let source = match fs::read_to_string(&filepath) {
@@ -78,6 +81,25 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+/// Detect language from file extension
+fn detect_language_from_extension(filepath: &str) -> Option<String> {
+    let path = Path::new(filepath);
+    let extension = path.extension()?.to_str()?;
+
+    let language = match extension {
+        "lm" => "lumen",
+        "rs" => "mini-rust",
+        "php" => "mini-php",
+        "sh" | "ms" => "mini-sh",
+        "c" | "mc" => "mini-c",
+        "p" | "mp" => "mini-pascal",
+        "basic" | "mb" => "mini-basic",
+        _ => return None,
+    };
+
+    Some(language.to_string())
 }
 
 fn run_lumen(source: &str) {

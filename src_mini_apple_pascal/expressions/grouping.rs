@@ -1,8 +1,8 @@
 // Grouping with parentheses
-use crate::framework::ast::ExprNode;
-use crate::framework::lexer::Token;
-use crate::framework::parser::Parser;
-use crate::framework::registry::{err_at, ExprPrefix, LumenResult, Registry};
+use crate::kernel::ast::ExprNode;
+use crate::kernel::lexer::Token;
+use crate::kernel::parser::Parser;
+use crate::kernel::registry::{err_at, ExprPrefix, LumenResult, Registry};
 use crate::src_mini_apple_pascal::structure::structural::{LPAREN, RPAREN};
 
 pub struct GroupingPrefix;

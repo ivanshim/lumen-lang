@@ -2,7 +2,7 @@
 // Mini-PHP language dispatcher
 // PHP-like: $ variables, echo, semicolons
 
-use crate::framework::registry::Registry;
+use crate::kernel::registry::Registry;
 
 // Import all feature modules
 use super::expressions;

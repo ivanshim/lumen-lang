@@ -1,10 +1,10 @@
 // Variable reference expression
 
-use crate::framework::ast::ExprNode;
-use crate::framework::lexer::Token;
-use crate::framework::parser::Parser;
-use crate::framework::registry::{LumenResult, ExprPrefix};
-use crate::framework::runtime::{Env, Value};
+use crate::kernel::ast::ExprNode;
+use crate::kernel::lexer::Token;
+use crate::kernel::parser::Parser;
+use crate::kernel::registry::{LumenResult, ExprPrefix};
+use crate::kernel::runtime::{Env, Value};
 
 #[derive(Debug)]
 struct IdentExpr {

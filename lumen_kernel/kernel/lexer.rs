@@ -5,7 +5,7 @@
 // Converts source text -> tokens (strings, numbers, identifiers, operators).
 // Language modules handle structural tokens (INDENT/DEDENT, NEWLINE, EOF, parens, etc.)
 
-use crate::framework::registry::{LumenResult, TokenRegistry};
+use crate::kernel::registry::{LumenResult, TokenRegistry};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {

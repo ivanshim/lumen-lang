@@ -1,10 +1,10 @@
 // Mini-PHP: Assignment statement ($var = expr;)
 
-use crate::framework::ast::{Control, ExprNode, StmtNode};
-use crate::framework::lexer::Token;
-use crate::framework::parser::Parser;
-use crate::framework::registry::{err_at, LumenResult, Registry, StmtHandler};
-use crate::framework::runtime::{Env, Value};
+use crate::kernel::ast::{Control, ExprNode, StmtNode};
+use crate::kernel::lexer::Token;
+use crate::kernel::parser::Parser;
+use crate::kernel::registry::{err_at, LumenResult, Registry, StmtHandler};
+use crate::kernel::runtime::{Env, Value};
 use crate::src_mini_php::structure::structural::DOLLAR;
 
 pub const ASSIGN: &str = "ASSIGN";

@@ -1,7 +1,7 @@
 // src_mini_apple_basic/src_mini_apple_basic.rs
 // mini-apple-basic language dispatcher
 
-use crate::framework::registry::Registry;
+use crate::kernel::registry::Registry;
 
 use super::expressions;
 use super::statements;

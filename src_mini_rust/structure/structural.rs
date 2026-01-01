@@ -1,9 +1,9 @@
 // Mini-Rust structural tokens and parsing helpers
 
-use crate::framework::ast::{Program, StmtNode};
-use crate::framework::lexer::Token;
-use crate::framework::parser::Parser;
-use crate::framework::registry::{err_at, LumenResult, Registry};
+use crate::kernel::ast::{Program, StmtNode};
+use crate::kernel::lexer::Token;
+use crate::kernel::parser::Parser;
+use crate::kernel::registry::{err_at, LumenResult, Registry};
 
 // --------------------
 // Mini-Rust Token Definitions

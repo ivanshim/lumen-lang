@@ -1,9 +1,9 @@
 // while loop
-use crate::framework::ast::{Control, ExprNode, StmtNode};
-use crate::framework::lexer::Token;
-use crate::framework::parser::Parser;
-use crate::framework::registry::{err_at, LumenResult, Registry, StmtHandler};
-use crate::framework::runtime::Env;
+use crate::kernel::ast::{Control, ExprNode, StmtNode};
+use crate::kernel::lexer::Token;
+use crate::kernel::parser::Parser;
+use crate::kernel::registry::{err_at, LumenResult, Registry, StmtHandler};
+use crate::kernel::runtime::Env;
 use crate::src_mini_apple_pascal::structure::structural;
 
 pub const WHILE: &str = "WHILE";
@@ -18,7 +18,7 @@ impl StmtNode for WhileStmt {
         loop {
             let cond = self.condition.eval(env)?;
             match cond {
-                crate::framework::runtime::Value::Bool(true) => {
+                crate::kernel::runtime::Value::Bool(true) => {
                     for stmt in &self.body {
                         match stmt.exec(env)? {
                             Control::Break => return Ok(Control::None),
@@ -27,7 +27,7 @@ impl StmtNode for WhileStmt {
                         }
                     }
                 }
-                crate::framework::runtime::Value::Bool(false) => break,
+                crate::kernel::runtime::Value::Bool(false) => break,
                 _ => return Err("while condition must be boolean".into()),
             }
         }

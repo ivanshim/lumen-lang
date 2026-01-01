@@ -1,6 +1,6 @@
 // Mini-PHP: Identifier handling (placeholder - PHP uses $ for variables)
 
-use crate::framework::registry::Registry;
+use crate::kernel::registry::Registry;
 
 // In PHP, identifiers alone don't create expressions
 // Variables must use $ prefix

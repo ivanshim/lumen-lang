@@ -1,7 +1,7 @@
 // src_mini_sh/src_mini_sh.rs
 // mini-sh language dispatcher
 
-use crate::framework::registry::Registry;
+use crate::kernel::registry::Registry;
 
 use super::expressions;
 use super::statements;

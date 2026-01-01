@@ -1,0 +1,34 @@
+PRINT(1 + 2 * 3);
+
+LET x = 0;
+LET y = 5;
+
+if (x < y and y == 5) {
+    PRINT(100)
+} else {
+    PRINT(200)
+}
+
+LET i = 0;
+LET sum = 0;
+
+while (i < 10) {
+    if (i == 5) {
+        LET i = i + 1;
+        continue
+    }
+
+    if (i == 8) {
+        break
+    }
+
+    LET sum = sum + i;
+    PRINT(sum);
+    LET i = i + 1
+}
+
+PRINT(sum);
+PRINT(true);
+PRINT(false);
+PRINT(not false);
+PRINT(-10 + 3)

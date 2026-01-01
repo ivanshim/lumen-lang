@@ -1,7 +1,7 @@
 // src_mini_c/src_mini_c.rs
 // mini-c language dispatcher
 
-use crate::framework::registry::Registry;
+use crate::kernel::registry::Registry;
 
 use super::expressions;
 use super::statements;
