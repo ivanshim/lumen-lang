@@ -1,9 +1,9 @@
 // Variable reference with $ prefix
-use crate::framework::ast::ExprNode;
-use crate::framework::lexer::Token;
-use crate::framework::parser::Parser;
-use crate::framework::registry::{err_at, ExprPrefix, LumenResult, Registry};
-use crate::framework::runtime::{Env, Value};
+use crate::kernel::ast::ExprNode;
+use crate::kernel::lexer::Token;
+use crate::kernel::parser::Parser;
+use crate::kernel::registry::{err_at, ExprPrefix, LumenResult, Registry};
+use crate::kernel::runtime::{Env, Value};
 use crate::src_mini_sh::structure::structural::DOLLAR;
 
 #[derive(Debug)]

@@ -2,11 +2,11 @@
 //
 // print(expr)
 
-use crate::framework::ast::{Control, ExprNode, StmtNode};
-use crate::framework::lexer::Token;
-use crate::framework::parser::Parser;
-use crate::framework::registry::{LumenResult, Registry, StmtHandler};
-use crate::framework::runtime::Env;
+use crate::kernel::ast::{Control, ExprNode, StmtNode};
+use crate::kernel::lexer::Token;
+use crate::kernel::parser::Parser;
+use crate::kernel::registry::{LumenResult, Registry, StmtHandler};
+use crate::kernel::runtime::Env;
 use crate::src_lumen::structure::structural::{LPAREN, RPAREN};
 
 #[derive(Debug)]

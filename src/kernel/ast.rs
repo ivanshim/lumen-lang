@@ -4,7 +4,7 @@
 // No feature enums. No syntax knowledge.
 
 use std::fmt;
-use crate::framework::runtime::{Env, Value};
+use crate::kernel::runtime::{Env, Value};
 
 pub struct Program {
     pub statements: Vec<Box<dyn StmtNode>>,

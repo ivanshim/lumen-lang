@@ -1,9 +1,9 @@
 // Parenthesized expressions: ( ... )
 
-use crate::framework::ast::ExprNode;
-use crate::framework::lexer::Token;
-use crate::framework::parser::Parser;
-use crate::framework::registry::{ExprPrefix, LumenResult, Registry};
+use crate::kernel::ast::ExprNode;
+use crate::kernel::lexer::Token;
+use crate::kernel::parser::Parser;
+use crate::kernel::registry::{ExprPrefix, LumenResult, Registry};
 use crate::src_lumen::structure::structural::{LPAREN, RPAREN};
 
 pub struct GroupingPrefix;

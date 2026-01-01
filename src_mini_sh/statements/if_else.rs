@@ -1,9 +1,9 @@
 // if/else statement
-use crate::framework::ast::{Control, ExprNode, StmtNode};
-use crate::framework::lexer::Token;
-use crate::framework::parser::Parser;
-use crate::framework::registry::{err_at, LumenResult, Registry, StmtHandler};
-use crate::framework::runtime::Env;
+use crate::kernel::ast::{Control, ExprNode, StmtNode};
+use crate::kernel::lexer::Token;
+use crate::kernel::parser::Parser;
+use crate::kernel::registry::{err_at, LumenResult, Registry, StmtHandler};
+use crate::kernel::runtime::Env;
 use crate::src_mini_sh::structure::structural;
 
 pub const IF: &str = "IF";
@@ -19,7 +19,7 @@ impl StmtNode for IfStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
         let cond = self.cond.eval(env)?;
         let branch_taken = match cond {
-            crate::framework::runtime::Value::Bool(b) => b,
+            crate::kernel::runtime::Value::Bool(b) => b,
             _ => return Err("Condition must be a boolean".into()),
         };
         if branch_taken {

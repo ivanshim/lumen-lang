@@ -4,9 +4,9 @@
 // Zero language-specific assumptions.
 // Delegates all parsing decisions to registered handlers.
 
-use crate::framework::ast::{ExprNode, Program};
-use crate::framework::lexer::{lex, SpannedToken, Token};
-use crate::framework::registry::{err_at, LumenResult, Precedence, Registry};
+use crate::kernel::ast::{ExprNode, Program};
+use crate::kernel::lexer::{lex, SpannedToken, Token};
+use crate::kernel::registry::{err_at, LumenResult, Precedence, Registry};
 
 pub struct Parser<'a> {
     pub reg: &'a Registry,

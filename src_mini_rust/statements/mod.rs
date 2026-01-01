@@ -6,7 +6,7 @@ pub mod break_stmt;
 pub mod continue_stmt;
 pub mod let_binding;
 
-pub fn register_all(registry: &mut crate::framework::registry::Registry) {
+pub fn register_all(registry: &mut crate::kernel::registry::Registry) {
     assignment::register(registry);
     print::register(registry);
     if_else::register(registry);

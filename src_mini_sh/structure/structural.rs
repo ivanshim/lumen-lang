@@ -1,8 +1,8 @@
 // Structural syntax (C-style: braces, semicolons)
-use crate::framework::ast::{Program, StmtNode};
-use crate::framework::lexer::Token;
-use crate::framework::parser::Parser;
-use crate::framework::registry::{err_at, LumenResult, Registry};
+use crate::kernel::ast::{Program, StmtNode};
+use crate::kernel::lexer::Token;
+use crate::kernel::parser::Parser;
+use crate::kernel::registry::{err_at, LumenResult, Registry};
 
 pub const LPAREN: &str = "LPAREN";
 pub const RPAREN: &str = "RPAREN";
@@ -52,10 +52,10 @@ pub fn parse_program(parser: &mut Parser) -> LumenResult<Program> {
     Ok(Program::new(statements))
 }
 
-pub fn process_tokens(raw_tokens: Vec<crate::framework::lexer::SpannedToken>) -> LumenResult<Vec<crate::framework::lexer::SpannedToken>> {
+pub fn process_tokens(raw_tokens: Vec<crate::kernel::lexer::SpannedToken>) -> LumenResult<Vec<crate::kernel::lexer::SpannedToken>> {
     let mut tokens = raw_tokens;
     let line = tokens.last().map(|t| t.line).unwrap_or(1);
-    tokens.push(crate::framework::lexer::SpannedToken {
+    tokens.push(crate::kernel::lexer::SpannedToken {
         tok: Token::Feature(EOF),
         line,
         col: 1,

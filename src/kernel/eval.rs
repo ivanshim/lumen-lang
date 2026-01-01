@@ -3,8 +3,8 @@
 // Core execution loop.
 // No language semantics live here.
 
-use crate::framework::ast::{Control, Program};
-use crate::framework::runtime::env::Env;
+use crate::kernel::ast::{Control, Program};
+use crate::kernel::runtime::env::Env;
 
 pub fn eval(program: &Program) -> Result<(), String> {
     let mut env = Env::new();

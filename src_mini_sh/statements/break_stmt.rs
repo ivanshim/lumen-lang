@@ -1,9 +1,9 @@
 // break statement
-use crate::framework::ast::{{Control, StmtNode}};
-use crate::framework::lexer::Token;
-use crate::framework::parser::Parser;
-use crate::framework::registry::{{LumenResult, Registry, StmtHandler}};
-use crate::framework::runtime::Env;
+use crate::kernel::ast::{{Control, StmtNode}};
+use crate::kernel::lexer::Token;
+use crate::kernel::parser::Parser;
+use crate::kernel::registry::{{LumenResult, Registry, StmtHandler}};
+use crate::kernel::runtime::Env;
 
 pub const BREAK: &str = "BREAK";
 

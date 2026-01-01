@@ -1,0 +1,5 @@
+LET x = 0;
+while (x < 5) {
+    PRINT(x);
+    LET x = x + 1
+}
