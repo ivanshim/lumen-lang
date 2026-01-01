@@ -1,5 +1,5 @@
 x = 0;
-while ($x < 5) {
+while ($x < 10) {
     print($x);
     x = $x + 1;
 }
