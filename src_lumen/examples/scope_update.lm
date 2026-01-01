@@ -1,0 +1,9 @@
+counter = 0
+
+if true
+    counter = counter + 1
+
+if true
+    counter = counter + 1
+
+print(counter)

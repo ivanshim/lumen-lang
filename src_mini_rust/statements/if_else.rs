@@ -29,19 +29,29 @@ impl StmtNode for IfStmt {
         };
 
         if branch_taken {
+            env.push_scope();
+            let mut result = Control::None;
             for stmt in &self.then_block {
                 let ctl = stmt.exec(env)?;
                 if !matches!(ctl, Control::None) {
-                    return Ok(ctl);
+                    result = ctl;
+                    break;
                 }
             }
+            env.pop_scope();
+            return Ok(result);
         } else if let Some(ref else_block) = self.else_block {
+            env.push_scope();
+            let mut result = Control::None;
             for stmt in else_block {
                 let ctl = stmt.exec(env)?;
                 if !matches!(ctl, Control::None) {
-                    return Ok(ctl);
+                    result = ctl;
+                    break;
                 }
             }
+            env.pop_scope();
+            return Ok(result);
         }
 
         Ok(Control::None)

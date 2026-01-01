@@ -21,12 +21,22 @@ impl StmtNode for WhileStmt {
             let cond = self.condition.eval(env)?;
             match cond {
                 crate::kernel::runtime::Value::Bool(true) => {
+                    // Each iteration gets its own scope
+                    env.push_scope();
+                    let mut break_occurred = false;
                     for stmt in &self.body {
                         match stmt.exec(env)? {
-                            Control::Break => return Ok(Control::None),
+                            Control::Break => {
+                                break_occurred = true;
+                                break;
+                            }
                             Control::Continue => break,
                             Control::None => {}
                         }
+                    }
+                    env.pop_scope();
+                    if break_occurred {
+                        return Ok(Control::None);
                     }
                 }
                 crate::kernel::runtime::Value::Bool(false) => break,
