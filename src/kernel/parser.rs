@@ -5,7 +5,7 @@
 // Delegates all parsing decisions to registered handlers.
 
 use crate::kernel::ast::{ExprNode, Program};
-use crate::kernel::lexer::{lex, SpannedToken, Token};
+use crate::kernel::lexer::{lex, SpannedToken, Token, Span};
 use crate::kernel::registry::{err_at, LumenResult, Precedence, Registry};
 
 pub struct Parser<'a> {

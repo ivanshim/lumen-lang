@@ -5,7 +5,7 @@
 // Completely language-specific - ALL structural concepts defined here.
 
 use crate::kernel::ast::{Program, StmtNode};
-use crate::kernel::lexer::{Token, SpannedToken};
+use crate::kernel::lexer::{Token, SpannedToken, Span};
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{err_at, LumenResult, Registry};
 
@@ -152,7 +152,7 @@ pub fn process_indentation(source: &str, raw_tokens: Vec<SpannedToken>) -> Lumen
             }
             indents.push(spaces);
             out.push(SpannedToken {
-                tok: Token::new(INDENT.to_string()),
+                tok: Token::new(INDENT.to_string(), Span::new(0, 0)),
                 line: line_no,
                 col: 1,
             });
@@ -160,7 +160,7 @@ pub fn process_indentation(source: &str, raw_tokens: Vec<SpannedToken>) -> Lumen
             while *indents.last().unwrap() > spaces {
                 indents.pop();
                 out.push(SpannedToken {
-                    tok: Token::new(DEDENT.to_string()),
+                    tok: Token::new(DEDENT.to_string(), Span::new(0, 0)),
                     line: line_no,
                     col: 1,
                 });
@@ -179,7 +179,7 @@ pub fn process_indentation(source: &str, raw_tokens: Vec<SpannedToken>) -> Lumen
 
         // Add NEWLINE at end of line
         out.push(SpannedToken {
-            tok: Token::new(NEWLINE.to_string()),
+            tok: Token::new(NEWLINE.to_string(), Span::new(0, 0)),
             line: line_no,
             col: spaces + rest.len() + 1,
         });
@@ -191,7 +191,7 @@ pub fn process_indentation(source: &str, raw_tokens: Vec<SpannedToken>) -> Lumen
     while indents.len() > 1 {
         indents.pop();
         out.push(SpannedToken {
-            tok: Token::new(DEDENT.to_string()),
+            tok: Token::new(DEDENT.to_string(), Span::new(0, 0)),
             line: line_no,
             col: 1,
         });
@@ -199,7 +199,7 @@ pub fn process_indentation(source: &str, raw_tokens: Vec<SpannedToken>) -> Lumen
 
     // Add EOF token
     out.push(SpannedToken {
-        tok: Token::new(EOF.to_string()),
+        tok: Token::new(EOF.to_string(), Span::new(0, 0)),
         line: line_no,
         col: 1,
     });

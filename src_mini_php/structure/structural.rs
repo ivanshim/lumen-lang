@@ -4,7 +4,7 @@
 // PHP-style: curly braces, semicolons, $ for variables
 
 use crate::kernel::ast::{Program, StmtNode};
-use crate::kernel::lexer::Token;
+use crate::kernel::lexer::{Token, SpannedToken, Span};
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{err_at, LumenResult, Registry};
 
@@ -87,7 +87,7 @@ pub fn process_tokens(raw_tokens: Vec<crate::kernel::lexer::SpannedToken>) -> Lu
     let mut tokens = raw_tokens;
     let line = tokens.last().map(|t| t.line).unwrap_or(1);
     tokens.push(crate::kernel::lexer::SpannedToken {
-        tok: Token::new(EOF.to_string()),
+        tok: Token::new(EOF.to_string(), Span::new(0, 0)),
         line,
         col: 1,
     });

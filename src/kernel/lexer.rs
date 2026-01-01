@@ -6,20 +6,34 @@
 // Language modules handle all interpretation of lexemes.
 //
 // ARCHITECTURE:
-// - Token is just { lexeme: String } - no semantic categories
+// - Token is just { lexeme: String, span: Span } - no semantic categories
 // - Lexer performs maximal-munch segmentation using language-provided multi-char sequences
 // - All semantic interpretation (keywords, operators, types) happens in language layer
 
 use crate::kernel::registry::{LumenResult, TokenRegistry};
 
+/// Explicit byte span: (start, end) offsets in source code
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    pub start: usize, // inclusive byte offset
+    pub end: usize,   // exclusive byte offset
+}
+
+impl Span {
+    pub fn new(start: usize, end: usize) -> Self {
+        Self { start, end }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub lexeme: String,
+    pub span: Span,
 }
 
 impl Token {
-    pub fn new(lexeme: String) -> Self {
-        Self { lexeme }
+    pub fn new(lexeme: String, span: Span) -> Self {
+        Self { lexeme, span }
     }
 }
 
@@ -41,85 +55,101 @@ impl SpannedToken {
 /// The lexer has NO semantic knowledge - it just segments the text.
 pub fn lex(source: &str, token_reg: &TokenRegistry) -> LumenResult<Vec<SpannedToken>> {
     let mut out = Vec::new();
+    let bytes = source.as_bytes();
+    let mut byte_pos = 0usize;
     let mut line_no = 1usize;
+    let mut col_in_line = 1usize;
 
-    for raw in source.lines() {
-        lex_line(raw, line_no, 1, token_reg, &mut out)?;
-        line_no += 1;
-    }
-
-    Ok(out)
-}
-
-fn lex_line(s: &str, line: usize, base_col: usize, token_reg: &TokenRegistry, out: &mut Vec<SpannedToken>) -> LumenResult<()> {
-    let bytes = s.as_bytes();
-    let mut i = 0usize;
-
-    while i < bytes.len() {
-        let col = base_col + i;
-
-        // whitespace (skip but track for position)
-        if bytes[i].is_ascii_whitespace() {
-            i += 1;
+    while byte_pos < bytes.len() {
+        // Skip whitespace and track line/column info
+        if bytes[byte_pos].is_ascii_whitespace() {
+            if bytes[byte_pos] == b'\n' {
+                line_no += 1;
+                col_in_line = 1;
+            } else {
+                col_in_line += 1;
+            }
+            byte_pos += 1;
             continue;
         }
 
+        let start_byte = byte_pos;
+        let start_col = col_in_line;
+
         // strings: "..."
-        if bytes[i] == b'"' {
-            let start = i;
-            i += 1;
-            while i < bytes.len() && bytes[i] != b'"' {
-                i += 1;
+        if bytes[byte_pos] == b'"' {
+            let start = byte_pos;
+            byte_pos += 1;
+            col_in_line += 1;
+            while byte_pos < bytes.len() && bytes[byte_pos] != b'"' {
+                if bytes[byte_pos] == b'\n' {
+                    line_no += 1;
+                    col_in_line = 1;
+                } else {
+                    col_in_line += 1;
+                }
+                byte_pos += 1;
             }
-            if i >= bytes.len() {
-                return Err(format!("Unterminated string at line {line}"));
+            if byte_pos >= bytes.len() {
+                return Err(format!("Unterminated string at line {line_no}"));
             }
-            i += 1; // include closing quote
-            let lexeme = s[start..i].to_string();
-            out.push(SpannedToken::new(Token::new(lexeme), line, col));
+            byte_pos += 1; // include closing quote
+            col_in_line += 1;
+            let lexeme = source[start..byte_pos].to_string();
+            let span = Span::new(start, byte_pos);
+            out.push(SpannedToken::new(Token::new(lexeme, span), line_no, start_col));
             continue;
         }
 
         // numbers: 123 or 123.45
-        if bytes[i].is_ascii_digit() {
-            let start = i;
-            while i < bytes.len() && bytes[i].is_ascii_digit() {
-                i += 1;
+        if bytes[byte_pos].is_ascii_digit() {
+            let start = byte_pos;
+            while byte_pos < bytes.len() && bytes[byte_pos].is_ascii_digit() {
+                col_in_line += 1;
+                byte_pos += 1;
             }
-            if i < bytes.len() && bytes[i] == b'.' {
-                i += 1;
-                while i < bytes.len() && bytes[i].is_ascii_digit() {
-                    i += 1;
+            if byte_pos < bytes.len() && bytes[byte_pos] == b'.' {
+                col_in_line += 1;
+                byte_pos += 1;
+                while byte_pos < bytes.len() && bytes[byte_pos].is_ascii_digit() {
+                    col_in_line += 1;
+                    byte_pos += 1;
                 }
             }
-            let lexeme = s[start..i].to_string();
-            out.push(SpannedToken::new(Token::new(lexeme), line, col));
+            let lexeme = source[start..byte_pos].to_string();
+            let span = Span::new(start, byte_pos);
+            out.push(SpannedToken::new(Token::new(lexeme, span), line_no, start_col));
             continue;
         }
 
         // identifiers / keywords (maximal-munch for word-like sequences)
-        if is_word_start(bytes[i]) {
-            let start = i;
-            i += 1;
-            while i < bytes.len() && is_word_continue(bytes[i]) {
-                i += 1;
+        if is_word_start(bytes[byte_pos]) {
+            let start = byte_pos;
+            byte_pos += 1;
+            col_in_line += 1;
+            while byte_pos < bytes.len() && is_word_continue(bytes[byte_pos]) {
+                col_in_line += 1;
+                byte_pos += 1;
             }
-            let lexeme = s[start..i].to_string();
-            out.push(SpannedToken::new(Token::new(lexeme), line, col));
+            let lexeme = source[start..byte_pos].to_string();
+            let span = Span::new(start, byte_pos);
+            out.push(SpannedToken::new(Token::new(lexeme, span), line_no, start_col));
             continue;
         }
 
         // multi-char sequences and single-char tokens
         // Try maximal-munch using language-provided multi-char lexemes
-        let remaining = &s[i..];
+        let remaining = &source[byte_pos..];
         let mut matched = false;
 
         // Try multi-char sequences in descending length order
         for &multichar in token_reg.multichar_lexemes() {
             if remaining.starts_with(multichar) {
                 let lexeme = multichar.to_string();
-                out.push(SpannedToken::new(Token::new(lexeme), line, col));
-                i += multichar.len();
+                let span = Span::new(byte_pos, byte_pos + multichar.len());
+                out.push(SpannedToken::new(Token::new(lexeme, span), line_no, start_col));
+                col_in_line += multichar.len();
+                byte_pos += multichar.len();
                 matched = true;
                 break;
             }
@@ -130,18 +160,20 @@ fn lex_line(s: &str, line: usize, base_col: usize, token_reg: &TokenRegistry, ou
         }
 
         // No multi-char match, emit single character
-        let ch = bytes[i] as char;
+        let ch = bytes[byte_pos] as char;
         if ch.is_ascii_graphic() || ch.is_ascii_punctuation() {
             let lexeme = ch.to_string();
-            out.push(SpannedToken::new(Token::new(lexeme), line, col));
-            i += 1;
+            let span = Span::new(byte_pos, byte_pos + 1);
+            out.push(SpannedToken::new(Token::new(lexeme, span), line_no, start_col));
+            col_in_line += 1;
+            byte_pos += 1;
             continue;
         }
 
-        return Err(format!("Unexpected character '{ch}' at line {line}, col {col}"));
+        return Err(format!("Unexpected character '{ch}' at line {line_no}, col {start_col}"));
     }
 
-    Ok(())
+    Ok(out)
 }
 
 fn is_word_start(b: u8) -> bool {
