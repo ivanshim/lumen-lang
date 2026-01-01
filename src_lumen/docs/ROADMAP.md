@@ -1,242 +1,200 @@
-# Lumen Roadmap
+# Lumen Language – Roadmap
 
-This document captures the long-term direction of the Lumen language.
-It is intentionally conceptual rather than technical.
+This roadmap describes the intentional evolution of **Lumen** from a proof-of-concept language into a stable, composable, AI-reasoning-friendly system.
 
-Lumen is not designed to compete with production languages.
-It exists to explore how little language is required for meaningful computation,
-and how semantics emerge from small, explicit rules.
-
-Once frozen, completed stages are never reinterpreted retroactively.
+The roadmap is ordered by **semantic dependency**, not convenience.  
+Later phases assume the invariants of earlier phases are stable.
 
 ---
 
-## Status
+## Phase 0 — Foundations (Completed / In Progress)
 
-- **v0.1 — COMPLETE**
-  - Minimal, executable language
-  - Variables, arithmetic, booleans
-  - if / else, while
-  - break / continue
-  - indentation-based blocks
-  - single builtin: `print()`
-  - no functions
-  - no expression statements
-  - no implicit behavior
+**Goal:** Establish a minimal, coherent execution model.
 
-This version is stable and locked.
+- Core syntax and grammar
+- AST construction
+- Interpreter / evaluator
+- Basic value types (numbers, strings, booleans)
+- Control flow primitives (conditionals, loops)
+- Minimal I/O (e.g. print)
+- Host implementation in Rust
 
----
+At this stage, **velocity is prioritised over permanence**.  
+No APIs are considered stable.
 
-## Roadmap Overview
-
-Lumen grows in *layers*, not features.
-Each version introduces exactly one new semantic axis.
+[Established]
 
 ---
 
-## v0.x — Foundations (Completed)
+## Phase 1 — Semantic Contracts (Critical)
 
-### v0.1 — Imperative Core ✅
-The smallest language that:
-- parses cleanly
-- executes deterministically
-- expresses loops and conditionals
-- fails honestly
+**Goal:** Define what Lumen *means*, independent of syntax or libraries.
 
-This version answers:
-> “What is the minimum executable language that still feels real?”
+This phase freezes the **behavioral invariants** upon which all libraries depend.
 
----
+### 1.1 Value Semantics
+- Value vs reference rules
+- Mutability model
+- Copy vs move behavior
+- Equality and ordering semantics
 
-## v0.2 — Functions & Scope
+### 1.2 Error and Failure Semantics
+- Error as value vs control-flow
+- Optionality (e.g. `Option`-like semantics)
+- Recoverable vs unrecoverable failure
+- Deterministic error propagation
 
-**New concepts**
-- `fn` definitions
-- parameter binding
-- `return`
-- lexical scope
-- call stack
+### 1.3 Iteration and Control Abstractions
+- Iteration model (eager vs lazy)
+- Canonical looping and traversal semantics
+- Termination guarantees
 
-**Constraints**
-- no closures initially
-- no recursion limits lifted
-- no default arguments
-- no overloading
+### 1.4 Side-Effect Discipline
+- What constitutes a side effect
+- How I/O, state mutation, and time are expressed
+- Explicit vs implicit effects
 
-**Goal**
-Introduce abstraction *without* magic.
+Deliverables:
+- Formal documentation of contracts
+- Executable tests enforcing invariants
+- Reference programs exercising edge cases
 
-This version answers:
-> “How does meaning get reused safely?”
+No standard library stabilization occurs before this phase completes.
 
----
-
-## v0.3 — Data Structures
-
-**New concepts**
-- lists
-- indexing
-- iteration patterns
-- value vs reference clarity
-
-**Non-goals**
-- no classes
-- no inheritance
-- no mutation-by-aliasing
-
-This version answers:
-> “How does structure emerge from repetition?”
+[Established]
 
 ---
 
-## v0.4 — Modules & Files
+## Phase 2 — Core Library (Rust-Core-Inspired)
 
-**New concepts**
-- `import`
-- namespaces
-- file boundaries
-- visibility rules
+**Goal:** Provide a minimal, rigorous core library aligned with frozen semantics.
 
-**Goal**
-Make Lumen programs larger without becoming opaque.
+This layer mirrors the *philosophy* of Rust’s `core`, not its surface API.
 
-This version answers:
-> “How does scale happen without loss of clarity?”
+### 2.1 Core Data Types
+- Numeric utilities
+- Strings and string operations
+- Core collections
+- Ranges and iteration helpers
 
----
+### 2.2 Core Abstractions
+- Optionality and result handling
+- Comparison and ordering helpers
+- Functional combinators (map, filter, fold)
 
-## v0.5 — Errors as Values
+Constraints:
+- No OS assumptions
+- No allocation strategy exposure (unless explicit)
+- No concurrency or I/O dependencies
 
-**New concepts**
-- explicit error values
-- propagation
-- controlled failure
+The core library is:
+- Always present
+- Versioned with the language
+- Semantically stable once released
 
-**Non-goals**
-- no exceptions
-- no hidden stack unwinding
-
-This version answers:
-> “How does a language admit fallibility honestly?”
-
----
-
-## v0.6 — Tooling & Introspection
-
-**New concepts**
-- AST inspection
-- runtime tracing
-- deterministic debugging hooks
-
-**Goal**
-Make the language explain itself.
-
-This version answers:
-> “Can a language be understood from the inside?”
+[Indicative]
 
 ---
 
-## v0.7 — Self-Description
+## Phase 3 — Standard Library (Environment-Aware)
 
-At this stage:
-- the grammar is fully specified
-- the AST is stable
-- the interpreter is conceptually complete
+**Goal:** Introduce practical utilities that interact with the external world.
 
-The language can now **describe its own grammar and semantics**.
+This layer is **explicitly effectful** and environment-dependent.
 
-This is *not* self-hosting yet.
+### 3.1 I/O and Environment
+- File system abstractions
+- Paths and directories
+- Basic environment queries
 
-This version answers:
-> “Can the language explain what it is?”
+### 3.2 Serialization and Parsing
+- JSON
+- Text-based formats
+- Deterministic parsing rules
 
----
+### 3.3 Time and Randomness
+- Clocks and timers
+- Random number generation
+- Explicit nondeterminism markers
 
-## v0.8 — Partial Self-Hosting
+Stability policy:
+- APIs stabilize slowly
+- Breaking changes are expected early
+- Experimental modules are clearly labeled
 
-At this stage:
-- parts of the interpreter (parser, evaluator, or tools)
-  can be reimplemented *in Lumen itself*
-- Rust remains the execution substrate
-
-This is a **meta-circular** phase.
-
-This version answers:
-> “Can the language reason about itself?”
-
----
-
-## v0.9 — Bootstrap Threshold
-
-This is the critical inflection point.
-
-At this stage:
-- a Lumen interpreter exists written in Lumen
-- it runs on top of the Rust interpreter
-- both interpreters agree on semantics
-
-This is sometimes called:
-- **self-hosting**
-- **bootstrapping**
-- **the reflective threshold**
-
-In GEB terms, this is a **strange loop**:
-> the system contains a representation of itself
-> that is rich enough to execute itself.
+[Indicative]
 
 ---
 
-## v1.0 — Self-Hosting (Conceptual Completion)
+## Phase 4 — Interoperability and FFI
 
-Lumen is now:
-- defined in terms of itself
-- executable via itself
-- fully specified without reference to Rust semantics
+**Goal:** Treat the external ecosystem as a first-class resource.
 
-Rust becomes an *implementation detail*, not the definition.
+Rather than re-implementing large ecosystems, Lumen prioritizes **bridges**.
 
-This is not “singularity”.
-It is **closure**.
+### 4.1 Rust Interop
+- Calling Rust functions from Lumen
+- Safe value and error translation
+- Ownership and lifetime boundaries
 
-The language is now *expressed by itself*.
+### 4.2 Foreign Libraries
+- C ABI compatibility (where applicable)
+- Host-language bindings
+- Sandboxing and safety boundaries
 
----
+This phase enables access to:
+- High-performance native libraries
+- Existing numerical, crypto, and systems code
 
-## Notes on the GEB “Singularity” Moment
-
-In *Gödel, Escher, Bach*, this moment is not mystical.
-It occurs when:
-- a system can encode statements about itself
-- those statements are executable
-- the execution preserves meaning
-
-For programming languages, this moment is called:
-- **bootstrapping**
-- **meta-circular interpretation**
-- **reflective closure**
-
-It is not intelligence.
-It is not consciousness.
-
-It is **semantic self-reference without collapse**.
-
-That is the real achievement.
+[Hypothetical]
 
 ---
 
-## Final Principle
+## Phase 5 — Tooling and Ecosystem
 
-Lumen will never grow by adding power first.
+**Goal:** Support long-term growth without semantic erosion.
 
-It grows by:
-1. making meaning explicit
-2. freezing semantics
-3. allowing structure to emerge
-4. resisting cleverness
+### 5.1 Tooling
+- Formatter
+- Linter
+- Static analysis hooks
+- Test frameworks
 
-If a feature cannot be explained clearly,
-it does not belong.
+### 5.2 Documentation and Contracts
+- Behavior-driven documentation
+- Stability guarantees
+- Deprecation policies
+
+### 5.3 Package and Module System
+- Dependency resolution
+- Versioning semantics
+- Reproducible builds
+
+[Hypothetical]
+
+---
+
+## Guiding Principles
+
+- **Semantics before syntax**
+- **Contracts before convenience**
+- **Libraries are consequences, not prerequisites**
+- **Interoperability beats duplication**
+- **Stability is earned, not assumed**
+
+Lumen is designed to remain:
+- Reasonable for humans
+- Legible to AI systems
+- Resistant to semantic drift
+
+---
+
+## Non-Goals (Explicit)
+
+- Blind compatibility with Python or other languages
+- Premature standard library completeness
+- Implicit side effects
+- Semantics defined by implementation accident
 
 ---
 
