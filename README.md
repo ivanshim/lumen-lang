@@ -164,30 +164,9 @@ This design allows the framework to support multiple languages with different sy
 
 ---
 
-## Version History & Contributors
+## Version History
 
-This section records each public milestone of Lumen in chronological order.
-Each entry is intentionally self-contained so that it remains meaningful even if surrounding detail is trimmed in the future.
-
----
-
-### v0.0.1 · 2025-12-30 · Ivan Shim & GPT-5.2 · Initial working interpreter
-
-**Ivan Shim**
-
-* Language design, architecture, and implementation
-
-**GPT-5.2**
-
-* Pair programming, debugging, parser design, documentation
-
-**Key changes**
-
-* Implemented a full parse → AST → evaluate execution pipeline
-* Added indentation-based block parsing
-* Implemented `while` loops and `if / else` conditionals
-* Added variables, arithmetic, comparisons, and `print()`
-* Delivered the first complete, executable Lumen program
+For a detailed version history and contributor credits, see [VERSION_HISTORY.md](VERSION_HISTORY.md).
 
 ---
 
