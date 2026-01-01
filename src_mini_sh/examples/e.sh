@@ -12,4 +12,4 @@ while ($iterations < $max_iter) {
     iterations = $iterations + 1;
 }
 
-print($sum);
+echo($sum);

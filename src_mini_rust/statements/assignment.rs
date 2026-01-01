@@ -39,9 +39,8 @@ impl StmtHandler for AssignStmtHandler {
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
         let name = parser.advance().lexeme;
 
-        match parser.advance() {
-            _ if parser.peek().lexeme == EQUALS => {}
-            _ => return Err(err_at(parser, "Expected '=' in assignment")),
+        if parser.advance().lexeme != EQUALS {
+            return Err(err_at(parser, "Expected '=' in assignment"));
         }
 
         let expr = parser.parse_expr()?;

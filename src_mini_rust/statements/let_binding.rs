@@ -2,7 +2,7 @@
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::kernel::registry::{LumenResult, Registry, StmtHandler};
+use crate::kernel::registry::{err_at, LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::{Env, Value};
 
 // --------------------
@@ -38,9 +38,8 @@ impl StmtHandler for LetStmtHandler {
 
         let name = parser.advance().lexeme;
 
-        match parser.advance() {
-            _ if parser.peek().lexeme == EQUALS => {}
-            _ => return Err("Expected '=' after identifier".into()),
+        if parser.advance().lexeme != EQUALS {
+            return Err(err_at(parser, "Expected '=' after identifier"));
         }
 
         let expr = parser.parse_expr()?;
