@@ -5,7 +5,7 @@ LET n = 1;
 LET iterations = 0;
 LET max_iter = 100;
 
-while (iterations < max_iter) {
+WHILE (iterations < max_iter) {
     LET term = term / n;
     LET sum = sum + term;
     LET n = n + 1;
