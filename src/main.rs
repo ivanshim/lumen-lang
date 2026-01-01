@@ -1,4 +1,4 @@
-// lumen_kernel/main.rs
+// src/main.rs
 // Language-agnostic interpreter kernel
 // Supports multiple language implementations
 
