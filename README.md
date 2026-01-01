@@ -3,7 +3,7 @@ For language philosophy and evolution constraints, see DESIGN.md.
 # Lumen-Lang
 
 Lumen is a minimal, experimental programming language and interpreter.
-This repository contains **Lumen v0.0.1**, a working proof-of-concept implemented in Rust.
+This repository contains **Lumen v0.0.3**, a multi-language kernel with support for 7 different language implementations.
 
 The goal of Lumen is not to be a production language, but to explore language design, parsing, and execution semantics in the smallest possible form that still feels *real*.
 
@@ -110,57 +110,54 @@ cargo run src_lumen/examples/loop.lm
 
 ```
 lumen-lang/
-├── src/                           # Language-agnostic framework
-│   ├── framework/
-│   │   ├── lexer.rs              # Pure tokenization
-│   │   ├── parser.rs             # Generic dispatch parser
-│   │   ├── registry.rs           # Token/operator registration
-│   │   ├── ast.rs                # Generic AST traits
-│   │   └── runtime/              # Evaluation engine
-│   │       ├── env.rs            # Scoping and variables
-│   │       └── value.rs          # Runtime values
-│   └── main.rs                   # Entry point
-├── src_lumen/                     # Lumen language implementation
-│   ├── dispatcher.rs             # Lumen handler registration
+├── src/                                # Lumen kernel (language-agnostic framework)
+│   ├── kernel/                         # Core framework
+│   │   ├── lexer.rs                    # Pure tokenization
+│   │   ├── parser.rs                   # Generic dispatch parser
+│   │   ├── registry.rs                 # Token/operator registration
+│   │   ├── ast.rs                      # Generic AST traits
+│   │   └── runtime/                    # Evaluation engine
+│   │       ├── env.rs                  # Scoping and variables
+│   │       └── value.rs                # Runtime values
+│   └── main.rs                         # Entry point & language dispatcher
+├── src_lumen/                          # Lumen language implementation
+│   ├── src_lumen.rs                    # Dispatcher
 │   ├── structure/
-│   │   └── structural.rs         # Indentation, newlines, block parsing
-│   ├── statements/               # Lumen statement implementations
-│   │   ├── assignment.rs
-│   │   ├── if_else.rs
-│   │   ├── print.rs
-│   │   └── while_loop.rs
-│   ├── expressions/              # Lumen expression implementations
-│   │   ├── arithmetic.rs
-│   │   ├── comparison.rs
-│   │   ├── grouping.rs
-│   │   └── identifier.rs
-│   ├── examples/
-│   │   ├── loop.lm
-│   │   ├── fibonacci.lm
-│   │   └── demo_v0_1.lm
-│   └── docs/                     # Lumen design documentation
-│       ├── DESIGN.md
-│       ├── BNF.md
-│       ├── ROADMAP.md
+│   │   └── structural.rs               # Indentation, newlines, block parsing
+│   ├── statements/ & expressions/      # Lumen statement/expression handlers
+│   └── examples/                       # Example programs
+├── src_mini_rust/                      # Mini-Rust implementation
+├── src_mini_php/                       # Mini-PHP implementation
+├── src_mini_sh/                        # Mini-Shell implementation
+├── src_mini_c/                         # Mini-C implementation
+├── src_mini_apple_pascal/              # Mini-Pascal implementation
+├── src_mini_apple_basic/               # Mini-Basic implementation
+├── test_all.sh                         # Comprehensive test suite
 ├── Cargo.toml
 └── README.md
 ```
 
 ### Architecture Philosophy
 
-The codebase is split into two layers:
+The codebase is split into three layers:
 
-1. **Framework (`src/framework/`)**: Language-agnostic infrastructure
+1. **Kernel (`src/kernel/`)**: Language-agnostic infrastructure
    - Pure tokenization, AST representation, evaluation
-   - Zero knowledge of language-specific syntax (colons, indentation, newlines, etc.)
+   - Zero knowledge of language-specific syntax
    - Provides trait-based dispatch for extensible parsing and evaluation
 
-2. **Language Module (`src_lumen/`)**: Lumen-specific implementation
+2. **Language Modules (`src_*/`)**: Language-specific implementations
+   - Each module implements one language variant
    - Defines tokens, operators, and syntax rules
-   - Implements indentation-based block parsing
-   - Registers handlers for all Lumen statements and expressions
+   - Registers handlers for all statements and expressions
+   - Includes language-specific example programs
 
-This design allows the framework to support multiple languages with different syntaxes and semantics.
+3. **Dispatcher (`src/main.rs`)**: Multi-language runtime
+   - Detects language from `--lang` parameter (priority 1) or file extension (priority 2)
+   - Routes program to appropriate language module
+   - Supports simultaneous operation of all 7 languages
+
+This design allows the kernel to support multiple languages with different syntaxes and semantics, making it easy to add new language implementations without modifying the core framework.
 
 ---
 
@@ -168,6 +165,38 @@ This design allows the framework to support multiple languages with different sy
 
 This section records each public milestone of Lumen in chronological order.
 Each entry is intentionally self-contained so that it remains meaningful even if surrounding detail is trimmed in the future.
+
+---
+
+### v0.0.3 · 2026-01-01 · Ivan Shim & Claude Code Haiku 4.5 · Lumen multi-language kernel
+
+**Ivan Shim**
+
+* Feature specification and direction
+
+**Claude Code Haiku 4.5**
+
+* Implementation of 6 additional language modules, dual language selection system, comprehensive test suite
+
+**Key changes**
+
+* Renamed framework module to `kernel` (language-agnostic kernel)
+* Added 6 new language implementations:
+  - Mini-Rust: C-style operators (`&&`, `||`, `!`), `let` keyword, semicolons, braces
+  - Mini-PHP: PHP-style variables (`$var`), `echo` output, `and`/`or` keywords
+  - Mini-Shell: Shell-style variables (`$var` in expressions), sh-like syntax
+  - Mini-C: C-style operators and `printf` output, curly braces
+  - Mini-Pascal: Pascal-style `:=` assignments, `BEGIN...END` blocks, `writeln` output
+  - Mini-Basic: BASIC-style `LET` and `PRINT` keywords (uppercase)
+* Implemented dual language selection:
+  - Explicit `--lang` parameter (priority 1)
+  - File extension detection (priority 2)
+  - Examples: `.rs` → mini-rust, `.php` → mini-php, `.sh` → mini-sh, `.c` → mini-c, `.p` → mini-pascal, `.basic` → mini-basic
+* Renamed `demo_v0_1` examples to `demo` across all language modules
+* Created mathematical examples (pi and e computation) for all 7 languages
+* Updated loop examples: fibonacci (20 → 10 iterations), loop (5 → 10 iterations)
+* Built comprehensive test suite (`test_all.sh`) with auto-discovery of examples
+* Fixed EOF token handling for all mini-language modules
 
 ---
 
