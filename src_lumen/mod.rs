@@ -2,6 +2,7 @@
 // Lumen language module
 // Complete language definition for Lumen
 
+mod numeric;
 pub mod expressions;
 pub mod statements;
 pub mod structure;
