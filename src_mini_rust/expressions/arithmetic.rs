@@ -1,7 +1,6 @@
 // Arithmetic operators: + - * / % and unary minus
 
 use crate::kernel::ast::ExprNode;
-use crate::kernel::lexer::Token;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{ExprInfix, ExprPrefix, LumenResult, Precedence, Registry};
 use crate::kernel::runtime::{Env, Value};
@@ -11,11 +10,11 @@ use crate::src_mini_rust::numeric;
 // Token definitions
 // --------------------
 
-pub const PLUS: &str = "PLUS";
-pub const MINUS: &str = "MINUS";
-pub const STAR: &str = "STAR";
-pub const SLASH: &str = "SLASH";
-pub const PERCENT: &str = "PERCENT";
+pub const PLUS: &str = "+";
+pub const MINUS: &str = "-";
+pub const STAR: &str = "*";
+pub const SLASH: &str = "/";
+pub const PERCENT: &str = "%";
 
 #[derive(Debug)]
 struct UnaryMinusExpr {
@@ -38,7 +37,7 @@ pub struct UnaryMinusPrefix;
 
 impl ExprPrefix for UnaryMinusPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(MINUS))
+        parser.peek().lexeme == MINUS
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
@@ -90,7 +89,7 @@ impl ArithmeticInfix {
 
 impl ExprInfix for ArithmeticInfix {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(kind) if *kind == self.op)
+        parser.peek().lexeme == self.op
     }
 
     fn precedence(&self) -> Precedence {
@@ -109,13 +108,8 @@ impl ExprInfix for ArithmeticInfix {
 // --------------------
 
 pub fn register(reg: &mut Registry) {
+    // No token registration needed - kernel handles all segmentation
     // Register tokens
-    reg.tokens.add_single_char('+', PLUS);
-    reg.tokens.add_single_char('-', MINUS);
-    reg.tokens.add_single_char('*', STAR);
-    reg.tokens.add_single_char('/', SLASH);
-    reg.tokens.add_single_char('%', PERCENT);
-
     // Register handlers
     reg.register_prefix(Box::new(UnaryMinusPrefix));
     reg.register_infix(Box::new(ArithmeticInfix::new(PLUS, Precedence::Term)));

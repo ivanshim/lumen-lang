@@ -1,27 +1,15 @@
 // Comparison operators: == != < > <= >=
 
 use crate::kernel::ast::ExprNode;
-use crate::kernel::lexer::Token;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{ExprInfix, LumenResult, Precedence, Registry};
 use crate::kernel::runtime::{Env, Value};
 use crate::src_mini_rust::numeric;
 
-// --------------------
-// Token definitions
-// --------------------
-
-pub const EQ_EQ: &str = "EQ_EQ";
-pub const NOT_EQ: &str = "NOT_EQ";
-pub const LT: &str = "LT";
-pub const GT: &str = "GT";
-pub const LT_EQ: &str = "LT_EQ";
-pub const GT_EQ: &str = "GT_EQ";
-
 #[derive(Debug)]
 struct ComparisonExpr {
     left: Box<dyn ExprNode>,
-    op: &'static str,
+    op: String,
     right: Box<dyn ExprNode>,
 }
 
@@ -32,30 +20,22 @@ impl ExprNode for ComparisonExpr {
 
         match (l, r) {
             (Value::Number(a), Value::Number(b)) => {
-                let result = match self.op {
-                    EQ_EQ => {
+                let result = match self.op.as_str() {
+                    "==" => {
                         let an = numeric::parse_number(&a)?;
                         let bn = numeric::parse_number(&b)?;
                         an == bn
                     }
-                    NOT_EQ => {
+                    "!=" => {
                         let an = numeric::parse_number(&a)?;
                         let bn = numeric::parse_number(&b)?;
                         an != bn
                     }
-                    LT => numeric::compare_lt(&a, &b)?,
-                    GT => numeric::compare_gt(&a, &b)?,
-                    LT_EQ => numeric::compare_le(&a, &b)?,
-                    GT_EQ => numeric::compare_ge(&a, &b)?,
+                    "<" => numeric::compare_lt(&a, &b)?,
+                    ">" => numeric::compare_gt(&a, &b)?,
+                    "<=" => numeric::compare_le(&a, &b)?,
+                    ">=" => numeric::compare_ge(&a, &b)?,
                     _ => return Err("Invalid comparison operator".into()),
-                };
-                Ok(Value::Bool(result))
-            }
-            (Value::Bool(a), Value::Bool(b)) => {
-                let result = match self.op {
-                    EQ_EQ => a == b,
-                    NOT_EQ => a != b,
-                    _ => return Err("Invalid comparison operator for booleans".into()),
                 };
                 Ok(Value::Bool(result))
             }
@@ -65,18 +45,18 @@ impl ExprNode for ComparisonExpr {
 }
 
 pub struct ComparisonInfix {
-    op: &'static str,
+    op: String,
 }
 
 impl ComparisonInfix {
-    pub fn new(op: &'static str) -> Self {
-        Self { op }
+    pub fn new(op: &str) -> Self {
+        Self { op: op.to_string() }
     }
 }
 
 impl ExprInfix for ComparisonInfix {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(kind) if *kind == self.op)
+        parser.peek().lexeme == self.op
     }
 
     fn precedence(&self) -> Precedence {
@@ -90,7 +70,7 @@ impl ExprInfix for ComparisonInfix {
     ) -> LumenResult<Box<dyn ExprNode>> {
         parser.advance(); // consume operator
         let right = parser.parse_expr_prec(self.precedence() + 1)?;
-        Ok(Box::new(ComparisonExpr { left, op: self.op, right }))
+        Ok(Box::new(ComparisonExpr { left, op: self.op.clone(), right }))
     }
 }
 
@@ -99,19 +79,12 @@ impl ExprInfix for ComparisonInfix {
 // --------------------
 
 pub fn register(reg: &mut Registry) {
-    // Register tokens
-    reg.tokens.add_two_char("==", EQ_EQ);
-    reg.tokens.add_two_char("!=", NOT_EQ);
-    reg.tokens.add_two_char("<=", LT_EQ);
-    reg.tokens.add_two_char(">=", GT_EQ);
-    reg.tokens.add_single_char('<', LT);
-    reg.tokens.add_single_char('>', GT);
-
+    // No token registration needed - kernel handles all segmentation
     // Register handlers
-    reg.register_infix(Box::new(ComparisonInfix::new(EQ_EQ)));
-    reg.register_infix(Box::new(ComparisonInfix::new(NOT_EQ)));
-    reg.register_infix(Box::new(ComparisonInfix::new(LT)));
-    reg.register_infix(Box::new(ComparisonInfix::new(GT)));
-    reg.register_infix(Box::new(ComparisonInfix::new(LT_EQ)));
-    reg.register_infix(Box::new(ComparisonInfix::new(GT_EQ)));
+    reg.register_infix(Box::new(ComparisonInfix::new("==")));
+    reg.register_infix(Box::new(ComparisonInfix::new("!=")));
+    reg.register_infix(Box::new(ComparisonInfix::new("<")));
+    reg.register_infix(Box::new(ComparisonInfix::new(">")));
+    reg.register_infix(Box::new(ComparisonInfix::new("<=")));
+    reg.register_infix(Box::new(ComparisonInfix::new(">=")));
 }

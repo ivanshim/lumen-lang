@@ -3,7 +3,6 @@
 // break statement
 
 use crate::kernel::ast::{Control, StmtNode};
-use crate::kernel::lexer::Token;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::Env;
@@ -21,7 +20,7 @@ pub struct BreakStmtHandler;
 
 impl StmtHandler for BreakStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Ident(s) if s == "break")
+        parser.peek().lexeme == "break"
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
@@ -35,8 +34,7 @@ impl StmtHandler for BreakStmtHandler {
 // --------------------
 
 pub fn register(reg: &mut Registry) {
-    // No tokens to register (uses "break" as identifier)
-
+    // No tokens to register (uses "break" keyword registered in dispatcher)
     // Register handlers
     reg.register_stmt(Box::new(BreakStmtHandler));
 }

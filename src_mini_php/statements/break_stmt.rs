@@ -1,12 +1,11 @@
 // Mini-PHP: break statement
 
 use crate::kernel::ast::{Control, StmtNode};
-use crate::kernel::lexer::Token;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::Env;
 
-pub const BREAK: &str = "BREAK";
+pub const BREAK: &str = "break";
 
 #[derive(Debug)]
 struct BreakStmt;
@@ -21,7 +20,7 @@ pub struct BreakStmtHandler;
 
 impl StmtHandler for BreakStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(BREAK))
+        parser.peek().lexeme == BREAK
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
@@ -30,7 +29,5 @@ impl StmtHandler for BreakStmtHandler {
     }
 }
 
-pub fn register(reg: &mut Registry) {
-    reg.tokens.add_keyword("break", BREAK);
-    reg.register_stmt(Box::new(BreakStmtHandler));
+pub fn register(reg: &mut Registry) {    reg.register_stmt(Box::new(BreakStmtHandler));
 }

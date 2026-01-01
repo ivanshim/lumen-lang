@@ -1,13 +1,12 @@
 // print!() statement for mini-rust
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
-use crate::kernel::lexer::Token;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::Env;
 use crate::src_mini_rust::structure::structural::{LPAREN, RPAREN};
 
-pub const PRINT: &str = "PRINT";
+pub const PRINT: &str = "print";
 
 #[derive(Debug)]
 struct PrintStmt {
@@ -28,7 +27,7 @@ impl StmtHandler for PrintStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
         matches!(
             parser.peek(),
-            Token::Feature(PRINT)
+            _ if parser.peek().lexeme == PRINT
         )
     }
 
@@ -36,17 +35,15 @@ impl StmtHandler for PrintStmtHandler {
         parser.advance(); // consume 'print!'
 
         // expect '('
-        match parser.advance() {
-            Token::Feature(k) if k == LPAREN => {}
-            _ => return Err("Expected '(' after print!".into()),
+        if parser.advance().lexeme != LPAREN {
+            return Err("Expected '(' after print!".into());
         }
 
         let expr = parser.parse_expr()?;
 
         // expect ')'
-        match parser.advance() {
-            Token::Feature(k) if k == RPAREN => {}
-            _ => return Err("Expected ')' after expression".into()),
+        if parser.advance().lexeme != RPAREN {
+            return Err("Expected ')' after expression".into());
         }
 
         Ok(Box::new(PrintStmt { expr }))
@@ -58,9 +55,8 @@ impl StmtHandler for PrintStmtHandler {
 // --------------------
 
 pub fn register(reg: &mut Registry) {
+    // No token registration needed - kernel handles all segmentation
     // Register tokens
-    reg.tokens.add_keyword("print", PRINT);
-
     // Register handlers
     reg.register_stmt(Box::new(PrintStmtHandler));
 }

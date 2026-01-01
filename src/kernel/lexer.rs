@@ -1,25 +1,26 @@
 // src/kernel/lexer.rs
 //
-// Pure lexical analysis - kernel level.
-// No indentation handling. No language assumptions.
-// Converts source text -> tokens (strings, numbers, identifiers, operators).
-// Language modules handle structural tokens (INDENT/DEDENT, NEWLINE, EOF, parens, etc.)
+// Pure lossless ASCII segmentation - kernel level.
+// No semantic token classification. No language assumptions.
+// Converts source text -> tokens (raw lexeme strings with position info).
+// Language modules handle all interpretation of lexemes.
 //
-// NOTE: Number tokens store raw string representation.
-// Language modules are responsible for parsing and interpreting numeric values.
+// ARCHITECTURE:
+// - Token is just { lexeme: String } - no semantic categories
+// - Lexer performs maximal-munch segmentation using language-provided multi-char sequences
+// - All semantic interpretation (keywords, operators, types) happens in language layer
 
 use crate::kernel::registry::{LumenResult, TokenRegistry};
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Token {
-    // Data-carrying tokens
-    Ident(String),
-    Number(String),      // Raw string representation - kernel is agnostic to numeric type
-    String(String),
+pub struct Token {
+    pub lexeme: String,
+}
 
-    // ALL other tokens (operators, keywords, structural elements)
-    // are defined by modules as &'static str constants
-    Feature(&'static str),
+impl Token {
+    pub fn new(lexeme: String) -> Self {
+        Self { lexeme }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -35,8 +36,9 @@ impl SpannedToken {
     }
 }
 
-/// Tokenize source code without any indentation or structural processing.
-/// Language modules are responsible for adding INDENT/DEDENT/NEWLINE/EOF tokens.
+/// Tokenize source code using maximal-munch segmentation.
+/// Language modules provide multi-char sequences via token_reg.
+/// The lexer has NO semantic knowledge - it just segments the text.
 pub fn lex(source: &str, token_reg: &TokenRegistry) -> LumenResult<Vec<SpannedToken>> {
     let mut out = Vec::new();
     let mut line_no = 1usize;
@@ -56,7 +58,7 @@ fn lex_line(s: &str, line: usize, base_col: usize, token_reg: &TokenRegistry, ou
     while i < bytes.len() {
         let col = base_col + i;
 
-        // whitespace (skip)
+        // whitespace (skip but track for position)
         if bytes[i].is_ascii_whitespace() {
             i += 1;
             continue;
@@ -64,17 +66,17 @@ fn lex_line(s: &str, line: usize, base_col: usize, token_reg: &TokenRegistry, ou
 
         // strings: "..."
         if bytes[i] == b'"' {
-            i += 1;
             let start = i;
+            i += 1;
             while i < bytes.len() && bytes[i] != b'"' {
                 i += 1;
             }
             if i >= bytes.len() {
                 return Err(format!("Unterminated string at line {line}"));
             }
-            let val = &s[start..i];
-            i += 1;
-            out.push(SpannedToken::new(Token::String(val.to_string()), line, col));
+            i += 1; // include closing quote
+            let lexeme = s[start..i].to_string();
+            out.push(SpannedToken::new(Token::new(lexeme), line, col));
             continue;
         }
 
@@ -90,41 +92,48 @@ fn lex_line(s: &str, line: usize, base_col: usize, token_reg: &TokenRegistry, ou
                     i += 1;
                 }
             }
-            let num_str = s[start..i].to_string();
-            out.push(SpannedToken::new(Token::Number(num_str), line, col));
+            let lexeme = s[start..i].to_string();
+            out.push(SpannedToken::new(Token::new(lexeme), line, col));
             continue;
         }
 
-        // identifiers / keywords
+        // identifiers / keywords (maximal-munch for word-like sequences)
         if is_word_start(bytes[i]) {
             let start = i;
             i += 1;
             while i < bytes.len() && is_word_continue(bytes[i]) {
                 i += 1;
             }
-            let word = &s[start..i];
-            let tok = token_reg.lookup_keyword(word)
-                .unwrap_or_else(|| Token::Ident(word.to_string()));
-            out.push(SpannedToken::new(tok, line, col));
+            let lexeme = s[start..i].to_string();
+            out.push(SpannedToken::new(Token::new(lexeme), line, col));
             continue;
         }
 
-        // two-char operators
-        if i + 1 < bytes.len() {
-            let two = &s[i..i + 2];
-            if let Some(tok) = token_reg.lookup_two_char(two) {
-                out.push(SpannedToken::new(tok, line, col));
-                i += 2;
-                continue;
+        // multi-char sequences and single-char tokens
+        // Try maximal-munch using language-provided multi-char lexemes
+        let remaining = &s[i..];
+        let mut matched = false;
+
+        // Try multi-char sequences in descending length order
+        for &multichar in token_reg.multichar_lexemes() {
+            if remaining.starts_with(multichar) {
+                let lexeme = multichar.to_string();
+                out.push(SpannedToken::new(Token::new(lexeme), line, col));
+                i += multichar.len();
+                matched = true;
+                break;
             }
         }
 
-        // single-char operators / punctuation
-        let ch = bytes[i] as char;
+        if matched {
+            continue;
+        }
 
-        // Try to lookup operator in registry (no hardcoded tokens)
-        if let Some(t) = token_reg.lookup_single_char(ch) {
-            out.push(SpannedToken::new(t, line, col));
+        // No multi-char match, emit single character
+        let ch = bytes[i] as char;
+        if ch.is_ascii_graphic() || ch.is_ascii_punctuation() {
+            let lexeme = ch.to_string();
+            out.push(SpannedToken::new(Token::new(lexeme), line, col));
             i += 1;
             continue;
         }

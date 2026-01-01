@@ -4,17 +4,10 @@
 //     <block>
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
-use crate::kernel::lexer::Token;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::Env;
 use crate::src_lumen::structure::structural;
-
-// --------------------
-// Token definitions
-// --------------------
-
-pub const WHILE: &str = "WHILE";
 
 #[derive(Debug)]
 struct WhileStmt {
@@ -48,7 +41,7 @@ pub struct WhileStmtHandler;
 
 impl StmtHandler for WhileStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(WHILE))
+        parser.peek().lexeme == "while"
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
@@ -69,9 +62,7 @@ impl StmtHandler for WhileStmtHandler {
 // --------------------
 
 pub fn register(reg: &mut Registry) {
-    // Register tokens
-    reg.tokens.add_keyword("while", WHILE);
-
+    // No tokens to register (uses "while" keyword registered in dispatcher)
     // Register handlers
     reg.register_stmt(Box::new(WhileStmtHandler));
 }

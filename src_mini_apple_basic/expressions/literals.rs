@@ -1,6 +1,5 @@
 // Literals
 use crate::kernel::ast::ExprNode;
-use crate::kernel::lexer::Token;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{ExprPrefix, LumenResult, Registry};
 use crate::kernel::runtime::{Env, Value};
@@ -19,13 +18,11 @@ impl ExprNode for NumberLiteral {
 pub struct NumberLiteralPrefix;
 impl ExprPrefix for NumberLiteralPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Number(_))
+        parser.peek().lexeme.chars().next().map_or(false, |c| c.is_ascii_digit())
     }
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
-        match parser.advance() {
-            Token::Number(s) => Ok(Box::new(NumberLiteral { value: s })),
-            _ => unreachable!(),
-        }
+        let value = parser.advance().lexeme;
+        Ok(Box::new(NumberLiteral { value }))
     }
 }
 
@@ -40,20 +37,14 @@ impl ExprNode for BoolLiteral {
 pub struct BoolLiteralPrefix;
 impl ExprPrefix for BoolLiteralPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(TRUE) | Token::Feature(FALSE))
+        (parser.peek().lexeme == "TRUE" || parser.peek().lexeme == "FALSE")
     }
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
-        match parser.advance() {
-            Token::Feature(TRUE) => Ok(Box::new(BoolLiteral { value: true })),
-            Token::Feature(FALSE) => Ok(Box::new(BoolLiteral { value: false })),
-            _ => unreachable!(),
-        }
+        let value = parser.advance().lexeme == "TRUE";
+        Ok(Box::new(BoolLiteral { value }))
     }
 }
 
-pub fn register(reg: &mut Registry) {
-    reg.tokens.add_keyword("true", TRUE);
-    reg.tokens.add_keyword("false", FALSE);
-    reg.register_prefix(Box::new(NumberLiteralPrefix));
+pub fn register(reg: &mut Registry) {    reg.register_prefix(Box::new(NumberLiteralPrefix));
     reg.register_prefix(Box::new(BoolLiteralPrefix));
 }

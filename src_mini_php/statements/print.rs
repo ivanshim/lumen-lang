@@ -7,7 +7,7 @@ use crate::kernel::registry::{err_at, LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::{Env, Value};
 use crate::src_mini_php::structure::structural::{LPAREN, RPAREN};
 
-pub const ECHO: &str = "ECHO";
+pub const ECHO: &str = "echo";
 
 #[derive(Debug)]
 struct EchoStmt {
@@ -29,25 +29,21 @@ pub struct EchoStmtHandler;
 
 impl StmtHandler for EchoStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(ECHO))
+        parser.peek().lexeme == ECHO
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'echo'
-        match parser.advance() {
-            Token::Feature(LPAREN) => {}
-            _ => return Err(err_at(parser, "Expected '(' after 'echo'")),
+        if parser.advance().lexeme != LPAREN {
+            return Err(err_at(parser, "Expected '(' after 'echo'"));
         }
         let expr = parser.parse_expr()?;
-        match parser.advance() {
-            Token::Feature(RPAREN) => {}
-            _ => return Err(err_at(parser, "Expected ')'")),
+        if parser.advance().lexeme != RPAREN {
+            return Err(err_at(parser, "Expected ')'"));
         }
         Ok(Box::new(EchoStmt { expr }))
     }
 }
 
-pub fn register(reg: &mut Registry) {
-    reg.tokens.add_keyword("echo", ECHO);
-    reg.register_stmt(Box::new(EchoStmtHandler));
+pub fn register(reg: &mut Registry) {    reg.register_stmt(Box::new(EchoStmtHandler));
 }

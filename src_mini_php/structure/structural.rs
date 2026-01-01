@@ -13,14 +13,14 @@ use crate::kernel::registry::{err_at, LumenResult, Registry};
 // --------------------
 
 // Grouping
-pub const LPAREN: &str = "LPAREN";
-pub const RPAREN: &str = "RPAREN";
-pub const LBRACE: &str = "LBRACE";
-pub const RBRACE: &str = "RBRACE";
+pub const LPAREN: &str = "(";
+pub const RPAREN: &str = ")";
+pub const LBRACE: &str = "{";
+pub const RBRACE: &str = "}";
 
 // Structural
-pub const SEMICOLON: &str = "SEMICOLON";
-pub const DOLLAR: &str = "DOLLAR";
+pub const SEMICOLON: &str = ";";
+pub const DOLLAR: &str = "$";
 
 // End of file
 pub const EOF: &str = "EOF";
@@ -31,22 +31,21 @@ pub const EOF: &str = "EOF";
 
 /// Consume optional semicolons
 pub fn consume_semicolons(parser: &mut Parser) {
-    while matches!(parser.peek(), Token::Feature(k) if *k == SEMICOLON) {
+    while parser.peek().lexeme == SEMICOLON {
         parser.advance();
     }
 }
 
 /// Parse a block enclosed in curly braces
 pub fn parse_block(parser: &mut Parser) -> LumenResult<Vec<Box<dyn StmtNode>>> {
-    match parser.advance() {
-        Token::Feature(k) if k == LBRACE => {}
-        _ => return Err(err_at(parser, "Expected '{'")),
+    if parser.advance().lexeme != LBRACE {
+        return Err(err_at(parser, "Expected '{'"));
     }
 
     let mut statements = Vec::new();
 
     consume_semicolons(parser);
-    while !matches!(parser.peek(), Token::Feature(k) if *k == RBRACE || *k == EOF) {
+    while !(parser.peek().lexeme == RBRACE || parser.peek().lexeme == EOF) {
         let stmt = parser
             .reg
             .find_stmt(parser)
@@ -57,9 +56,8 @@ pub fn parse_block(parser: &mut Parser) -> LumenResult<Vec<Box<dyn StmtNode>>> {
         consume_semicolons(parser);
     }
 
-    match parser.advance() {
-        Token::Feature(k) if k == RBRACE => {}
-        _ => return Err(err_at(parser, "Expected '}'")),
+    if parser.advance().lexeme != RBRACE {
+        return Err(err_at(parser, "Expected '}'"));
     }
 
     Ok(statements)
@@ -70,7 +68,7 @@ pub fn parse_program(parser: &mut Parser) -> LumenResult<Program> {
     let mut statements = Vec::new();
 
     consume_semicolons(parser);
-    while !matches!(parser.peek(), Token::Feature(k) if *k == EOF) {
+    while parser.peek().lexeme != EOF {
         let stmt = parser
             .reg
             .find_stmt(parser)
@@ -89,7 +87,7 @@ pub fn process_tokens(raw_tokens: Vec<crate::kernel::lexer::SpannedToken>) -> Lu
     let mut tokens = raw_tokens;
     let line = tokens.last().map(|t| t.line).unwrap_or(1);
     tokens.push(crate::kernel::lexer::SpannedToken {
-        tok: Token::Feature(EOF),
+        tok: Token::new(EOF.to_string()),
         line,
         col: 1,
     });
@@ -100,12 +98,6 @@ pub fn process_tokens(raw_tokens: Vec<crate::kernel::lexer::SpannedToken>) -> Lu
 // Registration
 // --------------------
 
-pub fn register(reg: &mut Registry) {
-    // Register PHP's operator tokens
-    reg.tokens.add_single_char('(', LPAREN);
-    reg.tokens.add_single_char(')', RPAREN);
-    reg.tokens.add_single_char('{', LBRACE);
-    reg.tokens.add_single_char('}', RBRACE);
-    reg.tokens.add_single_char(';', SEMICOLON);
-    reg.tokens.add_single_char('$', DOLLAR);
+pub fn register(_reg: &mut Registry) {
+    // No token registration needed - kernel handles all segmentation
 }

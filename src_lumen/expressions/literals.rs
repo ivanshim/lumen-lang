@@ -1,17 +1,9 @@
 // Number and boolean literals
 
 use crate::kernel::ast::ExprNode;
-use crate::kernel::lexer::Token;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{ExprPrefix, LumenResult, Registry};
 use crate::kernel::runtime::{Env, Value};
-
-// --------------------
-// Token definitions
-// --------------------
-
-pub const TRUE: &str = "TRUE";
-pub const FALSE: &str = "FALSE";
 
 #[derive(Debug)]
 pub struct NumberLiteral {
@@ -28,14 +20,13 @@ pub struct NumberLiteralPrefix;
 
 impl ExprPrefix for NumberLiteralPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Number(_))
+        // Check if lexeme starts with a digit
+        parser.peek().lexeme.chars().next().map_or(false, |c| c.is_ascii_digit())
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
-        match parser.advance() {
-            Token::Number(s) => Ok(Box::new(NumberLiteral { value: s })),
-            _ => unreachable!(),
-        }
+        let lexeme = parser.advance().lexeme;
+        Ok(Box::new(NumberLiteral { value: lexeme }))
     }
 }
 
@@ -56,15 +47,14 @@ pub struct BoolLiteralPrefix;
 
 impl ExprPrefix for BoolLiteralPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(TRUE) | Token::Feature(FALSE))
+        let lex = &parser.peek().lexeme;
+        lex == "true" || lex == "false"
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
-        match parser.advance() {
-            Token::Feature(TRUE) => Ok(Box::new(BoolLiteral { value: true })),
-            Token::Feature(FALSE) => Ok(Box::new(BoolLiteral { value: false })),
-            _ => unreachable!(),
-        }
+        let lexeme = parser.advance().lexeme;
+        let value = lexeme == "true";
+        Ok(Box::new(BoolLiteral { value }))
     }
 }
 
@@ -73,10 +63,7 @@ impl ExprPrefix for BoolLiteralPrefix {
 // --------------------
 
 pub fn register(reg: &mut Registry) {
-    // Register tokens
-    reg.tokens.add_keyword("true", TRUE);
-    reg.tokens.add_keyword("false", FALSE);
-
+    // No token registration needed - kernel handles all segmentation
     // Register handlers
     reg.register_prefix(Box::new(NumberLiteralPrefix));
     reg.register_prefix(Box::new(BoolLiteralPrefix));

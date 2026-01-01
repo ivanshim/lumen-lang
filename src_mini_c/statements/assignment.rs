@@ -5,7 +5,7 @@ use crate::kernel::parser::Parser;
 use crate::kernel::registry::{err_at, LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::{Env, Value};
 
-pub const ASSIGN: &str = "ASSIGN";
+pub const ASSIGN: &str = "=";
 
 #[derive(Debug)]
 struct AssignStmt {
@@ -23,24 +23,18 @@ impl StmtNode for AssignStmt {
 pub struct AssignStmtHandler;
 impl StmtHandler for AssignStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Ident(_))
-            && matches!(parser.peek_n(1), Some(Token::Feature(ASSIGN)))
+        parser.peek().lexeme.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_')
+            && parser.peek_n(1).map_or(false, |tok| tok.lexeme == ASSIGN)
     }
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
-        let name = match parser.advance() {
-            Token::Ident(s) => s,
-            _ => unreachable!(),
-        };
-        match parser.advance() {
-            Token::Feature(ASSIGN) => {}
-            _ => return Err(err_at(parser, "Expected '='")),
+        let name = parser.advance().lexeme;
+        if parser.advance().lexeme != ASSIGN {
+            return Err(err_at(parser, "Expected '='"));
         }
         let expr = parser.parse_expr()?;
         Ok(Box::new(AssignStmt { name, expr }))
     }
 }
 
-pub fn register(reg: &mut Registry) {
-    reg.tokens.add_single_char('=', ASSIGN);
-    reg.register_stmt(Box::new(AssignStmtHandler));
+pub fn register(reg: &mut Registry) {    reg.register_stmt(Box::new(AssignStmtHandler));
 }

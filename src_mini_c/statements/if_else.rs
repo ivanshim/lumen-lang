@@ -6,8 +6,8 @@ use crate::kernel::registry::{err_at, LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::Env;
 use crate::src_mini_c::structure::structural;
 
-pub const IF: &str = "IF";
-pub const ELSE: &str = "ELSE";
+pub const IF: &str = "if";
+pub const ELSE: &str = "else";
 
 #[derive(Debug)]
 struct IfStmt {
@@ -44,21 +44,19 @@ impl StmtNode for IfStmt {
 pub struct IfStmtHandler;
 impl StmtHandler for IfStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(IF))
+        parser.peek().lexeme == IF
     }
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'if'
-        match parser.advance() {
-            Token::Feature(structural::LPAREN) => {}
-            _ => return Err(err_at(parser, "Expected '(' after 'if'")),
+        if parser.advance().lexeme != structural::LPAREN {
+            return Err(err_at(parser, "Expected '(' after 'if'"));
         }
         let cond = parser.parse_expr()?;
-        match parser.advance() {
-            Token::Feature(structural::RPAREN) => {}
-            _ => return Err(err_at(parser, "Expected ')' after condition")),
+        if parser.advance().lexeme != structural::RPAREN {
+            return Err(err_at(parser, "Expected ')' after condition"));
         }
         let then_block = structural::parse_block(parser)?;
-        let else_block = if matches!(parser.peek(), Token::Feature(ELSE)) {
+        let else_block = if parser.peek().lexeme == ELSE {
             parser.advance();
             Some(structural::parse_block(parser)?)
         } else {
@@ -68,8 +66,5 @@ impl StmtHandler for IfStmtHandler {
     }
 }
 
-pub fn register(reg: &mut Registry) {
-    reg.tokens.add_keyword("if", IF);
-    reg.tokens.add_keyword("else", ELSE);
-    reg.register_stmt(Box::new(IfStmtHandler));
+pub fn register(reg: &mut Registry) {    reg.register_stmt(Box::new(IfStmtHandler));
 }

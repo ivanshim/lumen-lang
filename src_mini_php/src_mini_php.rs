@@ -11,6 +11,18 @@ use super::structure;
 
 /// Register all Mini-PHP language features
 pub fn register_all(registry: &mut Registry) {
+    // Register multi-character lexemes for maximal-munch segmentation
+    // The kernel lexer will use these for pure lossless ASCII segmentation
+    registry.tokens.set_multichar_lexemes(vec![
+        // Three-char operators (must come before two-char)
+        "===", "!==",
+        // Two-char operators
+        "==", "!=", "<=", ">=",
+        // Keywords (multi-char word sequences)
+        "and", "or", "not", "if", "else", "while", "break", "continue", "echo",
+        "true", "false",
+    ]);
+
     // Core syntax (structural tokens - braces, semicolons, etc.)
     structure::structural::register(registry);
 

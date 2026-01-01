@@ -6,7 +6,7 @@ use crate::kernel::registry::{err_at, LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::{Env, Value};
 use crate::src_mini_sh::structure::structural::{LPAREN, RPAREN};
 
-pub const PRINT: &str = "PRINT";
+pub const PRINT: &str = "echo";
 
 #[derive(Debug)]
 struct PrintStmt {
@@ -26,24 +26,20 @@ impl StmtNode for PrintStmt {
 pub struct PrintStmtHandler;
 impl StmtHandler for PrintStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(PRINT))
+        parser.peek().lexeme == PRINT
     }
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume keyword
-        match parser.advance() {
-            Token::Feature(LPAREN) => {}
-            _ => return Err(err_at(parser, "Expected '(' after 'print'")),
+        if parser.advance().lexeme != LPAREN {
+            return Err(err_at(parser, "Expected '(' after 'echo'"));
         }
         let expr = parser.parse_expr()?;
-        match parser.advance() {
-            Token::Feature(RPAREN) => {}
-            _ => return Err(err_at(parser, "Expected ')'")),
+        if parser.advance().lexeme != RPAREN {
+            return Err(err_at(parser, "Expected ')'"));
         }
         Ok(Box::new(PrintStmt { expr }))
     }
 }
 
-pub fn register(reg: &mut Registry) {
-    reg.tokens.add_keyword("print", PRINT);
-    reg.register_stmt(Box::new(PrintStmtHandler));
+pub fn register(reg: &mut Registry) {    reg.register_stmt(Box::new(PrintStmtHandler));
 }

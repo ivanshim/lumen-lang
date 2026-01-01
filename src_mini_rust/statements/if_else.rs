@@ -1,7 +1,6 @@
 // if / else statement for mini-rust
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
-use crate::kernel::lexer::Token;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::Env;
@@ -11,8 +10,8 @@ use crate::src_mini_rust::structure::structural;
 // Token definitions
 // --------------------
 
-pub const IF: &str = "IF";
-pub const ELSE: &str = "ELSE";
+pub const IF: &str = "if";
+pub const ELSE: &str = "else";
 
 #[derive(Debug)]
 struct IfStmt {
@@ -53,7 +52,7 @@ pub struct IfStmtHandler;
 
 impl StmtHandler for IfStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(parser.peek(), Token::Feature(IF))
+        parser.peek().lexeme == IF
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
@@ -64,7 +63,7 @@ impl StmtHandler for IfStmtHandler {
 
         structural::consume_newlines(parser);
 
-        let else_block = if matches!(parser.peek(), Token::Feature(ELSE)) {
+        let else_block = if parser.peek().lexeme == ELSE {
             parser.advance(); // consume 'else'
             Some(structural::parse_block(parser)?)
         } else {
@@ -84,10 +83,8 @@ impl StmtHandler for IfStmtHandler {
 // --------------------
 
 pub fn register(reg: &mut Registry) {
+    // No token registration needed - kernel handles all segmentation
     // Register tokens
-    reg.tokens.add_keyword("if", IF);
-    reg.tokens.add_keyword("else", ELSE);
-
     // Register handlers
     reg.register_stmt(Box::new(IfStmtHandler));
 }
