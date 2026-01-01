@@ -143,30 +143,4 @@ To add a new language (e.g., mini-Rust):
 
 The framework layer (src/framework/) needs NO changes.
 
-================================================================================
-REFACTORING NOTES
-================================================================================
 
-LEXER.rs:
-  Current: Has INDENT/DEDENT tokenization (Python-style)
-  Target: Should be purely language-agnostic
-  Action: Move indentation logic to language-specific modules
-          Lexer should only handle character→token conversion
-
-PARSER.rs:
-  Current: Generic but may have block-parsing assumptions
-  Target: Fully generic expression/statement parsing
-  Action: Review for language-specific assumptions
-          Ensure all syntax rules come from registry
-
-VALUE.rs:
-  Current: In framework/runtime/
-  Decision: Shared across languages OR language-specific?
-  Note: Currently shared for simplicity
-           Can be moved to language modules if needed
-
-DOCS & EXAMPLES:
-  Current: In project root
-  Target: Moved to src_lumen/ (language-specific)
-  Action: docs/ → src_lumen/docs/
-          examples/ → src_lumen/examples/
