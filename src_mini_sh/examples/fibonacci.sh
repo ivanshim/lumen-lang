@@ -3,7 +3,7 @@ b = 1;
 count = 0;
 
 while ($count < 10) {
-    print($a);
+    echo($a);
     next = $a + $b;
     a = $b;
     b = $next;

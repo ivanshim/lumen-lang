@@ -9,9 +9,9 @@ use crate::kernel::runtime::{Env, Value};
 // Token definitions
 // --------------------
 
-pub const AND: &str = "and";
-pub const OR: &str = "or";
-pub const NOT: &str = "not";
+pub const AND: &str = "&&";
+pub const OR: &str = "||";
+pub const NOT: &str = "!";
 
 #[derive(Debug)]
 struct LogicExpr {

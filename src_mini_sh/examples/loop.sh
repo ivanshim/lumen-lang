@@ -1,5 +1,5 @@
 x = 0;
 while ($x < 10) {
-    print($x);
+    echo($x);
     x = $x + 1;
 }

@@ -14,4 +14,4 @@ while ($iterations < $max_iter) {
     iterations = $iterations + 1;
 }
 
-print($pi);
+echo($pi);

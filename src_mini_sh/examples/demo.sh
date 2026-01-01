@@ -1,12 +1,12 @@
-print(1 + 2 * 3);
+echo(1 + 2 * 3);
 
 x = 0;
 y = 5;
 
 if ($x < $y and $y == 5) {
-    print(100);
+    echo(100);
 } else {
-    print(200);
+    echo(200);
 }
 
 i = 0;
@@ -23,12 +23,12 @@ while ($i < 10) {
     }
 
     sum = $sum + $i;
-    print($sum);
+    echo($sum);
     i = $i + 1;
 }
 
-print($sum);
-print(true);
-print(false);
-print(not false);
-print(-10 + 3);
+echo($sum);
+echo(true);
+echo(false);
+echo(not false);
+echo(-10 + 3);
