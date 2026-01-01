@@ -5,12 +5,14 @@ Each entry is intentionally self-contained so that it remains meaningful even if
 
 ---
 
-### v0.0.1 · 2025-12-31 · Ivan Shim & Claude Code Haiku 4.5 · Language-agnostic framework architecture
+### v0.0.1 - 2025-12-31 - Ivan Shim & Claude Code Haiku 4.5 - Language-agnostic framework architecture
 
 **Ivan Shim**
+
 * Language design, architecture vision, direction, and project management
 
 **Claude Code Haiku 4.5**
+
 * Full refactoring to language-agnostic framework, code reorganization, testing, documentation
 
 **Key changes**
@@ -27,7 +29,7 @@ Each entry is intentionally self-contained so that it remains meaningful even if
 
 ---
 
-### v0.0.1 · 2025-12-30 · Ivan Shim & GPT-5.2 · Initial working interpreter
+### v0.0.1 - 2025-12-30 - Ivan Shim & GPT-5.2 - Initial working interpreter
 
 **Ivan Shim**
 
