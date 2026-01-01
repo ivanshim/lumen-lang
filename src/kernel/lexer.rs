@@ -1,17 +1,20 @@
-// src/framework/lexer.rs
+// src/kernel/lexer.rs
 //
-// Pure lexical analysis - framework level.
+// Pure lexical analysis - kernel level.
 // No indentation handling. No language assumptions.
 // Converts source text -> tokens (strings, numbers, identifiers, operators).
 // Language modules handle structural tokens (INDENT/DEDENT, NEWLINE, EOF, parens, etc.)
+//
+// NOTE: Number tokens store raw string representation.
+// Language modules are responsible for parsing and interpreting numeric values.
 
 use crate::kernel::registry::{LumenResult, TokenRegistry};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
-    // Data-carrying tokens (carry runtime values)
+    // Data-carrying tokens
     Ident(String),
-    Number(f64),
+    Number(String),      // Raw string representation - kernel is agnostic to numeric type
     String(String),
 
     // ALL other tokens (operators, keywords, structural elements)
@@ -87,8 +90,8 @@ fn lex_line(s: &str, line: usize, base_col: usize, token_reg: &TokenRegistry, ou
                     i += 1;
                 }
             }
-            let n: f64 = s[start..i].parse().unwrap();
-            out.push(SpannedToken::new(Token::Number(n), line, col));
+            let num_str = s[start..i].to_string();
+            out.push(SpannedToken::new(Token::Number(num_str), line, col));
             continue;
         }
 

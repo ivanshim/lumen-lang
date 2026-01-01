@@ -18,13 +18,7 @@ impl StmtNode for EchoStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
         let value = self.expr.eval(env)?;
         match value {
-            Value::Number(n) => {
-                if n.fract() == 0.0 {
-                    println!("{}", n as i64);
-                } else {
-                    println!("{}", n);
-                }
-            }
+            Value::Number(s) => println!("{}", s),
             Value::Bool(b) => println!("{}", b),
         }
         Ok(Control::None)

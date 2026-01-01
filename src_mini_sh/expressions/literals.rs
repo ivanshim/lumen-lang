@@ -9,10 +9,10 @@ pub const TRUE: &str = "TRUE";
 pub const FALSE: &str = "FALSE";
 
 #[derive(Debug)]
-pub struct NumberLiteral { pub value: f64 }
+pub struct NumberLiteral { pub value: String }
 impl ExprNode for NumberLiteral {
     fn eval(&self, _env: &mut Env) -> LumenResult<Value> {
-        Ok(Value::Number(self.value))
+        Ok(Value::Number(self.value.clone()))
     }
 }
 
@@ -23,7 +23,7 @@ impl ExprPrefix for NumberLiteralPrefix {
     }
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
         match parser.advance() {
-            Token::Number(n) => Ok(Box::new(NumberLiteral { value: n })),
+            Token::Number(s) => Ok(Box::new(NumberLiteral { value: s })),
             _ => unreachable!(),
         }
     }

@@ -2,6 +2,7 @@
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::lexer::Token;
+use crate::kernel::numeric;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{ExprInfix, LumenResult, Precedence, Registry};
 use crate::kernel::runtime::{Env, Value};
@@ -32,12 +33,20 @@ impl ExprNode for ComparisonExpr {
         match (l, r) {
             (Value::Number(a), Value::Number(b)) => {
                 let result = match self.op {
-                    EQ_EQ => a == b,
-                    NOT_EQ => a != b,
-                    LT => a < b,
-                    GT => a > b,
-                    LT_EQ => a <= b,
-                    GT_EQ => a >= b,
+                    EQ_EQ => {
+                        let an = numeric::parse_number(&a)?;
+                        let bn = numeric::parse_number(&b)?;
+                        an == bn
+                    }
+                    NOT_EQ => {
+                        let an = numeric::parse_number(&a)?;
+                        let bn = numeric::parse_number(&b)?;
+                        an != bn
+                    }
+                    LT => numeric::compare_lt(&a, &b)?,
+                    GT => numeric::compare_gt(&a, &b)?,
+                    LT_EQ => numeric::compare_le(&a, &b)?,
+                    GT_EQ => numeric::compare_ge(&a, &b)?,
                     _ => return Err("Invalid comparison operator".into()),
                 };
                 Ok(Value::Bool(result))

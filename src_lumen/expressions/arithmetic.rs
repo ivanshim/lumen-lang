@@ -4,6 +4,7 @@
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::lexer::Token;
+use crate::kernel::numeric;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{ExprInfix, ExprPrefix, LumenResult, Precedence, Registry};
 use crate::kernel::runtime::{Env, Value};
@@ -26,7 +27,10 @@ struct UnaryMinusExpr {
 impl ExprNode for UnaryMinusExpr {
     fn eval(&self, env: &mut Env) -> LumenResult<Value> {
         match self.expr.eval(env)? {
-            Value::Number(n) => Ok(Value::Number(-n)),
+            Value::Number(s) => {
+                let result = numeric::negate(&s)?;
+                Ok(Value::Number(result))
+            }
             _ => Err("Invalid operand for unary '-'".into()),
         }
     }
@@ -61,11 +65,11 @@ impl ExprNode for ArithmeticExpr {
         match (l, r) {
             (Value::Number(a), Value::Number(b)) => {
                 let result = match self.op {
-                    PLUS => a + b,
-                    MINUS => a - b,
-                    STAR => a * b,
-                    SLASH => a / b,
-                    PERCENT => a % b,
+                    PLUS => numeric::add(&a, &b)?,
+                    MINUS => numeric::subtract(&a, &b)?,
+                    STAR => numeric::multiply(&a, &b)?,
+                    SLASH => numeric::divide(&a, &b)?,
+                    PERCENT => numeric::modulo(&a, &b)?,
                     _ => return Err("Invalid arithmetic operator".into()),
                 };
                 Ok(Value::Number(result))
