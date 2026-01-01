@@ -1,5 +1,5 @@
 LET x = 0;
-while (x < 10) {
+WHILE (x < 10) {
     PRINT(x);
     LET x = x + 1
 }
