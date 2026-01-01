@@ -2,7 +2,7 @@ let a = 0;
 let b = 1;
 let count = 0;
 
-while count < 20 {
+while count < 10 {
     print(a);
     let next = a + b;
     a = b;

@@ -2,7 +2,7 @@ LET a = 0;
 LET b = 1;
 LET count = 0;
 
-while (count < 20) {
+while (count < 10) {
     PRINT(a);
     LET next = a + b;
     LET a = b;

@@ -2,7 +2,7 @@ a = 0;
 b = 1;
 count = 0;
 
-while ($count < 20) {
+while ($count < 10) {
     print($a);
     next = $a + $b;
     a = $b;
