@@ -1,17 +1,41 @@
-let scale = 100000;
-let pi = 3 * scale;
-let k = 1;
-let sign = 1;
-let iterations = 0;
-let max_iter = 1000;
+let SCALE = 10000000000;
 
-while iterations < max_iter {
-    let denom = (2 * k) * (2 * k + 1) * (2 * k + 2);
-    let term = (4 * scale) / denom;
-    pi = pi + sign * term;
-    sign = -sign;
-    k = k + 1;
-    iterations = iterations + 1;
+let x = SCALE / 5;
+let x2 = (x * x) / SCALE;
+
+let term = x;
+let sum1 = term;
+let k = 1;
+
+while term > 0 {
+    term = (term * x2) / SCALE;
+    k = k + 2;
+
+    if (k / 2) * 2 == k {
+        sum1 = sum1 - (term / k);
+    } else {
+        sum1 = sum1 + (term / k);
+    }
 }
 
-print(pi);
+let x = SCALE / 239;
+let x2 = (x * x) / SCALE;
+
+let term = x;
+let sum2 = term;
+let k = 1;
+
+while term > 0 {
+    term = (term * x2) / SCALE;
+    k = k + 2;
+
+    if (k / 2) * 2 == k {
+        sum2 = sum2 - (term / k);
+    } else {
+        sum2 = sum2 + (term / k);
+    }
+}
+
+let pi_scaled = (16 * sum1) - (4 * sum2);
+
+print(pi_scaled);
