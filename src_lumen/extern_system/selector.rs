@@ -1,6 +1,12 @@
 // src_lumen/extern_system/selector.rs
 //
 // Selector parser for extern expressions.
+//
+// DESIGN PRINCIPLE: Selectors are opaque strings parsed at runtime.
+// The grammar knows nothing about specific backends or hosts.
+// All identifiers are treated as arbitrary strings.
+// This ensures Lumen remains host-agnostic.
+//
 // Grammar:
 //   selector ::= capability | backend ":" capability
 //              | backend-list ":" capability
@@ -10,10 +16,10 @@
 //   capability ::= word
 //
 // Examples:
-//   "print_native"
-//   "fs:open"
-//   "fs|mem:read"
-//   "(fs:impl1)|(impl2)"
+//   "print_native"     (capability only; no backend specified)
+//   "fs:open"          (fs backend, open capability)
+//   "fs|mem:read"      (try fs then mem backend, read capability)
+//   "(fs:impl1)|(impl2)"  (complex fallback: fs:impl1 OR impl2)
 
 use crate::kernel::registry::LumenResult;
 
