@@ -32,11 +32,8 @@ SKIPPED_TESTS=0
 declare -A LANG_MAP=(
     ["lm"]="lumen"
     ["rs"]="mini-rust"
-    ["php"]="mini-php"
-    ["sh"]="mini-sh"
-    ["c"]="mini-c"
-    ["p"]="mini-pascal"
-    ["basic"]="mini-basic"
+    ["py"]="mini-python"
+    ["mpy"]="mini-python"
 )
 
 # Function to run a test
