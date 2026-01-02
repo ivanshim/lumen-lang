@@ -9,4 +9,8 @@ while term > 0 {
     n = n + 1;
 }
 
-print(sum);
+let int_part = sum / SCALE;
+let frac_part = sum % SCALE;
+
+print(int_part);
+print(frac_part);

@@ -34,4 +34,8 @@ while term > 0
 
 pi_scaled = (16 * sum1) - (4 * sum2)
 
-print(pi_scaled)
+int_part = pi_scaled / SCALE
+frac_part = pi_scaled % SCALE
+
+print(int_part)
+print(frac_part)

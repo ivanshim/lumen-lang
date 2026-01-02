@@ -38,4 +38,8 @@ while term > 0 {
 
 let pi_scaled = (16 * sum1) - (4 * sum2);
 
-print(pi_scaled);
+let int_part = pi_scaled / SCALE;
+let frac_part = pi_scaled % SCALE;
+
+print(int_part);
+print(frac_part);

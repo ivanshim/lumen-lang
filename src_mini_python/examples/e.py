@@ -9,4 +9,8 @@ while term > 0
     total = total + term
     n = n + 1
 
-print(total)
+int_part = total / SCALE
+frac_part = total % SCALE
+
+print(int_part)
+print(frac_part)
