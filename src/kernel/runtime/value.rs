@@ -16,6 +16,7 @@ use std::fmt;
 pub enum Value {
     Number(String),    // Raw string representation - kernel is agnostic to numeric type
     Bool(bool),
+    String(String),    // String literal value
 }
 
 impl fmt::Debug for Value {
@@ -23,6 +24,7 @@ impl fmt::Debug for Value {
         match self {
             Value::Number(n) => write!(f, "Number(\"{}\")", n),
             Value::Bool(b) => write!(f, "Bool({})", b),
+            Value::String(s) => write!(f, "String(\"{}\")", s),
         }
     }
 }
@@ -32,6 +34,7 @@ impl fmt::Display for Value {
         match self {
             Value::Number(n) => write!(f, "{}", n),
             Value::Bool(b) => write!(f, "{}", if *b { "true" } else { "false" }),
+            Value::String(s) => write!(f, "{}", s),
         }
     }
 }
