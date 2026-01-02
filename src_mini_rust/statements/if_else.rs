@@ -5,6 +5,7 @@ use crate::kernel::parser::Parser;
 use crate::kernel::registry::{LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::Env;
 use crate::src_mini_rust::structure::structural;
+use crate::src_mini_rust::values::as_bool;
 
 // --------------------
 // Token definitions
@@ -23,10 +24,8 @@ struct IfStmt {
 impl StmtNode for IfStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
         let cond = self.cond.eval(env)?;
-        let branch_taken = match cond {
-            crate::kernel::runtime::Value::Bool(b) => b,
-            _ => return Err("Condition must be a boolean".into()),
-        };
+        let cond_bool = as_bool(cond.as_ref())?;
+        let branch_taken = cond_bool.value;
 
         if branch_taken {
             env.push_scope();

@@ -4,6 +4,7 @@ use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{ExprPrefix, LumenResult, Registry};
 use crate::kernel::runtime::{Env, Value};
+use crate::src_mini_python::values::{MiniPythonNumber, MiniPythonBool};
 
 #[derive(Debug)]
 pub struct NumberLiteral {
@@ -12,7 +13,7 @@ pub struct NumberLiteral {
 
 impl ExprNode for NumberLiteral {
     fn eval(&self, _env: &mut Env) -> LumenResult<Value> {
-        Ok(Value::Number(self.value.clone()))
+        Ok(Box::new(MiniPythonNumber::new(self.value.clone())))
     }
 }
 
@@ -39,7 +40,7 @@ struct BoolLiteral {
 
 impl ExprNode for BoolLiteral {
     fn eval(&self, _env: &mut Env) -> LumenResult<Value> {
-        Ok(Value::Bool(self.value))
+        Ok(Box::new(MiniPythonBool::new(self.value)))
     }
 }
 

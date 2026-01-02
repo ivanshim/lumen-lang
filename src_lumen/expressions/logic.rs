@@ -4,6 +4,7 @@ use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{ExprInfix, ExprPrefix, LumenResult, Precedence, Registry};
 use crate::kernel::runtime::{Env, Value};
+use crate::src_lumen::values::{LumenBool, as_bool};
 
 #[derive(Debug)]
 struct LogicExpr {
@@ -17,17 +18,15 @@ impl ExprNode for LogicExpr {
         let l = self.left.eval(env)?;
         let r = self.right.eval(env)?;
 
-        match (&l, &r) {
-            (Value::Bool(a), Value::Bool(b)) => {
-                let result = match self.op.as_str() {
-                    "and" => *a && *b,
-                    "or" => *a || *b,
-                    _ => return Err(format!("Invalid logical operator: {}", self.op)),
-                };
-                Ok(Value::Bool(result))
-            }
-            _ => Err(format!("Invalid logical operation: {:?} {} {:?}", l, self.op, r)),
-        }
+        let left_bool = as_bool(l.as_ref())?;
+        let right_bool = as_bool(r.as_ref())?;
+
+        let result = match self.op.as_str() {
+            "and" => left_bool.value && right_bool.value,
+            "or" => left_bool.value || right_bool.value,
+            _ => return Err(format!("Invalid logical operator: {}", self.op)),
+        };
+        Ok(Box::new(LumenBool::new(result)))
     }
 }
 
@@ -70,10 +69,9 @@ struct NotExpr {
 
 impl ExprNode for NotExpr {
     fn eval(&self, env: &mut Env) -> LumenResult<Value> {
-        match self.expr.eval(env)? {
-            Value::Bool(b) => Ok(Value::Bool(!b)),
-            _ => Err("Invalid operand for 'not'".into()),
-        }
+        let val = self.expr.eval(env)?;
+        let b = as_bool(val.as_ref())?;
+        Ok(Box::new(LumenBool::new(!b.value)))
     }
 }
 

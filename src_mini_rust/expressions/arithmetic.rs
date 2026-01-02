@@ -5,6 +5,7 @@ use crate::kernel::parser::Parser;
 use crate::kernel::registry::{ExprInfix, ExprPrefix, LumenResult, Precedence, Registry};
 use crate::kernel::runtime::{Env, Value};
 use crate::src_mini_rust::numeric;
+use crate::src_mini_rust::values::{MiniRustNumber, as_number};
 
 // --------------------
 // Token definitions
@@ -23,13 +24,10 @@ struct UnaryMinusExpr {
 
 impl ExprNode for UnaryMinusExpr {
     fn eval(&self, env: &mut Env) -> LumenResult<Value> {
-        match self.expr.eval(env)? {
-            Value::Number(s) => {
-                let result = numeric::negate(&s)?;
-                Ok(Value::Number(result))
-            }
-            _ => Err("Invalid operand for unary '-'".into()),
-        }
+        let val = self.expr.eval(env)?;
+        let num = as_number(val.as_ref())?;
+        let result = numeric::negate(&num.value)?;
+        Ok(Box::new(MiniRustNumber::new(result)))
     }
 }
 
@@ -59,20 +57,18 @@ impl ExprNode for ArithmeticExpr {
         let l = self.left.eval(env)?;
         let r = self.right.eval(env)?;
 
-        match (l, r) {
-            (Value::Number(a), Value::Number(b)) => {
-                let result = match self.op {
-                    PLUS => numeric::add(&a, &b)?,
-                    MINUS => numeric::subtract(&a, &b)?,
-                    STAR => numeric::multiply(&a, &b)?,
-                    SLASH => numeric::divide(&a, &b)?,
-                    PERCENT => numeric::modulo(&a, &b)?,
-                    _ => return Err("Invalid arithmetic operator".into()),
-                };
-                Ok(Value::Number(result))
-            }
-            _ => Err("Invalid operands for arithmetic operation".into()),
-        }
+        let left_num = as_number(l.as_ref())?;
+        let right_num = as_number(r.as_ref())?;
+
+        let result = match self.op {
+            PLUS => numeric::add(&left_num.value, &right_num.value)?,
+            MINUS => numeric::subtract(&left_num.value, &right_num.value)?,
+            STAR => numeric::multiply(&left_num.value, &right_num.value)?,
+            SLASH => numeric::divide(&left_num.value, &right_num.value)?,
+            PERCENT => numeric::modulo(&left_num.value, &right_num.value)?,
+            _ => return Err("Invalid arithmetic operator".into()),
+        };
+        Ok(Box::new(MiniRustNumber::new(result)))
     }
 }
 

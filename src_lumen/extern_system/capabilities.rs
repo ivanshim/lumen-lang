@@ -6,6 +6,7 @@
 use crate::kernel::registry::LumenResult;
 use crate::kernel::runtime::Value;
 use super::registry::ExternCapability;
+use crate::src_lumen::values::{LumenNumber, as_number, as_string, as_bool};
 
 /// print_native capability
 /// Takes a single Value and prints it to stdout.
@@ -76,13 +77,17 @@ impl ExternCapability for ValueType {
             ));
         }
 
-        let type_code = match &args[0] {
-            Value::Number(_) => "0",   // 0 = number
-            Value::Bool(_) => "1",     // 1 = boolean
-            Value::String(_) => "2",   // 2 = string
+        let type_code = if as_number(args[0].as_ref()).is_ok() {
+            "0"   // 0 = number
+        } else if as_bool(args[0].as_ref()).is_ok() {
+            "1"   // 1 = boolean
+        } else if as_string(args[0].as_ref()).is_ok() {
+            "2"   // 2 = string
+        } else {
+            return Err("Unknown value type".to_string());
         };
 
-        Ok(Value::Number(type_code.to_string()))
+        Ok(Box::new(LumenNumber::new(type_code.to_string())))
     }
 }
 
