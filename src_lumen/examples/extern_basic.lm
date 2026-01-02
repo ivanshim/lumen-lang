@@ -1,1 +1,1 @@
-print(extern("print_native", 42))
+print(extern(print_native, 42))
