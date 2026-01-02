@@ -1,0 +1,6 @@
+print(extern(print_native, 10))
+x = extern(print_native, 20)
+print(x)
+y = extern(debug_info, 30)
+z = extern(value_type, 42)
+print(z)

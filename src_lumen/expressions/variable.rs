@@ -26,7 +26,7 @@ impl ExprPrefix for VariablePrefix {
         // But exclude reserved keywords
         let lex = &parser.peek().lexeme;
         let is_identifier = lex.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_');
-        let is_reserved = matches!(lex.as_str(), "true" | "false" | "not" | "and" | "or" | "if" | "else" | "while" | "print" | "break" | "continue");
+        let is_reserved = matches!(lex.as_str(), "true" | "false" | "not" | "and" | "or" | "if" | "else" | "while" | "print" | "break" | "continue" | "extern");
         is_identifier && !is_reserved
     }
 

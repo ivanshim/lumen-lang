@@ -1,0 +1,1 @@
+print(extern(debug_info, 42))
