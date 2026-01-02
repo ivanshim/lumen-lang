@@ -1,14 +1,16 @@
-e = 1
-i = 1
+SCALE = 10000000000
 
-while i < 10
-    factorial = 1
-    j = 1
-    while j <= i
-        factorial = factorial * j
-        j = j + 1
+total = SCALE
+term = SCALE
+n = 1
 
-    e = e + 1 / factorial
-    i = i + 1
+while term > 0
+    term = term / n
+    total = total + term
+    n = n + 1
 
-print(e)
+int_part = total / SCALE
+frac_part = total % SCALE
+
+print(int_part)
+print(frac_part)

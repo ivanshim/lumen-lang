@@ -1,14 +1,17 @@
-scale = 1000000
-sum = scale
-term = scale
-n = 1
-iterations = 0
-max_iter = 100
+SCALE = 10000000000
 
-while iterations < max_iter
+sum = SCALE
+term = SCALE
+n = 1
+
+while term > 0
     term = term / n
     sum = sum + term
     n = n + 1
-    iterations = iterations + 1
 
-print(sum)
+int_part = sum / SCALE
+frac_part = sum % SCALE
+
+print(int_part)
+print(".")
+print(frac_part)
