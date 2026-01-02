@@ -6,6 +6,7 @@ mod numeric;
 pub mod expressions;
 pub mod statements;
 pub mod structure;
+pub mod extern_system;
 
 // The dispatcher module
 pub mod dispatcher {

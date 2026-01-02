@@ -19,6 +19,7 @@ pub fn register_all(registry: &mut Registry) {
         // Keywords (multi-char word sequences)
         "and", "or", "not",
         "if", "else", "while", "break", "continue", "print",
+        "extern",  // Impurity boundary marker
         "true", "false",
     ]);
 
@@ -32,6 +33,7 @@ pub fn register_all(registry: &mut Registry) {
     expressions::arithmetic::register(registry);    // Arithmetic operators
     expressions::comparison::register(registry);    // Comparison operators
     expressions::logic::register(registry);         // Logical operators
+    expressions::extern_expr::register(registry);   // extern impurity boundary
 
     // Statement features
     statements::print::register(registry);         // print() statement

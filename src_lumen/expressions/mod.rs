@@ -3,6 +3,7 @@
 
 pub mod arithmetic;
 pub mod comparison;
+pub mod extern_expr;
 pub mod grouping;
 pub mod identifier;
 pub mod literals;

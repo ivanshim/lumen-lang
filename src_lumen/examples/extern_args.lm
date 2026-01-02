@@ -1,0 +1,5 @@
+a = extern(value_type, 42)
+b = extern(value_type, true)
+c = extern(debug_info, 99)
+print(a)
+print(b)
