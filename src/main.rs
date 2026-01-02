@@ -10,20 +10,8 @@ mod src_lumen;
 #[path = "../src_mini_rust/mod.rs"]
 mod src_mini_rust;
 
-#[path = "../src_mini_php/mod.rs"]
-mod src_mini_php;
-
-#[path = "../src_mini_sh/mod.rs"]
-mod src_mini_sh;
-
-#[path = "../src_mini_c/mod.rs"]
-mod src_mini_c;
-
-#[path = "../src_mini_apple_pascal/mod.rs"]
-mod src_mini_apple_pascal;
-
-#[path = "../src_mini_apple_basic/mod.rs"]
-mod src_mini_apple_basic;
+#[path = "../src_mini_python/mod.rs"]
+mod src_mini_python;
 
 use std::env;
 use std::fs;
@@ -40,16 +28,12 @@ fn main() {
     if args.len() < 2 {
         eprintln!("Usage: lumen-lang [--lang <language>] <file>");
         eprintln!("\nSupported languages:");
-        eprintln!("  lumen         (Python-like with indentation)        [.lm]");
-        eprintln!("  mini-rust     (Rust-like with curly braces)         [.rs]");
-        eprintln!("  mini-php      (PHP-like with $ variables)           [.php]");
-        eprintln!("  mini-sh       (Shell-like syntax)                   [.sh, .ms]");
-        eprintln!("  mini-c        (C-like syntax)                       [.c, .mc]");
-        eprintln!("  mini-pascal   (Pascal-like with BEGIN/END)          [.p, .mp]");
-        eprintln!("  mini-basic    (BASIC-like syntax)                   [.mb, .basic]");
+        eprintln!("  lumen         (Python-like with indentation)  [.lm]");
+        eprintln!("  mini-rust     (Rust-like with curly braces)   [.rs]");
+        eprintln!("  mini-python   (Python-like with indentation)  [.py, .mpy]");
         eprintln!("\nExamples:");
-        eprintln!("  lumen-lang --lang mini-rust program.rs     (explicit language)");
-        eprintln!("  lumen-lang program.lm                      (auto-detect via extension)");
+        eprintln!("  lumen-lang --lang mini-python program.py     (explicit language)");
+        eprintln!("  lumen-lang program.lm                        (auto-detect via extension)");
         std::process::exit(1);
     }
 
@@ -71,11 +55,7 @@ fn main() {
     match language.as_str() {
         "lumen" => run_lumen(&source),
         "mini-rust" => run_mini_rust(&source),
-        "mini-php" => run_mini_php(&source),
-        "mini-sh" => run_mini_sh(&source),
-        "mini-c" => run_mini_c(&source),
-        "mini-pascal" | "mini-apple-pascal" => run_mini_pascal(&source),
-        "mini-basic" | "mini-apple-basic" => run_mini_basic(&source),
+        "mini-python" => run_mini_python(&source),
         _ => {
             eprintln!("Error: Unknown language '{}'", language);
             std::process::exit(1);
@@ -91,11 +71,7 @@ fn detect_language_from_extension(filepath: &str) -> Option<String> {
     let language = match extension {
         "lm" => "lumen",
         "rs" => "mini-rust",
-        "php" => "mini-php",
-        "sh" | "ms" => "mini-sh",
-        "c" | "mc" => "mini-c",
-        "p" | "mp" => "mini-pascal",
-        "basic" | "mb" => "mini-basic",
+        "py" | "mpy" => "mini-python",
         _ => return None,
     };
 
@@ -192,12 +168,12 @@ fn run_mini_rust(source: &str) {
     }
 }
 
-fn run_mini_php(source: &str) {
-    use crate::src_mini_php;
-    use crate::src_mini_php::structure::structural;
+fn run_mini_python(source: &str) {
+    use crate::src_mini_python;
+    use crate::src_mini_python::structure::structural;
 
     let mut registry = Registry::new();
-    src_mini_php::register_all(&mut registry);
+    src_mini_python::register_all(&mut registry);
 
     let raw_tokens = match lex(source, &registry.tokens) {
         Ok(toks) => toks,
@@ -207,190 +183,10 @@ fn run_mini_php(source: &str) {
         }
     };
 
-    let processed_tokens = match structural::process_tokens(raw_tokens) {
+    let processed_tokens = match structural::process_indentation(source, raw_tokens) {
         Ok(toks) => toks,
         Err(e) => {
-            eprintln!("TokenError: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    let mut parser = match Parser::new_with_tokens(&registry, processed_tokens) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(1);
-        }
-    };
-
-    let program = match structural::parse_program(&mut parser) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(1);
-        }
-    };
-
-    if let Err(e) = eval::eval(&program) {
-        eprintln!("RuntimeError: {e}");
-        std::process::exit(1);
-    }
-}
-
-fn run_mini_sh(source: &str) {
-    use crate::src_mini_sh;
-    use crate::src_mini_sh::structure::structural;
-
-    let mut registry = Registry::new();
-    src_mini_sh::register_all(&mut registry);
-
-    let raw_tokens = match lex(source, &registry.tokens) {
-        Ok(toks) => toks,
-        Err(e) => {
-            eprintln!("LexError: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    let processed_tokens = match structural::process_tokens(raw_tokens) {
-        Ok(toks) => toks,
-        Err(e) => {
-            eprintln!("TokenError: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    let mut parser = match Parser::new_with_tokens(&registry, processed_tokens) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(1);
-        }
-    };
-
-    let program = match structural::parse_program(&mut parser) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(1);
-        }
-    };
-
-    if let Err(e) = eval::eval(&program) {
-        eprintln!("RuntimeError: {e}");
-        std::process::exit(1);
-    }
-}
-
-fn run_mini_c(source: &str) {
-    use crate::src_mini_c;
-    use crate::src_mini_c::structure::structural;
-
-    let mut registry = Registry::new();
-    src_mini_c::register_all(&mut registry);
-
-    let raw_tokens = match lex(source, &registry.tokens) {
-        Ok(toks) => toks,
-        Err(e) => {
-            eprintln!("LexError: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    let processed_tokens = match structural::process_tokens(raw_tokens) {
-        Ok(toks) => toks,
-        Err(e) => {
-            eprintln!("TokenError: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    let mut parser = match Parser::new_with_tokens(&registry, processed_tokens) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(1);
-        }
-    };
-
-    let program = match structural::parse_program(&mut parser) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(1);
-        }
-    };
-
-    if let Err(e) = eval::eval(&program) {
-        eprintln!("RuntimeError: {e}");
-        std::process::exit(1);
-    }
-}
-
-fn run_mini_pascal(source: &str) {
-    use crate::src_mini_apple_pascal;
-    use crate::src_mini_apple_pascal::structure::structural;
-
-    let mut registry = Registry::new();
-    src_mini_apple_pascal::register_all(&mut registry);
-
-    let raw_tokens = match lex(source, &registry.tokens) {
-        Ok(toks) => toks,
-        Err(e) => {
-            eprintln!("LexError: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    let processed_tokens = match structural::process_tokens(raw_tokens) {
-        Ok(toks) => toks,
-        Err(e) => {
-            eprintln!("TokenError: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    let mut parser = match Parser::new_with_tokens(&registry, processed_tokens) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(1);
-        }
-    };
-
-    let program = match structural::parse_program(&mut parser) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(1);
-        }
-    };
-
-    if let Err(e) = eval::eval(&program) {
-        eprintln!("RuntimeError: {e}");
-        std::process::exit(1);
-    }
-}
-
-fn run_mini_basic(source: &str) {
-    use crate::src_mini_apple_basic;
-    use crate::src_mini_apple_basic::structure::structural;
-
-    let mut registry = Registry::new();
-    src_mini_apple_basic::register_all(&mut registry);
-
-    let raw_tokens = match lex(source, &registry.tokens) {
-        Ok(toks) => toks,
-        Err(e) => {
-            eprintln!("LexError: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    let processed_tokens = match structural::process_tokens(raw_tokens) {
-        Ok(toks) => toks,
-        Err(e) => {
-            eprintln!("TokenError: {e}");
+            eprintln!("IndentationError: {e}");
             std::process::exit(1);
         }
     };
