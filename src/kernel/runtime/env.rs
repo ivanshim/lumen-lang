@@ -36,16 +36,17 @@ impl Env {
         self.scopes.pop();
     }
 
-    /// Define or overwrite a variable in the current scope.
-    pub fn set(&mut self, name: String, value: Value) {
+    /// Define a new variable in the current scope.
+    /// This shadows any outer binding with the same name.
+    pub fn define(&mut self, name: String, value: Value) {
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name, value);
         }
     }
 
-    /// Assign to an existing variable.
-    /// Walks outward through scopes.
-    #[allow(dead_code)]
+    /// Assign to a variable, searching parent scopes.
+    /// If the variable exists in any enclosing scope, update it there.
+    /// If not found, create it in the current scope.
     pub fn assign(&mut self, name: &str, value: Value) -> Result<(), String> {
         for scope in self.scopes.iter_mut().rev() {
             if scope.contains_key(name) {
@@ -53,7 +54,20 @@ impl Env {
                 return Ok(());
             }
         }
-        Err(format!("Undefined variable '{}'", name))
+        // Variable not found in any scope; create in current scope.
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(name.to_string(), value);
+        }
+        Ok(())
+    }
+
+    /// Internal: set a variable in the current scope only.
+    /// Prefer assign() or define() in client code.
+    #[allow(dead_code)]
+    pub fn set(&mut self, name: String, value: Value) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(name, value);
+        }
     }
 
     /// Retrieve a variable value.

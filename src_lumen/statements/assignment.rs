@@ -16,7 +16,7 @@ struct AssignStmt {
 impl StmtNode for AssignStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
         let val: Value = self.expr.eval(env)?;
-        env.set(self.name.clone(), val);
+        env.assign(&self.name, val)?;
         Ok(Control::None)
     }
 }
