@@ -3,7 +3,7 @@ For language philosophy and evolution constraints, see DESIGN.md.
 # Lumen-Lang
 
 Lumen is a minimal, experimental programming language and interpreter.
-This repository contains **Lumen v0.0.3**, a multi-language kernel with support for 7 different language implementations.
+This repository contains **Lumen v0.0.5**, a multi-language kernel with support for 3 active language implementations.
 
 The goal of Lumen is not to be a production language, but to explore language design, parsing, and execution semantics in the smallest possible form that still feels *real*.
 
@@ -118,21 +118,27 @@ lumen-lang/
 │   │   ├── ast.rs                      # Generic AST traits
 │   │   └── runtime/                    # Evaluation engine
 │   │       ├── env.rs                  # Scoping and variables
-│   │       └── value.rs                # Runtime values
+│   │       └── value.rs                # Abstract value trait (ontologically neutral)
 │   └── main.rs                         # Entry point & language dispatcher
 ├── src_lumen/                          # Lumen language implementation
 │   ├── src_lumen.rs                    # Dispatcher
 │   ├── structure/
 │   │   └── structural.rs               # Indentation, newlines, block parsing
 │   ├── statements/ & expressions/      # Lumen statement/expression handlers
+│   ├── docs/                           # Design documentation
 │   └── examples/                       # Example programs
-├── src_mini_rust/                      # Mini-Rust implementation
-├── src_mini_php/                       # Mini-PHP implementation
-├── src_mini_sh/                        # Mini-Shell implementation
-├── src_mini_c/                         # Mini-C implementation
-├── src_mini_apple_pascal/              # Mini-Pascal implementation
-├── src_mini_apple_basic/               # Mini-Basic implementation
-├── test_all.sh                         # Comprehensive test suite
+├── src_mini_rust/                      # Mini-Rust language implementation
+│   └── examples/                       # Example programs
+├── src_mini_python/                    # Mini-Python language implementation
+│   └── examples/                       # Example programs
+├── archive/                            # Inactive language implementations
+│   ├── src_mini_php/
+│   ├── src_mini_sh/
+│   ├── src_mini_c/
+│   ├── src_mini_apple_pascal/
+│   └── src_mini_apple_basic/
+├── test_all.sh                         # Comprehensive test suite (21 tests)
+├── VERSION_HISTORY.md                  # Release notes and version changelog
 ├── Cargo.toml
 └── README.md
 ```
@@ -155,10 +161,32 @@ The codebase is split into three layers:
 3. **Dispatcher (`src/main.rs`)**: Multi-language runtime
    - Detects language from `--lang` parameter (priority 1) or file extension (priority 2)
    - Routes program to appropriate language module
-   - Supports simultaneous operation of all 7 languages
+   - Supports simultaneous operation of Lumen, Mini-Rust, and Mini-Python
 
 This design allows the kernel to support multiple languages with different syntaxes and semantics, making it easy to add new language implementations without modifying the core framework.
 
 ---
 
+## v0.0.5 Release Highlights
+
+**Date:** 2026-01-03
+**Contributors:** Ivan Shim orchestrating, GPT-5.2 prompting, Claude Code Haiku 4.5 coding
+
+### Key Improvements
+
+1. **Kernel Ontological Neutrality**: Replaced concrete `Value` enum with opaque `RuntimeValue` trait, making the kernel language-independent. All value semantics now belong to language modules, not the kernel.
+
+2. **Extern System Correctness**: Fixed design drift by enforcing string literal selectors in the extern system. Selectors are now treated as opaque data, not identifiers, enabling host-agnostic extensibility.
+
+3. **Canonical Proof Programs**: Replaced π and e examples with mathematically correct, integer-only, fixed-point implementations:
+   - **e (Euler's number)**: Factorial series implementation with SCALE = 10^10
+   - **π (Pi)**: Machin's formula using arctangent series
+   - All arithmetic is deterministic integer math; decimal point inserted only at output
+
+See [VERSION_HISTORY.md](VERSION_HISTORY.md) for complete release notes.
+
+---
+
 ## Version History
+
+For detailed version history, see [VERSION_HISTORY.md](VERSION_HISTORY.md).
