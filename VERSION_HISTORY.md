@@ -19,17 +19,10 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   - Implemented safe type downcasting via `as_any()` trait method and language-specific helper functions (`as_number()`, `as_bool()`, `as_string()`)
   - Result: Kernel is now language-independent; all value semantics belong to language modules
 
-- **Architectural Alignment and Documentation**:
-  - Created `EXTERN_DESIGN.md`: Comprehensive design document for extern system with five host-agnosticism constraints
-  - Created `ARCHITECTURAL_ALIGNMENT.md`: Explains three completed phases (kernel refactor, string foundation, extern shaping) and why proper abstraction order matters
-  - Documented how external host adapters can be registered without modifying Lumen or kernel code
-  - Result: System is ready for Phase 4 (external adapters)
-
 - **Extern System Correctness Enforcement**:
   - Fixed design drift: Parser now requires extern selectors to be **string literals**, not identifiers
   - Reject unquoted identifiers (e.g., `extern(print_native, ...)`) with clear error messages
   - Updated all 9 extern example files to use quoted selectors (e.g., `extern("print_native", ...)`)
-  - Created `EXTERN_CORRECTION.md` documenting the correction and design rationale
   - Result: Selectors are now opaque data strings; Lumen makes no assumptions about capability names
 
 - **π and e Examples: Integer-Only, Fixed-Point Implementations**:
@@ -40,12 +33,6 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   - Updated 6 example files across 3 languages (Lumen, Mini-Python, Mini-Rust)
   - Output format: Separated integer and fractional parts using modulo and division
   - Result: Canonical proof programs demonstrating deterministic integer math for each language
-
-### Test Status:
-- **All 34 tests passing** (22 Lumen + 5 Mini-Python + 5 Mini-Rust + 2 shared)
-- **Build succeeds** with zero errors
-- **Extern examples**: All 11 extern examples execute correctly with string literal selectors
-- **Mathematical examples**: e and π examples produce correct scaled integer values
 
 ### Key Achievements:
 - ✅ Kernel contains zero language-specific assumptions
