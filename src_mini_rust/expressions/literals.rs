@@ -4,6 +4,7 @@ use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{ExprPrefix, LumenResult, Registry};
 use crate::kernel::runtime::{Env, Value};
+use crate::src_mini_rust::values::{MiniRustNumber, MiniRustBool};
 
 // --------------------
 // Token definitions
@@ -19,7 +20,7 @@ pub struct NumberLiteral {
 
 impl ExprNode for NumberLiteral {
     fn eval(&self, _env: &mut Env) -> LumenResult<Value> {
-        Ok(Value::Number(self.value.clone()))
+        Ok(Box::new(MiniRustNumber::new(self.value.clone())))
     }
 }
 
@@ -45,7 +46,7 @@ pub struct BoolLiteral {
 
 impl ExprNode for BoolLiteral {
     fn eval(&self, _env: &mut Env) -> LumenResult<Value> {
-        Ok(Value::Bool(self.value))
+        Ok(Box::new(MiniRustBool::new(self.value)))
     }
 }
 

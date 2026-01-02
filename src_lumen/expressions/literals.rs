@@ -4,6 +4,7 @@ use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{ExprPrefix, LumenResult, Registry};
 use crate::kernel::runtime::{Env, Value};
+use crate::src_lumen::values::{LumenNumber, LumenBool, LumenString};
 
 #[derive(Debug)]
 pub struct NumberLiteral {
@@ -12,7 +13,7 @@ pub struct NumberLiteral {
 
 impl ExprNode for NumberLiteral {
     fn eval(&self, _env: &mut Env) -> LumenResult<Value> {
-        Ok(Value::Number(self.value.clone()))
+        Ok(Box::new(LumenNumber::new(self.value.clone())))
     }
 }
 
@@ -39,7 +40,7 @@ struct BoolLiteral {
 
 impl ExprNode for BoolLiteral {
     fn eval(&self, _env: &mut Env) -> LumenResult<Value> {
-        Ok(Value::Bool(self.value))
+        Ok(Box::new(LumenBool::new(self.value)))
     }
 }
 
@@ -69,7 +70,7 @@ impl ExprNode for StringLiteral {
     fn eval(&self, _env: &mut Env) -> LumenResult<Value> {
         // Remove quotes from the tokenized string: "hello" -> hello
         let content = &self.value[1..self.value.len() - 1];
-        Ok(Value::String(content.to_string()))
+        Ok(Box::new(LumenString::new(content.to_string())))
     }
 }
 

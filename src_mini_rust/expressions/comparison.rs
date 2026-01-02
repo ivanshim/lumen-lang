@@ -5,6 +5,7 @@ use crate::kernel::parser::Parser;
 use crate::kernel::registry::{ExprInfix, LumenResult, Precedence, Registry};
 use crate::kernel::runtime::{Env, Value};
 use crate::src_mini_rust::numeric;
+use crate::src_mini_rust::values::{MiniRustNumber, MiniRustBool, as_number, as_bool};
 
 #[derive(Debug)]
 struct ComparisonExpr {
@@ -18,26 +19,36 @@ impl ExprNode for ComparisonExpr {
         let l = self.left.eval(env)?;
         let r = self.right.eval(env)?;
 
-        match (l, r) {
-            (Value::Number(a), Value::Number(b)) => {
-                let result = match self.op.as_str() {
-                    "==" => {
-                        let an = numeric::parse_number(&a)?;
-                        let bn = numeric::parse_number(&b)?;
-                        an == bn
-                    }
-                    "!=" => {
-                        let an = numeric::parse_number(&a)?;
-                        let bn = numeric::parse_number(&b)?;
-                        an != bn
-                    }
-                    "<" => numeric::compare_lt(&a, &b)?,
-                    ">" => numeric::compare_gt(&a, &b)?,
-                    "<=" => numeric::compare_le(&a, &b)?,
-                    ">=" => numeric::compare_ge(&a, &b)?,
-                    _ => return Err("Invalid comparison operator".into()),
-                };
-                Ok(Value::Bool(result))
+        if let (Ok(left_num), Ok(right_num)) = (as_number(l.as_ref()), as_number(r.as_ref())) {
+            let result = match self.op.as_str() {
+                "==" => {
+                    let an = numeric::parse_number(&left_num.value)?;
+                    let bn = numeric::parse_number(&right_num.value)?;
+                    an == bn
+                }
+                "!=" => {
+                    let an = numeric::parse_number(&left_num.value)?;
+                    let bn = numeric::parse_number(&right_num.value)?;
+                    an != bn
+                }
+                "<" => numeric::compare_lt(&left_num.value, &right_num.value)?,
+                ">" => numeric::compare_gt(&left_num.value, &right_num.value)?,
+                "<=" => numeric::compare_le(&left_num.value, &right_num.value)?,
+                ">=" => numeric::compare_ge(&left_num.value, &right_num.value)?,
+                _ => return Err("Invalid comparison operator".into()),
+            };
+            return Ok(Box::new(MiniRustBool::new(result)));
+        }
+
+        // Use the trait method for generic equality
+        match self.op.as_str() {
+            "==" => {
+                let result = l.eq_value(r.as_ref())?;
+                Ok(Box::new(MiniRustBool::new(result)))
+            }
+            "!=" => {
+                let result = l.eq_value(r.as_ref())?;
+                Ok(Box::new(MiniRustBool::new(!result)))
             }
             _ => Err("Invalid comparison operands".into()),
         }

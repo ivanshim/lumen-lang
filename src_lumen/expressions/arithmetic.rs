@@ -7,6 +7,7 @@ use crate::kernel::parser::Parser;
 use crate::kernel::registry::{ExprInfix, ExprPrefix, LumenResult, Precedence, Registry};
 use crate::kernel::runtime::{Env, Value};
 use crate::src_lumen::numeric;
+use crate::src_lumen::values::{LumenNumber, as_number};
 
 #[derive(Debug)]
 struct UnaryMinusExpr {
@@ -15,13 +16,10 @@ struct UnaryMinusExpr {
 
 impl ExprNode for UnaryMinusExpr {
     fn eval(&self, env: &mut Env) -> LumenResult<Value> {
-        match self.expr.eval(env)? {
-            Value::Number(s) => {
-                let result = numeric::negate(&s)?;
-                Ok(Value::Number(result))
-            }
-            _ => Err("Invalid operand for unary '-'".into()),
-        }
+        let val = self.expr.eval(env)?;
+        let num = as_number(val.as_ref())?;
+        let result = numeric::negate(&num.value)?;
+        Ok(Box::new(LumenNumber::new(result)))
     }
 }
 
@@ -51,20 +49,18 @@ impl ExprNode for ArithmeticExpr {
         let l = self.left.eval(env)?;
         let r = self.right.eval(env)?;
 
-        match (l, r) {
-            (Value::Number(a), Value::Number(b)) => {
-                let result = match self.op.as_str() {
-                    "+" => numeric::add(&a, &b)?,
-                    "-" => numeric::subtract(&a, &b)?,
-                    "*" => numeric::multiply(&a, &b)?,
-                    "/" => numeric::divide(&a, &b)?,
-                    "%" => numeric::modulo(&a, &b)?,
-                    _ => return Err("Invalid arithmetic operator".into()),
-                };
-                Ok(Value::Number(result))
-            }
-            _ => Err("Invalid operands for arithmetic operation".into()),
-        }
+        let left_num = as_number(l.as_ref())?;
+        let right_num = as_number(r.as_ref())?;
+
+        let result = match self.op.as_str() {
+            "+" => numeric::add(&left_num.value, &right_num.value)?,
+            "-" => numeric::subtract(&left_num.value, &right_num.value)?,
+            "*" => numeric::multiply(&left_num.value, &right_num.value)?,
+            "/" => numeric::divide(&left_num.value, &right_num.value)?,
+            "%" => numeric::modulo(&left_num.value, &right_num.value)?,
+            _ => return Err("Invalid arithmetic operator".into()),
+        };
+        Ok(Box::new(LumenNumber::new(result)))
     }
 }
 

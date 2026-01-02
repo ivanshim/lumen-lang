@@ -8,6 +8,7 @@ use crate::kernel::parser::Parser;
 use crate::kernel::registry::{LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::Env;
 use crate::src_mini_python::structure::structural;
+use crate::src_mini_python::values::as_bool;
 
 #[derive(Debug)]
 struct WhileStmt {
@@ -19,28 +20,28 @@ impl StmtNode for WhileStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
         loop {
             let cond = self.condition.eval(env)?;
-            match cond {
-                crate::kernel::runtime::Value::Bool(true) => {
-                    // Each iteration gets its own scope
-                    env.push_scope();
-                    let mut break_occurred = false;
-                    for stmt in &self.body {
-                        match stmt.exec(env)? {
-                            Control::Break => {
-                                break_occurred = true;
-                                break;
-                            }
-                            Control::Continue => break,
-                            Control::None => {}
+            let cond_bool = as_bool(cond.as_ref())?;
+
+            if cond_bool.value {
+                // Each iteration gets its own scope
+                env.push_scope();
+                let mut break_occurred = false;
+                for stmt in &self.body {
+                    match stmt.exec(env)? {
+                        Control::Break => {
+                            break_occurred = true;
+                            break;
                         }
-                    }
-                    env.pop_scope();
-                    if break_occurred {
-                        return Ok(Control::None);
+                        Control::Continue => break,
+                        Control::None => {}
                     }
                 }
-                crate::kernel::runtime::Value::Bool(false) => break,
-                _ => return Err("while condition must be boolean".into()),
+                env.pop_scope();
+                if break_occurred {
+                    return Ok(Control::None);
+                }
+            } else {
+                break;
             }
         }
         Ok(Control::None)
