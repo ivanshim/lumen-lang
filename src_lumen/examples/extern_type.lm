@@ -1,2 +1,2 @@
-print(extern(value_type, 42))
-print(extern(value_type, true))
+print(extern("value_type", 42))
+print(extern("value_type", true))
