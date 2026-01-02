@@ -39,6 +39,14 @@ impl ExprNode for ComparisonExpr {
                 };
                 Ok(Value::Bool(result))
             }
+            (Value::String(a), Value::String(b)) => {
+                let result = match self.op.as_str() {
+                    "==" => a == b,
+                    "!=" => a != b,
+                    _ => return Err("String comparison only supports == and !=".into()),
+                };
+                Ok(Value::Bool(result))
+            }
             _ => Err("Invalid comparison operands".into()),
         }
     }

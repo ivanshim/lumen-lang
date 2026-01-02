@@ -1,4 +1,4 @@
-// Number and boolean literals
+// Number, boolean, and string literals
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
@@ -58,6 +58,35 @@ impl ExprPrefix for BoolLiteralPrefix {
     }
 }
 
+// String literals
+
+#[derive(Debug)]
+struct StringLiteral {
+    value: String,
+}
+
+impl ExprNode for StringLiteral {
+    fn eval(&self, _env: &mut Env) -> LumenResult<Value> {
+        // Remove quotes from the tokenized string: "hello" -> hello
+        let content = &self.value[1..self.value.len() - 1];
+        Ok(Value::String(content.to_string()))
+    }
+}
+
+pub struct StringLiteralPrefix;
+
+impl ExprPrefix for StringLiteralPrefix {
+    fn matches(&self, parser: &Parser) -> bool {
+        // Check if lexeme starts with a double quote
+        parser.peek().lexeme.starts_with('"')
+    }
+
+    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
+        let lexeme = parser.advance().lexeme;
+        Ok(Box::new(StringLiteral { value: lexeme }))
+    }
+}
+
 // --------------------
 // Registration
 // --------------------
@@ -67,4 +96,5 @@ pub fn register(reg: &mut Registry) {
     // Register handlers
     reg.register_prefix(Box::new(NumberLiteralPrefix));
     reg.register_prefix(Box::new(BoolLiteralPrefix));
+    reg.register_prefix(Box::new(StringLiteralPrefix));
 }

@@ -77,8 +77,9 @@ impl ExternCapability for ValueType {
         }
 
         let type_code = match &args[0] {
-            Value::Number(_) => "0",  // 0 = number
-            Value::Bool(_) => "1",    // 1 = boolean
+            Value::Number(_) => "0",   // 0 = number
+            Value::Bool(_) => "1",     // 1 = boolean
+            Value::String(_) => "2",   // 2 = string
         };
 
         Ok(Value::Number(type_code.to_string()))
