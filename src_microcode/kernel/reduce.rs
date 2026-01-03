@@ -483,10 +483,10 @@ impl<'a> Parser<'a> {
             return Ok(Instruction::literal(Value::String(string_val), start, self.prev_span().1));
         }
 
-        // Boolean literal
-        if lexeme == "true" || lexeme == "false" {
+        // Boolean literal (both lowercase and uppercase)
+        if lexeme == "true" || lexeme == "false" || lexeme == "True" || lexeme == "False" {
             self.advance();
-            let bool_val = lexeme == "true";
+            let bool_val = lexeme == "true" || lexeme == "True";
             return Ok(Instruction::literal(Value::Bool(bool_val), start, self.prev_span().1));
         }
 
