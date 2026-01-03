@@ -1,0 +1,260 @@
+// Stage 4: Execution
+//
+// Execute instruction trees using the primitive dispatch system.
+// Each primitive is language-agnostic and executes via its own rules.
+
+use super::primitives::{Instruction, Primitive, JumpKind};
+use super::eval::Value;
+use crate::src_microcode::runtime::{Environment, extern_system};
+
+/// Control flow signal from instruction execution
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ControlFlow {
+    /// Normal execution continues
+    Normal,
+
+    /// Break from loop
+    Break,
+
+    /// Continue to next iteration
+    Continue,
+
+    /// Return from function (not yet implemented)
+    Return(/* value */),
+}
+
+/// Execute an instruction tree
+pub fn execute(instruction: &Instruction, env: &mut Environment) -> Result<(Value, ControlFlow), String> {
+    match &instruction.primitive {
+        Primitive::Sequence(instrs) => {
+            let mut last_value = Value::Null;
+            for instr in instrs {
+                let (value, flow) = execute(instr, env)?;
+                last_value = value;
+                if flow != ControlFlow::Normal {
+                    return Ok((last_value, flow));
+                }
+            }
+            Ok((last_value, ControlFlow::Normal))
+        }
+
+        Primitive::Block(instrs) => {
+            env.push_scope();
+            let result = execute(&Instruction::sequence(instrs.clone()), env);
+            env.pop_scope();
+            result
+        }
+
+        Primitive::Conditional {
+            condition,
+            then_block,
+            else_block,
+        } => {
+            let (cond_value, _) = execute(condition, env)?;
+            if cond_value.to_bool() {
+                execute(then_block, env)
+            } else if let Some(else_inst) = else_block {
+                execute(else_inst, env)
+            } else {
+                Ok((Value::Null, ControlFlow::Normal))
+            }
+        }
+
+        Primitive::Loop { condition, block } => {
+            let mut last_value = Value::Null;
+            loop {
+                let (cond_value, _) = execute(condition, env)?;
+                if !cond_value.to_bool() {
+                    break;
+                }
+
+                let (value, flow) = execute(block, env)?;
+                last_value = value;
+
+                match flow {
+                    ControlFlow::Break => break,
+                    ControlFlow::Continue => continue,
+                    ControlFlow::Normal => {}
+                    _ => return Ok((last_value, flow)),
+                }
+            }
+            Ok((last_value, ControlFlow::Normal))
+        }
+
+        Primitive::Jump(kind) => {
+            match kind {
+                JumpKind::Break => Ok((Value::Null, ControlFlow::Break)),
+                JumpKind::Continue => Ok((Value::Null, ControlFlow::Continue)),
+            }
+        }
+
+        Primitive::Assign { name, value } => {
+            let (val, _) = execute(value, env)?;
+            env.set(name.clone(), val.clone());
+            Ok((val, ControlFlow::Normal))
+        }
+
+        Primitive::Call { selector, args } => {
+            let mut eval_args = Vec::new();
+            for arg in args {
+                let (val, _) = execute(arg, env)?;
+                eval_args.push(val);
+            }
+            let result = extern_system::call_extern(selector, eval_args)?;
+            Ok((result, ControlFlow::Normal))
+        }
+
+        Primitive::UnaryOp { operator, operand } => {
+            let (operand_val, _) = execute(operand, env)?;
+            let result = execute_unary_op(operator, &operand_val)?;
+            Ok((result, ControlFlow::Normal))
+        }
+
+        Primitive::BinaryOp { operator, left, right } => {
+            let (left_val, _) = execute(left, env)?;
+            let (right_val, _) = execute(right, env)?;
+            let result = execute_binary_op(operator, &left_val, &right_val)?;
+            Ok((result, ControlFlow::Normal))
+        }
+
+        Primitive::Literal(val) => Ok((val.clone(), ControlFlow::Normal)),
+
+        Primitive::Variable(name) => {
+            let val = env.get(name)?;
+            Ok((val, ControlFlow::Normal))
+        }
+
+        Primitive::Print(expr) => {
+            let (val, _) = execute(expr, env)?;
+            println!("{}", val);
+            Ok((Value::Null, ControlFlow::Normal))
+        }
+    }
+}
+
+/// Execute a unary operation
+fn execute_unary_op(operator: &str, operand: &Value) -> Result<Value, String> {
+    match operator {
+        "not" => Ok(Value::Bool(!operand.to_bool())),
+        "-" => {
+            let n = operand.to_number()?;
+            Ok(Value::Number(-n))
+        }
+        _ => Err(format!("Unknown unary operator: {}", operator)),
+    }
+}
+
+/// Execute a binary operation
+fn execute_binary_op(operator: &str, left: &Value, right: &Value) -> Result<Value, String> {
+    match operator {
+        // Arithmetic
+        "+" => {
+            let l = left.to_number()?;
+            let r = right.to_number()?;
+            Ok(Value::Number(l + r))
+        }
+        "-" => {
+            let l = left.to_number()?;
+            let r = right.to_number()?;
+            Ok(Value::Number(l - r))
+        }
+        "*" => {
+            let l = left.to_number()?;
+            let r = right.to_number()?;
+            Ok(Value::Number(l * r))
+        }
+        "/" => {
+            let l = left.to_number()?;
+            let r = right.to_number()?;
+            if r == 0.0 {
+                return Err("Division by zero".to_string());
+            }
+            Ok(Value::Number(l / r))
+        }
+
+        // Comparison
+        "==" => {
+            let result = left.equals(right)?;
+            Ok(Value::Bool(result))
+        }
+        "!=" => {
+            let result = left.equals(right)?;
+            Ok(Value::Bool(!result))
+        }
+        "<" => {
+            let l = left.to_number()?;
+            let r = right.to_number()?;
+            Ok(Value::Bool(l < r))
+        }
+        ">" => {
+            let l = left.to_number()?;
+            let r = right.to_number()?;
+            Ok(Value::Bool(l > r))
+        }
+        "<=" => {
+            let l = left.to_number()?;
+            let r = right.to_number()?;
+            Ok(Value::Bool(l <= r))
+        }
+        ">=" => {
+            let l = left.to_number()?;
+            let r = right.to_number()?;
+            Ok(Value::Bool(l >= r))
+        }
+
+        // Logical
+        "and" => {
+            let l = left.to_bool();
+            let r = right.to_bool();
+            Ok(Value::Bool(l && r))
+        }
+        "or" => {
+            let l = left.to_bool();
+            let r = right.to_bool();
+            Ok(Value::Bool(l || r))
+        }
+
+        // Assignment (should not reach here in normal execution)
+        "=" => Ok(right.clone()),
+
+        _ => Err(format!("Unknown binary operator: {}", operator)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_literal_execution() {
+        let mut env = Environment::new();
+        let instr = Instruction::literal(Value::Number(42.0), 0, 2);
+        let (val, flow) = execute(&instr, &mut env).unwrap();
+        assert_eq!(val, Value::Number(42.0));
+        assert_eq!(flow, ControlFlow::Normal);
+    }
+
+    #[test]
+    fn test_unary_op() {
+        assert_eq!(
+            execute_unary_op("not", &Value::Bool(true)).unwrap(),
+            Value::Bool(false)
+        );
+        assert_eq!(
+            execute_unary_op("-", &Value::Number(5.0)).unwrap(),
+            Value::Number(-5.0)
+        );
+    }
+
+    #[test]
+    fn test_binary_op() {
+        assert_eq!(
+            execute_binary_op("+", &Value::Number(3.0), &Value::Number(4.0)).unwrap(),
+            Value::Number(7.0)
+        );
+        assert_eq!(
+            execute_binary_op("==", &Value::Number(3.0), &Value::Number(3.0)).unwrap(),
+            Value::Bool(true)
+        );
+    }
+}
