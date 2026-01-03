@@ -134,10 +134,7 @@ fn execute_stream_kernel(source: &str, language: &str) {
 fn execute_microcode_kernel(source: &str, language: &str) {
     match language {
         "lumen" => run_lumen_microcode(source),
-        "mini-rust" => {
-            eprintln!("Error: Mini-Rust not yet supported in microcode kernel");
-            process::exit(1);
-        }
+        "mini-rust" => run_mini_rust_microcode(source),
         "mini-python" => {
             eprintln!("Error: Mini-Python not yet supported in microcode kernel");
             process::exit(1);
@@ -298,6 +295,18 @@ fn run_lumen_microcode(source: &str) {
     use crate::src_microcode::languages::lumen_schema;
 
     let schema = lumen_schema::get_schema();
+
+    if let Err(e) = Microcode::execute(source, &schema) {
+        eprintln!("MicrocodeError: {e}");
+        process::exit(1);
+    }
+}
+
+fn run_mini_rust_microcode(source: &str) {
+    use crate::src_microcode::Microcode;
+    use crate::src_microcode::languages::mini_rust_schema;
+
+    let schema = mini_rust_schema::get_schema();
 
     if let Err(e) = Microcode::execute(source, &schema) {
         eprintln!("MicrocodeError: {e}");
