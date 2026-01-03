@@ -63,6 +63,25 @@ impl<'a> Parser<'a> {
         t
     }
 
+    /// Skip whitespace tokens (language-level convenience).
+    /// Since the kernel lexer is now fully agnostic and emits all characters,
+    /// including whitespace, this helper skips over single-character space/tab/newline tokens.
+    /// Languages that care about whitespace (e.g., Lumen for indentation) handle it
+    /// at their parsing layer, not by using this method.
+    pub fn skip_whitespace(&mut self) {
+        while self.i < self.toks.len() {
+            let lexeme = &self.toks[self.i].tok.lexeme;
+            if lexeme.len() == 1 {
+                let ch = lexeme.as_bytes()[0];
+                if ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' {
+                    self.i += 1;
+                    continue;
+                }
+            }
+            break;
+        }
+    }
+
     /// Generic program parsing - just dispatches to handlers.
     /// Languages define their own parse_program() if they need custom behavior.
     pub fn parse_program(&mut self) -> LumenResult<Program> {
@@ -94,6 +113,9 @@ impl<'a> Parser<'a> {
         let mut left = prefix.parse(self)?;
 
         loop {
+            // Skip whitespace before checking for infix operators
+            self.skip_whitespace();
+
             let infix = match self.reg.find_infix(self) {
                 Some(i) => i,
                 None => break,

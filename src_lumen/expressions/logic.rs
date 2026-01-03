@@ -55,6 +55,7 @@ impl ExprInfix for LogicInfix {
         left: Box<dyn ExprNode>,
     ) -> LumenResult<Box<dyn ExprNode>> {
         parser.advance(); // consume operator
+        parser.skip_whitespace();
         let right = parser.parse_expr_prec(self.precedence() + 1)?;
         Ok(Box::new(LogicExpr { left, op: self.op.clone(), right }))
     }
@@ -84,6 +85,7 @@ impl ExprPrefix for NotPrefix {
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
         parser.advance();
+        parser.skip_whitespace();
         let expr = parser.parse_expr_prec(Precedence::Unary)?;
         Ok(Box::new(NotExpr { expr }))
     }

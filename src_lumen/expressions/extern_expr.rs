@@ -41,18 +41,18 @@ impl ExprPrefix for ExternPrefix {
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
         // Consume 'extern'
         parser.advance();
+        parser.skip_whitespace();
 
         // Expect '('
         if parser.advance().lexeme != LPAREN {
             return Err("Expected '(' after extern".into());
         }
+        parser.skip_whitespace();
 
         // CRITICAL: The selector MUST be a string literal.
         // This enforces that selectors are data, not identifiers.
         // Lumen must not accept unquoted capability names.
-        let selector_token = parser.peek().lexeme.clone();
-
-        if !selector_token.starts_with('"') {
+        if parser.peek().lexeme != "\"" {
             return Err(
                 "extern selector must be a string literal (e.g., \"print_native\").\n\
                  Selector is data, not an identifier.\n\
@@ -61,8 +61,28 @@ impl ExprPrefix for ExternPrefix {
             );
         }
 
-        // Extract the selector string (removing quotes)
-        let selector_lexeme = parser.advance().lexeme;
+        // Consume opening quote
+        let mut selector_lexeme = parser.advance().lexeme;
+
+        // Since the kernel lexer is agnostic, assemble the full string from individual characters
+        loop {
+            let ch = parser.peek().lexeme.clone();
+
+            // Check for closing quote
+            if ch == "\"" {
+                selector_lexeme.push_str(&parser.advance().lexeme);
+                break;
+            }
+
+            // Add character to selector (including whitespace, etc.)
+            selector_lexeme.push_str(&parser.advance().lexeme);
+
+            // Protect against unterminated strings
+            if parser.i >= parser.toks.len() {
+                return Err("Unterminated string literal in extern selector".into());
+            }
+        }
+
         // Remove the surrounding quotes: "selector" -> selector
         if selector_lexeme.len() < 2 || !selector_lexeme.ends_with('"') {
             return Err("Invalid string literal in extern selector".into());
@@ -73,6 +93,8 @@ impl ExprPrefix for ExternPrefix {
             return Err("extern selector cannot be empty".into());
         }
 
+        parser.skip_whitespace();
+
         // Parse remaining arguments
         let mut args = Vec::new();
 
@@ -82,10 +104,12 @@ impl ExprPrefix for ExternPrefix {
             if parser.advance().lexeme != "," {
                 return Err("Expected ',' after extern selector".into());
             }
+            parser.skip_whitespace();
 
             // Parse argument expressions
             loop {
                 args.push(parser.parse_expr()?);
+                parser.skip_whitespace();
 
                 if parser.peek().lexeme == RPAREN {
                     break;
@@ -94,6 +118,7 @@ impl ExprPrefix for ExternPrefix {
                 if parser.advance().lexeme != "," {
                     return Err("Expected ',' between extern arguments".into());
                 }
+                parser.skip_whitespace();
             }
         }
 

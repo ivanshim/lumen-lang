@@ -26,8 +26,24 @@ impl ExprPrefix for NumberLiteralPrefix {
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
-        let lexeme = parser.advance().lexeme;
-        Ok(Box::new(NumberLiteral { value: lexeme }))
+        // Consume the first digit
+        let mut value = parser.advance().lexeme;
+
+        // Since the kernel lexer is fully agnostic, it emits each digit as a separate token.
+        // We need to consume consecutive digit tokens to build the full number.
+        loop {
+            // Check if next token is a digit
+            if parser.peek().lexeme.len() == 1 {
+                let ch = parser.peek().lexeme.as_bytes()[0];
+                if ch.is_ascii_digit() || ch == b'.' {
+                    value.push_str(&parser.advance().lexeme);
+                    continue;
+                }
+            }
+            break;
+        }
+
+        Ok(Box::new(NumberLiteral { value }))
     }
 }
 
@@ -79,12 +95,34 @@ pub struct StringLiteralPrefix;
 impl ExprPrefix for StringLiteralPrefix {
     fn matches(&self, parser: &Parser) -> bool {
         // Check if lexeme starts with a double quote
-        parser.peek().lexeme.starts_with('"')
+        parser.peek().lexeme == "\""
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
-        let lexeme = parser.advance().lexeme;
-        Ok(Box::new(StringLiteral { value: lexeme }))
+        // Consume opening quote
+        let mut value = parser.advance().lexeme;
+
+        // Since the kernel lexer is agnostic, it emits each character separately.
+        // Assemble the full string by consuming characters until closing quote.
+        loop {
+            let ch = parser.peek().lexeme.clone();
+
+            // Check for closing quote
+            if ch == "\"" {
+                value.push_str(&parser.advance().lexeme);
+                break;
+            }
+
+            // Add character to string (including whitespace, newlines, etc.)
+            value.push_str(&parser.advance().lexeme);
+
+            // Protect against unterminated strings
+            if parser.i >= parser.toks.len() {
+                return Err("Unterminated string literal".into());
+            }
+        }
+
+        Ok(Box::new(StringLiteral { value }))
     }
 }
 

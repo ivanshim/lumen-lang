@@ -31,7 +31,22 @@ impl ExprPrefix for VariablePrefix {
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
-        let name = parser.advance().lexeme;
+        // Consume the first character of the identifier
+        let mut name = parser.advance().lexeme;
+
+        // Since the kernel lexer is agnostic, multi-character identifiers are split into single chars
+        // Continue consuming identifier characters
+        loop {
+            if parser.peek().lexeme.len() == 1 {
+                let ch = parser.peek().lexeme.as_bytes()[0];
+                if ch.is_ascii_alphanumeric() || ch == b'_' {
+                    name.push_str(&parser.advance().lexeme);
+                    continue;
+                }
+            }
+            break;
+        }
+
         Ok(Box::new(VarExpr { name }))
     }
 }
