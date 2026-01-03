@@ -1,8 +1,0 @@
-y = 100
-print(y)
-
-if true
-    y = 50
-    print(y)
-
-print(y)
