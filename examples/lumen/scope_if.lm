@@ -1,0 +1,10 @@
+x = 10
+
+if true
+    x = 20
+    print(x)
+else
+    x = 30
+    print(x)
+
+print(x)
