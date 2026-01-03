@@ -2,10 +2,10 @@
 //
 // break statement
 
-use crate::src_stream::src_stream::kernel::ast::{Control, StmtNode};
-use crate::src_stream::src_stream::kernel::parser::Parser;
-use crate::src_stream::src_stream::kernel::registry::{LumenResult, Registry, StmtHandler};
-use crate::src_stream::src_stream::kernel::runtime::Env;
+use crate::src_stream::kernel::ast::{Control, StmtNode};
+use crate::src_stream::kernel::parser::Parser;
+use crate::src_stream::kernel::registry::{LumenResult, Registry, StmtHandler};
+use crate::src_stream::kernel::runtime::Env;
 
 #[derive(Debug)]
 struct BreakStmt;

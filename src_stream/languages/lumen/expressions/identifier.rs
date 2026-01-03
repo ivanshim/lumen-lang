@@ -1,9 +1,9 @@
 // Variable reference expression
 
-use crate::src_stream::src_stream::kernel::ast::ExprNode;
-use crate::src_stream::src_stream::kernel::parser::Parser;
-use crate::src_stream::src_stream::kernel::registry::{LumenResult, ExprPrefix};
-use crate::src_stream::src_stream::kernel::runtime::{Env, Value};
+use crate::src_stream::kernel::ast::ExprNode;
+use crate::src_stream::kernel::parser::Parser;
+use crate::src_stream::kernel::registry::{LumenResult, ExprPrefix};
+use crate::src_stream::kernel::runtime::{Env, Value};
 
 #[derive(Debug)]
 struct IdentExpr {

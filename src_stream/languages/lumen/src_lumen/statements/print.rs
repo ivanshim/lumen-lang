@@ -6,7 +6,7 @@ use crate::src_stream::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::src_stream::kernel::parser::Parser;
 use crate::src_stream::kernel::registry::{LumenResult, Registry, StmtHandler};
 use crate::src_stream::kernel::runtime::Env;
-use crate::src_lumen::structure::structural::{LPAREN, RPAREN};
+use crate::src_stream::languages::lumen::structure::structural::{LPAREN, RPAREN};
 
 #[derive(Debug)]
 struct PrintStmt {

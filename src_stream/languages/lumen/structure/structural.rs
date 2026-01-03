@@ -4,10 +4,10 @@
 // Handles Python-style indentation: 4-space indents, INDENT/DEDENT tokens.
 // Completely language-specific - ALL structural concepts defined here.
 
-use crate::src_stream::src_stream::kernel::ast::{Program, StmtNode};
-use crate::src_stream::src_stream::kernel::lexer::{Token, SpannedToken, Span};
-use crate::src_stream::src_stream::kernel::parser::Parser;
-use crate::src_stream::src_stream::kernel::registry::{err_at, LumenResult, Registry};
+use crate::src_stream::kernel::ast::{Program, StmtNode};
+use crate::src_stream::kernel::lexer::{Token, SpannedToken, Span};
+use crate::src_stream::kernel::parser::Parser;
+use crate::src_stream::kernel::registry::{err_at, LumenResult, Registry};
 
 // --------------------
 // Lumen Token Definitions (lexeme strings)

@@ -1,9 +1,9 @@
 // break statement for mini-rust
 
-use crate::src_stream::src_stream::kernel::ast::{Control, StmtNode};
-use crate::src_stream::src_stream::kernel::parser::Parser;
-use crate::src_stream::src_stream::kernel::registry::{LumenResult, Registry, StmtHandler};
-use crate::src_stream::src_stream::kernel::runtime::Env;
+use crate::src_stream::kernel::ast::{Control, StmtNode};
+use crate::src_stream::kernel::parser::Parser;
+use crate::src_stream::kernel::registry::{LumenResult, Registry, StmtHandler};
+use crate::src_stream::kernel::runtime::Env;
 
 pub const BREAK: &str = "break";
 

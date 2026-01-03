@@ -1,9 +1,9 @@
 // let binding statement for mini-rust
 
-use crate::src_stream::src_stream::kernel::ast::{Control, ExprNode, StmtNode};
-use crate::src_stream::src_stream::kernel::parser::Parser;
-use crate::src_stream::src_stream::kernel::registry::{err_at, LumenResult, Registry, StmtHandler};
-use crate::src_stream::src_stream::kernel::runtime::{Env, Value};
+use crate::src_stream::kernel::ast::{Control, ExprNode, StmtNode};
+use crate::src_stream::kernel::parser::Parser;
+use crate::src_stream::kernel::registry::{err_at, LumenResult, Registry, StmtHandler};
+use crate::src_stream::kernel::runtime::{Env, Value};
 
 // --------------------
 // Token definitions
