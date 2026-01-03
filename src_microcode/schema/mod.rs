@@ -1,4 +1,5 @@
-// Declarative schema system (shared by both kernels)
+// Declarative schema system for microcode kernel
+// Allows languages to be specified entirely as data
 
 pub mod statements;
 pub mod operators;
@@ -8,6 +9,7 @@ pub use operators::{OperatorInfo, Associativity, UnaryOperatorInfo};
 
 use std::collections::HashMap;
 
+/// Complete declarative schema for a language
 #[derive(Debug, Clone)]
 pub struct LanguageSchema {
     pub statements: HashMap<String, StatementPattern>,

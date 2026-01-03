@@ -6,7 +6,7 @@ pub mod variable;
 pub mod identifier;
 pub mod grouping;
 
-pub fn register_all(registry: &mut crate::kernel::registry::Registry) {
+pub fn register_all(registry: &mut crate::src_stream::kernel::registry::Registry) {
     literals::register(registry);
     arithmetic::register(registry);
     comparison::register(registry);

@@ -1,2 +1,0 @@
-x = extern("print_native", 99)
-print(x)

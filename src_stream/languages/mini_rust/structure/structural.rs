@@ -1,9 +1,9 @@
 // Mini-Rust structural tokens and parsing helpers
 
-use crate::src_stream::src_stream::kernel::ast::{Program, StmtNode};
-use crate::src_stream::src_stream::kernel::lexer::{Token, SpannedToken, Span};
-use crate::src_stream::src_stream::kernel::parser::Parser;
-use crate::src_stream::src_stream::kernel::registry::{err_at, LumenResult, Registry};
+use crate::src_stream::kernel::ast::{Program, StmtNode};
+use crate::src_stream::kernel::lexer::{Token, SpannedToken, Span};
+use crate::src_stream::kernel::parser::Parser;
+use crate::src_stream::kernel::registry::{err_at, LumenResult, Registry};
 
 // --------------------
 // Mini-Rust Token Definitions
@@ -99,10 +99,10 @@ pub fn parse_program(parser: &mut Parser) -> LumenResult<Program> {
 }
 
 /// Add EOF token to raw tokens (no indentation processing for mini-rust)
-pub fn process_tokens(raw_tokens: Vec<crate::kernel::lexer::SpannedToken>) -> LumenResult<Vec<crate::kernel::lexer::SpannedToken>> {
+pub fn process_tokens(raw_tokens: Vec<crate::src_stream::kernel::lexer::SpannedToken>) -> LumenResult<Vec<crate::src_stream::kernel::lexer::SpannedToken>> {
     let mut tokens = raw_tokens;
     let line = tokens.last().map(|t| t.line).unwrap_or(1);
-    tokens.push(crate::kernel::lexer::SpannedToken {
+    tokens.push(crate::src_stream::kernel::lexer::SpannedToken {
         tok: Token::new(EOF.to_string(), Span::new(0, 0)),
         line,
         col: 1,

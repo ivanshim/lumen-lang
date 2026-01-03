@@ -1,34 +1,21 @@
 // lumen-lang main entry point
-// Supports both stream and microcode execution models
-// Use --kernel to select: stream (default) or microcode
+// Routes between stream and microcode kernels
+// Usage: lumen-lang [--kernel stream|microcode] [--lang <language>] <file>
 
-mod kernel;
+mod schema;
 
-#[path = "../src_lumen/mod.rs"]
-mod src_lumen;
+// Load stream kernel track
+#[path = "../src_stream/mod.rs"]
+mod src_stream;
 
-#[path = "../src_mini_rust/mod.rs"]
-mod src_mini_rust;
-
-#[path = "../src_mini_python/mod.rs"]
-mod src_mini_python;
-
-// Microcode track (independent from stream track)
+// Load microcode kernel track
 #[path = "../src_microcode/mod.rs"]
 mod src_microcode;
-
-// Shared schema system for both tracks
-mod schema;
 
 use std::env;
 use std::fs;
 use std::path::Path;
 use std::process;
-
-use crate::kernel::lexer::lex;
-use crate::kernel::parser::Parser;
-use crate::kernel::registry::Registry;
-use crate::kernel::eval;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -134,9 +121,9 @@ fn detect_language_from_extension(filepath: &str) -> Option<String> {
 
 fn execute_stream_kernel(source: &str, language: &str) {
     match language {
-        "lumen" => run_lumen(source),
-        "mini-rust" => run_mini_rust(source),
-        "mini-python" => run_mini_python(source),
+        "lumen" => run_lumen_stream(source),
+        "mini-rust" => run_mini_rust_stream(source),
+        "mini-python" => run_mini_python_stream(source),
         _ => {
             eprintln!("Error: Unknown language '{}'", language);
             process::exit(1);
@@ -162,12 +149,15 @@ fn execute_microcode_kernel(source: &str, language: &str) {
     }
 }
 
-fn run_lumen(source: &str) {
-    use crate::src_lumen;
-    use crate::src_lumen::structure::structural;
+fn run_lumen_stream(source: &str) {
+    use crate::src_stream::kernel::lexer::lex;
+    use crate::src_stream::kernel::parser::Parser;
+    use crate::src_stream::kernel::registry::Registry;
+    use crate::src_stream::kernel::eval;
+    use crate::src_stream::languages::lumen::structure::structural;
 
     let mut registry = Registry::new();
-    src_lumen::dispatcher::register_all(&mut registry);
+    crate::src_stream::languages::lumen::dispatcher::register_all(&mut registry);
 
     let raw_tokens = match lex(source, &registry.tokens) {
         Ok(toks) => toks,
@@ -207,12 +197,15 @@ fn run_lumen(source: &str) {
     }
 }
 
-fn run_mini_rust(source: &str) {
-    use crate::src_mini_rust;
-    use crate::src_mini_rust::structure::structural;
+fn run_mini_rust_stream(source: &str) {
+    use crate::src_stream::kernel::lexer::lex;
+    use crate::src_stream::kernel::parser::Parser;
+    use crate::src_stream::kernel::registry::Registry;
+    use crate::src_stream::kernel::eval;
+    use crate::src_stream::languages::mini_rust::structure::structural;
 
     let mut registry = Registry::new();
-    src_mini_rust::register_all(&mut registry);
+    crate::src_stream::languages::mini_rust::register_all(&mut registry);
 
     let raw_tokens = match lex(source, &registry.tokens) {
         Ok(toks) => toks,
@@ -252,12 +245,15 @@ fn run_mini_rust(source: &str) {
     }
 }
 
-fn run_mini_python(source: &str) {
-    use crate::src_mini_python;
-    use crate::src_mini_python::structure::structural;
+fn run_mini_python_stream(source: &str) {
+    use crate::src_stream::kernel::lexer::lex;
+    use crate::src_stream::kernel::parser::Parser;
+    use crate::src_stream::kernel::registry::Registry;
+    use crate::src_stream::kernel::eval;
+    use crate::src_stream::languages::mini_python::structure::structural;
 
     let mut registry = Registry::new();
-    src_mini_python::register_all(&mut registry);
+    crate::src_stream::languages::mini_python::register_all(&mut registry);
 
     let raw_tokens = match lex(source, &registry.tokens) {
         Ok(toks) => toks,

@@ -1,8 +1,8 @@
 // Parenthesized expressions: ( ... )
 
-use crate::src_stream::src_stream::kernel::ast::ExprNode;
-use crate::src_stream::src_stream::kernel::parser::Parser;
-use crate::src_stream::src_stream::kernel::registry::{ExprPrefix, LumenResult, Registry};
+use crate::src_stream::kernel::ast::ExprNode;
+use crate::src_stream::kernel::parser::Parser;
+use crate::src_stream::kernel::registry::{ExprPrefix, LumenResult, Registry};
 use crate::src_stream::src_mini_python::structure::structural::{LPAREN, RPAREN};
 
 pub struct GroupingPrefix;

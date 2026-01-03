@@ -6,7 +6,7 @@
 use crate::src_stream::kernel::registry::LumenResult;
 use crate::src_stream::kernel::runtime::Value;
 use super::registry::ExternCapability;
-use crate::src_lumen::values::{LumenNumber, as_number, as_string, as_bool};
+use crate::src_stream::languages::lumen::values::{LumenNumber, as_number, as_string, as_bool};
 
 /// print_native capability
 /// Takes a single Value and prints it to stdout.

@@ -4,7 +4,7 @@ use crate::src_stream::kernel::ast::ExprNode;
 use crate::src_stream::kernel::parser::Parser;
 use crate::src_stream::kernel::registry::{ExprPrefix, LumenResult, Registry};
 use crate::src_stream::kernel::runtime::{Env, Value};
-use crate::src_lumen::values::{LumenNumber, LumenBool, LumenString};
+use crate::src_stream::languages::lumen::values::{LumenNumber, LumenBool, LumenString};
 
 #[derive(Debug)]
 pub struct NumberLiteral {

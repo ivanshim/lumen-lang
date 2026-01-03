@@ -1,9 +1,9 @@
 // Number and boolean literals
 
-use crate::src_stream::src_stream::kernel::ast::ExprNode;
-use crate::src_stream::src_stream::kernel::parser::Parser;
-use crate::src_stream::src_stream::kernel::registry::{ExprPrefix, LumenResult, Registry};
-use crate::src_stream::src_stream::kernel::runtime::{Env, Value};
+use crate::src_stream::kernel::ast::ExprNode;
+use crate::src_stream::kernel::parser::Parser;
+use crate::src_stream::kernel::registry::{ExprPrefix, LumenResult, Registry};
+use crate::src_stream::kernel::runtime::{Env, Value};
 use crate::src_stream::src_mini_python::values::{MiniPythonNumber, MiniPythonBool};
 
 #[derive(Debug)]

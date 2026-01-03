@@ -4,7 +4,7 @@
 // These are the concrete implementations of the kernel's RuntimeValue trait.
 // Only Lumen code knows what numbers, booleans, and strings mean.
 
-use crate::src_stream::src_stream::kernel::runtime::RuntimeValue;
+use crate::src_stream::kernel::runtime::RuntimeValue;
 use std::any::Any;
 
 /// Lumen number value - stored as string to preserve precision

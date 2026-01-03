@@ -5,10 +5,10 @@
 // Extern marks the boundary where Lumen's semantic guarantees stop.
 // It is deliberately uncomfortable, making the impurity explicit.
 
-use crate::src_stream::src_stream::kernel::ast::ExprNode;
-use crate::src_stream::src_stream::kernel::parser::Parser;
-use crate::src_stream::src_stream::kernel::registry::{ExprPrefix, LumenResult, Registry};
-use crate::src_stream::src_stream::kernel::runtime::{Env, Value};
+use crate::src_stream::kernel::ast::ExprNode;
+use crate::src_stream::kernel::parser::Parser;
+use crate::src_stream::kernel::registry::{ExprPrefix, LumenResult, Registry};
+use crate::src_stream::kernel::runtime::{Env, Value};
 use crate::src_stream::src_lumen::structure::structural::{LPAREN, RPAREN};
 use crate::src_stream::src_lumen::extern_system;
 
