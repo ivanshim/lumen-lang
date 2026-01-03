@@ -59,6 +59,7 @@ impl StmtHandler for IfStmtHandler {
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'if'
+        parser.skip_whitespace();
 
         let cond = parser.parse_expr()?;
         let then_block = structural::parse_block(parser)?;
@@ -67,6 +68,7 @@ impl StmtHandler for IfStmtHandler {
 
         let else_block = if parser.peek().lexeme == "else" {
             parser.advance(); // consume 'else'
+            parser.skip_whitespace();
             Some(structural::parse_block(parser)?)
         } else {
             None

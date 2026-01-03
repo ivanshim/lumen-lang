@@ -1,20 +1,36 @@
 // src/kernel/lexer.rs
 //
+// ONTOLOGICALLY NEUTRAL LEXER
+//
 // Pure lossless ASCII segmentation - kernel level.
-// No semantic token classification. No language assumptions.
-// Converts source text -> tokens (raw lexeme strings with byte span).
-// Language modules handle all interpretation of lexemes.
+// Zero semantic assumptions. Converts source bytes -> tokens (raw lexeme strings with span).
+// All interpretation of lexemes (keywords, operators, numbers, strings, etc.) happens
+// entirely in language modules.
+//
+// PRINCIPLE: The kernel lexer does not know what anything means.
+// It only guarantees:
+//   1. Lossless segmentation: every input byte → part of exactly one token
+//   2. Maximal-munch: longest registered multi-char sequence is always preferred
+//   3. Fallback to single-char: if no multi-char matches, emit one byte as token
+//   4. Position tracking: line/col/span preserved for all tokens (including whitespace)
 //
 // AUTHORITY:
-// - Span { start, end } (byte offsets) is the AUTHORITATIVE source-location coordinate system
-// - All parsing, AST construction, and evaluation logic must rely on Span
-// - line/col are DIAGNOSTIC-ONLY (derived metadata, used only for error messages)
+// - Span { start, end } (byte offsets) is AUTHORITATIVE source-location coordinate
+// - All parsing, AST construction, evaluation use Span
+// - line/col are DIAGNOSTIC-ONLY (derived metadata for error messages only)
 //
 // ARCHITECTURE:
-// - Token is { lexeme: String, span: Span } - no semantic categories
-// - SpannedToken also carries line/col for diagnostic formatting only
-// - Lexer performs maximal-munch segmentation using language-provided multi-char sequences
-// - All semantic interpretation (keywords, operators, types) happens in language layer
+// - Token: { lexeme: String, span: Span } - opaque, no semantic categories
+// - SpannedToken: adds line/col for diagnostic formatting
+// - Lexer: pure maximal-munch with language-provided sequences + single-char fallback
+// - No character-class checks (no is_digit, is_alpha, is_whitespace)
+// - No special-case handling (no string literals, numbers, identifiers, keywords)
+// - No assumptions about human language conventions
+//
+// EXAMPLE:
+// Input: "@@@if@@@then@@else"
+// The lexer tokenizes this WITHOUT KNOWING what it means.
+// All meaning is defined by the language module via registry and parser.
 
 use crate::kernel::registry::{LumenResult, TokenRegistry};
 
@@ -56,9 +72,23 @@ impl SpannedToken {
     }
 }
 
-/// Tokenize source code using maximal-munch segmentation.
+/// Tokenize source code using pure maximal-munch segmentation.
 /// Language modules provide multi-char sequences via token_reg.
-/// The lexer has NO semantic knowledge - it just segments the text.
+/// Kernel has ZERO semantic knowledge.
+///
+/// Algorithm:
+///   1. At each byte position, try to match the longest language-supplied multi-char sequence
+///   2. If no multi-char match, emit a single byte as a token (including all whitespace)
+///   3. Track line/col for every byte (required for error reporting)
+///   4. Never reject any input - all bytes are valid
+///
+/// This lexer makes NO assumptions about:
+///   - What constitutes whitespace or if it's meaningful
+///   - What constitutes identifiers, numbers, strings, keywords
+///   - What characters are "allowed" or "unexpected"
+///   - Human language conventions
+///
+/// All such interpretation is delegated entirely to language modules.
 pub fn lex(source: &str, token_reg: &TokenRegistry) -> LumenResult<Vec<SpannedToken>> {
     let mut out = Vec::new();
     let bytes = source.as_bytes();
@@ -67,94 +97,30 @@ pub fn lex(source: &str, token_reg: &TokenRegistry) -> LumenResult<Vec<SpannedTo
     let mut col_in_line = 1usize;
 
     while byte_pos < bytes.len() {
-        // Skip whitespace and track line/column info
-        if bytes[byte_pos].is_ascii_whitespace() {
-            if bytes[byte_pos] == b'\n' {
-                line_no += 1;
-                col_in_line = 1;
-            } else {
-                col_in_line += 1;
-            }
-            byte_pos += 1;
-            continue;
-        }
-
-        let start_byte = byte_pos;
         let start_col = col_in_line;
 
-        // strings: "..."
-        if bytes[byte_pos] == b'"' {
-            let start = byte_pos;
-            byte_pos += 1;
-            col_in_line += 1;
-            while byte_pos < bytes.len() && bytes[byte_pos] != b'"' {
-                if bytes[byte_pos] == b'\n' {
-                    line_no += 1;
-                    col_in_line = 1;
-                } else {
-                    col_in_line += 1;
-                }
-                byte_pos += 1;
-            }
-            if byte_pos >= bytes.len() {
-                return Err(format!("Unterminated string at line {line_no}"));
-            }
-            byte_pos += 1; // include closing quote
-            col_in_line += 1;
-            let lexeme = source[start..byte_pos].to_string();
-            let span = Span::new(start, byte_pos);
-            out.push(SpannedToken::new(Token::new(lexeme, span), line_no, start_col));
-            continue;
-        }
-
-        // numbers: 123 or 123.45
-        if bytes[byte_pos].is_ascii_digit() {
-            let start = byte_pos;
-            while byte_pos < bytes.len() && bytes[byte_pos].is_ascii_digit() {
-                col_in_line += 1;
-                byte_pos += 1;
-            }
-            if byte_pos < bytes.len() && bytes[byte_pos] == b'.' {
-                col_in_line += 1;
-                byte_pos += 1;
-                while byte_pos < bytes.len() && bytes[byte_pos].is_ascii_digit() {
-                    col_in_line += 1;
-                    byte_pos += 1;
-                }
-            }
-            let lexeme = source[start..byte_pos].to_string();
-            let span = Span::new(start, byte_pos);
-            out.push(SpannedToken::new(Token::new(lexeme, span), line_no, start_col));
-            continue;
-        }
-
-        // identifiers / keywords (maximal-munch for word-like sequences)
-        if is_word_start(bytes[byte_pos]) {
-            let start = byte_pos;
-            byte_pos += 1;
-            col_in_line += 1;
-            while byte_pos < bytes.len() && is_word_continue(bytes[byte_pos]) {
-                col_in_line += 1;
-                byte_pos += 1;
-            }
-            let lexeme = source[start..byte_pos].to_string();
-            let span = Span::new(start, byte_pos);
-            out.push(SpannedToken::new(Token::new(lexeme, span), line_no, start_col));
-            continue;
-        }
-
-        // multi-char sequences and single-char tokens
-        // Try maximal-munch using language-provided multi-char lexemes
+        // Try maximal-munch: match longest language-provided sequence first
         let remaining = &source[byte_pos..];
         let mut matched = false;
 
-        // Try multi-char sequences in descending length order
+        // Try multi-char sequences in descending length order (pre-sorted by registry)
         for &multichar in token_reg.multichar_lexemes() {
             if remaining.starts_with(multichar) {
+                // Found a multi-char match. Emit it and update position tracking.
                 let lexeme = multichar.to_string();
                 let span = Span::new(byte_pos, byte_pos + multichar.len());
                 out.push(SpannedToken::new(Token::new(lexeme, span), line_no, start_col));
-                col_in_line += multichar.len();
+
+                // Update line/col for the matched sequence
+                for byte in multichar.as_bytes() {
+                    if *byte == b'\n' {
+                        line_no += 1;
+                        col_in_line = 1;
+                    } else {
+                        col_in_line += 1;
+                    }
+                }
+
                 byte_pos += multichar.len();
                 matched = true;
                 break;
@@ -165,27 +131,24 @@ pub fn lex(source: &str, token_reg: &TokenRegistry) -> LumenResult<Vec<SpannedTo
             continue;
         }
 
-        // No multi-char match, emit single character
-        let ch = bytes[byte_pos] as char;
-        if ch.is_ascii_graphic() || ch.is_ascii_punctuation() {
-            let lexeme = ch.to_string();
-            let span = Span::new(byte_pos, byte_pos + 1);
-            out.push(SpannedToken::new(Token::new(lexeme, span), line_no, start_col));
+        // No multi-char match: emit single byte as token
+        // Kernel does not reject any byte - even whitespace, control chars, etc.
+        // Languages interpret all bytes according to their conventions.
+        let byte = bytes[byte_pos];
+        let lexeme = (byte as char).to_string();
+        let span = Span::new(byte_pos, byte_pos + 1);
+        out.push(SpannedToken::new(Token::new(lexeme, span), line_no, start_col));
+
+        // Update line/col for the single byte
+        if byte == b'\n' {
+            line_no += 1;
+            col_in_line = 1;
+        } else {
             col_in_line += 1;
-            byte_pos += 1;
-            continue;
         }
 
-        return Err(format!("Unexpected character '{ch}' at line {line_no}, col {start_col}"));
+        byte_pos += 1;
     }
 
     Ok(out)
-}
-
-fn is_word_start(b: u8) -> bool {
-    b.is_ascii_alphabetic() || b == b'_'
-}
-
-fn is_word_continue(b: u8) -> bool {
-    is_word_start(b) || b.is_ascii_digit()
 }

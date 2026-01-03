@@ -26,8 +26,24 @@ impl ExprPrefix for NumberLiteralPrefix {
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
-        let lexeme = parser.advance().lexeme;
-        Ok(Box::new(NumberLiteral { value: lexeme }))
+        // Consume the first digit
+        let mut value = parser.advance().lexeme;
+
+        // Since the kernel lexer is fully agnostic, it emits each digit as a separate token.
+        // We need to consume consecutive digit tokens to build the full number.
+        loop {
+            // Check if next token is a digit
+            if parser.peek().lexeme.len() == 1 {
+                let ch = parser.peek().lexeme.as_bytes()[0];
+                if ch.is_ascii_digit() || ch == b'.' {
+                    value.push_str(&parser.advance().lexeme);
+                    continue;
+                }
+            }
+            break;
+        }
+
+        Ok(Box::new(NumberLiteral { value }))
     }
 }
 

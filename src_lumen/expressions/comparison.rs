@@ -91,6 +91,7 @@ impl ExprInfix for ComparisonInfix {
         left: Box<dyn ExprNode>,
     ) -> LumenResult<Box<dyn ExprNode>> {
         parser.advance(); // consume operator
+        parser.skip_whitespace();
         let right = parser.parse_expr_prec(self.precedence() + 1)?;
         Ok(Box::new(ComparisonExpr { left, op: self.op.clone(), right }))
     }

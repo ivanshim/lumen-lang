@@ -41,6 +41,7 @@ pub fn parse_block(parser: &mut Parser) -> LumenResult<Vec<Box<dyn StmtNode>>> {
     if parser.advance().lexeme != LBRACE {
         return Err(err_at(parser, "Expected '{'"));
     }
+    parser.skip_whitespace();
 
     // Parse statements until '}'
     while !(parser.peek().lexeme == RBRACE || parser.peek().lexeme == EOF) {
@@ -52,10 +53,12 @@ pub fn parse_block(parser: &mut Parser) -> LumenResult<Vec<Box<dyn StmtNode>>> {
 
         statements.push(stmt);
 
-        // Optionally consume semicolons
+        // Optionally consume semicolons and whitespace
         while parser.peek().lexeme == SEMICOLON {
             parser.advance();
+            parser.skip_whitespace();
         }
+        parser.skip_whitespace();
     }
 
     // Expect '}'
@@ -70,6 +73,12 @@ pub fn parse_program(parser: &mut Parser) -> LumenResult<Program> {
     let mut statements = Vec::new();
 
     while parser.peek().lexeme != EOF {
+        parser.skip_whitespace();
+
+        if parser.peek().lexeme == EOF {
+            break;
+        }
+
         let stmt = parser
             .reg
             .find_stmt(parser)
@@ -78,10 +87,12 @@ pub fn parse_program(parser: &mut Parser) -> LumenResult<Program> {
 
         statements.push(stmt);
 
-        // Optionally consume semicolons
+        // Optionally consume semicolons and whitespace
         while parser.peek().lexeme == SEMICOLON {
             parser.advance();
+            parser.skip_whitespace();
         }
+        parser.skip_whitespace();
     }
 
     Ok(Program::new(statements))

@@ -171,8 +171,18 @@ pub fn process_indentation(source: &str, raw_tokens: Vec<SpannedToken>) -> Lumen
         }
 
         // Add tokens from this line (from raw_tokens filtered by line number)
+        // IMPORTANT: Filter out single-character whitespace tokens
+        // The kernel lexer is now fully agnostic and emits all characters (including spaces, tabs, newlines)
+        // Lumen's indentation processing needs only the meaningful tokens
         for raw_tok in &raw_tokens {
             if raw_tok.line == line_no {
+                // Skip whitespace tokens (single-char spaces, tabs, newlines, carriage returns)
+                if raw_tok.tok.lexeme.len() == 1 {
+                    let ch = raw_tok.tok.lexeme.as_bytes()[0];
+                    if ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' {
+                        continue;
+                    }
+                }
                 out.push(raw_tok.clone());
             }
         }
