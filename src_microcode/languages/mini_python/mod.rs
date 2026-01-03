@@ -200,6 +200,8 @@ pub fn get_schema() -> LanguageSchema {
         "not".to_string(),
         "True".to_string(),
         "False".to_string(),
+        "true".to_string(),
+        "false".to_string(),
         "range".to_string(),
     ];
 
@@ -212,7 +214,7 @@ pub fn get_schema() -> LanguageSchema {
     let multichar_lexemes = vec![
         // Keywords (longer first for maximal-munch)
         "continue", "range",
-        "while", "False", "print", "True",
+        "while", "False", "print", "True", "false", "true",
         "break", "False", "else", "elif", "not", "and", "if", "or", "in",
         // Operators
         "==", "!=", "<=", ">=", "//", "**",  // multi-char operators

@@ -31,26 +31,45 @@ pub fn lex(source: &str, schema: &LanguageSchema) -> Result<Vec<Token>, String> 
         let mut matched = false;
         for &sequence in &schema.multichar_lexemes {
             if remaining.starts_with(sequence) {
-                tokens.push(Token {
-                    lexeme: sequence.to_string(),
-                    span: (pos, pos + sequence.len()),
-                    line,
-                    col: start_col,
-                });
+                // Check if this is an identifier-like keyword that needs word boundary checking
+                let is_identifier_keyword = sequence.chars().all(|c| c.is_alphabetic() || c == '_');
+                let mut can_match = true;
 
-                // Update position tracking
-                for byte in sequence.as_bytes() {
-                    if *byte == b'\n' {
-                        line += 1;
-                        col = 1;
-                    } else {
-                        col += 1;
+                if is_identifier_keyword {
+                    // Check the character after the match
+                    let after_pos = pos + sequence.len();
+                    if after_pos < bytes.len() {
+                        let next_byte = bytes[after_pos];
+                        let next_ch = next_byte as char;
+                        // If the next character is alphanumeric or underscore, don't match
+                        if next_ch.is_alphanumeric() || next_ch == '_' {
+                            can_match = false;
+                        }
                     }
                 }
 
-                pos += sequence.len();
-                matched = true;
-                break;
+                if can_match {
+                    tokens.push(Token {
+                        lexeme: sequence.to_string(),
+                        span: (pos, pos + sequence.len()),
+                        line,
+                        col: start_col,
+                    });
+
+                    // Update position tracking
+                    for byte in sequence.as_bytes() {
+                        if *byte == b'\n' {
+                            line += 1;
+                            col = 1;
+                        } else {
+                            col += 1;
+                        }
+                    }
+
+                    pos += sequence.len();
+                    matched = true;
+                    break;
+                }
             }
         }
 
