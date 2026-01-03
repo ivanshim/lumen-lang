@@ -3,7 +3,7 @@
 // The environment manages variable bindings and provides scope isolation.
 // Scopes are created for blocks and restored on exit.
 
-use crate::src_microcode::kernel::eval::Value;
+use super::eval::Value;
 use std::collections::HashMap;
 
 /// Execution environment with lexically-scoped variable bindings

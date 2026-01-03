@@ -1,9 +1,8 @@
-// Runtime execution environment
+// Runtime: external function dispatch
 //
-// The runtime provides scope management, variable storage, and extern function dispatch.
-// It is language-agnostic and interprets execution based on kernel primitives.
+// The runtime handles extern/foreign function calls defined in language schemas.
+// Environment and scoping is handled in kernel/env.rs
 
-pub mod env;
-pub mod extern_system;
+pub mod r#extern;
 
-pub use env::Environment;
+pub use r#extern::execute_extern;

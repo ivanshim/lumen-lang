@@ -15,9 +15,10 @@ pub mod structure;
 pub mod reduce;
 pub mod execute;
 pub mod eval;
+pub mod env;
 
 use crate::schema::LanguageSchema;
-use crate::src_microcode::runtime::Environment;
+use self::env::Environment;
 
 pub struct Microcode;
 

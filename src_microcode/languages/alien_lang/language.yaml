@@ -1,0 +1,34 @@
+# Alien-Lang Schema (YAML format example)
+# This shows how a language could be defined as data
+
+name: alien_lang
+keywords:
+  - define
+  - check
+  - transform
+
+statements:
+  define:
+    pattern: [keyword, identifier, ":", expression]
+    
+  print:
+    pattern: [keyword, "(", expression, ")"]
+
+operators:
+  binary:
+    "+": {precedence: 5, associativity: left}
+    "-": {precedence: 5, associativity: left}
+    "*": {precedence: 6, associativity: left}
+    "/": {precedence: 6, associativity: left}
+    
+  unary:
+    "-": {precedence: 7, position: prefix}
+    "not": {precedence: 7, position: prefix}
+
+lexemes:
+  multichar: ["==", "!=", "<=", ">=", "->", ":="]
+  terminators: [";", "\n"]
+  
+blocks:
+  open: "{"
+  close: "}"

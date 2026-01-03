@@ -5,7 +5,7 @@
 
 use super::primitives::{Instruction, Primitive, JumpKind};
 use super::eval::Value;
-use crate::src_microcode::runtime::{Environment, extern_system};
+use super::env::Environment;
 
 /// Control flow signal from instruction execution
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -100,8 +100,9 @@ pub fn execute(instruction: &Instruction, env: &mut Environment) -> Result<(Valu
                 let (val, _) = execute(arg, env)?;
                 eval_args.push(val);
             }
-            let result = extern_system::call_extern(selector, eval_args)?;
-            Ok((result, ControlFlow::Normal))
+            // TODO: Use runtime::execute_extern with schema to dispatch
+            let _result = eval_args;  // Suppress unused warning
+            Err("Call primitive not yet implemented".to_string())?
         }
 
         Primitive::UnaryOp { operator, operand } => {
