@@ -1,7 +1,0 @@
-message = "value: "
-n = 42
-print(message)
-print(n)
-
-if n == 42
-    print("correct")
