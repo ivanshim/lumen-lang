@@ -85,7 +85,9 @@ impl<'a> Parser<'a> {
     /// Handle assignment or expression statements (x = value)
     fn parse_assignment_or_expression(&mut self) -> Result<Instruction, String> {
         let start = self.peek().span.0;
-        let expr = self.parse_expression(0)?;
+        // Parse with min_prec=1 to exclude assignment operator (precedence 0)
+        // This allows us to distinguish between assignment and binary operators
+        let expr = self.parse_expression(1)?;
 
         // Check if it's an assignment
         if self.peek().lexeme == "=" {

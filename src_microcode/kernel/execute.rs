@@ -90,7 +90,10 @@ pub fn execute(instruction: &Instruction, env: &mut Environment) -> Result<(Valu
 
         Primitive::Assign { name, value } => {
             let (val, _) = execute(value, env)?;
-            env.set(name.clone(), val.clone());
+            // Try to update existing variable in any scope; if not found, create new variable
+            if env.update(name.clone(), val.clone()).is_err() {
+                env.set(name.clone(), val.clone());
+            }
             Ok((val, ControlFlow::Normal))
         }
 
