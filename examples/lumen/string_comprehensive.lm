@@ -1,0 +1,15 @@
+a = "alpha"
+b = "beta"
+print(a)
+print(b)
+
+if a == "alpha"
+    print("a is alpha")
+
+if a != b
+    print("a and b are different")
+
+x = 10
+y = "number"
+print(x)
+print(y)
