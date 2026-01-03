@@ -3,6 +3,7 @@
 # lumen-lang comprehensive test script
 # Tests all examples for all languages with both stream and microcode kernels
 # Output is displayed directly, not captured
+# Runs ALL tests without skipping
 
 # Colors for output
 RED='\033[0;31m'
@@ -23,7 +24,6 @@ BINARY="./target/debug/lumen-lang"
 TOTAL_TESTS=0
 PASSED_TESTS=0
 FAILED_TESTS=0
-SKIPPED_TESTS=0
 
 # Function to run a test
 run_test() {
@@ -42,8 +42,8 @@ run_test() {
     else
         local exit_code=$?
         if [ $exit_code -eq 124 ]; then
-            echo -e "${YELLOW}⊘ TIMEOUT${NC}\n"
-            SKIPPED_TESTS=$((SKIPPED_TESTS + 1))
+            echo -e "${RED}✗ TIMEOUT${NC}\n"
+            FAILED_TESTS=$((FAILED_TESTS + 1))
         else
             echo -e "${RED}✗ FAIL${NC}\n"
             FAILED_TESTS=$((FAILED_TESTS + 1))
@@ -53,41 +53,23 @@ run_test() {
 }
 
 echo "=========================================="
-echo "  Lumen-Lang Test Suite"
+echo "  Lumen-Lang Test Suite (All Tests)"
 echo "=========================================="
 echo ""
 
-# Test lumen examples
+# Test lumen examples with both kernels
 echo -e "${YELLOW}Testing Lumen Examples:${NC}\n"
 for file in examples/lumen/*.lm; do
     filename=$(basename "$file")
 
-    # Skip extern examples (require external dependencies)
-    if [[ $filename == extern_* ]]; then
-        echo -e "${YELLOW}⊘ SKIP${NC} $filename (external dependencies)\n"
-        SKIPPED_TESTS=$((SKIPPED_TESTS + 1))
-        continue
-    fi
-
     # Test with stream kernel
     run_test "$file" "stream"
 
-    # Test with microcode kernel (only if not too complex)
-    if [[ $filename == "string_basic.lm" ]]; then
-        # This one is known to work with microcode
-        run_test "$file" "microcode"
-    else
-        # Try microcode, but skip if not implemented
-        if timeout 5 $BINARY --kernel microcode "$file" > /dev/null 2>&1; then
-            run_test "$file" "microcode"
-        else
-            echo -e "${YELLOW}⊘ SKIP${NC} $filename (microcode - not yet implemented)\n"
-            SKIPPED_TESTS=$((SKIPPED_TESTS + 1))
-        fi
-    fi
+    # Test with microcode kernel (always attempt)
+    run_test "$file" "microcode"
 done
 
-# Test mini_python examples
+# Test mini_python examples with both kernels
 echo -e "${YELLOW}Testing Mini-Python Examples:${NC}\n"
 for file in examples/mini_python/*.py; do
     filename=$(basename "$file")
@@ -95,12 +77,11 @@ for file in examples/mini_python/*.py; do
     # Test with stream kernel
     run_test "$file" "stream"
 
-    # Microcode kernel not yet implemented for mini-python
-    echo -e "${YELLOW}⊘ SKIP${NC} $filename (microcode - not implemented)\n"
-    SKIPPED_TESTS=$((SKIPPED_TESTS + 1))
+    # Test with microcode kernel (always attempt)
+    run_test "$file" "microcode"
 done
 
-# Test mini_rust examples
+# Test mini_rust examples with both kernels
 echo -e "${YELLOW}Testing Mini-Rust Examples:${NC}\n"
 for file in examples/mini_rust/*.rs; do
     filename=$(basename "$file")
@@ -108,9 +89,8 @@ for file in examples/mini_rust/*.rs; do
     # Test with stream kernel
     run_test "$file" "stream"
 
-    # Microcode kernel not yet implemented for mini-rust
-    echo -e "${YELLOW}⊘ SKIP${NC} $filename (microcode - not implemented)\n"
-    SKIPPED_TESTS=$((SKIPPED_TESTS + 1))
+    # Test with microcode kernel (always attempt)
+    run_test "$file" "microcode"
 done
 
 # Summary
@@ -120,13 +100,12 @@ echo "=========================================="
 echo "Total tests:   $TOTAL_TESTS"
 echo -e "Passed:        ${GREEN}$PASSED_TESTS${NC}"
 echo -e "Failed:        ${RED}$FAILED_TESTS${NC}"
-echo -e "Skipped:       ${YELLOW}$SKIPPED_TESTS${NC}"
 echo ""
 
 if [ $FAILED_TESTS -eq 0 ]; then
-    echo -e "${GREEN}All active tests passed!${NC}"
+    echo -e "${GREEN}All tests passed!${NC}"
     exit 0
 else
-    echo -e "${RED}Some tests failed!${NC}"
+    echo -e "${RED}Some tests failed ($FAILED_TESTS/$TOTAL_TESTS)${NC}"
     exit 1
 fi
