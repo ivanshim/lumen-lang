@@ -361,6 +361,9 @@ impl<'a> Parser<'a> {
         let mut left = self.parse_primary()?;
 
         loop {
+            // Skip whitespace before checking for operators
+            self.skip_whitespace();
+
             let lexeme = self.peek().lexeme.clone();
 
             // Check if it's a binary operator
