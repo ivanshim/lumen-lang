@@ -39,7 +39,7 @@ impl Microcode {
 
         // Stage 4: Execute - run instruction tree using primitive dispatch
         let mut env = Environment::new();
-        let (_, _) = execute::execute(&instructions, &mut env)?;
+        let (_, _) = execute::execute(&instructions, &mut env, schema)?;
 
         Ok(())
     }

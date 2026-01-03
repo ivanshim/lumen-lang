@@ -6,6 +6,7 @@
 use super::primitives::{Instruction, Primitive, JumpKind};
 use super::eval::Value;
 use super::env::Environment;
+use crate::schema::LanguageSchema;
 
 /// Control flow signal from instruction execution
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -24,12 +25,12 @@ pub enum ControlFlow {
 }
 
 /// Execute an instruction tree
-pub fn execute(instruction: &Instruction, env: &mut Environment) -> Result<(Value, ControlFlow), String> {
+pub fn execute(instruction: &Instruction, env: &mut Environment, schema: &LanguageSchema) -> Result<(Value, ControlFlow), String> {
     match &instruction.primitive {
         Primitive::Sequence(instrs) => {
             let mut last_value = Value::Null;
             for instr in instrs {
-                let (value, flow) = execute(instr, env)?;
+                let (value, flow) = execute(instr, env, schema)?;
                 last_value = value;
                 if flow != ControlFlow::Normal {
                     return Ok((last_value, flow));
@@ -40,7 +41,7 @@ pub fn execute(instruction: &Instruction, env: &mut Environment) -> Result<(Valu
 
         Primitive::Block(instrs) => {
             env.push_scope();
-            let result = execute(&Instruction::sequence(instrs.clone()), env);
+            let result = execute(&Instruction::sequence(instrs.clone()), env, schema);
             env.pop_scope();
             result
         }
@@ -50,11 +51,11 @@ pub fn execute(instruction: &Instruction, env: &mut Environment) -> Result<(Valu
             then_block,
             else_block,
         } => {
-            let (cond_value, _) = execute(condition, env)?;
+            let (cond_value, _) = execute(condition, env, schema)?;
             if cond_value.to_bool() {
-                execute(then_block, env)
+                execute(then_block, env, schema)
             } else if let Some(else_inst) = else_block {
-                execute(else_inst, env)
+                execute(else_inst, env, schema)
             } else {
                 Ok((Value::Null, ControlFlow::Normal))
             }
@@ -63,12 +64,12 @@ pub fn execute(instruction: &Instruction, env: &mut Environment) -> Result<(Valu
         Primitive::Loop { condition, block } => {
             let mut last_value = Value::Null;
             loop {
-                let (cond_value, _) = execute(condition, env)?;
+                let (cond_value, _) = execute(condition, env, schema)?;
                 if !cond_value.to_bool() {
                     break;
                 }
 
-                let (value, flow) = execute(block, env)?;
+                let (value, flow) = execute(block, env, schema)?;
                 last_value = value;
 
                 match flow {
@@ -89,31 +90,34 @@ pub fn execute(instruction: &Instruction, env: &mut Environment) -> Result<(Valu
         }
 
         Primitive::Assign { name, value } => {
-            let (val, _) = execute(value, env)?;
-            env.set(name.clone(), val.clone());
+            let (val, _) = execute(value, env, schema)?;
+            // Try to update existing variable in any scope; if not found, create new variable
+            if env.update(name.clone(), val.clone()).is_err() {
+                env.set(name.clone(), val.clone());
+            }
             Ok((val, ControlFlow::Normal))
         }
 
         Primitive::Call { selector, args } => {
             let mut eval_args = Vec::new();
             for arg in args {
-                let (val, _) = execute(arg, env)?;
+                let (val, _) = execute(arg, env, schema)?;
                 eval_args.push(val);
             }
-            // TODO: Use runtime::execute_extern with schema to dispatch
-            let _result = eval_args;  // Suppress unused warning
-            Err("Call primitive not yet implemented".to_string())?
+            // Dispatch to external function handler
+            let result = crate::src_microcode::runtime::execute_extern(selector, eval_args, schema)?;
+            Ok((result, ControlFlow::Normal))
         }
 
         Primitive::UnaryOp { operator, operand } => {
-            let (operand_val, _) = execute(operand, env)?;
+            let (operand_val, _) = execute(operand, env, schema)?;
             let result = execute_unary_op(operator, &operand_val)?;
             Ok((result, ControlFlow::Normal))
         }
 
         Primitive::BinaryOp { operator, left, right } => {
-            let (left_val, _) = execute(left, env)?;
-            let (right_val, _) = execute(right, env)?;
+            let (left_val, _) = execute(left, env, schema)?;
+            let (right_val, _) = execute(right, env, schema)?;
             let result = execute_binary_op(operator, &left_val, &right_val)?;
             Ok((result, ControlFlow::Normal))
         }
@@ -126,7 +130,7 @@ pub fn execute(instruction: &Instruction, env: &mut Environment) -> Result<(Valu
         }
 
         Primitive::Print(expr) => {
-            let (val, _) = execute(expr, env)?;
+            let (val, _) = execute(expr, env, schema)?;
             println!("{}", val);
             Ok((Value::Null, ControlFlow::Normal))
         }

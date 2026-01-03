@@ -85,7 +85,9 @@ impl<'a> Parser<'a> {
     /// Handle assignment or expression statements (x = value)
     fn parse_assignment_or_expression(&mut self) -> Result<Instruction, String> {
         let start = self.peek().span.0;
-        let expr = self.parse_expression(0)?;
+        // Parse with min_prec=1 to exclude assignment operator (precedence 0)
+        // This allows us to distinguish between assignment and binary operators
+        let expr = self.parse_expression(1)?;
 
         // Check if it's an assignment
         if self.peek().lexeme == "=" {
@@ -488,9 +490,62 @@ impl<'a> Parser<'a> {
             return Ok(Instruction::literal(Value::Bool(bool_val), start, self.prev_span().1));
         }
 
-        // Identifier (variable reference)
+        // Identifier (variable reference or extern function call)
         if lexeme.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_') {
             let name = self.parse_identifier()?;
+
+            // Check if this is an extern function call
+            if name == "extern" && self.peek().lexeme == "(" {
+                self.advance(); // consume '('
+                self.skip_whitespace();
+
+                // Parse selector (string literal)
+                self.expect("\"")?;
+                let mut selector = String::new();
+                while !self.is_at_end() && self.peek().lexeme != "\"" {
+                    selector.push_str(&self.peek().lexeme);
+                    self.advance();
+                }
+                self.expect("\"")?;
+                self.skip_whitespace();
+
+                // Parse arguments (comma-separated)
+                let mut args = Vec::new();
+
+                if self.peek().lexeme != ")" {
+                    // Expect comma before first argument
+                    self.expect(",")?;
+                    self.skip_whitespace();
+
+                    // Parse comma-separated arguments
+                    loop {
+                        let arg = self.parse_expression(0)?;
+                        args.push(arg);
+                        self.skip_whitespace();
+
+                        if self.peek().lexeme == "," {
+                            self.advance();
+                            self.skip_whitespace();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+
+                self.skip_whitespace();
+                self.expect(")")?;
+
+                let end = self.prev_span().1;
+                return Ok(Instruction::new(
+                    Primitive::Call {
+                        selector,
+                        args,
+                    },
+                    start,
+                    end,
+                ));
+            }
+
             return Ok(Instruction::variable(name, start, self.prev_span().1));
         }
 

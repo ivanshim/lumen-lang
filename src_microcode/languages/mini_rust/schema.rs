@@ -300,6 +300,10 @@ pub fn get_schema() -> LanguageSchema {
 
     // Multi-character lexemes (sorted by length descending for maximal-munch)
     let multichar_lexemes = vec![
+        // Keywords (longer first for maximal-munch)
+        "println", "continue", "return", "false", "while", "break", "match",
+        "let", "mut", "print", "loop", "else", "true", "if", "for", "in", "fn", "as",
+        // Operators
         "==", "!=", "<=", ">=", "<<", ">>",
         "&&", "||", "->", "=>", "::", "+=", "-=", "*=", "/=", "..",
     ];
@@ -319,6 +323,7 @@ pub fn get_schema() -> LanguageSchema {
         statement_terminators,
         block_open: "{".to_string(),
         block_close: "}".to_string(),
+        is_indentation_based: false,
         extern_syntax: None,  // Mini-Rust doesn't support extern in this implementation
     }
 }

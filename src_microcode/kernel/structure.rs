@@ -59,8 +59,23 @@ fn find_last_keyword(result: &[Token]) -> String {
 }
 
 /// Process tokens for structural significance per schema
-pub fn process(tokens: &[Token], _schema: &LanguageSchema) -> Result<Vec<Token>, String> {
+pub fn process(tokens: &[Token], schema: &LanguageSchema) -> Result<Vec<Token>, String> {
     let mut result = Vec::new();
+
+    // Only process indentation for indentation-based languages
+    if !schema.is_indentation_based {
+        // For brace-based languages, just remove indentation whitespace
+        for token in tokens {
+            if token.lexeme == " " || token.lexeme == "\t" {
+                continue; // Skip individual space/tab tokens
+            }
+            result.push(token.clone());
+        }
+        result = ensure_eof(result);
+        return Ok(result);
+    }
+
+    // Indentation processing for indentation-based languages
     let mut indent_stack: Vec<usize> = vec![0]; // Track indentation levels
     let mut i = 0;
 
