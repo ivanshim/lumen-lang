@@ -13,6 +13,13 @@ mod src_mini_rust;
 #[path = "../src_mini_python/mod.rs"]
 mod src_mini_python;
 
+// Microcode track (independent from stream track)
+#[path = "../src_microcode/mod.rs"]
+mod src_microcode;
+
+// Shared schema system for microcode track
+mod schema;
+
 use std::env;
 use std::fs;
 use std::path::Path;
