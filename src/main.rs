@@ -78,6 +78,12 @@ fn parse_args(args: &[String]) -> (String, String, String) {
 
     let filepath = args[file_idx].clone();
 
+    // Support positional kernel argument (file kernel)
+    // If there's an extra argument after the file, treat it as the kernel
+    if file_idx + 1 < args.len() && !args[file_idx + 1].starts_with("--") {
+        kernel = args[file_idx + 1].to_lowercase();
+    }
+
     // Auto-detect language if not specified
     if language.is_empty() {
         language = detect_language_from_extension(&filepath)
