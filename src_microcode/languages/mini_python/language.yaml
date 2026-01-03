@@ -1,0 +1,304 @@
+# Mini-Python Language Schema (YAML)
+# Pure declarative data for Mini-Python
+# All parsing and execution is handled by the microcode kernel
+
+name: mini_python
+version: 1.0
+
+# LEXICAL RULES
+# =============
+
+keywords:
+  - if
+  - else
+  - elif
+  - while
+  - for
+  - print
+  - in
+  - range
+  - and
+  - or
+  - not
+  - True
+  - False
+  - break
+  - continue
+
+# Multi-character lexemes (sorted by length descending for maximal-munch)
+multichar_lexemes:
+  - "=="
+  - "!="
+  - "<="
+  - ">="
+  - "//"
+  - "**"
+
+# Characters that split tokens
+split_chars:
+  - " "
+  - "\t"
+  - "\n"
+  - "("
+  - ")"
+  - "["
+  - "]"
+  - ":"
+  - ","
+  - "."
+
+# STRUCTURAL RULES
+# ================
+
+structure:
+  # Indentation mode: Python uses indentation-based blocks
+  indentation: fixed
+  indent_size: 4
+
+  # Newline behavior: Python uses newlines as statement terminators
+  newline_behavior: terminator
+
+  # EOF handling
+  eof_handling: dedent_all
+
+  # No explicit block delimiters in Python (indentation-based)
+  block_open: null
+  block_close: null
+
+  # Statement terminators
+  statement_terminators:
+    - "\n"
+
+# OPERATORS
+# =========
+
+operators:
+  # Binary operators
+  binary:
+    # Arithmetic (precedence 5-6)
+    "+":
+      precedence: 5
+      associativity: left
+      name: addition
+    "-":
+      precedence: 5
+      associativity: left
+      name: subtraction
+    "*":
+      precedence: 6
+      associativity: left
+      name: multiplication
+    "/":
+      precedence: 6
+      associativity: left
+      name: division
+    "//":
+      precedence: 6
+      associativity: left
+      name: floor_division
+    "%":
+      precedence: 6
+      associativity: left
+      name: modulo
+    "**":
+      precedence: 7
+      associativity: right
+      name: exponentiation
+
+    # Comparison (precedence 4)
+    "==":
+      precedence: 4
+      associativity: left
+      name: equal
+    "!=":
+      precedence: 4
+      associativity: left
+      name: not_equal
+    "<":
+      precedence: 4
+      associativity: left
+      name: less_than
+    ">":
+      precedence: 4
+      associativity: left
+      name: greater_than
+    "<=":
+      precedence: 4
+      associativity: left
+      name: less_equal
+    ">=":
+      precedence: 4
+      associativity: left
+      name: greater_equal
+    "in":
+      precedence: 4
+      associativity: left
+      name: membership
+
+    # Logical (precedence 2-3)
+    "and":
+      precedence: 3
+      associativity: left
+      name: logical_and
+    "or":
+      precedence: 2
+      associativity: left
+      name: logical_or
+
+    # Assignment (precedence 1)
+    "=":
+      precedence: 1
+      associativity: right
+      name: assign
+
+  # Unary operators
+  unary:
+    "not":
+      precedence: 7
+      position: prefix
+      name: logical_not
+    "-":
+      precedence: 7
+      position: prefix
+      name: negate
+    "+":
+      precedence: 7
+      position: prefix
+      name: positive
+
+# STATEMENTS
+# ==========
+
+statements:
+  print_function:
+    description: "Print function call"
+    pattern: [identifier, "(", args, ")"]
+    fields:
+      - function: print
+      - lparen: "("
+      - arguments: expression_list
+      - rparen: ")"
+    primitive: call
+
+  assignment:
+    description: "Assign value to variable"
+    pattern: [identifier, "=", expression]
+    fields:
+      - variable: name
+      - operator: "="
+      - value: expression
+    primitive: assign
+
+  if_statement:
+    description: "If-elif-else conditional"
+    pattern: [keyword, expression, ":", block]
+    fields:
+      - keyword: if
+      - condition: expression
+      - colon: ":"
+      - body: block
+    primitive: conditional
+
+  for_loop:
+    description: "For loop over sequence"
+    pattern: [keyword, identifier, "in", expression, ":", block]
+    fields:
+      - keyword: for
+      - variable: identifier
+      - in_keyword: in
+      - iterable: expression
+      - colon: ":"
+      - body: block
+    primitive: loop
+
+  while_loop:
+    description: "While loop"
+    pattern: [keyword, expression, ":", block]
+    fields:
+      - keyword: while
+      - condition: expression
+      - colon: ":"
+      - body: block
+    primitive: loop
+
+  break_statement:
+    description: "Break from loop"
+    pattern: [keyword]
+    fields:
+      - keyword: break
+    primitive: jump
+
+  continue_statement:
+    description: "Continue loop iteration"
+    pattern: [keyword]
+    fields:
+      - keyword: continue
+    primitive: jump
+
+  function_def:
+    description: "Function definition"
+    pattern: [keyword, identifier, "(", params, ")", ":", block]
+    fields:
+      - keyword: def
+      - name: identifier
+      - params: parameter_list
+      - colon: ":"
+      - body: block
+    primitive: function_def
+
+# EXPRESSION TYPES
+# ================
+
+expressions:
+  literal:
+    - number: "0-9, including decimals"
+    - string: "\"...\""
+    - boolean: "True, False"
+
+  identifier:
+    - pattern: "[a-zA-Z_][a-zA-Z0-9_]*"
+    - description: "Variable name"
+
+  function_call:
+    - function: "identifier"
+    - args: "expression_list"
+
+  indexing:
+    - object: "expression"
+    - index: "expression"
+    - syntax: "object[index]"
+
+  grouping:
+    - open: "("
+    - close: ")"
+    - content: "expression"
+
+# VALUE TYPES
+# ===========
+
+values:
+  number:
+    description: "Numeric value"
+    subtypes:
+      - int: "Integer (0, 42, -5)"
+      - float: "Floating-point (3.14, -2.5)"
+
+  string:
+    description: "Text string"
+    quote_styles:
+      - single: "'"
+      - double: "\""
+
+  boolean:
+    description: "True or False"
+    values:
+      - True
+      - False
+
+  list:
+    description: "Ordered collection"
+    syntax: "[1, 2, 3]"
+
+  none:
+    description: "Null/None value"
+    value: "None"

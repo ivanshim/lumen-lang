@@ -1,29 +1,26 @@
-# Alien-Lang Language Schema (YAML)
-# Example of an extensible language that demonstrates YAML-based schema system
-# Pure declarative data - all parsing and execution handled by kernel
+# Lumen Language Schema (YAML)
+# Pure declarative data for the Lumen language
+# All parsing and execution is handled by the microcode kernel
 
-name: alien_lang
+name: lumen
 version: 1.0
-description: "Experimental extensible language for demonstrating YAML-based language definitions"
 
 # LEXICAL RULES
 # =============
 
 keywords:
-  - define
-  - check
-  - transform
-  - output
-  - input
-  - with
-  - from
-  - to
-  - as
   - if
   - else
-  - loop
+  - while
+  - print
+  - and
+  - or
+  - not
+  - true
+  - false
   - break
   - continue
+  - extern
 
 # Multi-character lexemes (sorted by length descending for maximal-munch)
 multichar_lexemes:
@@ -32,12 +29,8 @@ multichar_lexemes:
   - "<="
   - ">="
   - ":="
-  - "->"
-  - "=>"
-  - ">>"
-  - "<<"
 
-# Characters that split tokens
+# Characters that split tokens (whitespace, punctuation)
 split_chars:
   - " "
   - "\t"
@@ -51,9 +44,6 @@ split_chars:
   - ","
   - ";"
   - ":"
-  - "."
-  - "@"
-  - "#"
 
 # STRUCTURAL RULES
 # ================
@@ -61,7 +51,7 @@ split_chars:
 structure:
   # Indentation mode: "fixed" (Python-like) or "none" (C-like with braces)
   indentation: fixed
-  indent_size: 2
+  indent_size: 4
 
   # Newline behavior: "terminator" (ends statement) or "ignored" (just whitespace)
   newline_behavior: terminator
@@ -147,16 +137,6 @@ operators:
       precedence: 1
       associativity: right
       name: assign
-    ":=":
-      precedence: 1
-      associativity: right
-      name: declare_assign
-
-    # Pipeline (precedence 4)
-    ">>":
-      precedence: 4
-      associativity: left
-      name: pipeline
 
   # Unary operators
   unary:
@@ -168,61 +148,32 @@ operators:
       precedence: 7
       position: prefix
       name: negate
-    "@":
-      precedence: 8
-      position: prefix
-      name: reference
 
 # STATEMENTS
 # ==========
 
 statements:
-  define:
-    description: "Define a named value or transformation"
-    pattern: [keyword, identifier, ":", expression]
+  print:
+    description: "Print expression to output"
+    pattern: [keyword, "(", expression, ")"]
     fields:
-      - keyword: define
-      - name: identifier
-      - colon: ":"
+      - keyword: print
+      - lparen: "("
+      - expression: value
+      - rparen: ")"
+    primitive: print_stmt
+
+  assignment:
+    description: "Assign value to variable"
+    pattern: [identifier, "=", expression]
+    fields:
+      - variable: name
+      - operator: "="
       - value: expression
     primitive: assign
 
-  check:
-    description: "Check a condition"
-    pattern: [keyword, expression]
-    fields:
-      - keyword: check
-      - condition: expression
-    primitive: conditional
-
-  transform:
-    description: "Transform a value through pipeline"
-    pattern: [keyword, identifier, "from", expression, "to", expression]
-    fields:
-      - keyword: transform
-      - name: identifier
-      - from_expr: expression
-      - to_expr: expression
-    primitive: assign
-
-  output:
-    description: "Output value"
-    pattern: [keyword, expression]
-    fields:
-      - keyword: output
-      - value: expression
-    primitive: call
-
-  input:
-    description: "Input value"
-    pattern: [keyword, "as", identifier]
-    fields:
-      - keyword: input
-      - variable: identifier
-    primitive: call
-
-  conditional:
-    description: "Conditional execution"
+  if_statement:
+    description: "If-then-else conditional"
     pattern: [keyword, expression, block, optional(keyword, block)]
     fields:
       - keyword: if
@@ -232,28 +183,59 @@ statements:
       - else_block: block
     primitive: conditional
 
-  loop:
-    description: "Loop with condition"
+  while_loop:
+    description: "While loop"
     pattern: [keyword, expression, block]
     fields:
-      - keyword: loop
+      - keyword: while
       - condition: expression
       - body: block
     primitive: loop
 
-  break_stmt:
+  break_statement:
     description: "Break from loop"
     pattern: [keyword]
     fields:
       - keyword: break
     primitive: jump
 
-  continue_stmt:
-    description: "Continue loop"
+  continue_statement:
+    description: "Continue loop iteration"
     pattern: [keyword]
     fields:
       - keyword: continue
     primitive: jump
+
+  extern_call:
+    description: "Call external capability"
+    pattern: [keyword, identifier, ":", identifier, "(", args, ")"]
+    fields:
+      - keyword: extern
+      - module: identifier
+      - selector: identifier
+      - args: expression_list
+    primitive: call
+
+# EXTERN CALLS
+# ============
+
+extern:
+  keyword: extern
+  # Syntax: extern module:capability(arg1, arg2)
+  selector_start: " "
+  selector_separator: ":"
+  args_open: "("
+  args_close: ")"
+  arg_separator: ","
+
+  # Built-in capabilities (examples)
+  capabilities:
+    print:
+      arity: 1
+      description: "Print value"
+    input:
+      arity: 0
+      description: "Read line from input"
 
 # EXPRESSION TYPES
 # ================
@@ -263,63 +245,41 @@ expressions:
     - number: "0-9, including decimals"
     - string: "\"...\""
     - boolean: "true, false"
-    - symbol: "@symbol"
 
   identifier:
     - pattern: "[a-zA-Z_][a-zA-Z0-9_]*"
-    - description: "Named reference"
-
-  pipeline:
-    - left: "expression"
-    - operator: ">>"
-    - right: "expression"
-    - description: "Pass left result to right"
-
-  transformation:
-    - from: "expression"
-    - to: "expression"
-    - syntax: "from value to transform"
+    - description: "Variable name"
 
   grouping:
     - open: "("
     - close: ")"
     - content: "expression"
 
-  indexing:
-    - object: "expression"
-    - index: "expression"
-    - syntax: "object[index]"
+  binary_operation:
+    - left: "expression"
+    - operator: "binary_op"
+    - right: "expression"
+
+  unary_operation:
+    - operator: "unary_op"
+    - operand: "expression"
 
 # VALUE TYPES
 # ===========
 
 values:
   number:
-    description: "Numeric value"
-    range: "All real numbers"
+    description: "Floating-point number"
+    display: "64-bit IEEE 754 float"
 
   string:
-    description: "Text value"
-    quoted: "\"...\""
+    description: "Text string"
+    display: "UTF-8 encoded text"
 
   boolean:
-    description: "Logic value"
-    values:
-      - true
-      - false
-
-  symbol:
-    description: "Named symbol"
-    syntax: "@symbol_name"
-
-  sequence:
-    description: "Ordered collection"
-    syntax: "[item1, item2, item3]"
-
-  mapping:
-    description: "Key-value mapping"
-    syntax: "{key: value, ...}"
+    description: "True or false"
+    display: "true or false"
 
   null:
-    description: "Empty/void value"
-    value: "null"
+    description: "Null/void value"
+    display: "null"
