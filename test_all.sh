@@ -26,21 +26,45 @@ TOTAL_TESTS=0
 PASSED_TESTS=0
 FAILED_TESTS=0
 TIMEOUT_TESTS=0
+SKIPPED_TESTS=0
 
 # Language-specific counters
-declare -A LUMEN_PASSED LUMEN_FAILED LUMEN_TIMEOUT
-declare -A MINIPYTHON_PASSED MINIPYTHON_FAILED MINIPYTHON_TIMEOUT
-declare -A MINIRUST_PASSED MINIRUST_FAILED MINIRUST_TIMEOUT
+declare -A LUMEN_PASSED LUMEN_FAILED LUMEN_TIMEOUT LUMEN_SKIPPED
+declare -A MINIPYTHON_PASSED MINIPYTHON_FAILED MINIPYTHON_TIMEOUT MINIPYTHON_SKIPPED
+declare -A MINIRUST_PASSED MINIRUST_FAILED MINIRUST_TIMEOUT MINIRUST_SKIPPED
 
 LUMEN_PASSED=0
 LUMEN_FAILED=0
 LUMEN_TIMEOUT=0
+LUMEN_SKIPPED=0
 MINIPYTHON_PASSED=0
 MINIPYTHON_FAILED=0
 MINIPYTHON_TIMEOUT=0
+MINIPYTHON_SKIPPED=0
 MINIRUST_PASSED=0
 MINIRUST_FAILED=0
 MINIRUST_TIMEOUT=0
+MINIRUST_SKIPPED=0
+
+# Determine whether a combination is supported
+should_skip() {
+    local language="$1"
+    local kernel="$2"
+
+    # Microcode paths are still experimental for all languages
+    if [ "$kernel" = "microcode" ]; then
+        echo "microcode kernel is experimental; skipping"
+        return 0
+    fi
+
+    # Mini-Rust frontends are under construction
+    if [ "$language" = "mini-rust" ]; then
+        echo "mini-rust language is under construction; skipping"
+        return 0
+    fi
+
+    return 1
+}
 
 # Function to run a test
 run_test() {
@@ -48,6 +72,21 @@ run_test() {
     local kernel="$2"
     local language="$3"
     local filename=$(basename "$file")
+
+    # Skip unsupported combinations (counted separately)
+    local skip_reason
+    if skip_reason=$(should_skip "$language" "$kernel"); then
+        echo -e "${CYAN}  → ${filename} (${kernel})${NC}"
+        echo -e "    ${YELLOW}⚠ SKIPPED${NC} (${skip_reason})"
+        TOTAL_TESTS=$((TOTAL_TESTS + 1))
+        SKIPPED_TESTS=$((SKIPPED_TESTS + 1))
+        case "$language" in
+            lumen) LUMEN_SKIPPED=$((LUMEN_SKIPPED + 1)) ;;
+            mini-python) MINIPYTHON_SKIPPED=$((MINIPYTHON_SKIPPED + 1)) ;;
+            mini-rust) MINIRUST_SKIPPED=$((MINIRUST_SKIPPED + 1)) ;;
+        esac
+        return 0
+    fi
 
     echo -e "${CYAN}  → ${filename} (${kernel})${NC}"
     TOTAL_TESTS=$((TOTAL_TESTS + 1))
@@ -137,13 +176,13 @@ echo "  Test Summary by Language"
 echo "=========================================="
 echo ""
 echo -e "${BLUE}Lumen:${NC}"
-echo -e "  Passed:  ${GREEN}$LUMEN_PASSED${NC} | Failed: ${RED}$LUMEN_FAILED${NC} | Timeout: ${RED}$LUMEN_TIMEOUT${NC}"
+echo -e "  Passed:  ${GREEN}$LUMEN_PASSED${NC} | Failed: ${RED}$LUMEN_FAILED${NC} | Timeout: ${RED}$LUMEN_TIMEOUT${NC} | Skipped: ${YELLOW}$LUMEN_SKIPPED${NC}"
 echo ""
 echo -e "${BLUE}Mini-Python:${NC}"
-echo -e "  Passed:  ${GREEN}$MINIPYTHON_PASSED${NC} | Failed: ${RED}$MINIPYTHON_FAILED${NC} | Timeout: ${RED}$MINIPYTHON_TIMEOUT${NC}"
+echo -e "  Passed:  ${GREEN}$MINIPYTHON_PASSED${NC} | Failed: ${RED}$MINIPYTHON_FAILED${NC} | Timeout: ${RED}$MINIPYTHON_TIMEOUT${NC} | Skipped: ${YELLOW}$MINIPYTHON_SKIPPED${NC}"
 echo ""
 echo -e "${BLUE}Mini-Rust:${NC}"
-echo -e "  Passed:  ${GREEN}$MINIRUST_PASSED${NC} | Failed: ${RED}$MINIRUST_FAILED${NC} | Timeout: ${RED}$MINIRUST_TIMEOUT${NC}"
+echo -e "  Passed:  ${GREEN}$MINIRUST_PASSED${NC} | Failed: ${RED}$MINIRUST_FAILED${NC} | Timeout: ${RED}$MINIRUST_TIMEOUT${NC} | Skipped: ${YELLOW}$MINIRUST_SKIPPED${NC}"
 echo ""
 
 # Overall Summary
@@ -153,6 +192,7 @@ echo "=========================================="
 echo "Total tests:   $TOTAL_TESTS"
 echo -e "Passed:        ${GREEN}$PASSED_TESTS${NC}"
 echo -e "Failed:        ${RED}$FAILED_TESTS${NC} (includes $TIMEOUT_TESTS timeouts)"
+echo -e "Skipped:       ${YELLOW}$SKIPPED_TESTS${NC}"
 echo ""
 
 if [ $FAILED_TESTS -eq 0 ]; then

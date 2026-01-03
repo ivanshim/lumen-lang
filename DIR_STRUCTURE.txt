@@ -11,136 +11,84 @@ DIRECTORY STRUCTURE
 
 lumen-lang/
 │
-├── src/
-│   ├── main.rs                          # Entry point - loads language dispatcher
-│   │
-│   └── framework/                       # LANGUAGE-AGNOSTIC FRAMEWORK CORE
-│       ├── mod.rs                       # Framework module organization
-│       ├── lexer.rs                     # Tokenization (no language assumptions)
-│       ├── parser.rs                    # Expression/statement parsing (generic)
-│       ├── ast.rs                       # AST traits (ExprNode, StmtNode, Control)
-│       ├── eval.rs                      # Evaluation loop (no semantics)
-│       ├── registry.rs                  # Feature registration system
-│       └── runtime/
-│           ├── mod.rs
-│           ├── env.rs                   # Environment/scope management
-│           └── value.rs                 # Runtime value type (shared by all languages)
+├── src/                                 # Binary entry point and shared schema
+│   ├── main.rs                          # CLI for selecting kernel/language
+│   └── schema/                          # Common argument/operator models
 │
-├── src_lumen/                           # LUMEN LANGUAGE DEFINITION
-│   ├── mod.rs                           # Language module root
-│   ├── src_lumen.rs                     # Dispatcher - registers all Lumen features
-│   │
-│   ├── expressions/                     # Lumen expression features
-│   │   ├── mod.rs
-│   │   ├── literals.rs
-│   │   ├── arithmetic.rs
-│   │   ├── comparison.rs
-│   │   ├── logic.rs
-│   │   ├── variable.rs
-│   │   ├── grouping.rs
-│   │   └── identifier.rs
-│   │
-│   ├── statements/                      # Lumen statement features
-│   │   ├── mod.rs
-│   │   ├── print.rs
-│   │   ├── assignment.rs
-│   │   ├── if_else.rs
-│   │   ├── while_loop.rs
-│   │   ├── break_stmt.rs
-│   │   └── continue_stmt.rs
-│   │
-│   ├── structure/                       # Lumen syntactic structure
-│   │   ├── mod.rs
-│   │   └── structural.rs                # INDENT/DEDENT, parens, newlines (Lumen-specific)
-│   │
-│   ├── docs/                            # Lumen language documentation
-│   │   ├── README.md                    # Lumen language overview
-│   │   ├── syntax.md                    # Syntax specification
-│   │   └── examples.md                  # Usage examples
-│   │
-│   └── examples/                        # Lumen example programs
-│       ├── loop.lm
-│       ├── fibonacci.lm
-│       └── demo_v0_1.lm
+├── src_stream/                          # STREAM (procedural) KERNEL
+│   ├── kernel/                          # Lexer, parser, registry, runtime eval
+│   │   └── runtime/                     # Stream runtime primitives
+│   ├── languages/                       # Stream language implementations
+│   │   ├── lumen/
+│   │   ├── mini_rust/
+│   │   └── mini_python/
+│   ├── schema/                          # Stream AST and operator schema
+│   └── docs/                            # Stream kernel documentation
 │
-├── src_mini_python/                     # MINI-PYTHON LANGUAGE (FUTURE)
-│   ├── mod.rs
-│   ├── src_mini_python.rs               # Dispatcher
-│   ├── expressions/
-│   ├── statements/
-│   ├── structure/
-│   ├── docs/
-│   └── examples/
+├── src_microcode/                       # MICROCODE (data-driven) KERNEL
+│   ├── kernel/                          # Ingest → reduce → execute pipeline
+│   ├── runtime/                         # Runtime glue for microcode engine
+│   ├── languages/                       # Microcode language definitions
+│   │   ├── lumen/
+│   │   ├── mini_rust/
+│   │   ├── mini_python/
+│   │   └── alien_lang/
+│   └── schema/                          # Microcode schema definitions
 │
-├── src_mini_c/                          # MINI-C LANGUAGE (FUTURE)
-│   ├── mod.rs
-│   ├── src_mini_c.rs                    # Dispatcher
-│   ├── expressions/
-│   ├── statements/
-│   ├── structure/
-│   ├── docs/
-│   └── examples/
-│
+├── examples/                            # Sample programs (lumen, mini-rust, mini-python)
+├── archive/                             # Inactive or experimental language tracks
+├── README_LANGUAGES.md                  # Cross-language design notes
+├── MICROCODE_ARCHITECTURE.md            # Microcode kernel overview
+├── VERSION_HISTORY.md                   # Release notes and changelog
 ├── Cargo.toml
 ├── README.md                            # Project overview
 └── DIR_STRUCTURE.txt                    # This file
 
 ================================================================================
-FRAMEWORK vs LANGUAGE MODULES
+KERNELS vs LANGUAGE MODULES
 ================================================================================
 
-FRAMEWORK (src/framework/):
-  - Zero language-specific knowledge
-  - Generic AST, lexer, parser, evaluator
-  - Provides traits and infrastructure for languages to implement
-  - Responsible for: tokenization, syntax parsing, AST evaluation, scoping
+KERNEL TRACKS (src_stream/, src_microcode/):
+  - Contain language-agnostic infrastructure
+  - Stream kernel: procedural parsing/evaluation pipeline with direct AST execution
+  - Microcode kernel: data-driven ingest → reduce → execute model
+  - Each kernel ships with its own schema, runtime, and docs folders
 
-LANGUAGE MODULES (src_lumen/, src_mini_python/, etc.):
-  - Complete language definitions
-  - Each language directory mirrors the same structure
-  - Registers tokens, operators, precedence, and semantics
-  - Defines syntactic structure (indentation rules, brackets, etc.)
-  - Includes documentation and examples specific to that language
+LANGUAGE MODULES (src_stream/languages/, src_microcode/languages/):
+  - Implement syntax/semantics for each supported language
+  - Register tokens, operators, precedence, and language-specific primitives
+  - Provide examples and (where applicable) documentation per language
 
 ================================================================================
 KEY DESIGN PRINCIPLES
 ================================================================================
 
-1. FRAMEWORK AGNOSTICISM:
-   - Framework knows nothing about operators, keywords, or syntax rules
-   - Framework provides infrastructure; languages define semantics
-   - Each language can have completely different syntax/semantics
+1. KERNEL AGNOSTICISM:
+   - Kernels stay neutral regarding keywords or operators
+   - All syntax/semantics live in language modules
+   - Stream and microcode kernels expose different execution models while sharing the neutrality principle
 
 2. MODULAR FEATURES:
    - Each language feature (statement, expression) is independent
    - Features register themselves with the framework registry
    - Features can be enabled/disabled by commenting out registrations
 
-3. SHARED VALUE SYSTEM:
-   - All languages use the same runtime Value type (Number, Bool)
-   - Allows cross-language interop and simplifies framework
-   - Languages can extend/wrap values as needed
-
-4. LANGUAGE SWAPPABLE:
-   - To run a different language, change dispatcher in main.rs
-   - Framework reused completely, only language changes
+3. LANGUAGE SWAPPABLE:
+   - Switching languages is handled in src/main.rs via CLI flags
+   - Both kernels can host multiple languages without changing kernel code
 
 ================================================================================
 ADDING A NEW LANGUAGE
 ================================================================================
 
-To add a new language (e.g., mini-Rust):
+To add a new language:
 
-1. Create src_mini_rust/ directory structure matching src_lumen/
-2. Create src_mini_rust/src_mini_rust.rs dispatcher
-3. Create feature modules in:
-   - src_mini_rust/expressions/
-   - src_mini_rust/statements/
-   - src_mini_rust/structure/
-4. Register all features in dispatcher
-5. Update main.rs to load src_mini_rust dispatcher
-6. Create docs/ and examples/ in src_mini_rust/
+1. Create language folders under each kernel (e.g., src_stream/languages/your_lang/ and src_microcode/languages/your_lang/)
+2. Add dispatcher/registration files to wire tokens, operators, and runtime handlers
+3. Implement language features using the kernel's schema and runtime traits
+4. Update src/main.rs CLI mapping if new file extensions or language names are introduced
+5. Provide docs and examples to demonstrate the new language
 
-The framework layer (src/framework/) needs NO changes.
+The kernel layers remain untouched when adding languages; all semantics live in language modules.
 
 
