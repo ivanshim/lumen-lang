@@ -110,35 +110,24 @@ cargo run src_lumen/examples/loop.lm
 
 ```
 lumen-lang/
-├── src/                                # Lumen kernel (language-agnostic framework)
-│   ├── kernel/                         # Core framework
-│   │   ├── lexer.rs                    # Pure tokenization
-│   │   ├── parser.rs                   # Generic dispatch parser
-│   │   ├── registry.rs                 # Token/operator registration
-│   │   ├── ast.rs                      # Generic AST traits
-│   │   └── runtime/                    # Evaluation engine
-│   │       ├── env.rs                  # Scoping and variables
-│   │       └── value.rs                # Abstract value trait (ontologically neutral)
-│   └── main.rs                         # Entry point & language dispatcher
-├── src_lumen/                          # Lumen language implementation
-│   ├── src_lumen.rs                    # Dispatcher
-│   ├── structure/
-│   │   └── structural.rs               # Indentation, newlines, block parsing
-│   ├── statements/ & expressions/      # Lumen statement/expression handlers
-│   ├── docs/                           # Design documentation
-│   └── examples/                       # Example programs
-├── src_mini_rust/                      # Mini-Rust language implementation
-│   └── examples/                       # Example programs
-├── src_mini_python/                    # Mini-Python language implementation
-│   └── examples/                       # Example programs
-├── archive/                            # Inactive language implementations
-│   ├── src_mini_php/
-│   ├── src_mini_sh/
-│   ├── src_mini_c/
-│   ├── src_mini_apple_pascal/
-│   └── src_mini_apple_basic/
-├── test_all.sh                         # Comprehensive test suite (21 tests)
-├── VERSION_HISTORY.md                  # Release notes and version changelog
+├── src/                                # Binary entry point and shared schema
+│   ├── main.rs                         # CLI dispatcher for kernels/languages
+│   └── schema/                         # Common argument and operator models
+├── src_stream/                         # Procedural stream kernel
+│   ├── kernel/                         # Lexer, parser, registry, evaluator
+│   ├── languages/                      # Stream implementations (lumen, mini-rust, mini-python)
+│   ├── schema/                         # Stream-specific AST and operator schema
+│   └── docs/                           # Stream kernel design notes
+├── src_microcode/                      # Data-driven microcode kernel
+│   ├── kernel/                         # Ingest → reduce → execute pipeline
+│   ├── languages/                      # Microcode languages (lumen, mini-rust, mini-python, alien_lang)
+│   ├── runtime/                        # Runtime wiring for the microcode engine
+│   └── schema/                         # Microcode schema definitions
+├── examples/                           # Sample programs for each language/kernel
+├── archive/                            # Retired or experimental language tracks
+├── README_LANGUAGES.md                 # Language-level design notes
+├── MICROCODE_ARCHITECTURE.md           # Microcode kernel overview
+├── VERSION_HISTORY.md                  # Release notes and changelog
 ├── Cargo.toml
 └── README.md
 ```
@@ -147,20 +136,20 @@ lumen-lang/
 
 The codebase is split into three layers:
 
-1. **Kernel (`src/kernel/`)**: Language-agnostic infrastructure
-   - Pure tokenization, AST representation, evaluation
-   - Zero knowledge of language-specific syntax
-   - Provides trait-based dispatch for extensible parsing and evaluation
+1. **Kernel Tracks (`src_stream/`, `src_microcode/`)**: Language-agnostic infrastructure
+   - Stream kernel: procedural parser/evaluator that runs ASTs directly
+   - Microcode kernel: data-driven ingest → reduce → execute pipeline
+   - Both kernels avoid language-specific syntax and rely on registration from language modules
 
-2. **Language Modules (`src_*/`)**: Language-specific implementations
-   - Each module implements one language variant
-   - Defines tokens, operators, and syntax rules
-   - Registers handlers for all statements and expressions
+2. **Language Modules (`src_stream/languages/`, `src_microcode/languages/`)**: Language-specific implementations
+   - Each module implements one language variant per kernel
+   - Defines tokens, operators, syntax rules, and runtime handlers
+   - Registers handlers for statements and expressions with the active kernel
    - Includes language-specific example programs
 
 3. **Dispatcher (`src/main.rs`)**: Multi-language runtime
    - Detects language from `--lang` parameter (priority 1) or file extension (priority 2)
-   - Routes program to appropriate language module
+   - Routes program to the selected kernel and language module
    - Supports simultaneous operation of Lumen, Mini-Rust, and Mini-Python
 
 This design allows the kernel to support multiple languages with different syntaxes and semantics, making it easy to add new language implementations without modifying the core framework.
