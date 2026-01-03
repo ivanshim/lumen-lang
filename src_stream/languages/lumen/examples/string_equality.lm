@@ -1,0 +1,7 @@
+x = "hello"
+y = "hello"
+z = "world"
+
+print(x == y)
+print(x == z)
+print(x != z)

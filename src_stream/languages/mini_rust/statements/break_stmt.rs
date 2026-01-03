@@ -1,0 +1,41 @@
+// break statement for mini-rust
+
+use crate::src_stream::src_stream::kernel::ast::{Control, StmtNode};
+use crate::src_stream::src_stream::kernel::parser::Parser;
+use crate::src_stream::src_stream::kernel::registry::{LumenResult, Registry, StmtHandler};
+use crate::src_stream::src_stream::kernel::runtime::Env;
+
+pub const BREAK: &str = "break";
+
+#[derive(Debug)]
+struct BreakStmt;
+
+impl StmtNode for BreakStmt {
+    fn exec(&self, _env: &mut Env) -> LumenResult<Control> {
+        Ok(Control::Break)
+    }
+}
+
+pub struct BreakStmtHandler;
+
+impl StmtHandler for BreakStmtHandler {
+    fn matches(&self, parser: &Parser) -> bool {
+        parser.peek().lexeme == BREAK
+    }
+
+    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
+        parser.advance(); // consume 'break'
+        Ok(Box::new(BreakStmt))
+    }
+}
+
+// --------------------
+// Registration
+// --------------------
+
+pub fn register(reg: &mut Registry) {
+    // No token registration needed - kernel handles all segmentation
+    // Register tokens
+    // Register handlers
+    reg.register_stmt(Box::new(BreakStmtHandler));
+}
