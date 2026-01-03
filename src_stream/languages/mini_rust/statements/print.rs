@@ -33,13 +33,16 @@ impl StmtHandler for PrintStmtHandler {
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'print!'
+        parser.skip_whitespace();
 
         // expect '('
         if parser.advance().lexeme != LPAREN {
             return Err("Expected '(' after print!".into());
         }
+        parser.skip_whitespace();
 
         let expr = parser.parse_expr()?;
+        parser.skip_whitespace();
 
         // expect ')'
         if parser.advance().lexeme != RPAREN {

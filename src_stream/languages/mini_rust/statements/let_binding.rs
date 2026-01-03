@@ -35,12 +35,29 @@ impl StmtHandler for LetStmtHandler {
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'let'
+        parser.skip_whitespace();
 
-        let name = parser.advance().lexeme;
+        // Consume first character of identifier
+        let mut name = parser.advance().lexeme;
+
+        // Since kernel lexer is agnostic, consume remaining identifier characters
+        loop {
+            if parser.peek().lexeme.len() == 1 {
+                let ch = parser.peek().lexeme.as_bytes()[0];
+                if ch.is_ascii_alphanumeric() || ch == b'_' {
+                    name.push_str(&parser.advance().lexeme);
+                    continue;
+                }
+            }
+            break;
+        }
+
+        parser.skip_whitespace();
 
         if parser.advance().lexeme != EQUALS {
             return Err(err_at(parser, "Expected '=' after identifier"));
         }
+        parser.skip_whitespace();
 
         let expr = parser.parse_expr()?;
         Ok(Box::new(LetStmt { name, expr }))

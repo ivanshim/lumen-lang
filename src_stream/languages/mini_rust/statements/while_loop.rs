@@ -60,9 +60,11 @@ impl StmtHandler for WhileStmtHandler {
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'while'
+        parser.skip_whitespace();
 
         // parse condition expression
         let condition = parser.parse_expr()?;
+        parser.skip_whitespace();
 
         // parse indented body
         let body = structural::parse_block(parser)?;

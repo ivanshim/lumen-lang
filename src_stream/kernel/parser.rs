@@ -105,6 +105,8 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse_expr_prec(&mut self, min_prec: Precedence) -> LumenResult<Box<dyn ExprNode>> {
+        self.skip_whitespace();
+
         let prefix = self
             .reg
             .find_prefix(self)
