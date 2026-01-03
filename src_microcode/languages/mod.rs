@@ -6,6 +6,8 @@
 
 pub mod lumen;
 pub mod mini_rust;
+pub mod mini_python;
 
 pub use lumen::schema as lumen_schema;
 pub use mini_rust::schema as mini_rust_schema;
+pub use mini_python as mini_python_schema;

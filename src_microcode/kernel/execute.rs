@@ -191,6 +191,19 @@ fn execute_binary_op(operator: &str, left: &Value, right: &Value) -> Result<Valu
             }
             Ok(Value::Number((l % r) as f64))
         }
+        "//" => {
+            let l = left.to_number()?;
+            let r = right.to_number()?;
+            if r == 0.0 {
+                return Err("Division by zero".to_string());
+            }
+            Ok(Value::Number((l / r).floor()))
+        }
+        "**" => {
+            let l = left.to_number()?;
+            let r = right.to_number()?;
+            Ok(Value::Number(l.powf(r)))
+        }
 
         // Bitwise operations (treated as integer operations)
         "|" => {

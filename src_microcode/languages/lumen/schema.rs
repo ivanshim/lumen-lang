@@ -142,6 +142,10 @@ pub fn get_schema() -> LanguageSchema {
         "/".to_string(),
         OperatorInfo::left("/", 6),
     );
+    binary_ops.insert(
+        "%".to_string(),
+        OperatorInfo::left("%", 6),
+    );
 
     // Unary operators
     let mut unary_ops = HashMap::new();
