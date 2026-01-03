@@ -51,18 +51,7 @@ should_skip() {
     local language="$1"
     local kernel="$2"
 
-    # Microcode paths are still experimental for all languages
-    if [ "$kernel" = "microcode" ]; then
-        echo "microcode kernel is experimental; skipping"
-        return 0
-    fi
-
-    # Mini-Rust frontends are under construction
-    if [ "$language" = "mini-rust" ]; then
-        echo "mini-rust language is under construction; skipping"
-        return 0
-    fi
-
+    # All combinations are now supported - run all tests
     return 1
 }
 
