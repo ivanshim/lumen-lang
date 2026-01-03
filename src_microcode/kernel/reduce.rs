@@ -63,29 +63,65 @@ impl<'a> Parser<'a> {
 
         // Check if it's a statement keyword
         if !self.schema.is_statement_keyword(&lexeme) {
-            // Might be an expression statement (for now, unsupported)
-            return Err(format!(
-                "Expected statement keyword, found: {}",
-                lexeme
-            ));
+            // Try to parse as assignment or expression statement
+            return self.parse_assignment_or_expression();
         }
 
         match lexeme.as_str() {
             "print" => self.parse_print(),
             "if" => self.parse_if(),
             "while" => self.parse_while(),
+            "for" => self.parse_for(),
+            "loop" => self.parse_loop(),
             "var" => self.parse_var(),
+            "let" => self.parse_let(),
             "break" => self.parse_break(),
             "continue" => self.parse_continue(),
+            "return" => self.parse_return(),
             _ => Err(format!("Unknown statement: {}", lexeme)),
         }
     }
 
-    /// print(expression)
+    /// Handle assignment or expression statements (x = value)
+    fn parse_assignment_or_expression(&mut self) -> Result<Instruction, String> {
+        let start = self.peek().span.0;
+        let expr = self.parse_expression(0)?;
+
+        // Check if it's an assignment
+        if self.peek().lexeme == "=" {
+            self.advance();
+            self.skip_whitespace();
+            let value = self.parse_expression(0)?;
+            let end = self.prev_span().1;
+
+            // Extract variable name from expression (if it's a variable reference)
+            if let Primitive::Variable(name) = &expr.primitive {
+                return Ok(Instruction::new(
+                    Primitive::Assign {
+                        name: name.clone(),
+                        value: Box::new(value),
+                    },
+                    start,
+                    end,
+                ));
+            }
+        }
+
+        Ok(expr)
+    }
+
+    /// print(expression) or print!(expression) for Mini-Rust
     fn parse_print(&mut self) -> Result<Instruction, String> {
         let start = self.peek().span.0;
         self.expect("print")?;
         self.skip_whitespace();
+
+        // Handle print! macro syntax (Mini-Rust)
+        if self.peek().lexeme == "!" {
+            self.advance();
+            self.skip_whitespace();
+        }
+
         self.expect("(")?;
         self.skip_whitespace();
 
@@ -174,6 +210,99 @@ impl<'a> Parser<'a> {
             start,
             end,
         ))
+    }
+
+    /// let name = expression; (Mini-Rust style)
+    fn parse_let(&mut self) -> Result<Instruction, String> {
+        let start = self.peek().span.0;
+        self.expect("let")?;
+        self.skip_whitespace();
+
+        // Check for 'mut' keyword
+        let _is_mut = if self.peek().lexeme == "mut" {
+            self.advance();
+            self.skip_whitespace();
+            true
+        } else {
+            false
+        };
+
+        let name = self.parse_identifier()?;
+        self.skip_whitespace();
+
+        self.expect("=")?;
+        self.skip_whitespace();
+
+        let value = self.parse_expression(0)?;
+        let end = self.prev_span().1;
+
+        Ok(Instruction::new(
+            Primitive::Assign {
+                name,
+                value: Box::new(value),
+            },
+            start,
+            end,
+        ))
+    }
+
+    /// for variable in expression { block }
+    fn parse_for(&mut self) -> Result<Instruction, String> {
+        let start = self.peek().span.0;
+        self.expect("for")?;
+        self.skip_whitespace();
+
+        let _var = self.parse_identifier()?;
+        self.skip_whitespace();
+
+        self.expect("in")?;
+        self.skip_whitespace();
+
+        let _iterable = self.parse_expression(0)?;
+        self.skip_whitespace();
+
+        let _block = self.parse_block()?;
+        let end = self.prev_span().1;
+
+        // For now, return a placeholder - proper for-loop support would need to be added
+        Err("for loops not yet supported in microcode kernel".to_string())
+    }
+
+    /// loop { block }
+    fn parse_loop(&mut self) -> Result<Instruction, String> {
+        let start = self.peek().span.0;
+        self.expect("loop")?;
+        self.skip_whitespace();
+
+        let block = self.parse_block()?;
+        let end = self.prev_span().1;
+
+        // Infinite loop: while true
+        let condition = Instruction::new(
+            Primitive::Literal(Value::Bool(true)),
+            start,
+            start,
+        );
+
+        Ok(Instruction::new(
+            Primitive::Loop {
+                condition: Box::new(condition),
+                block: Box::new(block),
+            },
+            start,
+            end,
+        ))
+    }
+
+    /// return [expression];
+    fn parse_return(&mut self) -> Result<Instruction, String> {
+        let start = self.peek().span.0;
+        self.expect("return")?;
+        self.skip_whitespace();
+
+        // For now, return is not implemented
+        let end = self.prev_span().1;
+        Err(format!("return statements not yet supported at span {:?}", (start, end)))
     }
 
     /// break

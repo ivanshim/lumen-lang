@@ -136,11 +136,18 @@ pub fn execute(instruction: &Instruction, env: &mut Environment) -> Result<(Valu
 /// Execute a unary operation
 fn execute_unary_op(operator: &str, operand: &Value) -> Result<Value, String> {
     match operator {
-        "not" => Ok(Value::Bool(!operand.to_bool())),
+        // Logical NOT
+        "not" | "!" => Ok(Value::Bool(!operand.to_bool())),
+
+        // Negation
         "-" => {
             let n = operand.to_number()?;
             Ok(Value::Number(-n))
         }
+
+        // Reference and dereference (not fully implemented, just pass through)
+        "&" | "*" => Ok(operand.clone()),
+
         _ => Err(format!("Unknown unary operator: {}", operator)),
     }
 }
@@ -171,6 +178,41 @@ fn execute_binary_op(operator: &str, left: &Value, right: &Value) -> Result<Valu
                 return Err("Division by zero".to_string());
             }
             Ok(Value::Number(l / r))
+        }
+        "%" => {
+            let l = left.to_number()? as i64;
+            let r = right.to_number()? as i64;
+            if r == 0 {
+                return Err("Division by zero".to_string());
+            }
+            Ok(Value::Number((l % r) as f64))
+        }
+
+        // Bitwise operations (treated as integer operations)
+        "|" => {
+            let l = left.to_number()? as i64;
+            let r = right.to_number()? as i64;
+            Ok(Value::Number((l | r) as f64))
+        }
+        "^" => {
+            let l = left.to_number()? as i64;
+            let r = right.to_number()? as i64;
+            Ok(Value::Number((l ^ r) as f64))
+        }
+        "&" => {
+            let l = left.to_number()? as i64;
+            let r = right.to_number()? as i64;
+            Ok(Value::Number((l & r) as f64))
+        }
+        "<<" => {
+            let l = left.to_number()? as i64;
+            let r = right.to_number()? as i64;
+            Ok(Value::Number((l << r) as f64))
+        }
+        ">>" => {
+            let l = left.to_number()? as i64;
+            let r = right.to_number()? as i64;
+            Ok(Value::Number((l >> r) as f64))
         }
 
         // Comparison
@@ -204,15 +246,20 @@ fn execute_binary_op(operator: &str, left: &Value, right: &Value) -> Result<Valu
         }
 
         // Logical
-        "and" => {
+        "and" | "&&" => {
             let l = left.to_bool();
             let r = right.to_bool();
             Ok(Value::Bool(l && r))
         }
-        "or" => {
+        "or" | "||" => {
             let l = left.to_bool();
             let r = right.to_bool();
             Ok(Value::Bool(l || r))
+        }
+
+        // Range operator (creates a simple range representation)
+        ".." => {
+            Ok(Value::String(format!("{}..{}", left, right)))
         }
 
         // Assignment (should not reach here in normal execution)
