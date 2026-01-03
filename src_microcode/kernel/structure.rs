@@ -10,28 +10,62 @@
 use super::ingest::Token;
 use crate::schema::LanguageSchema;
 
+/// Check if a keyword expects a block
+fn keyword_expects_block(keyword: &str) -> bool {
+    keyword == "if" || keyword == "while" || keyword == "for" || keyword == "else"
+}
+
+/// Find the most recent block-expecting keyword in result
+/// Returns the keyword if found, or empty string
+fn find_last_keyword(result: &[Token]) -> String {
+    // Scan backwards to find a block-expecting keyword that starts a statement
+    // A keyword is at a statement boundary if:
+    // - It's at the beginning, OR
+    // - The token immediately before it (skipping internal expressions) is a newline or }
+
+    // First, find the most recent block-expecting keyword anywhere
+    for i in (0..result.len()).rev() {
+        let token = &result[i];
+
+        if keyword_expects_block(&token.lexeme) {
+            // Check if this keyword starts a statement
+            // It starts a statement if the previous non-whitespace token is newline, }, or beginning
+            if i == 0 {
+                return token.lexeme.clone();
+            }
+
+            // Look immediately before this keyword (skipping whitespace)
+            // to see if there's a newline or }
+            if i > 0 {
+                let mut found_boundary = false;
+                for j in (0..i).rev() {
+                    let prev = &result[j];
+                    if prev.lexeme == " " || prev.lexeme == "\t" {
+                        continue; // Skip whitespace
+                    }
+                    if prev.lexeme == "\n" || prev.lexeme == "}" {
+                        found_boundary = true;
+                    }
+                    break; // Stop at first non-whitespace token
+                }
+                if found_boundary {
+                    return token.lexeme.clone();
+                }
+            }
+        }
+    }
+
+    String::new()
+}
+
 /// Process tokens for structural significance per schema
 pub fn process(tokens: &[Token], _schema: &LanguageSchema) -> Result<Vec<Token>, String> {
     let mut result = Vec::new();
     let mut indent_stack: Vec<usize> = vec![0]; // Track indentation levels
     let mut i = 0;
-    let mut last_statement_keyword = String::new(); // Track last control keyword
 
     while i < tokens.len() {
         let token = &tokens[i];
-
-        // Remember control flow keywords that expect blocks
-        if token.lexeme == "if" || token.lexeme == "while" || token.lexeme == "for" {
-            last_statement_keyword = token.lexeme.clone();
-        } else if token.lexeme == "else" {
-            last_statement_keyword = "else".to_string();
-        } else if token.lexeme == "\n" {
-            // Reset keyword tracking on newline (unless followed by else)
-            // Actually, we'll handle this below
-        } else if token.lexeme != " " && token.lexeme != "\t" && !token.lexeme.is_empty() {
-            // Only reset if it's a non-whitespace, non-newline token
-            // But keep the keyword if we're about to see a newline+indent
-        }
 
         // Handle newlines - check indentation of next line
         if token.lexeme == "\n" {
@@ -57,17 +91,15 @@ pub fn process(tokens: &[Token], _schema: &LanguageSchema) -> Result<Vec<Token>,
             // Skip empty lines
             if j >= tokens.len() || tokens[j].lexeme == "\n" {
                 i = j;
-                last_statement_keyword.clear();
                 continue;
             }
 
-            // Process indentation changes only if the last keyword expects a block
+            // Check what keyword this indent follows
+            let last_keyword = find_last_keyword(&result);
+            let should_have_block = !last_keyword.is_empty();
+
+            // Process indentation changes
             let current_indent = *indent_stack.last().unwrap_or(&0);
-            let should_have_block =
-                last_statement_keyword == "if" ||
-                last_statement_keyword == "while" ||
-                last_statement_keyword == "for" ||
-                last_statement_keyword == "else";
 
             if indent_level > current_indent && should_have_block {
                 indent_stack.push(indent_level);
@@ -77,7 +109,6 @@ pub fn process(tokens: &[Token], _schema: &LanguageSchema) -> Result<Vec<Token>,
                     line: token.line,
                     col: 0,
                 });
-                last_statement_keyword.clear();
             } else if indent_level < current_indent {
                 while indent_stack.len() > 1 && indent_stack[indent_stack.len() - 1] > indent_level {
                     indent_stack.pop();
@@ -88,9 +119,6 @@ pub fn process(tokens: &[Token], _schema: &LanguageSchema) -> Result<Vec<Token>,
                         col: 0,
                     });
                 }
-                last_statement_keyword.clear();
-            } else {
-                last_statement_keyword.clear();
             }
 
             // Skip the whitespace tokens we counted

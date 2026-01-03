@@ -178,7 +178,7 @@ pub fn get_schema() -> LanguageSchema {
     // Statement terminators
     let statement_terminators = vec![
         ";".to_string(),
-        "}".to_string(),
+        "\n".to_string(),
     ];
 
     // Multi-character lexemes for maximal-munch
