@@ -18,6 +18,7 @@ pub struct LanguageSchema {
     pub statement_terminators: Vec<String>,
     pub block_open: String,
     pub block_close: String,
+    pub is_indentation_based: bool,
     pub extern_syntax: Option<ExternSyntax>,
 }
 

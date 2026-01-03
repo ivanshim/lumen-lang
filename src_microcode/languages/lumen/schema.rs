@@ -183,12 +183,12 @@ pub fn get_schema() -> LanguageSchema {
 
     // Multi-character lexemes for maximal-munch
     let multichar_lexemes = vec![
+        // Keywords (longer first for maximal-munch)
+        "continue", "extern",
+        "while", "break", "false", "print",
+        "true", "else", "let", "var", "not", "and", "if", "or",
+        // Operators
         "==", "!=", "<=", ">=",  // comparison operators
-        "and", "or", "not",       // logical operators
-        "true", "false",          // boolean literals
-        "extern", "print",        // keywords
-        "if", "else", "while",    // control flow
-        "var", "break", "continue", // declarations and jumps
     ];
 
     // Extern call syntax
@@ -210,6 +210,7 @@ pub fn get_schema() -> LanguageSchema {
         statement_terminators,
         block_open: "{".to_string(),
         block_close: "}".to_string(),
+        is_indentation_based: true,
         extern_syntax,
     }
 }
