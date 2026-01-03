@@ -84,7 +84,7 @@ pub fn get_schema() -> LanguageSchema {
     // Assignment (lowest precedence, right-associative)
     binary_ops.insert(
         "=".to_string(),
-        OperatorInfo::right("=", 1),
+        OperatorInfo::right("=", 0),
     );
 
     // Logical OR
