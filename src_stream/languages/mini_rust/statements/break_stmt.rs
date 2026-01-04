@@ -25,7 +25,7 @@ impl StmtHandler for BreakStmtHandler {
         parser.peek().lexeme == BREAK
     }
 
-    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
+    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'break'
         Ok(Box::new(BreakStmt))
     }

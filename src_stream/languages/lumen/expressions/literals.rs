@@ -26,7 +26,7 @@ impl ExprPrefix for NumberLiteralPrefix {
         parser.peek().lexeme.chars().next().map_or(false, |c| c.is_ascii_digit())
     }
 
-    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
+    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
         // Consume the first digit
         let mut value = parser.advance().lexeme;
 
@@ -69,7 +69,7 @@ impl ExprPrefix for BoolLiteralPrefix {
         lex == "true" || lex == "false"
     }
 
-    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
+    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
         let lexeme = parser.advance().lexeme;
         let value = lexeme == "true";
         Ok(Box::new(BoolLiteral { value }))
@@ -99,7 +99,7 @@ impl ExprPrefix for StringLiteralPrefix {
         parser.peek().lexeme == "\""
     }
 
-    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
+    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
         // Consume opening quote
         let mut value = parser.advance().lexeme;
 

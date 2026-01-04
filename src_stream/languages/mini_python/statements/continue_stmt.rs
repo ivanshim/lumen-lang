@@ -25,7 +25,7 @@ impl StmtHandler for ContinueStmtHandler {
         parser.peek().lexeme == "continue"
     }
 
-    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
+    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'continue'
         Ok(Box::new(ContinueStmt))
     }

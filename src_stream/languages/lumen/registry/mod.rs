@@ -74,7 +74,7 @@ pub fn parse_expr_with_prec(
         .find_prefix(parser)
         .ok_or_else(|| err_at(parser, "Unknown expression"))?;
 
-    let mut left = prefix.parse(parser)?;
+    let mut left = prefix.parse(parser, registry)?;
 
     loop {
         parser.skip_whitespace();
@@ -88,7 +88,7 @@ pub fn parse_expr_with_prec(
             break;
         }
 
-        left = infix.parse(parser, left)?;
+        left = infix.parse(parser, left, registry)?;
     }
 
     Ok(left)

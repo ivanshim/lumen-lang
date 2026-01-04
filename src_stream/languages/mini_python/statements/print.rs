@@ -30,7 +30,7 @@ impl StmtHandler for PrintStmtHandler {
         parser.peek().lexeme == "print"
     }
 
-    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
+    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
         // consume `print`
         parser.advance();
 
@@ -39,7 +39,7 @@ impl StmtHandler for PrintStmtHandler {
             return Err("Expected '(' after print".into());
         }
 
-        let expr = parser.parse_expr()?;
+        let expr = parser.parse_expr(registry)?;
 
         // expect ')'
         if parser.advance().lexeme != RPAREN {

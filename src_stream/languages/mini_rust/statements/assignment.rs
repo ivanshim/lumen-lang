@@ -72,7 +72,7 @@ impl StmtHandler for AssignStmtHandler {
         false
     }
 
-    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
+    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
         // Consume first character of identifier
         let mut name = parser.advance().lexeme;
 
@@ -95,7 +95,7 @@ impl StmtHandler for AssignStmtHandler {
         }
         parser.skip_whitespace();
 
-        let expr = parser.parse_expr()?;
+        let expr = parser.parse_expr(registry)?;
         Ok(Box::new(AssignStmt { name, expr }))
     }
 }
