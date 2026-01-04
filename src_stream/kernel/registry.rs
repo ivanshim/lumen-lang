@@ -28,30 +28,82 @@ pub fn err_at(parser: &Parser, msg: &str) -> String {
 }
 
 // --------------------
+// Token Definition (Unified Token Metadata)
+// --------------------
+
+/// Complete definition of a token with all its properties.
+/// Unifies multichar lexemes and skip behavior under one structure.
+#[derive(Debug, Clone)]
+pub struct TokenDefinition {
+    /// The lexeme string to recognize
+    pub lexeme: &'static str,
+    /// Whether this token should be skipped during parsing
+    pub skip_during_parsing: bool,
+}
+
+impl TokenDefinition {
+    pub fn new(lexeme: &'static str, skip_during_parsing: bool) -> Self {
+        Self {
+            lexeme,
+            skip_during_parsing,
+        }
+    }
+
+    /// Create a token that should be recognized but not skipped
+    pub fn recognize(lexeme: &'static str) -> Self {
+        Self {
+            lexeme,
+            skip_during_parsing: false,
+        }
+    }
+
+    /// Create a token that should be skipped during parsing
+    pub fn skip(lexeme: &'static str) -> Self {
+        Self {
+            lexeme,
+            skip_during_parsing: true,
+        }
+    }
+}
+
+// --------------------
 // Token Registry (Pure Transport Layer)
 // --------------------
 
-/// Registry of multi-character lexeme sequences for maximal-munch segmentation.
-/// This is the only kernel-level registry - all other registries are language-specific.
+/// Registry of token definitions for lexical analysis and parsing.
+/// Single source of truth for token behavior.
 pub struct TokenRegistry {
-    // Multi-character lexeme sequences for maximal-munch segmentation
+    // All token definitions with their properties
+    token_defs: Vec<TokenDefinition>,
+    // Cached: Multi-character lexeme sequences for maximal-munch segmentation
     // Stored in descending length order for proper maximal-munch
     multichar_lexemes: Vec<&'static str>,
-    // Tokens that should be skipped during parsing (whitespace, comments, etc.)
+    // Cached: Tokens that should be skipped during parsing
     skip_tokens: Vec<&'static str>,
 }
 
 impl TokenRegistry {
     pub fn new() -> Self {
         Self {
+            token_defs: Vec::new(),
             multichar_lexemes: Vec::new(),
             skip_tokens: Vec::new(),
         }
     }
 
+    /// Set tokens using unified TokenDefinition approach.
+    /// This is the recommended way to register tokens.
+    /// Internally extracts multichar lexemes and skip tokens.
+    pub fn set_token_definitions(&mut self, defs: Vec<TokenDefinition>) {
+        self.token_defs = defs;
+        self.rebuild_caches();
+    }
+
     /// Set the multi-character lexeme sequences that the language uses.
     /// The lexer will use these for maximal-munch segmentation.
     /// Sequences will be sorted by descending length automatically.
+    ///
+    /// This is a legacy API. Prefer set_token_definitions() instead.
     pub fn set_multichar_lexemes(&mut self, mut lexemes: Vec<&'static str>) {
         // Sort by descending length for proper maximal-munch
         lexemes.sort_by(|a, b| b.len().cmp(&a.len()));
@@ -65,6 +117,8 @@ impl TokenRegistry {
 
     /// Set which lexemes should be skipped during parsing.
     /// These are typically whitespace characters or comment tokens.
+    ///
+    /// This is a legacy API. Prefer set_token_definitions() instead.
     pub fn set_skip_tokens(&mut self, tokens: Vec<&'static str>) {
         self.skip_tokens = tokens;
     }
@@ -77,6 +131,35 @@ impl TokenRegistry {
     /// Check if a lexeme should be skipped
     pub fn is_skip_token(&self, lexeme: &str) -> bool {
         self.skip_tokens.contains(&lexeme)
+    }
+
+    /// Get all token definitions
+    pub fn token_definitions(&self) -> &[TokenDefinition] {
+        &self.token_defs
+    }
+
+    /// Rebuild internal caches from token definitions
+    fn rebuild_caches(&mut self) {
+        let mut multichar = Vec::new();
+        let mut skip = Vec::new();
+
+        for def in &self.token_defs {
+            // Extract multichar lexemes (lexer concern)
+            if def.lexeme.len() > 1 {
+                multichar.push(def.lexeme);
+            }
+
+            // Extract skip tokens (parser concern)
+            if def.skip_during_parsing {
+                skip.push(def.lexeme);
+            }
+        }
+
+        // Sort by descending length for proper maximal-munch
+        multichar.sort_by(|a, b| b.len().cmp(&a.len()));
+
+        self.multichar_lexemes = multichar;
+        self.skip_tokens = skip;
     }
 }
 
