@@ -1,11 +1,4 @@
 ================================================================================
-LUMEN-LANG: LANGUAGE-AGNOSTIC FRAMEWORK ARCHITECTURE
-================================================================================
-
-This document describes the directory structure for the language-agnostic
-interpreter framework and language implementations.
-
-================================================================================
 DIRECTORY STRUCTURE
 ================================================================================
 
