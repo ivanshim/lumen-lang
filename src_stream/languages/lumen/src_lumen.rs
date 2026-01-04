@@ -58,7 +58,6 @@ pub fn register_all(registry: &mut Registry) {
     // Expression features
     expressions::literals::register(registry);      // Number and boolean literals
     expressions::variable::register(registry);      // Variable references
-    expressions::identifier::register(registry);    // Identifier handling
     expressions::grouping::register(registry);      // Parenthesized expressions
     expressions::arithmetic::register(registry);    // Arithmetic operators
     expressions::comparison::register(registry);    // Comparison operators
