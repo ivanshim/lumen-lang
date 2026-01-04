@@ -11,29 +11,50 @@ DIRECTORY STRUCTURE
 
 lumen-lang/
 │
-├── src/                                 # Binary entry point and shared schema
-│   ├── main.rs                          # CLI for selecting kernel/language
-│   └── schema/                          # Common argument/operator models
+├── src/                                 # Binary entry point and dispatcher
+│   └── main.rs                          # Kernel selection and binary delegation
 │
-├── src_stream/                          # STREAM (procedural) KERNEL
-│   ├── kernel/                          # Lexer, parser, registry, runtime eval
-│   │   └── runtime/                     # Stream runtime primitives
-│   ├── languages/                       # Stream language implementations
-│   │   ├── lumen/
-│   │   ├── mini_rust/
-│   │   └── mini_python/
-│   ├── schema/                          # Stream AST and operator schema
-│   └── docs/                            # Stream kernel documentation
+├── src_stream/                          # STREAM (procedural, AST-based) KERNEL
+│   ├── main.rs                          # Stream kernel binary entry point
+│   ├── kernel/                          # Language-agnostic kernel core
+│   │   ├── lexer.rs                     # Tokenization infrastructure
+│   │   ├── parser.rs                    # Generic AST parsing engine
+│   │   ├── registry.rs                  # Token and handler registration
+│   │   ├── eval.rs                      # Tree-walking interpreter
+│   │   └── runtime/                     # Runtime value primitives
+│   └── languages/                       # Language-specific implementations
+│       ├── lumen/                       # Lumen language (indentation-based)
+│       │   ├── expressions/
+│       │   ├── statements/
+│       │   ├── structure/
+│       │   ├── extern_system/
+│       │   └── dispatcher/
+│       ├── mini_rust/                   # Mini-Rust language (brace-based)
+│       │   ├── expressions/
+│       │   ├── statements/
+│       │   ├── structure/
+│       │   └── dispatcher/
+│       └── mini_python/                 # Mini-Python language (indentation-based)
+│           ├── expressions/
+│           ├── statements/
+│           ├── structure/
+│           └── dispatcher/
 │
-├── src_microcode/                       # MICROCODE (data-driven) KERNEL
-│   ├── kernel/                          # Ingest → reduce → execute pipeline
-│   ├── runtime/                         # Runtime glue for microcode engine
-│   ├── languages/                       # Microcode language definitions
+├── src_microcode/                       # MICROCODE (data-driven, table-based) KERNEL
+│   ├── main.rs                          # Microcode kernel binary entry point
+│   ├── kernel/                          # Data-driven execution pipeline
+│   │   ├── ingest.rs                    # Schema parsing and validation
+│   │   ├── reduce.rs                    # Instruction compilation
+│   │   ├── execute.rs                   # Instruction interpretation
+│   │   └── primitives.rs                # Primitive operation definitions
+│   ├── runtime/                         # Runtime support and external calls
+│   │   └── extern/                      # External function dispatch
+│   ├── languages/                       # Language schema definitions
 │   │   ├── lumen/
 │   │   ├── mini_rust/
 │   │   ├── mini_python/
 │   │   └── alien_lang/
-│   └── schema/                          # Microcode schema definitions
+│   └── schema/                          # Schema structure and validation
 │
 ├── examples/                            # Sample programs (lumen, mini-rust, mini-python)
 ├── archive/                             # Inactive or experimental language tracks
