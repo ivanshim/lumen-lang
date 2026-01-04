@@ -66,11 +66,11 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   - All expression types: literals, variables, arithmetic, comparison, logical
   - All statement types: assignment, if/else, while, print, break, continue
   - 5 example programs: loop, fibonacci, demo, pi (1000 iterations), e (10 terms)
-  - File extensions: `.py` and `.mpy`
+  - File extensions: `.py`
 - **Project Cleanup**: Updated `src/main.rs` to support only 3 active languages:
   - Lumen (`.lm`)
   - Mini-Rust (`.rs`)
-  - Mini-Python (`.py`, `.mpy`)
+  - Mini-Python (`.py`)
 - **Test Suite Update**: Modified `test_all.sh` for 3-language support (21 total tests)
 - **Build Status**: All tests passing, zero compilation errors
 
