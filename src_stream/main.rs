@@ -9,7 +9,6 @@ use std::process;
 
 mod kernel;
 mod languages;
-mod schema;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
