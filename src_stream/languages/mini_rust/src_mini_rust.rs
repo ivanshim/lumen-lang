@@ -2,7 +2,7 @@
 // Mini-Rust language dispatcher
 // Rust-like: let bindings, curly braces, print! macro
 
-use crate::kernel::registry::LumenResult;
+use crate::kernel::registry::{LumenResult, TokenDefinition};
 use crate::languages::mini_rust::registry::Registry;
 
 // Import all feature modules
@@ -12,15 +12,31 @@ use super::structure;
 
 /// Register all Mini-Rust language features
 pub fn register_all(registry: &mut Registry) {
-    // Register multi-character lexemes for maximal-munch segmentation
-    // The kernel lexer will use these for pure lossless ASCII segmentation
-    registry.tokens.set_multichar_lexemes(vec![
-        // Two-char operators
-        "==", "!=", "<=", ">=", "&&", "||", ":=",
-        // Keywords (multi-char word sequences)
-        "let", "if", "else", "while", "break", "continue", "print",
-        "true", "false",
-    ]);
+    // Define all tokens with unified TokenDefinition API
+    // Each token specifies whether it should be skipped during parsing
+    let tokens = vec![
+        // Two-char operators (not skipped)
+        TokenDefinition::recognize("=="),
+        TokenDefinition::recognize("!="),
+        TokenDefinition::recognize("<="),
+        TokenDefinition::recognize(">="),
+        TokenDefinition::recognize("&&"),
+        TokenDefinition::recognize("||"),
+        TokenDefinition::recognize(":="),
+
+        // Keywords (not skipped)
+        TokenDefinition::recognize("let"),
+        TokenDefinition::recognize("if"),
+        TokenDefinition::recognize("else"),
+        TokenDefinition::recognize("while"),
+        TokenDefinition::recognize("break"),
+        TokenDefinition::recognize("continue"),
+        TokenDefinition::recognize("print"),
+        TokenDefinition::recognize("true"),
+        TokenDefinition::recognize("false"),
+    ];
+
+    registry.tokens.set_token_definitions(tokens);
 
     // Core syntax (structural tokens - braces, parens, semicolons)
     structure::structural::register(registry);

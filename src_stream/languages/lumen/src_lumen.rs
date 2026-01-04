@@ -3,6 +3,7 @@
 // This module registers all Lumen language features with the Lumen registry
 
 use crate::languages::lumen::patterns::PatternSet;
+use crate::kernel::registry::TokenDefinition;
 use super::registry::Registry;
 
 // Import all feature modules
@@ -40,17 +41,31 @@ pub fn aggregate_patterns() -> PatternSet {
 
 /// Register all Lumen language features
 pub fn register_all(registry: &mut Registry) {
-    // Register multi-character lexemes for maximal-munch segmentation
-    // The kernel lexer will use these for pure lossless ASCII segmentation
-    registry.tokens.set_multichar_lexemes(vec![
-        // Two-char operators
-        "==", "!=", "<=", ">=",
-        // Keywords (multi-char word sequences)
-        "and", "or", "not",
-        "if", "else", "while", "break", "continue", "print",
-        "extern",  // Impurity boundary marker
-        "true", "false",
-    ]);
+    // Define all tokens with unified TokenDefinition API
+    // Each token specifies whether it should be skipped during parsing
+    let tokens = vec![
+        // Two-char operators (not skipped)
+        TokenDefinition::recognize("=="),
+        TokenDefinition::recognize("!="),
+        TokenDefinition::recognize("<="),
+        TokenDefinition::recognize(">="),
+
+        // Keywords (not skipped)
+        TokenDefinition::recognize("and"),
+        TokenDefinition::recognize("or"),
+        TokenDefinition::recognize("not"),
+        TokenDefinition::recognize("if"),
+        TokenDefinition::recognize("else"),
+        TokenDefinition::recognize("while"),
+        TokenDefinition::recognize("break"),
+        TokenDefinition::recognize("continue"),
+        TokenDefinition::recognize("print"),
+        TokenDefinition::recognize("extern"),  // Impurity boundary marker
+        TokenDefinition::recognize("true"),
+        TokenDefinition::recognize("false"),
+    ];
+
+    registry.tokens.set_token_definitions(tokens);
 
     // Core syntax (structural tokens - parentheses, indentation, etc.)
     structure::structural::register(registry);
