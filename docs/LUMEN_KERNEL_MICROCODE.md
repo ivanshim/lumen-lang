@@ -8,45 +8,6 @@ The microcode kernel is a pure algorithmic execution engine that makes NO semant
 
 **INVARIANT: The kernel owns ALL algorithms. All language-specific behavior is table-driven via declarative schemas.**
 
-## Directory Structure
-
-```
-src_microcode/
-├── kernel/                     # Pure algorithmic engine (no logic crosses these files)
-│   ├── ingest.rs              # Stage 1: Lex source using schema tables
-│   ├── structure.rs           # Stage 2: Process structural tokens (indentation, newlines)
-│   ├── reduce.rs              # Stage 3: Convert token stream to instruction tree
-│   ├── execute.rs             # Stage 4: Execute instruction tree via primitive dispatch
-│   ├── env.rs                 # Execution environment with lexical scoping
-│   ├── eval.rs                # Value evaluation and primitive utilities
-│   ├── primitives.rs          # Closed primitive set (8 primitives only)
-│   └── mod.rs                 # Kernel entry point (4-stage pipeline)
-│
-├── schema/                     # Declarative schema system (DATA ONLY)
-│   ├── language.rs            # LanguageSchema and ExternSyntax types
-│   ├── structure.rs           # StatementPattern and StatementRole types
-│   ├── operator.rs            # OperatorInfo and Associativity types
-│   ├── validation.rs          # Schema validation logic
-│   └── mod.rs                 # Exports and re-exports
-│
-├── languages/                  # Language definitions (DATA ONLY - NO LOGIC)
-│   ├── lumen/
-│   │   ├── language.rs        # Lumen schema (pure data)
-│   │   └── values.rs          # Lumen value types
-│   │
-│   ├── mini_python/
-│   │   ├── language.yaml      # Mini-Python schema (YAML format - extensible)
-│   │   └── values.rs          # Mini-Python value types
-│   │
-│   └── alien_lang/
-│       ├── language.yaml      # Example extensible language
-│       └── mod.rs             # Loader for YAML-based languages
-│
-└── runtime/                    # External function dispatch
-    └── extern/
-        └── mod.rs             # Execute extern calls per schema definition
-```
-
 ## Four-Stage Pipeline
 
 ### Stage 1: Ingest
@@ -73,22 +34,41 @@ src_microcode/
 ### Stage 4: Execute
 - **File**: `kernel/execute.rs`
 - **Input**: Instruction tree, Environment
-- **Process**: Execute via primitive dispatch (8-primitive closed set)
+- **Process**: Execute via primitive dispatch (7-primitive canonical set)
 - **Output**: Value (result) and ControlFlow
 - **Key Principle**: All semantics come from primitive definitions, never from code
 
-## Closed Primitive Set
+## Canonical Primitive Set
 
-The kernel can ONLY execute these 8 primitives (no others):
+The kernel executes only these 7 canonical primitives (single-word verbs):
 
-1. **Sequence** - Execute instructions in order, return last value
-2. **Block** - Push/pop scope, execute sequence
-3. **Conditional** - if-then-else branching
-4. **Loop** - while looping with break/continue support
-5. **Jump** - break/continue signals
-6. **Assign** - Set variable in current scope
-7. **Call** - Call external/foreign function (via schema registry)
-8. **UnaryOp/BinaryOp** - Operator dispatch (precedence from schema)
+1. **Sequence** - Execute multiple instructions in order, return last value
+2. **Scope** - Push/pop variable binding scope, execute sequence in new scope
+3. **Branch** - Conditional execution (if condition then-block else else-block)
+4. **Assign** - Variable assignment (update or create in current scope)
+5. **Invoke** - Call external/foreign function via schema registry
+6. **Operate** - Unary or binary operator dispatch (precedence and associativity from schema)
+7. **Transfer** - Control flow signals with tagged variants:
+   - `Transfer(Return, value)` - Return from function with optional value
+   - `Transfer(Break, None)` - Break from loop
+   - `Transfer(Continue, None)` - Continue to next iteration
+
+## Desugaring
+
+Source-level constructs are desugared to primitives during parsing:
+
+- `print(expr)` → `Invoke("print_native", [expr])`
+- `return expr` → `Transfer(Return, Some(expr))`
+- `break` → `Transfer(Break, None)`
+- `continue` → `Transfer(Continue, None)`
+- `{ statements }` → `Scope([statements])`
+
+## Internal Non-Canonical Primitive
+
+- **Loop** - While looping construct (internal implementation detail, not part of canonical set)
+  - Used by `while` and `loop` statements during parsing
+  - Handles repeated condition evaluation with break/continue support
+  - Planned for future refactoring to Branch + Transfer patterns
 
 ## Schema Responsibilities
 
