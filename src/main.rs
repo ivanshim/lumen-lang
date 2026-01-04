@@ -53,8 +53,16 @@ fn parse_kernel_arg(args: &[String]) -> (String, Vec<String>) {
 fn run_stream_kernel(args: &[String]) {
     // Execute the stream kernel binary with the remaining arguments
     // The stream kernel will handle language detection and file processing
+    let mut binary_path = std::env::current_exe()
+        .expect("Failed to get current executable path")
+        .parent()
+        .expect("Failed to get parent directory")
+        .to_path_buf();
+
     let binary_name = if cfg!(windows) { "stream.exe" } else { "stream" };
-    let mut cmd = std::process::Command::new(binary_name);
+    binary_path.push(binary_name);
+
+    let mut cmd = std::process::Command::new(&binary_path);
     cmd.args(args);
 
     match cmd.status() {
@@ -62,7 +70,7 @@ fn run_stream_kernel(args: &[String]) {
             process::exit(status.code().unwrap_or(1));
         }
         Err(e) => {
-            eprintln!("Error: Failed to execute stream kernel: {}", e);
+            eprintln!("Error: Failed to execute stream kernel at {:?}: {}", binary_path, e);
             eprintln!("Make sure to build with 'cargo build' first");
             process::exit(1);
         }
@@ -72,8 +80,16 @@ fn run_stream_kernel(args: &[String]) {
 fn run_microcode_kernel(args: &[String]) {
     // Execute the microcode kernel binary with the remaining arguments
     // The microcode kernel will handle language detection and file processing
+    let mut binary_path = std::env::current_exe()
+        .expect("Failed to get current executable path")
+        .parent()
+        .expect("Failed to get parent directory")
+        .to_path_buf();
+
     let binary_name = if cfg!(windows) { "microcode.exe" } else { "microcode" };
-    let mut cmd = std::process::Command::new(binary_name);
+    binary_path.push(binary_name);
+
+    let mut cmd = std::process::Command::new(&binary_path);
     cmd.args(args);
 
     match cmd.status() {
@@ -81,7 +97,7 @@ fn run_microcode_kernel(args: &[String]) {
             process::exit(status.code().unwrap_or(1));
         }
         Err(e) => {
-            eprintln!("Error: Failed to execute microcode kernel: {}", e);
+            eprintln!("Error: Failed to execute microcode kernel at {:?}: {}", binary_path, e);
             eprintln!("Make sure to build with 'cargo build' first");
             process::exit(1);
         }
