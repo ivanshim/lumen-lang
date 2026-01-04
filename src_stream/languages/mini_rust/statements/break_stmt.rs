@@ -2,7 +2,8 @@
 
 use crate::kernel::ast::{Control, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::languages::mini_rust::registry::{LumenResult, Registry, StmtHandler};
+use crate::kernel::registry::LumenResult;
+use crate::languages::mini_rust::registry::{Registry, StmtHandler};
 use crate::kernel::runtime::Env;
 
 pub const BREAK: &str = "break";

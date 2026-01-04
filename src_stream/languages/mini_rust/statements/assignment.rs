@@ -3,7 +3,8 @@
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::kernel::lexer::Token;
 use crate::kernel::parser::Parser;
-use crate::languages::mini_rust::registry::{err_at, LumenResult, Registry, StmtHandler};
+use crate::kernel::registry::{LumenResult, err_at};
+use crate::languages::mini_rust::registry::{Registry, StmtHandler};
 use crate::kernel::runtime::{Env, Value};
 
 // --------------------

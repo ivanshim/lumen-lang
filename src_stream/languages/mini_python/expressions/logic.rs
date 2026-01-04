@@ -2,7 +2,8 @@
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
-use crate::languages::mini_python::registry::{ExprInfix, ExprPrefix, LumenResult, Precedence, Registry};
+use crate::kernel::registry::LumenResult;
+use crate::languages::mini_python::registry::{ExprInfix, ExprPrefix, Precedence, Registry};
 use crate::kernel::runtime::{Env, Value};
 use crate::languages::mini_python::values::{MiniPythonBool, as_bool};
 
