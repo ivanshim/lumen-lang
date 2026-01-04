@@ -11,56 +11,154 @@ DIRECTORY STRUCTURE
 
 lumen-lang/
 │
-├── src/                                 # Binary entry point and dispatcher
-│   └── main.rs                          # Kernel selection and binary delegation
+├── src/                                 # Main binary dispatcher
+│   ├── main.rs                          # CLI entry point and kernel routing
+│   └── mod.rs                           # Module exports
 │
-├── src_stream/                          # STREAM (procedural, AST-based) KERNEL
+├── src_stream/                          # Stream kernel (procedural, AST-based)
 │   ├── main.rs                          # Stream kernel binary entry point
+│   ├── mod.rs                           # Module exports
 │   ├── kernel/                          # Language-agnostic kernel core
-│   │   ├── lexer.rs                     # Tokenization infrastructure
-│   │   ├── parser.rs                    # Generic AST parsing engine
-│   │   ├── registry.rs                  # Token and handler registration
-│   │   ├── eval.rs                      # Tree-walking interpreter
-│   │   └── runtime/                     # Runtime value primitives
+│   │   ├── mod.rs                       # Kernel module exports
+│   │   ├── lexer.rs                     # Tokenization with symbol registry
+│   │   ├── parser.rs                    # AST construction
+│   │   ├── ast.rs                       # AST node definitions
+│   │   ├── registry.rs                  # Token and pattern definitions
+│   │   ├── eval.rs                      # Tree-walking AST evaluator
+│   │   └── runtime/                     # Runtime environment and values
+│   │       ├── env.rs                   # Scope and environment management
+│   │       └── value.rs                 # Value representation
 │   └── languages/                       # Language-specific implementations
-│       ├── lumen/                       # Lumen language (indentation-based)
-│       │   ├── expressions/
-│       │   ├── statements/
-│       │   ├── structure/
-│       │   ├── extern_system/
-│       │   └── dispatcher/
-│       ├── mini_rust/                   # Mini-Rust language (brace-based)
-│       │   ├── expressions/
-│       │   ├── statements/
-│       │   ├── structure/
-│       │   └── dispatcher/
-│       └── mini_python/                 # Mini-Python language (indentation-based)
-│           ├── expressions/
-│           ├── statements/
-│           ├── structure/
-│           └── dispatcher/
+│       ├── lumen/                       # Lumen language (Python-style)
+│       │   ├── mod.rs                   # Lumen module exports
+│       │   ├── src_lumen.rs             # Main lumen entry point
+│       │   ├── prelude.rs               # Default environment setup
+│       │   ├── patterns.rs              # Token pattern definitions
+│       │   ├── numeric.rs               # Numeric parsing and operations
+│       │   ├── registry/                # Token and operator definitions
+│       │   │   └── mod.rs               # Registry module
+│       │   ├── structure/               # Indentation and structure handling
+│       │   │   └── mod.rs               # Structure module
+│       │   ├── expressions/             # Expression parsing and evaluation
+│       │   │   └── mod.rs               # Expressions module
+│       │   ├── statements/              # Statement parsing and execution
+│       │   │   └── mod.rs               # Statements module
+│       │   └── extern_system/           # External function dispatch
+│       │       └── mod.rs               # Extern system module
+│       ├── mini_rust/                   # Mini-Rust language (Rust-style)
+│       │   ├── mod.rs                   # Mini-Rust module exports
+│       │   ├── src_mini_rust.rs         # Main mini-rust entry point
+│       │   ├── registry/                # Token and operator definitions
+│       │   │   └── mod.rs               # Registry module
+│       │   ├── structure/               # Brace and structure handling
+│       │   │   └── mod.rs               # Structure module
+│       │   ├── expressions/             # Expression parsing and evaluation
+│       │   │   └── mod.rs               # Expressions module
+│       │   └── statements/              # Statement parsing and execution
+│       │       └── mod.rs               # Statements module
+│       └── mini_python/                 # Mini-Python language (Python-style)
+│           ├── mod.rs                   # Mini-Python module exports
+│           ├── src_mini_python.rs       # Main mini-python entry point
+│           ├── registry/                # Token and operator definitions
+│           │   └── mod.rs               # Registry module
+│           ├── structure/               # Indentation and structure handling
+│           │   └── mod.rs               # Structure module
+│           ├── expressions/             # Expression parsing and evaluation
+│           │   └── mod.rs               # Expressions module
+│           └── statements/              # Statement parsing and execution
+│               └── mod.rs               # Statements module
 │
-├── src_microcode/                       # MICROCODE (data-driven, table-based) KERNEL
+├── src_microcode/                       # Microcode kernel (data-driven, 4-stage)
 │   ├── main.rs                          # Microcode kernel binary entry point
+│   ├── mod.rs                           # Module exports
 │   ├── kernel/                          # Data-driven execution pipeline
-│   │   ├── ingest.rs                    # Schema parsing and validation
-│   │   ├── reduce.rs                    # Instruction compilation
-│   │   ├── execute.rs                   # Instruction interpretation
-│   │   └── primitives.rs                # Primitive operation definitions
-│   ├── runtime/                         # Runtime support and external calls
-│   │   └── extern/                      # External function dispatch
-│   ├── languages/                       # Language schema definitions
-│   │   ├── lumen/
-│   │   ├── mini_rust/
-│   │   ├── mini_python/
-│   │   └── alien_lang/
-│   └── schema/                          # Schema structure and validation
+│   │   ├── mod.rs                       # Kernel pipeline orchestration
+│   │   ├── ingest.rs                    # Stage 1: Lexing with schema tables
+│   │   ├── structure.rs                 # Stage 2: Structural token processing
+│   │   ├── reduce.rs                    # Stage 3: Token stream to instructions
+│   │   ├── execute.rs                   # Stage 4: Instruction execution
+│   │   ├── eval.rs                      # Evaluation logic
+│   │   ├── env.rs                       # Scope and environment management
+│   │   └── primitives.rs                # Primitive operation dispatch
+│   ├── schema/                          # Declarative schema system
+│   │   ├── mod.rs                       # Schema module exports
+│   │   ├── language.rs                  # Language schema definitions
+│   │   ├── operator.rs                  # Operator declarations
+│   │   ├── structure.rs                 # Structural token definitions
+│   │   └── validation.rs                # Schema validation logic
+│   ├── languages/                       # Language-specific schema implementations
+│   │   ├── mod.rs                       # Languages module exports
+│   │   ├── lumen/                       # Lumen language schemas
+│   │   │   ├── mod.rs                   # Lumen schemas module exports
+│   │   │   ├── schema.rs                # Declarative language schema
+│   │   │   └── values.rs                # Value handling
+│   │   ├── mini_rust/                   # Mini-Rust language schemas
+│   │   │   ├── mod.rs                   # Mini-Rust schemas module exports
+│   │   │   ├── schema.rs                # Declarative language schema
+│   │   │   └── values.rs                # Value handling
+│   │   ├── mini_python/                 # Mini-Python language schemas
+│   │   │   ├── mod.rs                   # Mini-Python schemas module exports
+│   │   │   └── values.rs                # Value handling
+│   │   └── alien_lang/                  # Experimental language placeholder
+│   │       └── mod.rs                   # Alien language module
+│   └── runtime/                         # Runtime support system
+│       ├── mod.rs                       # Runtime module exports
+│       └── extern/                      # External function dispatch
+│           └── mod.rs                   # Extern dispatch module
 │
-├── examples/                            # Sample programs (lumen, mini-rust, mini-python)
-├── archive/                             # Inactive or experimental language tracks
-├── README_LANGUAGES.md                  # Cross-language design notes
-├── MICROCODE_ARCHITECTURE.md            # Microcode kernel overview
-├── VERSION_HISTORY.md                   # Release notes and changelog
-├── Cargo.toml
+├── examples/                            # Example programs for all languages
+│   ├── lumen/                           # Lumen language examples (24 files)
+│   │   ├── fibonacci.lm                 # Fibonacci sequence computation
+│   │   ├── pi.lm                        # Pi calculation via Machin's formula
+│   │   ├── e.lm                         # Euler's number via factorial series
+│   │   ├── loop.lm                      # Loop and control flow demonstration
+│   │   ├── demo.lm                      # Feature showcase program
+│   │   ├── scope_if.lm                  # Scope tests with if statements
+│   │   ├── scope_leak.lm                # Scope boundary testing
+│   │   ├── scope_loop.lm                # Scope tests with loops
+│   │   ├── scope_simple.lm              # Basic scope isolation test
+│   │   ├── extern_01.lm                 # Extern system test 1
+│   │   ├── extern_02.lm                 # Extern system test 2
+│   │   ├── extern_03.lm                 # Extern system test 3
+│   │   ├── extern_04.lm                 # Extern system test 4
+│   │   ├── extern_05.lm                 # Extern system test 5
+│   │   ├── extern_06.lm                 # Extern system test 6
+│   │   ├── extern_07.lm                 # Extern system test 7
+│   │   ├── extern_08.lm                 # Extern system test 8
+│   │   ├── extern_09.lm                 # Extern system test 9
+│   │   ├── extern_10.lm                 # Extern system test 10
+│   │   └── extern_11.lm                 # Extern system test 11
+│   ├── mini_python/                     # Mini-Python language examples (5 files)
+│   │   ├── fibonacci.py                 # Fibonacci sequence computation
+│   │   ├── pi.py                        # Pi calculation
+│   │   ├── e.py                         # Euler's number calculation
+│   │   ├── loop.py                      # Loop demonstration
+│   │   └── demo.py                      # Feature showcase
+│   └── mini_rust/                       # Mini-Rust language examples (5 files)
+│       ├── fibonacci.rs                 # Fibonacci sequence computation
+│       ├── pi.rs                        # Pi calculation
+│       ├── e.rs                         # Euler's number calculation
+│       ├── loop.rs                      # Loop demonstration
+│       └── demo.rs                      # Feature showcase
+│
+├── docs/                                # Project documentation
+│   ├── LUMEN_KERNEL_STREAM.md           # Stream kernel design and philosophy
+│   ├── LUMEN_KERNEL_MICROCODE.md        # Microcode kernel 4-stage pipeline
+│   ├── LUMEN_LANGUAGE_BNF.md            # Language grammar in BNF notation
+│   ├── LUMEN_LANGUAGE_DESIGN.md         # Language semantics and design
+│   ├── LUMEN_LANGUAGE_EXTERN_SYSTEM.md  # External function system
+│   ├── LUMEN_LANGUAGE_ROADMAP.md        # Planned features and enhancements
+│   ├── VERSION_HISTORY.md               # Release notes and changelog
+│   └── DIRECTORY_STRUCTURE.txt          # This file
+│
+├── src_stream/languages/lumen/docs/     # Legacy documentation archive
+│   ├── BNF.md                           # Legacy grammar specification
+│   ├── DESIGN.md                        # Legacy design notes
+│   ├── EXTERN_DESIGN.md                 # Legacy extern system design
+│   └── ROADMAP.md                       # Legacy roadmap
+│
+├── test_all.sh                          # Test suite runner script
+├── Cargo.toml                           # Rust project manifest
+├── Cargo.lock                           # Dependency lock file
 ├── README.md                            # Project overview
-└── DIRECTORY_STRUCTURE.txt              # This file
+└── .gitignore                           # Git configuration
