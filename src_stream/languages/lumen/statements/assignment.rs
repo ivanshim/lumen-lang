@@ -4,6 +4,7 @@
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
+use crate::kernel::patterns::PatternSet;
 use crate::kernel::registry::{err_at, LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::{Env, Value};
 
@@ -91,6 +92,17 @@ impl StmtHandler for AssignStmtHandler {
         let expr = parser.parse_expr()?;
         Ok(Box::new(AssignStmt { name, expr }))
     }
+}
+
+// --------------------
+// Pattern Declaration
+// --------------------
+
+/// Declare what patterns this module recognizes
+pub fn patterns() -> PatternSet {
+    PatternSet::new()
+        .with_literals(vec!["="])
+        .with_char_classes(vec!["ident_start"])
 }
 
 // --------------------

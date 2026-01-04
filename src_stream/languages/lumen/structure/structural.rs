@@ -7,6 +7,7 @@
 use crate::kernel::ast::{Program, StmtNode};
 use crate::kernel::lexer::{Token, SpannedToken, Span};
 use crate::kernel::parser::Parser;
+use crate::kernel::patterns::PatternSet;
 use crate::kernel::registry::{err_at, LumenResult, Registry};
 
 // --------------------
@@ -215,6 +216,17 @@ pub fn process_indentation(source: &str, raw_tokens: Vec<SpannedToken>) -> Lumen
     });
 
     Ok(out)
+}
+
+// --------------------
+// Pattern Declaration
+// --------------------
+
+/// Declare what patterns this module recognizes
+pub fn patterns() -> PatternSet {
+    PatternSet::new()
+        .with_literals(vec!["(", ")"])
+        .with_structural(vec!["newline", "indent", "dedent", "eof"])
 }
 
 // --------------------

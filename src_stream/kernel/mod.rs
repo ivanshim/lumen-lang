@@ -5,6 +5,7 @@ pub mod ast;
 pub mod eval;
 pub mod lexer;
 pub mod parser;
+pub mod patterns;
 pub mod registry;
 pub mod runtime;
 

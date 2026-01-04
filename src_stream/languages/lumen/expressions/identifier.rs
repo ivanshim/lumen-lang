@@ -2,7 +2,8 @@
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
-use crate::kernel::registry::{LumenResult, ExprPrefix};
+use crate::kernel::patterns::PatternSet;
+use crate::kernel::registry::{LumenResult, ExprPrefix, Registry};
 use crate::kernel::runtime::{Env, Value};
 
 #[derive(Debug)]
@@ -27,4 +28,24 @@ impl ExprPrefix for IdentPrefix {
         let name = parser.advance().lexeme;
         Ok(Box::new(IdentExpr { name }))
     }
+}
+
+// --------------------
+// Pattern Declaration
+// --------------------
+
+/// Declare what patterns this module recognizes
+pub fn patterns() -> PatternSet {
+    PatternSet::new()
+        .with_char_classes(vec!["ident_start", "ident_char"])
+}
+
+// --------------------
+// Registration
+// --------------------
+
+pub fn register(reg: &mut Registry) {
+    // No tokens to register (identifiers are recognized by lexer)
+    // Register handlers
+    reg.register_prefix(Box::new(IdentPrefix));
 }

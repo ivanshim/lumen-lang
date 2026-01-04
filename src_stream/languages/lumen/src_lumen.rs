@@ -2,12 +2,41 @@
 // Lumen language dispatcher
 // This module registers all Lumen language features with the framework registry
 
+use crate::kernel::patterns::PatternSet;
 use crate::kernel::registry::Registry;
 
 // Import all feature modules
 use super::expressions;
 use super::statements;
 use super::structure;
+
+/// Aggregate all patterns from all Lumen modules
+pub fn aggregate_patterns() -> PatternSet {
+    let patterns_list = vec![
+        // Structural patterns
+        structure::structural::patterns(),
+
+        // Expression patterns
+        expressions::literals::patterns(),
+        expressions::variable::patterns(),
+        expressions::identifier::patterns(),
+        expressions::grouping::patterns(),
+        expressions::arithmetic::patterns(),
+        expressions::comparison::patterns(),
+        expressions::logic::patterns(),
+        expressions::extern_expr::patterns(),
+
+        // Statement patterns
+        statements::print::patterns(),
+        statements::assignment::patterns(),
+        statements::if_else::patterns(),
+        statements::while_loop::patterns(),
+        statements::break_stmt::patterns(),
+        statements::continue_stmt::patterns(),
+    ];
+
+    PatternSet::merge(patterns_list)
+}
 
 /// Register all Lumen language features
 pub fn register_all(registry: &mut Registry) {
@@ -29,6 +58,7 @@ pub fn register_all(registry: &mut Registry) {
     // Expression features
     expressions::literals::register(registry);      // Number and boolean literals
     expressions::variable::register(registry);      // Variable references
+    expressions::identifier::register(registry);    // Identifier handling
     expressions::grouping::register(registry);      // Parenthesized expressions
     expressions::arithmetic::register(registry);    // Arithmetic operators
     expressions::comparison::register(registry);    // Comparison operators

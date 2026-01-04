@@ -2,6 +2,7 @@
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
+use crate::kernel::patterns::PatternSet;
 use crate::kernel::registry::{ExprInfix, LumenResult, Precedence, Registry};
 use crate::kernel::runtime::{Env, Value};
 use crate::languages::lumen::numeric;
@@ -95,6 +96,16 @@ impl ExprInfix for ComparisonInfix {
         let right = parser.parse_expr_prec(self.precedence() + 1)?;
         Ok(Box::new(ComparisonExpr { left, op: self.op.clone(), right }))
     }
+}
+
+// --------------------
+// Pattern Declaration
+// --------------------
+
+/// Declare what patterns this module recognizes
+pub fn patterns() -> PatternSet {
+    PatternSet::new()
+        .with_literals(vec!["==", "!=", "<", ">", "<=", ">="])
 }
 
 // --------------------

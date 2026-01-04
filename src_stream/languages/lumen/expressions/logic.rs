@@ -2,6 +2,7 @@
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
+use crate::kernel::patterns::PatternSet;
 use crate::kernel::registry::{ExprInfix, ExprPrefix, LumenResult, Precedence, Registry};
 use crate::kernel::runtime::{Env, Value};
 use crate::languages::lumen::values::{LumenBool, as_bool};
@@ -89,6 +90,16 @@ impl ExprPrefix for NotPrefix {
         let expr = parser.parse_expr_prec(Precedence::Unary)?;
         Ok(Box::new(NotExpr { expr }))
     }
+}
+
+// --------------------
+// Pattern Declaration
+// --------------------
+
+/// Declare what patterns this module recognizes
+pub fn patterns() -> PatternSet {
+    PatternSet::new()
+        .with_literals(vec!["and", "or", "not"])
 }
 
 // --------------------

@@ -2,6 +2,7 @@
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
+use crate::kernel::patterns::PatternSet;
 use crate::kernel::registry::{ExprPrefix, LumenResult, Registry};
 use crate::languages::lumen::structure::structural::{LPAREN, RPAREN};
 
@@ -24,6 +25,16 @@ impl ExprPrefix for GroupingPrefix {
 
         Ok(expr)
     }
+}
+
+// --------------------
+// Pattern Declaration
+// --------------------
+
+/// Declare what patterns this module recognizes
+pub fn patterns() -> PatternSet {
+    PatternSet::new()
+        .with_literals(vec!["(", ")"])
 }
 
 // --------------------

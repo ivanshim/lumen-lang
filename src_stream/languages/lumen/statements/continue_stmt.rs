@@ -4,6 +4,7 @@
 
 use crate::kernel::ast::{Control, StmtNode};
 use crate::kernel::parser::Parser;
+use crate::kernel::patterns::PatternSet;
 use crate::kernel::registry::{LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::Env;
 
@@ -27,6 +28,16 @@ impl StmtHandler for ContinueStmtHandler {
         parser.advance(); // consume 'continue'
         Ok(Box::new(ContinueStmt))
     }
+}
+
+// --------------------
+// Pattern Declaration
+// --------------------
+
+/// Declare what patterns this module recognizes
+pub fn patterns() -> PatternSet {
+    PatternSet::new()
+        .with_literals(vec!["continue"])
 }
 
 // --------------------
