@@ -1,5 +1,7 @@
 // Mini-Rust-specific handler traits
 // Languages define their own trait definitions for parsing
+// Note: These are independent from kernel traits - they're language-specific definitions
+// The Dispatcher pattern bridges between language-specific traits and kernel's generic interface
 
 use crate::kernel::ast::{ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
