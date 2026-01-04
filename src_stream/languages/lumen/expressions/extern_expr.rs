@@ -42,13 +42,13 @@ impl ExprPrefix for ExternPrefix {
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
         // Consume 'extern'
         parser.advance();
-        parser.skip_whitespace();
+        parser.skip_tokens();
 
         // Expect '('
         if parser.advance().lexeme != LPAREN {
             return Err("Expected '(' after extern".into());
         }
-        parser.skip_whitespace();
+        parser.skip_tokens();
 
         // CRITICAL: The selector MUST be a string literal.
         // This enforces that selectors are data, not identifiers.
@@ -94,7 +94,7 @@ impl ExprPrefix for ExternPrefix {
             return Err("extern selector cannot be empty".into());
         }
 
-        parser.skip_whitespace();
+        parser.skip_tokens();
 
         // Parse remaining arguments
         let mut args = Vec::new();
@@ -105,12 +105,12 @@ impl ExprPrefix for ExternPrefix {
             if parser.advance().lexeme != "," {
                 return Err("Expected ',' after extern selector".into());
             }
-            parser.skip_whitespace();
+            parser.skip_tokens();
 
             // Parse argument expressions
             loop {
                 args.push(parser.parse_expr(registry)?);
-                parser.skip_whitespace();
+                parser.skip_tokens();
 
                 if parser.peek().lexeme == RPAREN {
                     break;
@@ -119,7 +119,7 @@ impl ExprPrefix for ExternPrefix {
                 if parser.advance().lexeme != "," {
                     return Err("Expected ',' between extern arguments".into());
                 }
-                parser.skip_whitespace();
+                parser.skip_tokens();
             }
         }
 

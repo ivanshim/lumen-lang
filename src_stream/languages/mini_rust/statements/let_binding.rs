@@ -37,7 +37,7 @@ impl StmtHandler for LetStmtHandler {
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'let'
-        parser.skip_whitespace();
+        parser.skip_tokens();
 
         // Consume first character of identifier
         let mut name = parser.advance().lexeme;
@@ -54,12 +54,12 @@ impl StmtHandler for LetStmtHandler {
             break;
         }
 
-        parser.skip_whitespace();
+        parser.skip_tokens();
 
         if parser.advance().lexeme != EQUALS {
             return Err(err_at(parser, "Expected '=' after identifier"));
         }
-        parser.skip_whitespace();
+        parser.skip_tokens();
 
         let expr = parser.parse_expr(registry)?;
         Ok(Box::new(LetStmt { name, expr }))

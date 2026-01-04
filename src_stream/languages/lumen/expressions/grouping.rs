@@ -15,9 +15,9 @@ impl ExprPrefix for GroupingPrefix {
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
         parser.advance(); // consume '('
-        parser.skip_whitespace();
+        parser.skip_tokens();
         let expr = parser.parse_expr(registry)?;
-        parser.skip_whitespace();
+        parser.skip_tokens();
 
         if parser.advance().lexeme != RPAREN {
             return Err("Expected ')'".into());

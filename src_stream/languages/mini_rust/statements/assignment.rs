@@ -88,12 +88,12 @@ impl StmtHandler for AssignStmtHandler {
             break;
         }
 
-        parser.skip_whitespace();
+        parser.skip_tokens();
 
         if parser.advance().lexeme != EQUALS {
             return Err(err_at(parser, "Expected '=' in assignment"));
         }
-        parser.skip_whitespace();
+        parser.skip_tokens();
 
         let expr = parser.parse_expr(registry)?;
         Ok(Box::new(AssignStmt { name, expr }))

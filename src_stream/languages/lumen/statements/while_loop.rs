@@ -58,7 +58,7 @@ impl StmtHandler for WhileStmtHandler {
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'while'
-        parser.skip_whitespace();
+        parser.skip_tokens();
 
         // parse condition expression
         let condition = parser.parse_expr(registry)?;

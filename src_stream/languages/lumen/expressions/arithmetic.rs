@@ -35,7 +35,7 @@ impl ExprPrefix for UnaryMinusPrefix {
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
         parser.advance(); // '-'
-        parser.skip_whitespace();
+        parser.skip_tokens();
         let expr = parser.parse_expr_prec(registry, Precedence::Unary)?;
         Ok(Box::new(UnaryMinusExpr { expr }))
     }
@@ -90,7 +90,7 @@ impl ExprInfix for ArithmeticInfix {
 
     fn parse(&self, parser: &mut Parser, left: Box<dyn ExprNode>, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
         parser.advance(); // consume operator
-        parser.skip_whitespace();
+        parser.skip_tokens();
         let right = parser.parse_expr_prec(registry, self.precedence() + 1)?;
         Ok(Box::new(ArithmeticExpr { left, op: self.op.clone(), right }))
     }
