@@ -1,7 +1,7 @@
 // src_mini_python/values.rs
 // Mini-Python-specific value types.
 
-use crate::src_stream::kernel::runtime::RuntimeValue;
+use crate::kernel::runtime::RuntimeValue;
 use std::any::Any;
 
 #[derive(Debug, Clone, PartialEq)]

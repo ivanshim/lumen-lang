@@ -8,7 +8,7 @@ pub mod expressions;
 pub mod statements;
 pub mod structure;
 
-pub fn register_all(registry: &mut crate::src_stream::kernel::registry::Registry) {
+pub fn register_all(registry: &mut crate::kernel::registry::Registry) {
     // Register multi-character lexemes for maximal-munch segmentation
     registry.tokens.set_multichar_lexemes(vec![
         // Two-char operators

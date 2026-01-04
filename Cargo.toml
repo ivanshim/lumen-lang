@@ -3,4 +3,16 @@ name = "lumen-lang"
 version = "0.0.1"
 edition = "2021"
 
+[[bin]]
+name = "lumen-lang"
+path = "src/main.rs"
+
+[[bin]]
+name = "stream"
+path = "src_stream/main.rs"
+
+[[bin]]
+name = "microcode"
+path = "src_microcode/main.rs"
+
 [dependencies]

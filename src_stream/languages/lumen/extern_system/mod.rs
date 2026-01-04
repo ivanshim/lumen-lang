@@ -94,8 +94,8 @@ pub mod selector;
 
 use registry::CapabilityRegistry;
 use std::sync::{Mutex, OnceLock};
-use crate::src_stream::kernel::runtime::Value;
-use crate::src_stream::kernel::registry::LumenResult;
+use crate::kernel::runtime::Value;
+use crate::kernel::registry::LumenResult;
 
 /// Global capability registry (lazily initialized)
 fn get_registry() -> &'static Mutex<CapabilityRegistry> {

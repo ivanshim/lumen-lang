@@ -40,6 +40,9 @@ pub struct LanguageSchema {
     /// Character(s) that close a block (e.g., "}", "end")
     pub block_close: String,
 
+    /// Whether the language uses indentation-based blocks (true) or braces (false)
+    pub is_indentation_based: bool,
+
     /// Optional syntax for external/foreign calls
     pub extern_syntax: Option<ExternSyntax>,
 }

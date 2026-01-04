@@ -1,11 +1,11 @@
 // Comparison operators: == != < > <= >=
 
-use crate::src_stream::kernel::ast::ExprNode;
-use crate::src_stream::kernel::parser::Parser;
-use crate::src_stream::kernel::registry::{ExprInfix, LumenResult, Precedence, Registry};
-use crate::src_stream::kernel::runtime::{Env, Value};
-use crate::src_stream::src_mini_rust::numeric;
-use crate::src_stream::src_mini_rust::values::{MiniRustNumber, MiniRustBool, as_number, as_bool};
+use crate::kernel::ast::ExprNode;
+use crate::kernel::parser::Parser;
+use crate::kernel::registry::{ExprInfix, LumenResult, Precedence, Registry};
+use crate::kernel::runtime::{Env, Value};
+use crate::languages::mini_rust::numeric;
+use crate::languages::mini_rust::values::{MiniRustNumber, MiniRustBool, as_number, as_bool};
 
 #[derive(Debug)]
 struct ComparisonExpr {

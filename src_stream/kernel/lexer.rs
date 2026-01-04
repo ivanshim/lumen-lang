@@ -32,7 +32,7 @@
 // The lexer tokenizes this WITHOUT KNOWING what it means.
 // All meaning is defined by the language module via registry and parser.
 
-use crate::src_stream::kernel::registry::{LumenResult, TokenRegistry};
+use crate::kernel::registry::{LumenResult, TokenRegistry};
 
 /// Explicit byte span: (start, end) offsets in source code
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

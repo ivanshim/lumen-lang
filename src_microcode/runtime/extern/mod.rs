@@ -3,7 +3,7 @@
 // Handles dispatch to capabilities defined in language schemas.
 // This is intentionally minimal and data-driven.
 
-use crate::src_microcode::kernel::eval::Value;
+use crate::kernel::eval::Value;
 use crate::schema::LanguageSchema;
 
 /// Execute an external capability call
