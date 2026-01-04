@@ -64,7 +64,7 @@ pub fn consume_newlines(parser: &mut Parser) {
 }
 
 /// Parse Lumen block (indented statements) - Lumen-specific syntax handling.
-pub fn parse_block(parser: &mut Parser) -> LumenResult<Vec<Box<dyn StmtNode>>> {
+pub fn parse_block(parser: &mut Parser, registry: &Registry) -> LumenResult<Vec<Box<dyn StmtNode>>> {
     consume_newlines(parser);
 
     // Expect INDENT
@@ -78,11 +78,10 @@ pub fn parse_block(parser: &mut Parser) -> LumenResult<Vec<Box<dyn StmtNode>>> {
 
     // Parse statements until DEDENT or EOF
     while parser.peek().lexeme != DEDENT && parser.peek().lexeme != EOF {
-        let s = parser
-            .reg
+        let s = registry
             .find_stmt(parser)
             .ok_or_else(|| err_at(parser, "Unknown statement in block"))?
-            .parse(parser)?;
+            .parse(parser, registry)?;
 
         stmts.push(s);
         consume_newlines(parser);
@@ -97,16 +96,15 @@ pub fn parse_block(parser: &mut Parser) -> LumenResult<Vec<Box<dyn StmtNode>>> {
 }
 
 /// Lumen-specific program parsing with newline handling.
-pub fn parse_program(parser: &mut Parser) -> LumenResult<Program> {
+pub fn parse_program(parser: &mut Parser, registry: &Registry) -> LumenResult<Program> {
     let mut stmts = Vec::new();
     consume_newlines(parser);
 
     while parser.peek().lexeme != EOF {
-        let stmt = parser
-            .reg
+        let stmt = registry
             .find_stmt(parser)
             .ok_or_else(|| err_at(parser, "Unknown statement"))?
-            .parse(parser)?;
+            .parse(parser, registry)?;
 
         stmts.push(stmt);
         consume_newlines(parser);

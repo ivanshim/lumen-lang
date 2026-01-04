@@ -104,7 +104,7 @@ fn run_lumen_stream(source: &str) {
         }
     };
 
-    let mut parser = match Parser::new_with_tokens(&registry, processed_tokens) {
+    let mut parser = match Parser::new_with_tokens(processed_tokens, &registry.tokens) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");
@@ -112,7 +112,7 @@ fn run_lumen_stream(source: &str) {
         }
     };
 
-    let program = match structural::parse_program(&mut parser) {
+    let program = match structural::parse_program(&mut parser, &registry) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");
@@ -152,7 +152,7 @@ fn run_mini_rust_stream(source: &str) {
         }
     };
 
-    let mut parser = match Parser::new_with_tokens(&registry, processed_tokens) {
+    let mut parser = match Parser::new_with_tokens(processed_tokens, &registry.tokens) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");
@@ -160,7 +160,7 @@ fn run_mini_rust_stream(source: &str) {
         }
     };
 
-    let program = match structural::parse_program(&mut parser) {
+    let program = match structural::parse_program(&mut parser, &registry) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");
@@ -200,7 +200,7 @@ fn run_mini_python_stream(source: &str) {
         }
     };
 
-    let mut parser = match Parser::new_with_tokens(&registry, processed_tokens) {
+    let mut parser = match Parser::new_with_tokens(processed_tokens, &registry.tokens) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");
@@ -208,7 +208,7 @@ fn run_mini_python_stream(source: &str) {
         }
     };
 
-    let program = match structural::parse_program(&mut parser) {
+    let program = match structural::parse_program(&mut parser, &registry) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");

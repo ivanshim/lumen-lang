@@ -5,7 +5,7 @@ pub mod precedence;
 pub mod traits;
 
 use crate::kernel::parser::Parser;
-use crate::kernel::registry::TokenRegistry;
+use crate::kernel::registry::{TokenRegistry, LumenResult, err_at};
 
 pub use precedence::Precedence;
 pub use traits::{ExprPrefix, ExprInfix, StmtHandler};
@@ -59,4 +59,36 @@ impl Default for Registry {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Parse expression with precedence climbing for Mini-Python
+pub fn parse_expr_with_prec(
+    parser: &mut Parser,
+    registry: &Registry,
+    min_prec: Precedence,
+) -> LumenResult<Box<dyn crate::kernel::ast::ExprNode>> {
+    parser.skip_whitespace();
+
+    let prefix = registry
+        .find_prefix(parser)
+        .ok_or_else(|| err_at(parser, "Unknown expression"))?;
+
+    let mut left = prefix.parse(parser, registry)?;
+
+    loop {
+        parser.skip_whitespace();
+
+        let infix = match registry.find_infix(parser) {
+            Some(i) => i,
+            None => break,
+        };
+
+        if infix.precedence() < min_prec {
+            break;
+        }
+
+        left = infix.parse(parser, left, registry)?;
+    }
+
+    Ok(left)
 }

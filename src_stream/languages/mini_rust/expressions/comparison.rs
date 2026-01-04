@@ -1,3 +1,4 @@
+use crate::languages::mini_rust::prelude::*;
 // Comparison operators: == != < > <= >=
 
 use crate::kernel::ast::ExprNode;
@@ -79,9 +80,10 @@ impl ExprInfix for ComparisonInfix {
         &self,
         parser: &mut Parser,
         left: Box<dyn ExprNode>,
+        registry: &super::super::registry::Registry,
     ) -> LumenResult<Box<dyn ExprNode>> {
         parser.advance(); // consume operator
-        let right = parser.parse_expr_prec(self.precedence() + 1)?;
+        let right = parser.parse_expr_prec(registry, self.precedence() + 1)?;
         Ok(Box::new(ComparisonExpr { left, op: self.op.clone(), right }))
     }
 }

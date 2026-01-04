@@ -1,3 +1,4 @@
+use crate::languages::mini_rust::prelude::*;
 pub mod literals;
 pub mod arithmetic;
 pub mod comparison;
@@ -6,7 +7,7 @@ pub mod variable;
 pub mod identifier;
 pub mod grouping;
 
-pub fn register_all(registry: &mut crate::kernel::registry::Registry) {
+pub fn register_all(registry: &mut crate::languages::mini_rust::registry::Registry) {
     literals::register(registry);
     arithmetic::register(registry);
     comparison::register(registry);

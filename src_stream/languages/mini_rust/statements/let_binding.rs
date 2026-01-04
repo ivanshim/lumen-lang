@@ -1,3 +1,4 @@
+use crate::languages::mini_rust::prelude::*;
 // let binding statement for mini-rust
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
@@ -34,7 +35,7 @@ impl StmtHandler for LetStmtHandler {
         parser.peek().lexeme == LET
     }
 
-    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
+    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'let'
         parser.skip_whitespace();
 
@@ -60,7 +61,7 @@ impl StmtHandler for LetStmtHandler {
         }
         parser.skip_whitespace();
 
-        let expr = parser.parse_expr()?;
+        let expr = parser.parse_expr(registry)?;
         Ok(Box::new(LetStmt { name, expr }))
     }
 }

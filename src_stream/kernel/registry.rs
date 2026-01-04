@@ -9,10 +9,11 @@
 // - line/col are DIAGNOSTIC-ONLY (derived metadata, only for error messages)
 //
 // ARCHITECTURE:
-// - Kernel provides only TokenRegistry for lexeme segmentation
-// - Handler traits are language-specific (defined in language modules)
-// - Parser is generic over language-specific trait types
-// - Each language defines its own Precedence, handlers, and Registry
+// - Kernel provides TokenRegistry and generic Handler/Dispatcher traits
+// - Kernel contains ALL parsing algorithms (expression, statement, precedence-climbing)
+// - Languages implement Dispatcher trait to tell kernel how to dispatch handlers
+// - Languages provide Handler implementations (prefix, infix, statement)
+// - Each language defines own Precedence enum and handler types
 
 use crate::kernel::ast::{ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
@@ -95,3 +96,4 @@ pub trait StmtHandlerTrait {
     fn matches(&self, parser: &Parser) -> bool;
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>>;
 }
+

@@ -92,7 +92,8 @@ impl<'a> Parser<'a> {
             let t = &self.toks[self.i - 1];
             t.tok.span
         } else {
-            Span(0, 0)
+            Span::new(0, 0)
         }
     }
 }
+

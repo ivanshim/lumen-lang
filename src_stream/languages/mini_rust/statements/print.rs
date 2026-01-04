@@ -1,3 +1,4 @@
+use crate::languages::mini_rust::prelude::*;
 // print!() statement for mini-rust
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
@@ -32,7 +33,7 @@ impl StmtHandler for PrintStmtHandler {
         )
     }
 
-    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
+    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'print!'
         parser.skip_whitespace();
 
@@ -42,7 +43,7 @@ impl StmtHandler for PrintStmtHandler {
         }
         parser.skip_whitespace();
 
-        let expr = parser.parse_expr()?;
+        let expr = parser.parse_expr(registry)?;
         parser.skip_whitespace();
 
         // expect ')'

@@ -1,3 +1,4 @@
+use crate::languages::lumen::prelude::*;
 // src/stmt/while_loop.rs
 //
 // while <expr>
@@ -55,15 +56,15 @@ impl StmtHandler for WhileStmtHandler {
         parser.peek().lexeme == "while"
     }
 
-    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
+    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'while'
         parser.skip_whitespace();
 
         // parse condition expression
-        let condition = parser.parse_expr()?;
+        let condition = parser.parse_expr(registry)?;
 
         // parse indented body
-        let body = structural::parse_block(parser)?;
+        let body = structural::parse_block(parser, registry)?;
 
         Ok(Box::new(WhileStmt { condition, body }))
     }

@@ -1,5 +1,7 @@
 // Mini-Python-specific handler traits
 // Languages define their own trait definitions for parsing
+// Note: These are independent from kernel traits - they're language-specific definitions
+// The Dispatcher pattern bridges between language-specific traits and kernel's generic interface
 
 use crate::kernel::ast::{ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
@@ -13,7 +15,7 @@ pub trait ExprPrefix {
     fn matches(&self, parser: &Parser) -> bool;
 
     /// Parse the prefix expression
-    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>>;
+    fn parse(&self, parser: &mut Parser, registry: &super::Registry) -> LumenResult<Box<dyn ExprNode>>;
 }
 
 /// Infix expression handler
@@ -26,7 +28,7 @@ pub trait ExprInfix {
     fn precedence(&self) -> Precedence;
 
     /// Parse the infix expression with left-hand side already parsed
-    fn parse(&self, parser: &mut Parser, left: Box<dyn ExprNode>) -> LumenResult<Box<dyn ExprNode>>;
+    fn parse(&self, parser: &mut Parser, left: Box<dyn ExprNode>, registry: &super::Registry) -> LumenResult<Box<dyn ExprNode>>;
 }
 
 /// Statement handler
@@ -36,5 +38,5 @@ pub trait StmtHandler {
     fn matches(&self, parser: &Parser) -> bool;
 
     /// Parse the statement
-    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>>;
+    fn parse(&self, parser: &mut Parser, registry: &super::Registry) -> LumenResult<Box<dyn StmtNode>>;
 }

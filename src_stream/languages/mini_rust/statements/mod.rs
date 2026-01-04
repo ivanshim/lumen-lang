@@ -1,3 +1,4 @@
+use crate::languages::mini_rust::prelude::*;
 pub mod assignment;
 pub mod print;
 pub mod if_else;
@@ -6,7 +7,7 @@ pub mod break_stmt;
 pub mod continue_stmt;
 pub mod let_binding;
 
-pub fn register_all(registry: &mut crate::kernel::registry::Registry) {
+pub fn register_all(registry: &mut crate::languages::mini_rust::registry::Registry) {
     assignment::register(registry);
     print::register(registry);
     if_else::register(registry);

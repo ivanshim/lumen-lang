@@ -1,3 +1,4 @@
+use crate::languages::mini_rust::prelude::*;
 // Parenthesized expressions: ( ... )
 
 use crate::kernel::ast::ExprNode;
@@ -13,9 +14,9 @@ impl ExprPrefix for GroupingPrefix {
         parser.peek().lexeme == LPAREN
     }
 
-    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
+    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
         parser.advance(); // consume '('
-        let expr = parser.parse_expr()?;
+        let expr = parser.parse_expr(registry)?;
 
         if parser.advance().lexeme != RPAREN {
             return Err("Expected ')'".into());

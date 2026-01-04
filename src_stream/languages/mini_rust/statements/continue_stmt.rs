@@ -1,3 +1,4 @@
+use crate::languages::mini_rust::prelude::*;
 // continue statement for mini-rust
 
 use crate::kernel::ast::{Control, StmtNode};
@@ -24,7 +25,7 @@ impl StmtHandler for ContinueStmtHandler {
         parser.peek().lexeme == CONTINUE
     }
 
-    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
+    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'continue'
         Ok(Box::new(ContinueStmt))
     }

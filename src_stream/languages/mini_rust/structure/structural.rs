@@ -35,7 +35,7 @@ pub fn consume_newlines(parser: &mut Parser) {
 }
 
 /// Parse a block enclosed in curly braces
-pub fn parse_block(parser: &mut Parser) -> LumenResult<Vec<Box<dyn StmtNode>>> {
+pub fn parse_block(parser: &mut Parser, registry: &Registry) -> LumenResult<Vec<Box<dyn StmtNode>>> {
     let mut statements = Vec::new();
 
     // Expect '{'
@@ -52,11 +52,10 @@ pub fn parse_block(parser: &mut Parser) -> LumenResult<Vec<Box<dyn StmtNode>>> {
             break;
         }
 
-        let stmt = parser
-            .reg
+        let stmt = registry
             .find_stmt(parser)
             .ok_or_else(|| err_at(parser, "Unknown statement in block"))?
-            .parse(parser)?;
+            .parse(parser, registry)?;
 
         statements.push(stmt);
 
@@ -76,7 +75,7 @@ pub fn parse_block(parser: &mut Parser) -> LumenResult<Vec<Box<dyn StmtNode>>> {
 }
 
 /// Parse the main program (sequence of statements)
-pub fn parse_program(parser: &mut Parser) -> LumenResult<Program> {
+pub fn parse_program(parser: &mut Parser, registry: &Registry) -> LumenResult<Program> {
     let mut statements = Vec::new();
 
     while parser.peek().lexeme != EOF {
@@ -86,11 +85,10 @@ pub fn parse_program(parser: &mut Parser) -> LumenResult<Program> {
             break;
         }
 
-        let stmt = parser
-            .reg
+        let stmt = registry
             .find_stmt(parser)
             .ok_or_else(|| err_at(parser, "Unknown statement"))?
-            .parse(parser)?;
+            .parse(parser, registry)?;
 
         statements.push(stmt);
 

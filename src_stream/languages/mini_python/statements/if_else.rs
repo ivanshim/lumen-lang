@@ -1,3 +1,4 @@
+use crate::languages::mini_python::prelude::*;
 // if / else statement
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
@@ -57,17 +58,17 @@ impl StmtHandler for IfStmtHandler {
         parser.peek().lexeme == "if"
     }
 
-    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
+    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'if'
 
-        let cond = parser.parse_expr()?;
-        let then_block = structural::parse_block(parser)?;
+        let cond = parser.parse_expr(registry)?;
+        let then_block = structural::parse_block(parser, registry)?;
 
         structural::consume_newlines(parser);
 
         let else_block = if parser.peek().lexeme == "else" {
             parser.advance(); // consume 'else'
-            Some(structural::parse_block(parser)?)
+            Some(structural::parse_block(parser, registry)?)
         } else {
             None
         };

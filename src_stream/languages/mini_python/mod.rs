@@ -8,6 +8,7 @@ pub mod expressions;
 pub mod statements;
 pub mod structure;
 pub mod registry;
+pub mod prelude;
 
 pub mod src_mini_python;
 

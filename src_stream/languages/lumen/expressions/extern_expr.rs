@@ -1,3 +1,4 @@
+use crate::languages::lumen::prelude::*;
 // src_lumen/expressions/extern_expr.rs
 //
 // extern "selector" (arg1, arg2, ...)
@@ -38,7 +39,7 @@ impl ExprPrefix for ExternPrefix {
         parser.peek().lexeme == "extern"
     }
 
-    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>> {
+    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
         // Consume 'extern'
         parser.advance();
         parser.skip_whitespace();
@@ -108,7 +109,7 @@ impl ExprPrefix for ExternPrefix {
 
             // Parse argument expressions
             loop {
-                args.push(parser.parse_expr()?);
+                args.push(parser.parse_expr(registry)?);
                 parser.skip_whitespace();
 
                 if parser.peek().lexeme == RPAREN {
