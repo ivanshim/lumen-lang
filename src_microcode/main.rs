@@ -75,7 +75,7 @@ fn detect_language_from_extension(filepath: &str) -> Option<String> {
     let language = match extension {
         "lm" => "lumen",
         "rs" => "mini-rust",
-        "py" | "mpy" => "mini-python",
+        "py" => "mini-python",
         _ => return None,
     };
 
