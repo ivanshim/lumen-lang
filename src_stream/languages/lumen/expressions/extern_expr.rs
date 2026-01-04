@@ -7,6 +7,7 @@
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
+use crate::kernel::patterns::PatternSet;
 use crate::kernel::registry::{ExprPrefix, LumenResult, Registry};
 use crate::kernel::runtime::{Env, Value};
 use crate::languages::lumen::structure::structural::{LPAREN, RPAREN};
@@ -129,6 +130,16 @@ impl ExprPrefix for ExternPrefix {
 
         Ok(Box::new(ExternExpr { selector, args }))
     }
+}
+
+// --------------------
+// Pattern Declaration
+// --------------------
+
+/// Declare what patterns this module recognizes
+pub fn patterns() -> PatternSet {
+    PatternSet::new()
+        .with_literals(vec!["extern", "(", ")", ",", "\""])
 }
 
 // --------------------

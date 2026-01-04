@@ -2,6 +2,7 @@
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
+use crate::kernel::patterns::PatternSet;
 use crate::kernel::registry::{LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::Env;
 use crate::languages::lumen::structure::structural;
@@ -80,6 +81,16 @@ impl StmtHandler for IfStmtHandler {
             else_block,
         }))
     }
+}
+
+// --------------------
+// Pattern Declaration
+// --------------------
+
+/// Declare what patterns this module recognizes
+pub fn patterns() -> PatternSet {
+    PatternSet::new()
+        .with_literals(vec!["if", "else"])
 }
 
 // --------------------

@@ -2,6 +2,7 @@
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
+use crate::kernel::patterns::PatternSet;
 use crate::kernel::registry::{ExprPrefix, LumenResult, Registry};
 use crate::kernel::runtime::{Env, Value};
 use crate::languages::lumen::values::{LumenNumber, LumenBool, LumenString};
@@ -124,6 +125,17 @@ impl ExprPrefix for StringLiteralPrefix {
 
         Ok(Box::new(StringLiteral { value }))
     }
+}
+
+// --------------------
+// Pattern Declaration
+// --------------------
+
+/// Declare what patterns this module recognizes
+pub fn patterns() -> PatternSet {
+    PatternSet::new()
+        .with_literals(vec!["true", "false", "\""])
+        .with_char_classes(vec!["digit", "quote"])
 }
 
 // --------------------
