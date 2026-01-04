@@ -39,7 +39,22 @@ The kernel converts a stream of characters into a stream of tokens.
 
 * Tokens are labeled, ordered, and position-aware.
 * The kernel does not assign meaning to tokens.
-* Token definitions (keywords, operators, symbols) are registered by the language.
+* Token definitions (keywords, operators, symbols) are registered by the language via `TokenRegistry`.
+
+Token registration uses the **unified `TokenDefinition` API**:
+
+```rust
+let tokens = vec![
+    TokenDefinition::recognize("=="),      // Token to be lexed
+    TokenDefinition::recognize("if"),      // Token to be lexed
+    TokenDefinition::skip(" "),            // Token to skip during parsing
+];
+registry.tokens.set_token_definitions(tokens);
+```
+
+The kernel internally extracts and caches:
+* Multichar lexemes for the lexer (for maximal-munch segmentation)
+* Skip tokens for the parser (for whitespace/comment handling)
 
 The kernel guarantees **stability and order**, not interpretation.
 
@@ -119,8 +134,50 @@ The kernel intentionally does **not**:
 * privilege any syntactic style
 * impose a grammar
 * impose a type system
+* define operator precedence
+* define token patterns or pattern matching
+* handle whitespace or skip behavior
+* provide generic handler trait types
 
 Any such behavior belongs exclusively to the language implementation.
+
+---
+
+## Achieving Kernel Purity
+
+The kernel achieves complete separation of concerns through strategic delegation:
+
+### Language-Specific Artifacts (NOT in Kernel)
+
+All of the following are defined and managed by language modules, not the kernel:
+
+* **Handler traits**: `ExprPrefix`, `ExprInfix`, `StmtHandler` — each language defines its own
+* **Precedence types**: `Precedence` enums with language-specific levels
+* **Pattern definitions**: `PatternSet` structures for language syntax patterns
+* **Skip behavior**: Extension traits like `LumenParserExt::skip_tokens()` for whitespace handling
+
+### Kernel-Only Responsibilities
+
+The kernel provides only:
+
+* **TokenRegistry**: Register tokens via `TokenDefinition` API (language-agnostic)
+* **Lexer**: Pure maximal-munch tokenization
+* **Parser**: Generic token stream navigation and dispatch
+* **AST**: Abstract syntax tree node traits (language-neutral)
+* **Evaluator**: Generic evaluation engine
+* **Runtime**: Value storage and execution environment
+
+### Result: Zero Language Knowledge in Kernel
+
+A hypothetical audit of kernel source code would find:
+
+* Zero references to "lumen", "mini_rust", "mini_python", or "languages"
+* Zero hardcoded keywords, operators, or syntax rules
+* Zero trait definitions for handlers or precedence
+* Zero pattern matching or structural assumptions
+* Zero semantic interpretations
+
+The kernel contains **pure infrastructure**, nothing else.
 
 ---
 
