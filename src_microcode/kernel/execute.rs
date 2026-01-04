@@ -3,7 +3,7 @@
 // Execute instruction trees using the primitive dispatch system.
 // Each primitive is language-agnostic and executes via its own rules.
 
-use super::primitives::{Instruction, Primitive, JumpKind};
+use super::primitives::{Instruction, Primitive, TransferKind, OperateKind};
 use super::eval::Value;
 use super::env::Environment;
 use crate::schema::LanguageSchema;
@@ -20,8 +20,8 @@ pub enum ControlFlow {
     /// Continue to next iteration
     Continue,
 
-    /// Return from function (not yet implemented)
-    Return(/* value */),
+    /// Return from function
+    Return,
 }
 
 /// Execute an instruction tree
@@ -39,14 +39,14 @@ pub fn execute(instruction: &Instruction, env: &mut Environment, schema: &Langua
             Ok((last_value, ControlFlow::Normal))
         }
 
-        Primitive::Block(instrs) => {
+        Primitive::Scope(instrs) => {
             env.push_scope();
             let result = execute(&Instruction::sequence(instrs.clone()), env, schema);
             env.pop_scope();
             result
         }
 
-        Primitive::Conditional {
+        Primitive::Branch {
             condition,
             then_block,
             else_block,
@@ -59,6 +59,70 @@ pub fn execute(instruction: &Instruction, env: &mut Environment, schema: &Langua
             } else {
                 Ok((Value::Null, ControlFlow::Normal))
             }
+        }
+
+        Primitive::Assign { name, value } => {
+            let (val, _) = execute(value, env, schema)?;
+            // Try to update existing variable in any scope; if not found, create new variable
+            if env.update(name.clone(), val.clone()).is_err() {
+                env.set(name.clone(), val.clone());
+            }
+            Ok((val, ControlFlow::Normal))
+        }
+
+        Primitive::Invoke { selector, args } => {
+            let mut eval_args = Vec::new();
+            for arg in args {
+                let (val, _) = execute(arg, env, schema)?;
+                eval_args.push(val);
+            }
+            // Dispatch to external function handler
+            let result = crate::runtime::execute_extern(selector, eval_args, schema)?;
+            Ok((result, ControlFlow::Normal))
+        }
+
+        Primitive::Operate { kind, operands } => {
+            match kind {
+                OperateKind::Unary(operator) => {
+                    if operands.len() != 1 {
+                        return Err(format!("Unary operator {} expects 1 operand, got {}", operator, operands.len()));
+                    }
+                    let (operand_val, _) = execute(&operands[0], env, schema)?;
+                    let result = execute_unary_op(operator, &operand_val)?;
+                    Ok((result, ControlFlow::Normal))
+                }
+                OperateKind::Binary(operator) => {
+                    if operands.len() != 2 {
+                        return Err(format!("Binary operator {} expects 2 operands, got {}", operator, operands.len()));
+                    }
+                    let (left_val, _) = execute(&operands[0], env, schema)?;
+                    let (right_val, _) = execute(&operands[1], env, schema)?;
+                    let result = execute_binary_op(operator, &left_val, &right_val)?;
+                    Ok((result, ControlFlow::Normal))
+                }
+            }
+        }
+
+        Primitive::Transfer { kind, value } => {
+            let val = if let Some(v) = value {
+                let (val, _) = execute(v, env, schema)?;
+                val
+            } else {
+                Value::Null
+            };
+
+            match kind {
+                TransferKind::Return => Ok((val, ControlFlow::Return)),
+                TransferKind::Break => Ok((Value::Null, ControlFlow::Break)),
+                TransferKind::Continue => Ok((Value::Null, ControlFlow::Continue)),
+            }
+        }
+
+        Primitive::Literal(val) => Ok((val.clone(), ControlFlow::Normal)),
+
+        Primitive::Variable(name) => {
+            let val = env.get(name)?;
+            Ok((val, ControlFlow::Normal))
         }
 
         Primitive::Loop { condition, block } => {
@@ -80,59 +144,6 @@ pub fn execute(instruction: &Instruction, env: &mut Environment, schema: &Langua
                 }
             }
             Ok((last_value, ControlFlow::Normal))
-        }
-
-        Primitive::Jump(kind) => {
-            match kind {
-                JumpKind::Break => Ok((Value::Null, ControlFlow::Break)),
-                JumpKind::Continue => Ok((Value::Null, ControlFlow::Continue)),
-            }
-        }
-
-        Primitive::Assign { name, value } => {
-            let (val, _) = execute(value, env, schema)?;
-            // Try to update existing variable in any scope; if not found, create new variable
-            if env.update(name.clone(), val.clone()).is_err() {
-                env.set(name.clone(), val.clone());
-            }
-            Ok((val, ControlFlow::Normal))
-        }
-
-        Primitive::Call { selector, args } => {
-            let mut eval_args = Vec::new();
-            for arg in args {
-                let (val, _) = execute(arg, env, schema)?;
-                eval_args.push(val);
-            }
-            // Dispatch to external function handler
-            let result = crate::runtime::execute_extern(selector, eval_args, schema)?;
-            Ok((result, ControlFlow::Normal))
-        }
-
-        Primitive::UnaryOp { operator, operand } => {
-            let (operand_val, _) = execute(operand, env, schema)?;
-            let result = execute_unary_op(operator, &operand_val)?;
-            Ok((result, ControlFlow::Normal))
-        }
-
-        Primitive::BinaryOp { operator, left, right } => {
-            let (left_val, _) = execute(left, env, schema)?;
-            let (right_val, _) = execute(right, env, schema)?;
-            let result = execute_binary_op(operator, &left_val, &right_val)?;
-            Ok((result, ControlFlow::Normal))
-        }
-
-        Primitive::Literal(val) => Ok((val.clone(), ControlFlow::Normal)),
-
-        Primitive::Variable(name) => {
-            let val = env.get(name)?;
-            Ok((val, ControlFlow::Normal))
-        }
-
-        Primitive::Print(expr) => {
-            let (val, _) = execute(expr, env, schema)?;
-            println!("{}", val);
-            Ok((Value::Null, ControlFlow::Normal))
         }
     }
 }

@@ -3,9 +3,17 @@
 // These are the ONLY operations the kernel knows how to execute.
 // All language behavior is expressed as compositions of these primitives.
 // Each primitive is data-driven by schema mappings.
+//
+// Canonical primitive set (single-word verbs):
+// - Sequence: execute instructions in order
+// - Scope: create new scope, execute, pop scope
+// - Branch: if condition → then-block else else-block
+// - Assign: variable = expression
+// - Invoke: call external function
+// - Operate: apply unary or binary operator
+// - Transfer: return/break/continue control flow
 
 use super::eval::Value;
-use std::collections::HashMap;
 
 /// Closed set of kernel primitives
 #[derive(Debug, Clone)]
@@ -13,24 +21,15 @@ pub enum Primitive {
     /// sequence: execute instructions in order
     Sequence(Vec<Instruction>),
 
-    /// block: create new scope, execute, pop scope
-    Block(Vec<Instruction>),
+    /// scope: create new scope, execute, pop scope
+    Scope(Vec<Instruction>),
 
-    /// conditional: if condition → then-block else else-block
-    Conditional {
+    /// branch: if condition → then-block else else-block
+    Branch {
         condition: Box<Instruction>,
         then_block: Box<Instruction>,
         else_block: Option<Box<Instruction>>,
     },
-
-    /// loop: repeat block while condition is true
-    Loop {
-        condition: Box<Instruction>,
-        block: Box<Instruction>,
-    },
-
-    /// jump: break or continue (used inside loops)
-    Jump(JumpKind),
 
     /// assign: variable = expression
     Assign {
@@ -38,23 +37,22 @@ pub enum Primitive {
         value: Box<Instruction>,
     },
 
-    /// call: invoke extern function
-    Call {
+    /// invoke: call external function
+    Invoke {
         selector: String,
         args: Vec<Instruction>,
     },
 
-    /// unary_op: apply unary operator
-    UnaryOp {
-        operator: String,
-        operand: Box<Instruction>,
+    /// operate: apply unary or binary operator
+    Operate {
+        kind: OperateKind,
+        operands: Vec<Instruction>,
     },
 
-    /// binary_op: apply binary operator
-    BinaryOp {
-        operator: String,
-        left: Box<Instruction>,
-        right: Box<Instruction>,
+    /// transfer: return, break, or continue
+    Transfer {
+        kind: TransferKind,
+        value: Option<Box<Instruction>>,
     },
 
     /// literal: constant value
@@ -63,13 +61,31 @@ pub enum Primitive {
     /// variable: load variable value
     Variable(String),
 
-    /// print: output value (special case for now)
-    Print(Box<Instruction>),
+    /// loop: internal implementation detail for while/loop constructs
+    /// (not part of canonical primitive set; kept for internal use during refactoring)
+    Loop {
+        condition: Box<Instruction>,
+        block: Box<Instruction>,
+    },
 }
 
+/// Type of operation for Operate primitive
+#[derive(Debug, Clone)]
+pub enum OperateKind {
+    /// Unary operator (operator name, operand)
+    Unary(String),
+    /// Binary operator (operator name, left, right)
+    Binary(String),
+}
+
+/// Type of transfer for Transfer primitive
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum JumpKind {
+pub enum TransferKind {
+    /// Return from function with optional value
+    Return,
+    /// Break from loop
     Break,
+    /// Continue to next loop iteration
     Continue,
 }
 
@@ -95,11 +111,11 @@ impl Instruction {
         Self::new(Primitive::Sequence(instrs), start, end)
     }
 
-    /// Helper: block with scope
-    pub fn block(instrs: Vec<Instruction>) -> Self {
+    /// Helper: scope with new variable bindings
+    pub fn scope(instrs: Vec<Instruction>) -> Self {
         let start = instrs.first().map(|i| i.span.0).unwrap_or(0);
         let end = instrs.last().map(|i| i.span.1).unwrap_or(0);
-        Self::new(Primitive::Block(instrs), start, end)
+        Self::new(Primitive::Scope(instrs), start, end)
     }
 
     /// Helper: literal value
