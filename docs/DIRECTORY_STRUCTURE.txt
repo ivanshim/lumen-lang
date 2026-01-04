@@ -3,7 +3,9 @@ LUMEN-LANG: LANGUAGE-AGNOSTIC FRAMEWORK ARCHITECTURE
 ================================================================================
 
 This document describes the directory structure for the language-agnostic
-interpreter framework and language implementations.
+interpreter framework with two independent kernel architectures (Stream and
+Microcode) supporting three language implementations (Lumen, Mini-Rust,
+Mini-Python).
 
 ================================================================================
 DIRECTORY STRUCTURE
@@ -11,56 +13,187 @@ DIRECTORY STRUCTURE
 
 lumen-lang/
 │
-├── src/                                 # Binary entry point and dispatcher
-│   └── main.rs                          # Kernel selection and binary delegation
+├── src/                                 # Main binary entry point
+│   ├── main.rs                          # CLI dispatcher (kernel selection)
+│   └── mod.rs
 │
-├── src_stream/                          # STREAM (procedural, AST-based) KERNEL
+├── src_stream/                          # STREAM KERNEL (Procedural, AST-based)
 │   ├── main.rs                          # Stream kernel binary entry point
+│   ├── mod.rs                           # Module exports
+│   │
 │   ├── kernel/                          # Language-agnostic kernel core
-│   │   ├── lexer.rs                     # Tokenization infrastructure
-│   │   ├── parser.rs                    # Generic AST parsing engine
-│   │   ├── registry.rs                  # Token and handler registration
-│   │   ├── eval.rs                      # Tree-walking interpreter
-│   │   └── runtime/                     # Runtime value primitives
+│   │   ├── mod.rs
+│   │   ├── lexer.rs                     # Tokenization with symbol registry
+│   │   ├── parser.rs                    # AST construction engine
+│   │   ├── ast.rs                       # AST node definitions
+│   │   ├── registry.rs                  # Token and pattern definitions
+│   │   ├── eval.rs                      # AST tree-walking evaluator
+│   │   └── runtime/                     # Runtime environment and values
+│   │       ├── env.rs                   # Scope/environment management
+│   │       └── value.rs                 # Value representation
+│   │
 │   └── languages/                       # Language-specific implementations
-│       ├── lumen/                       # Lumen language (indentation-based)
-│       │   ├── expressions/
-│       │   ├── statements/
+│       ├── lumen/                       # Lumen language (Python-style indentation)
+│       │   ├── mod.rs
+│       │   ├── src_lumen.rs             # Main entry point
+│       │   ├── prelude.rs               # Default environment setup
+│       │   ├── patterns.rs              # Token patterns
+│       │   ├── numeric.rs               # Numeric parsing and operations
+│       │   ├── registry/                # Token/operator definitions
+│       │   │   └── mod.rs
+│       │   ├── structure/               # Indentation/structural parsing
+│       │   │   └── mod.rs
+│       │   ├── expressions/             # Arithmetic, logic, comparison, variables
+│       │   │   └── mod.rs
+│       │   ├── statements/              # Assignment, print, if/else, while, break
+│       │   │   └── mod.rs
+│       │   └── extern_system/           # External function dispatch
+│       │       └── mod.rs
+│       │
+│       ├── mini_rust/                   # Mini-Rust language (Rust-style braces)
+│       │   ├── mod.rs
+│       │   ├── src_mini_rust.rs
+│       │   ├── registry/
 │       │   ├── structure/
-│       │   ├── extern_system/
-│       │   └── dispatcher/
-│       ├── mini_rust/                   # Mini-Rust language (brace-based)
 │       │   ├── expressions/
-│       │   ├── statements/
-│       │   ├── structure/
-│       │   └── dispatcher/
-│       └── mini_python/                 # Mini-Python language (indentation-based)
-│           ├── expressions/
-│           ├── statements/
+│       │   └── statements/
+│       │
+│       └── mini_python/                 # Mini-Python language (Python-style)
+│           ├── mod.rs
+│           ├── src_mini_python.rs
+│           ├── registry/
 │           ├── structure/
-│           └── dispatcher/
+│           ├── expressions/
+│           └── statements/
 │
-├── src_microcode/                       # MICROCODE (data-driven, table-based) KERNEL
+├── src_microcode/                       # MICROCODE KERNEL (Data-driven, 4-stage)
 │   ├── main.rs                          # Microcode kernel binary entry point
+│   ├── mod.rs                           # Module exports
+│   │
 │   ├── kernel/                          # Data-driven execution pipeline
-│   │   ├── ingest.rs                    # Schema parsing and validation
-│   │   ├── reduce.rs                    # Instruction compilation
-│   │   ├── execute.rs                   # Instruction interpretation
-│   │   └── primitives.rs                # Primitive operation definitions
-│   ├── runtime/                         # Runtime support and external calls
-│   │   └── extern/                      # External function dispatch
-│   ├── languages/                       # Language schema definitions
-│   │   ├── lumen/
-│   │   ├── mini_rust/
-│   │   ├── mini_python/
-│   │   └── alien_lang/
-│   └── schema/                          # Schema structure and validation
+│   │   ├── mod.rs                       # Pipeline orchestration
+│   │   ├── ingest.rs                    # Stage 1: Lexing using schema tables
+│   │   ├── structure.rs                 # Stage 2: Process structural tokens
+│   │   ├── reduce.rs                    # Stage 3: Token stream → instruction tree
+│   │   ├── execute.rs                   # Stage 4: Execute instruction tree
+│   │   ├── eval.rs                      # Evaluation logic
+│   │   ├── env.rs                       # Scope/environment management
+│   │   └── primitives.rs                # Primitive operations dispatch
+│   │
+│   ├── schema/                          # Declarative schema system
+│   │   ├── mod.rs
+│   │   ├── language.rs                  # Language schema definitions
+│   │   ├── operator.rs                  # Operator declarations
+│   │   ├── structure.rs                 # Structural token definitions
+│   │   └── validation.rs                # Schema validation
+│   │
+│   ├── languages/                       # Language-specific schema implementations
+│   │   ├── mod.rs
+│   │   ├── lumen/                       # Lumen language schemas
+│   │   │   ├── mod.rs
+│   │   │   ├── schema.rs                # Declarative schema (Rust + YAML-style)
+│   │   │   └── values.rs                # Value handling
+│   │   │
+│   │   ├── mini_rust/                   # Mini-Rust language schemas
+│   │   │   ├── mod.rs
+│   │   │   ├── schema.rs
+│   │   │   └── values.rs
+│   │   │
+│   │   ├── mini_python/                 # Mini-Python language schemas
+│   │   │   ├── mod.rs
+│   │   │   └── values.rs
+│   │   │
+│   │   └── alien_lang/                  # Experimental language placeholder
+│   │       └── mod.rs
+│   │
+│   └── runtime/                         # Runtime support system
+│       ├── mod.rs
+│       └── extern/                      # External function dispatch
+│           └── mod.rs
 │
-├── examples/                            # Sample programs (lumen, mini-rust, mini-python)
-├── archive/                             # Inactive or experimental language tracks
-├── README_LANGUAGES.md                  # Cross-language design notes
-├── MICROCODE_ARCHITECTURE.md            # Microcode kernel overview
-├── VERSION_HISTORY.md                   # Release notes and changelog
-├── Cargo.toml
-├── README.md                            # Project overview
+├── examples/                            # 35+ Example programs (test suite)
+│   ├── lumen/                           # 24 Lumen example programs
+│   │   ├── fibonacci.lm                 # Recursive fibonacci
+│   │   ├── pi.lm                        # Pi computation (Machin's formula)
+│   │   ├── e.lm                         # Euler's number (factorial series)
+│   │   ├── loop.lm                      # Loop control flow
+│   │   ├── demo.lm                      # Feature demonstration
+│   │   ├── scope_*.lm                   # Scope isolation tests (4 files)
+│   │   └── extern_*.lm                  # Extern system tests (11 files)
+│   │
+│   ├── mini_python/                     # 5 Mini-Python example programs
+│   │   ├── fibonacci.py
+│   │   ├── pi.py
+│   │   ├── e.py
+│   │   ├── loop.py
+│   │   └── demo.py
+│   │
+│   └── mini_rust/                       # 5 Mini-Rust example programs
+│       ├── fibonacci.rs
+│       ├── pi.rs
+│       ├── e.rs
+│       ├── loop.rs
+│       └── demo.rs
+│
+├── docs/                                # Comprehensive documentation
+│   ├── LUMEN_KERNEL_STREAM.md           # Stream kernel design and architecture
+│   ├── LUMEN_KERNEL_MICROCODE.md        # Microcode kernel 4-stage pipeline
+│   ├── LUMEN_LANGUAGE_BNF.md            # Lumen grammar specification (BNF)
+│   ├── LUMEN_LANGUAGE_DESIGN.md         # Language design and semantics
+│   ├── LUMEN_LANGUAGE_EXTERN_SYSTEM.md  # External function system design
+│   ├── LUMEN_LANGUAGE_ROADMAP.md        # Planned features and improvements
+│   ├── VERSION_HISTORY.md               # Complete version history
+│   └── DIRECTORY_STRUCTURE.txt          # This file
+│
+├── src_stream/languages/lumen/docs/     # Legacy documentation
+│   ├── BNF.md
+│   ├── DESIGN.md
+│   ├── EXTERN_DESIGN.md
+│   └── ROADMAP.md
+│
+├── test_all.sh                          # Comprehensive test suite (68 tests)
+├── Cargo.toml                           # Rust project configuration
+├── Cargo.lock                           # Locked dependency versions
+├── README.md                            # Project overview and quick start
 └── DIRECTORY_STRUCTURE.txt              # This file
+
+================================================================================
+KEY DIRECTORIES SUMMARY
+================================================================================
+
+src/
+  - Main dispatcher that routes to either stream or microcode kernel
+  - Parses command-line arguments for kernel selection
+
+src_stream/
+  - Traditional AST-based interpreter (tree-walking evaluator)
+  - Language-agnostic kernel with trait-based handler dispatch
+  - Complete implementations of Lumen, Mini-Rust, and Mini-Python
+
+src_microcode/
+  - Data-driven, schema-based execution engine
+  - 4-stage pipeline: Ingest → Structure → Reduce → Execute
+  - All language semantics defined via declarative schemas
+  - Kernel contains zero language-specific code
+
+examples/
+  - 35 executable test programs (24 Lumen, 5 Mini-Python, 5 Mini-Rust)
+  - Each program runs on both kernels (68 total test cases)
+  - Demonstrates language features: loops, conditionals, scoping, algorithms
+
+docs/
+  - Comprehensive markdown documentation covering:
+    * Kernel architectures and design patterns
+    * Language grammar and semantics
+    * External function system design
+    * Roadmap and version history
+
+================================================================================
+TECHNICAL NOTES
+================================================================================
+
+- Zero External Dependencies: All functionality implemented using only Rust std
+- Dual-Kernel Independence: Stream and Microcode kernels share no code
+- Language-Agnostic Design: Kernels contain no language-specific logic
+- Schema-Driven Semantics: Microcode kernel uses declarative schemas
+- Test Coverage: 68 tests covering all language features and both kernels
