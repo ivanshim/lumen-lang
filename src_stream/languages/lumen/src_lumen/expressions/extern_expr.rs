@@ -7,7 +7,7 @@
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
-use crate::kernel::registry::{ExprPrefix, LumenResult, Registry};
+use crate::languages::lumen::registry::{ExprPrefix, LumenResult, Registry};
 use crate::kernel::runtime::{Env, Value};
 use crate::languages::lumen::structure::structural::{LPAREN, RPAREN};
 use crate::languages::lumen::extern_system;

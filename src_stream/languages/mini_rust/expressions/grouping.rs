@@ -2,7 +2,7 @@
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
-use crate::kernel::registry::{ExprPrefix, LumenResult, Registry};
+use crate::languages::mini_rust::registry::{ExprPrefix, LumenResult, Registry};
 use crate::languages::mini_rust::structure::structural::{LPAREN, RPAREN};
 
 pub struct GroupingPrefix;

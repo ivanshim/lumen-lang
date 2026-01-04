@@ -2,7 +2,7 @@
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::kernel::registry::{LumenResult, Registry, StmtHandler};
+use crate::languages::mini_rust::registry::{LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::Env;
 use crate::languages::mini_rust::structure::structural;
 use crate::languages::mini_rust::values::as_bool;

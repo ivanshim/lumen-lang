@@ -1,4 +1,4 @@
-// Lumen operator precedence levels
+// Mini-Python operator precedence levels
 // Each language defines its own precedence scale
 
 use crate::kernel::registry::PrecedenceLevel;

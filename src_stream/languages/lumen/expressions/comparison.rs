@@ -3,7 +3,7 @@
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
 use crate::kernel::patterns::PatternSet;
-use crate::kernel::registry::{ExprInfix, LumenResult, Precedence, Registry};
+use crate::languages::lumen::registry::{ExprInfix, LumenResult, Precedence, Registry};
 use crate::kernel::runtime::{Env, Value};
 use crate::languages::lumen::numeric;
 use crate::languages::lumen::values::{as_number, as_string, LumenBool};

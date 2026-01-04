@@ -1,5 +1,5 @@
-// Lumen language registry
-// Manages all Lumen-specific parsing handlers and features
+// Mini-Python language registry
+// Manages all Mini-Python-specific parsing handlers and features
 
 pub mod precedence;
 pub mod traits;
@@ -11,7 +11,7 @@ use crate::kernel::registry::TokenRegistry;
 pub use precedence::Precedence;
 pub use traits::{ExprPrefix, ExprInfix, StmtHandler};
 
-/// Lumen's feature registry
+/// Mini-Python's feature registry
 /// Maintains all registered expression prefix/infix handlers, statement handlers,
 /// and the token registry for lexeme segmentation
 pub struct Registry {

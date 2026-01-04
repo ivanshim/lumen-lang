@@ -4,7 +4,7 @@
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::kernel::registry::{LumenResult, Registry, StmtHandler};
+use crate::languages::lumen::registry::{LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::Env;
 use crate::languages::lumen::structure::structural::{LPAREN, RPAREN};
 
