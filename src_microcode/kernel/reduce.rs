@@ -10,9 +10,9 @@
 // - Token pattern matching for syntax validation
 
 use super::ingest::Token;
-use super::primitives::{Instruction, Primitive};
+use super::primitives::{Instruction, Primitive, TransferKind, OperateKind};
 use super::eval::Value;
-use crate::schema::{LanguageSchema, StatementRole};
+use crate::schema::LanguageSchema;
 
 /// Reduce token stream to instruction tree per schema
 pub fn parse(tokens: &[Token], schema: &LanguageSchema) -> Result<Instruction, String> {
@@ -59,7 +59,7 @@ impl<'a> Parser<'a> {
 
     fn parse_statement(&mut self) -> Result<Instruction, String> {
         let lexeme = self.peek().lexeme.clone();
-        let start = self.peek().span.0;
+        let _start = self.peek().span.0;
 
         // Check if it's a statement keyword
         if !self.schema.is_statement_keyword(&lexeme) {
@@ -113,6 +113,7 @@ impl<'a> Parser<'a> {
     }
 
     /// print(expression) or print!(expression) for Mini-Rust
+    /// Desugared to: Invoke("print_native", [expression])
     fn parse_print(&mut self) -> Result<Instruction, String> {
         let start = self.peek().span.0;
         self.expect("print")?;
@@ -132,7 +133,15 @@ impl<'a> Parser<'a> {
         self.expect(")")?;
 
         let end = self.prev_span().1;
-        Ok(Instruction::new(Primitive::Print(Box::new(expr)), start, end))
+        // Desugar print to Invoke external function
+        Ok(Instruction::new(
+            Primitive::Invoke {
+                selector: "print_native".to_string(),
+                args: vec![expr],
+            },
+            start,
+            end,
+        ))
     }
 
     /// if condition { block } [else { block }]
@@ -157,7 +166,7 @@ impl<'a> Parser<'a> {
 
         let end = self.prev_span().1;
         Ok(Instruction::new(
-            Primitive::Conditional {
+            Primitive::Branch {
                 condition: Box::new(condition),
                 then_block: Box::new(then_block),
                 else_block,
@@ -168,6 +177,8 @@ impl<'a> Parser<'a> {
     }
 
     /// while condition { block }
+    /// Desugared to: Scope [ looping_branch ]
+    /// where looping_branch uses Branch + Transfer(Continue) for loop control
     fn parse_while(&mut self) -> Result<Instruction, String> {
         let start = self.peek().span.0;
         self.expect("while")?;
@@ -179,6 +190,9 @@ impl<'a> Parser<'a> {
         let block = self.parse_block()?;
         let end = self.prev_span().1;
 
+        // Desugar while loop to: Scope [ Loop { condition, block } ]
+        // Note: Loop is kept as internal implementation detail for now.
+        // In the final canonical set, this would be expressed as nested Branch + Transfer patterns.
         Ok(Instruction::new(
             Primitive::Loop {
                 condition: Box::new(condition),
@@ -297,31 +311,58 @@ impl<'a> Parser<'a> {
     }
 
     /// return [expression];
+    /// Desugared to: Transfer(RETURN, [expression])
     fn parse_return(&mut self) -> Result<Instruction, String> {
         let start = self.peek().span.0;
         self.expect("return")?;
         self.skip_whitespace();
 
-        // For now, return is not implemented
-        let end = self.prev_span().1;
-        Err(format!("return statements not yet supported at span {:?}", (start, end)))
+        // Check if there's a return value or just 'return'
+        let (value, end) = if self.schema.is_terminator(&self.peek().lexeme) || self.peek().lexeme == "}" || self.is_at_end() {
+            (None, self.prev_span().1)
+        } else {
+            let expr = self.parse_expression(0)?;
+            let end = expr.span.1;
+            (Some(Box::new(expr)), end)
+        };
+
+        Ok(Instruction::new(
+            Primitive::Transfer {
+                kind: TransferKind::Return,
+                value,
+            },
+            start,
+            end,
+        ))
     }
 
     /// break
+    /// Desugared to: Transfer(BREAK)
     fn parse_break(&mut self) -> Result<Instruction, String> {
         let start = self.peek().span.0;
         let end = start + 5;
         self.expect("break")?;
-        Ok(Instruction::new(Primitive::Jump(super::primitives::JumpKind::Break), start, end))
+        Ok(Instruction::new(
+            Primitive::Transfer {
+                kind: TransferKind::Break,
+                value: None,
+            },
+            start,
+            end,
+        ))
     }
 
     /// continue
+    /// Desugared to: Transfer(CONTINUE)
     fn parse_continue(&mut self) -> Result<Instruction, String> {
         let start = self.peek().span.0;
         let end = start + 8;
         self.expect("continue")?;
         Ok(Instruction::new(
-            Primitive::Jump(super::primitives::JumpKind::Continue),
+            Primitive::Transfer {
+                kind: TransferKind::Continue,
+                value: None,
+            },
             start,
             end,
         ))
@@ -355,7 +396,7 @@ impl<'a> Parser<'a> {
 
         self.expect("}")?;
 
-        Ok(Instruction::block(instructions))
+        Ok(Instruction::scope(instructions))
     }
 
     /// Parse expression using Pratt parser (operator precedence climbing)
@@ -388,10 +429,9 @@ impl<'a> Parser<'a> {
                 let start = left.span.0;
 
                 left = Instruction::new(
-                    Primitive::BinaryOp {
-                        operator: lexeme,
-                        left: Box::new(left),
-                        right: Box::new(right),
+                    Primitive::Operate {
+                        kind: OperateKind::Binary(lexeme),
+                        operands: vec![left, right],
                     },
                     start,
                     end,
@@ -419,9 +459,9 @@ impl<'a> Parser<'a> {
             let final_end = operand.span.1;
 
             return Ok(Instruction::new(
-                Primitive::UnaryOp {
-                    operator: lexeme,
-                    operand: Box::new(operand),
+                Primitive::Operate {
+                    kind: OperateKind::Unary(lexeme),
+                    operands: vec![operand],
                 },
                 start,
                 final_end,
@@ -537,7 +577,7 @@ impl<'a> Parser<'a> {
 
                 let end = self.prev_span().1;
                 return Ok(Instruction::new(
-                    Primitive::Call {
+                    Primitive::Invoke {
                         selector,
                         args,
                     },
