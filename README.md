@@ -86,40 +86,6 @@ Lumen has **4 independent development tracks**, each with its own architecture a
 
 ---
 
-## Repository Structure
-
-```
-lumen-lang/
-├── src/                          # Binary entry point and shared schema
-│   ├── main.rs                   # CLI dispatcher (kernels/languages router)
-│   └── schema/                   # Common type definitions
-├── src_stream/                   # Stream Kernel (procedural, AST-based)
-│   ├── kernel/                   # Lexer, parser, registry, evaluator
-│   ├── languages/                # Lumen, Mini-Rust, Mini-Python implementations
-│   └── schema/                   # Stream-specific AST definitions
-├── src_microcode/                # Microcode Kernel (data-driven, 4-stage pipeline)
-│   ├── kernel/                   # Ingest → Structure → Reduce → Execute
-│   ├── languages/                # Language schemas (Rust & YAML)
-│   ├── runtime/                  # Extern function dispatch
-│   └── schema/                   # Declarative schema system
-├── examples/                     # 35+ example programs
-│   ├── lumen/                    # 24 Lumen examples
-│   ├── mini_python/              # 5 Mini-Python examples
-│   └── mini_rust/                # 5 Mini-Rust examples
-├── docs/                              # Comprehensive documentation
-│   ├── LUMEN_KERNEL_STREAM.md        # Stream kernel design
-│   ├── LUMEN_KERNEL_MICROCODE.md     # Microcode kernel architecture
-│   ├── LUMEN_LANGUAGE_BNF.md         # Lumen grammar specification
-│   ├── LUMEN_LANGUAGE_DESIGN.md      # Lumen language design
-│   ├── LUMEN_LANGUAGE_EXTERN_SYSTEM.md # Extern system design
-│   ├── LUMEN_LANGUAGE_ROADMAP.md     # Future development roadmap
-│   └── VERSION_HISTORY.md            # Release notes and changelog
-├── Cargo.toml                    # Rust project configuration
-└── test_all.sh                   # Comprehensive test suite
-```
-
----
-
 ## Testing
 
 Run the full test suite (68 tests across all kernels and languages):
@@ -136,18 +102,21 @@ Run the full test suite (68 tests across all kernels and languages):
 
 Comprehensive documentation is organized in the `docs/` directory:
 
+### Project Structure
+- [**DIRECTORY_STRUCTURE.txt**](docs/DIRECTORY_STRUCTURE.txt) - Complete directory and file organization
+
 ### Kernel Architecture
-- **docs/LUMEN_KERNEL_STREAM.md** - Stream kernel design and philosophy
-- **docs/LUMEN_KERNEL_MICROCODE.md** - Microcode kernel design and 4-stage pipeline
+- [**LUMEN_KERNEL_STREAM.md**](docs/LUMEN_KERNEL_STREAM.md) - Stream kernel design and philosophy
+- [**LUMEN_KERNEL_MICROCODE.md**](docs/LUMEN_KERNEL_MICROCODE.md) - Microcode kernel design and 4-stage pipeline
 
 ### Lumen Language Documentation
-- **docs/LUMEN_LANGUAGE_BNF.md** - Lumen grammar specification
-- **docs/LUMEN_LANGUAGE_DESIGN.md** - Language design and semantics
-- **docs/LUMEN_LANGUAGE_EXTERN_SYSTEM.md** - External function system design
-- **docs/LUMEN_LANGUAGE_ROADMAP.md** - Planned features and improvements
+- [**LUMEN_LANGUAGE_BNF.md**](docs/LUMEN_LANGUAGE_BNF.md) - Lumen grammar specification
+- [**LUMEN_LANGUAGE_DESIGN.md**](docs/LUMEN_LANGUAGE_DESIGN.md) - Language design and semantics
+- [**LUMEN_LANGUAGE_EXTERN_SYSTEM.md**](docs/LUMEN_LANGUAGE_EXTERN_SYSTEM.md) - External function system design
+- [**LUMEN_LANGUAGE_ROADMAP.md**](docs/LUMEN_LANGUAGE_ROADMAP.md) - Planned features and improvements
 
 ### Release Information
-- **docs/VERSION_HISTORY.md** - Complete version history and release notes
+- [**VERSION_HISTORY.md**](docs/VERSION_HISTORY.md) - Complete version history and release notes
 
 ---
 
