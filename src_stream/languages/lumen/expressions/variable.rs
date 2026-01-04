@@ -5,7 +5,6 @@
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
 use crate::kernel::patterns::PatternSet;
-use crate::languages::lumen::registry::{ExprPrefix, LumenResult, Registry};
 use crate::kernel::runtime::{Env, Value};
 
 #[derive(Debug)]

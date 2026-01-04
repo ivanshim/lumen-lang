@@ -61,3 +61,36 @@ impl Default for Registry {
         Self::new()
     }
 }
+
+/// Parse expression with precedence climbing for Lumen
+/// This function is called by expression handlers to recursively parse nested expressions
+pub fn parse_expr_with_prec(
+    parser: &mut Parser,
+    registry: &Registry,
+    min_prec: Precedence,
+) -> crate::kernel::registry::LumenResult<Box<dyn crate::kernel::ast::ExprNode>> {
+    parser.skip_whitespace();
+
+    let prefix = registry
+        .find_prefix(parser)
+        .ok_or_else(|| crate::kernel::registry::err_at(parser, "Unknown expression"))?;
+
+    let mut left = prefix.parse(parser)?;
+
+    loop {
+        parser.skip_whitespace();
+
+        let infix = match registry.find_infix(parser) {
+            Some(i) => i,
+            None => break,
+        };
+
+        if infix.precedence() < min_prec {
+            break;
+        }
+
+        left = infix.parse(parser, left)?;
+    }
+
+    Ok(left)
+}
