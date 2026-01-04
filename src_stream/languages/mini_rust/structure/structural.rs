@@ -45,6 +45,12 @@ pub fn parse_block(parser: &mut Parser) -> LumenResult<Vec<Box<dyn StmtNode>>> {
 
     // Parse statements until '}'
     while !(parser.peek().lexeme == RBRACE || parser.peek().lexeme == EOF) {
+        parser.skip_whitespace();
+
+        if parser.peek().lexeme == RBRACE || parser.peek().lexeme == EOF {
+            break;
+        }
+
         let stmt = parser
             .reg
             .find_stmt(parser)

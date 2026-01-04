@@ -35,8 +35,8 @@ pub fn register_all(registry: &mut Registry) {
 
     // Statement features
     statements::print::register(registry);          // print! statement
+    statements::let_binding::register(registry);    // let x = expr; (must be before assignment)
     statements::assignment::register(registry);     // var = expr;
-    statements::let_binding::register(registry);    // let x = expr;
     statements::if_else::register(registry);        // if/else statements
     statements::while_loop::register(registry);     // while loops
     statements::break_stmt::register(registry);     // break statement

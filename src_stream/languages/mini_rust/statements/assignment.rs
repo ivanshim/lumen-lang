@@ -30,18 +30,68 @@ pub struct AssignStmtHandler;
 
 impl StmtHandler for AssignStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        matches!(
-            (parser.peek(), parser.peek_n(1)),
-            (tok, Some(next)) if tok.lexeme.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_') && next.lexeme == EQUALS
-        )
+        // Check if current token is the start of an identifier
+        let curr = &parser.peek().lexeme;
+        let is_ident_start = curr.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_');
+
+        if !is_ident_start {
+            return false;
+        }
+
+        // Look ahead for '=' (skip whitespace tokens and identifier continuation tokens)
+        // Since the kernel lexer is agnostic, multi-character identifiers are split into single chars
+        let mut i = 1;
+        while let Some(t) = parser.peek_n(i) {
+            let lexeme = &t.lexeme;
+
+            // Skip whitespace tokens
+            if lexeme.len() == 1 {
+                let ch = lexeme.as_bytes()[0];
+                if ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' {
+                    i += 1;
+                    continue;
+                }
+                // Skip identifier continuation characters (letters, digits, underscores)
+                if ch.is_ascii_alphanumeric() || ch == b'_' {
+                    i += 1;
+                    continue;
+                }
+            }
+
+            // Check if we found '='
+            if lexeme == EQUALS {
+                return true;
+            }
+
+            // Anything else means not an assignment
+            break;
+        }
+
+        false
     }
 
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>> {
-        let name = parser.advance().lexeme;
+        // Consume first character of identifier
+        let mut name = parser.advance().lexeme;
+
+        // Since kernel lexer is agnostic, consume remaining identifier characters
+        loop {
+            if parser.peek().lexeme.len() == 1 {
+                let ch = parser.peek().lexeme.as_bytes()[0];
+                if ch.is_ascii_alphanumeric() || ch == b'_' {
+                    name.push_str(&parser.advance().lexeme);
+                    continue;
+                }
+            }
+            break;
+        }
+
+        parser.skip_whitespace();
 
         if parser.advance().lexeme != EQUALS {
             return Err(err_at(parser, "Expected '=' in assignment"));
         }
+        parser.skip_whitespace();
 
         let expr = parser.parse_expr()?;
         Ok(Box::new(AssignStmt { name, expr }))
