@@ -3,7 +3,7 @@ use crate::languages::lumen::prelude::*;
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
-use crate::kernel::patterns::PatternSet;
+use crate::languages::lumen::patterns::PatternSet;
 use crate::languages::lumen::structure::structural::{LPAREN, RPAREN};
 
 pub struct GroupingPrefix;
@@ -15,9 +15,9 @@ impl ExprPrefix for GroupingPrefix {
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
         parser.advance(); // consume '('
-        parser.skip_whitespace();
+        parser.skip_tokens();
         let expr = parser.parse_expr(registry)?;
-        parser.skip_whitespace();
+        parser.skip_tokens();
 
         if parser.advance().lexeme != RPAREN {
             return Err("Expected ')'".into());

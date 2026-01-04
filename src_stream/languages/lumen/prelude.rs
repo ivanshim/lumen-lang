@@ -13,6 +13,7 @@ pub use crate::languages::lumen::registry::{
 pub trait LumenParserExt {
     fn parse_expr_prec(&mut self, registry: &Registry, min_prec: Precedence) -> LumenResult<Box<dyn ExprNode>>;
     fn parse_expr(&mut self, registry: &Registry) -> LumenResult<Box<dyn ExprNode>>;
+    fn skip_tokens(&mut self);
 }
 
 impl LumenParserExt for Parser<'_> {
@@ -22,5 +23,19 @@ impl LumenParserExt for Parser<'_> {
 
     fn parse_expr(&mut self, registry: &Registry) -> LumenResult<Box<dyn ExprNode>> {
         parse_expr_with_prec(self, registry, Precedence::Lowest)
+    }
+
+    fn skip_tokens(&mut self) {
+        while self.i < self.toks.len() {
+            let lexeme = &self.toks[self.i].tok.lexeme;
+            if lexeme.len() == 1 {
+                let ch = lexeme.as_bytes()[0];
+                if ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' {
+                    self.i += 1;
+                    continue;
+                }
+            }
+            break;
+        }
     }
 }

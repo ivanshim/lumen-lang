@@ -6,7 +6,7 @@ use crate::languages::lumen::prelude::*;
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::kernel::patterns::PatternSet;
+use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::Env;
 use crate::languages::lumen::structure::structural;
 use crate::languages::lumen::values::as_bool;
@@ -58,7 +58,7 @@ impl StmtHandler for WhileStmtHandler {
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'while'
-        parser.skip_whitespace();
+        parser.skip_tokens();
 
         // parse condition expression
         let condition = parser.parse_expr(registry)?;

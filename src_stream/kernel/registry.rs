@@ -9,13 +9,12 @@
 // - line/col are DIAGNOSTIC-ONLY (derived metadata, only for error messages)
 //
 // ARCHITECTURE:
-// - Kernel provides TokenRegistry and generic Handler/Dispatcher traits
+// - Kernel provides TokenRegistry only (pure token management)
 // - Kernel contains ALL parsing algorithms (expression, statement, precedence-climbing)
-// - Languages implement Dispatcher trait to tell kernel how to dispatch handlers
-// - Languages provide Handler implementations (prefix, infix, statement)
-// - Each language defines own Precedence enum and handler types
+// - Languages define their own handler trait types (ExprPrefix, ExprInfix, StmtHandler)
+// - Languages define their own Precedence types
+// - Languages manage all dispatch and handler logic
 
-use crate::kernel::ast::{ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
 
 pub type LumenResult<T> = Result<T, String>;
@@ -38,12 +37,15 @@ pub struct TokenRegistry {
     // Multi-character lexeme sequences for maximal-munch segmentation
     // Stored in descending length order for proper maximal-munch
     multichar_lexemes: Vec<&'static str>,
+    // Tokens that should be skipped during parsing (whitespace, comments, etc.)
+    skip_tokens: Vec<&'static str>,
 }
 
 impl TokenRegistry {
     pub fn new() -> Self {
         Self {
             multichar_lexemes: Vec::new(),
+            skip_tokens: Vec::new(),
         }
     }
 
@@ -60,6 +62,22 @@ impl TokenRegistry {
     pub fn multichar_lexemes(&self) -> &[&'static str] {
         &self.multichar_lexemes
     }
+
+    /// Set which lexemes should be skipped during parsing.
+    /// These are typically whitespace characters or comment tokens.
+    pub fn set_skip_tokens(&mut self, tokens: Vec<&'static str>) {
+        self.skip_tokens = tokens;
+    }
+
+    /// Get the tokens that should be skipped during parsing
+    pub fn skip_tokens(&self) -> &[&'static str] {
+        &self.skip_tokens
+    }
+
+    /// Check if a lexeme should be skipped
+    pub fn is_skip_token(&self, lexeme: &str) -> bool {
+        self.skip_tokens.contains(&lexeme)
+    }
 }
 
 impl Default for TokenRegistry {
@@ -68,32 +86,7 @@ impl Default for TokenRegistry {
     }
 }
 
-// --------------------
-// Generic Handler Traits (for language implementations to use)
-// --------------------
-// These traits define the interface for language-specific handlers.
-// Actual implementations and concrete trait objects are defined in language modules.
-
-pub trait PrecedenceLevel: std::cmp::Ord + std::cmp::PartialOrd + Copy {
-    /// Lowest/base precedence
-    fn lowest() -> Self;
-}
-
-pub trait ExprPrefixHandler {
-    fn matches(&self, parser: &Parser) -> bool;
-    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>>;
-}
-
-pub trait ExprInfixHandler {
-    type Prec: PrecedenceLevel;
-
-    fn matches(&self, parser: &Parser) -> bool;
-    fn precedence(&self) -> Self::Prec;
-    fn parse(&self, parser: &mut Parser, left: Box<dyn ExprNode>) -> LumenResult<Box<dyn ExprNode>>;
-}
-
-pub trait StmtHandlerTrait {
-    fn matches(&self, parser: &Parser) -> bool;
-    fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>>;
-}
+// Handler traits are now COMPLETELY language-specific and defined in language modules.
+// The kernel provides NO trait definitions for handlers - each language defines its own
+// handler types (ExprPrefix, ExprInfix, StmtHandler) and precedence types.
 

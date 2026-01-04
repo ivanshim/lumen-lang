@@ -1,19 +1,15 @@
-// src_stream/kernel/patterns.rs
+// Lumen pattern definitions
 //
-// Pattern Declaration System
-//
-// Languages declare what patterns they can recognize via PatternSet.
-// The kernel uses these declarations to parse the ASCII stream.
-// Each module in a language provides an array of strings it recognizes.
+// Patterns are language-specific declarations of what patterns Lumen recognizes.
+// Each module in Lumen provides an array of strings it recognizes.
 
-/// A set of patterns that a language module can recognize.
+/// A set of patterns that a Lumen module can recognize.
 /// Each module exports the literal strings and character classes it handles.
 pub struct PatternSet {
     /// Literal string patterns: "if", "else", "+", "-", "print", etc.
     pub literals: Vec<&'static str>,
 
     /// Character class names this module handles: "digit", "letter", "quote", etc.
-    /// The kernel has built-in understanding of standard classes.
     pub char_classes: Vec<&'static str>,
 
     /// Structural pattern names: "newline", "indent", "dedent", etc.
@@ -79,7 +75,7 @@ impl Default for PatternSet {
 }
 
 // ============================================================================
-// Standard Character Classes (Kernel-provided)
+// Standard Character Classes (Lumen-defined)
 // ============================================================================
 
 pub mod char_classes {

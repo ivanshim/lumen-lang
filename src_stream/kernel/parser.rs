@@ -9,6 +9,7 @@
 // All parsing, AST construction, and evaluation logic must use Span.
 // line/col are DIAGNOSTIC-ONLY metadata (for error messages).
 // This parser is language-agnostic and makes no semantic assumptions.
+// Token skipping (whitespace, comments) is handled by language-specific extension traits.
 
 use crate::kernel::ast::{ExprNode};
 use crate::kernel::lexer::{lex, SpannedToken, Token, Span};
@@ -66,25 +67,6 @@ impl<'a> Parser<'a> {
         let t = self.toks[self.i].tok.clone();
         self.i += 1;
         t
-    }
-
-    /// Skip whitespace tokens (language-level convenience).
-    /// Since the kernel lexer is now fully agnostic and emits all characters,
-    /// including whitespace, this helper skips over single-character space/tab/newline tokens.
-    /// Languages that care about whitespace (e.g., Lumen for indentation) handle it
-    /// at their parsing layer, not by using this method.
-    pub fn skip_whitespace(&mut self) {
-        while self.i < self.toks.len() {
-            let lexeme = &self.toks[self.i].tok.lexeme;
-            if lexeme.len() == 1 {
-                let ch = lexeme.as_bytes()[0];
-                if ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' {
-                    self.i += 1;
-                    continue;
-                }
-            }
-            break;
-        }
     }
 
     pub fn prev_span(&self) -> Span {

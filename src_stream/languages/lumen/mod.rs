@@ -4,6 +4,7 @@
 
 pub mod registry;
 pub mod prelude;
+pub mod patterns;
 pub mod values;
 mod numeric;
 pub mod expressions;

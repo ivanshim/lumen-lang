@@ -5,6 +5,7 @@ use crate::kernel::lexer::{Token, SpannedToken, Span};
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{err_at, LumenResult};
 use crate::languages::mini_rust::registry::Registry;
+use crate::languages::mini_rust::prelude::MiniRustParserExt;
 
 // --------------------
 // Mini-Rust Token Definitions
@@ -42,11 +43,11 @@ pub fn parse_block(parser: &mut Parser, registry: &Registry) -> LumenResult<Vec<
     if parser.advance().lexeme != LBRACE {
         return Err(err_at(parser, "Expected '{'"));
     }
-    parser.skip_whitespace();
+    parser.skip_tokens();
 
     // Parse statements until '}'
     while !(parser.peek().lexeme == RBRACE || parser.peek().lexeme == EOF) {
-        parser.skip_whitespace();
+        parser.skip_tokens();
 
         if parser.peek().lexeme == RBRACE || parser.peek().lexeme == EOF {
             break;
@@ -62,9 +63,9 @@ pub fn parse_block(parser: &mut Parser, registry: &Registry) -> LumenResult<Vec<
         // Optionally consume semicolons and whitespace
         while parser.peek().lexeme == SEMICOLON {
             parser.advance();
-            parser.skip_whitespace();
+            parser.skip_tokens();
         }
-        parser.skip_whitespace();
+        parser.skip_tokens();
     }
 
     // Expect '}'
@@ -79,7 +80,7 @@ pub fn parse_program(parser: &mut Parser, registry: &Registry) -> LumenResult<Pr
     let mut statements = Vec::new();
 
     while parser.peek().lexeme != EOF {
-        parser.skip_whitespace();
+        parser.skip_tokens();
 
         if parser.peek().lexeme == EOF {
             break;
@@ -95,9 +96,9 @@ pub fn parse_program(parser: &mut Parser, registry: &Registry) -> LumenResult<Pr
         // Optionally consume semicolons and whitespace
         while parser.peek().lexeme == SEMICOLON {
             parser.advance();
-            parser.skip_whitespace();
+            parser.skip_tokens();
         }
-        parser.skip_whitespace();
+        parser.skip_tokens();
     }
 
     Ok(Program::new(statements))

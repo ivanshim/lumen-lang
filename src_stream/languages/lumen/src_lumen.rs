@@ -2,7 +2,7 @@
 // Lumen language dispatcher
 // This module registers all Lumen language features with the Lumen registry
 
-use crate::kernel::patterns::PatternSet;
+use crate::languages::lumen::patterns::PatternSet;
 use super::registry::Registry;
 
 // Import all feature modules

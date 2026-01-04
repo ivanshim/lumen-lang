@@ -1,8 +1,6 @@
 // Mini-Rust operator precedence levels
 // Each language defines its own precedence scale
 
-use crate::kernel::registry::PrecedenceLevel;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Precedence {
     Lowest = 0,
@@ -13,8 +11,8 @@ pub enum Precedence {
     Unary = 50,
 }
 
-impl PrecedenceLevel for Precedence {
-    fn lowest() -> Self {
+impl Precedence {
+    pub fn lowest() -> Self {
         Precedence::Lowest
     }
 }

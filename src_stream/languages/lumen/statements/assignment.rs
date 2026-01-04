@@ -5,7 +5,7 @@ use crate::languages::lumen::prelude::*;
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::kernel::patterns::PatternSet;
+use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::{Env, Value};
 
 #[derive(Debug)]
@@ -69,7 +69,7 @@ impl StmtHandler for AssignStmtHandler {
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
         // Consume the identifier (which may span multiple tokens for the kernel's agnostic lexer)
         let mut name = parser.advance().lexeme;
-        parser.skip_whitespace();
+        parser.skip_tokens();
 
         // Continue consuming identifier characters if split across tokens
         loop {
@@ -77,7 +77,7 @@ impl StmtHandler for AssignStmtHandler {
                 let ch = parser.peek().lexeme.as_bytes()[0];
                 if ch.is_ascii_alphanumeric() || ch == b'_' {
                     name.push_str(&parser.advance().lexeme);
-                    parser.skip_whitespace();
+                    parser.skip_tokens();
                     continue;
                 }
             }
@@ -87,7 +87,7 @@ impl StmtHandler for AssignStmtHandler {
         if parser.advance().lexeme != "=" {
             return Err(err_at(parser, "Expected '=' in assignment"));
         }
-        parser.skip_whitespace();
+        parser.skip_tokens();
 
         let expr = parser.parse_expr(registry)?;
         Ok(Box::new(AssignStmt { name, expr }))

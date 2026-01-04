@@ -6,6 +6,7 @@ pub mod traits;
 
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{TokenRegistry, LumenResult, err_at};
+use crate::languages::mini_python::prelude::MiniPythonParserExt;
 
 pub use precedence::Precedence;
 pub use traits::{ExprPrefix, ExprInfix, StmtHandler};
@@ -67,7 +68,7 @@ pub fn parse_expr_with_prec(
     registry: &Registry,
     min_prec: Precedence,
 ) -> LumenResult<Box<dyn crate::kernel::ast::ExprNode>> {
-    parser.skip_whitespace();
+    parser.skip_tokens();
 
     let prefix = registry
         .find_prefix(parser)
@@ -76,7 +77,7 @@ pub fn parse_expr_with_prec(
     let mut left = prefix.parse(parser, registry)?;
 
     loop {
-        parser.skip_whitespace();
+        parser.skip_tokens();
 
         let infix = match registry.find_infix(parser) {
             Some(i) => i,
