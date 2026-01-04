@@ -2,7 +2,7 @@
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
-use crate::kernel::registry::{LumenResult, ExprPrefix};
+use crate::languages::mini_python::registry::{LumenResult, ExprPrefix};
 use crate::kernel::runtime::{Env, Value};
 
 #[derive(Debug)]

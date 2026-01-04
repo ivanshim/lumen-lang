@@ -81,7 +81,7 @@ fn detect_language_from_extension(filepath: &str) -> Option<String> {
 fn run_lumen_stream(source: &str) {
     use crate::kernel::lexer::lex;
     use crate::kernel::parser::Parser;
-    use crate::kernel::registry::Registry;
+    use crate::languages::lumen::registry::Registry;
     use crate::kernel::eval;
     use crate::languages::lumen::structure::structural;
 
@@ -129,7 +129,7 @@ fn run_lumen_stream(source: &str) {
 fn run_mini_rust_stream(source: &str) {
     use crate::kernel::lexer::lex;
     use crate::kernel::parser::Parser;
-    use crate::kernel::registry::Registry;
+    use crate::languages::mini_rust::registry::Registry;
     use crate::kernel::eval;
     use crate::languages::mini_rust::structure::structural;
 
@@ -177,7 +177,7 @@ fn run_mini_rust_stream(source: &str) {
 fn run_mini_python_stream(source: &str) {
     use crate::kernel::lexer::lex;
     use crate::kernel::parser::Parser;
-    use crate::kernel::registry::Registry;
+    use crate::languages::mini_python::registry::Registry;
     use crate::kernel::eval;
     use crate::languages::mini_python::structure::structural;
 

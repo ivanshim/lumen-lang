@@ -5,7 +5,7 @@
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::kernel::registry::{LumenResult, Registry, StmtHandler};
+use crate::languages::mini_python::registry::{LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::Env;
 use crate::languages::mini_python::structure::structural;
 use crate::languages::mini_python::values::as_bool;

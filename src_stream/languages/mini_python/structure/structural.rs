@@ -7,7 +7,8 @@
 use crate::kernel::ast::{Program, StmtNode};
 use crate::kernel::lexer::{Token, SpannedToken, Span};
 use crate::kernel::parser::Parser;
-use crate::kernel::registry::{err_at, LumenResult, Registry};
+use crate::kernel::registry::{err_at, LumenResult};
+use crate::languages::mini_python::registry::Registry;
 
 // --------------------
 // Mini-Python Token Definitions (lexeme strings)

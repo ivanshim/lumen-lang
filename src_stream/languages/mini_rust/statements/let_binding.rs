@@ -2,7 +2,7 @@
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::kernel::registry::{err_at, LumenResult, Registry, StmtHandler};
+use crate::languages::mini_rust::registry::{err_at, LumenResult, Registry, StmtHandler};
 use crate::kernel::runtime::{Env, Value};
 
 // --------------------

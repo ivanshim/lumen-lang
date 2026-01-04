@@ -1,7 +1,7 @@
 // src/framework/registry.rs
 //
-// Feature registration + lookup.
-// Parser knows nothing about language features; it consults the Registry.
+// Kernel registry utilities.
+// Provides basic error handling and token registry for stream processing.
 //
 // AUTHORITY:
 // - Span { start, end } (byte offsets) is the AUTHORITATIVE source-location mechanism
@@ -9,40 +9,15 @@
 // - line/col are DIAGNOSTIC-ONLY (derived metadata, only for error messages)
 //
 // ARCHITECTURE:
-// - TokenRegistry no longer holds semantic mappings (keywords, operators)
-// - Instead, it only stores multi-character lexeme sequences for maximal-munch
-// - ALL semantic interpretation happens in language modules
+// - Kernel provides only TokenRegistry for lexeme segmentation
+// - Handler traits are language-specific (defined in language modules)
+// - Parser is generic over language-specific trait types
+// - Each language defines its own Precedence, handlers, and Registry
 
 use crate::kernel::ast::{ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
 
 pub type LumenResult<T> = Result<T, String>;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Precedence {
-    Lowest = 0,
-    Logic = 10,
-    Comparison = 20,
-    Term = 30,
-    Factor = 40,
-    Unary = 50,
-}
-
-impl std::ops::Add<i32> for Precedence {
-    type Output = Precedence;
-
-    fn add(self, rhs: i32) -> Precedence {
-        let v = self as i32 + rhs;
-        match v {
-            v if v <= 0 => Precedence::Lowest,
-            v if v < 20 => Precedence::Logic,
-            v if v < 30 => Precedence::Comparison,
-            v if v < 40 => Precedence::Term,
-            v if v < 50 => Precedence::Factor,
-            _ => Precedence::Unary,
-        }
-    }
-}
 
 /// Format a parse error with diagnostic position information.
 /// DIAGNOSTIC FUNCTION: Uses line/col (derived from source) only for human-readable error messages.
@@ -56,6 +31,8 @@ pub fn err_at(parser: &Parser, msg: &str) -> String {
 // Token Registry (Pure Transport Layer)
 // --------------------
 
+/// Registry of multi-character lexeme sequences for maximal-munch segmentation.
+/// This is the only kernel-level registry - all other registries are language-specific.
 pub struct TokenRegistry {
     // Multi-character lexeme sequences for maximal-munch segmentation
     // Stored in descending length order for proper maximal-munch
@@ -84,68 +61,37 @@ impl TokenRegistry {
     }
 }
 
-// --------------------
-// Expression features
-// --------------------
+impl Default for TokenRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-pub trait ExprPrefix {
+// --------------------
+// Generic Handler Traits (for language implementations to use)
+// --------------------
+// These traits define the interface for language-specific handlers.
+// Actual implementations and concrete trait objects are defined in language modules.
+
+pub trait PrecedenceLevel: std::cmp::Ord + std::cmp::PartialOrd + Copy {
+    /// Lowest/base precedence
+    fn lowest() -> Self;
+}
+
+pub trait ExprPrefixHandler {
     fn matches(&self, parser: &Parser) -> bool;
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn ExprNode>>;
 }
 
-pub trait ExprInfix {
+pub trait ExprInfixHandler {
+    type Prec: PrecedenceLevel;
+
     fn matches(&self, parser: &Parser) -> bool;
-    fn precedence(&self) -> Precedence;
+    fn precedence(&self) -> Self::Prec;
     fn parse(&self, parser: &mut Parser, left: Box<dyn ExprNode>) -> LumenResult<Box<dyn ExprNode>>;
 }
 
-// --------------------
-// Statement features
-// --------------------
-
-pub trait StmtHandler {
+pub trait StmtHandlerTrait {
     fn matches(&self, parser: &Parser) -> bool;
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>>;
-}
-
-pub struct Registry {
-    pub tokens: TokenRegistry,
-    prefixes: Vec<Box<dyn ExprPrefix>>,
-    infixes: Vec<Box<dyn ExprInfix>>,
-    stmts: Vec<Box<dyn StmtHandler>>,
-}
-
-impl Registry {
-    pub fn new() -> Self {
-        Self {
-            tokens: TokenRegistry::new(),
-            prefixes: Vec::new(),
-            infixes: Vec::new(),
-            stmts: Vec::new(),
-        }
-    }
-
-    pub fn register_prefix(&mut self, h: Box<dyn ExprPrefix>) {
-        self.prefixes.push(h);
-    }
-
-    pub fn register_infix(&mut self, h: Box<dyn ExprInfix>) {
-        self.infixes.push(h);
-    }
-
-    pub fn register_stmt(&mut self, h: Box<dyn StmtHandler>) {
-        self.stmts.push(h);
-    }
-
-    pub fn find_prefix(&self, parser: &Parser) -> Option<&dyn ExprPrefix> {
-        self.prefixes.iter().map(|b| b.as_ref()).find(|h| h.matches(parser))
-    }
-
-    pub fn find_infix(&self, parser: &Parser) -> Option<&dyn ExprInfix> {
-        self.infixes.iter().map(|b| b.as_ref()).find(|h| h.matches(parser))
-    }
-
-    pub fn find_stmt(&self, parser: &Parser) -> Option<&dyn StmtHandler> {
-        self.stmts.iter().map(|b| b.as_ref()).find(|h| h.matches(parser))
-    }
 }

@@ -10,29 +10,34 @@
 // line/col are DIAGNOSTIC-ONLY metadata (for error messages).
 // This parser is language-agnostic and makes no semantic assumptions.
 
-use crate::kernel::ast::{ExprNode, Program};
+use crate::kernel::ast::{ExprNode};
 use crate::kernel::lexer::{lex, SpannedToken, Token, Span};
-use crate::kernel::registry::{err_at, LumenResult, Precedence, Registry};
+use crate::kernel::registry::{err_at, LumenResult, TokenRegistry};
 
 pub struct Parser<'a> {
-    pub reg: &'a Registry,
     pub toks: Vec<SpannedToken>,
     pub i: usize,
+    pub token_registry: &'a TokenRegistry,
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(reg: &'a Registry, source: &str) -> LumenResult<Self> {
+    /// Create parser from source and token registry
+    pub fn new(source: &str, token_registry: &'a TokenRegistry) -> LumenResult<Self> {
         Ok(Self {
-            reg,
-            toks: lex(source, &reg.tokens)?,
+            toks: lex(source, token_registry)?,
             i: 0,
+            token_registry,
         })
     }
 
     /// Create parser with pre-tokenized token stream.
     /// Used when language-specific token processing is needed.
-    pub fn new_with_tokens(reg: &'a Registry, toks: Vec<SpannedToken>) -> LumenResult<Self> {
-        Ok(Self { reg, toks, i: 0 })
+    pub fn new_with_tokens(toks: Vec<SpannedToken>, token_registry: &'a TokenRegistry) -> LumenResult<Self> {
+        Ok(Self {
+            toks,
+            i: 0,
+            token_registry,
+        })
     }
 
     /// Get the byte span of the current token (AUTHORITATIVE position).
@@ -82,54 +87,12 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Generic program parsing - just dispatches to handlers.
-    /// Languages define their own parse_program() if they need custom behavior.
-    pub fn parse_program(&mut self) -> LumenResult<Program> {
-        let mut stmts = Vec::new();
-
-        while self.i < self.toks.len() {
-            let stmt = self
-                .reg
-                .find_stmt(self)
-                .ok_or_else(|| err_at(self, "Unknown statement"))?
-                .parse(self)?;
-
-            stmts.push(stmt);
+    pub fn prev_span(&self) -> Span {
+        if self.i > 0 {
+            let t = &self.toks[self.i - 1];
+            t.tok.span
+        } else {
+            Span(0, 0)
         }
-
-        Ok(Program::new(stmts))
-    }
-
-    pub fn parse_expr(&mut self) -> LumenResult<Box<dyn ExprNode>> {
-        self.parse_expr_prec(Precedence::Lowest)
-    }
-
-    pub fn parse_expr_prec(&mut self, min_prec: Precedence) -> LumenResult<Box<dyn ExprNode>> {
-        self.skip_whitespace();
-
-        let prefix = self
-            .reg
-            .find_prefix(self)
-            .ok_or_else(|| err_at(self, "Unknown expression"))?;
-
-        let mut left = prefix.parse(self)?;
-
-        loop {
-            // Skip whitespace before checking for infix operators
-            self.skip_whitespace();
-
-            let infix = match self.reg.find_infix(self) {
-                Some(i) => i,
-                None => break,
-            };
-
-            if infix.precedence() < min_prec {
-                break;
-            }
-
-            left = infix.parse(self, left)?;
-        }
-
-        Ok(left)
     }
 }
