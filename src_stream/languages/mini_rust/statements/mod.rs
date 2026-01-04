@@ -1,3 +1,4 @@
+use crate::languages::mini_rust::prelude::*;
 pub mod assignment;
 pub mod print;
 pub mod if_else;

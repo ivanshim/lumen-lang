@@ -1,3 +1,4 @@
+use crate::languages::lumen::prelude::*;
 // src/stmt/continue_stmt.rs
 //
 // continue statement

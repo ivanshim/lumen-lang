@@ -1,3 +1,4 @@
+use crate::languages::lumen::prelude::*;
 // Number, boolean, and string literals
 
 use crate::kernel::ast::ExprNode;

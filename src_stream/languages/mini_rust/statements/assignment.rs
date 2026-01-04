@@ -1,3 +1,4 @@
+use crate::languages::mini_rust::prelude::*;
 // Assignment statement: x = expr
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};

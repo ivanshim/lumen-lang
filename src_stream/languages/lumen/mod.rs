@@ -3,6 +3,7 @@
 // Complete language definition for Lumen
 
 pub mod registry;
+pub mod prelude;
 pub mod values;
 mod numeric;
 pub mod expressions;

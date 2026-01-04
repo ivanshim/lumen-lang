@@ -1,3 +1,4 @@
+use crate::languages::mini_rust::prelude::*;
 // while loop statement for mini-rust
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};

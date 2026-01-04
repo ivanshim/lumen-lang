@@ -1,3 +1,4 @@
+use crate::languages::mini_rust::prelude::*;
 // Number and boolean literals for mini-rust
 
 use crate::kernel::ast::ExprNode;

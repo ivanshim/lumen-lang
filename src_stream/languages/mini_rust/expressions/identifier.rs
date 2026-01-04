@@ -1,3 +1,4 @@
+use crate::languages::mini_rust::prelude::*;
 // Identifier handling for mini-rust
 // Identifiers are handled as variables in variable.rs
 

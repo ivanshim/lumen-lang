@@ -1,3 +1,4 @@
+use crate::languages::mini_rust::prelude::*;
 // print!() statement for mini-rust
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};

@@ -1,3 +1,4 @@
+use crate::languages::lumen::prelude::*;
 // src/stmt/while_loop.rs
 //
 // while <expr>

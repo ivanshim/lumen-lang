@@ -1,3 +1,4 @@
+use crate::languages::mini_rust::prelude::*;
 pub mod literals;
 pub mod arithmetic;
 pub mod comparison;

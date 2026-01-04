@@ -38,3 +38,4 @@ pub trait StmtHandler {
     /// Parse the statement
     fn parse(&self, parser: &mut Parser) -> LumenResult<Box<dyn StmtNode>>;
 }
+
