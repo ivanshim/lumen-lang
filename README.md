@@ -1,8 +1,6 @@
 # Lumen-Lang
 
-A minimal, experimental programming language interpreter framework with multiple kernel architectures and language implementations.
-
-Lumen v0.0.5 features dual-kernel architecture (Stream & Microcode), support for 3 active languages (Lumen, Mini-Rust, Mini-Python), and comprehensive documentation.
+A minimal, experimental programming language interpreter framework exploring language design, multi-kernel architectures, and separation of concerns between kernel logic and language semantics.
 
 ---
 
@@ -56,31 +54,35 @@ All supported languages include:
 
 ---
 
-## Architecture
+## Development Tracks
 
-Lumen features a **dual-kernel design**:
+Lumen has **4 independent development tracks**, each with its own architecture and purpose:
 
-### Stream Kernel
-- **Style**: Procedural, AST-based execution
-- **Approach**: Parse source → build AST → evaluate tree-walking interpreter
-- **Status**: Fully tested with all 3 languages
-- **Code**: `src_stream/`
-
-### Microcode Kernel
-- **Style**: Data-driven, 4-stage pipeline
-- **Approach**: Ingest → Structure → Reduce → Execute
+### Track 1: Microcode Kernel (`src_microcode/kernel/`)
+- **Design**: Data-driven, table-based execution engine
+- **Pipeline**: 4-stage (Ingest → Structure → Reduce → Execute)
 - **Principle**: ALL language semantics in declarative schemas, ZERO semantic logic in kernel code
-- **Status**: Complete with all 3 languages
-- **Code**: `src_microcode/`
+- **Language-Agnostic**: Kernel makes no assumptions about syntax or semantics
 
-Both kernels are **completely independent** with zero cross-imports, allowing independent evolution.
+### Track 2: Stream Kernel (`src_stream/kernel/`)
+- **Design**: Procedural, AST-based execution engine
+- **Pipeline**: Parse → AST → Tree-Walking Interpreter
+- **Principle**: Language-agnostic core with trait-based handler dispatch
+- **Language-Agnostic**: Generic parser delegates all decisions to registered handlers
 
-### Design Principles
+### Track 3: Lumen Language (Primary Language)
+- **Stream Implementation**: `src_stream/languages/lumen/`
+- **Microcode Implementation**: `src_microcode/languages/lumen/`
+- **Style**: Python-style indentation-based syntax
+- **Role**: Reference implementation demonstrating both kernels
 
-1. **Kernel Neutrality**: Kernels own only algorithms (tokenization, parsing, execution mechanics)
-2. **Language Modularity**: Languages own syntax, semantics, value types, operators
-3. **Schema-Driven Semantics**: In the microcode kernel, ALL language behavior is table-driven
-4. **Clear Separation**: `src/main.rs` dispatcher routes between kernels and languages
+### Track 4: Other Language Examples
+- **Mini-Rust**: `src_stream/languages/mini_rust/` + `src_microcode/languages/mini_rust/`
+  - Rust-style curly braces and `let` bindings
+- **Mini-Python**: `src_stream/languages/mini_python/` + `src_microcode/languages/mini_python/`
+  - Python-like syntax with indentation
+
+**Key Design Principle**: Each kernel is **completely independent** with zero cross-imports, allowing independent evolution. The `src/main.rs` dispatcher routes between kernels and languages.
 
 ---
 
@@ -156,12 +158,12 @@ Comprehensive documentation is organized in the `docs/` directory:
 
 ---
 
-## Key Features (v0.0.5)
+## Key Features
 
 ### Dual-Kernel Architecture
-- Stream kernel: Immediate AST-based execution
-- Microcode kernel: Data-driven schema-based execution
-- Both kernels fully tested and independent
+- **Stream Kernel**: Immediate AST-based execution
+- **Microcode Kernel**: Data-driven schema-based execution
+- **Independent Evolution**: Both kernels fully tested, zero cross-imports
 
 ### Multi-Language Support
 - **Lumen**: Python-style indentation-based syntax
@@ -183,22 +185,6 @@ Comprehensive documentation is organized in the `docs/` directory:
 - Canonical e (Euler's number) using factorial series
 - Integer-only, fixed-point implementations with deterministic output
 - Available in all 3 languages
-
----
-
-## v0.0.5 Release Highlights
-
-**Date:** 2026-01-03
-**Key Achievement:** Kernel ontological neutrality, extern system correctness, mathematical proof programs
-
-### What's New
-1. **Kernel Refactored to Ontological Neutrality**: Values are now opaque traits, not kernel enums
-2. **Extern System Correctness**: String literal selectors for host-agnostic extensibility
-3. **Canonical Proof Programs**: Integer-only, deterministic math implementations
-4. **Mini-Rust Stream Kernel**: Fixed statement registration order and whitespace handling
-5. **Full Test Coverage**: 68/68 tests passing (all kernels, all languages)
-
-For detailed version history, see **docs/03_VERSION_HISTORY.md**.
 
 ---
 
@@ -273,6 +259,8 @@ This project is provided as-is for educational and experimental purposes.
 
 ---
 
-**Last Updated**: 2026-01-04
-**Status**: ✅ All tests passing, production-quality implementation
-**Next Steps**: See docs/07_LUMEN_ROADMAP.md for planned enhancements
+**Status**: ✅ All 68 tests passing (48 Lumen, 10 Mini-Python, 10 Mini-Rust)
+
+For release notes and version history, see **docs/03_VERSION_HISTORY.md**
+
+For planned enhancements, see **docs/07_LUMEN_ROADMAP.md**
