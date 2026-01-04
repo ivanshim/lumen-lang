@@ -92,48 +92,32 @@ impl TokenRegistry {
     }
 
     /// Set tokens using unified TokenDefinition approach.
-    /// This is the recommended way to register tokens.
-    /// Internally extracts multichar lexemes and skip tokens.
+    /// Languages call this during initialization to register all their tokens.
+    /// Internally extracts and caches multichar lexemes and skip tokens for efficiency.
     pub fn set_token_definitions(&mut self, defs: Vec<TokenDefinition>) {
         self.token_defs = defs;
         self.rebuild_caches();
     }
 
-    /// Set the multi-character lexeme sequences that the language uses.
-    /// The lexer will use these for maximal-munch segmentation.
-    /// Sequences will be sorted by descending length automatically.
-    ///
-    /// This is a legacy API. Prefer set_token_definitions() instead.
-    pub fn set_multichar_lexemes(&mut self, mut lexemes: Vec<&'static str>) {
-        // Sort by descending length for proper maximal-munch
-        lexemes.sort_by(|a, b| b.len().cmp(&a.len()));
-        self.multichar_lexemes = lexemes;
-    }
-
-    /// Get the multi-character lexemes in descending length order
+    /// Get the multi-character lexemes in descending length order.
+    /// Used by the lexer for maximal-munch segmentation.
     pub fn multichar_lexemes(&self) -> &[&'static str] {
         &self.multichar_lexemes
     }
 
-    /// Set which lexemes should be skipped during parsing.
-    /// These are typically whitespace characters or comment tokens.
-    ///
-    /// This is a legacy API. Prefer set_token_definitions() instead.
-    pub fn set_skip_tokens(&mut self, tokens: Vec<&'static str>) {
-        self.skip_tokens = tokens;
-    }
-
-    /// Get the tokens that should be skipped during parsing
+    /// Get the tokens that should be skipped during parsing.
+    /// Used by language-specific parser extension traits.
     pub fn skip_tokens(&self) -> &[&'static str] {
         &self.skip_tokens
     }
 
-    /// Check if a lexeme should be skipped
+    /// Check if a specific lexeme should be skipped during parsing.
     pub fn is_skip_token(&self, lexeme: &str) -> bool {
         self.skip_tokens.contains(&lexeme)
     }
 
-    /// Get all token definitions
+    /// Get all token definitions.
+    /// Used for inspection and debugging.
     pub fn token_definitions(&self) -> &[TokenDefinition] {
         &self.token_defs
     }
