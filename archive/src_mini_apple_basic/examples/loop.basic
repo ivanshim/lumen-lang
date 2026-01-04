@@ -1,5 +1,0 @@
-LET x = 0;
-WHILE (x < 10) {
-    PRINT(x);
-    LET x = x + 1
-}
