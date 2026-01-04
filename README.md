@@ -106,15 +106,14 @@ lumen-lang/
 │   ├── lumen/                    # 24 Lumen examples
 │   ├── mini_python/              # 5 Mini-Python examples
 │   └── mini_rust/                # 5 Mini-Rust examples
-├── docs/                         # Comprehensive documentation
-│   ├── 00_KERNEL_STREAM.md      # Stream kernel overview
-│   ├── 01_KERNEL_MICROCODE.md   # Microcode kernel architecture
-│   ├── 02_LANGUAGES.md           # Language-level design guide
-│   ├── 03_VERSION_HISTORY.md     # Release notes and changelog
-│   ├── 04_LUMEN_BNF.md           # Lumen grammar specification
-│   ├── 05_LUMEN_DESIGN.md        # Lumen language design
-│   ├── 06_LUMEN_EXTERN_SYSTEM.md # Extern system design
-│   └── 07_LUMEN_ROADMAP.md       # Future development roadmap
+├── docs/                              # Comprehensive documentation
+│   ├── LUMEN_KERNEL_STREAM.md        # Stream kernel design
+│   ├── LUMEN_KERNEL_MICROCODE.md     # Microcode kernel architecture
+│   ├── LUMEN_LANGUAGE_BNF.md         # Lumen grammar specification
+│   ├── LUMEN_LANGUAGE_DESIGN.md      # Lumen language design
+│   ├── LUMEN_LANGUAGE_EXTERN_SYSTEM.md # Extern system design
+│   ├── LUMEN_LANGUAGE_ROADMAP.md     # Future development roadmap
+│   └── VERSION_HISTORY.md            # Release notes and changelog
 ├── Cargo.toml                    # Rust project configuration
 └── test_all.sh                   # Comprehensive test suite
 ```
@@ -137,24 +136,18 @@ Run the full test suite (68 tests across all kernels and languages):
 
 Comprehensive documentation is organized in the `docs/` directory:
 
-### Getting Started
-- Start with the main README (this file)
-- Review **docs/00_KERNEL_STREAM.md** for kernel philosophy
-- Check **docs/02_LANGUAGES.md** for language-level overview
-
-### Architecture Deep Dives
-- **docs/01_KERNEL_MICROCODE.md** - Microcode kernel design and 4-stage pipeline
-- **docs/02_LANGUAGES.md** - Complete language module reference
-- **docs/00_KERNEL_STREAM_REFERENCE.md** - Stream kernel design philosophy
+### Kernel Architecture
+- **docs/LUMEN_KERNEL_STREAM.md** - Stream kernel design and philosophy
+- **docs/LUMEN_KERNEL_MICROCODE.md** - Microcode kernel design and 4-stage pipeline
 
 ### Lumen Language Documentation
-- **docs/04_LUMEN_BNF.md** - Lumen grammar specification
-- **docs/05_LUMEN_DESIGN.md** - Language design and semantics
-- **docs/06_LUMEN_EXTERN_SYSTEM.md** - External function system design
-- **docs/07_LUMEN_ROADMAP.md** - Planned features and improvements
+- **docs/LUMEN_LANGUAGE_BNF.md** - Lumen grammar specification
+- **docs/LUMEN_LANGUAGE_DESIGN.md** - Language design and semantics
+- **docs/LUMEN_LANGUAGE_EXTERN_SYSTEM.md** - External function system design
+- **docs/LUMEN_LANGUAGE_ROADMAP.md** - Planned features and improvements
 
 ### Release Information
-- **docs/03_VERSION_HISTORY.md** - Complete version history and release notes
+- **docs/VERSION_HISTORY.md** - Complete version history and release notes
 
 ---
 
@@ -261,6 +254,6 @@ This project is provided as-is for educational and experimental purposes.
 
 **Status**: ✅ All 68 tests passing (48 Lumen, 10 Mini-Python, 10 Mini-Rust)
 
-For release notes and version history, see **docs/03_VERSION_HISTORY.md**
+For release notes and version history, see **docs/VERSION_HISTORY.md**
 
-For planned enhancements, see **docs/07_LUMEN_ROADMAP.md**
+For planned enhancements, see **docs/LUMEN_LANGUAGE_ROADMAP.md**
