@@ -2,6 +2,7 @@
 // Mini-Python language dispatcher
 // Python-like: indentation-based blocks, no braces
 
+use crate::kernel::registry::LumenResult;
 use crate::languages::mini_python::registry::Registry;
 
 // Import all feature modules

@@ -4,7 +4,8 @@
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
-use crate::languages::mini_python::registry::{ExprPrefix, LumenResult, Registry};
+use crate::kernel::registry::LumenResult;
+use crate::languages::mini_python::registry::{ExprPrefix, Registry};
 use crate::kernel::runtime::{Env, Value};
 
 #[derive(Debug)]

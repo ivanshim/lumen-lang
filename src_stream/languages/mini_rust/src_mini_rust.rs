@@ -2,6 +2,7 @@
 // Mini-Rust language dispatcher
 // Rust-like: let bindings, curly braces, print! macro
 
+use crate::kernel::registry::LumenResult;
 use crate::languages::mini_rust::registry::Registry;
 
 // Import all feature modules

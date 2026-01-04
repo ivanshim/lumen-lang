@@ -4,7 +4,8 @@
 
 use crate::kernel::ast::{Control, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::languages::mini_python::registry::{LumenResult, Registry, StmtHandler};
+use crate::kernel::registry::LumenResult;
+use crate::languages::mini_python::registry::{Registry, StmtHandler};
 use crate::kernel::runtime::Env;
 
 #[derive(Debug)]

@@ -5,7 +5,6 @@ pub mod precedence;
 pub mod traits;
 
 use crate::kernel::parser::Parser;
-use self::traits::{ExprPrefix, ExprInfix, StmtHandler};
 use crate::kernel::registry::TokenRegistry;
 
 pub use precedence::Precedence;
