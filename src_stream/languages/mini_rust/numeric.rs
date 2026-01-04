@@ -1,7 +1,7 @@
 // Mini-Rust numeric utilities
 // Private helper module for numeric string operations
 
-use crate::src_stream::kernel::registry::LumenResult;
+use crate::kernel::registry::LumenResult;
 
 /// Parse a numeric string to f64
 pub fn parse_number(s: &str) -> LumenResult<f64> {

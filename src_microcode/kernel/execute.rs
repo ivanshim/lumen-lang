@@ -105,7 +105,7 @@ pub fn execute(instruction: &Instruction, env: &mut Environment, schema: &Langua
                 eval_args.push(val);
             }
             // Dispatch to external function handler
-            let result = crate::src_microcode::runtime::execute_extern(selector, eval_args, schema)?;
+            let result = crate::runtime::execute_extern(selector, eval_args, schema)?;
             Ok((result, ControlFlow::Normal))
         }
 

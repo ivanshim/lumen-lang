@@ -2,7 +2,7 @@
 // Mini-Rust language dispatcher
 // Rust-like: let bindings, curly braces, print! macro
 
-use crate::src_stream::kernel::registry::Registry;
+use crate::kernel::registry::Registry;
 
 // Import all feature modules
 use super::expressions;

@@ -1,10 +1,10 @@
 // Assignment statement: x = expr
 
-use crate::src_stream::kernel::ast::{Control, ExprNode, StmtNode};
-use crate::src_stream::kernel::lexer::Token;
-use crate::src_stream::kernel::parser::Parser;
-use crate::src_stream::kernel::registry::{err_at, LumenResult, Registry, StmtHandler};
-use crate::src_stream::kernel::runtime::{Env, Value};
+use crate::kernel::ast::{Control, ExprNode, StmtNode};
+use crate::kernel::lexer::Token;
+use crate::kernel::parser::Parser;
+use crate::kernel::registry::{err_at, LumenResult, Registry, StmtHandler};
+use crate::kernel::runtime::{Env, Value};
 
 // --------------------
 // Token definitions

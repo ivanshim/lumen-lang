@@ -3,8 +3,8 @@
 // Capability registry and trait definitions.
 // Separates Lumen's semantic contracts from host implementations.
 
-use crate::src_stream::kernel::registry::LumenResult;
-use crate::src_stream::kernel::runtime::Value;
+use crate::kernel::registry::LumenResult;
+use crate::kernel::runtime::Value;
 use std::collections::HashMap;
 
 /// Trait defining a host capability implementation.

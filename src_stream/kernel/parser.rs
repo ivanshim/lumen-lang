@@ -10,9 +10,9 @@
 // line/col are DIAGNOSTIC-ONLY metadata (for error messages).
 // This parser is language-agnostic and makes no semantic assumptions.
 
-use crate::src_stream::kernel::ast::{ExprNode, Program};
-use crate::src_stream::kernel::lexer::{lex, SpannedToken, Token, Span};
-use crate::src_stream::kernel::registry::{err_at, LumenResult, Precedence, Registry};
+use crate::kernel::ast::{ExprNode, Program};
+use crate::kernel::lexer::{lex, SpannedToken, Token, Span};
+use crate::kernel::registry::{err_at, LumenResult, Precedence, Registry};
 
 pub struct Parser<'a> {
     pub reg: &'a Registry,

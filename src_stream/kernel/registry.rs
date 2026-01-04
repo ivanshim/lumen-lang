@@ -13,8 +13,8 @@
 // - Instead, it only stores multi-character lexeme sequences for maximal-munch
 // - ALL semantic interpretation happens in language modules
 
-use crate::src_stream::kernel::ast::{ExprNode, StmtNode};
-use crate::src_stream::kernel::parser::Parser;
+use crate::kernel::ast::{ExprNode, StmtNode};
+use crate::kernel::parser::Parser;
 
 pub type LumenResult<T> = Result<T, String>;
 

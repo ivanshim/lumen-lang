@@ -21,7 +21,7 @@
 //   "fs|mem:read"      (try fs then mem backend, read capability)
 //   "(fs:impl1)|(impl2)"  (complex fallback: fs:impl1 OR impl2)
 
-use crate::src_stream::kernel::registry::LumenResult;
+use crate::kernel::registry::LumenResult;
 
 /// A selector clause: try to resolve (backend, capability) pair
 #[derive(Debug, Clone, PartialEq, Eq)]

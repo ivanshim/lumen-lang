@@ -2,7 +2,7 @@
 // Lumen language dispatcher
 // This module registers all Lumen language features with the framework registry
 
-use crate::src_stream::kernel::registry::Registry;
+use crate::kernel::registry::Registry;
 
 // Import all feature modules
 use super::expressions;
