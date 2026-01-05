@@ -144,6 +144,12 @@ pub fn process_indentation(source: &str, raw_tokens: Vec<SpannedToken>) -> Lumen
             continue;
         }
 
+        // Skip comment-only lines (lines starting with # after indentation)
+        if rest.starts_with('#') {
+            line_no += 1;
+            continue;
+        }
+
         // Indentation handling (4-space indents for Lumen)
         let current = *indents.last().unwrap();
         if spaces > current {
