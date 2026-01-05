@@ -78,6 +78,23 @@ pub fn get_schema() -> LanguageSchema {
             .build(),
     );
 
+    // let statement: let [mut] name [: Type] = expression
+    statements.insert(
+        "let".to_string(),
+        PatternBuilder::new("let")
+            .keyword("let_keyword")
+            .expression("binding")  // Includes mut and identifier
+            .build(),
+    );
+
+    // return statement: return [expression]
+    statements.insert(
+        "return".to_string(),
+        PatternBuilder::new("return")
+            .keyword("return_keyword")
+            .build(),
+    );
+
     // Binary operators with precedence and associativity
     let mut binary_ops = HashMap::new();
 
@@ -146,6 +163,16 @@ pub fn get_schema() -> LanguageSchema {
         "%".to_string(),
         OperatorInfo::left("%", 6),
     );
+    binary_ops.insert(
+        "**".to_string(),
+        OperatorInfo::right("**", 7),  // Exponentiation: right-associative, higher precedence
+    );
+
+    // Pipe operator (very low precedence, right-associative)
+    binary_ops.insert(
+        "|>".to_string(),
+        OperatorInfo::right("|>", 1),
+    );
 
     // Unary operators
     let mut unary_ops = HashMap::new();
@@ -169,10 +196,15 @@ pub fn get_schema() -> LanguageSchema {
         "else".to_string(),
         "while".to_string(),
         "var".to_string(),
+        "let".to_string(),
+        "mut".to_string(),
         "break".to_string(),
         "continue".to_string(),
+        "return".to_string(),
+        "fn".to_string(),
         "true".to_string(),
         "false".to_string(),
+        "none".to_string(),
         "and".to_string(),
         "or".to_string(),
         "not".to_string(),
@@ -188,10 +220,11 @@ pub fn get_schema() -> LanguageSchema {
     // Multi-character lexemes for maximal-munch
     let multichar_lexemes = vec![
         // Keywords (longer first for maximal-munch)
-        "continue", "extern",
+        "continue", "extern", "return",
         "while", "break", "false", "print",
-        "true", "else", "let", "var", "not", "and", "if", "or",
+        "true", "else", "false", "let", "var", "not", "and", "if", "or", "fn", "mut", "none",
         // Operators
+        "|>", "**",  // Pipe and exponentiation (2 chars)
         "==", "!=", "<=", ">=",  // comparison operators
     ];
 
@@ -232,17 +265,25 @@ mod tests {
         assert!(schema.is_statement_keyword("if"));
         assert!(schema.is_statement_keyword("while"));
         assert!(schema.is_statement_keyword("var"));
+        assert!(schema.is_statement_keyword("let"));
+        assert!(schema.is_statement_keyword("return"));
         assert!(schema.is_statement_keyword("break"));
         assert!(schema.is_statement_keyword("continue"));
 
         // Verify all expected operators are present
         assert!(schema.get_binary_op("+").is_some());
         assert!(schema.get_binary_op("*").is_some());
+        assert!(schema.get_binary_op("**").is_some());
+        assert!(schema.get_binary_op("|>").is_some());
         assert!(schema.get_unary_op("not").is_some());
 
         // Verify precedence ordering
         assert!(schema.get_binary_op("+").unwrap().precedence <
                 schema.get_binary_op("*").unwrap().precedence);
+        assert!(schema.get_binary_op("**").unwrap().precedence >
+                schema.get_binary_op("*").unwrap().precedence);
+        assert!(schema.get_binary_op("|>").unwrap().precedence <
+                schema.get_binary_op("+").unwrap().precedence);
     }
 
     #[test]
