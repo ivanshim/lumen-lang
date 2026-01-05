@@ -3,6 +3,12 @@ version: 2.2
 status: stable-core
 role: general_purpose_language
 
+authority:
+  status: canonical
+  supersedes:
+    - lumen1.yaml
+    - lumen2.yaml
+
 specification_basis:
   - lumen.yaml v2.0 (detailed language specification)
   - lumen2.yaml v2.1 (kernel primitives and execution model)
