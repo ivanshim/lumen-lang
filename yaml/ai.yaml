@@ -1,0 +1,577 @@
+name: ai
+version: 0.3
+status: stable-dialect
+role: ai_ml_language
+purpose: "Clear, composable, verifiable AI and machine learning workflows"
+
+specification_basis:
+  - ai1.yaml v0.1 (semantic breadth, design intent)
+  - ai2.yaml v0.2 (discipline, kernel alignment)
+
+design_principles:
+  1_semantic_clarity: "Every operation's data flow must be visible in syntax"
+  2_no_implicit_broadcasting: "Type mismatches fail early with clear error messages"
+  3_immutable_by_default: "Values are immutable unless explicitly marked mutable"
+  4_explicit_function_types: "Function signatures show inputs, outputs, and transformations"
+  5_tensor_as_first_class: "Tensors/arrays are native types with clear semantics"
+  6_pattern_matching_first: "Control flow uses pattern matching for ML workflows"
+  7_fail_fast_fail_clearly: "Type errors caught at parse time, runtime errors descriptive"
+  8_composable_pipelines: "Functions compose naturally without wrapper overhead"
+  9_transparent_computation: "All operations are traceable and explainable"
+  10_minimal_syntax: "Every syntactic element serves semantic purpose"
+
+philosophy:
+  rationale: |
+    AI systems must be trustworthy and verifiable. This language prioritizes:
+    - Making data transformations explicit (no hidden dimensions, broadcasting, or coercion)
+    - Type safety without verbosity (inferred where possible, annotated where needed)
+    - Composable operations that chain naturally
+    - Clear error messages that guide debugging
+    - Semantics that survive re-implementation (portable across frameworks)
+
+  non_goals:
+    - opaque_model_magic
+    - probabilistic_control_flow
+    - hidden_side_effects
+
+kernel_alignment:
+  base: lumen2.kernel
+  extensions:
+    - tensor_ops
+    - pattern_match
+
+growth_discipline:
+  simplicity: "Language must remain explainable in one sitting"
+  inspectability: "Full implementation must be inspectable by one person"
+  no_feature_creep: "New features only when real examples demand them"
+  preservation: "New features cannot invalidate existing mental models"
+  minimalism: "If removed feature isn't missed, remove it"
+
+lexical:
+  keywords:
+    type_definition:
+      - type
+      - struct
+      - enum
+    control_flow:
+      - if
+      - else
+      - match
+      - case
+    function_definition:
+      - fn
+      - return
+    loops:
+      - for
+      - while
+      - break
+      - continue
+    scope:
+      - let
+      - mut
+    error_handling:
+      - try
+      - catch
+      - throw
+    special_values:
+      - true
+      - false
+      - null
+      - none
+    visibility:
+      - pub
+      - private
+    type_markers:
+      - as
+      - in
+
+  multichar_lexemes:
+    - "=>"
+    - "->"
+    - "|>"
+    - "=="
+    - "!="
+    - "<="
+    - ">="
+    - "&&"
+    - "||"
+    - "**"
+    - "::"
+    - ".."
+
+  literals:
+    number:
+      description: "Integer or float literal"
+      type_inference: "Inferred as i32, f64, or specific type from context"
+    string:
+      description: "UTF-8 string literal"
+      syntax: "\"hello\" or 'hello'"
+    tensor:
+      description: "Tensor/array literal with explicit shape"
+      syntax: "[1, 2, 3] or [[1, 2], [3, 4]] or Tensor(shape=[N, M], values=[...])"
+      type: "Tensor<T, Shape>"
+      immutable: "Tensors are immutable by default"
+    boolean:
+      values: ["true", "false"]
+    none:
+      value: "none"
+      meaning: "No value (type-safe via Option type)"
+
+  comments:
+    line: "// comment to end of line"
+    block: "/* ... */ (may nest)"
+    docstring: "/// for function/type documentation"
+
+structure:
+  indentation: "None significant; braces delimit blocks"
+  newline_behavior: "Ignored (semicolon terminates statements)"
+  block_delimiters:
+    open: "{"
+    close: "}"
+  statement_terminator: ";"
+  pipe_operator: "|> (data pipeline, left-to-right composition)"
+
+types:
+  primitives:
+    number:
+      types:
+        - "i32: 32-bit signed integer"
+        - "i64: 64-bit signed integer"
+        - "f32: 32-bit IEEE 754 float"
+        - "f64: 64-bit IEEE 754 float"
+      coercion: "No implicit coercion; use 'as' for explicit cast"
+    boolean:
+      type: "bool"
+      values: ["true", "false"]
+      truthiness: "Only bool is truthy; numbers/strings don't coerce to bool"
+    string:
+      type: "String (owned) or &str (borrowed)"
+      immutable: "All strings are immutable"
+      operations: "Concatenation via +, length, slicing, equality"
+    none:
+      type: "None (unit type)"
+      use: "Return type when nothing is returned"
+      meaning: "Type-safe null (used in Option type)"
+
+  composite:
+    tensor:
+      description: "Multi-dimensional array (first-class type)"
+      type: "Tensor<T, Shape>"
+      syntax: "[1, 2, 3] or Tensor(shape=[3], values=[1, 2, 3])"
+      first_class: true
+      shape_required: true
+      immutable_default: true
+      immutable: "Default immutable; 'mut x: Tensor' for mutable"
+      operations:
+        - "Indexing: t[0] or t[0][1]"
+        - "Slicing: t[1:5] or t[::2]"
+        - "Shape: t.shape() -> [N, M]"
+        - "Reshape: t.reshape([N*M])"
+        - "Element-wise operations: t1 + t2, t1 * t2"
+      broadcasting: "Explicit only - use reshape() or broadcast() for shape alignment"
+      type_checking: "Shape validation at compile time where possible"
+
+    array:
+      description: "Fixed-size homogeneous collection"
+      type: "Array<T, N>"
+      syntax: "[1, 2, 3] or Array(T, 5)"
+      fixed_size: true
+      immutable: "Immutable by default"
+
+    tuple:
+      description: "Fixed-size heterogeneous collection"
+      type: "Tuple<T1, T2, ...>"
+      syntax: "(x: i32, y: f64, name: String)"
+      heterogeneous: true
+      destructuring: "let (x, y) = point"
+
+    custom_struct:
+      description: "Named composite type"
+      syntax: "struct Point { x: f64, y: f64 }"
+      fields: "Immutable by default; 'mut field' for mutable"
+      methods: "Defined via impl blocks"
+
+  algebraic:
+    option:
+      description: "Explicit optional type (no null pointer dereference)"
+      type: "Option<T>"
+      variants: ["Some(T)", "None"]
+      operations: "match, unwrap(), unwrap_or(default), map(f)"
+      required: "Must be used instead of null - no implicit null"
+
+    result:
+      description: "Explicit error handling type"
+      type: "Result<T, E>"
+      variants: ["Ok(T)", "Err(E)"]
+      operations: "match, unwrap(), unwrap_or(default), map(), catch()"
+      required: "All fallible operations return Result; errors are explicit"
+
+    custom_enum:
+      description: "Tagged union type"
+      syntax: "enum Color { Red, Green, Blue } or enum Option { Some(T), None }"
+      pattern_matching: "Primary control flow mechanism"
+
+  function_type:
+    description: "First-class function type"
+    syntax: "fn(input: T) -> output: U"
+    higher_order: "Functions can take/return functions"
+    partial_application: "Supported via lambda"
+
+operators:
+  arithmetic:
+    "+": "Addition (numbers and string concatenation)"
+    "-": "Subtraction"
+    "*": "Multiplication (and tensor operations)"
+    "/": "Division"
+    "%": "Modulo"
+    "**": "Exponentiation"
+
+  comparison:
+    "==": "Equality (must have same type)"
+    "!=": "Inequality"
+    "<": "Less than"
+    "<=": "Less than or equal"
+    ">": "Greater than"
+    ">=": "Greater than or equal"
+
+  logical:
+    "&&": "Logical AND (short-circuit)"
+    "||": "Logical OR (short-circuit)"
+    "!": "Logical NOT"
+
+  tensor_operations:
+    element_wise:
+      "+": "Element-wise addition (shapes must match)"
+      "-": "Element-wise subtraction (shapes must match)"
+      "*": "Element-wise multiplication (Hadamard product)"
+      "/": "Element-wise division"
+      "**": "Element-wise exponentiation"
+    matrix_multiply:
+      "@": "Matrix multiplication (T1[M, K] @ T2[K, N] = Result[M, N])"
+
+  type_operations:
+    "as": "Explicit type cast"
+    "->": "Function return type annotation"
+    "::": "Module/namespace separator"
+    "|>": "Pipe operator (pass result to next function)"
+
+  assignment:
+    "=": "Assignment (both let and update)"
+    "+=": "Add-assign"
+    "-=": "Subtract-assign"
+    "*=": "Multiply-assign"
+    "/=": "Divide-assign"
+
+  pattern:
+    "=>": "Match arm syntax (pattern => expression)"
+    "|": "Pattern or (match a | b => ...)"
+
+  special:
+    "..": "Range operator (1..10)"
+
+precedence:
+  level_1:
+    name: "Postfix operations"
+    operators: ["[index]", ".method()", ".field", "(call)"]
+
+  level_2:
+    name: "Exponentiation"
+    operators: ["**"]
+    associativity: "right"
+
+  level_3:
+    name: "Unary"
+    operators: ["-x", "!x"]
+
+  level_4:
+    name: "Multiplicative"
+    operators: ["*", "/", "%", "@"]
+    associativity: "left"
+
+  level_5:
+    name: "Additive"
+    operators: ["+", "-"]
+    associativity: "left"
+
+  level_6:
+    name: "Range"
+    operators: [".."]
+
+  level_7:
+    name: "Relational"
+    operators: ["<", "<=", ">", ">="]
+
+  level_8:
+    name: "Equality"
+    operators: ["==", "!="]
+
+  level_9:
+    name: "Logical AND"
+    operators: ["&&"]
+
+  level_10:
+    name: "Logical OR"
+    operators: ["||"]
+
+  level_11:
+    name: "Assignment"
+    operators: ["=", "+=", "-=", "*=", "/="]
+    associativity: "right"
+
+  level_12:
+    name: "Pipe"
+    operators: ["|>"]
+    associativity: "left"
+    description: "Data flows left to right through pipeline"
+
+statements:
+  variable_binding:
+    description: "Bind value to name"
+    syntax: "let name: Type = value; or let name = value;"
+    mutability: "let name is immutable; let mut name is mutable"
+    shadowing: "New let in same scope creates new binding"
+
+  assignment:
+    description: "Update mutable variable"
+    syntax: "name = value;"
+    requirements: "Variable must be declared with 'mut'"
+    type_check: "New value must match declared type"
+
+  function_definition:
+    description: "Define named function"
+    syntax: "fn name(param1: Type1, param2: Type2) -> ReturnType { ... }"
+    immutable_params: "Parameters immutable by default"
+    return: "Last expression (no semicolon) is return value"
+    explicit_return: "return value; for early return"
+    purity: "Pure by default"
+
+  if_statement:
+    description: "Conditional execution"
+    syntax: "if condition { ... } else if condition { ... } else { ... }"
+    pattern_matching: "if let pattern = value { ... }"
+
+  match_statement:
+    description: "Pattern matching (preferred over if for multiple cases)"
+    syntax: "match value { pattern => expr, ... }"
+    exhaustiveness: "Must cover all cases (compiler checks)"
+    required_exhaustiveness: true
+    primary_decision_mechanism: true
+
+  for_loop:
+    description: "Iterate over collection"
+    syntax: "for item in collection { ... } or for i in 0..10 { ... }"
+    destructuring: "for (x, y) in points { ... }"
+
+  while_loop:
+    description: "Conditional loop"
+    syntax: "while condition { ... }"
+
+  try_catch:
+    description: "Error handling"
+    syntax: "try { ... } catch(error) { ... }"
+    result_based: "Functions return Result<T, E> by default"
+    unwrapping: "Use 'try!' macro to propagate errors"
+
+  return_statement:
+    description: "Early return from function"
+    syntax: "return value;"
+    implicit: "Last expression is implicit return"
+
+  break_statement:
+    description: "Exit loop"
+    syntax: "break;"
+
+  continue_statement:
+    description: "Skip to next loop iteration"
+    syntax: "continue;"
+
+expressions:
+  literals:
+    numbers: "42, 3.14, 1e-5"
+    strings: "\"hello\""
+    tensors: "[1, 2, 3] or [[1, 2], [3, 4]]"
+    booleans: "true, false"
+
+  function_call:
+    syntax: "function(arg1, arg2)"
+    partial_application: "func(x) creates new function with x bound"
+
+  method_call:
+    syntax: "object.method(args)"
+    auto_deref: "Automatic dereferencing for convenience"
+
+  pipe_operator:
+    syntax: "value |> function1() |> function2() |> function3()"
+    meaning: "Left-to-right data flow, more readable than nested calls"
+
+  lambda:
+    syntax: "lambda(x, y) => x + y"
+    composition: "Lambdas compose naturally with pipe operator"
+
+  pattern_match:
+    syntax: "match expr { pattern => expr, ... }"
+    destructuring: "match point { (0, 0) => \"origin\", (x, y) => ... }"
+
+  tensor_operations:
+    element_wise: "t1 + t2, t1 * t2, t1 / t2"
+    matrix_multiply: "t1 @ t2"
+    slicing: "t[1:5], t[:, 0], t[::2]"
+    indexing: "t[0], t[i][j]"
+    reshape: "t.reshape([new_shape])"
+    transpose: "t.transpose()"
+
+functions_and_pipelines:
+  definition:
+    syntax: "fn name(params) -> Type"
+  purity:
+    default: pure
+  composition:
+    pipeline_operator: "|>"
+  pipelines:
+    left_to_right: true
+    intermediate_values: explicit
+    side_effects: prohibited
+    description: "Data flows left-to-right through transformations"
+
+control_flow:
+  primary:
+    - if
+    - match
+  secondary:
+    - for
+    - while
+
+pattern_matching:
+  required_exhaustiveness: true
+  primary_decision_mechanism: true
+
+error_handling:
+  model:
+    - result
+    - try_catch
+  unchecked_exceptions: disallowed
+  explicit_handling: "All fallible operations must return Result or be handled"
+
+ai_features:
+  tensor_type:
+    description: "First-class immutable tensor type"
+    syntax: "Tensor<T, Shape>"
+    operations: "Shape-aware indexing, slicing, broadcasting (explicit)"
+    type_safety: "Shape checking at compile time where possible"
+    immutability: "Tensors immutable by default (functional style)"
+    efficiency: "Compiler can optimize without mutable-state tracking"
+
+  explicit_broadcasting:
+    description: "No implicit broadcasting - must be explicit"
+    why: "Prevents silent dimension errors in ML code"
+    implicit: false
+    explicit: true
+    shape_mismatch: error
+
+  pattern_matching_ml:
+    description: "Primary control flow for ML decisions"
+
+  result_type:
+    description: "Explicit error handling"
+    benefit: "All operations that can fail return Result; no surprises"
+
+  function_composition:
+    description: "Functions as first-class values"
+    benefit: "Build complex pipelines from simple functions"
+
+  immutable_by_default:
+    description: "Values immutable unless declared mutable"
+    benefit: "Prevents accidental mutations, easier to reason about"
+
+  type_annotations:
+    description: "Explicit where needed, inferred where possible"
+    benefit: "Code is self-documenting without verbosity"
+
+stdlib:
+  tensor_ops:
+    - reshape
+    - transpose
+    - slice
+    - broadcast
+    - concatenate
+    - stack
+    - concat
+
+  math:
+    - sin
+    - cos
+    - exp
+    - log
+    - sqrt
+    - max
+    - min
+    - mean
+    - sum
+    - std
+
+  linear_algebra:
+    - matmul
+    - inv
+    - solve
+    - eigh
+    - svd
+
+  random:
+    - normal
+    - uniform
+    - shuffle
+    - choice
+
+  io:
+    - load
+    - save
+
+  functional:
+    - map
+    - filter
+    - reduce
+    - compose
+    - pipe
+
+  statistics:
+    - mean
+    - variance
+    - percentile
+    - histogram
+
+  loss_functions:
+    - mse
+    - crossentropy
+    - mae
+    - huber
+
+  optimizers:
+    - sgd
+    - adam
+    - rmsprop
+    - momentum
+
+  metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1
+
+semantic_guarantees:
+  type_safety: "All type mismatches caught at compile time"
+  no_implicit_coercion: "No silent type conversions; 'as' keyword required"
+  no_broadcast_surprises: "All shape mismatches caught early; explicit broadcasting required"
+  no_null_dereference: "Option type prevents null pointer errors"
+  no_unhandled_errors: "Result type requires error handling; compiler enforces"
+  determinism: "Same input always produces same output (no hidden state)"
+  reproducibility: "Execution is deterministic and reproducible"
+  hidden_state: "Prohibited"
+  evaluation_order: "Explicit and deterministic"
+  explicitness: "All operations visible in syntax; no magic"
+  verifiability: "Code structure matches execution flow (AST is truth)"
+
+backward_compatibility:
+  preserves:
+    - ai1.yaml v0.1 (specification intent and semantic breadth)
+    - ai2.yaml v0.2 (kernel alignment and discipline)
+  migration: "All valid ai1.yaml and ai2.yaml code remains valid in ai.yaml v0.3"
