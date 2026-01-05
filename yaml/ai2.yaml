@@ -1,0 +1,197 @@
+name: AI
+version: 0.2
+status: stable-dialect
+role: ai_ml_language
+
+specification_basis:
+  - ai.yaml v0.1
+  - lumen2.yaml kernel alignment
+  - deterministic ML workflows
+
+philosophy:
+  principles:
+    - semantic_clarity
+    - explicit_shapes
+    - immutable_by_default
+    - no_implicit_broadcasting
+    - fail_fast_fail_clearly
+    - composable_pipelines
+  non_goals:
+    - opaque_model_magic
+    - probabilistic_control_flow
+    - hidden_side_effects
+
+# -------------------------------------------------------------------
+# KERNEL ALIGNMENT
+# -------------------------------------------------------------------
+
+kernel_alignment:
+  base: lumen2.kernel
+  extensions:
+    - tensor_ops
+    - pattern_match
+
+# -------------------------------------------------------------------
+# LEXICAL & STRUCTURAL RULES
+# -------------------------------------------------------------------
+
+lexical:
+  keywords:
+    - type
+    - struct
+    - enum
+    - fn
+    - let
+    - mut
+    - if
+    - else
+    - match
+    - case
+    - for
+    - while
+    - break
+    - continue
+    - return
+    - try
+    - catch
+    - throw
+    - true
+    - false
+    - null
+    - none
+    - pub
+    - private
+
+  operators:
+    arithmetic: ["+", "-", "*", "/", "%", "**"]
+    comparison: ["==", "!=", "<", ">", "<=", ">="]
+    logical: ["&&", "||", "!"]
+    pipeline: ["|>"]
+    pattern: ["=>", "|"]
+    tensor:
+      element_wise: ["+", "-", "*", "/"]
+      matrix_multiply: "@"
+
+structure:
+  braces: ["{", "}"]
+  statement_termination: ";"
+
+# -------------------------------------------------------------------
+# TYPES
+# -------------------------------------------------------------------
+
+types:
+  primitives:
+    - i32
+    - i64
+    - f32
+    - f64
+    - bool
+    - String
+    - str_ref
+
+  composite:
+    tuple:
+      heterogeneous: true
+    array:
+      fixed_size: true
+    tensor:
+      first_class: true
+      shape_required: true
+      immutable_default: true
+
+  algebraic:
+    option: "Option(T)"
+    result: "Result(T, E)"
+
+  user_defined:
+    struct: true
+    enum: true
+
+# -------------------------------------------------------------------
+# FUNCTIONS & PIPELINES
+# -------------------------------------------------------------------
+
+functions:
+  definition:
+    syntax: "fn name(params) -> Type"
+  purity:
+    default: pure
+  composition:
+    pipeline_operator: "|>"
+
+pipelines:
+  semantics:
+    left_to_right: true
+    intermediate_values: explicit
+    side_effects: prohibited
+
+# -------------------------------------------------------------------
+# CONTROL FLOW
+# -------------------------------------------------------------------
+
+control_flow:
+  primary:
+    - if
+    - match
+  secondary:
+    - for
+    - while
+
+pattern_matching:
+  required_exhaustiveness: true
+  primary_decision_mechanism: true
+
+# -------------------------------------------------------------------
+# ERROR HANDLING
+# -------------------------------------------------------------------
+
+errors:
+  model:
+    - result
+    - try_catch
+  unchecked_exceptions: disallowed
+
+# -------------------------------------------------------------------
+# AI / ML DOMAIN FEATURES
+# -------------------------------------------------------------------
+
+ai_features:
+  tensors:
+    broadcasting:
+      implicit: false
+      explicit: true
+    shape_mismatch: error
+
+  stdlib:
+    tensor_ops:
+      - reshape
+      - transpose
+      - slice
+      - concat
+    math:
+      - exp
+      - log
+      - sqrt
+      - mean
+      - std
+    loss_functions:
+      - mse
+      - cross_entropy
+    optimizers:
+      - sgd
+      - adam
+
+# -------------------------------------------------------------------
+# SEMANTIC GUARANTEES
+# -------------------------------------------------------------------
+
+semantics:
+  determinism: guaranteed
+  reproducibility: guaranteed
+  hidden_state: none
+  evaluation_order: explicit
+
+backward_compatibility:
+  preserves:
+    - ai.yaml v0.1
