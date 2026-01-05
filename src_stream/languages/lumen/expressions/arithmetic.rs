@@ -1,7 +1,7 @@
 use crate::languages::lumen::prelude::*;
 // src/expr/arithmetic.rs
 //
-// + - * / % and unary minus
+// + - * / % ** and unary minus
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
@@ -62,6 +62,7 @@ impl ExprNode for ArithmeticExpr {
             "*" => numeric::multiply(&left_num.value, &right_num.value)?,
             "/" => numeric::divide(&left_num.value, &right_num.value)?,
             "%" => numeric::modulo(&left_num.value, &right_num.value)?,
+            "**" => numeric::power(&left_num.value, &right_num.value)?,
             _ => return Err("Invalid arithmetic operator".into()),
         };
         Ok(Box::new(LumenNumber::new(result)))
@@ -103,7 +104,7 @@ impl ExprInfix for ArithmeticInfix {
 /// Declare what patterns this module recognizes
 pub fn patterns() -> PatternSet {
     PatternSet::new()
-        .with_literals(vec!["+", "-", "*", "/", "%"])
+        .with_literals(vec!["+", "-", "*", "/", "%", "**"])
 }
 
 // --------------------
@@ -119,4 +120,5 @@ pub fn register(reg: &mut Registry) {
     reg.register_infix(Box::new(ArithmeticInfix::new("*", Precedence::Factor)));
     reg.register_infix(Box::new(ArithmeticInfix::new("/", Precedence::Factor)));
     reg.register_infix(Box::new(ArithmeticInfix::new("%", Precedence::Factor)));
+    reg.register_infix(Box::new(ArithmeticInfix::new("**", Precedence::Power)));
 }

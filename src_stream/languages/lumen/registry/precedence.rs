@@ -8,6 +8,7 @@ pub enum Precedence {
     Comparison = 20,
     Term = 30,
     Factor = 40,
+    Power = 45,
     Unary = 50,
 }
 
@@ -27,7 +28,8 @@ impl std::ops::Add<i32> for Precedence {
             v if v < 20 => Precedence::Logic,
             v if v < 30 => Precedence::Comparison,
             v if v < 40 => Precedence::Term,
-            v if v < 50 => Precedence::Factor,
+            v if v < 45 => Precedence::Factor,
+            v if v < 50 => Precedence::Power,
             _ => Precedence::Unary,
         }
     }

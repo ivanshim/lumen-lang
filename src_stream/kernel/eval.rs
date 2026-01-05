@@ -14,6 +14,10 @@ pub fn eval(program: &Program) -> Result<(), String> {
             Control::None => {}
             Control::Break => break,
             Control::Continue => continue,
+            Control::Return(_) => {
+                // Return at top level (outside function) - just stop execution
+                break;
+            }
         }
     }
 
