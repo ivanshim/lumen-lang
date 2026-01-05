@@ -11,6 +11,7 @@ pub mod expressions;
 pub mod statements;
 pub mod structure;
 pub mod extern_system;
+pub mod function_registry;
 
 // The dispatcher module
 pub mod dispatcher {

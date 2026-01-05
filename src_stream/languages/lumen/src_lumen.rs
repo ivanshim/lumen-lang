@@ -37,6 +37,7 @@ pub fn aggregate_patterns() -> PatternSet {
         statements::break_stmt::patterns(),
         statements::continue_stmt::patterns(),
         statements::return_stmt::patterns(),
+        statements::fn_definition::patterns(),
     ];
 
     PatternSet::merge(patterns_list)
@@ -66,6 +67,7 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::recognize("break"),
         TokenDefinition::recognize("continue"),
         TokenDefinition::recognize("return"),
+        TokenDefinition::recognize("fn"),
         TokenDefinition::recognize("print"),
         TokenDefinition::recognize("extern"),  // Impurity boundary marker
         TokenDefinition::recognize("true"),
@@ -97,4 +99,5 @@ pub fn register_all(registry: &mut Registry) {
     statements::break_stmt::register(registry);    // break statement
     statements::continue_stmt::register(registry); // continue statement
     statements::return_stmt::register(registry);   // return statement
+    statements::fn_definition::register(registry); // function definition
 }
