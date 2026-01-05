@@ -1,11 +1,11 @@
 use crate::languages::lumen::prelude::*;
-// Number, boolean, and string literals
+// Number, boolean, string, and none literals
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
 use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::{Env, Value};
-use crate::languages::lumen::values::{LumenNumber, LumenBool, LumenString};
+use crate::languages::lumen::values::{LumenNumber, LumenBool, LumenString, LumenNone};
 
 #[derive(Debug)]
 pub struct NumberLiteral {
@@ -127,6 +127,30 @@ impl ExprPrefix for StringLiteralPrefix {
     }
 }
 
+// None literal
+
+#[derive(Debug)]
+struct NoneLiteral;
+
+impl ExprNode for NoneLiteral {
+    fn eval(&self, _env: &mut Env) -> LumenResult<Value> {
+        Ok(Box::new(LumenNone))
+    }
+}
+
+pub struct NoneLiteralPrefix;
+
+impl ExprPrefix for NoneLiteralPrefix {
+    fn matches(&self, parser: &Parser) -> bool {
+        parser.peek().lexeme == "none"
+    }
+
+    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
+        parser.advance(); // consume 'none'
+        Ok(Box::new(NoneLiteral))
+    }
+}
+
 // --------------------
 // Pattern Declaration
 // --------------------
@@ -134,7 +158,7 @@ impl ExprPrefix for StringLiteralPrefix {
 /// Declare what patterns this module recognizes
 pub fn patterns() -> PatternSet {
     PatternSet::new()
-        .with_literals(vec!["true", "false", "\""])
+        .with_literals(vec!["true", "false", "none", "\""])
         .with_char_classes(vec!["digit", "quote"])
 }
 
@@ -147,5 +171,6 @@ pub fn register(reg: &mut Registry) {
     // Register handlers
     reg.register_prefix(Box::new(NumberLiteralPrefix));
     reg.register_prefix(Box::new(BoolLiteralPrefix));
+    reg.register_prefix(Box::new(NoneLiteralPrefix));
     reg.register_prefix(Box::new(StringLiteralPrefix));
 }

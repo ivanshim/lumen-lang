@@ -16,11 +16,12 @@ impl Program {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Control {
     None,
     Break,
     Continue,
+    Return(Value),
 }
 
 pub trait ExprNode: fmt::Debug {

@@ -60,6 +60,13 @@ pub fn modulo(a: &str, b: &str) -> LumenResult<String> {
     Ok(format_number(av % bv))
 }
 
+/// Exponentiation (power) operation on two numeric strings
+pub fn power(a: &str, b: &str) -> LumenResult<String> {
+    let av = parse_number(a)?;
+    let bv = parse_number(b)?;
+    Ok(format_number(av.powf(bv)))
+}
+
 /// Negate a numeric string
 pub fn negate(s: &str) -> LumenResult<String> {
     let v = parse_number(s)?;

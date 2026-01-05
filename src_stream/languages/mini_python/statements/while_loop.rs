@@ -35,6 +35,10 @@ impl StmtNode for WhileStmt {
                             break;
                         }
                         Control::Continue => break,
+                        Control::Return(val) => {
+                            env.pop_scope();
+                            return Ok(Control::Return(val));
+                        }
                         Control::None => {}
                     }
                 }

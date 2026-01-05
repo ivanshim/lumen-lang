@@ -8,3 +8,4 @@ pub mod continue_stmt;
 pub mod if_else;
 pub mod print;
 pub mod while_loop;
+pub mod return_stmt;

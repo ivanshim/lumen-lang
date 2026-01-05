@@ -34,6 +34,7 @@ pub fn aggregate_patterns() -> PatternSet {
         statements::while_loop::patterns(),
         statements::break_stmt::patterns(),
         statements::continue_stmt::patterns(),
+        statements::return_stmt::patterns(),
     ];
 
     PatternSet::merge(patterns_list)
@@ -49,6 +50,7 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::recognize("!="),
         TokenDefinition::recognize("<="),
         TokenDefinition::recognize(">="),
+        TokenDefinition::recognize("**"),
 
         // Keywords (not skipped)
         TokenDefinition::recognize("and"),
@@ -59,10 +61,12 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::recognize("while"),
         TokenDefinition::recognize("break"),
         TokenDefinition::recognize("continue"),
+        TokenDefinition::recognize("return"),
         TokenDefinition::recognize("print"),
         TokenDefinition::recognize("extern"),  // Impurity boundary marker
         TokenDefinition::recognize("true"),
         TokenDefinition::recognize("false"),
+        TokenDefinition::recognize("none"),
     ];
 
     registry.tokens.set_token_definitions(tokens);
@@ -86,4 +90,5 @@ pub fn register_all(registry: &mut Registry) {
     statements::while_loop::register(registry);    // while loops
     statements::break_stmt::register(registry);    // break statement
     statements::continue_stmt::register(registry); // continue statement
+    statements::return_stmt::register(registry);   // return statement
 }
