@@ -1,6 +1,6 @@
 # Mini-Rust Language Schema (YAML)
 # Pure declarative data for Mini-Rust
-# All parsing and execution is handled by the microcode kernel
+# All parsing and execution is handled by the kernel
 
 name: mini_rust
 version: 1.0
