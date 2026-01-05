@@ -1,49 +1,42 @@
 // Function registry for storing function definitions
 // Functions are stored globally during parsing/execution
-// This is used by function definition and function call handlers
+// Uses Rc<RefCell<>> to store statement bodies without requiring Clone
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::any::Any;
+use std::rc::Rc;
 use crate::kernel::ast::StmtNode;
 
-// We use a wrapper to store function bodies
-// The function bodies can't be directly cloned, so we store them through Any
-pub struct FunctionBody {
-    // Stored as a mutable reference that can be temporarily taken
-    stmts: RefCell<Option<Vec<Box<dyn StmtNode>>>>,
-}
-
-impl FunctionBody {
-    pub fn new(stmts: Vec<Box<dyn StmtNode>>) -> Self {
-        Self {
-            stmts: RefCell::new(Some(stmts)),
-        }
-    }
-
-    pub fn clone_stmts(&self) -> Option<Vec<Box<dyn StmtNode>>> {
-        // This is a workaround - we can't actually clone trait objects
-        // For now, we'll use a different approach
-        None
-    }
-}
-
+/// Stores a function definition: parameters and statement body
 pub struct FunctionDef {
     pub params: Vec<String>,
-    pub body_ptr: *const (),  // Pointer to statement vector (for reference)
+    pub body: Rc<RefCell<Vec<Box<dyn StmtNode>>>>,
 }
 
 thread_local! {
-    // Store functions with their names and parameter counts
-    // The actual bodies will be managed through execution context
-    static FUNCTION_REGISTRY: RefCell<HashMap<String, Vec<String>>> = RefCell::new(HashMap::new());
+    /// Global function registry - stores all defined functions
+    /// Maps function name -> FunctionDef
+    static FUNCTION_REGISTRY: RefCell<HashMap<String, FunctionDef>> = RefCell::new(HashMap::new());
 }
 
-/// Register function parameters (body will be handled during execution)
-pub fn register_function(name: String, params: Vec<String>) {
+/// Register a function definition with its parameters and body
+pub fn define_function(name: String, params: Vec<String>, body: Vec<Box<dyn StmtNode>>) {
     FUNCTION_REGISTRY.with(|registry| {
-        registry.borrow_mut().insert(name, params);
+        let def = FunctionDef {
+            params,
+            body: Rc::new(RefCell::new(body)),
+        };
+        registry.borrow_mut().insert(name, def);
     });
+}
+
+/// Get a function definition by name (returns Rc to allow shared access)
+pub fn get_function(name: &str) -> Option<(Vec<String>, Rc<RefCell<Vec<Box<dyn StmtNode>>>>)> {
+    FUNCTION_REGISTRY.with(|registry| {
+        registry.borrow().get(name).map(|def| {
+            (def.params.clone(), Rc::clone(&def.body))
+        })
+    })
 }
 
 /// Check if a function exists
@@ -53,10 +46,10 @@ pub fn function_exists(name: &str) -> bool {
     })
 }
 
-/// Get parameters for a function
+/// Get function parameter names
 pub fn get_function_params(name: &str) -> Option<Vec<String>> {
     FUNCTION_REGISTRY.with(|registry| {
-        registry.borrow().get(name).cloned()
+        registry.borrow().get(name).map(|def| def.params.clone())
     })
 }
 
