@@ -1,0 +1,1339 @@
+# Python 3.14 Language Schema (YAML)
+# Based on official Python grammar specification from docs.python.org/3/reference/grammar.html
+# Pure declarative data for Python language
+# All parsing and execution is handled by the microcode kernel
+
+name: python
+version: 3.14
+specification_url: "https://docs.python.org/3/reference/grammar.html"
+parser_type: PEG (Parsing Expression Grammar)
+
+# LANGUAGE OVERVIEW
+# =================
+
+description: |
+  Python is a high-level, dynamically-typed programming language emphasizing code readability.
+  Features include:
+  - Object-oriented, functional, and procedural programming styles
+  - Automatic memory management and garbage collection
+  - Comprehensive standard library
+  - Dynamic typing with runtime type checking
+  - Support for async/await concurrency
+  - Pattern matching (match/case statements as of 3.10)
+  - Type hints and annotations (PEP 484+)
+  - List/dict/set comprehensions and generators
+
+# LEXICAL RULES
+# ==============
+
+keywords:
+  # Control flow
+  - if
+  - elif
+  - else
+  - for
+  - while
+  - break
+  - continue
+
+  # Functions and definitions
+  - def
+  - return
+  - yield
+  - lambda
+
+  # Classes and objects
+  - class
+  - self
+
+  # Scope modifiers
+  - global
+  - nonlocal
+
+  # Error handling
+  - try
+  - except
+  - finally
+  - raise
+
+  # Context management
+  - with
+  - as
+
+  # Pattern matching (3.10+)
+  - match
+  - case
+
+  # Async/await (3.5+)
+  - async
+  - await
+
+  # Type/module directives
+  - import
+  - from
+  - del
+
+  # Assertions and debugging
+  - assert
+  - pass
+
+  # Boolean and null values
+  - True
+  - False
+  - None
+
+  # Logical operators
+  - and
+  - or
+  - not
+
+  # Membership/identity
+  - in
+  - is
+
+# Multi-character lexemes (sorted by length descending)
+multichar_lexemes:
+  - "**="
+  - "//="
+  - "<<="
+  - ">>="
+  - "=="
+  - "!="
+  - "<="
+  - ">="
+  - "**"
+  - "//"
+  - "<<"
+  - ">>"
+  - ":="
+  - "->"
+  - "..."
+
+# Numeric literals
+numeric_literals:
+  integers:
+    - decimal: "[0-9]+"
+    - binary: "0b[01]+"
+    - octal: "0o[0-7]+"
+    - hexadecimal: "0x[0-9a-fA-F]+"
+  floats:
+    - standard: "[0-9]+.[0-9]*"
+    - exponent: "[0-9]+(.[0-9]*)?[eE][+-]?[0-9]+"
+  imaginary: "[0-9]+(.[0-9]*)?[jJ]"
+
+# String literals
+string_literals:
+  single_quoted: "'[^']*'"
+  double_quoted: "\"[^\"]*\""
+  triple_single: "'''...'''"
+  triple_double: "\"\"\"...\"\"\""
+  raw_strings: "r'...' or r\"...\""
+  formatted_strings: "f'...' or f\"...\" (f-strings, 3.6+)"
+  byte_strings: "b'...' or b\"...\""
+
+# Characters that split tokens
+split_chars:
+  - " "
+  - "\t"
+  - "\n"
+  - "\r"
+  - "("
+  - ")"
+  - "["
+  - "]"
+  - "{"
+  - "}"
+  - ","
+  - ":"
+  - ";"
+  - "."
+  - "@"
+  - "="
+  - "+"
+  - "-"
+  - "*"
+  - "/"
+  - "%"
+  - "&"
+  - "|"
+  - "^"
+  - "~"
+  - "<"
+  - ">"
+  - "!"
+  - "#"
+
+# STRUCTURAL RULES
+# ================
+
+structure:
+  # Indentation mode: Python uses indentation-based blocks (significant whitespace)
+  indentation: fixed
+  indent_size: flexible (conventionally 4 spaces)
+
+  # Newline behavior: Newlines are significant and act as statement terminators
+  newline_behavior: terminator
+
+  # Line continuation
+  line_continuation: "backslash at end of line (\\) or implicit in parentheses/brackets/braces"
+
+  # EOF handling: Dedent all remaining indentation levels
+  eof_handling: dedent_all
+
+  # Block delimiters: Implicit via indentation (no explicit braces)
+  block_open: null
+  block_close: null
+  block_indicator: "colon (:) followed by indented block"
+
+  # Statement separators
+  statement_separators:
+    - newline
+    - semicolon (;)
+
+  # Comment syntax
+  comments:
+    - line_comment: "# to end of line"
+    - docstring: "Triple-quoted string as first statement in module/class/function"
+
+# OPERATORS
+# =========
+
+operators:
+
+  # Operator Precedence (Lowest to Highest)
+  # ======================================
+  precedence_level_1:
+    name: "Conditional expression"
+    operators:
+      conditional_expr:
+        syntax: "x if condition else y"
+        precedence: 1
+        associativity: right
+        name: conditional_expression
+        description: "Ternary conditional operator"
+
+  precedence_level_2:
+    name: "Lambda expressions"
+    operators:
+      lambda:
+        syntax: "lambda [args]: expression"
+        precedence: 2
+        associativity: right
+        name: lambda
+        description: "Anonymous function definition"
+
+  precedence_level_3:
+    name: "Disjunction (OR)"
+    operators:
+      or:
+        syntax: "x or y"
+        precedence: 3
+        associativity: left
+        name: logical_or
+        description: "Logical OR - short-circuit evaluation"
+
+  precedence_level_4:
+    name: "Conjunction (AND)"
+    operators:
+      and:
+        syntax: "x and y"
+        precedence: 4
+        associativity: left
+        name: logical_and
+        description: "Logical AND - short-circuit evaluation"
+
+  precedence_level_5:
+    name: "Boolean negation"
+    operators:
+      not:
+        syntax: "not x"
+        precedence: 5
+        position: prefix
+        name: logical_not
+        description: "Logical NOT"
+
+  precedence_level_6:
+    name: "Comparisons"
+    operators:
+      eq:
+        syntax: "x == y"
+        precedence: 6
+        associativity: left
+        name: equal
+        description: "Equality comparison"
+      ne:
+        syntax: "x != y"
+        precedence: 6
+        associativity: left
+        name: not_equal
+        description: "Not equal comparison"
+      lt:
+        syntax: "x < y"
+        precedence: 6
+        associativity: left
+        name: less_than
+        description: "Less than comparison"
+      le:
+        syntax: "x <= y"
+        precedence: 6
+        associativity: left
+        name: less_equal
+        description: "Less than or equal comparison"
+      gt:
+        syntax: "x > y"
+        precedence: 6
+        associativity: left
+        name: greater_than
+        description: "Greater than comparison"
+      ge:
+        syntax: "x >= y"
+        precedence: 6
+        associativity: left
+        name: greater_equal
+        description: "Greater than or equal comparison"
+      in:
+        syntax: "x in y"
+        precedence: 6
+        associativity: left
+        name: membership
+        description: "Membership test"
+      not_in:
+        syntax: "x not in y"
+        precedence: 6
+        associativity: left
+        name: not_membership
+        description: "Negated membership test"
+      is:
+        syntax: "x is y"
+        precedence: 6
+        associativity: left
+        name: identity
+        description: "Identity test (same object)"
+      is_not:
+        syntax: "x is not y"
+        precedence: 6
+        associativity: left
+        name: not_identity
+        description: "Negated identity test"
+
+  precedence_level_7:
+    name: "Bitwise OR"
+    operators:
+      bitor:
+        syntax: "x | y"
+        precedence: 7
+        associativity: left
+        name: bitwise_or
+        description: "Bitwise OR"
+
+  precedence_level_8:
+    name: "Bitwise XOR"
+    operators:
+      bitxor:
+        syntax: "x ^ y"
+        precedence: 8
+        associativity: left
+        name: bitwise_xor
+        description: "Bitwise XOR"
+
+  precedence_level_9:
+    name: "Bitwise AND"
+    operators:
+      bitand:
+        syntax: "x & y"
+        precedence: 9
+        associativity: left
+        name: bitwise_and
+        description: "Bitwise AND"
+
+  precedence_level_10:
+    name: "Shifts"
+    operators:
+      lshift:
+        syntax: "x << y"
+        precedence: 10
+        associativity: left
+        name: shift_left
+        description: "Bitwise left shift"
+      rshift:
+        syntax: "x >> y"
+        precedence: 10
+        associativity: left
+        name: shift_right
+        description: "Bitwise right shift"
+
+  precedence_level_11:
+    name: "Addition and subtraction"
+    operators:
+      add:
+        syntax: "x + y"
+        precedence: 11
+        associativity: left
+        name: addition
+        description: "Addition / concatenation"
+      sub:
+        syntax: "x - y"
+        precedence: 11
+        associativity: left
+        name: subtraction
+        description: "Subtraction"
+
+  precedence_level_12:
+    name: "Multiplication, division, modulo"
+    operators:
+      mul:
+        syntax: "x * y"
+        precedence: 12
+        associativity: left
+        name: multiplication
+        description: "Multiplication / repetition"
+      div:
+        syntax: "x / y"
+        precedence: 12
+        associativity: left
+        name: true_division
+        description: "True division (always returns float)"
+      floordiv:
+        syntax: "x // y"
+        precedence: 12
+        associativity: left
+        name: floor_division
+        description: "Floor division"
+      mod:
+        syntax: "x % y"
+        precedence: 12
+        associativity: left
+        name: modulo
+        description: "Modulo / string formatting"
+      matmul:
+        syntax: "x @ y"
+        precedence: 12
+        associativity: left
+        name: matrix_multiplication
+        description: "Matrix multiplication operator (3.5+)"
+
+  precedence_level_13:
+    name: "Unary operations"
+    operators:
+      pos:
+        syntax: "+x"
+        precedence: 13
+        position: prefix
+        name: unary_plus
+        description: "Unary plus"
+      neg:
+        syntax: "-x"
+        precedence: 13
+        position: prefix
+        name: unary_minus
+        description: "Unary minus / negation"
+      invert:
+        syntax: "~x"
+        precedence: 13
+        position: prefix
+        name: bitwise_not
+        description: "Bitwise NOT / inversion"
+
+  precedence_level_14:
+    name: "Exponentiation"
+    operators:
+      pow:
+        syntax: "x ** y"
+        precedence: 14
+        associativity: right
+        name: exponentiation
+        description: "Exponentiation (right-associative)"
+
+  precedence_level_15:
+    name: "Primary (highest)"
+    operators:
+      subscript:
+        syntax: "x[i]"
+        precedence: 15
+        name: subscript
+        description: "Subscript / indexing"
+      slice:
+        syntax: "x[i:j:k]"
+        precedence: 15
+        name: slice
+        description: "Slicing"
+      call:
+        syntax: "f(args)"
+        precedence: 15
+        name: call
+        description: "Function/method call"
+      attribute:
+        syntax: "x.attr"
+        precedence: 15
+        name: attribute_access
+        description: "Attribute access"
+
+  # Assignment operators (special handling, right-associative)
+  assignment:
+    "=":
+      precedence: 0
+      associativity: right
+      name: assign
+      description: "Assignment"
+    "+=":
+      precedence: 0
+      associativity: right
+      name: add_assign
+      description: "In-place addition"
+    "-=":
+      precedence: 0
+      associativity: right
+      name: sub_assign
+      description: "In-place subtraction"
+    "*=":
+      precedence: 0
+      associativity: right
+      name: mul_assign
+      description: "In-place multiplication"
+    "/=":
+      precedence: 0
+      associativity: right
+      name: truediv_assign
+      description: "In-place true division"
+    "//=":
+      precedence: 0
+      associativity: right
+      name: floordiv_assign
+      description: "In-place floor division"
+    "%=":
+      precedence: 0
+      associativity: right
+      name: mod_assign
+      description: "In-place modulo"
+    "@=":
+      precedence: 0
+      associativity: right
+      name: matmul_assign
+      description: "In-place matrix multiplication"
+    "&=":
+      precedence: 0
+      associativity: right
+      name: and_assign
+      description: "In-place bitwise AND"
+    "|=":
+      precedence: 0
+      associativity: right
+      name: or_assign
+      description: "In-place bitwise OR"
+    "^=":
+      precedence: 0
+      associativity: right
+      name: xor_assign
+      description: "In-place bitwise XOR"
+    ">>=":
+      precedence: 0
+      associativity: right
+      name: rshift_assign
+      description: "In-place right shift"
+    "<<=":
+      precedence: 0
+      associativity: right
+      name: lshift_assign
+      description: "In-place left shift"
+    "**=":
+      precedence: 0
+      associativity: right
+      name: pow_assign
+      description: "In-place exponentiation"
+    ":=":
+      precedence: 0.5
+      associativity: right
+      name: walrus_assign
+      description: "Named expression / walrus operator (3.8+)"
+
+# STATEMENTS
+# ==========
+
+statements:
+
+  simple_statements:
+
+    pass_statement:
+      description: "Null operation (no-op)"
+      pattern: [keyword]
+      fields:
+        - keyword: pass
+      primitive: noop
+
+    break_statement:
+      description: "Break from loop"
+      pattern: [keyword]
+      fields:
+        - keyword: break
+      primitive: jump
+
+    continue_statement:
+      description: "Continue to next loop iteration"
+      pattern: [keyword]
+      fields:
+        - keyword: continue
+      primitive: jump
+
+    return_statement:
+      description: "Return from function"
+      pattern: [keyword, optional(expression)]
+      fields:
+        - keyword: return
+        - value: optional_expression
+      primitive: return
+
+    yield_statement:
+      description: "Yield from generator"
+      pattern: [keyword, optional(expression)]
+      fields:
+        - keyword: yield
+        - value: optional_expression
+      primitive: yield
+
+    raise_statement:
+      description: "Raise exception"
+      pattern: [keyword, optional(expression, optional("from", expression))]
+      fields:
+        - keyword: raise
+        - exception: optional_expression
+        - cause: optional_expression
+      primitive: raise
+
+    assert_statement:
+      description: "Assert condition (debugging)"
+      pattern: [keyword, expression, optional(",", expression)]
+      fields:
+        - keyword: assert
+        - condition: expression
+        - message: optional_expression
+      primitive: assert
+
+    del_statement:
+      description: "Delete variable/attribute/subscript"
+      pattern: [keyword, target_list]
+      fields:
+        - keyword: del
+        - targets: target_list
+      primitive: delete
+
+    simple_assignment:
+      description: "Simple assignment"
+      pattern: [target, "=", expression]
+      fields:
+        - target: identifier_or_subscript
+        - value: expression
+      primitive: assign
+
+    multiple_assignment:
+      description: "Multiple simultaneous assignments"
+      pattern: [target_list, "=", target_list, "=", "...", "=", expression]
+      fields:
+        - targets: target_list
+        - value: expression
+      primitive: assign
+
+    augmented_assignment:
+      description: "Augmented assignment (+=, -=, etc.)"
+      pattern: [target, augmented_assign_op, expression]
+      fields:
+        - target: identifier_or_subscript
+        - operator: augmented_assign_op
+        - value: expression
+      primitive: augmented_assign
+
+    starred_assignment:
+      description: "Assignment with starred target (unpacking)"
+      pattern: [starred_target_list, "=", expression]
+      fields:
+        - targets: starred_target_list
+        - value: expression
+      primitive: assign_unpacking
+
+    annotated_assignment:
+      description: "Assignment with type annotation (3.6+)"
+      pattern: [identifier, ":", expression, optional("=", expression)]
+      fields:
+        - target: identifier
+        - annotation: type_expression
+        - value: optional_expression
+      primitive: annotated_assign
+
+    expression_statement:
+      description: "Expression as statement"
+      pattern: [expression]
+      fields:
+        - expression: expression
+      primitive: expr_stmt
+
+    import_statement:
+      description: "Import module or names from module"
+      pattern: [keyword, import_clause]
+      fields:
+        - keyword: import
+        - clause: import_clause
+      primitive: import
+
+    from_import_statement:
+      description: "From ... import ..."
+      pattern: [keyword, module_name, keyword, import_names]
+      fields:
+        - keyword: from
+        - module: module_name
+        - import_keyword: import
+        - names: import_names
+      primitive: import
+
+    global_statement:
+      description: "Declare global variable"
+      pattern: [keyword, identifier_list]
+      fields:
+        - keyword: global
+        - names: identifier_list
+      primitive: global_stmt
+
+    nonlocal_statement:
+      description: "Declare nonlocal variable"
+      pattern: [keyword, identifier_list]
+      fields:
+        - keyword: nonlocal
+        - names: identifier_list
+      primitive: nonlocal_stmt
+
+  compound_statements:
+
+    if_statement:
+      description: "If-elif-else conditional"
+      pattern: [keyword, test, ":", block, repeat(keyword, test, ":", block), optional(keyword, ":", block)]
+      fields:
+        - keyword: if
+        - condition: test
+        - body: block
+        - elif_parts: list_of_elif_clause
+        - else_keyword: optional_else
+        - else_body: optional_block
+      primitive: conditional
+
+    while_loop:
+      description: "While loop with optional else"
+      pattern: [keyword, test, ":", block, optional(keyword, ":", block)]
+      fields:
+        - keyword: while
+        - condition: test
+        - body: block
+        - else_keyword: optional_else
+        - else_body: optional_block
+      primitive: loop
+
+    for_loop:
+      description: "For loop with optional else"
+      pattern: [keyword, target_list, keyword, testlist, ":", block, optional(keyword, ":", block)]
+      fields:
+        - keyword: for
+        - target: target_list
+        - in_keyword: in
+        - iterable: testlist
+        - body: block
+        - else_keyword: optional_else
+        - else_body: optional_block
+      primitive: loop
+
+    try_statement:
+      description: "Try-except-else-finally error handling"
+      pattern: [keyword, ":", block, except_clauses, optional(keyword, ":", block), optional(keyword, ":", block)]
+      fields:
+        - keyword: try
+        - body: block
+        - handlers: list_of_except_clause
+        - else_keyword: optional_else
+        - else_body: optional_block
+        - finally_keyword: optional_finally
+        - finally_body: optional_block
+      primitive: try_except
+
+    with_statement:
+      description: "Context manager (with statement)"
+      pattern: [keyword, with_item, repeat(",", with_item), ":", block]
+      fields:
+        - keyword: with
+        - context_expr: expression
+        - context_var: optional_target
+        - body: block
+      primitive: with_stmt
+
+    async_for_loop:
+      description: "Asynchronous for loop (3.5+)"
+      pattern: [keyword, keyword, target_list, keyword, testlist, ":", block]
+      fields:
+        - async_keyword: async
+        - keyword: for
+        - target: target_list
+        - in_keyword: in
+        - iterable: testlist
+        - body: block
+      primitive: async_loop
+
+    async_with_statement:
+      description: "Asynchronous context manager (3.5+)"
+      pattern: [keyword, keyword, with_item, ":", block]
+      fields:
+        - async_keyword: async
+        - keyword: with
+        - context_expr: expression
+        - body: block
+      primitive: async_with
+
+    function_def:
+      description: "Function definition"
+      pattern: [optional(keyword), keyword, identifier, "(", parameters, ")", optional("->", expression), ":", block]
+      fields:
+        - async_keyword: optional_async
+        - keyword: def
+        - name: identifier
+        - params: parameters
+        - return_type: optional_type_annotation
+        - body: block
+      primitive: function_def
+
+    class_def:
+      description: "Class definition"
+      pattern: [keyword, identifier, optional("(", arglist, ")"), ":", block]
+      fields:
+        - keyword: class
+        - name: identifier
+        - bases: optional_base_list
+        - body: block
+      primitive: class_def
+
+    match_statement:
+      description: "Pattern matching statement (3.10+)"
+      pattern: [keyword, expression, ":", case_block, repeat(case_block)]
+      fields:
+        - keyword: match
+        - subject: expression
+        - cases: list_of_case_clause
+      primitive: match
+
+    async_function_def:
+      description: "Asynchronous function definition (3.5+)"
+      pattern: [keyword, keyword, identifier, "(", parameters, ")", optional("->", expression), ":", block]
+      fields:
+        - async_keyword: async
+        - keyword: def
+        - name: identifier
+        - params: parameters
+        - return_type: optional_type_annotation
+        - body: block
+      primitive: async_function_def
+
+# EXPRESSION TYPES
+# ================
+
+expressions:
+
+  literals:
+    integer:
+      description: "Integer literal"
+      examples: ["0", "123", "0xFF", "0o17", "0b1010"]
+    float:
+      description: "Floating-point literal"
+      examples: ["3.14", "2.5e-3", "1.", ".5"]
+    complex:
+      description: "Complex number literal"
+      examples: ["3+4j", "1j", "complex(1, 2)"]
+    string:
+      description: "String literal"
+      examples: ["'hello'", "\"world\"", "'''multi-line'''", "r'raw'", "f'formatted {var}'"]
+    bytes:
+      description: "Bytes literal"
+      examples: ["b'bytes'", "b'\\x00\\x01'"]
+    boolean:
+      description: "Boolean literal"
+      examples: ["True", "False"]
+    none:
+      description: "None literal"
+      examples: ["None"]
+
+  containers:
+    list:
+      description: "List literal / construction"
+      syntax: "[expr, expr, ...]"
+      examples: ["[1, 2, 3]", "[]", "[x for x in range(10)]"]
+    tuple:
+      description: "Tuple literal / construction"
+      syntax: "(expr, expr, ...) or expr, expr, ..."
+      examples: ["(1, 2, 3)", "(1,)", "1, 2, 3"]
+    dict:
+      description: "Dictionary literal / construction"
+      syntax: "{key: value, key: value, ...}"
+      examples: ["{\"a\": 1, \"b\": 2}", "{x: y for x, y in items}", "{}"]
+    set:
+      description: "Set literal / construction"
+      syntax: "{expr, expr, ...}"
+      examples: ["{1, 2, 3}", "set()"]
+
+  comprehensions:
+    list_comprehension:
+      description: "List comprehension"
+      syntax: "[expr for target in iterable if condition]"
+    dict_comprehension:
+      description: "Dictionary comprehension"
+      syntax: "{key: value for target in iterable if condition}"
+    set_comprehension:
+      description: "Set comprehension"
+      syntax: "{expr for target in iterable if condition}"
+    generator_expression:
+      description: "Generator expression"
+      syntax: "(expr for target in iterable if condition)"
+
+  primary_expressions:
+    identifier:
+      description: "Variable/name reference"
+      pattern: "[a-zA-Z_][a-zA-Z0-9_]*"
+    attribute_access:
+      description: "Attribute access"
+      syntax: "obj.attr"
+    subscript:
+      description: "Subscript / indexing"
+      syntax: "obj[expr]"
+    slice:
+      description: "Slicing"
+      syntax: "obj[start:stop:step]"
+    function_call:
+      description: "Function or method call"
+      syntax: "func(args, kwargs)"
+    lambda:
+      description: "Lambda expression"
+      syntax: "lambda args: expression"
+
+  operators:
+    arithmetic:
+      - "Addition: x + y"
+      - "Subtraction: x - y"
+      - "Multiplication: x * y"
+      - "Division: x / y (always float)"
+      - "Floor division: x // y"
+      - "Modulo: x % y"
+      - "Exponentiation: x ** y"
+      - "Matrix multiplication: x @ y (3.5+)"
+    logical:
+      - "AND: x and y (short-circuit)"
+      - "OR: x or y (short-circuit)"
+      - "NOT: not x"
+    comparison:
+      - "Equal: x == y"
+      - "Not equal: x != y"
+      - "Less than: x < y"
+      - "Greater than: x > y"
+      - "Less or equal: x <= y"
+      - "Greater or equal: x >= y"
+      - "Membership: x in y"
+      - "Non-membership: x not in y"
+      - "Identity: x is y"
+      - "Non-identity: x is not y"
+    bitwise:
+      - "AND: x & y"
+      - "OR: x | y"
+      - "XOR: x ^ y"
+      - "NOT: ~x"
+      - "Left shift: x << y"
+      - "Right shift: x >> y"
+    conditional:
+      - "Ternary: x if cond else y"
+    special:
+      - "Named expression (walrus): x := value (3.8+)"
+
+# VALUE TYPES
+# ===========
+
+types:
+
+  none_type:
+    description: "Null/None value type"
+    value: "None"
+    operations: "Singleton value representing absence"
+
+  boolean:
+    description: "Boolean type"
+    values:
+      - True
+      - False
+    operations: "Logical operations, truthiness evaluation"
+
+  numeric_types:
+
+    int:
+      description: "Arbitrary precision integer"
+      syntax_examples: ["0", "123", "-456", "0xFF", "0o17", "0b1010", "1_000_000"]
+      operations: ["Arithmetic (+, -, *, //, %, **)", "Bitwise (&, |, ^, ~, <<, >>)", "Comparisons"]
+      coercion: "int(x) conversion"
+
+    float:
+      description: "Floating-point number (IEEE 754 double precision)"
+      syntax_examples: ["3.14", "2.5e-3", "1.", ".5", "float('inf')", "float('nan')"]
+      operations: ["Arithmetic (+, -, *, /, //, %, **)", "Comparisons"]
+      coercion: "float(x) conversion"
+
+    complex:
+      description: "Complex number"
+      syntax_examples: ["3+4j", "1j", "complex(1, 2)"]
+      operations: ["Arithmetic (+, -, *, /, //, %, **)", "Comparisons"]
+      coercion: "complex(x) conversion"
+
+  sequence_types:
+
+    str:
+      description: "Unicode string (immutable)"
+      syntax_examples: ["'string'", "\"string\"", "'''multi-line'''", "r'raw'", "f'formatted {var}'"]
+      operations: ["Concatenation (+)", "Repetition (*)", "Indexing, slicing", "Methods (.format(), .upper(), etc)"]
+      coercion: "str(x) conversion"
+
+    bytes:
+      description: "Byte sequence (immutable)"
+      syntax_examples: ["b'bytes'", "b'\\x00\\x01'", "bytes([1, 2, 3])"]
+      operations: ["Concatenation (+)", "Repetition (*)", "Indexing, slicing"]
+      coercion: "bytes(x) conversion"
+
+    bytearray:
+      description: "Mutable byte sequence"
+      syntax_examples: ["bytearray(b'bytes')", "bytearray([1, 2, 3])"]
+      operations: ["Mutable operations", "Indexing, slicing"]
+      coercion: "bytearray(x) conversion"
+
+    list:
+      description: "Ordered mutable sequence"
+      syntax_examples: ["[1, 2, 3]", "[]", "[x for x in range(10)]"]
+      operations: ["Indexing, slicing", "Mutations (.append(), .extend(), .pop(), etc)", "Comprehensions"]
+      coercion: "list(x) conversion"
+
+    tuple:
+      description: "Ordered immutable sequence"
+      syntax_examples: ["(1, 2, 3)", "(1,)", "1, 2, 3", "()"]
+      operations: ["Indexing, slicing", "Unpacking"]
+      coercion: "tuple(x) conversion"
+
+    range:
+      description: "Immutable sequence of integers"
+      syntax_examples: ["range(10)", "range(1, 11)", "range(0, 20, 2)"]
+      operations: ["Iteration", "Indexing", "Containment test"]
+      coercion: "range(start, stop, step) construction"
+
+  mapping_types:
+
+    dict:
+      description: "Mutable key-value mapping"
+      syntax_examples: ["{\"a\": 1, \"b\": 2}", "{}", "{x: y for x, y in items}"]
+      operations: ["Indexing (get/set/delete)", "Iteration", "Methods (.keys(), .values(), .items(), etc)"]
+      coercion: "dict(x) conversion"
+
+  set_types:
+
+    set:
+      description: "Unordered collection of unique items (mutable)"
+      syntax_examples: ["{1, 2, 3}", "set()", "{x for x in items}"]
+      operations: ["Set operations (union, intersection, difference)", "Membership test", "Mutations"]
+      coercion: "set(x) conversion"
+
+    frozenset:
+      description: "Unordered collection of unique items (immutable)"
+      syntax_examples: ["frozenset([1, 2, 3])", "frozenset()"]
+      operations: ["Set operations (union, intersection, difference)", "Membership test"]
+      coercion: "frozenset(x) conversion"
+
+  callable_types:
+
+    function:
+      description: "User-defined function"
+      syntax: "def func(args): ..."
+      operations: ["Call with arguments", "Type hints/annotations (3.5+)"]
+
+    builtin_function:
+      description: "Built-in function (native implementation)"
+      operations: ["Call with arguments"]
+
+    method:
+      description: "Function bound to an object"
+      operations: ["Call with arguments"]
+
+    lambda:
+      description: "Anonymous function"
+      syntax: "lambda args: expression"
+      operations: ["Call with arguments"]
+
+    class:
+      description: "Class type"
+      syntax: "class Name: ..."
+      operations: ["Instantiation", "Inheritance", "Type checking"]
+
+    generator:
+      description: "Generator function/iterator"
+      syntax: "def gen(): yield x"
+      operations: ["Iteration", ".send(), .throw(), .close()"]
+
+    coroutine:
+      description: "Asynchronous function"
+      syntax: "async def coro(): ..."
+      operations: ["Awaiting", ".send(), .throw(), .close()"]
+
+  special_types:
+    type:
+      description: "Metaclass / type object"
+      operations: ["Type creation", "Isinstance checks"]
+
+    object:
+      description: "Base class of all Python objects"
+      operations: ["Attribute access", "Method calls"]
+
+# TYPE ANNOTATIONS & HINTS
+# ========================
+
+type_hints:
+  description: "Python 3.5+ type annotation system (PEP 484)"
+  supports_annotations: true
+  syntax_examples:
+    - "def func(x: int) -> str: ..."
+    - "variable: int = 5"
+    - "from typing import List, Dict, Union, Optional, Callable"
+    - "def func(items: List[int]) -> Dict[str, int]: ..."
+  features:
+    - "Basic types: int, str, float, bool, None"
+    - "Generic types: List, Dict, Set, Tuple, Callable, etc."
+    - "Union types: Union[int, str]"
+    - "Optional types: Optional[int] (Union[int, None])"
+    - "Type aliases: MyType = List[Dict[str, int]]"
+    - "Protocols (3.8+): typing.Protocol for structural subtyping"
+    - "TypedDict (3.8+): typing.TypedDict for typed dictionaries"
+    - "Literal types (3.8+): Literal['option1', 'option2']"
+    - "Generics with TypeVar"
+
+# ASYNC/AWAIT
+# ===========
+
+async_support:
+  version_introduced: 3.5
+  description: "Asynchronous programming with async/await syntax"
+  keywords:
+    - async
+    - await
+  features:
+    - "async def for coroutine functions"
+    - "await expression to pause execution"
+    - "asyncio module for managing coroutines"
+    - "async for for async iteration"
+    - "async with for async context managers"
+    - "Coroutines, Tasks, Futures"
+    - "Event loops"
+
+# PATTERN MATCHING
+# ================
+
+pattern_matching:
+  version_introduced: 3.10
+  description: "Structural pattern matching with match/case statements"
+  features:
+    - "Literal patterns: case 0: ..."
+    - "Capture patterns: case x: ... (bind to variable)"
+    - "Wildcard pattern: case _: ... (any value)"
+    - "Sequence patterns: case [1, x, 3]: ... (list/tuple unpacking)"
+    - "Mapping patterns: case {\"key\": value}: ... (dict unpacking)"
+    - "Class patterns: case Point(x, y): ... (object deconstruction)"
+    - "OR patterns: case 1 | 2: ... (match multiple cases)"
+    - "Guard clauses: case x if x > 0: ... (additional conditions)"
+
+# STANDARD LIBRARY HIGHLIGHTS
+# ============================
+
+stdlib_overview:
+  description: "Python includes a comprehensive standard library"
+  major_modules:
+    - "builtins: Built-in functions and constants"
+    - "sys: System-specific functions"
+    - "os: Operating system interface"
+    - "io: Input/output operations"
+    - "pathlib: Object-oriented filesystem paths"
+    - "collections: Specialized data structures"
+    - "itertools: Iterator tools"
+    - "functools: Function manipulation"
+    - "operator: Function operators"
+    - "string: String operations"
+    - "re: Regular expressions"
+    - "json: JSON encoder/decoder"
+    - "csv: CSV file handling"
+    - "datetime: Date and time handling"
+    - "time: Time-related functions"
+    - "random: Pseudo-random number generation"
+    - "math: Mathematical functions"
+    - "statistics: Statistical calculations"
+    - "decimal: Precise decimal arithmetic"
+    - "fractions: Rational number arithmetic"
+    - "cmath: Complex number math"
+    - "typing: Type hints support"
+    - "copy: Object copying"
+    - "pprint: Pretty-print data structures"
+    - "enum: Enumeration support"
+    - "dataclasses: Data class decorator (3.7+)"
+    - "asyncio: Asynchronous I/O"
+    - "threading: Thread-based parallelism"
+    - "multiprocessing: Process-based parallelism"
+    - "subprocess: Subprocess management"
+    - "socket: Network socket interface"
+    - "urllib: URL handling"
+    - "http: HTTP protocol"
+    - "email: Email message handling"
+    - "sqlite3: SQLite database interface"
+    - "unittest: Testing framework"
+    - "doctest: Docstring testing"
+    - "logging: Logging facility"
+    - "warnings: Warning control"
+    - "contextlib: Context manager utilities"
+    - "abc: Abstract base classes"
+    - "inspect: Runtime inspection tools"
+    - "traceback: Exception traceback tools"
+    - "gc: Garbage collector interface"
+    - "sys: System-specific configuration"
+    - "pickle: Object serialization"
+    - "struct: Binary data packing"
+    - "codecs: Codec registry and base classes"
+    - "gettext: Message translation"
+    - "locale: Localization"
+    - "argparse: Command-line argument parser"
+    - "shlex: Shell-like lexical analyzer"
+    - "configparser: Configuration file parser"
+    - "tempfile: Temporary files and directories"
+    - "glob: File path pattern expansion"
+    - "fnmatch: Unix filename matching"
+    - "linecache: Line-by-line content"
+    - "zipfile: ZIP archive handling"
+    - "tarfile: TAR archive handling"
+    - "gzip: Gzip compression"
+    - "shutil: High-level file operations"
+    - "hashlib: Cryptographic hash functions"
+    - "hmac: HMAC authentication"
+    - "secrets: Cryptographically secure random generation"
+
+# DECORATORS
+# ===========
+
+decorators:
+  description: "Function and class decorators for metaprogramming"
+  builtin_decorators:
+    - "@property: Create property accessors"
+    - "@classmethod: Class method decorator"
+    - "@staticmethod: Static method decorator"
+    - "@abstractmethod: Abstract method (abc module)"
+    - "@dataclass: Dataclass decorator (dataclasses module)"
+  syntax: "@decorator or @decorator(args)"
+  usage: "Applied to function/class definitions"
+
+# CONTEXT MANAGERS
+# ================
+
+context_managers:
+  description: "Resource management with 'with' statement"
+  syntax: "with expression as variable: block"
+  dunder_methods:
+    - "__enter__(): Called when entering context"
+    - "__exit__(): Called when leaving context"
+  examples:
+    - "File handling: with open(file) as f: ..."
+    - "Locks: with lock: ..."
+    - "Transactions: with transaction: ..."
+
+# SCOPING RULES
+# ==============
+
+scoping:
+  description: "Python's LEGB scope resolution order"
+  rules:
+    - "L (Local): Inside current function"
+    - "E (Enclosing): Inside enclosing function (nested functions)"
+    - "G (Global): Module level"
+    - "B (Built-in): Built-in namespace"
+  special_keywords:
+    - "global: Declare global variable"
+    - "nonlocal: Declare enclosing scope variable"
+  closure_support: "Functions can capture variables from enclosing scope"
+
+# OBJECT MODEL
+# ============
+
+object_model:
+  description: "Everything in Python is an object"
+  dunder_methods:
+    attribute_access:
+      - "__getattr__(): Get attribute"
+      - "__setattr__(): Set attribute"
+      - "__delattr__(): Delete attribute"
+      - "__getattribute__(): Get attribute (always called)"
+    object_representation:
+      - "__str__(): String representation (user-friendly)"
+      - "__repr__(): Developer representation"
+      - "__format__(): Format specification"
+    comparison:
+      - "__eq__(), __ne__(), __lt__(), __le__(), __gt__(), __ge__(): Comparisons"
+    arithmetic:
+      - "__add__(), __sub__(), __mul__(), __truediv__(), __floordiv__(), __mod__(), __pow__(): Arithmetic"
+      - "__radd__(), __rsub__(), etc.: Reverse arithmetic"
+      - "__iadd__(), __isub__(), etc.: In-place arithmetic"
+    container:
+      - "__len__(): Length"
+      - "__getitem__(), __setitem__(), __delitem__(): Indexing"
+      - "__contains__(): Membership test"
+      - "__iter__(), __next__(): Iteration"
+    callable:
+      - "__call__(): Make object callable"
+    context:
+      - "__enter__(), __exit__(): Context manager protocol"
+    misc:
+      - "__hash__(): Hash value"
+      - "__bool__(): Truthiness"
+      - "__new__(), __init__(): Object creation"
+      - "__del__(): Destructor"
+
+# SPECIAL FEATURES
+# ================
+
+special_features:
+  list_dict_set_comprehensions:
+    description: "Concise syntax for creating sequences and collections"
+    examples:
+      - "[x*2 for x in range(10) if x % 2 == 0]"
+      - "{x: x**2 for x in range(5)}"
+      - "{x for x in items if x > 0}"
+
+  generator_expressions:
+    description: "Lazy evaluation of sequences"
+    syntax: "(x for x in iterable)"
+
+  unpacking:
+    description: "Unpacking sequences and mappings"
+    examples:
+      - "a, b, c = [1, 2, 3]"
+      - "a, *rest, b = [1, 2, 3, 4, 5]"
+      - "func(*args, **kwargs)"
+
+  slice_objects:
+    description: "Extended slicing with start:stop:step"
+    examples:
+      - "lst[1:5]"
+      - "lst[::2]"
+      - "lst[::-1]"
+
+  string_formatting:
+    description: "Multiple string formatting methods"
+    methods:
+      - "Old-style: 'value: %d' % value"
+      - "str.format(): 'value: {}'.format(value)"
+      - "f-strings: f'value: {value}' (3.6+)"
+
+  multiple_inheritance:
+    description: "Classes can inherit from multiple base classes"
+    mro: "Method Resolution Order (MRO) using C3 linearization"
+
+  metaclasses:
+    description: "Classes as objects (instances of metaclass)"
+    usage: "class Meta(type): ..."
+
+  property_descriptors:
+    description: "Descriptor protocol for custom attribute access"
+    dunder_methods:
+      - "__get__(), __set__(), __delete__(): Descriptor methods"

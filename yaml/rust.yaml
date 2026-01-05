@@ -1,0 +1,1310 @@
+# Rust Language Schema (YAML)
+# Based on official Rust Reference from doc.rust-lang.org/reference/
+# Pure declarative data for Rust language
+# All parsing and execution is handled by the microcode kernel
+
+name: rust
+version: 1.75+
+specification_url: "https://doc.rust-lang.org/reference/"
+working_group_url: "https://github.com/rust-lang/wg-grammar"
+
+# LANGUAGE OVERVIEW
+# =================
+
+description: |
+  Rust is a systems programming language that runs blazingly fast, prevents segfaults,
+  and guarantees thread safety.
+
+  Key Features:
+  - Ownership system and borrow checker for memory safety without garbage collection
+  - Traits and generic programming for zero-cost abstractions
+  - Pattern matching and algebraic data types (enums)
+  - Lifetimes for explicit memory management
+  - Concurrency primitives (Async/Await, Threads)
+  - Macros for metaprogramming
+  - Strong static typing with type inference
+  - No null pointer dereference (Option/Result types)
+  - Unsafe blocks for low-level operations
+  - FFI (Foreign Function Interface) for C interoperability
+
+target_audience: "Systems programming, embedded systems, performance-critical code, blockchain"
+
+# LEXICAL RULES
+# ==============
+
+keywords:
+  # Control flow
+  - if
+  - else
+  - match
+  - loop
+  - while
+  - for
+  - break
+  - continue
+
+  # Functions
+  - fn
+  - return
+
+  # Type declarations
+  - struct
+  - enum
+  - union
+  - trait
+  - impl
+  - type
+  - const
+  - static
+  - async
+  - unsafe
+
+  # Scope and visibility
+  - pub
+  - crate
+  - self
+  - super
+  - use
+  - mod
+
+  # Ownership and borrowing
+  - move
+  - ref
+  - mut
+
+  # Keywords for special constructs
+  - dyn
+  - abstract
+  - become
+  - box
+  - do
+  - final
+  - macro
+  - override
+  - priv
+  - typeof
+  - unsized
+  - virtual
+  - where
+  - yield
+
+  # Boolean and null-like
+  - true
+  - false
+
+  # Placeholders
+  - _
+
+  # Keywords for special constructs
+  - as
+  - in
+
+# Reserved keywords (not yet used but reserved)
+reserved_keywords:
+  - abstract
+  - become
+  - box
+  - do
+  - final
+  - macro
+  - override
+  - priv
+  - typeof
+  - unsized
+  - virtual
+  - yield
+
+# Multi-character lexemes (sorted by length descending)
+multichar_lexemes:
+  - "<<="
+  - ">>="
+  - "::="
+  - "->"
+  - "=>"
+  - ".."
+  - "..."
+  - "..="
+  - "=="
+  - "!="
+  - "<="
+  - ">="
+  - "&&"
+  - "||"
+  - "::"
+  - "<<"
+  - ">>"
+  - "+="
+  - "-="
+  - "*="
+  - "/="
+  - "%="
+  - "&="
+  - "|="
+  - "^="
+
+# Literals
+literals:
+  integer:
+    description: "Integer literals"
+    formats:
+      decimal: "[0-9][0-9_]*"
+      hexadecimal: "0x[0-9a-fA-F_]+"
+      octal: "0o[0-7_]+"
+      binary: "0b[01_]+"
+    suffixes:
+      unsigned: "u8, u16, u32, u64, u128, usize"
+      signed: "i8, i16, i32, i64, i128, isize"
+    examples: ["123", "0xFF", "0o755", "0b1010", "1_000_000", "42u32", "10i64"]
+
+  float:
+    description: "Floating-point literals"
+    formats:
+      decimal: "[0-9]+(.[0-9]+)?([eE][+-]?[0-9]+)?"
+    suffixes:
+      - f32
+      - f64
+    examples: ["3.14", "2.5e-3", "1.", ".5", "1e10f32"]
+
+  string:
+    description: "String literals"
+    types:
+      string_literal: "\"...\" (str slice, double-quoted)"
+      raw_string: "r\"...\" or r#\"...\"# (no escape sequences)"
+      byte_string: "b\"...\" (u8 slice)"
+      c_string: "c\"...\" (C string, 1.77+)"
+    examples: ["\"hello\"", "r\"raw\\string\"", "b\"bytes\"", "c\"C string\""]
+
+  char:
+    description: "Character literal"
+    syntax: "'c' (single character)"
+    examples: ["'a'", "'\\n'", "'\\u{1F600}'"]
+
+  boolean:
+    description: "Boolean literals"
+    values:
+      - true
+      - false
+
+# Comments
+comments:
+  line_comment: "// comment to end of line"
+  block_comment: "/* ... */ (nested)"
+  doc_comment: "/// (documentation for items)"
+  module_doc: "//! (documentation for module/crate)"
+
+# Whitespace
+whitespace: "Ignored except for token separation (ASCII 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x20)"
+
+# STRUCTURAL RULES
+# ================
+
+structure:
+  description: "Rust uses brace-based block structure"
+
+  indentation: none
+  indentation_note: "Indentation is not significant; braces delimit blocks"
+
+  newline_behavior: ignored
+  newline_note: "Newlines are just whitespace, not statement terminators"
+
+  block_delimiters:
+    open: "{"
+    close: "}"
+
+  statement_terminators:
+    - ";"
+  terminator_note: "Semicolon terminates statements; expressions don't need semicolons"
+
+  path_separator: "::"
+
+  attributes: "#[attr] for outer, #![attr] for inner"
+
+# OPERATORS
+# =========
+
+operators:
+
+  # Precedence levels from lowest to highest
+  precedence_1:
+    name: "Assignment (right-associative)"
+    operators:
+      assign:
+        syntax: "x = y"
+        precedence: 1
+        associativity: right
+        name: assign
+      add_assign:
+        syntax: "x += y"
+        precedence: 1
+        associativity: right
+        name: add_assign
+      sub_assign:
+        syntax: "x -= y"
+        precedence: 1
+        associativity: right
+        name: sub_assign
+      mul_assign:
+        syntax: "x *= y"
+        precedence: 1
+        associativity: right
+        name: mul_assign
+      div_assign:
+        syntax: "x /= y"
+        precedence: 1
+        associativity: right
+        name: div_assign
+      rem_assign:
+        syntax: "x %= y"
+        precedence: 1
+        associativity: right
+        name: rem_assign
+      and_assign:
+        syntax: "x &= y"
+        precedence: 1
+        associativity: right
+        name: and_assign
+      or_assign:
+        syntax: "x |= y"
+        precedence: 1
+        associativity: right
+        name: or_assign
+      xor_assign:
+        syntax: "x ^= y"
+        precedence: 1
+        associativity: right
+        name: xor_assign
+      shl_assign:
+        syntax: "x <<= y"
+        precedence: 1
+        associativity: right
+        name: shl_assign
+      shr_assign:
+        syntax: "x >>= y"
+        precedence: 1
+        associativity: right
+        name: shr_assign
+
+  precedence_2:
+    name: "Range"
+    operators:
+      range:
+        syntax: "x..y or x..=y"
+        precedence: 2
+        associativity: right
+        name: range
+        description: "Range creation"
+
+  precedence_3:
+    name: "Logical OR"
+    operators:
+      or:
+        syntax: "x || y"
+        precedence: 3
+        associativity: left
+        name: logical_or
+        description: "Logical OR (short-circuit)"
+
+  precedence_4:
+    name: "Logical AND"
+    operators:
+      and:
+        syntax: "x && y"
+        precedence: 4
+        associativity: left
+        name: logical_and
+        description: "Logical AND (short-circuit)"
+
+  precedence_5:
+    name: "Equality"
+    operators:
+      eq:
+        syntax: "x == y"
+        precedence: 5
+        associativity: left
+        name: equal
+      ne:
+        syntax: "x != y"
+        precedence: 5
+        associativity: left
+        name: not_equal
+
+  precedence_6:
+    name: "Relational"
+    operators:
+      lt:
+        syntax: "x < y"
+        precedence: 6
+        associativity: left
+        name: less_than
+      le:
+        syntax: "x <= y"
+        precedence: 6
+        associativity: left
+        name: less_equal
+      gt:
+        syntax: "x > y"
+        precedence: 6
+        associativity: left
+        name: greater_than
+      ge:
+        syntax: "x >= y"
+        precedence: 6
+        associativity: left
+        name: greater_equal
+
+  precedence_7:
+    name: "Bitwise OR"
+    operators:
+      bitor:
+        syntax: "x | y"
+        precedence: 7
+        associativity: left
+        name: bitwise_or
+
+  precedence_8:
+    name: "Bitwise XOR"
+    operators:
+      bitxor:
+        syntax: "x ^ y"
+        precedence: 8
+        associativity: left
+        name: bitwise_xor
+
+  precedence_9:
+    name: "Bitwise AND"
+    operators:
+      bitand:
+        syntax: "x & y"
+        precedence: 9
+        associativity: left
+        name: bitwise_and
+
+  precedence_10:
+    name: "Shift"
+    operators:
+      shl:
+        syntax: "x << y"
+        precedence: 10
+        associativity: left
+        name: shift_left
+      shr:
+        syntax: "x >> y"
+        precedence: 10
+        associativity: left
+        name: shift_right
+
+  precedence_11:
+    name: "Additive"
+    operators:
+      add:
+        syntax: "x + y"
+        precedence: 11
+        associativity: left
+        name: addition
+      sub:
+        syntax: "x - y"
+        precedence: 11
+        associativity: left
+        name: subtraction
+
+  precedence_12:
+    name: "Multiplicative"
+    operators:
+      mul:
+        syntax: "x * y"
+        precedence: 12
+        associativity: left
+        name: multiplication
+      div:
+        syntax: "x / y"
+        precedence: 12
+        associativity: left
+        name: division
+      rem:
+        syntax: "x % y"
+        precedence: 12
+        associativity: left
+        name: remainder
+
+  precedence_13:
+    name: "Unary and cast"
+    operators:
+      deref:
+        syntax: "*x"
+        precedence: 13
+        position: prefix
+        name: dereference
+        description: "Dereference pointer"
+      not:
+        syntax: "!x"
+        precedence: 13
+        position: prefix
+        name: logical_not
+      neg:
+        syntax: "-x"
+        precedence: 13
+        position: prefix
+        name: negate
+      ref:
+        syntax: "&x"
+        precedence: 13
+        position: prefix
+        name: reference
+        description: "Create immutable reference"
+      mut_ref:
+        syntax: "&mut x"
+        precedence: 13
+        position: prefix
+        name: mutable_reference
+        description: "Create mutable reference"
+      cast:
+        syntax: "x as T"
+        precedence: 13.5
+        associativity: right
+        name: cast
+        description: "Type cast"
+
+  precedence_14:
+    name: "Postfix"
+    operators:
+      call:
+        syntax: "f(args)"
+        precedence: 14
+        name: call
+      index:
+        syntax: "x[i]"
+        precedence: 14
+        name: index
+      access:
+        syntax: "x.f"
+        precedence: 14
+        name: member_access
+      method:
+        syntax: "x.method(args)"
+        precedence: 14
+        name: method_call
+      question:
+        syntax: "x?"
+        precedence: 14
+        position: postfix
+        name: try_operator
+        description: "Error propagation (Result/Option)"
+
+# STATEMENTS AND ITEMS
+# ====================
+
+items:
+  description: "Items are declarations of functions, types, modules, etc."
+
+  module:
+    description: "Module definition"
+    syntax: "mod name { ... } or mod name;"
+    features: "Namespace organization, visibility control"
+
+  use_declaration:
+    description: "Import items into scope"
+    syntax: "use path::to::item; use path::*;"
+    features: "Rename with 'as', glob imports, relative paths"
+
+  function:
+    description: "Function definition"
+    syntax: "fn name(params) -> ReturnType { body }"
+    modifiers:
+      - async
+      - unsafe
+      - const
+      - extern
+    features: "Type parameters, lifetimes, where clauses, trait bounds"
+
+  struct:
+    description: "Struct definition (product type)"
+    syntax: "struct Name { field: Type, ... } or struct Name(Type, Type);"
+    variants:
+      regular: "Named fields"
+      tuple: "Unnamed fields"
+      unit: "No fields"
+
+  enum:
+    description: "Enum definition (sum type, tagged union)"
+    syntax: "enum Name { Variant1, Variant2(T), Variant3 { field: T } }"
+    features: "Tagged variants with associated data"
+
+  union:
+    description: "Union type (requires unsafe to access)"
+    syntax: "union Name { field1: Type, field2: Type }"
+    safety: "Requires unsafe blocks; no type safety"
+
+  trait:
+    description: "Trait definition (abstract interface)"
+    syntax: "trait Name { fn method(&self) -> Type; }"
+    features: "Default implementations, associated types, where clauses"
+
+  trait_impl:
+    description: "Trait implementation"
+    syntax: "impl Trait for Type { ... }"
+    features: "Generic implementations, blanket implementations"
+
+  impl_block:
+    description: "Implementation block (associated functions/methods)"
+    syntax: "impl Type { ... } or impl<T: Trait> Type<T> { ... }"
+
+  type_alias:
+    description: "Type alias"
+    syntax: "type Name = Type;"
+
+  const:
+    description: "Constant item"
+    syntax: "const NAME: Type = value;"
+    restrictions: "Must be compile-time evaluable"
+
+  static:
+    description: "Static variable"
+    syntax: "static NAME: Type = value; or static mut NAME: Type = value;"
+    restrictions: "Mutable statics require unsafe"
+
+  extern_block:
+    description: "Foreign Function Interface (FFI)"
+    syntax: "extern \"C\" { fn c_function(...); }"
+    languages: "Supports C, C++, system"
+
+  macro_rules:
+    description: "Macro definition (compile-time code generation)"
+    syntax: "macro_rules! name { (pattern) => { expansion }; }"
+
+# STATEMENTS
+# ==========
+
+statements:
+
+  let_binding:
+    description: "Variable binding"
+    syntax: "let pattern: Type = expr; or let pattern = expr;"
+    features: "Destructuring, mutable bindings (let mut)"
+    scope: "Block scope"
+
+  assignment:
+    description: "Assignment to existing binding"
+    syntax: "x = expr;"
+    requirements: "Variable must be mutable"
+
+  expression_statement:
+    description: "Expression used as statement"
+    syntax: "expr;"
+    note: "Semicolon converts expression to statement"
+
+  item_statement:
+    description: "Item declaration in function scope"
+    syntax: "fn inner() { ... } or struct Inner { ... }"
+
+  empty_statement:
+    description: "Empty statement"
+    syntax: ";"
+
+  if_expression:
+    description: "Conditional expression/statement"
+    syntax: "if cond { ... } else if cond { ... } else { ... }"
+    note: "Can be used as expression (no final semicolon)"
+
+  loop_statement:
+    description: "Infinite loop"
+    syntax: "loop { ... }"
+    control: "break, continue, break value"
+
+  while_loop:
+    description: "While loop"
+    syntax: "while cond { ... }"
+    control: "break, continue"
+
+  for_loop:
+    description: "For loop (iterator)"
+    syntax: "for pattern in iterator { ... }"
+    control: "break, continue"
+    features: "Destructuring in pattern"
+
+  break_statement:
+    description: "Break from loop"
+    syntax: "break; or break 'label; or break value;"
+    features: "Loop labels, break with value"
+
+  continue_statement:
+    description: "Continue loop iteration"
+    syntax: "continue; or continue 'label;"
+    features: "Loop labels"
+
+  return_statement:
+    description: "Return from function"
+    syntax: "return; or return value;"
+
+  match_expression:
+    description: "Pattern matching"
+    syntax: "match expr { pattern => expr, ... }"
+    features: "Exhaustiveness checking, guards"
+
+  block_expression:
+    description: "Block with value"
+    syntax: "{ statements; expr }"
+    note: "Last expression (no semicolon) is value"
+
+  unsafe_block:
+    description: "Unsafe code block"
+    syntax: "unsafe { ... }"
+    allows: "Dereferencing raw pointers, calling unsafe functions, mutable statics"
+
+  async_block:
+    description: "Async block (creates Future)"
+    syntax: "async { ... }"
+    features: "Used with await"
+
+# PATTERNS
+# ========
+
+patterns:
+  description: "Patterns for destructuring and matching"
+
+  literal_pattern:
+    description: "Match literal value"
+    examples: ["1", "true", "\"hello\""]
+
+  identifier_pattern:
+    description: "Bind value to variable"
+    examples: ["x", "_"]
+    wildcard: "_ matches anything, discards value"
+
+  range_pattern:
+    description: "Match range of values"
+    syntax: "1..=5 or 'a'..='z'"
+
+  struct_pattern:
+    description: "Destructure struct"
+    syntax: "Point { x, y } or Point { x: a, y: b }"
+
+  tuple_pattern:
+    description: "Destructure tuple"
+    syntax: "(x, y) or (a, ..., z)"
+    rest: ".. can match multiple elements"
+
+  slice_pattern:
+    description: "Match slice with pattern"
+    syntax: "[x, y] or [a, .., z]"
+
+  or_pattern:
+    description: "Match one of multiple patterns"
+    syntax: "pattern1 | pattern2"
+
+  guard:
+    description: "Additional condition on pattern"
+    syntax: "pattern if condition =>"
+
+  reference_pattern:
+    description: "Match reference"
+    syntax: "&pattern or &mut pattern"
+
+# EXPRESSIONS
+# ===========
+
+expressions:
+
+  primary:
+    literal: "Boolean, integer, float, string, char literals"
+    path: "Absolute or relative path to item"
+    self_expr: "self, self.field, self.method()"
+    grouped: "(expr)"
+    block: "{ ... }"
+    async_block: "async { ... }"
+    unsafe_block: "unsafe { ... }"
+    closure: "|params| expr or |params| { body }"
+    loop_expr: "loop { ... }"
+    break_expr: "break or break value"
+    continue_expr: "continue"
+    return_expr: "return or return value"
+    macro_call: "macro!(args)"
+    array: "[elem; count] or [elem1, elem2]"
+    tuple: "(elem1, elem2, ...) or ()"
+    struct_construct: "Path { field: value, ... }"
+    enum_construct: "Path::Variant or Path::Variant(value)"
+
+  operator_expressions:
+    binary: "Arithmetic, bitwise, logical, comparison, range, cast"
+    unary: "Negation, not, dereference, reference, raw pointer cast"
+    assignment: "Simple and compound assignment"
+
+  index_expression:
+    description: "Indexing"
+    syntax: "expr[expr]"
+
+  call_expression:
+    description: "Function/closure call"
+    syntax: "expr(args)"
+
+  method_call:
+    description: "Method call"
+    syntax: "expr.method(args)"
+    features: "Auto-dereferencing, auto-borrowing"
+
+  field_access:
+    description: "Struct/enum field access"
+    syntax: "expr.field"
+
+  closure:
+    description: "Anonymous function"
+    syntax: "|params| expr or |params| { body }"
+    capture_modes: "move, ref, mut ref (inferred)"
+
+  if_expression:
+    description: "If expression"
+    syntax: "if cond { expr } else { expr }"
+    note: "Can be assigned to variable"
+
+  match_expression:
+    description: "Pattern matching"
+    syntax: "match expr { pattern => expr, ... }"
+    requirements: "Must be exhaustive"
+
+  loop_expression:
+    description: "Loop expression"
+    syntax: "loop { ... }"
+    value: "Can use 'break value' to set value"
+
+  while_expression:
+    description: "While loop expression"
+    syntax: "while cond { ... }"
+    value: "Always evaluates to ()"
+
+  for_expression:
+    description: "For loop expression"
+    syntax: "for pattern in iterator { ... }"
+    value: "Always evaluates to ()"
+
+  return_expression:
+    description: "Return from function"
+    syntax: "return or return expr"
+    value: "Never type (!)"
+
+  break_expression:
+    description: "Break from loop"
+    syntax: "break or break expr"
+    value: "Can have value when breaking"
+
+  continue_expression:
+    description: "Continue loop"
+    syntax: "continue"
+    value: "Never type (!)"
+
+  await_expression:
+    description: "Await future completion"
+    syntax: "expr.await or await expr (older)"
+    requirements: "Can only be used in async context"
+
+  macro_invocation:
+    description: "Macro call"
+    syntax: "macro!(args) or macro![args] or macro!{args}"
+
+# TYPE SYSTEM
+# ===========
+
+types:
+
+  primitive_types:
+
+    bool:
+      description: "Boolean"
+      values: [true, false]
+      size: "1 byte"
+
+    char:
+      description: "Unicode scalar value"
+      size: "4 bytes"
+      range: "U+0000 to U+D7FF and U+E000 to U+10FFFF"
+
+    integer_types:
+      signed:
+        i8: "8-bit signed"
+        i16: "16-bit signed"
+        i32: "32-bit signed (default for integer literals)"
+        i64: "64-bit signed"
+        i128: "128-bit signed"
+        isize: "Pointer-sized signed"
+      unsigned:
+        u8: "8-bit unsigned"
+        u16: "16-bit unsigned"
+        u32: "32-bit unsigned"
+        u64: "64-bit unsigned"
+        u128: "128-bit unsigned"
+        usize: "Pointer-sized unsigned"
+
+    float_types:
+      f32: "32-bit IEEE 754 (float)"
+      f64: "64-bit IEEE 754 (default for float literals)"
+
+    never_type:
+      description: "Never type (!)"
+      purpose: "Functions that never return (diverge)"
+      examples: ["panic!(), loop {}, !"]
+
+    unit_type:
+      description: "Unit type ()"
+      size: "0 bytes (zero-sized type)"
+      use: "Return type when nothing is returned"
+
+  compound_types:
+
+    tuple:
+      description: "Fixed-size heterogeneous collection"
+      syntax: "(T1, T2, ...) or (T; n) for homogeneous"
+      size: "Sum of field sizes"
+      examples: ["(i32, f64, bool)", "(u8, u8, u8, u8)"]
+
+    array:
+      description: "Fixed-size homogeneous collection"
+      syntax: "[T; n]"
+      size: "sizeof(T) * n"
+      examples: ["[i32; 5]", "[0; 100]"]
+
+    struct:
+      description: "Named product type"
+      variants:
+        regular: "struct Point { x: i32, y: i32 }"
+        tuple: "struct Color(u8, u8, u8)"
+        unit: "struct Marker"
+
+    enum:
+      description: "Tagged union (sum type)"
+      examples:
+        - "enum Option<T> { Some(T), None }"
+        - "enum Result<T, E> { Ok(T), Err(E) }"
+        - "enum Color { Red, Green, Blue }"
+
+    union:
+      description: "Untagged union (requires unsafe)"
+      syntax: "union Value { i: i32, f: f64 }"
+      warning: "No type safety; unsafe to read"
+
+  pointer_types:
+
+    raw_pointer:
+      description: "Raw pointer (C-like)"
+      immutable: "*const T"
+      mutable: "*mut T"
+      restrictions: "Dereferencing requires unsafe"
+      use: "FFI, low-level code"
+
+    reference:
+      description: "Safe reference (borrowing)"
+      immutable: "&T"
+      mutable: "&mut T"
+      rules: "Borrow checker ensures memory safety"
+      single_mutable: "Only one &mut T at a time"
+
+    slice:
+      description: "Dynamically-sized view into contiguous data"
+      immutable: "&[T]"
+      mutable: "&mut [T]"
+      unsized: "DST (Dynamically Sized Type)"
+
+  function_types:
+
+    function_pointer:
+      description: "Pointer to function"
+      syntax: "fn(T, U) -> V"
+      size: "Pointer-sized"
+      callable: "Can be called like a function"
+
+    function_item:
+      description: "Function type (zero-sized)"
+      syntax: "fn name"
+      use: "Function names as values"
+      zero_sized: "ZST (zero-sized type)"
+
+    closure:
+      description: "Anonymous function (trait)"
+      traits:
+        - "Fn(&self, args) -> Output"
+        - "FnMut(&mut self, args) -> Output"
+        - "FnOnce(self, args) -> Output"
+
+    async_function:
+      description: "Async function (returns Future)"
+      syntax: "async fn name(...) -> T"
+      future: "Impl Future<Output = T>"
+
+  trait_types:
+
+    dyn_trait:
+      description: "Dynamic dispatch (trait object)"
+      syntax: "&dyn Trait or Box<dyn Trait>"
+      unsized: "DST (requires pointer)"
+      vtable: "Virtual method table at runtime"
+
+    impl_trait:
+      description: "Existential type (impl Trait)"
+      syntax: "fn func() -> impl Trait"
+      use: "Return type abstraction without dynamic dispatch"
+
+  generic_types:
+
+    generics:
+      description: "Parametric polymorphism"
+      syntax: "struct Pair<T> { ... } or fn func<T>(x: T)"
+      monomorphization: "Compiled separately for each concrete type"
+
+    associated_types:
+      description: "Type associated with trait"
+      syntax: "trait Container { type Item; }"
+      use: "Define type relationships in traits"
+
+    where_clauses:
+      description: "Trait bound syntax"
+      syntax: "fn func<T>(x: T) where T: Trait"
+      complexity: "For complex trait bounds"
+
+  type_aliases:
+    syntax: "type Name = Type;"
+    use: "Readability, reducing typing"
+
+# LIFETIMES
+# ==========
+
+lifetimes:
+  description: "Explicit lifetime annotations for borrowing"
+
+  syntax: "'lifetime"
+  examples:
+    - "&'a T (reference with lifetime 'a)"
+    - "struct Ref<'a, T> { r: &'a T }"
+    - "fn func<'a>(x: &'a str) -> &'a str"
+
+  rules:
+    - "Every reference has a lifetime"
+    - "Lifetimes are inferred in most cases"
+    - "Explicit annotations when multiple references exist"
+    - "'static is lifetime of the entire program"
+
+  variance: "Covariance/contravariance rules for lifetimes"
+
+# TRAITS AND BOUNDS
+# =================
+
+traits:
+  description: "Traits define shared behavior"
+
+  syntax: "trait Name { fn method(&self) -> Type; }"
+
+  types:
+    object_safe: "Can use as dyn Trait (no associated types, only &self methods)"
+    impl_trait: "Can use impl Trait in function signatures"
+
+  bounds:
+    trait_bound: "T: Trait"
+    multiple_bounds: "T: Trait1 + Trait2"
+    lifetime_bound: "'a: 'b (lifetime outlives)"
+    higher_ranked: "for<'a> Fn(&'a T)"
+
+  common_traits:
+    - "Clone: Deep copy"
+    - "Copy: Bitwise copy (marker trait)"
+    - "Default: Default value"
+    - "Drop: Destructor logic"
+    - "Deref: Dereference operator"
+    - "DerefMut: Mutable dereference"
+    - "AsRef: Reference conversion"
+    - "AsMut: Mutable reference conversion"
+    - "Into/From: Value conversion"
+    - "ToOwned: Owned value conversion"
+    - "Eq/PartialEq: Equality"
+    - "Ord/PartialOrd: Ordering"
+    - "Hash: Hashing"
+    - "Display/Debug: Formatting"
+    - "Iterator/IntoIterator: Iteration"
+    - "Future: Async computation"
+    - "Fn/FnMut/FnOnce: Closures"
+    - "Send/Sync: Thread safety markers"
+    - "Sized/Unsize: Size information"
+
+# ASYNC/AWAIT
+# ===========
+
+async_support:
+  description: "Asynchronous programming with async/await"
+
+  syntax:
+    async_function: "async fn name(...) -> T { ... }"
+    async_block: "async { ... }"
+    await: "future.await or await!(future)"
+
+  concepts:
+    future: "Represents a value that will be available later"
+    executor: "Runs futures to completion"
+    polling: "Futures are polled for progress"
+    non_blocking: "Async operations don't block threads"
+
+  ecosystem:
+    - "tokio: Async runtime"
+    - "async-std: Alternative runtime"
+    - "futures: Utilities for futures"
+
+# MACROS
+# ======
+
+macros:
+  description: "Compile-time metaprogramming"
+
+  declarative_macros:
+    syntax: "macro_rules! name { ... }"
+    use: "Pattern matching on token trees"
+
+  procedural_macros:
+    attribute_macros: "#[attr] for transforming items"
+    derive_macros: "#[derive(Trait)] for generating code"
+    function_macros: "fn-like macros"
+
+  common_macros:
+    - "println!, print!: Output macros"
+    - "panic!: Panic with message"
+    - "assert!, assert_eq!, assert_ne!: Assertions"
+    - "vec!: Vector literal"
+    - "format!: String formatting"
+    - "todo!, unimplemented!: Placeholders"
+    - "dbg!: Debug printing"
+    - "env!: Environment variables"
+    - "include!, include_str!: File inclusion"
+
+# MODULES AND VISIBILITY
+# =======================
+
+modules:
+  description: "Organize code into namespaces"
+
+  syntax: "mod name { ... } or mod name;"
+
+  visibility:
+    private: "Visible only in current module/submodules"
+    pub: "Public (visible outside module)"
+    pub_crate: "Visible in entire crate"
+    pub_in_path: "Visible to specific path"
+    pub_super: "Visible to parent module"
+
+  file_based: "Separate files for modules (mod.rs)"
+
+# ERROR HANDLING
+# ==============
+
+error_handling:
+  description: "Rust uses Result and Option types for error handling"
+
+  option_type:
+    syntax: "enum Option<T> { Some(T), None }"
+    use: "For optional values"
+    methods: ["match, unwrap, unwrap_or, map, and_then"]
+
+  result_type:
+    syntax: "enum Result<T, E> { Ok(T), Err(E) }"
+    use: "For operations that might fail"
+    methods: ["match, unwrap, unwrap_or, map, and_then, ?"]
+
+  question_mark_operator:
+    syntax: "result?"
+    use: "Propagate errors up call stack"
+    restrictions: "Can only be used in functions returning Result/Option"
+
+  panic:
+    syntax: "panic!(...) or unwrap() or expect(...)"
+    use: "Unrecoverable errors (abort execution)"
+    difference: "Errors are explicit with Result"
+
+# OWNERSHIP AND BORROWING
+# ========================
+
+ownership:
+  description: "Core to Rust's memory safety"
+
+  rules:
+    - "Each value has one owner"
+    - "Owner can borrow reference (&)"
+    - "Owner can lend mutable reference (&mut)"
+    - "Value dropped when owner goes out of scope"
+    - "No use-after-free, no double-free, no data races"
+
+  move_semantics:
+    description: "Transferring ownership"
+    syntax: "let y = x; or func(x)"
+    result: "x is no longer accessible"
+
+  borrowing:
+    immutable: "&T - read-only reference (multiple allowed)"
+    mutable: "&mut T - exclusive write access (only one allowed)"
+    rule: "Cannot have &T and &mut T at same time"
+
+  dereference:
+    auto: "Rust automatically dereferences for method calls"
+    syntax: "*ref or ref.field"
+
+# MEMORY SAFETY
+# ==============
+
+memory_safety:
+  description: "Compile-time memory safety guarantees"
+
+  prevented_bugs:
+    - "Buffer overflow"
+    - "Use-after-free"
+    - "Double-free"
+    - "Data races (Mutex, Arc, Send, Sync)"
+    - "Null pointer dereference (Option type)"
+
+  borrow_checker:
+    algorithm: "Enforces ownership and borrowing rules at compile time"
+    lifetime_elision: "Compiler infers lifetimes in most cases"
+    conflicts: "Reports lifetime conflicts before runtime"
+
+  unsafe_blocks:
+    description: "Opt into unsafety when needed"
+    syntax: "unsafe { ... }"
+    requires: "Programmer assertion of safety"
+    operations: ["Dereference raw pointers", "Call unsafe functions", "Mutable statics", "Union field access"]
+
+# FFI (FOREIGN FUNCTION INTERFACE)
+# =================================
+
+ffi:
+  description: "Interact with C/C++ code"
+
+  extern_functions:
+    syntax: "extern \"C\" { fn c_function(...); }"
+    calling_convention: "C calling convention"
+
+  extern_crates:
+    syntax: "extern crate name;"
+    use: "Link to C libraries"
+
+  type_mapping:
+    c_int: "i32 or i64 (platform-dependent)"
+    c_void: "c_void from libc"
+    c_char: "u8 or c_char"
+    c_double: "f64"
+
+  no_mangle:
+    syntax: "#[no_mangle] pub extern \"C\" fn name() { ... }"
+    use: "Export Rust function to C"
+
+# ATTRIBUTES
+# ===========
+
+attributes:
+  description: "Metadata attached to items"
+
+  syntax: "#[attr] for item-level, #![attr] for container-level"
+
+  common_attributes:
+    derive: "#[derive(Clone, Copy, Debug)]"
+    must_use: "#[must_use] for warning on discarded value"
+    deprecated: "#[deprecated(since=\"...\", note=\"...\")]"
+    allow_warn: "#[allow(dead_code)], #[warn(...)], #[deny(...)]"
+    inline: "#[inline], #[inline(always)], #[inline(never)]"
+    no_mangle: "#[no_mangle]"
+    cfg: "#[cfg(target_os=\"linux\")]"
+    test: "#[test]"
+    bench: "#[bench]"
+    path: "#[path=\"...\"]"
+    doc: "/// for documentation comments"
+    repr: "#[repr(C)], #[repr(u8)]"
+    non_exhaustive: "#[non_exhaustive]"
+
+# STANDARD LIBRARY HIGHLIGHTS
+# ============================
+
+stdlib:
+  description: "Rust's comprehensive standard library (std/core)"
+
+  core_modules:
+    - "std: Main standard library"
+    - "core: No-std compatible core (embedded)"
+    - "alloc: Heap allocation utilities"
+    - "proc_macro: Procedural macro support"
+
+  major_modules:
+    collections: "Vec, HashMap, BTreeMap, LinkedList, VecDeque, BinaryHeap"
+    io: "File I/O, streams, buffering (Read, Write traits)"
+    fs: "File system operations"
+    path: "Path manipulation (Path, PathBuf)"
+    os: "Operating system interfaces"
+    net: "Networking (TcpListener, TcpStream, UdpSocket)"
+    sync: "Synchronization primitives (Mutex, RwLock, Arc, Barrier)"
+    thread: "Threading and thread-local storage"
+    time: "Time and duration types"
+    fmt: "Formatting and printing"
+    string: "String type and operations"
+    vec: "Vector type (Vec<T>)"
+    option: "Option<T> type and utilities"
+    result: "Result<T, E> type and utilities"
+    iter: "Iterator trait and utilities"
+    hash: "Hashing types and traits"
+    cmp: "Comparison and ordering"
+    ops: "Operator overloading traits"
+    convert: "Type conversion traits"
+    default: "Default trait"
+    clone: "Clone trait"
+    boxed: "Box type"
+    rc: "Rc (reference counting, single-threaded)"
+    cell: "Interior mutability (Cell, RefCell)"
+    ptr: "Raw pointers and utility functions"
+    mem: "Memory manipulation (size_of, align_of, transmute)"
+    panic: "Panic handling"
+    process: "Child processes, std::process"
+    env: "Environment variables"
+    marker: "Marker traits (Send, Sync, Copy, PhantomData)"
+
+# COMPILER AND TOOLING
+# =====================
+
+tooling:
+  package_manager: "cargo"
+  build_system: "cargo"
+  testing: "cargo test"
+  documentation: "cargo doc"
+  formatting: "rustfmt"
+  linting: "clippy"
+  edition_management: "Rust 2015, 2018, 2021, 2024"
+  feature_flags: "#[cfg(feature=\"name\")]"
+
+# EDITION DIFFERENCES
+# ===================
+
+editions:
+  edition_2015:
+    release_year: 2015
+    keywords: "Early Rust"
+
+  edition_2018:
+    release_year: 2018
+    changes:
+      - "Non-lexical lifetimes (NLL)"
+      - "async/await"
+      - "Module system overhaul"
+      - "2018 idioms"
+
+  edition_2021:
+    release_year: 2021
+    changes:
+      - "Const generics"
+      - "const fn improvements"
+      - "Disjoint closure captures"
+      - "Panic message formats"
+
+  edition_2024:
+    release_year: 2024
+    status: "In development"
+
+# PERFORMANCE FEATURES
+# =====================
+
+performance:
+  zero_cost_abstractions: "No overhead for high-level features"
+  generics_monomorphization: "Compile-time specialization (no vtable)"
+  inlining: "#[inline] attributes for aggressive optimization"
+  simd: "SIMD support via std::simd"
+  intrinsics: "Low-level hardware intrinsics"
+  optimization_levels:
+    - "debug: No optimization (fast compilation)"
+    - "release: Full optimization (-O3 equivalent)"
+    - "lto: Link-time optimization"
+    - "codegen_units: Parallelization control"
