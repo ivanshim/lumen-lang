@@ -29,6 +29,8 @@ pub fn aggregate_patterns() -> PatternSet {
 
         // Statement patterns
         statements::print::patterns(),
+        statements::let_mut_binding::patterns(),
+        statements::let_binding::patterns(),
         statements::assignment::patterns(),
         statements::if_else::patterns(),
         statements::while_loop::patterns(),
@@ -53,6 +55,8 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::recognize("**"),
 
         // Keywords (not skipped)
+        TokenDefinition::recognize("let"),
+        TokenDefinition::recognize("mut"),
         TokenDefinition::recognize("and"),
         TokenDefinition::recognize("or"),
         TokenDefinition::recognize("not"),
@@ -85,6 +89,8 @@ pub fn register_all(registry: &mut Registry) {
 
     // Statement features
     statements::print::register(registry);         // print() statement
+    statements::let_mut_binding::register(registry); // let mut binding
+    statements::let_binding::register(registry);   // let binding
     statements::assignment::register(registry);    // Assignment
     statements::if_else::register(registry);       // if/else statements
     statements::while_loop::register(registry);    // while loops
