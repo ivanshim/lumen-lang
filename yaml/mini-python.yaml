@@ -1,6 +1,6 @@
 # Mini-Python Language Schema (YAML)
 # Pure declarative data for Mini-Python
-# All parsing and execution is handled by the microcode kernel
+# All parsing and execution is handled by the kernel
 
 name: mini_python
 version: 1.0
