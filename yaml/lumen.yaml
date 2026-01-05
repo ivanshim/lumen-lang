@@ -1,0 +1,867 @@
+name: Lumen
+version: 2.2
+status: stable-core
+role: general_purpose_language
+
+specification_basis:
+  - lumen.yaml v2.0 (detailed language specification)
+  - lumen2.yaml v2.1 (kernel primitives and execution model)
+  - Lumen v0.1 BNF foundation
+  - design principles from docs/LUMEN_LANGUAGE_DESIGN.md
+
+philosophy: |
+  Lumen exists to explore language semantics with minimalism and clarity.
+
+  Core Principles (Prioritized):
+  1. Semantic clarity - Every operation's meaning visible in syntax
+  2. Minimalism with intent - No decorative syntax
+  3. Syntax hierarchy - Clear categories (grouping, blocks, identifiers)
+  4. Statements vs Expressions - Distinction visible in code
+  5. Readability over uniformity - Asymmetry acceptable if clearer
+  6. Semantics first - AST is single source of truth
+  7. Small, honest semantics - Do few things correctly
+  8. Explicit over clever - No implicit conversions or hidden control flow
+  9. Failure is a feature - Fail early, clearly, without guessing
+  10. Evolution constraint - New features only if they don't break mental models
+
+  Kernel Principles:
+  - determinism: guaranteed sequential execution
+  - explicit_control_flow: no hidden jumps or implicit transfers
+  - immutable_by_default: values immutable unless declared otherwise
+  - side_effects: explicit (no hidden state mutations)
+  - semantic_guarantees: portable, implementation-independent semantics
+
+  This specification incorporates:
+  - Functions (core abstraction, fits minimalism)
+  - Type annotations (optional clarity, Python-style)
+  - Better control flow (return statement, clarity on explicit values)
+  - Immutability awareness (let vs let mut)
+  - Composition operators (|>, for readable pipelines)
+  - Explicit error handling (Result type, planned)
+  - Kernel model (primitive operations, explicit execution)
+
+kernel:
+  execution_model:
+    type: sequential
+    evaluation_order: explicit
+    determinism: guaranteed
+    portability: implementation_independent
+
+  primitives:
+    core_execution:
+      - sequence     # execute instructions in order
+      - block        # push/pop scope, execute sequence
+      - assign       # bind or mutate a symbol
+      - call         # invoke function or external
+      - return       # exit function with value
+
+    control_flow:
+      - branch       # conditional execution (if/else)
+      - loop         # iterative execution (while)
+      - jump         # break / continue
+
+    computation:
+      - operate      # unary/binary operator dispatch
+
+  signals:
+    jump:
+      - break        # exit from innermost loop
+      - continue     # skip to next loop iteration
+    termination:
+      - return       # exit function with value
+
+lexical:
+  keywords:
+    - let           # variable binding
+    - mut           # mutability modifier
+    - if            # conditional
+    - else          # else branch
+    - while         # loop
+    - break         # loop control
+    - continue      # loop control
+    - return        # function return
+    - fn            # function definition
+    - extern        # external capability
+    - true          # boolean literal
+    - false         # boolean literal
+    - none          # null/unit value
+    - and           # logical AND
+    - or            # logical OR
+    - not           # logical NOT
+    - type          # type annotation keyword
+
+  multichar_lexemes:
+    - "=="          # equality
+    - "!="          # inequality
+    - "<="          # less or equal
+    - ">="          # greater or equal
+    - ":="          # type assertion (reserved)
+    - "->"          # return type annotation
+    - "|>"          # pipe operator
+    - "**"          # exponentiation
+
+  split_chars:
+    - " "           # space
+    - "\t"          # tab
+    - "\n"          # newline
+    - "("           # grouping open
+    - ")"           # grouping close
+    - "{"           # brace (reserved)
+    - "}"           # brace (reserved)
+    - "["           # bracket (reserved)
+    - "]"           # bracket (reserved)
+    - ","           # comma
+    - ";"           # semicolon
+    - ":"           # colon
+    - "."           # dot
+
+structure:
+  indentation:
+    mode: fixed
+    size: 4
+    character: "space (tabs not permitted)"
+
+  newline_behavior: "terminator (can be escaped with backslash)"
+  eof_handling: "dedent_all"
+
+  block_structure:
+    open_marker: "Colon (:) introduces indented block"
+    open_mechanism: "INDENT (via colon)"
+    close_mechanism: "DEDENT (end of indented block)"
+
+  statement_terminators:
+    - newline
+    - semicolon (";")
+    - explicit_return ("return" keyword)
+
+  comments:
+    line: "# comment to end of line"
+    block: "not supported (use line comments)"
+
+operators:
+  arithmetic:
+    "+":
+      precedence: 5
+      associativity: left
+      name: addition
+      description: "Addition (numbers) or concatenation (strings)"
+
+    "-":
+      precedence: 5
+      associativity: left
+      name: subtraction
+
+    "*":
+      precedence: 6
+      associativity: left
+      name: multiplication
+
+    "/":
+      precedence: 6
+      associativity: left
+      name: division
+      note: "Both integer and float division produce consistent results"
+
+    "%":
+      precedence: 6
+      associativity: left
+      name: modulo
+
+    "**":
+      precedence: 7
+      associativity: right
+      name: exponentiation
+
+  comparison:
+    "==":
+      precedence: 4
+      associativity: left
+      name: equal
+      note: "No implicit type coercion; same type required"
+
+    "!=":
+      precedence: 4
+      associativity: left
+      name: not_equal
+
+    "<":
+      precedence: 4
+      associativity: left
+      name: less_than
+
+    ">":
+      precedence: 4
+      associativity: left
+      name: greater_than
+
+    "<=":
+      precedence: 4
+      associativity: left
+      name: less_equal
+
+    ">=":
+      precedence: 4
+      associativity: left
+      name: greater_equal
+
+  logical:
+    "and":
+      precedence: 3
+      associativity: left
+      name: logical_and
+      short_circuit: true
+      description: "Logical AND; evaluates right only if left is true"
+
+    "or":
+      precedence: 2
+      associativity: left
+      name: logical_or
+      short_circuit: true
+      description: "Logical OR; evaluates right only if left is false"
+
+    "not":
+      precedence: 7
+      position: prefix
+      name: logical_not
+
+  unary:
+    "-":
+      precedence: 7
+      position: prefix
+      name: negate
+      description: "Unary minus (negation)"
+
+  assignment:
+    "=":
+      precedence: 1
+      associativity: right
+      name: assign
+      description: "Assignment (updates binding or declares new binding)"
+      note: "Can only assign to variables declared with let (mutable) or let binding targets"
+      kernel_operation: assign
+
+  composition:
+    "|>":
+      precedence: 0.5
+      associativity: left
+      name: pipe
+      description: "Pipeline operator (pass result of left expression to right function)"
+      example: "data |> process() |> analyze() |> print()"
+      benefit: "More readable than nested function calls"
+
+types:
+  system:
+    primitive:
+      number:
+        description: "Numeric value (unified type in this version)"
+        representation: "64-bit IEEE 754 floating-point"
+        integers: "Represented as floats (5 becomes 5.0)"
+        operations: "Arithmetic, comparison, modulo"
+        precision: "Limited by float representation for large integers"
+        future: "Future versions may distinguish i32, f64, etc."
+
+      string:
+        description: "Text value"
+        representation: "UTF-8 encoded text"
+        immutable: "Cannot be modified after creation"
+        operations: "Concatenation (+), equality (==, !=), length queries"
+        coercion: "No implicit string conversions; explicit with toString()"
+
+      boolean:
+        description: "True or false value"
+        values: [true, false]
+        operations: "Logical operations (and, or, not)"
+        comparison: "Result of <, >, <=, >=, ==, != operations"
+        truthiness: "Only bool values are truthy; numbers don't coerce"
+
+      none:
+        description: "Absence of value (unit type)"
+        semantics: "Represents 'no meaningful value'"
+        use: "Return type of functions that perform side effects"
+
+    composite:
+      tuple:
+        description: "Ordered collection of values (heterogeneous)"
+        syntax: "(value1, value2, ...) - implicit, created by comma"
+        immutable: "Tuple values are immutable"
+        operations: "Indexing: tuple[0], pattern matching (future)"
+        note: "Tuples shown in examples but full support deferred"
+
+      option:
+        description: "Optional value (planned feature)"
+        syntax: "Option(value) or none"
+        semantics: "Either Some(value) or None"
+        use: "Represents value that might not exist"
+        safety: "Forces explicit handling of absence"
+        status: "Planned for future versions (type system evolution)"
+
+      result:
+        description: "Result of fallible operation (planned feature)"
+        syntax: "Ok(value) or Err(error)"
+        semantics: "Either success with value, or failure with error"
+        use: "Explicit error handling without exceptions"
+        status: "Planned for future versions (as error handling improves)"
+
+  properties:
+    typing:
+      static: true
+      inferred: true
+    mutability:
+      default: immutable
+      explicit_keyword: mut
+    nullability:
+      explicit: none
+
+  type_inference_and_annotations:
+    inference:
+      description: "Automatic type determination from value and context"
+      literals: "123 inferred as number, 'text' as string, true as boolean"
+      operations: "5 + 3 inferred as number addition"
+      default: "Generally inferred correctly in well-written code"
+
+    annotations:
+      description: "Optional explicit type declarations for clarity"
+      syntax: "let name: Type = value"
+      benefit: "Self-documents code intent, catches type mismatches"
+      optional: "Not required but recommended for clarity"
+      examples:
+        - "let x: number = 42"
+        - "let message: string = \"hello\""
+        - "fn add(a: number, b: number) -> number"
+
+    compatibility:
+      description: "Type checking at operation boundaries"
+      equality: "x == y requires same type"
+      arithmetic: "x + y requires both numeric or both string"
+      comparison: "x < y requires numeric or string on both sides"
+      failure: "Type mismatch causes clear error message"
+
+expressions:
+  literals:
+    number:
+      description: "Numeric literal (integer or float)"
+      syntax: "123 or 3.14 or 1e-5 or 0xFF (hex)"
+      type: "Automatically inferred as i32, f64, or specific type"
+      immutable: "All literals are immutable"
+
+    string:
+      description: "Text literal"
+      syntax: "\"hello\" or 'hello'"
+      encoding: "UTF-8"
+      immutable: "Strings are immutable"
+      operations: "Concatenation with +, equality with =="
+
+    boolean:
+      description: "Boolean literal"
+      values: ["true", "false"]
+      immutable: "Immutable constant"
+
+    none:
+      description: "No value / unit type"
+      syntax: "none"
+      use: "Functions that don't return a value, Option.None"
+
+  identifier:
+    description: "Variable or function reference"
+    syntax: "name or _name (starts with letter or underscore)"
+    immutable: "Variables are immutable unless declared with 'let mut'"
+    first_class: "Can be passed to functions, returned from functions"
+
+  function_call:
+    description: "Invoke function with arguments"
+    syntax: "function_name(arg1, arg2, ...) or function()"
+    arguments: "Evaluated left to right"
+    return_value: "Result of function becomes expression value"
+    example: "add(5, 3) or process(data)"
+    kernel_operation: call
+
+  grouping:
+    description: "Parenthesized expression (precedence override)"
+    syntax: "(expression)"
+    use: "Override operator precedence"
+    example: "2 * (3 + 4) = 14"
+
+  binary_operation:
+    description: "Two operands with binary operator"
+    syntax: "left operator right"
+    precedence: "Follows operator precedence table"
+    type_check: "Operands must be compatible types"
+    example: "10 + 20 or x < y"
+    kernel_operation: operate
+
+  unary_operation:
+    description: "One operand with unary operator"
+    syntax: "operator operand"
+    examples: "-x (negation), not condition (logical not)"
+    kernel_operation: operate
+
+  pipeline:
+    description: "Data flows through sequence of functions"
+    syntax: "value |> function1() |> function2()"
+    associativity: "Left-to-right (explicit left-associative)"
+    benefit: "More readable than nested function calls"
+    example: |
+      data
+          |> load()
+          |> process()
+          |> print()
+
+statements:
+  variable_binding:
+    description: "Bind value to identifier"
+    syntax: "let name = value; or let name: Type = value; or let mut name = value;"
+    mutability_default: "Immutable (cannot be reassigned)"
+    mutable: "let mut name = value (can be reassigned)"
+    type_annotation: "Optional: let name: Type = value (for clarity)"
+    scope: "Module-level or function-level"
+    shadowing: "New let in same scope creates new binding"
+    examples:
+      - "let x = 10"
+      - "let message: String = \"hello\""
+      - "let mut counter = 0"
+    kernel_operation: assign
+
+  simple_assignment:
+    description: "Update value of mutable variable"
+    syntax: "name = expression;"
+    requirement: "Variable must be declared with 'let mut'"
+    type_check: "Right side must match declared type"
+    example: "counter = counter + 1"
+    kernel_operation: assign
+
+  print_statement:
+    description: "Print expression to output"
+    syntax: "print(expression) or extern(\"print_native\", expression)"
+    builtin: "print is shorthand for extern(\"print_native\", ...)"
+    note: "Explicit output operation (no implicit prints)"
+    example: "print(\"value: \"); print(42)"
+    kernel_operation: call
+
+  if_statement:
+    description: "Conditional execution (statement, not expression)"
+    syntax: "if condition NEWLINE INDENT statements+ DEDENT [else NEWLINE INDENT statements+ DEDENT]"
+    condition: "Must be boolean (true/false, no truthy coercion)"
+    blocks: "Indented blocks following colon"
+    example: |
+      if x < 10
+          print("small")
+      else
+          print("large")
+    scope_note: "No block-local scope; assignments update outer scope"
+    kernel_operation: branch
+
+  while_loop:
+    description: "Loop while condition is true"
+    syntax: "while condition NEWLINE INDENT statements+ DEDENT"
+    condition: "Must be boolean expression"
+    control: "break (exit loop), continue (next iteration)"
+    example: |
+      while counter < 10
+          print(counter)
+          counter = counter + 1
+    kernel_operation: loop
+
+  break_statement:
+    description: "Exit innermost loop"
+    syntax: "break"
+    effect: "Transfers control after loop body"
+    kernel_signal: jump
+
+  continue_statement:
+    description: "Skip to next loop iteration"
+    syntax: "continue"
+    effect: "Transfers control to loop condition evaluation"
+    kernel_signal: jump
+
+  return_statement:
+    description: "Return from function with value"
+    syntax: "return expression or return"
+    implicit: "Last expression in function is implicit return"
+    explicit: "return can be used for early exit"
+    example: |
+      fn absolute(x)
+          if x < 0
+              return -x
+          return x
+    kernel_operation: return
+    kernel_signal: termination
+
+  function_definition:
+    description: "Define named function"
+    syntax: "fn name(param1, param2, ...) NEWLINE INDENT statements+ DEDENT"
+    syntax_with_return_type: "fn name(param1: Type1, param2: Type2) -> ReturnType NEWLINE ..."
+    parameters: "Names only (typing optional); can include type annotations"
+    return_value: "Last statement value (or explicit return)"
+    implicit_return: "Last expression without semicolon is return value"
+    scope: "Parameters are local to function"
+    purity: "Default impure; no annotation supported"
+    recursion: "Allowed"
+    example: |
+      fn add(a, b)
+          a + b
+
+      fn greet(name: String) -> String
+          "Hello, " + name
+    kernel_operation: call
+
+  extern_call:
+    description: "Call external capability via kernel bridge"
+    syntax: "extern(\"capability_name\", arg1, arg2, ...) or extern capability:function(...)"
+    builtin_capabilities:
+      - "print_native: Output a value"
+      - "value_type: Get type of value as string"
+      - "debug_info: Debugging information"
+      - "error: Raise an error with message"
+    example: "extern(\"print_native\", 42)"
+    integration: "Bridges gap between Lumen and execution kernel"
+    safety_boundary: explicit
+    kernel_operation: call
+
+variables:
+  binding:
+    syntax: "let [mut] name [: Type] = value"
+    immutable_default: true
+  scope:
+    levels:
+      - module
+      - function
+    block_local: false
+    shadowing: "New 'let' creates new binding; outer binding hidden"
+
+functions:
+  definition:
+    syntax: "fn name(params) [-> Type]"
+  purity:
+    default: impure
+    annotation_supported: false
+  recursion:
+    allowed: true
+
+control_flow:
+  branching:
+    forms:
+      - if
+      - if_else
+    condition_requirement: "Must be boolean (true/false, no truthy coercion)"
+
+  looping:
+    forms:
+      - while
+    condition_requirement: "Must be boolean expression"
+
+  jump:
+    break: true
+    continue: true
+    return: true
+
+  immutability_default:
+    description: "Values are immutable unless declared mutable"
+    binding: "let x = 5 creates immutable binding"
+    mutation: "let mut x = 5 creates mutable binding"
+    reassignment: "Only mutable bindings can be reassigned"
+    benefit: "Prevents accidental mutations, easier to reason about code"
+    example: |
+      let x = 10        # x is immutable
+      x = 20            # ERROR: cannot reassign immutable binding
+
+      let mut y = 10    # y is mutable
+      y = 20            # OK: reassigns y
+
+  scope_semantics:
+    description: "Variables have module or function scope"
+    block_scope: "No block-local scope (assignments affect outer scope)"
+    function_scope: "Parameters and local bindings scoped to function"
+    global_scope: "Module-level bindings accessible to all functions"
+    shadowing: "New 'let' creates new binding; outer binding hidden"
+    example: |
+      x = 10
+      if true
+          x = 20          # Updates outer x
+      print(x)            # Prints 20
+
+  short_circuit_evaluation:
+    description: "Logical operators don't evaluate unnecessary expressions"
+    and_operator: "a and b: if a is false, b is not evaluated"
+    or_operator: "a or b: if a is true, b is not evaluated"
+    benefit: "Prevents unnecessary computation and errors"
+    example: "if x != 0 and 10 / x > 5  # Division only if x != 0"
+
+  function_return:
+    description: "Functions return value of last expression"
+    implicit: "Expression without semicolon is return value"
+    explicit: "return statement for early exit"
+    none_return: "Functions with no return value implicitly return none"
+    example: |
+      fn square(x)
+          x * x           # Implicit return
+
+      fn safe_divide(a, b)
+          if b == 0
+              return none
+          a / b            # Implicit return if b != 0
+
+foreign_interface:
+  extern:
+    enabled: true
+    typed: optional
+    safety_boundary: explicit
+    builtin_capabilities:
+      print_native: "Output a value"
+      value_type: "Get type of value as string"
+      debug_info: "Debugging information"
+      error: "Raise an error with message"
+
+errors:
+  philosophy:
+    - explicit
+    - fail_fast
+  current:
+    mechanism: runtime_error
+  planned:
+    - result_type
+  current_guarantees: "Errors fail early with clear messages"
+  prevention: "Type mismatches caught before execution"
+  safety: "No silent wrong behavior"
+
+semantic_guarantees:
+  undefined_behavior: none
+  side_effects: explicit
+  portability: implementation_independent
+  determinism: guaranteed
+
+  semantic_clarity:
+    guarantee: "Every operation's effect is visible in code"
+    example: "No hidden type conversions, no implicit side effects"
+    validation: "Types checked, operations explicit"
+
+  minimalism:
+    guarantee: "Every syntactic element carries semantic weight"
+    consequence: "No decorative syntax, no redundant keywords"
+    evolution: "New features only when real examples demand them"
+
+  readability:
+    guarantee: "Code structure matches execution order"
+    benefit: "Programs are easier to reason about and debug"
+    asymmetry: "Clarity preferred over uniform syntax"
+
+  explicit_errors:
+    guarantee: "Errors fail early with clear messages"
+    prevention: "Type mismatches caught before execution"
+    safety: "No silent wrong behavior"
+
+  execution_order:
+    guarantee: "Sequential and deterministic evaluation"
+    consequence: "Same program produces same result in any correct implementation"
+
+  immutability_by_default:
+    guarantee: "Values immutable unless explicitly marked mutable"
+    safety_benefit: "Prevents accidental state mutations"
+
+  control_flow_clarity:
+    guarantee: "No hidden jumps or implicit control transfers"
+    requirement: "All control flow explicitly visible in code"
+
+backward_compatibility:
+  preserves:
+    - lumen.yaml v2.0
+    - lumen2.yaml v2.1
+
+  v0_1_compatibility: |
+    This schema extends Lumen v0.1 while maintaining compatibility.
+
+    v0.1 Programs Still Valid:
+    - All v0.1 examples execute unchanged
+    - if/while/print/extern syntax identical
+    - Operator precedence unchanged
+    - Variable binding same (implicit 'let')
+
+  v2_0_additions: |
+    Opt-in features from v2.0:
+    - 'let' keyword (explicit, optional)
+    - 'let mut' for mutable bindings (explicit)
+    - 'fn' for functions (new feature)
+    - 'return' statement (explicit, optional)
+    - Type annotations (optional)
+    - Pipe operator |> (new feature)
+
+  v2_1_additions: |
+    Kernel model from v2.1:
+    - Explicit execution model specification
+    - Kernel primitives and signals
+    - Semantic guarantees formalized
+    - Portability and determinism guarantees
+
+  philosophy_preserved: |
+    - Semantic clarity paramount
+    - Minimalism with intent maintained
+    - Statements vs expressions distinction clear
+    - Explicit over clever enforced
+    - Small, honest semantics (core features only)
+
+future_features:
+  pattern_matching:
+    keyword: "match/case"
+    status: "Reserved, not implemented"
+    motivation: "Would improve clarity for multi-branch logic"
+    concern: "Adds complexity; needs real use cases first"
+
+  custom_types:
+    keywords: "struct, enum"
+    status: "Reserved, not implemented"
+    motivation: "Would enable data abstraction"
+    concern: "Requires comprehensive type system"
+
+  for_loop:
+    keyword: "for"
+    status: "Reserved, not implemented"
+    current_alternative: "while loops with manual increment"
+    consideration: "May add if iteration becomes very common"
+
+  error_types:
+    types: "Result, Option"
+    status: "Type system foundation exists, semantics deferred"
+    motivation: "Explicit error handling"
+    implementation: "Needs match/pattern matching first"
+
+  traits_or_interfaces:
+    keyword: "trait"
+    status: "Deferred indefinitely"
+    concern: "Violates minimalism principle"
+    alternative: "Functions compose without trait mechanism"
+
+reserved_keywords:
+  - match
+  - case
+  - for
+  - struct
+  - enum
+  - trait
+
+values:
+  number:
+    description: "Numeric value"
+    representation: "64-bit IEEE 754 floating-point"
+    operations:
+      arithmetic: "+, -, *, /, %, **"
+      comparison: "==, !=, <, >, <=, >="
+      conversion: "toString() for string conversion"
+    examples: ["42", "3.14", "-5", "1e10"]
+
+  string:
+    description: "Text value"
+    representation: "UTF-8 encoded sequence"
+    operations:
+      concatenation: "+ operator"
+      equality: "==, != operators"
+      length: "Future feature (deferred)"
+    examples: ["\"hello\"", "'world'", "\"\""]
+
+  boolean:
+    description: "Truth value"
+    values: ["true", "false"]
+    operations:
+      logical: "and, or, not"
+      equality: "==, != operators"
+    coercion: "No implicit coercion from other types"
+
+  none:
+    description: "Unit/null value"
+    syntax: "none"
+    use: "Functions with no return value, Option type"
+    semantics: "Explicit absence of value"
+
+examples:
+  fibonacci:
+    file: "fibonacci.lm"
+    demonstrates: "while loops, arithmetic, variable updates"
+    program: |
+      a = 0
+      b = 1
+      count = 0
+
+      while count < 10
+          print(a)
+          next = a + b
+          a = b
+          b = next
+          count = count + 1
+
+  pi_computation:
+    file: "pi.lm"
+    demonstrates: "Fixed-point arithmetic, complex conditionals"
+    program: |
+      SCALE = 10000000000
+      x = SCALE / 5
+      x2 = (x * x) / SCALE
+      ...
+      pi_scaled = (16 * sum1) - (4 * sum2)
+
+  scoping:
+    file: "scope_if.lm"
+    demonstrates: "No block-local scope (assignments affect outer scope)"
+    program: |
+      x = 10
+      if true
+          x = 20
+          print(x)
+      else
+          x = 30
+          print(x)
+      print(x)  # Prints 20
+
+  extern_functions:
+    file: "extern_basic.lm"
+    demonstrates: "Kernel interface via extern"
+    program: "print(extern(\"print_native\", 42))"
+
+  function_definition:
+    file: "functions.lm"
+    demonstrates: "Function definition and composition"
+    program: |
+      fn square(x)
+          x * x
+
+      fn add(a, b)
+          a + b
+
+      fn greet(name: String) -> String
+          "Hello, " + name
+
+minimalism_validation: |
+  Every element in this specification carries semantic meaning.
+
+  ✓ Keywords: Each keyword introduces distinct semantic concept
+  ✓ Operators: Each operator performs specific operation
+  ✓ Syntax: Structure (indentation) matches block structure
+  ✓ Types: Each type has distinct behavior
+  ✓ Statements: Each statement type has distinct control flow
+  ✓ Kernel: Primitives and signals formalize execution model
+  ✓ Semantics: Guarantees ensure portability and determinism
+
+  ✗ Removed: Keywords/syntax that add no semantic value
+  ✗ Deferred: Features without real use cases
+  ✗ Avoided: Syntactic sugar that obscures meaning
+
+  Result: Lumen remains minimal yet complete for its domain
+          (exploring language semantics and composition)
+
+design_authority: |
+  This schema is binding on language implementation.
+
+  If implementation diverges from this schema:
+  - The schema is authoritative
+  - Implementation must be corrected
+  - Design principles in preamble take precedence
+
+  When in doubt about language behavior:
+  1. Consult this schema
+  2. Check docs/LUMEN_LANGUAGE_DESIGN.md (design principles)
+  3. Refer to docs/LUMEN_LANGUAGE_BNF.md (v0.1 foundation)
+  4. Review examples/lumen/ (how language is used)
+
+  Order of authority:
+  1. Design principles (semantic clarity, minimalism, determinism)
+  2. This schema (operational definition)
+  3. Kernel model (primitive operations, execution guarantees)
+  4. Examples (correct usage patterns)
+  5. Implementation (must align with above)
