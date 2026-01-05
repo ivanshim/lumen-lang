@@ -26,6 +26,7 @@ pub fn aggregate_patterns() -> PatternSet {
         expressions::comparison::patterns(),
         expressions::logic::patterns(),
         expressions::extern_expr::patterns(),
+        expressions::pipe::patterns(),
 
         // Statement patterns
         statements::print::patterns(),
@@ -68,6 +69,7 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::recognize("continue"),
         TokenDefinition::recognize("return"),
         TokenDefinition::recognize("fn"),
+        TokenDefinition::recognize("|>"),
         TokenDefinition::recognize("print"),
         TokenDefinition::recognize("extern"),  // Impurity boundary marker
         TokenDefinition::recognize("true"),
@@ -88,6 +90,7 @@ pub fn register_all(registry: &mut Registry) {
     expressions::comparison::register(registry);    // Comparison operators
     expressions::logic::register(registry);         // Logical operators
     expressions::extern_expr::register(registry);   // extern impurity boundary
+    expressions::pipe::register(registry);          // Pipe operator
 
     // Statement features
     statements::print::register(registry);         // print() statement
