@@ -1,6 +1,6 @@
 # Lumen Language Schema (YAML)
 # Pure declarative data for the Lumen language
-# All parsing and execution is handled by the microcode kernel
+# All parsing and execution is handled by the kernel
 
 name: lumen
 version: 1.0
