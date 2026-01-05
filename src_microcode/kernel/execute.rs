@@ -220,8 +220,13 @@ fn execute_unary_op(operator: &str, operand: &Value) -> Result<Value, String> {
 /// Execute a binary operation
 fn execute_binary_op(operator: &str, left: &Value, right: &Value) -> Result<Value, String> {
     match operator {
-        // Arithmetic
+        // Arithmetic (with string concatenation support for +)
         "+" => {
+            // Try string concatenation first if both are strings
+            if let (Value::String(l), Value::String(r)) = (left, right) {
+                return Ok(Value::String(format!("{}{}", l, r)));
+            }
+            // Otherwise, numeric addition
             let l = left.to_number()?;
             let r = right.to_number()?;
             Ok(Value::Number(l + r))

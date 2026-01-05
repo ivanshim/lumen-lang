@@ -425,6 +425,12 @@ impl<'a> Parser<'a> {
         self.expect(")")?;
         self.skip_whitespace();
 
+        // Skip newlines before block
+        while self.peek().lexeme == "\n" {
+            self.advance();
+            self.skip_whitespace();
+        }
+
         // Parse function body block
         let body = self.parse_block()?;
         let end = body.span.1;
@@ -445,33 +451,65 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    /// { statements }
+    /// Parse { statements } or INDENT statements DEDENT
+    /// Supports both brace-based and indentation-based syntax
     fn parse_block(&mut self) -> Result<Instruction, String> {
-        self.expect("{")?;
-        self.skip_whitespace();
-
         let mut instructions = Vec::new();
 
-        while self.peek().lexeme != "}" && !self.is_at_end() {
+        // Check if this is a brace-based block or indentation-based block
+        if self.peek().lexeme == "{" {
+            // Brace-based: { statements }
+            self.expect("{")?;
             self.skip_whitespace();
 
-            if self.peek().lexeme == "}" {
-                break;
-            }
-
-            let instr = self.parse_statement()?;
-            instructions.push(instr);
-
-            self.skip_whitespace();
-
-            // Skip optional terminators
-            while self.schema.is_terminator(&self.peek().lexeme) {
-                self.advance();
+            while self.peek().lexeme != "}" && !self.is_at_end() {
                 self.skip_whitespace();
-            }
-        }
 
-        self.expect("}")?;
+                if self.peek().lexeme == "}" {
+                    break;
+                }
+
+                let instr = self.parse_statement()?;
+                instructions.push(instr);
+
+                self.skip_whitespace();
+
+                // Skip optional terminators
+                while self.schema.is_terminator(&self.peek().lexeme) {
+                    self.advance();
+                    self.skip_whitespace();
+                }
+            }
+
+            self.expect("}")?;
+        } else if self.peek().lexeme == "INDENT" {
+            // Indentation-based: INDENT statements DEDENT
+            self.expect("INDENT")?;
+            self.skip_whitespace();
+
+            while self.peek().lexeme != "DEDENT" && !self.is_at_end() {
+                self.skip_whitespace();
+
+                if self.peek().lexeme == "DEDENT" {
+                    break;
+                }
+
+                let instr = self.parse_statement()?;
+                instructions.push(instr);
+
+                self.skip_whitespace();
+
+                // Skip optional terminators
+                while self.schema.is_terminator(&self.peek().lexeme) {
+                    self.advance();
+                    self.skip_whitespace();
+                }
+            }
+
+            self.expect("DEDENT")?;
+        } else {
+            return Err("Expected '{' or indented block".to_string());
+        }
 
         Ok(Instruction::scope(instructions))
     }
