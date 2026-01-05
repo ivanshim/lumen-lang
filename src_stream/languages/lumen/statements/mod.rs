@@ -12,3 +12,4 @@ pub mod return_stmt;
 pub mod let_binding;
 pub mod let_mut_binding;
 pub mod fn_definition;
+pub mod expr_stmt;

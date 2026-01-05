@@ -53,6 +53,18 @@ impl ExprNode for ArithmeticExpr {
         let l = self.left.eval(env)?;
         let r = self.right.eval(env)?;
 
+        // Special handling for + operator: can be string concatenation or addition
+        if self.op == "+" {
+            use crate::languages::lumen::values::{LumenString, as_string};
+
+            // Try to treat both as strings for concatenation
+            if let (Ok(left_str), Ok(right_str)) = (as_string(l.as_ref()), as_string(r.as_ref())) {
+                let result = format!("{}{}", left_str.value, right_str.value);
+                return Ok(Box::new(LumenString::new(result)));
+            }
+        }
+
+        // All other operators require numbers
         let left_num = as_number(l.as_ref())?;
         let right_num = as_number(r.as_ref())?;
 

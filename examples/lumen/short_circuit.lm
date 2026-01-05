@@ -1,0 +1,45 @@
+fn is_even(x)
+    print("Checking if ")
+    print(x)
+    print(" is even")
+    x % 2 == 0
+
+fn is_positive(x)
+    print("Checking if ")
+    print(x)
+    print(" is positive")
+    x > 0
+
+print("Test: Short-Circuit Evaluation")
+
+print("false and is_even(10):")
+result = false and is_even(10)
+print(result)
+
+print("true and is_even(10):")
+result = true and is_even(10)
+print(result)
+
+print("true or is_positive(5):")
+result = true or is_positive(5)
+print(result)
+
+print("false or is_positive(5):")
+result = false or is_positive(5)
+print(result)
+
+print("Testing division by zero avoidance:")
+x = 0
+if x != 0 and 10 / x > 5
+    print("Result is greater than 5")
+else
+    print("x is zero or result is not greater than 5")
+
+fn safe_check(value)
+    if value != none and value > 10
+        print("Value is not none and greater than 10")
+    else
+        print("Value is none or not greater than 10")
+
+safe_check(15)
+safe_check(5)
