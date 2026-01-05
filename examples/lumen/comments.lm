@@ -1,0 +1,25 @@
+print("Test: Comments Support")
+
+x = 42
+print(x)
+
+let result = x * 2
+print(result)
+
+fn add_numbers(a, b)
+    a + b
+
+value = add_numbers(10, 20)
+print(value)
+
+if value > 20
+    print("Value is greater than 20")
+else
+    print("Value is 20 or less")
+
+counter = 0
+while counter < 3
+    print(counter)
+    counter = counter + 1
+
+print("Done testing comments")

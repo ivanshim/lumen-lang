@@ -56,9 +56,10 @@ impl StmtHandler for FnDefStmtHandler {
         }
 
         // Expect '('
-        if parser.advance().lexeme != LPAREN {
+        if parser.peek().lexeme != LPAREN {
             return Err(err_at(parser, "Expected '(' after function name"));
         }
+        parser.advance(); // consume '('
         parser.skip_tokens();
 
         // Parse parameters (comma-separated identifiers)
@@ -100,9 +101,10 @@ impl StmtHandler for FnDefStmtHandler {
         }
 
         // Expect ')'
-        if parser.advance().lexeme != RPAREN {
+        if parser.peek().lexeme != RPAREN {
             return Err(err_at(parser, "Expected ')' after parameters"));
         }
+        parser.advance(); // consume ')'
         parser.skip_tokens();
 
         // Parse function body (indented block)
