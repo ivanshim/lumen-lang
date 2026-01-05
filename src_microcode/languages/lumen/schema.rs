@@ -95,6 +95,14 @@ pub fn get_schema() -> LanguageSchema {
             .build(),
     );
 
+    // fn statement: fn name(params) { body }
+    statements.insert(
+        "fn".to_string(),
+        PatternBuilder::new("fn")
+            .keyword("fn_keyword")
+            .build(),
+    );
+
     // Binary operators with precedence and associativity
     let mut binary_ops = HashMap::new();
 

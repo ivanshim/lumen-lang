@@ -12,7 +12,7 @@ use crate::schema::LanguageSchema;
 
 /// Check if a keyword expects a block
 fn keyword_expects_block(keyword: &str) -> bool {
-    keyword == "if" || keyword == "while" || keyword == "for" || keyword == "else"
+    keyword == "if" || keyword == "while" || keyword == "for" || keyword == "else" || keyword == "fn"
 }
 
 /// Find the most recent block-expecting keyword in result
