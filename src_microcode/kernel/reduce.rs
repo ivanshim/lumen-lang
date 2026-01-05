@@ -78,6 +78,7 @@ impl<'a> Parser<'a> {
             "break" => self.parse_break(),
             "continue" => self.parse_continue(),
             "return" => self.parse_return(),
+            "fn" => self.parse_function_def(),
             _ => Err(format!("Unknown statement: {}", lexeme)),
         }
     }
@@ -368,6 +369,82 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    /// fn name(param1, param2, ...) { statements }
+    fn parse_function_def(&mut self) -> Result<Instruction, String> {
+        let start = self.peek().span.0;
+        self.expect("fn")?;
+        self.skip_whitespace();
+
+        // Parse function name
+        let mut name = String::new();
+
+        // Collect the function name (may be split across tokens if it contains letters)
+        while !self.is_at_end() && self.peek().lexeme.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            name.push_str(&self.peek().lexeme);
+            self.advance();
+        }
+
+        if name.is_empty() {
+            return Err("Expected function name after 'fn'".to_string());
+        }
+
+        let fn_name = name.clone();
+
+        self.skip_whitespace();
+
+        // Expect '('
+        self.expect("(")?;
+        self.skip_whitespace();
+
+        // Parse parameters
+        let mut params = Vec::new();
+        while self.peek().lexeme != ")" {
+            let mut param = String::new();
+            while !self.is_at_end() && self.peek().lexeme.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                param.push_str(&self.peek().lexeme);
+                self.advance();
+            }
+
+            if param.is_empty() {
+                return Err("Expected parameter name".to_string());
+            }
+
+            params.push(param);
+            self.skip_whitespace();
+
+            // Check for comma or closing paren
+            if self.peek().lexeme == "," {
+                self.advance();
+                self.skip_whitespace();
+            } else if self.peek().lexeme != ")" {
+                return Err("Expected ',' or ')' after parameter".to_string());
+            }
+        }
+
+        // Expect ')'
+        self.expect(")")?;
+        self.skip_whitespace();
+
+        // Parse function body block
+        let body = self.parse_block()?;
+        let end = body.span.1;
+
+        // Store function in registry
+        let fn_params = params.clone();
+        super::function_registry::define_function(fn_name.clone(), fn_params, body.clone());
+
+        // Return FunctionDef primitive
+        Ok(Instruction::new(
+            Primitive::FunctionDef {
+                name: fn_name,
+                params: params,
+                body: Box::new(body),
+            },
+            start,
+            end,
+        ))
+    }
+
     /// { statements }
     fn parse_block(&mut self) -> Result<Instruction, String> {
         self.expect("{")?;
@@ -579,6 +656,41 @@ impl<'a> Parser<'a> {
                 return Ok(Instruction::new(
                     Primitive::Invoke {
                         selector,
+                        args,
+                    },
+                    start,
+                    end,
+                ));
+            }
+
+            // Check if this is a function call (identifier followed by '(')
+            if self.peek().lexeme == "(" {
+                self.advance(); // consume '('
+                self.skip_whitespace();
+
+                // Parse arguments (comma-separated)
+                let mut args = Vec::new();
+
+                while self.peek().lexeme != ")" {
+                    let arg = self.parse_expression(0)?;
+                    args.push(arg);
+                    self.skip_whitespace();
+
+                    if self.peek().lexeme == "," {
+                        self.advance();
+                        self.skip_whitespace();
+                    } else if self.peek().lexeme != ")" {
+                        return Err("Expected ',' or ')' after argument".to_string());
+                    }
+                }
+
+                self.skip_whitespace();
+                self.expect(")")?;
+
+                let end = self.prev_span().1;
+                return Ok(Instruction::new(
+                    Primitive::FunctionCall {
+                        name,
                         args,
                     },
                     start,

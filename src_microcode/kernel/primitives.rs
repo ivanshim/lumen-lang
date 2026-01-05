@@ -67,6 +67,19 @@ pub enum Primitive {
         condition: Box<Instruction>,
         block: Box<Instruction>,
     },
+
+    /// function_def: define a function with parameters and body
+    FunctionDef {
+        name: String,
+        params: Vec<String>,
+        body: Box<Instruction>,
+    },
+
+    /// function_call: call a defined function with arguments
+    FunctionCall {
+        name: String,
+        args: Vec<Instruction>,
+    },
 }
 
 /// Type of operation for Operate primitive

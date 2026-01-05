@@ -145,6 +145,56 @@ pub fn execute(instruction: &Instruction, env: &mut Environment, schema: &Langua
             }
             Ok((last_value, ControlFlow::Normal))
         }
+
+        Primitive::FunctionDef { name: _, params: _, body: _ } => {
+            // Function definition stores itself in the registry during parsing
+            // Execution is a no-op; just return null
+            Ok((Value::Null, ControlFlow::Normal))
+        }
+
+        Primitive::FunctionCall { name, args } => {
+            // Get the function definition from the registry
+            let func_def = super::function_registry::get_function(name)
+                .ok_or_else(|| format!("Undefined function '{}'", name))?;
+
+            // Check argument count
+            if args.len() != func_def.params.len() {
+                return Err(format!(
+                    "Function '{}' expects {} arguments, got {}",
+                    name,
+                    func_def.params.len(),
+                    args.len()
+                ));
+            }
+
+            // Evaluate arguments
+            let mut arg_values = Vec::new();
+            for arg in args {
+                let (val, _) = execute(arg, env, schema)?;
+                arg_values.push(val);
+            }
+
+            // Create new scope for function
+            env.push_scope();
+
+            // Bind parameters to arguments
+            for (param, arg_val) in func_def.params.iter().zip(arg_values) {
+                env.set(param.clone(), arg_val);
+            }
+
+            // Execute function body
+            let (mut result, mut flow) = execute(&func_def.body, env, schema)?;
+
+            // Pop function scope
+            env.pop_scope();
+
+            // Handle return value
+            if flow == ControlFlow::Return {
+                flow = ControlFlow::Normal;
+            }
+
+            Ok((result, flow))
+        }
     }
 }
 
