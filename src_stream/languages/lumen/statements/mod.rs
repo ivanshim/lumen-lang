@@ -8,6 +8,8 @@ pub mod continue_stmt;
 pub mod if_else;
 pub mod print;
 pub mod while_loop;
+pub mod for_loop;
+pub mod until_loop;
 pub mod return_stmt;
 pub mod let_binding;
 pub mod let_mut_binding;
