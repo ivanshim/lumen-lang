@@ -65,34 +65,97 @@ pub struct BoolLiteralPrefix;
 
 impl ExprPrefix for BoolLiteralPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        // Since "true" and "false" are not registered at lexer level,
-        // they come as individual characters. Check if it could be the start of "true" or "false"
-        let lex = &parser.peek().lexeme;
-        lex == "true" || lex == "false" || lex == "t" || lex == "f"
+        // Check if the next characters form "true" or "false" (which are not registered as tokens)
+        for keyword in &["true", "false"] {
+            let mut i = parser.i;
+            let mut collected = String::new();
+
+            // Collect characters to check if they form our keyword
+            for expected_ch in keyword.chars() {
+                if i >= parser.toks.len() {
+                    break;
+                }
+                let actual = &parser.toks[i].tok.lexeme;
+                if actual.len() == 1 && actual.chars().next() == Some(expected_ch) {
+                    collected.push(expected_ch);
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+
+            // Make sure we collected the full keyword
+            if collected == *keyword {
+                // Make sure next character doesn't extend the keyword
+                if i < parser.toks.len() {
+                    let next = &parser.toks[i].tok.lexeme;
+                    if next.len() == 1 {
+                        let next_ch = next.chars().next().unwrap();
+                        if next_ch.is_ascii_alphanumeric() || next_ch == '_' {
+                            continue; // This keyword is extended, try next one
+                        }
+                    }
+                }
+                return true;
+            }
+        }
+        false
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
-        // Collect the full identifier from potentially split characters
-        let mut name = parser.advance().lexeme;
-        loop {
-            if parser.peek().lexeme.len() == 1 {
-                let ch = parser.peek().lexeme.as_bytes()[0];
-                if ch.is_ascii_alphabetic() {
-                    name.push_str(&parser.advance().lexeme);
-                    continue;
+        // Determine which keyword we're parsing
+        let keywords = ["true", "false"];
+        let mut collected = String::new();
+        let mut matched_keyword = "";
+
+        for keyword in &keywords {
+            let mut i = parser.i;
+            collected.clear();
+
+            // Collect characters to check if they form our keyword
+            for expected_ch in keyword.chars() {
+                if i >= parser.toks.len() {
+                    break;
+                }
+                let actual = &parser.toks[i].tok.lexeme;
+                if actual.len() == 1 && actual.chars().next() == Some(expected_ch) {
+                    collected.push(expected_ch);
+                    i += 1;
+                } else {
+                    break;
                 }
             }
-            break;
+
+            // Check if we matched the full keyword
+            if collected == *keyword {
+                // Make sure next character doesn't extend the keyword
+                if i < parser.toks.len() {
+                    let next = &parser.toks[i].tok.lexeme;
+                    if next.len() == 1 {
+                        let next_ch = next.chars().next().unwrap();
+                        if next_ch.is_ascii_alphanumeric() || next_ch == '_' {
+                            continue; // This keyword is extended, try next one
+                        }
+                    }
+                }
+                matched_keyword = keyword;
+                break;
+            }
+        }
+
+        // Consume the matched keyword characters
+        for _ in matched_keyword.chars() {
+            parser.advance();
         }
 
         // Check if it's actually a boolean literal
-        if name == "true" {
+        if matched_keyword == "true" {
             Ok(Box::new(BoolLiteral { value: true }))
-        } else if name == "false" {
+        } else if matched_keyword == "false" {
             Ok(Box::new(BoolLiteral { value: false }))
         } else {
             // Not a boolean literal, this is an error
-            Err(format!("Expected 'true' or 'false', got '{}'", name))
+            Err(format!("Expected 'true' or 'false', got '{}'", matched_keyword))
         }
     }
 }
