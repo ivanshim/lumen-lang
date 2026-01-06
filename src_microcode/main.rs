@@ -1,18 +1,15 @@
-// Microcode Kernel Main Entry Point
-// Handles language detection and routing for the microcode kernel
-// Usage: microcode <file> [--lang <language>]
+// Microcode Kernel v2 - Main Entry Point
+// Handles language detection and routing for the new microcode kernel
+// Usage: microcode_2 <file> [--lang <language>]
 
 use std::env;
 use std::fs;
 use std::path::Path;
 use std::process;
 
-mod kernel;
-mod languages;
-mod runtime;
-mod schema;
-
-pub use kernel::Microcode;
+// Import the microcode_2 library
+use microcode_2::kernel::run;
+use microcode_2::languages::{lumen_schema, mini_rust_schema, mini_python_schema};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -31,9 +28,27 @@ fn main() {
 
     // Route to appropriate language
     match language.as_str() {
-        "lumen" => run_lumen_microcode(&source),
-        "mini-rust" => run_mini_rust_microcode(&source),
-        "mini-python" => run_mini_python_microcode(&source),
+        "lumen" => {
+            let schema = lumen_schema::get_schema();
+            if let Err(e) = run(&source, &schema) {
+                eprintln!("LumenError: {}", e);
+                process::exit(1);
+            }
+        }
+        "mini-rust" => {
+            let schema = mini_rust_schema::get_schema();
+            if let Err(e) = run(&source, &schema) {
+                eprintln!("MiniRustError: {}", e);
+                process::exit(1);
+            }
+        }
+        "mini-python" => {
+            let schema = mini_python_schema::get_schema();
+            if let Err(e) = run(&source, &schema) {
+                eprintln!("MiniPythonError: {}", e);
+                process::exit(1);
+            }
+        }
         _ => {
             eprintln!("Error: Unknown language '{}'", language);
             process::exit(1);
@@ -43,7 +58,10 @@ fn main() {
 
 fn parse_args(args: &[String]) -> (String, String) {
     if args.len() < 2 {
-        eprintln!("Usage: {} <file> [--lang <language>]", args.get(0).unwrap_or(&"lumen-lang".to_string()));
+        eprintln!(
+            "Usage: {} <file> [--lang <language>]",
+            args.get(0).unwrap_or(&"microcode_2".to_string())
+        );
         process::exit(1);
     }
 
@@ -80,40 +98,4 @@ fn detect_language_from_extension(filepath: &str) -> Option<String> {
     };
 
     Some(language.to_string())
-}
-
-fn run_lumen_microcode(source: &str) {
-    use crate::Microcode;
-    use crate::languages::lumen_schema;
-
-    let schema = lumen_schema::get_schema();
-
-    if let Err(e) = Microcode::execute(source, &schema) {
-        eprintln!("MicrocodeError: {e}");
-        process::exit(1);
-    }
-}
-
-fn run_mini_rust_microcode(source: &str) {
-    use crate::Microcode;
-    use crate::languages::mini_rust_schema;
-
-    let schema = mini_rust_schema::get_schema();
-
-    if let Err(e) = Microcode::execute(source, &schema) {
-        eprintln!("MicrocodeError: {e}");
-        process::exit(1);
-    }
-}
-
-fn run_mini_python_microcode(source: &str) {
-    use crate::Microcode;
-    use crate::languages::mini_python_schema;
-
-    let schema = mini_python_schema::get_schema();
-
-    if let Err(e) = Microcode::execute(source, &schema) {
-        eprintln!("MicrocodeError: {e}");
-        process::exit(1);
-    }
 }

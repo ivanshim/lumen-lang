@@ -1,9 +1,6 @@
-// Lumen language schema (pure declarative)
+// Lumen language: semantic definition
 //
-// This module contains ONLY data describing the Lumen language.
-// No parsing logic - the kernel interprets this schema.
+// Maps Lumen syntax to the microcode kernel.
 
 pub mod schema;
 pub mod values;
-
-pub use schema::get_schema;

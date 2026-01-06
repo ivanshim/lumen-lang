@@ -15,13 +15,9 @@ path = "src_stream/main.rs"
 name = "microcode"
 path = "src_microcode/main.rs"
 
-[[bin]]
-name = "microcode_2"
-path = "src_microcode_2/main.rs"
-
 [lib]
 name = "microcode_2"
-path = "src_microcode_2/lib.rs"
+path = "src_microcode/lib.rs"
 
 [dependencies]
 serde_yaml = "0.9"

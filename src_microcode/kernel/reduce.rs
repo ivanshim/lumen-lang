@@ -1,157 +1,135 @@
-// Stage 3: Reduction
+// Stage 3: Reduce - Token stream → Instruction tree
 //
-// Convert token stream to instruction tree per schema.
-// Schema tables guide all parsing decisions.
-// No semantic assumptions.
+// Parse tokens into Instruction tree using 7 primitives.
+// All semantics come from:
+// - Schema (operator precedence, statement patterns)
+// - Value types (what data exists)
+// - Environment (where data lives)
 //
-// The parser uses:
-// - Pratt parsing for expressions (operator precedence climbing)
-// - Schema-driven statement dispatch
-// - Token pattern matching for syntax validation
+// Parser uses Pratt parsing for expressions + top-down for statements.
 
 use super::ingest::Token;
-use super::primitives::{Instruction, Primitive, TransferKind, OperateKind};
+use super::primitives::Instruction;
 use super::eval::Value;
 use crate::schema::LanguageSchema;
 
-/// Reduce token stream to instruction tree per schema
-pub fn parse(tokens: &[Token], schema: &LanguageSchema) -> Result<Instruction, String> {
-    let mut parser = Parser {
-        tokens,
-        pos: 0,
-        schema,
-    };
-
-    parser.parse_program()
-}
-
+/// Parser: stateful token consumer
 struct Parser<'a> {
     tokens: &'a [Token],
     pos: usize,
+    #[allow(dead_code)]
     schema: &'a LanguageSchema,
 }
 
 impl<'a> Parser<'a> {
+    fn new(tokens: &'a [Token], schema: &'a LanguageSchema) -> Self {
+        Parser {
+            tokens,
+            pos: 0,
+            schema,
+        }
+    }
+
+    fn peek(&self) -> Token {
+        self.tokens.get(self.pos).cloned().unwrap_or_else(|| Token {
+            lexeme: "EOF".to_string(),
+            span: (0, 0),
+            line: 0,
+            col: 0,
+        })
+    }
+
+    fn advance(&mut self) -> Token {
+        let token = self.peek();
+        if self.pos < self.tokens.len() {
+            self.pos += 1;
+        }
+        token
+    }
+
+    fn is_at_end(&self) -> bool {
+        self.peek().lexeme == "EOF"
+    }
+
+    fn skip_whitespace(&mut self) {
+        while self.peek().lexeme == " " || self.peek().lexeme == "\t" || self.peek().lexeme == "\n" {
+            self.advance();
+        }
+    }
+
+    /// Parse a program (sequence of statements)
     fn parse_program(&mut self) -> Result<Instruction, String> {
-        let mut instructions = Vec::new();
+        let mut stmts = Vec::new();
 
-        while !self.is_at_end() && self.peek().lexeme != "EOF" {
+        while !self.is_at_end() {
             self.skip_whitespace();
-
-            if self.is_at_end() || self.peek().lexeme == "EOF" {
+            if self.is_at_end() {
                 break;
             }
 
-            let instr = self.parse_statement()?;
-            instructions.push(instr);
-
+            let stmt = self.parse_statement()?;
+            stmts.push(stmt);
             self.skip_whitespace();
-
-            // Skip optional terminators (semicolon, newline)
-            while self.schema.is_terminator(&self.peek().lexeme) {
-                self.advance();
-                self.skip_whitespace();
-            }
         }
 
-        Ok(Instruction::sequence(instructions))
+        Ok(Instruction::sequence(stmts))
     }
 
+    /// Parse a statement
     fn parse_statement(&mut self) -> Result<Instruction, String> {
-        let lexeme = self.peek().lexeme.clone();
-        let _start = self.peek().span.0;
+        let keyword = &self.peek().lexeme.clone();
 
-        // Check if it's a statement keyword
-        if !self.schema.is_statement_keyword(&lexeme) {
-            // Try to parse as assignment or expression statement
-            return self.parse_assignment_or_expression();
-        }
-
-        match lexeme.as_str() {
-            "print" => self.parse_print(),
+        match keyword.as_str() {
+            "let" => self.parse_let(),
             "if" => self.parse_if(),
             "while" => self.parse_while(),
-            "for" => self.parse_for(),
-            "loop" => self.parse_loop(),
-            "var" => self.parse_var(),
-            "let" => self.parse_let(),
-            "break" => self.parse_break(),
-            "continue" => self.parse_continue(),
             "return" => self.parse_return(),
-            "fn" => self.parse_function_def(),
-            _ => Err(format!("Unknown statement: {}", lexeme)),
-        }
-    }
-
-    /// Handle assignment or expression statements (x = value)
-    fn parse_assignment_or_expression(&mut self) -> Result<Instruction, String> {
-        let start = self.peek().span.0;
-        // Parse with min_prec=1 to exclude assignment operator (precedence 0)
-        // This allows us to distinguish between assignment and binary operators
-        let expr = self.parse_expression(1)?;
-
-        // Check if it's an assignment
-        if self.peek().lexeme == "=" {
-            self.advance();
-            self.skip_whitespace();
-            let value = self.parse_expression(0)?;
-            let end = self.prev_span().1;
-
-            // Extract variable name from expression (if it's a variable reference)
-            if let Primitive::Variable(name) = &expr.primitive {
-                return Ok(Instruction::new(
-                    Primitive::Assign {
-                        name: name.clone(),
-                        value: Box::new(value),
-                    },
-                    start,
-                    end,
-                ));
+            "break" => {
+                self.advance();
+                Ok(Instruction::break_stmt())
             }
+            "continue" => {
+                self.advance();
+                Ok(Instruction::continue_stmt())
+            }
+            "fn" => self.parse_function_def(),
+            _ => self.parse_assignment_or_expression(),
         }
-
-        Ok(expr)
     }
 
-    /// print(expression) or print!(expression) for Mini-Rust
-    /// Desugared to: Invoke("print_native", [expression])
-    fn parse_print(&mut self) -> Result<Instruction, String> {
-        let start = self.peek().span.0;
-        self.expect("print")?;
+    /// Parse: let name = expr
+    fn parse_let(&mut self) -> Result<Instruction, String> {
+        self.advance();  // consume 'let'
         self.skip_whitespace();
 
-        // Handle print! macro syntax (Mini-Rust)
-        if self.peek().lexeme == "!" {
+        let name = self.parse_identifier()?;
+        self.skip_whitespace();
+
+        // Skip optional type annotation ": type"
+        if self.peek().lexeme == ":" {
             self.advance();
+            self.skip_whitespace();
+            // Skip the type name
+            let _ = self.parse_identifier();
             self.skip_whitespace();
         }
 
-        self.expect("(")?;
+        if self.peek().lexeme != "=" {
+            return Err("Expected '=' in let binding".to_string());
+        }
+        self.advance();
         self.skip_whitespace();
 
-        let expr = self.parse_expression(0)?;
-        self.skip_whitespace();
-        self.expect(")")?;
-
-        let end = self.prev_span().1;
-        // Desugar print to Invoke external function
-        Ok(Instruction::new(
-            Primitive::Invoke {
-                selector: "print_native".to_string(),
-                args: vec![expr],
-            },
-            start,
-            end,
-        ))
+        let value = self.parse_expression()?;
+        Ok(Instruction::assign(name, value))
     }
 
-    /// if condition { block } [else { block }]
+    /// Parse: if condition { block } [else { block }]
     fn parse_if(&mut self) -> Result<Instruction, String> {
-        let start = self.peek().span.0;
-        self.expect("if")?;
+        self.advance();  // consume 'if'
         self.skip_whitespace();
 
-        let condition = self.parse_expression(0)?;
+        let condition = self.parse_expression()?;
         self.skip_whitespace();
 
         let then_block = self.parse_block()?;
@@ -160,397 +138,138 @@ impl<'a> Parser<'a> {
         let else_block = if self.peek().lexeme == "else" {
             self.advance();
             self.skip_whitespace();
-            Some(Box::new(self.parse_block()?))
+            Some(self.parse_block()?)
         } else {
             None
         };
 
-        let end = self.prev_span().1;
-        Ok(Instruction::new(
-            Primitive::Branch {
-                condition: Box::new(condition),
-                then_block: Box::new(then_block),
-                else_block,
-            },
-            start,
-            end,
-        ))
+        Ok(Instruction::branch(condition, then_block, else_block))
     }
 
-    /// while condition { block }
-    /// Desugared to: Scope [ looping_branch ]
-    /// where looping_branch uses Branch + Transfer(Continue) for loop control
+    /// Parse: while condition { block }
     fn parse_while(&mut self) -> Result<Instruction, String> {
-        let start = self.peek().span.0;
-        self.expect("while")?;
+        self.advance();  // consume 'while'
         self.skip_whitespace();
 
-        let condition = self.parse_expression(0)?;
+        let condition = self.parse_expression()?;
         self.skip_whitespace();
 
-        let block = self.parse_block()?;
-        let end = self.prev_span().1;
+        let body = self.parse_block()?;
 
-        // Desugar while loop to: Scope [ Loop { condition, block } ]
-        // Note: Loop is kept as internal implementation detail for now.
-        // In the final canonical set, this would be expressed as nested Branch + Transfer patterns.
-        Ok(Instruction::new(
-            Primitive::Loop {
-                condition: Box::new(condition),
-                block: Box::new(block),
-            },
-            start,
-            end,
-        ))
+        Ok(Instruction::loop_stmt(condition, body))
     }
 
-    /// var name = expression
-    fn parse_var(&mut self) -> Result<Instruction, String> {
-        let start = self.peek().span.0;
-        self.expect("var")?;
-        self.skip_whitespace();
-
-        let name = self.parse_identifier()?;
-        self.skip_whitespace();
-
-        self.expect("=")?;
-        self.skip_whitespace();
-
-        let value = self.parse_expression(0)?;
-        let end = self.prev_span().1;
-
-        Ok(Instruction::new(
-            Primitive::Assign {
-                name,
-                value: Box::new(value),
-            },
-            start,
-            end,
-        ))
-    }
-
-    /// let name = expression; (Mini-Rust style)
-    fn parse_let(&mut self) -> Result<Instruction, String> {
-        let start = self.peek().span.0;
-        self.expect("let")?;
-        self.skip_whitespace();
-
-        // Check for 'mut' keyword
-        let _is_mut = if self.peek().lexeme == "mut" {
-            self.advance();
-            self.skip_whitespace();
-            true
-        } else {
-            false
-        };
-
-        let name = self.parse_identifier()?;
-        self.skip_whitespace();
-
-        self.expect("=")?;
-        self.skip_whitespace();
-
-        let value = self.parse_expression(0)?;
-        let end = self.prev_span().1;
-
-        Ok(Instruction::new(
-            Primitive::Assign {
-                name,
-                value: Box::new(value),
-            },
-            start,
-            end,
-        ))
-    }
-
-    /// for variable in expression { block }
-    fn parse_for(&mut self) -> Result<Instruction, String> {
-        let start = self.peek().span.0;
-        self.expect("for")?;
-        self.skip_whitespace();
-
-        let _var = self.parse_identifier()?;
-        self.skip_whitespace();
-
-        self.expect("in")?;
-        self.skip_whitespace();
-
-        let _iterable = self.parse_expression(0)?;
-        self.skip_whitespace();
-
-        let _block = self.parse_block()?;
-        let end = self.prev_span().1;
-
-        // For now, return a placeholder - proper for-loop support would need to be added
-        Err("for loops not yet supported in microcode kernel".to_string())
-    }
-
-    /// loop { block }
-    fn parse_loop(&mut self) -> Result<Instruction, String> {
-        let start = self.peek().span.0;
-        self.expect("loop")?;
-        self.skip_whitespace();
-
-        let block = self.parse_block()?;
-        let end = self.prev_span().1;
-
-        // Infinite loop: while true
-        let condition = Instruction::new(
-            Primitive::Literal(Value::Bool(true)),
-            start,
-            start,
-        );
-
-        Ok(Instruction::new(
-            Primitive::Loop {
-                condition: Box::new(condition),
-                block: Box::new(block),
-            },
-            start,
-            end,
-        ))
-    }
-
-    /// return [expression];
-    /// Desugared to: Transfer(RETURN, [expression])
+    /// Parse: return [expr]
     fn parse_return(&mut self) -> Result<Instruction, String> {
-        let start = self.peek().span.0;
-        self.expect("return")?;
+        self.advance();  // consume 'return'
         self.skip_whitespace();
 
-        // Check if there's a return value or just 'return'
-        let (value, end) = if self.schema.is_terminator(&self.peek().lexeme) || self.peek().lexeme == "}" || self.is_at_end() {
-            (None, self.prev_span().1)
+        if self.peek().lexeme == "\n" || self.is_at_end() || self.peek().lexeme == "}" {
+            Ok(Instruction::return_stmt(None))
         } else {
-            let expr = self.parse_expression(0)?;
-            let end = expr.span.1;
-            (Some(Box::new(expr)), end)
-        };
-
-        Ok(Instruction::new(
-            Primitive::Transfer {
-                kind: TransferKind::Return,
-                value,
-            },
-            start,
-            end,
-        ))
+            let expr = self.parse_expression()?;
+            Ok(Instruction::return_stmt(Some(expr)))
+        }
     }
 
-    /// break
-    /// Desugared to: Transfer(BREAK)
-    fn parse_break(&mut self) -> Result<Instruction, String> {
-        let start = self.peek().span.0;
-        let end = start + 5;
-        self.expect("break")?;
-        Ok(Instruction::new(
-            Primitive::Transfer {
-                kind: TransferKind::Break,
-                value: None,
-            },
-            start,
-            end,
-        ))
-    }
-
-    /// continue
-    /// Desugared to: Transfer(CONTINUE)
-    fn parse_continue(&mut self) -> Result<Instruction, String> {
-        let start = self.peek().span.0;
-        let end = start + 8;
-        self.expect("continue")?;
-        Ok(Instruction::new(
-            Primitive::Transfer {
-                kind: TransferKind::Continue,
-                value: None,
-            },
-            start,
-            end,
-        ))
-    }
-
-    /// fn name(param1, param2, ...) { statements }
+    /// Parse: fn name(params) { block }
     fn parse_function_def(&mut self) -> Result<Instruction, String> {
-        let start = self.peek().span.0;
-        self.expect("fn")?;
+        self.advance();  // consume 'fn'
         self.skip_whitespace();
 
-        // Parse function name
-        let mut name = String::new();
-
-        // Collect the function name (may be split across tokens if it contains letters)
-        while !self.is_at_end() && self.peek().lexeme.chars().all(|c| c.is_alphanumeric() || c == '_') {
-            name.push_str(&self.peek().lexeme);
-            self.advance();
-        }
-
-        if name.is_empty() {
-            return Err("Expected function name after 'fn'".to_string());
-        }
-
-        let fn_name = name.clone();
-
+        let name = self.parse_identifier()?;
         self.skip_whitespace();
 
-        // Expect '('
-        self.expect("(")?;
+        if self.peek().lexeme != "(" {
+            return Err("Expected '(' after function name".to_string());
+        }
+        self.advance();
         self.skip_whitespace();
 
         // Parse parameters
         let mut params = Vec::new();
         while self.peek().lexeme != ")" {
-            let mut param = String::new();
-            while !self.is_at_end() && self.peek().lexeme.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                param.push_str(&self.peek().lexeme);
-                self.advance();
-            }
-
-            if param.is_empty() {
-                return Err("Expected parameter name".to_string());
-            }
-
-            params.push(param);
+            params.push(self.parse_identifier()?);
             self.skip_whitespace();
-
-            // Check for comma or closing paren
             if self.peek().lexeme == "," {
                 self.advance();
                 self.skip_whitespace();
-            } else if self.peek().lexeme != ")" {
-                return Err("Expected ',' or ')' after parameter".to_string());
             }
         }
 
-        // Expect ')'
-        self.expect(")")?;
+        self.advance();  // consume ')'
         self.skip_whitespace();
 
-        // Skip newlines before block
-        while self.peek().lexeme == "\n" {
+        let body = self.parse_block()?;
+
+        Ok(Instruction::FunctionDef {
+            name,
+            params,
+            body: Box::new(body),
+        })
+    }
+
+    /// Parse a block: { statements }
+    fn parse_block(&mut self) -> Result<Instruction, String> {
+        if self.peek().lexeme != "{" {
+            return Err("Expected '{'".to_string());
+        }
+        self.advance();
+        self.skip_whitespace();
+
+        let mut stmts = Vec::new();
+        while self.peek().lexeme != "}" && !self.is_at_end() {
+            let stmt = self.parse_statement()?;
+            stmts.push(stmt);
+            self.skip_whitespace();
+        }
+
+        if self.peek().lexeme != "}" {
+            return Err("Expected '}'".to_string());
+        }
+        self.advance();
+
+        Ok(Instruction::sequence(stmts))
+    }
+
+    /// Parse assignment or expression statement
+    fn parse_assignment_or_expression(&mut self) -> Result<Instruction, String> {
+        let expr = self.parse_expression()?;
+        self.skip_whitespace();
+
+        if self.peek().lexeme == "=" {
             self.advance();
             self.skip_whitespace();
+            let value = self.parse_expression()?;
+
+            // Extract variable name from expression
+            if let Instruction::Variable(name) = expr {
+                return Ok(Instruction::assign(name, value));
+            } else {
+                return Err("Invalid assignment target".to_string());
+            }
         }
 
-        // Parse function body block
-        let body = self.parse_block()?;
-        let end = body.span.1;
-
-        // Store function in registry
-        let fn_params = params.clone();
-        super::function_registry::define_function(fn_name.clone(), fn_params, body.clone());
-
-        // Return FunctionDef primitive
-        Ok(Instruction::new(
-            Primitive::FunctionDef {
-                name: fn_name,
-                params: params,
-                body: Box::new(body),
-            },
-            start,
-            end,
-        ))
+        Ok(expr)
     }
 
-    /// Parse { statements } or INDENT statements DEDENT
-    /// Supports both brace-based and indentation-based syntax
-    fn parse_block(&mut self) -> Result<Instruction, String> {
-        let mut instructions = Vec::new();
-
-        // Check if this is a brace-based block or indentation-based block
-        if self.peek().lexeme == "{" {
-            // Brace-based: { statements }
-            self.expect("{")?;
-            self.skip_whitespace();
-
-            while self.peek().lexeme != "}" && !self.is_at_end() {
-                self.skip_whitespace();
-
-                if self.peek().lexeme == "}" {
-                    break;
-                }
-
-                let instr = self.parse_statement()?;
-                instructions.push(instr);
-
-                self.skip_whitespace();
-
-                // Skip optional terminators
-                while self.schema.is_terminator(&self.peek().lexeme) {
-                    self.advance();
-                    self.skip_whitespace();
-                }
-            }
-
-            self.expect("}")?;
-        } else if self.peek().lexeme == "INDENT" {
-            // Indentation-based: INDENT statements DEDENT
-            self.expect("INDENT")?;
-            self.skip_whitespace();
-
-            while self.peek().lexeme != "DEDENT" && !self.is_at_end() {
-                self.skip_whitespace();
-
-                if self.peek().lexeme == "DEDENT" {
-                    break;
-                }
-
-                let instr = self.parse_statement()?;
-                instructions.push(instr);
-
-                self.skip_whitespace();
-
-                // Skip optional terminators
-                while self.schema.is_terminator(&self.peek().lexeme) {
-                    self.advance();
-                    self.skip_whitespace();
-                }
-            }
-
-            self.expect("DEDENT")?;
-        } else {
-            return Err("Expected '{' or indented block".to_string());
-        }
-
-        Ok(Instruction::scope(instructions))
+    /// Parse expression (lowest precedence)
+    fn parse_expression(&mut self) -> Result<Instruction, String> {
+        self.parse_logical_or()
     }
 
-    /// Parse expression using Pratt parser (operator precedence climbing)
-    fn parse_expression(&mut self, min_prec: u32) -> Result<Instruction, String> {
-        let mut left = self.parse_primary()?;
+    /// Parse logical OR (lowest precedence after assignment)
+    fn parse_logical_or(&mut self) -> Result<Instruction, String> {
+        let mut left = self.parse_logical_and()?;
+        self.skip_whitespace();
 
         loop {
-            // Skip whitespace before checking for operators
-            self.skip_whitespace();
-
-            let lexeme = self.peek().lexeme.clone();
-
-            // Check if it's a binary operator
-            if let Some(op_info) = self.schema.get_binary_op(&lexeme) {
-                if op_info.precedence < min_prec {
-                    break;
-                }
-
+            if self.peek().lexeme == "or" {
                 self.advance();
                 self.skip_whitespace();
-
-                let right_prec = match op_info.associativity {
-                    crate::schema::Associativity::Left => op_info.precedence + 1,
-                    crate::schema::Associativity::Right => op_info.precedence,
-                    crate::schema::Associativity::None => op_info.precedence + 1,
-                };
-
-                let right = self.parse_expression(right_prec)?;
-                let end = self.prev_span().1;
-                let start = left.span.0;
-
-                left = Instruction::new(
-                    Primitive::Operate {
-                        kind: OperateKind::Binary(lexeme),
-                        operands: vec![left, right],
-                    },
-                    start,
-                    end,
-                );
+                let right = self.parse_logical_and()?;
+                self.skip_whitespace();
+                left = Instruction::binary("or".to_string(), left, right);
             } else {
                 break;
             }
@@ -559,232 +278,186 @@ impl<'a> Parser<'a> {
         Ok(left)
     }
 
-    /// Parse primary expression (literal, variable, parenthesized, unary)
-    fn parse_primary(&mut self) -> Result<Instruction, String> {
-        let lexeme = self.peek().lexeme.clone();
-        let start = self.peek().span.0;
-        let end = self.peek().span.1;
+    /// Parse logical AND
+    fn parse_logical_and(&mut self) -> Result<Instruction, String> {
+        let mut left = self.parse_comparison()?;
+        self.skip_whitespace();
 
-        // Unary operator
-        if let Some(_op_info) = self.schema.get_unary_op(&lexeme) {
+        loop {
+            if self.peek().lexeme == "and" {
+                self.advance();
+                self.skip_whitespace();
+                let right = self.parse_comparison()?;
+                self.skip_whitespace();
+                left = Instruction::binary("and".to_string(), left, right);
+            } else {
+                break;
+            }
+        }
+
+        Ok(left)
+    }
+
+    /// Parse comparison operators
+    fn parse_comparison(&mut self) -> Result<Instruction, String> {
+        let mut left = self.parse_additive()?;
+        self.skip_whitespace();
+
+        loop {
+            let op = match self.peek().lexeme.as_str() {
+                "==" | "!=" | "<" | ">" | "<=" | ">=" => self.peek().lexeme.clone(),
+                _ => break,
+            };
             self.advance();
             self.skip_whitespace();
+            let right = self.parse_additive()?;
+            self.skip_whitespace();
+            left = Instruction::binary(op, left, right);
+        }
 
-            let operand = self.parse_primary()?;
-            let final_end = operand.span.1;
+        Ok(left)
+    }
 
-            return Ok(Instruction::new(
-                Primitive::Operate {
-                    kind: OperateKind::Unary(lexeme),
-                    operands: vec![operand],
-                },
-                start,
-                final_end,
-            ));
+    /// Parse additive operators
+    fn parse_additive(&mut self) -> Result<Instruction, String> {
+        let mut left = self.parse_multiplicative()?;
+        self.skip_whitespace();
+
+        loop {
+            let op = match self.peek().lexeme.as_str() {
+                "+" | "-" => self.peek().lexeme.clone(),
+                _ => break,
+            };
+            self.advance();
+            self.skip_whitespace();
+            let right = self.parse_multiplicative()?;
+            self.skip_whitespace();
+            left = Instruction::binary(op, left, right);
+        }
+
+        Ok(left)
+    }
+
+    /// Parse multiplicative operators
+    fn parse_multiplicative(&mut self) -> Result<Instruction, String> {
+        let mut left = self.parse_unary()?;
+        self.skip_whitespace();
+
+        loop {
+            let op = match self.peek().lexeme.as_str() {
+                "*" | "/" | "%" => self.peek().lexeme.clone(),
+                _ => break,
+            };
+            self.advance();
+            self.skip_whitespace();
+            let right = self.parse_unary()?;
+            self.skip_whitespace();
+            left = Instruction::binary(op, left, right);
+        }
+
+        Ok(left)
+    }
+
+    /// Parse unary operators
+    fn parse_unary(&mut self) -> Result<Instruction, String> {
+        let op = match self.peek().lexeme.as_str() {
+            "-" | "not" => self.peek().lexeme.clone(),
+            _ => return self.parse_primary(),
+        };
+
+        self.advance();
+        self.skip_whitespace();
+        let operand = self.parse_unary()?;
+        Ok(Instruction::unary(op, operand))
+    }
+
+    /// Parse primary expression
+    fn parse_primary(&mut self) -> Result<Instruction, String> {
+        let lexeme = &self.peek().lexeme.clone();
+
+        // Numbers
+        if lexeme.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+            let num_str = self.consume_number()?;
+            let num = num_str.parse::<f64>()
+                .map_err(|_| format!("Invalid number: {}", num_str))?;
+            return Ok(Instruction::literal(Value::Number(num)));
+        }
+
+        // Strings
+        if lexeme == "\"" {
+            let string_val = self.consume_string()?;
+            return Ok(Instruction::literal(Value::String(string_val)));
+        }
+
+        // Booleans
+        if lexeme == "true" || lexeme == "false" {
+            let val = lexeme == "true";
+            self.advance();
+            return Ok(Instruction::literal(Value::Bool(val)));
+        }
+
+        // None
+        if lexeme == "none" {
+            self.advance();
+            return Ok(Instruction::literal(Value::Null));
         }
 
         // Parenthesized expression
         if lexeme == "(" {
             self.advance();
             self.skip_whitespace();
-
-            let expr = self.parse_expression(0)?;
+            let expr = self.parse_expression()?;
             self.skip_whitespace();
-            self.expect(")")?;
-
+            if self.peek().lexeme != ")" {
+                return Err("Expected ')'".to_string());
+            }
+            self.advance();
             return Ok(expr);
         }
 
-        // Number literal
-        if lexeme.chars().next().map_or(false, |c| c.is_ascii_digit()) {
-            let mut number_str = lexeme.clone();
-            self.advance();
-
-            // Consume additional digits and decimal points
-            while !self.is_at_end() {
-                let next = &self.peek().lexeme;
-                if next.len() == 1 {
-                    let ch = next.as_bytes()[0];
-                    if ch.is_ascii_digit() || ch == b'.' {
-                        number_str.push_str(next);
-                        self.advance();
-                        continue;
-                    }
-                }
-                break;
-            }
-
-            let num = number_str.parse::<f64>()
-                .map_err(|_| format!("Invalid number: {}", number_str))?;
-
-            return Ok(Instruction::literal(Value::Number(num), start, self.prev_span().1));
-        }
-
-        // String literal
-        if lexeme == "\"" {
-            self.advance();
-            let mut string_val = String::new();
-
-            while !self.is_at_end() && self.peek().lexeme != "\"" {
-                // Handle escape sequences
-                if self.peek().lexeme == "\\" {
-                    self.advance();
-                    if !self.is_at_end() {
-                        let next = self.peek().lexeme.clone();
-                        match next.as_str() {
-                            "\"" => { string_val.push('"'); self.advance(); }
-                            "\\" => { string_val.push('\\'); self.advance(); }
-                            "n" => { string_val.push('\n'); self.advance(); }
-                            "t" => { string_val.push('\t'); self.advance(); }
-                            "r" => { string_val.push('\r'); self.advance(); }
-                            _ => { string_val.push_str("\\"); string_val.push_str(&next); self.advance(); }
-                        }
-                    }
-                } else {
-                    string_val.push_str(&self.peek().lexeme);
-                    self.advance();
-                }
-            }
-
-            if self.is_at_end() {
-                return Err("Unterminated string".to_string());
-            }
-
-            self.expect("\"")?;
-            return Ok(Instruction::literal(Value::String(string_val), start, self.prev_span().1));
-        }
-
-        // Boolean literal (both lowercase and uppercase)
-        if lexeme == "true" || lexeme == "false" || lexeme == "True" || lexeme == "False" {
-            self.advance();
-            let bool_val = lexeme == "true" || lexeme == "True";
-            return Ok(Instruction::literal(Value::Bool(bool_val), start, self.prev_span().1));
-        }
-
-        // None literal
-        if lexeme == "none" || lexeme == "None" {
-            self.advance();
-            return Ok(Instruction::literal(Value::Null, start, self.prev_span().1));
-        }
-
-        // Identifier (variable reference or extern function call)
+        // Identifiers (variables or function calls)
         if lexeme.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_') {
             let name = self.parse_identifier()?;
+            self.skip_whitespace();
 
-            // Check if this is an extern function call
-            if name == "extern" && self.peek().lexeme == "(" {
-                self.advance(); // consume '('
-                self.skip_whitespace();
-
-                // Parse selector (string literal)
-                self.expect("\"")?;
-                let mut selector = String::new();
-                while !self.is_at_end() && self.peek().lexeme != "\"" {
-                    selector.push_str(&self.peek().lexeme);
-                    self.advance();
-                }
-                self.expect("\"")?;
-                self.skip_whitespace();
-
-                // Parse arguments (comma-separated)
-                let mut args = Vec::new();
-
-                if self.peek().lexeme != ")" {
-                    // Expect comma before first argument
-                    self.expect(",")?;
-                    self.skip_whitespace();
-
-                    // Parse comma-separated arguments
-                    loop {
-                        let arg = self.parse_expression(0)?;
-                        args.push(arg);
-                        self.skip_whitespace();
-
-                        if self.peek().lexeme == "," {
-                            self.advance();
-                            self.skip_whitespace();
-                        } else {
-                            break;
-                        }
-                    }
-                }
-
-                self.skip_whitespace();
-                self.expect(")")?;
-
-                let end = self.prev_span().1;
-                return Ok(Instruction::new(
-                    Primitive::Invoke {
-                        selector,
-                        args,
-                    },
-                    start,
-                    end,
-                ));
-            }
-
-            // Check if this is a function call (identifier followed by '(')
             if self.peek().lexeme == "(" {
-                self.advance(); // consume '('
+                self.advance();
                 self.skip_whitespace();
 
-                // Parse arguments (comma-separated)
                 let mut args = Vec::new();
-
                 while self.peek().lexeme != ")" {
-                    let arg = self.parse_expression(0)?;
-                    args.push(arg);
+                    args.push(self.parse_expression()?);
                     self.skip_whitespace();
-
                     if self.peek().lexeme == "," {
                         self.advance();
                         self.skip_whitespace();
-                    } else if self.peek().lexeme != ")" {
-                        return Err("Expected ',' or ')' after argument".to_string());
                     }
                 }
 
-                self.skip_whitespace();
-                self.expect(")")?;
-
-                let end = self.prev_span().1;
-                return Ok(Instruction::new(
-                    Primitive::FunctionCall {
-                        name,
-                        args,
-                    },
-                    start,
-                    end,
-                ));
+                self.advance();  // consume ')'
+                return Ok(Instruction::invoke(name, args));
             }
 
-            return Ok(Instruction::variable(name, start, self.prev_span().1));
+            return Ok(Instruction::variable(name));
         }
 
-        Err(format!("Unexpected token in expression: {}", lexeme))
+        Err(format!("Unexpected token: {}", lexeme))
     }
 
-    /// Parse identifier (variable name)
+    /// Parse identifier (handling multi-char identifiers from character tokens)
     fn parse_identifier(&mut self) -> Result<String, String> {
-        if self.is_at_end() {
-            return Err("Expected identifier, found EOF".to_string());
+        if !self.peek().lexeme.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_') {
+            return Err(format!("Expected identifier, got: {}", self.peek().lexeme));
         }
 
         let mut name = self.peek().lexeme.clone();
-
-        if !name.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_') {
-            return Err(format!("Expected identifier, found: {}", name));
-        }
-
         self.advance();
 
-        // Consume additional identifier characters
-        while !self.is_at_end() {
-            let next = &self.peek().lexeme;
-            if next.len() == 1 {
-                let ch = next.as_bytes()[0];
-                if ch.is_ascii_alphanumeric() || ch == b'_' {
-                    name.push_str(next);
+        loop {
+            if self.peek().lexeme.len() == 1 {
+                let ch = self.peek().lexeme.as_bytes()[0] as char;
+                if ch.is_alphanumeric() || ch == '_' {
+                    name.push_str(&self.peek().lexeme);
                     self.advance();
                     continue;
                 }
@@ -795,60 +468,67 @@ impl<'a> Parser<'a> {
         Ok(name)
     }
 
-    fn expect(&mut self, expected: &str) -> Result<(), String> {
-        if self.peek().lexeme == expected {
-            self.advance();
-            Ok(())
-        } else {
-            Err(format!(
-                "Expected '{}', found '{}'",
-                expected, self.peek().lexeme
-            ))
-        }
-    }
+    /// Consume a number (handling multi-char numbers)
+    fn consume_number(&mut self) -> Result<String, String> {
+        let mut num_str = self.peek().lexeme.clone();
+        self.advance();
 
-    fn peek(&self) -> Token {
-        if self.is_at_end() {
-            Token {
-                lexeme: "EOF".to_string(),
-                span: (0, 0),
-                line: 0,
-                col: 0,
-            }
-        } else {
-            self.tokens[self.pos].clone()
-        }
-    }
-
-    fn prev_span(&self) -> (usize, usize) {
-        if self.pos > 0 {
-            self.tokens[self.pos - 1].span
-        } else {
-            (0, 0)
-        }
-    }
-
-    fn advance(&mut self) {
-        if !self.is_at_end() {
-            self.pos += 1;
-        }
-    }
-
-    fn is_at_end(&self) -> bool {
-        self.pos >= self.tokens.len()
-    }
-
-    fn skip_whitespace(&mut self) {
-        while !self.is_at_end() {
-            let lexeme = &self.peek().lexeme;
-            if lexeme.len() == 1 {
-                let ch = lexeme.as_bytes()[0];
-                if ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' {
+        loop {
+            let token = self.peek();
+            let ch = token.lexeme.as_str();
+            if ch.len() == 1 {
+                let b = ch.as_bytes()[0] as char;
+                if b.is_ascii_digit() || b == '.' {
+                    num_str.push_str(ch);
                     self.advance();
                     continue;
                 }
             }
             break;
         }
+
+        Ok(num_str)
     }
+
+    /// Consume a string (handling escape sequences)
+    fn consume_string(&mut self) -> Result<String, String> {
+        self.advance();  // consume opening quote
+        let mut string_val = String::new();
+
+        while self.peek().lexeme != "\"" && !self.is_at_end() {
+            if self.peek().lexeme == "\\" {
+                self.advance();
+                let token = self.peek();
+                let next = token.lexeme.as_str();
+                match next {
+                    "\"" => { string_val.push('"'); self.advance(); }
+                    "\\" => { string_val.push('\\'); self.advance(); }
+                    "n" => { string_val.push('\n'); self.advance(); }
+                    "t" => { string_val.push('\t'); self.advance(); }
+                    _ => {
+                        string_val.push('\\');
+                        string_val.push_str(next);
+                        self.advance();
+                    }
+                }
+            } else {
+                let token = self.peek();
+                string_val.push_str(&token.lexeme);
+                self.advance();
+            }
+        }
+
+        if self.peek().lexeme != "\"" {
+            return Err("Unterminated string".to_string());
+        }
+        self.advance();
+
+        Ok(string_val)
+    }
+}
+
+/// Parse tokens to instruction tree
+pub fn parse(tokens: Vec<Token>, schema: &LanguageSchema) -> Result<Instruction, String> {
+    let mut parser = Parser::new(&tokens, schema);
+    parser.parse_program()
 }
