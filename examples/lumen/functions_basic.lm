@@ -1,0 +1,25 @@
+fn square(x)
+    x * x
+
+fn add(a, b)
+    a + b
+
+fn greet(name)
+    "Hello, " + name
+
+print("Test: Basic Functions")
+print(square(5))
+print(add(10, 20))
+print(greet("Lumen"))
+
+fn get_constant()
+    42
+
+print(get_constant())
+
+fn compute(x, y)
+    sum = x + y
+    product = x * y
+    sum + product
+
+print(compute(3, 4))

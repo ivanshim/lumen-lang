@@ -1,0 +1,36 @@
+print("Test: Type Annotations on Variables")
+
+let x: number = 42
+print("let x: number = 42")
+print(x)
+
+let message: string = "Hello, World"
+print("let message: string = ")
+print(message)
+
+let flag: boolean = true
+print("let flag: boolean = true")
+print(flag)
+
+let empty: none = none
+print("let empty: none = none")
+print(empty)
+
+fn add(a, b)
+    a + b
+
+print("add(5, 3):")
+print(add(5, 3))
+
+fn greet(name)
+    "Hello, " + name
+
+print("greet(\"Alice\"):")
+print(greet("Alice"))
+
+fn process(x, y)
+    let result: number = x * 2 + y
+    result
+
+print("process(10, 5):")
+print(process(10, 5))

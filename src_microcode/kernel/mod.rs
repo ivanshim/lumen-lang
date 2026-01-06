@@ -16,6 +16,7 @@ pub mod reduce;
 pub mod execute;
 pub mod eval;
 pub mod env;
+pub mod function_registry;
 
 use crate::schema::LanguageSchema;
 use self::env::Environment;

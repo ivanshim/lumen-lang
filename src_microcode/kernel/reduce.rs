@@ -78,6 +78,7 @@ impl<'a> Parser<'a> {
             "break" => self.parse_break(),
             "continue" => self.parse_continue(),
             "return" => self.parse_return(),
+            "fn" => self.parse_function_def(),
             _ => Err(format!("Unknown statement: {}", lexeme)),
         }
     }
@@ -368,33 +369,147 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    /// { statements }
-    fn parse_block(&mut self) -> Result<Instruction, String> {
-        self.expect("{")?;
+    /// fn name(param1, param2, ...) { statements }
+    fn parse_function_def(&mut self) -> Result<Instruction, String> {
+        let start = self.peek().span.0;
+        self.expect("fn")?;
         self.skip_whitespace();
 
-        let mut instructions = Vec::new();
+        // Parse function name
+        let mut name = String::new();
 
-        while self.peek().lexeme != "}" && !self.is_at_end() {
-            self.skip_whitespace();
+        // Collect the function name (may be split across tokens if it contains letters)
+        while !self.is_at_end() && self.peek().lexeme.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            name.push_str(&self.peek().lexeme);
+            self.advance();
+        }
 
-            if self.peek().lexeme == "}" {
-                break;
+        if name.is_empty() {
+            return Err("Expected function name after 'fn'".to_string());
+        }
+
+        let fn_name = name.clone();
+
+        self.skip_whitespace();
+
+        // Expect '('
+        self.expect("(")?;
+        self.skip_whitespace();
+
+        // Parse parameters
+        let mut params = Vec::new();
+        while self.peek().lexeme != ")" {
+            let mut param = String::new();
+            while !self.is_at_end() && self.peek().lexeme.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                param.push_str(&self.peek().lexeme);
+                self.advance();
             }
 
-            let instr = self.parse_statement()?;
-            instructions.push(instr);
+            if param.is_empty() {
+                return Err("Expected parameter name".to_string());
+            }
 
+            params.push(param);
             self.skip_whitespace();
 
-            // Skip optional terminators
-            while self.schema.is_terminator(&self.peek().lexeme) {
+            // Check for comma or closing paren
+            if self.peek().lexeme == "," {
                 self.advance();
                 self.skip_whitespace();
+            } else if self.peek().lexeme != ")" {
+                return Err("Expected ',' or ')' after parameter".to_string());
             }
         }
 
-        self.expect("}")?;
+        // Expect ')'
+        self.expect(")")?;
+        self.skip_whitespace();
+
+        // Skip newlines before block
+        while self.peek().lexeme == "\n" {
+            self.advance();
+            self.skip_whitespace();
+        }
+
+        // Parse function body block
+        let body = self.parse_block()?;
+        let end = body.span.1;
+
+        // Store function in registry
+        let fn_params = params.clone();
+        super::function_registry::define_function(fn_name.clone(), fn_params, body.clone());
+
+        // Return FunctionDef primitive
+        Ok(Instruction::new(
+            Primitive::FunctionDef {
+                name: fn_name,
+                params: params,
+                body: Box::new(body),
+            },
+            start,
+            end,
+        ))
+    }
+
+    /// Parse { statements } or INDENT statements DEDENT
+    /// Supports both brace-based and indentation-based syntax
+    fn parse_block(&mut self) -> Result<Instruction, String> {
+        let mut instructions = Vec::new();
+
+        // Check if this is a brace-based block or indentation-based block
+        if self.peek().lexeme == "{" {
+            // Brace-based: { statements }
+            self.expect("{")?;
+            self.skip_whitespace();
+
+            while self.peek().lexeme != "}" && !self.is_at_end() {
+                self.skip_whitespace();
+
+                if self.peek().lexeme == "}" {
+                    break;
+                }
+
+                let instr = self.parse_statement()?;
+                instructions.push(instr);
+
+                self.skip_whitespace();
+
+                // Skip optional terminators
+                while self.schema.is_terminator(&self.peek().lexeme) {
+                    self.advance();
+                    self.skip_whitespace();
+                }
+            }
+
+            self.expect("}")?;
+        } else if self.peek().lexeme == "INDENT" {
+            // Indentation-based: INDENT statements DEDENT
+            self.expect("INDENT")?;
+            self.skip_whitespace();
+
+            while self.peek().lexeme != "DEDENT" && !self.is_at_end() {
+                self.skip_whitespace();
+
+                if self.peek().lexeme == "DEDENT" {
+                    break;
+                }
+
+                let instr = self.parse_statement()?;
+                instructions.push(instr);
+
+                self.skip_whitespace();
+
+                // Skip optional terminators
+                while self.schema.is_terminator(&self.peek().lexeme) {
+                    self.advance();
+                    self.skip_whitespace();
+                }
+            }
+
+            self.expect("DEDENT")?;
+        } else {
+            return Err("Expected '{' or indented block".to_string());
+        }
 
         Ok(Instruction::scope(instructions))
     }
@@ -579,6 +694,41 @@ impl<'a> Parser<'a> {
                 return Ok(Instruction::new(
                     Primitive::Invoke {
                         selector,
+                        args,
+                    },
+                    start,
+                    end,
+                ));
+            }
+
+            // Check if this is a function call (identifier followed by '(')
+            if self.peek().lexeme == "(" {
+                self.advance(); // consume '('
+                self.skip_whitespace();
+
+                // Parse arguments (comma-separated)
+                let mut args = Vec::new();
+
+                while self.peek().lexeme != ")" {
+                    let arg = self.parse_expression(0)?;
+                    args.push(arg);
+                    self.skip_whitespace();
+
+                    if self.peek().lexeme == "," {
+                        self.advance();
+                        self.skip_whitespace();
+                    } else if self.peek().lexeme != ")" {
+                        return Err("Expected ',' or ')' after argument".to_string());
+                    }
+                }
+
+                self.skip_whitespace();
+                self.expect(")")?;
+
+                let end = self.prev_span().1;
+                return Ok(Instruction::new(
+                    Primitive::FunctionCall {
+                        name,
                         args,
                     },
                     start,

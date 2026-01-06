@@ -1,0 +1,27 @@
+fn double(x)
+    x * 2
+
+fn add_one(x)
+    x + 1
+
+fn square(x)
+    x * x
+
+print("Test: Pipe Operator")
+
+print("Without pipe: square(add_one(double(5)))")
+print(square(add_one(double(5))))
+
+print("With pipe: 5 |> double() |> add_one() |> square()")
+result = 5 |> double() |> add_one() |> square()
+print(result)
+
+print("10 |> double():")
+print(10 |> double())
+
+fn multiply(a, b)
+    a * b
+
+print("3 |> double():")
+x = 3 |> double()
+print(multiply(x, 2))

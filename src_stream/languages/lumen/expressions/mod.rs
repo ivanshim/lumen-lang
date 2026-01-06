@@ -10,3 +10,4 @@ pub mod identifier;
 pub mod literals;
 pub mod logic;
 pub mod variable;
+pub mod pipe;

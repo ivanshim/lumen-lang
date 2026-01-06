@@ -1,7 +1,7 @@
 use crate::languages::lumen::prelude::*;
 // src/expr/arithmetic.rs
 //
-// + - * / % and unary minus
+// + - * / % ** and unary minus
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
@@ -53,6 +53,18 @@ impl ExprNode for ArithmeticExpr {
         let l = self.left.eval(env)?;
         let r = self.right.eval(env)?;
 
+        // Special handling for + operator: can be string concatenation or addition
+        if self.op == "+" {
+            use crate::languages::lumen::values::{LumenString, as_string};
+
+            // Try to treat both as strings for concatenation
+            if let (Ok(left_str), Ok(right_str)) = (as_string(l.as_ref()), as_string(r.as_ref())) {
+                let result = format!("{}{}", left_str.value, right_str.value);
+                return Ok(Box::new(LumenString::new(result)));
+            }
+        }
+
+        // All other operators require numbers
         let left_num = as_number(l.as_ref())?;
         let right_num = as_number(r.as_ref())?;
 
@@ -62,6 +74,7 @@ impl ExprNode for ArithmeticExpr {
             "*" => numeric::multiply(&left_num.value, &right_num.value)?,
             "/" => numeric::divide(&left_num.value, &right_num.value)?,
             "%" => numeric::modulo(&left_num.value, &right_num.value)?,
+            "**" => numeric::power(&left_num.value, &right_num.value)?,
             _ => return Err("Invalid arithmetic operator".into()),
         };
         Ok(Box::new(LumenNumber::new(result)))
@@ -103,7 +116,7 @@ impl ExprInfix for ArithmeticInfix {
 /// Declare what patterns this module recognizes
 pub fn patterns() -> PatternSet {
     PatternSet::new()
-        .with_literals(vec!["+", "-", "*", "/", "%"])
+        .with_literals(vec!["+", "-", "*", "/", "%", "**"])
 }
 
 // --------------------
@@ -119,4 +132,5 @@ pub fn register(reg: &mut Registry) {
     reg.register_infix(Box::new(ArithmeticInfix::new("*", Precedence::Factor)));
     reg.register_infix(Box::new(ArithmeticInfix::new("/", Precedence::Factor)));
     reg.register_infix(Box::new(ArithmeticInfix::new("%", Precedence::Factor)));
+    reg.register_infix(Box::new(ArithmeticInfix::new("**", Precedence::Power)));
 }
