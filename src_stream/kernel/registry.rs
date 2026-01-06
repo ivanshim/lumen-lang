@@ -97,8 +97,6 @@ pub struct TokenRegistry {
     multichar_lexemes: Vec<&'static str>,
     // Cached: Tokens that should be skipped during parsing
     skip_tokens: Vec<&'static str>,
-    // Cached: Tokens that require word boundary checks
-    word_boundary_lexemes: HashSet<&'static str>,
     // Cached: Tokens that require word boundaries (keywords that shouldn't match inside identifiers)
     word_boundary_lexemes: Vec<&'static str>,
 }
@@ -109,7 +107,6 @@ impl TokenRegistry {
             token_defs: Vec::new(),
             multichar_lexemes: Vec::new(),
             skip_tokens: Vec::new(),
-            word_boundary_lexemes: HashSet::new(),
             word_boundary_lexemes: Vec::new(),
         }
     }
@@ -134,12 +131,6 @@ impl TokenRegistry {
         &self.skip_tokens
     }
 
-    /// Check if the lexeme requires surrounding word boundaries.
-    /// Used by the lexer to avoid splitting identifiers that contain keywords.
-    pub fn requires_word_boundary(&self, lexeme: &str) -> bool {
-        self.word_boundary_lexemes.contains(&lexeme)
-    }
-
     /// Check if a specific lexeme should be skipped during parsing.
     pub fn is_skip_token(&self, lexeme: &str) -> bool {
         self.skip_tokens.contains(&lexeme)
@@ -151,9 +142,10 @@ impl TokenRegistry {
         &self.word_boundary_lexemes
     }
 
-    /// Check if a specific lexeme requires word boundaries.
+    /// Check if the lexeme requires surrounding word boundaries.
+    /// Used by the lexer to avoid splitting identifiers that contain keywords.
     pub fn requires_word_boundary(&self, lexeme: &str) -> bool {
-        self.word_boundary_lexemes.contains(&lexeme)
+        self.word_boundary_lexemes.iter().any(|&wb| wb == lexeme)
     }
 
     /// Get all token definitions.
@@ -166,7 +158,6 @@ impl TokenRegistry {
     fn rebuild_caches(&mut self) {
         let mut multichar = Vec::new();
         let mut skip = Vec::new();
-        let mut word_boundary = HashSet::new();
         let mut word_boundary = Vec::new();
 
         for def in &self.token_defs {
@@ -180,9 +171,6 @@ impl TokenRegistry {
                 skip.push(def.lexeme);
             }
 
-            // Extract word-boundary tokens (lexer concern)
-            if def.requires_word_boundary {
-                word_boundary.insert(def.lexeme);
             // Extract word boundary tokens (lexer concern)
             if def.requires_word_boundary {
                 word_boundary.push(def.lexeme);

@@ -43,14 +43,6 @@ impl LogicInfix {
 
 impl ExprInfix for LogicInfix {
     fn matches(&self, parser: &Parser) -> bool {
-        // Direct token match (keyword registered with word-boundaries)
-        if parser.peek().lexeme == self.op {
-            return true;
-        }
-
-        // Fallback: collect characters for character-by-character handlers
-        let lex = &parser.peek().lexeme;
-
         let lex = &parser.peek().lexeme;
 
         // Case 1: "and"/"or" are registered as keyword tokens (single token)
@@ -104,10 +96,6 @@ impl ExprInfix for LogicInfix {
         left: Box<dyn ExprNode>,
         registry: &super::super::registry::Registry,
     ) -> LumenResult<Box<dyn ExprNode>> {
-        // Consume either the single keyword token or character-by-character tokens
-        if parser.peek().lexeme == self.op {
-            parser.advance();
-        } else {
         // Consume the operator - either as a single token or as multiple characters
         if parser.peek().lexeme == self.op {
             // Single token operator (registered as keyword)
@@ -143,12 +131,6 @@ pub struct NotPrefix;
 
 impl ExprPrefix for NotPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        if parser.peek().lexeme == "not" {
-            return true;
-        }
-
-        let lex = &parser.peek().lexeme;
-
         let lex = &parser.peek().lexeme;
 
         // Case 1: "not" is registered as a keyword token (single token)
@@ -194,9 +176,6 @@ impl ExprPrefix for NotPrefix {
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
-        if parser.peek().lexeme == "not" {
-            parser.advance();
-        } else {
         // Consume "not" - either as a single token or as multiple characters
         if parser.peek().lexeme == "not" {
             // Single token operator (registered as keyword)
