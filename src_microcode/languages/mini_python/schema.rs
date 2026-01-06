@@ -15,6 +15,7 @@ pub fn get_schema() -> LanguageSchema {
         // Keywords
         "def", "if", "elif", "else", "while", "for", "break", "continue", "return",
         "and", "or", "not", "print", "True", "False", "None", "in", "pass",
+        "true", "false", "none",  // Also support lowercase variants
 
         // Single-char operators
         ":", "=", "+", "-", "*", "/", "%", "<", ">", "!", "&", "|", "^", "~",
@@ -25,6 +26,7 @@ pub fn get_schema() -> LanguageSchema {
     schema.word_boundary_keywords = vec![
         "def", "if", "elif", "else", "while", "for", "break", "continue", "return",
         "and", "or", "not", "print", "True", "False", "None", "in", "pass",
+        "true", "false", "none",  // Also support lowercase variants
     ];
 
     // Statement terminators

@@ -4,6 +4,7 @@
 // No special semantics - just name lookup.
 
 use crate::kernel::eval::Value;
+use crate::kernel::primitives::Instruction;
 use std::collections::HashMap;
 
 /// A single scope frame
@@ -13,6 +14,8 @@ type Scope = HashMap<String, Value>;
 /// Top of stack is current scope.
 pub struct Environment {
     scopes: Vec<Scope>,
+    /// Store function bodies for user-defined functions
+    pub functions: HashMap<String, Instruction>,
 }
 
 impl Environment {
@@ -20,6 +23,7 @@ impl Environment {
     pub fn new() -> Self {
         Environment {
             scopes: vec![HashMap::new()],
+            functions: HashMap::new(),
         }
     }
 

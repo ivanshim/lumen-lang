@@ -70,6 +70,12 @@ impl<'a> Parser<'a> {
             let stmt = self.parse_statement()?;
             stmts.push(stmt);
             self.skip_whitespace();
+
+            // Skip optional semicolon after statement
+            if self.peek().lexeme == ";" {
+                self.advance();
+                self.skip_whitespace();
+            }
         }
 
         Ok(Instruction::sequence(stmts))
@@ -97,10 +103,16 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse: let name = expr
+    /// Parse: let [mut] name [: type] = expr
     fn parse_let(&mut self) -> Result<Instruction, String> {
         self.advance();  // consume 'let'
         self.skip_whitespace();
+
+        // Skip optional "mut" keyword
+        if self.peek().lexeme == "mut" {
+            self.advance();
+            self.skip_whitespace();
+        }
 
         let name = self.parse_identifier()?;
         self.skip_whitespace();
@@ -222,6 +234,12 @@ impl<'a> Parser<'a> {
             let stmt = self.parse_statement()?;
             stmts.push(stmt);
             self.skip_whitespace();
+
+            // Skip optional semicolon or newline after statement
+            if self.peek().lexeme == ";" || self.peek().lexeme == "\n" {
+                self.advance();
+                self.skip_whitespace();
+            }
         }
 
         if self.peek().lexeme != "}" {
@@ -255,7 +273,23 @@ impl<'a> Parser<'a> {
 
     /// Parse expression (lowest precedence)
     fn parse_expression(&mut self) -> Result<Instruction, String> {
-        self.parse_logical_or()
+        self.parse_pipe()
+    }
+
+    /// Parse pipe operator (lowest precedence: 0.5)
+    fn parse_pipe(&mut self) -> Result<Instruction, String> {
+        let mut left = self.parse_logical_or()?;
+        self.skip_whitespace();
+
+        while self.peek().lexeme == "|>" {
+            self.advance();
+            self.skip_whitespace();
+            let right = self.parse_logical_or()?;
+            self.skip_whitespace();
+            left = Instruction::binary("|>".to_string(), left, right);
+        }
+
+        Ok(left)
     }
 
     /// Parse logical OR (lowest precedence after assignment)
@@ -264,14 +298,16 @@ impl<'a> Parser<'a> {
         self.skip_whitespace();
 
         loop {
-            if self.peek().lexeme == "or" {
-                self.advance();
-                self.skip_whitespace();
-                let right = self.parse_logical_and()?;
-                self.skip_whitespace();
-                left = Instruction::binary("or".to_string(), left, right);
-            } else {
-                break;
+            match self.peek().lexeme.as_str() {
+                "or" | "||" => {
+                    let op = self.peek().lexeme.clone();
+                    self.advance();
+                    self.skip_whitespace();
+                    let right = self.parse_logical_and()?;
+                    self.skip_whitespace();
+                    left = Instruction::binary(op, left, right);
+                }
+                _ => break,
             }
         }
 
@@ -284,14 +320,16 @@ impl<'a> Parser<'a> {
         self.skip_whitespace();
 
         loop {
-            if self.peek().lexeme == "and" {
-                self.advance();
-                self.skip_whitespace();
-                let right = self.parse_comparison()?;
-                self.skip_whitespace();
-                left = Instruction::binary("and".to_string(), left, right);
-            } else {
-                break;
+            match self.peek().lexeme.as_str() {
+                "and" | "&&" => {
+                    let op = self.peek().lexeme.clone();
+                    self.advance();
+                    self.skip_whitespace();
+                    let right = self.parse_comparison()?;
+                    self.skip_whitespace();
+                    left = Instruction::binary(op, left, right);
+                }
+                _ => break,
             }
         }
 
@@ -340,7 +378,7 @@ impl<'a> Parser<'a> {
 
     /// Parse multiplicative operators
     fn parse_multiplicative(&mut self) -> Result<Instruction, String> {
-        let mut left = self.parse_unary()?;
+        let mut left = self.parse_exponentiation()?;
         self.skip_whitespace();
 
         loop {
@@ -350,9 +388,24 @@ impl<'a> Parser<'a> {
             };
             self.advance();
             self.skip_whitespace();
-            let right = self.parse_unary()?;
+            let right = self.parse_exponentiation()?;
             self.skip_whitespace();
             left = Instruction::binary(op, left, right);
+        }
+
+        Ok(left)
+    }
+
+    /// Parse exponentiation operator (right-associative)
+    fn parse_exponentiation(&mut self) -> Result<Instruction, String> {
+        let mut left = self.parse_unary()?;
+        self.skip_whitespace();
+
+        if self.peek().lexeme == "**" {
+            self.advance();
+            self.skip_whitespace();
+            let right = self.parse_exponentiation()?;  // Right-associative!
+            return Ok(Instruction::binary("**".to_string(), left, right));
         }
 
         Ok(left)
@@ -361,7 +414,7 @@ impl<'a> Parser<'a> {
     /// Parse unary operators
     fn parse_unary(&mut self) -> Result<Instruction, String> {
         let op = match self.peek().lexeme.as_str() {
-            "-" | "not" => self.peek().lexeme.clone(),
+            "-" | "not" | "!" => self.peek().lexeme.clone(),
             _ => return self.parse_primary(),
         };
 
