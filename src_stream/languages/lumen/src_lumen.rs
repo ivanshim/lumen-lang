@@ -59,6 +59,9 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::recognize("**"),
         TokenDefinition::recognize("|>"),  // Pipe operator
 
+        // Single-char operators
+        TokenDefinition::recognize(":"),   // Type annotation separator
+
         // Keywords (boundary-sensitive, not skipped)
         // Keywords that require word boundaries (to prevent matching inside identifiers like "test_let" or "no_return")
         TokenDefinition::keyword("let"),

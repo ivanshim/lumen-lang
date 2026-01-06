@@ -171,7 +171,13 @@ impl ExprNode for StringLiteral {
     fn eval(&self, _env: &mut Env) -> LumenResult<Value> {
         // Remove quotes from the tokenized string: "hello" -> hello
         let content = &self.value[1..self.value.len() - 1];
-        Ok(Box::new(LumenString::new(content.to_string())))
+        // Process escape sequences
+        let unescaped = content
+            .replace("\\\"", "\"")  // Escaped quote
+            .replace("\\\\", "\\")  // Escaped backslash
+            .replace("\\n", "\n")   // Newline
+            .replace("\\t", "\t");  // Tab
+        Ok(Box::new(LumenString::new(unescaped)))
     }
 }
 
@@ -188,9 +194,19 @@ impl ExprPrefix for StringLiteralPrefix {
         let mut value = parser.advance().lexeme;
 
         // Since the kernel lexer is agnostic, it emits each character separately.
-        // Assemble the full string by consuming characters until closing quote.
+        // Assemble the full string by consuming characters until closing quote (unescaped).
         loop {
             let ch = parser.peek().lexeme.clone();
+
+            // Check for backslash (escape character)
+            if ch == "\\" {
+                value.push_str(&parser.advance().lexeme);
+                // Consume the next character as escaped
+                if parser.i < parser.toks.len() {
+                    value.push_str(&parser.advance().lexeme);
+                }
+                continue;
+            }
 
             // Check for closing quote
             if ch == "\"" {
