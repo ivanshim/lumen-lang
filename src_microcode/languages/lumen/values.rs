@@ -1,4 +1,4 @@
-// Lumen language-specific values
+// Lumen values
 //
-// Values are defined at the kernel level (eval.rs).
-// This module is reserved for any Lumen-specific value handling if needed.
+// Language-specific value handling.
+// For now, just use kernel's Value type directly.

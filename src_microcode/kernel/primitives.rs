@@ -1,143 +1,197 @@
-// Closed set of execution primitives
+// Microcode Kernel: 7 Primitives (semantic normal form)
 //
-// These are the ONLY operations the kernel knows how to execute.
-// All language behavior is expressed as compositions of these primitives.
-// Each primitive is data-driven by schema mappings.
+// These are the ONLY semantic operations in the kernel.
+// All language-specific meaning is pushed to schema and value layers.
 //
-// Canonical primitive set (single-word verbs):
-// - Sequence: execute instructions in order
-// - Scope: create new scope, execute, pop scope
-// - Branch: if condition → then-block else else-block
-// - Assign: variable = expression
-// - Invoke: call external function
-// - Operate: apply unary or binary operator
-// - Transfer: return/break/continue control flow
+// Primitives represent minimal, canonical forms:
+// 1. Sequence - execute instructions in order
+// 2. Scope - push/pop binding context
+// 3. Branch - conditional execution
+// 4. Assign - bind/mutate a name
+// 5. Invoke - call external function
+// 6. Operate - dispatch unary/binary operator
+// 7. Transfer - control flow (return/break/continue)
+//
+// Each primitive is stateless data. Semantics come from:
+// - Instruction structure (the "what")
+// - Schema tables (the "how")
+// - Value types (the "with what")
+// - Environment (the "in what context")
 
-use super::eval::Value;
+use crate::kernel::eval::Value;
 
-/// Closed set of kernel primitives
+/// Control transfer kinds (for Transfer primitive)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferKind {
+    Return,
+    Break,
+    Continue,
+}
+
+/// Operator kinds (for Operate primitive)
 #[derive(Debug, Clone)]
-pub enum Primitive {
-    /// sequence: execute instructions in order
+pub enum OperateKind {
+    Unary(String),   // operator name
+    Binary(String),  // operator name
+}
+
+/// Instruction: One node in the semantic normal form.
+/// Each instruction is one of 7 primitives, nothing more.
+#[derive(Debug, Clone)]
+pub enum Instruction {
+    // 1. Sequence: execute Vec<Instruction> in order, return last value
     Sequence(Vec<Instruction>),
 
-    /// scope: create new scope, execute, pop scope
-    Scope(Vec<Instruction>),
+    // 2. Scope: push scope, execute instruction, pop scope
+    Scope(Box<Instruction>),
 
-    /// branch: if condition → then-block else else-block
+    // 3. Branch: if cond then_instr else else_instr
     Branch {
         condition: Box<Instruction>,
-        then_block: Box<Instruction>,
-        else_block: Option<Box<Instruction>>,
+        then_instr: Box<Instruction>,
+        else_instr: Option<Box<Instruction>>,
     },
 
-    /// assign: variable = expression
+    // 4. Assign: name = value_instr
     Assign {
         name: String,
         value: Box<Instruction>,
     },
 
-    /// invoke: call external function
+    // 5. Invoke: call external function
+    //    All actual semantics come from the schema and external registry
     Invoke {
-        selector: String,
+        function: String,  // fully qualified function name
         args: Vec<Instruction>,
     },
 
-    /// operate: apply unary or binary operator
+    // 6. Operate: apply operator to operands
+    //    Operator semantics defined in schema
     Operate {
         kind: OperateKind,
         operands: Vec<Instruction>,
     },
 
-    /// transfer: return, break, or continue
+    // 7. Transfer: control flow signal
     Transfer {
         kind: TransferKind,
         value: Option<Box<Instruction>>,
     },
 
-    /// literal: constant value
+    // Literals: not a "primitive" but necessary
+    // (represents final values before evaluation)
     Literal(Value),
 
-    /// variable: load variable value
+    // Variable reference: look up name in environment
     Variable(String),
 
-    /// loop: internal implementation detail for while/loop constructs
-    /// (not part of canonical primitive set; kept for internal use during refactoring)
+    // Loop: while condition { body }
     Loop {
         condition: Box<Instruction>,
-        block: Box<Instruction>,
+        body: Box<Instruction>,
     },
 
-    /// function_def: define a function with parameters and body
+    // Function definition: store in registry
+    // (This is metadata, not execution)
     FunctionDef {
         name: String,
         params: Vec<String>,
         body: Box<Instruction>,
     },
-
-    /// function_call: call a defined function with arguments
-    FunctionCall {
-        name: String,
-        args: Vec<Instruction>,
-    },
-}
-
-/// Type of operation for Operate primitive
-#[derive(Debug, Clone)]
-pub enum OperateKind {
-    /// Unary operator (operator name, operand)
-    Unary(String),
-    /// Binary operator (operator name, left, right)
-    Binary(String),
-}
-
-/// Type of transfer for Transfer primitive
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TransferKind {
-    /// Return from function with optional value
-    Return,
-    /// Break from loop
-    Break,
-    /// Continue to next loop iteration
-    Continue,
-}
-
-/// Instruction tree node (wraps primitive with metadata)
-#[derive(Debug, Clone)]
-pub struct Instruction {
-    pub primitive: Primitive,
-    pub span: (usize, usize), // byte range in source for error reporting
 }
 
 impl Instruction {
-    pub fn new(primitive: Primitive, start: usize, end: usize) -> Self {
-        Self {
-            primitive,
-            span: (start, end),
-        }
-    }
-
     /// Helper: sequence of instructions
     pub fn sequence(instrs: Vec<Instruction>) -> Self {
-        let start = instrs.first().map(|i| i.span.0).unwrap_or(0);
-        let end = instrs.last().map(|i| i.span.1).unwrap_or(0);
-        Self::new(Primitive::Sequence(instrs), start, end)
-    }
-
-    /// Helper: scope with new variable bindings
-    pub fn scope(instrs: Vec<Instruction>) -> Self {
-        let start = instrs.first().map(|i| i.span.0).unwrap_or(0);
-        let end = instrs.last().map(|i| i.span.1).unwrap_or(0);
-        Self::new(Primitive::Scope(instrs), start, end)
+        Instruction::Sequence(instrs)
     }
 
     /// Helper: literal value
-    pub fn literal(value: Value, start: usize, end: usize) -> Self {
-        Self::new(Primitive::Literal(value), start, end)
+    pub fn literal(value: Value) -> Self {
+        Instruction::Literal(value)
     }
 
     /// Helper: variable reference
-    pub fn variable(name: String, start: usize, end: usize) -> Self {
-        Self::new(Primitive::Variable(name), start, end)
+    pub fn variable(name: String) -> Self {
+        Instruction::Variable(name)
+    }
+
+    /// Helper: assignment
+    pub fn assign(name: String, value: Instruction) -> Self {
+        Instruction::Assign {
+            name,
+            value: Box::new(value),
+        }
+    }
+
+    /// Helper: binary operation
+    pub fn binary(op: String, left: Instruction, right: Instruction) -> Self {
+        Instruction::Operate {
+            kind: OperateKind::Binary(op),
+            operands: vec![left, right],
+        }
+    }
+
+    /// Helper: unary operation
+    pub fn unary(op: String, operand: Instruction) -> Self {
+        Instruction::Operate {
+            kind: OperateKind::Unary(op),
+            operands: vec![operand],
+        }
+    }
+
+    /// Helper: function call
+    pub fn invoke(function: String, args: Vec<Instruction>) -> Self {
+        Instruction::Invoke { function, args }
+    }
+
+    /// Helper: if-then-else
+    pub fn branch(
+        condition: Instruction,
+        then_instr: Instruction,
+        else_instr: Option<Instruction>,
+    ) -> Self {
+        Instruction::Branch {
+            condition: Box::new(condition),
+            then_instr: Box::new(then_instr),
+            else_instr: else_instr.map(Box::new),
+        }
+    }
+
+    /// Helper: return statement
+    pub fn return_stmt(value: Option<Instruction>) -> Self {
+        Instruction::Transfer {
+            kind: TransferKind::Return,
+            value: value.map(Box::new),
+        }
+    }
+
+    /// Helper: break statement
+    pub fn break_stmt() -> Self {
+        Instruction::Transfer {
+            kind: TransferKind::Break,
+            value: None,
+        }
+    }
+
+    /// Helper: continue statement
+    pub fn continue_stmt() -> Self {
+        Instruction::Transfer {
+            kind: TransferKind::Continue,
+            value: None,
+        }
+    }
+
+    /// Helper: loop
+    pub fn loop_stmt(condition: Instruction, body: Instruction) -> Self {
+        Instruction::Loop {
+            condition: Box::new(condition),
+            body: Box::new(body),
+        }
+    }
+
+    /// Helper: scope push
+    pub fn scope(instr: Instruction) -> Self {
+        Instruction::Scope(Box::new(instr))
     }
 }

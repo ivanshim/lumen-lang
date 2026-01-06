@@ -1,158 +1,117 @@
-// Stage 2: Structural processing
+// Stage 2: Structure - Indentation and block processing
 //
-// Handle indentation, newlines, EOF per schema rules.
-// For indentation-based languages (Lumen/Mini-Python):
-//   - Convert indentation levels to synthetic { } block markers
-// For brace-based languages (Mini-Rust):
-//   - Just ensure EOF is present
-// No semantic interpretation.
+// For indentation-based languages (Lumen, Python):
+//   Convert indentation levels → { } block markers
+// For brace-based languages (Rust):
+//   Just pass through (braces already in token stream)
+//
+// Algorithm:
+// 1. Process line-by-line to track indentation
+// 2. When indentation increases, insert {
+// 3. When indentation decreases, insert }
+// 4. Handle colons as block openers
 
 use super::ingest::Token;
 use crate::schema::LanguageSchema;
 
-/// Check if a keyword expects a block
-fn keyword_expects_block(keyword: &str) -> bool {
-    keyword == "if" || keyword == "while" || keyword == "for" || keyword == "else" || keyword == "fn"
-}
-
-/// Find the most recent block-expecting keyword in result
-/// Returns the keyword if found, or empty string
-fn find_last_keyword(result: &[Token]) -> String {
-    // Scan backwards to find a block-expecting keyword that starts a statement
-    // A keyword is at a statement boundary if:
-    // - It's at the beginning, OR
-    // - The token immediately before it (skipping internal expressions) is a newline or }
-
-    // First, find the most recent block-expecting keyword anywhere
-    for i in (0..result.len()).rev() {
-        let token = &result[i];
-
-        if keyword_expects_block(&token.lexeme) {
-            // Check if this keyword starts a statement
-            // It starts a statement if the previous non-whitespace token is newline, }, or beginning
-            if i == 0 {
-                return token.lexeme.clone();
-            }
-
-            // Look immediately before this keyword (skipping whitespace)
-            // to see if there's a newline or }
-            if i > 0 {
-                let mut found_boundary = false;
-                for j in (0..i).rev() {
-                    let prev = &result[j];
-                    if prev.lexeme == " " || prev.lexeme == "\t" {
-                        continue; // Skip whitespace
-                    }
-                    if prev.lexeme == "\n" || prev.lexeme == "}" {
-                        found_boundary = true;
-                    }
-                    break; // Stop at first non-whitespace token
-                }
-                if found_boundary {
-                    return token.lexeme.clone();
-                }
-            }
-        }
+/// Process indentation and insert block markers
+pub fn process_structure(
+    tokens: Vec<Token>,
+    schema: &LanguageSchema,
+) -> Result<Vec<Token>, String> {
+    // For brace-based languages, skip processing
+    if schema.block_open_marker == "{" {
+        return Ok(tokens);
     }
 
-    String::new()
-}
-
-/// Process tokens for structural significance per schema
-pub fn process(tokens: &[Token], schema: &LanguageSchema) -> Result<Vec<Token>, String> {
     let mut result = Vec::new();
-
-    // Only process indentation for indentation-based languages
-    if !schema.is_indentation_based {
-        // For brace-based languages, just remove indentation whitespace
-        for token in tokens {
-            if token.lexeme == " " || token.lexeme == "\t" {
-                continue; // Skip individual space/tab tokens
-            }
-            result.push(token.clone());
-        }
-        result = ensure_eof(result);
-        return Ok(result);
-    }
-
-    // Indentation processing for indentation-based languages
-    let mut indent_stack: Vec<usize> = vec![0]; // Track indentation levels
+    let mut indent_stack = vec![0];
     let mut i = 0;
 
     while i < tokens.len() {
-        let token = &tokens[i];
-
-        // Handle newlines - check indentation of next line
-        if token.lexeme == "\n" {
-            result.push(token.clone());
+        // Skip to next line start if not at beginning
+        if i > 0 && tokens[i - 1].lexeme != "\n" && result.last().map(|t: &Token| t.lexeme.as_str()) != Some("\n") {
+            // Not at line start, just add token
+            result.push(tokens[i].clone());
             i += 1;
+            continue;
+        }
 
-            // Count indentation on next line
-            let mut indent_level = 0;
-            let mut j = i;
-            while j < tokens.len() {
-                let t = &tokens[j];
-                if t.lexeme == " " {
-                    indent_level += 1;
-                    j += 1;
-                } else if t.lexeme == "\t" {
-                    indent_level += 4;
-                    j += 1;
-                } else {
-                    break;
-                }
+        // We're at line start. Measure indentation
+        let mut indent_level = 0;
+
+        // Count indentation (spaces or tabs)
+        while i < tokens.len() && (tokens[i].lexeme == " " || tokens[i].lexeme == "\t") {
+            if tokens[i].lexeme == " " {
+                indent_level += 1;
+            } else {
+                indent_level += schema.indentation_size;
             }
+            result.push(tokens[i].clone());
+            i += 1;
+        }
 
-            // Skip empty lines
-            if j >= tokens.len() || tokens[j].lexeme == "\n" {
-                i = j;
-                continue;
-            }
+        // Skip empty/blank lines
+        if i < tokens.len() && tokens[i].lexeme == "\n" {
+            result.push(tokens[i].clone());
+            i += 1;
+            continue;
+        }
 
-            // Check what keyword this indent follows
-            let last_keyword = find_last_keyword(&result);
-            let should_have_block = !last_keyword.is_empty();
+        // Convert indent level to indentation units
+        let indent_units = indent_level / schema.indentation_size;
+        let current_indent = *indent_stack.last().unwrap();
 
-            // Process indentation changes
-            let current_indent = *indent_stack.last().unwrap_or(&0);
-
-            if indent_level > current_indent && should_have_block {
-                indent_stack.push(indent_level);
+        // Handle indentation changes
+        if indent_units > current_indent {
+            // Indentation increased: insert {
+            indent_stack.push(indent_units);
+            result.push(Token {
+                lexeme: "{".to_string(),
+                span: (tokens[i].span.0, tokens[i].span.0),
+                line: tokens[i].line,
+                col: 0,
+            });
+        } else if indent_units < current_indent {
+            // Indentation decreased: insert } for each level
+            while indent_stack.len() > 1 && *indent_stack.last().unwrap() > indent_units {
+                indent_stack.pop();
                 result.push(Token {
-                    lexeme: "{".to_string(),
-                    span: (token.span.0, token.span.0),
-                    line: token.line,
+                    lexeme: "}".to_string(),
+                    span: (tokens[i].span.0, tokens[i].span.0),
+                    line: tokens[i].line,
                     col: 0,
                 });
-            } else if indent_level < current_indent {
-                while indent_stack.len() > 1 && indent_stack[indent_stack.len() - 1] > indent_level {
-                    indent_stack.pop();
-                    result.push(Token {
-                        lexeme: "}".to_string(),
-                        span: (token.span.0, token.span.0),
-                        line: token.line,
-                        col: 0,
-                    });
+            }
+        }
+
+        // Process tokens on this line until newline
+        while i < tokens.len() && tokens[i].lexeme != "\n" {
+            // If we see a colon, mark end of line for block
+            if tokens[i].lexeme == ":" && schema.block_open_marker == ":" {
+                result.push(tokens[i].clone());
+                i += 1;
+                // Skip whitespace after colon
+                while i < tokens.len() && tokens[i].lexeme == " " {
+                    result.push(tokens[i].clone());
+                    i += 1;
                 }
+                // Next line will handle indentation increase
+                break;
             }
 
-            // Skip the whitespace tokens we counted
-            i = j;
-            continue;
-        }
-
-        // Skip standalone whitespace tokens (not at line start)
-        if token.lexeme == " " || token.lexeme == "\t" {
+            result.push(tokens[i].clone());
             i += 1;
-            continue;
         }
 
-        // Regular token
-        result.push(token.clone());
-        i += 1;
+        // Add newline if present
+        if i < tokens.len() && tokens[i].lexeme == "\n" {
+            result.push(tokens[i].clone());
+            i += 1;
+        }
     }
 
-    // Close any remaining indentation levels
+    // Close all remaining open indentation blocks
     while indent_stack.len() > 1 {
         indent_stack.pop();
         result.push(Token {
@@ -163,23 +122,5 @@ pub fn process(tokens: &[Token], schema: &LanguageSchema) -> Result<Vec<Token>, 
         });
     }
 
-    // Ensure EOF is present
-    result = ensure_eof(result);
-
     Ok(result)
-}
-
-fn ensure_eof(mut tokens: Vec<Token>) -> Vec<Token> {
-    // If EOF is not already present, add it
-    if tokens.last().map(|t| t.lexeme.as_str()) != Some("EOF") {
-        let last_line = tokens.last().map(|t| t.line).unwrap_or(1);
-        let last_col = tokens.last().map(|t| t.col).unwrap_or(1);
-        tokens.push(Token {
-            lexeme: "EOF".to_string(),
-            span: (0, 0),
-            line: last_line,
-            col: last_col,
-        });
-    }
-    tokens
 }

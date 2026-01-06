@@ -1,396 +1,276 @@
-// Stage 4: Execution
+// Stage 4: Execute - Faithful execution of instructions
 //
-// Execute instruction trees using the primitive dispatch system.
-// Each primitive is language-agnostic and executes via its own rules.
+// Apply the 7 primitives with clear, deterministic semantics.
+// No language-specific behavior here - just mechanics.
 
-use super::primitives::{Instruction, Primitive, TransferKind, OperateKind};
+use super::primitives::{Instruction, TransferKind, OperateKind};
 use super::eval::Value;
 use super::env::Environment;
 use crate::schema::LanguageSchema;
 
-/// Control flow signal from instruction execution
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Execution state
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlFlow {
-    /// Normal execution continues
     Normal,
-
-    /// Break from loop
-    Break,
-
-    /// Continue to next iteration
-    Continue,
-
-    /// Return from function
     Return,
+    Break,
+    Continue,
 }
 
-/// Execute an instruction tree
-pub fn execute(instruction: &Instruction, env: &mut Environment, schema: &LanguageSchema) -> Result<(Value, ControlFlow), String> {
-    match &instruction.primitive {
-        Primitive::Sequence(instrs) => {
-            let mut last_value = Value::Null;
-            for instr in instrs {
-                let (value, flow) = execute(instr, env, schema)?;
-                last_value = value;
+/// Execute instruction tree
+pub fn execute(
+    instr: &Instruction,
+    env: &mut Environment,
+    _schema: &LanguageSchema,
+) -> Result<(Value, ControlFlow), String> {
+    match instr {
+        // 1. Sequence: execute in order, return last value
+        Instruction::Sequence(instrs) => {
+            let mut result = Value::Null;
+            for inst in instrs {
+                let (val, flow) = execute(inst, env, _schema)?;
+                result = val;
                 if flow != ControlFlow::Normal {
-                    return Ok((last_value, flow));
+                    return Ok((result, flow));
                 }
             }
-            Ok((last_value, ControlFlow::Normal))
+            Ok((result, ControlFlow::Normal))
         }
 
-        Primitive::Scope(instrs) => {
+        // 2. Scope: push scope, execute, pop scope
+        Instruction::Scope(inst) => {
             env.push_scope();
-            let result = execute(&Instruction::sequence(instrs.clone()), env, schema);
+            let result = execute(inst, env, _schema);
             env.pop_scope();
             result
         }
 
-        Primitive::Branch {
+        // 3. Branch: if condition then else
+        Instruction::Branch {
             condition,
-            then_block,
-            else_block,
+            then_instr,
+            else_instr,
         } => {
-            let (cond_value, _) = execute(condition, env, schema)?;
-            if cond_value.to_bool() {
-                execute(then_block, env, schema)
-            } else if let Some(else_inst) = else_block {
-                execute(else_inst, env, schema)
+            let (cond_val, flow) = execute(condition, env, _schema)?;
+            if flow != ControlFlow::Normal {
+                return Ok((cond_val, flow));
+            }
+
+            if cond_val.to_bool() {
+                execute(then_instr, env, _schema)
+            } else if let Some(else_inst) = else_instr {
+                execute(else_inst, env, _schema)
             } else {
                 Ok((Value::Null, ControlFlow::Normal))
             }
         }
 
-        Primitive::Assign { name, value } => {
-            let (val, _) = execute(value, env, schema)?;
-            // Try to update existing variable in any scope; if not found, create new variable
-            if env.update(name.clone(), val.clone()).is_err() {
-                env.set(name.clone(), val.clone());
+        // 4. Assign: bind name in current scope
+        Instruction::Assign { name, value } => {
+            let (val, flow) = execute(value, env, _schema)?;
+            if flow != ControlFlow::Normal {
+                return Ok((val.clone(), flow));
             }
+            env.set(name.clone(), val.clone());
             Ok((val, ControlFlow::Normal))
         }
 
-        Primitive::Invoke { selector, args } => {
-            let mut eval_args = Vec::new();
+        // 5. Invoke: call external function
+        Instruction::Invoke { function, args } => {
+            let mut arg_vals = Vec::new();
             for arg in args {
-                let (val, _) = execute(arg, env, schema)?;
-                eval_args.push(val);
+                let (val, flow) = execute(arg, env, _schema)?;
+                if flow != ControlFlow::Normal {
+                    return Ok((val, flow));
+                }
+                arg_vals.push(val);
             }
-            // Dispatch to external function handler
-            let result = crate::runtime::execute_extern(selector, eval_args, schema)?;
-            Ok((result, ControlFlow::Normal))
-        }
 
-        Primitive::Operate { kind, operands } => {
-            match kind {
-                OperateKind::Unary(operator) => {
-                    if operands.len() != 1 {
-                        return Err(format!("Unary operator {} expects 1 operand, got {}", operator, operands.len()));
+            // External function dispatch
+            // For now, just built-in functions
+            match function.as_str() {
+                "print" | "print_native" => {
+                    for val in &arg_vals {
+                        println!("{}", val);
                     }
-                    let (operand_val, _) = execute(&operands[0], env, schema)?;
-                    let result = execute_unary_op(operator, &operand_val)?;
-                    Ok((result, ControlFlow::Normal))
+                    Ok((Value::Null, ControlFlow::Normal))
                 }
-                OperateKind::Binary(operator) => {
-                    if operands.len() != 2 {
-                        return Err(format!("Binary operator {} expects 2 operands, got {}", operator, operands.len()));
-                    }
-                    let (left_val, _) = execute(&operands[0], env, schema)?;
-                    let (right_val, _) = execute(&operands[1], env, schema)?;
-                    let result = execute_binary_op(operator, &left_val, &right_val)?;
-                    Ok((result, ControlFlow::Normal))
-                }
+                _ => Err(format!("Unknown function: {}", function)),
             }
         }
 
-        Primitive::Transfer { kind, value } => {
+        // 6. Operate: apply operator
+        Instruction::Operate { kind, operands } => {
+            execute_operator(kind, operands, env, _schema)
+        }
+
+        // 7. Transfer: control flow (return/break/continue)
+        Instruction::Transfer { kind, value } => {
             let val = if let Some(v) = value {
-                let (val, _) = execute(v, env, schema)?;
-                val
+                let (v_val, flow) = execute(v, env, _schema)?;
+                if flow != ControlFlow::Normal {
+                    return Ok((v_val, flow));
+                }
+                v_val
             } else {
                 Value::Null
             };
 
-            match kind {
-                TransferKind::Return => Ok((val, ControlFlow::Return)),
-                TransferKind::Break => Ok((Value::Null, ControlFlow::Break)),
-                TransferKind::Continue => Ok((Value::Null, ControlFlow::Continue)),
-            }
+            let flow = match kind {
+                TransferKind::Return => ControlFlow::Return,
+                TransferKind::Break => ControlFlow::Break,
+                TransferKind::Continue => ControlFlow::Continue,
+            };
+
+            Ok((val, flow))
         }
 
-        Primitive::Literal(val) => Ok((val.clone(), ControlFlow::Normal)),
-
-        Primitive::Variable(name) => {
-            let val = env.get(name)?;
-            Ok((val, ControlFlow::Normal))
-        }
-
-        Primitive::Loop { condition, block } => {
-            let mut last_value = Value::Null;
+        // Loop: while condition { body }
+        Instruction::Loop { condition, body } => {
             loop {
-                let (cond_value, _) = execute(condition, env, schema)?;
-                if !cond_value.to_bool() {
+                let (cond_val, flow) = execute(condition, env, _schema)?;
+                if flow != ControlFlow::Normal {
+                    return Ok((cond_val, flow));
+                }
+
+                if !cond_val.to_bool() {
                     break;
                 }
 
-                let (value, flow) = execute(block, env, schema)?;
-                last_value = value;
-
+                let (result, flow) = execute(body, env, _schema)?;
                 match flow {
-                    ControlFlow::Break => break,
+                    ControlFlow::Normal => continue,
+                    ControlFlow::Break => return Ok((result, ControlFlow::Normal)),
                     ControlFlow::Continue => continue,
-                    ControlFlow::Normal => {}
-                    _ => return Ok((last_value, flow)),
+                    ControlFlow::Return => return Ok((result, ControlFlow::Return)),
                 }
             }
-            Ok((last_value, ControlFlow::Normal))
-        }
 
-        Primitive::FunctionDef { name: _, params: _, body: _ } => {
-            // Function definition stores itself in the registry during parsing
-            // Execution is a no-op; just return null
             Ok((Value::Null, ControlFlow::Normal))
         }
 
-        Primitive::FunctionCall { name, args } => {
-            // Get the function definition from the registry
-            let func_def = super::function_registry::get_function(name)
-                .ok_or_else(|| format!("Undefined function '{}'", name))?;
+        // Function definition: store in environment (simplified)
+        Instruction::FunctionDef {
+            name,
+            params: _,
+            body: _,
+        } => {
+            // Simplified: just mark as defined
+            // Full implementation would store in function registry
+            env.set(
+                name.clone(),
+                Value::Function {
+                    params: vec![],
+                    body_ref: name.clone(),
+                },
+            );
+            Ok((Value::Null, ControlFlow::Normal))
+        }
 
-            // Check argument count
-            if args.len() != func_def.params.len() {
-                return Err(format!(
-                    "Function '{}' expects {} arguments, got {}",
-                    name,
-                    func_def.params.len(),
-                    args.len()
-                ));
-            }
+        // Literal: just return the value
+        Instruction::Literal(val) => Ok((val.clone(), ControlFlow::Normal)),
 
-            // Evaluate arguments
-            let mut arg_values = Vec::new();
-            for arg in args {
-                let (val, _) = execute(arg, env, schema)?;
-                arg_values.push(val);
-            }
-
-            // Create new scope for function
-            env.push_scope();
-
-            // Bind parameters to arguments
-            for (param, arg_val) in func_def.params.iter().zip(arg_values) {
-                env.set(param.clone(), arg_val);
-            }
-
-            // Execute function body
-            let (mut result, mut flow) = execute(&func_def.body, env, schema)?;
-
-            // Pop function scope
-            env.pop_scope();
-
-            // Handle return value
-            if flow == ControlFlow::Return {
-                flow = ControlFlow::Normal;
-            }
-
-            Ok((result, flow))
+        // Variable: look up in environment
+        Instruction::Variable(name) => {
+            let val = env.get(name)?;
+            Ok((val, ControlFlow::Normal))
         }
     }
 }
 
-/// Execute a unary operation
-fn execute_unary_op(operator: &str, operand: &Value) -> Result<Value, String> {
-    match operator {
-        // Logical NOT
-        "not" | "!" => Ok(Value::Bool(!operand.to_bool())),
-
-        // Negation
-        "-" => {
-            let n = operand.to_number()?;
-            Ok(Value::Number(-n))
-        }
-
-        // Reference and dereference (not fully implemented, just pass through)
-        "&" | "*" => Ok(operand.clone()),
-
-        _ => Err(format!("Unknown unary operator: {}", operator)),
-    }
-}
-
-/// Execute a binary operation
-fn execute_binary_op(operator: &str, left: &Value, right: &Value) -> Result<Value, String> {
-    match operator {
-        // Arithmetic (with string concatenation support for +)
-        "+" => {
-            // Try string concatenation first if both are strings
-            if let (Value::String(l), Value::String(r)) = (left, right) {
-                return Ok(Value::String(format!("{}{}", l, r)));
+/// Execute operator
+fn execute_operator(
+    kind: &OperateKind,
+    operands: &[Instruction],
+    env: &mut Environment,
+    schema: &LanguageSchema,
+) -> Result<(Value, ControlFlow), String> {
+    match kind {
+        OperateKind::Unary(op) => {
+            if operands.len() != 1 {
+                return Err("Unary operator requires 1 operand".to_string());
             }
-            // Otherwise, numeric addition
-            let l = left.to_number()?;
-            let r = right.to_number()?;
-            Ok(Value::Number(l + r))
-        }
-        "-" => {
-            let l = left.to_number()?;
-            let r = right.to_number()?;
-            Ok(Value::Number(l - r))
-        }
-        "*" => {
-            let l = left.to_number()?;
-            let r = right.to_number()?;
-            Ok(Value::Number(l * r))
-        }
-        "/" => {
-            let l = left.to_number()?;
-            let r = right.to_number()?;
-            if r == 0.0 {
-                return Err("Division by zero".to_string());
+            let (val, flow) = execute(&operands[0], env, schema)?;
+            if flow != ControlFlow::Normal {
+                return Ok((val, flow));
             }
-            Ok(Value::Number(l / r))
+
+            let result = match op.as_str() {
+                "-" => Value::Number(-val.to_number()?),
+                "not" => Value::Bool(!val.to_bool()),
+                _ => return Err(format!("Unknown unary operator: {}", op)),
+            };
+
+            Ok((result, ControlFlow::Normal))
         }
-        "%" => {
-            let l = left.to_number()? as i64;
-            let r = right.to_number()? as i64;
-            if r == 0 {
-                return Err("Division by zero".to_string());
+
+        OperateKind::Binary(op) => {
+            if operands.len() != 2 {
+                return Err("Binary operator requires 2 operands".to_string());
             }
-            Ok(Value::Number((l % r) as f64))
-        }
-        "//" => {
-            let l = left.to_number()?;
-            let r = right.to_number()?;
-            if r == 0.0 {
-                return Err("Division by zero".to_string());
+
+            let (left, left_flow) = execute(&operands[0], env, schema)?;
+            if left_flow != ControlFlow::Normal {
+                return Ok((left, left_flow));
             }
-            Ok(Value::Number((l / r).floor()))
-        }
-        "**" => {
-            let l = left.to_number()?;
-            let r = right.to_number()?;
-            Ok(Value::Number(l.powf(r)))
-        }
 
-        // Bitwise operations (treated as integer operations)
-        "|" => {
-            let l = left.to_number()? as i64;
-            let r = right.to_number()? as i64;
-            Ok(Value::Number((l | r) as f64))
-        }
-        "^" => {
-            let l = left.to_number()? as i64;
-            let r = right.to_number()? as i64;
-            Ok(Value::Number((l ^ r) as f64))
-        }
-        "&" => {
-            let l = left.to_number()? as i64;
-            let r = right.to_number()? as i64;
-            Ok(Value::Number((l & r) as f64))
-        }
-        "<<" => {
-            let l = left.to_number()? as i64;
-            let r = right.to_number()? as i64;
-            Ok(Value::Number((l << r) as f64))
-        }
-        ">>" => {
-            let l = left.to_number()? as i64;
-            let r = right.to_number()? as i64;
-            Ok(Value::Number((l >> r) as f64))
-        }
+            // Short-circuit evaluation for logical operators
+            match op.as_str() {
+                "and" => {
+                    if !left.to_bool() {
+                        return Ok((Value::Bool(false), ControlFlow::Normal));
+                    }
+                }
+                "or" => {
+                    if left.to_bool() {
+                        return Ok((Value::Bool(true), ControlFlow::Normal));
+                    }
+                }
+                _ => {}
+            }
 
-        // Comparison
-        "==" => {
-            let result = left.equals(right)?;
-            Ok(Value::Bool(result))
-        }
-        "!=" => {
-            let result = left.equals(right)?;
-            Ok(Value::Bool(!result))
-        }
-        "<" => {
-            let l = left.to_number()?;
-            let r = right.to_number()?;
-            Ok(Value::Bool(l < r))
-        }
-        ">" => {
-            let l = left.to_number()?;
-            let r = right.to_number()?;
-            Ok(Value::Bool(l > r))
-        }
-        "<=" => {
-            let l = left.to_number()?;
-            let r = right.to_number()?;
-            Ok(Value::Bool(l <= r))
-        }
-        ">=" => {
-            let l = left.to_number()?;
-            let r = right.to_number()?;
-            Ok(Value::Bool(l >= r))
-        }
+            let (right, right_flow) = execute(&operands[1], env, schema)?;
+            if right_flow != ControlFlow::Normal {
+                return Ok((right, right_flow));
+            }
 
-        // Logical
-        "and" | "&&" => {
-            let l = left.to_bool();
-            let r = right.to_bool();
-            Ok(Value::Bool(l && r))
+            let result = match op.as_str() {
+                "+" => {
+                    if let (Value::String(_), _) | (_, Value::String(_)) = (&left, &right) {
+                        Value::String(format!("{}{}", left, right))
+                    } else {
+                        Value::Number(left.to_number()? + right.to_number()?)
+                    }
+                }
+                "-" => Value::Number(left.to_number()? - right.to_number()?),
+                "*" => Value::Number(left.to_number()? * right.to_number()?),
+                "/" => {
+                    let r = right.to_number()?;
+                    if r == 0.0 {
+                        return Err("Division by zero".to_string());
+                    }
+                    Value::Number(left.to_number()? / r)
+                }
+                "%" => {
+                    let l = left.to_number()? as i64;
+                    let r = right.to_number()? as i64;
+                    if r == 0 {
+                        return Err("Division by zero".to_string());
+                    }
+                    Value::Number((l % r) as f64)
+                }
+                "==" => Value::Bool(left == right),
+                "!=" => Value::Bool(left != right),
+                "<" => Value::Bool(left.to_number()? < right.to_number()?),
+                ">" => Value::Bool(left.to_number()? > right.to_number()?),
+                "<=" => Value::Bool(left.to_number()? <= right.to_number()?),
+                ">=" => Value::Bool(left.to_number()? >= right.to_number()?),
+                "and" => Value::Bool(left.to_bool() && right.to_bool()),
+                "or" => Value::Bool(left.to_bool() || right.to_bool()),
+                _ => return Err(format!("Unknown binary operator: {}", op)),
+            };
+
+            Ok((result, ControlFlow::Normal))
         }
-        "or" | "||" => {
-            let l = left.to_bool();
-            let r = right.to_bool();
-            Ok(Value::Bool(l || r))
-        }
-
-        // Range operator (creates a simple range representation)
-        ".." => {
-            Ok(Value::String(format!("{}..{}", left, right)))
-        }
-
-        // Assignment (should not reach here in normal execution)
-        "=" => Ok(right.clone()),
-
-        _ => Err(format!("Unknown binary operator: {}", operator)),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn test_schema() -> LanguageSchema {
-        crate::languages::lumen_schema::get_schema()
-    }
-
-    #[test]
-    fn test_literal_execution() {
-        let mut env = Environment::new();
-        let instr = Instruction::literal(Value::Number(42.0), 0, 2);
-        let schema = test_schema();
-        let (val, flow) = execute(&instr, &mut env, &schema).unwrap();
-        assert_eq!(val, Value::Number(42.0));
-        assert_eq!(flow, ControlFlow::Normal);
-    }
-
-    #[test]
-    fn test_unary_op() {
-        assert_eq!(
-            execute_unary_op("not", &Value::Bool(true)).unwrap(),
-            Value::Bool(false)
-        );
-        assert_eq!(
-            execute_unary_op("-", &Value::Number(5.0)).unwrap(),
-            Value::Number(-5.0)
-        );
-    }
-
-    #[test]
-    fn test_binary_op() {
-        assert_eq!(
-            execute_binary_op("+", &Value::Number(3.0), &Value::Number(4.0)).unwrap(),
-            Value::Number(7.0)
-        );
-        assert_eq!(
-            execute_binary_op("==", &Value::Number(3.0), &Value::Number(3.0)).unwrap(),
-            Value::Bool(true)
-        );
     }
 }

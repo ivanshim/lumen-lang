@@ -1,9 +1,4 @@
-// Mini-Rust language schema (pure declarative)
-//
-// This module contains ONLY data describing the Mini-Rust language.
-// No parsing logic - the kernel interprets this schema.
+// Mini-Rust language module
 
 pub mod schema;
 pub mod values;
-
-pub use schema::get_schema;
