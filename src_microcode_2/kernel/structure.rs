@@ -6,10 +6,10 @@
 //   Just pass through (braces already in token stream)
 //
 // Algorithm:
-// 1. Track indentation level on each line
-// 2. When indentation increases after ":", insert {
+// 1. Process line-by-line to track indentation
+// 2. When indentation increases, insert {
 // 3. When indentation decreases, insert }
-// 4. Skip blank lines and normalize indentation handling
+// 4. Handle colons as block openers
 
 use super::ingest::Token;
 use crate::schema::LanguageSchema;
@@ -24,100 +24,94 @@ pub fn process_structure(
         return Ok(tokens);
     }
 
-    // For indentation-based languages
     let mut result = Vec::new();
-    let mut indent_stack = vec![0]; // Track indentation levels
-    let mut current_indent = 0;
+    let mut indent_stack = vec![0];
     let mut i = 0;
 
     while i < tokens.len() {
-        let token = &tokens[i];
-
-        // Track line starts to detect indentation
-        if i == 0 || (i > 0 && tokens[i - 1].lexeme == "\n") {
-            // Count spaces/tabs for indentation
-            let mut spaces = 0;
-            let mut j = i;
-
-            while j < tokens.len() && (tokens[j].lexeme == " " || tokens[j].lexeme == "\t") {
-                if tokens[j].lexeme == " " {
-                    spaces += 1;
-                } else if tokens[j].lexeme == "\t" {
-                    spaces += schema.indentation_size;
-                }
-                j += 1;
-            }
-
-            // Skip blank lines
-            if j < tokens.len() && tokens[j].lexeme == "\n" {
-                // Just output the whitespace and newline
-                while i < j {
-                    result.push(tokens[i].clone());
-                    i += 1;
-                }
-                result.push(tokens[j].clone());
-                i = j + 1;
-                continue;
-            }
-
-            current_indent = spaces / schema.indentation_size;
-
-            // Skip whitespace tokens
-            while i < j {
-                i += 1;
-            }
-
-            // Process indent changes
-            let last_indent = *indent_stack.last().unwrap();
-
-            if current_indent > last_indent {
-                // Increased indentation: insert {
-                indent_stack.push(current_indent);
-                result.push(Token {
-                    lexeme: "{".to_string(),
-                    span: (token.span.0, token.span.0),
-                    line: token.line,
-                    col: token.col,
-                });
-            } else if current_indent < last_indent {
-                // Decreased indentation: insert } for each level
-                while indent_stack.len() > 1 && indent_stack[indent_stack.len() - 1] > current_indent {
-                    indent_stack.pop();
-                    result.push(Token {
-                        lexeme: "}".to_string(),
-                        span: (token.span.0, token.span.0),
-                        line: token.line,
-                        col: token.col,
-                    });
-                }
-            }
-
-            if i >= tokens.len() {
-                break;
-            }
-        }
-
-        // Check for colon (block opener)
-        if token.lexeme == ":" && schema.block_open_marker == ":" {
-            result.push(token.clone());
+        // Skip to next line start if not at beginning
+        if i > 0 && tokens[i - 1].lexeme != "\n" && result.last().map(|t: &Token| t.lexeme.as_str()) != Some("\n") {
+            // Not at line start, just add token
+            result.push(tokens[i].clone());
             i += 1;
-
-            // Skip newline after colon
-            if i < tokens.len() && tokens[i].lexeme == "\n" {
-                result.push(tokens[i].clone());
-                i += 1;
-            }
-
-            // The { will be inserted on next line when indentation increases
             continue;
         }
 
-        // Regular token
-        result.push(token.clone());
-        i += 1;
+        // We're at line start. Measure indentation
+        let mut indent_level = 0;
+
+        // Count indentation (spaces or tabs)
+        while i < tokens.len() && (tokens[i].lexeme == " " || tokens[i].lexeme == "\t") {
+            if tokens[i].lexeme == " " {
+                indent_level += 1;
+            } else {
+                indent_level += schema.indentation_size;
+            }
+            result.push(tokens[i].clone());
+            i += 1;
+        }
+
+        // Skip empty/blank lines
+        if i < tokens.len() && tokens[i].lexeme == "\n" {
+            result.push(tokens[i].clone());
+            i += 1;
+            continue;
+        }
+
+        // Convert indent level to indentation units
+        let indent_units = indent_level / schema.indentation_size;
+        let current_indent = *indent_stack.last().unwrap();
+
+        // Handle indentation changes
+        if indent_units > current_indent {
+            // Indentation increased: insert {
+            indent_stack.push(indent_units);
+            result.push(Token {
+                lexeme: "{".to_string(),
+                span: (tokens[i].span.0, tokens[i].span.0),
+                line: tokens[i].line,
+                col: 0,
+            });
+        } else if indent_units < current_indent {
+            // Indentation decreased: insert } for each level
+            while indent_stack.len() > 1 && *indent_stack.last().unwrap() > indent_units {
+                indent_stack.pop();
+                result.push(Token {
+                    lexeme: "}".to_string(),
+                    span: (tokens[i].span.0, tokens[i].span.0),
+                    line: tokens[i].line,
+                    col: 0,
+                });
+            }
+        }
+
+        // Process tokens on this line until newline
+        while i < tokens.len() && tokens[i].lexeme != "\n" {
+            // If we see a colon, mark end of line for block
+            if tokens[i].lexeme == ":" && schema.block_open_marker == ":" {
+                result.push(tokens[i].clone());
+                i += 1;
+                // Skip whitespace after colon
+                while i < tokens.len() && tokens[i].lexeme == " " {
+                    result.push(tokens[i].clone());
+                    i += 1;
+                }
+                // Next line will handle indentation increase
+                break;
+            }
+
+            result.push(tokens[i].clone());
+            i += 1;
+        }
+
+        // Add newline if present
+        if i < tokens.len() && tokens[i].lexeme == "\n" {
+            result.push(tokens[i].clone());
+            i += 1;
+        }
     }
 
-    // Close all remaining open blocks
+    // Close all remaining open indentation blocks
     while indent_stack.len() > 1 {
         indent_stack.pop();
         result.push(Token {

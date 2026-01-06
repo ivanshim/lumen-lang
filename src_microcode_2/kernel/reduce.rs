@@ -253,9 +253,49 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
-    /// Parse expression (Pratt parsing for operators)
+    /// Parse expression (lowest precedence)
     fn parse_expression(&mut self) -> Result<Instruction, String> {
-        self.parse_comparison()
+        self.parse_logical_or()
+    }
+
+    /// Parse logical OR (lowest precedence after assignment)
+    fn parse_logical_or(&mut self) -> Result<Instruction, String> {
+        let mut left = self.parse_logical_and()?;
+        self.skip_whitespace();
+
+        loop {
+            if self.peek().lexeme == "or" {
+                self.advance();
+                self.skip_whitespace();
+                let right = self.parse_logical_and()?;
+                self.skip_whitespace();
+                left = Instruction::binary("or".to_string(), left, right);
+            } else {
+                break;
+            }
+        }
+
+        Ok(left)
+    }
+
+    /// Parse logical AND
+    fn parse_logical_and(&mut self) -> Result<Instruction, String> {
+        let mut left = self.parse_comparison()?;
+        self.skip_whitespace();
+
+        loop {
+            if self.peek().lexeme == "and" {
+                self.advance();
+                self.skip_whitespace();
+                let right = self.parse_comparison()?;
+                self.skip_whitespace();
+                left = Instruction::binary("and".to_string(), left, right);
+            } else {
+                break;
+            }
+        }
+
+        Ok(left)
     }
 
     /// Parse comparison operators
