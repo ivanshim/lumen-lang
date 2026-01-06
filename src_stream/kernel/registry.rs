@@ -16,6 +16,7 @@
 // - Languages manage all dispatch and handler logic
 
 use crate::kernel::parser::Parser;
+use std::collections::HashSet;
 
 pub type LumenResult<T> = Result<T, String>;
 
@@ -39,6 +40,8 @@ pub struct TokenDefinition {
     pub lexeme: &'static str,
     /// Whether this token should be skipped during parsing
     pub skip_during_parsing: bool,
+    /// Whether this token requires word boundaries (identifier-safe keywords)
+    pub requires_word_boundary: bool,
 }
 
 impl TokenDefinition {
@@ -46,6 +49,7 @@ impl TokenDefinition {
         Self {
             lexeme,
             skip_during_parsing,
+            requires_word_boundary: false,
         }
     }
 
@@ -54,6 +58,7 @@ impl TokenDefinition {
         Self {
             lexeme,
             skip_during_parsing: false,
+            requires_word_boundary: false,
         }
     }
 
@@ -62,6 +67,16 @@ impl TokenDefinition {
         Self {
             lexeme,
             skip_during_parsing: true,
+            requires_word_boundary: false,
+        }
+    }
+
+    /// Create a keyword token that must respect identifier word boundaries
+    pub fn keyword(lexeme: &'static str) -> Self {
+        Self {
+            lexeme,
+            skip_during_parsing: false,
+            requires_word_boundary: true,
         }
     }
 }
@@ -80,6 +95,8 @@ pub struct TokenRegistry {
     multichar_lexemes: Vec<&'static str>,
     // Cached: Tokens that should be skipped during parsing
     skip_tokens: Vec<&'static str>,
+    // Cached: Tokens that require word boundary checks
+    word_boundary_lexemes: HashSet<&'static str>,
 }
 
 impl TokenRegistry {
@@ -88,6 +105,7 @@ impl TokenRegistry {
             token_defs: Vec::new(),
             multichar_lexemes: Vec::new(),
             skip_tokens: Vec::new(),
+            word_boundary_lexemes: HashSet::new(),
         }
     }
 
@@ -111,6 +129,12 @@ impl TokenRegistry {
         &self.skip_tokens
     }
 
+    /// Check if the lexeme requires surrounding word boundaries.
+    /// Used by the lexer to avoid splitting identifiers that contain keywords.
+    pub fn requires_word_boundary(&self, lexeme: &str) -> bool {
+        self.word_boundary_lexemes.contains(&lexeme)
+    }
+
     /// Check if a specific lexeme should be skipped during parsing.
     pub fn is_skip_token(&self, lexeme: &str) -> bool {
         self.skip_tokens.contains(&lexeme)
@@ -126,6 +150,7 @@ impl TokenRegistry {
     fn rebuild_caches(&mut self) {
         let mut multichar = Vec::new();
         let mut skip = Vec::new();
+        let mut word_boundary = HashSet::new();
 
         for def in &self.token_defs {
             // Extract multichar lexemes (lexer concern)
@@ -137,6 +162,11 @@ impl TokenRegistry {
             if def.skip_during_parsing {
                 skip.push(def.lexeme);
             }
+
+            // Extract word-boundary tokens (lexer concern)
+            if def.requires_word_boundary {
+                word_boundary.insert(def.lexeme);
+            }
         }
 
         // Sort by descending length for proper maximal-munch
@@ -144,6 +174,7 @@ impl TokenRegistry {
 
         self.multichar_lexemes = multichar;
         self.skip_tokens = skip;
+        self.word_boundary_lexemes = word_boundary;
     }
 }
 
