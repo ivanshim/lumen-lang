@@ -42,7 +42,10 @@ pub fn aggregate_patterns() -> PatternSet {
 /// Register all Lumen language features
 pub fn register_all(registry: &mut Registry) {
     // Define all tokens with unified TokenDefinition API
-    // Each token specifies whether it should be skipped during parsing
+    // IMPORTANT: Keywords like "and", "or", "not" are NOT registered to prevent
+    // breaking identifiers that contain these keywords (e.g., "factorial" contains "or").
+    // These will be handled as identifiers and checked at the expression level.
+    // Similarly, "true" and "false" are not registered so they use their expression handlers.
     let tokens = vec![
         // Two-char operators (not skipped)
         TokenDefinition::recognize("=="),
@@ -50,19 +53,15 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::recognize("<="),
         TokenDefinition::recognize(">="),
 
-        // Keywords (not skipped)
-        TokenDefinition::recognize("and"),
-        TokenDefinition::recognize("or"),
-        TokenDefinition::recognize("not"),
+        // Keywords: Only register essential statement keywords
+        // NOTE: "and", "or", "not" are NOT registered to prevent breaking identifiers like "factorial"
+        // NOTE: "true", "false", "extern" are NOT registered as they have their own expression handlers
         TokenDefinition::recognize("if"),
         TokenDefinition::recognize("else"),
         TokenDefinition::recognize("while"),
         TokenDefinition::recognize("break"),
         TokenDefinition::recognize("continue"),
         TokenDefinition::recognize("print"),
-        TokenDefinition::recognize("extern"),  // Impurity boundary marker
-        TokenDefinition::recognize("true"),
-        TokenDefinition::recognize("false"),
     ];
 
     registry.tokens.set_token_definitions(tokens);
