@@ -66,9 +66,7 @@ pub fn register_all(registry: &mut Registry) {
         // Keywords (not skipped)
         TokenDefinition::recognize("let"),
         TokenDefinition::recognize("mut"),
-        TokenDefinition::recognize("and"),
-        TokenDefinition::recognize("or"),
-        TokenDefinition::recognize("not"),
+        // "and", "or", "not" are NOT registered
         TokenDefinition::recognize("if"),
         TokenDefinition::recognize("else"),
         TokenDefinition::recognize("while"),
@@ -78,9 +76,8 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::recognize("fn"),
         TokenDefinition::recognize("|>"),
         TokenDefinition::recognize("print"),
-        TokenDefinition::recognize("extern"),  // Impurity boundary marker
-        TokenDefinition::recognize("true"),
-        TokenDefinition::recognize("false"),
+        // "extern" is NOT registered
+        // "true" and "false" are NOT registered
         TokenDefinition::recognize("none"),
     ];
 
@@ -90,13 +87,15 @@ pub fn register_all(registry: &mut Registry) {
     structure::structural::register(registry);
 
     // Expression features
+    // NOTE: Registration order matters - earlier registrations have higher priority
+    // Special expressions (literals, extern) must come before generic variable matching
     expressions::literals::register(registry);      // Number and boolean literals
-    expressions::variable::register(registry);      // Variable references
+    expressions::extern_expr::register(registry);   // extern impurity boundary (before variable)
+    expressions::variable::register(registry);      // Variable references (generic identifier matching)
     expressions::grouping::register(registry);      // Parenthesized expressions
     expressions::arithmetic::register(registry);    // Arithmetic operators
     expressions::comparison::register(registry);    // Comparison operators
     expressions::logic::register(registry);         // Logical operators
-    expressions::extern_expr::register(registry);   // extern impurity boundary
     expressions::pipe::register(registry);          // Pipe operator
 
     // Statement features
