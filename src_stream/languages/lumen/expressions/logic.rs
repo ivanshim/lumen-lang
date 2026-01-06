@@ -16,18 +16,31 @@ struct LogicExpr {
 
 impl ExprNode for LogicExpr {
     fn eval(&self, env: &mut Env) -> LumenResult<Value> {
+        // Implement short-circuit evaluation
         let l = self.left.eval(env)?;
-        let r = self.right.eval(env)?;
-
         let left_bool = as_bool(l.as_ref())?;
-        let right_bool = as_bool(r.as_ref())?;
 
-        let result = match self.op.as_str() {
-            "and" => left_bool.value && right_bool.value,
-            "or" => left_bool.value || right_bool.value,
-            _ => return Err(format!("Invalid logical operator: {}", self.op)),
-        };
-        Ok(Box::new(LumenBool::new(result)))
+        match self.op.as_str() {
+            "and" => {
+                // Short-circuit: if left is false, don't evaluate right
+                if !left_bool.value {
+                    return Ok(Box::new(LumenBool::new(false)));
+                }
+                let r = self.right.eval(env)?;
+                let right_bool = as_bool(r.as_ref())?;
+                Ok(Box::new(LumenBool::new(right_bool.value)))
+            }
+            "or" => {
+                // Short-circuit: if left is true, don't evaluate right
+                if left_bool.value {
+                    return Ok(Box::new(LumenBool::new(true)));
+                }
+                let r = self.right.eval(env)?;
+                let right_bool = as_bool(r.as_ref())?;
+                Ok(Box::new(LumenBool::new(right_bool.value)))
+            }
+            _ => Err(format!("Invalid logical operator: {}", self.op)),
+        }
     }
 }
 

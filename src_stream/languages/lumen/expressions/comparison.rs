@@ -54,17 +54,21 @@ impl ExprNode for ComparisonExpr {
             return Ok(Box::new(LumenBool::new(result)));
         }
 
-        // Use the trait method for generic equality (handles Bool-Bool, etc.)
+        // Handle equality comparisons for remaining types
         match self.op.as_str() {
             "==" => {
-                let result = l.eq_value(r.as_ref())?;
+                // Try the built-in eq_value for same-type comparisons
+                // If that fails, different types are not equal
+                let result = l.eq_value(r.as_ref()).unwrap_or(false);
                 Ok(Box::new(LumenBool::new(result)))
             }
             "!=" => {
-                let result = l.eq_value(r.as_ref())?;
+                // Try the built-in eq_value for same-type comparisons
+                // If that fails, different types are not equal (so != is true)
+                let result = l.eq_value(r.as_ref()).unwrap_or(false);
                 Ok(Box::new(LumenBool::new(!result)))
             }
-            _ => Err("Invalid comparison operands".into()),
+            _ => Err("Cannot apply operators other than == and != to these types".into()),
         }
     }
 }
