@@ -43,15 +43,18 @@ impl LogicInfix {
 
 impl ExprInfix for LogicInfix {
     fn matches(&self, parser: &Parser) -> bool {
-        // Check if the next characters form "and" or "or" (which are not registered as tokens)
+        // Direct token match (keyword registered with word-boundaries)
+        if parser.peek().lexeme == self.op {
+            return true;
+        }
+
+        // Fallback: collect characters for character-by-character handlers
         let lex = &parser.peek().lexeme;
 
-        // Quick check: first character must match
         if self.op.chars().next() != lex.chars().next() {
             return false;
         }
 
-        // Collect characters to check if they form our operator
         let mut i = parser.i;
         let mut collected = String::new();
 
@@ -92,9 +95,13 @@ impl ExprInfix for LogicInfix {
         left: Box<dyn ExprNode>,
         registry: &super::super::registry::Registry,
     ) -> LumenResult<Box<dyn ExprNode>> {
-        // Consume the operator characters
-        for _ in self.op.chars() {
+        // Consume either the single keyword token or character-by-character tokens
+        if parser.peek().lexeme == self.op {
             parser.advance();
+        } else {
+            for _ in self.op.chars() {
+                parser.advance();
+            }
         }
         parser.skip_tokens();
         let right = parser.parse_expr_prec(registry, self.precedence() + 1)?;
@@ -121,10 +128,12 @@ pub struct NotPrefix;
 
 impl ExprPrefix for NotPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        // Check if next characters form "not" (which is not registered as a token)
+        if parser.peek().lexeme == "not" {
+            return true;
+        }
+
         let lex = &parser.peek().lexeme;
 
-        // Quick check: first character must be 'n'
         if lex != "n" {
             return false;
         }
@@ -161,9 +170,12 @@ impl ExprPrefix for NotPrefix {
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
-        // Consume "n", "o", "t"
-        for _ in "not".chars() {
+        if parser.peek().lexeme == "not" {
             parser.advance();
+        } else {
+            for _ in "not".chars() {
+                parser.advance();
+            }
         }
         parser.skip_tokens();
         let expr = parser.parse_expr_prec(registry, Precedence::Unary)?;

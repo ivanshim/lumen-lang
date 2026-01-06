@@ -48,10 +48,8 @@ pub fn aggregate_patterns() -> PatternSet {
 /// Register all Lumen language features
 pub fn register_all(registry: &mut Registry) {
     // Define all tokens with unified TokenDefinition API
-    // IMPORTANT: Keywords like "and", "or", "not" are NOT registered to prevent
-    // breaking identifiers that contain these keywords (e.g., "factorial" contains "or").
-    // These will be handled as identifiers and checked at the expression level.
-    // Similarly, "true" and "false" are not registered so they use their expression handlers.
+    // Keywords use boundary-aware registration to avoid splitting identifiers that contain
+    // keyword substrings.
     let tokens = vec![
         // Two-char operators (not skipped)
         TokenDefinition::recognize("=="),
@@ -60,25 +58,24 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::recognize(">="),
         TokenDefinition::recognize("**"),
 
-        // Keywords: Only register essential statement keywords
-        // NOTE: "and", "or", "not" are NOT registered to prevent breaking identifiers like "factorial"
-        // NOTE: "true", "false", "extern" are NOT registered as they have their own expression handlers
-        // Keywords (not skipped)
-        TokenDefinition::recognize("let"),
-        TokenDefinition::recognize("mut"),
-        // "and", "or", "not" are NOT registered
-        TokenDefinition::recognize("if"),
-        TokenDefinition::recognize("else"),
-        TokenDefinition::recognize("while"),
-        TokenDefinition::recognize("break"),
-        TokenDefinition::recognize("continue"),
-        TokenDefinition::recognize("return"),
-        TokenDefinition::recognize("fn"),
+        // Keywords (boundary-sensitive, not skipped)
+        TokenDefinition::keyword("let"),
+        TokenDefinition::keyword("mut"),
+        TokenDefinition::keyword("and"),
+        TokenDefinition::keyword("or"),
+        TokenDefinition::keyword("not"),
+        TokenDefinition::keyword("if"),
+        TokenDefinition::keyword("else"),
+        TokenDefinition::keyword("while"),
+        TokenDefinition::keyword("break"),
+        TokenDefinition::keyword("continue"),
+        TokenDefinition::keyword("return"),
+        TokenDefinition::keyword("fn"),
         TokenDefinition::recognize("|>"),
-        TokenDefinition::recognize("print"),
+        TokenDefinition::keyword("print"),
         // "extern" is NOT registered
         // "true" and "false" are NOT registered
-        TokenDefinition::recognize("none"),
+        TokenDefinition::keyword("none"),
     ];
 
     registry.tokens.set_token_definitions(tokens);
