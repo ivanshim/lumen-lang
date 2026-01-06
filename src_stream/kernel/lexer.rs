@@ -135,11 +135,26 @@ pub fn lex(source: &str, token_reg: &TokenRegistry) -> LumenResult<Vec<SpannedTo
                         col_in_line += 1;
                     }
                 }
-
-                byte_pos += multichar.len();
-                matched = true;
-                break;
             }
+
+            // Found a multi-char match. Emit it and update position tracking.
+            let lexeme = multichar.to_string();
+            let span = Span::new(byte_pos, byte_pos + multichar.len());
+            out.push(SpannedToken::new(Token::new(lexeme, span), line_no, start_col));
+
+            // Update line/col for the matched sequence
+            for byte in multichar.as_bytes() {
+                if *byte == b'\n' {
+                    line_no += 1;
+                    col_in_line = 1;
+                } else {
+                    col_in_line += 1;
+                }
+            }
+
+            byte_pos += multichar.len();
+            matched = true;
+            break;
         }
 
         if matched {
@@ -166,4 +181,8 @@ pub fn lex(source: &str, token_reg: &TokenRegistry) -> LumenResult<Vec<SpannedTo
     }
 
     Ok(out)
+}
+
+fn is_identifier_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' 
 }

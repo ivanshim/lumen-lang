@@ -56,7 +56,6 @@ impl ExprInfix for LogicInfix {
             return false;
         }
 
-        // Collect characters to check if they form our operator
         let mut i = parser.i;
         let mut collected = String::new();
 

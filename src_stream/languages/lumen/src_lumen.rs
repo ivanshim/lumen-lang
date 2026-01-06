@@ -48,10 +48,8 @@ pub fn aggregate_patterns() -> PatternSet {
 /// Register all Lumen language features
 pub fn register_all(registry: &mut Registry) {
     // Define all tokens with unified TokenDefinition API
-    // IMPORTANT: Keywords like "and", "or", "not" are NOT registered to prevent
-    // breaking identifiers that contain these keywords (e.g., "factorial" contains "or").
-    // These will be handled as identifiers and checked at the expression level.
-    // Similarly, "true" and "false" are not registered so they use their expression handlers.
+    // Keywords use boundary-aware registration to avoid splitting identifiers that contain
+    // keyword substrings.
     let tokens = vec![
         // Two-char operators (not skipped)
         TokenDefinition::recognize("=="),

@@ -16,6 +16,7 @@
 // - Languages manage all dispatch and handler logic
 
 use crate::kernel::parser::Parser;
+use std::collections::HashSet;
 
 pub type LumenResult<T> = Result<T, String>;
 
@@ -126,6 +127,12 @@ impl TokenRegistry {
     /// Used by language-specific parser extension traits.
     pub fn skip_tokens(&self) -> &[&'static str] {
         &self.skip_tokens
+    }
+
+    /// Check if the lexeme requires surrounding word boundaries.
+    /// Used by the lexer to avoid splitting identifiers that contain keywords.
+    pub fn requires_word_boundary(&self, lexeme: &str) -> bool {
+        self.word_boundary_lexemes.contains(&lexeme)
     }
 
     /// Check if a specific lexeme should be skipped during parsing.
