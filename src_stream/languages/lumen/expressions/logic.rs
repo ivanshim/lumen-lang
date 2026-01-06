@@ -43,9 +43,14 @@ impl LogicInfix {
 
 impl ExprInfix for LogicInfix {
     fn matches(&self, parser: &Parser) -> bool {
-        // Check if the next characters form "and" or "or" (which are not registered as tokens)
         let lex = &parser.peek().lexeme;
 
+        // Case 1: "and"/"or" are registered as keyword tokens (single token)
+        if lex == &self.op {
+            return true;
+        }
+
+        // Case 2: "and"/"or" are split into characters (for backward compatibility with non-registered keywords)
         // Quick check: first character must match
         if self.op.chars().next() != lex.chars().next() {
             return false;
@@ -92,9 +97,15 @@ impl ExprInfix for LogicInfix {
         left: Box<dyn ExprNode>,
         registry: &super::super::registry::Registry,
     ) -> LumenResult<Box<dyn ExprNode>> {
-        // Consume the operator characters
-        for _ in self.op.chars() {
+        // Consume the operator - either as a single token or as multiple characters
+        if parser.peek().lexeme == self.op {
+            // Single token operator (registered as keyword)
             parser.advance();
+        } else {
+            // Multi-character operator (individual character tokens)
+            for _ in self.op.chars() {
+                parser.advance();
+            }
         }
         parser.skip_tokens();
         let right = parser.parse_expr_prec(registry, self.precedence() + 1)?;
@@ -121,9 +132,14 @@ pub struct NotPrefix;
 
 impl ExprPrefix for NotPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        // Check if next characters form "not" (which is not registered as a token)
         let lex = &parser.peek().lexeme;
 
+        // Case 1: "not" is registered as a keyword token (single token)
+        if lex == "not" {
+            return true;
+        }
+
+        // Case 2: "not" is split into characters (for backward compatibility with non-registered keywords)
         // Quick check: first character must be 'n'
         if lex != "n" {
             return false;
@@ -161,9 +177,15 @@ impl ExprPrefix for NotPrefix {
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
-        // Consume "n", "o", "t"
-        for _ in "not".chars() {
+        // Consume "not" - either as a single token or as multiple characters
+        if parser.peek().lexeme == "not" {
+            // Single token operator (registered as keyword)
             parser.advance();
+        } else {
+            // Multi-character operator (individual character tokens)
+            for _ in "not".chars() {
+                parser.advance();
+            }
         }
         parser.skip_tokens();
         let expr = parser.parse_expr_prec(registry, Precedence::Unary)?;
