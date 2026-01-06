@@ -60,25 +60,27 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::recognize(">="),
         TokenDefinition::recognize("**"),
 
-        // Keywords: Only register essential statement keywords
+        // Keywords that require word boundaries (to prevent matching inside identifiers like "test_let" or "no_return")
         // NOTE: "and", "or", "not" are NOT registered to prevent breaking identifiers like "factorial"
         // NOTE: "true", "false", "extern" are NOT registered as they have their own expression handlers
-        // Keywords (not skipped)
-        TokenDefinition::recognize("let"),
-        TokenDefinition::recognize("mut"),
-        // "and", "or", "not" are NOT registered
-        TokenDefinition::recognize("if"),
-        TokenDefinition::recognize("else"),
-        TokenDefinition::recognize("while"),
-        TokenDefinition::recognize("break"),
-        TokenDefinition::recognize("continue"),
-        TokenDefinition::recognize("return"),
-        TokenDefinition::recognize("fn"),
-        TokenDefinition::recognize("|>"),
-        TokenDefinition::recognize("print"),
+        TokenDefinition::keyword("let"),
+        TokenDefinition::keyword("mut"),
+        // "and", "or", "not" - now registered with word boundaries to prevent breaking identifiers like "android", "north", "notation"
+        TokenDefinition::keyword("and"),
+        TokenDefinition::keyword("or"),
+        TokenDefinition::keyword("not"),
+        TokenDefinition::keyword("if"),
+        TokenDefinition::keyword("else"),
+        TokenDefinition::keyword("while"),
+        TokenDefinition::keyword("break"),
+        TokenDefinition::keyword("continue"),
+        TokenDefinition::keyword("return"),
+        TokenDefinition::keyword("fn"),
+        TokenDefinition::recognize("|>"),  // Pipe operator, not a keyword
+        TokenDefinition::keyword("print"),
         // "extern" is NOT registered
         // "true" and "false" are NOT registered
-        TokenDefinition::recognize("none"),
+        TokenDefinition::keyword("none"),
     ];
 
     registry.tokens.set_token_definitions(tokens);
