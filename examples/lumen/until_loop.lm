@@ -1,0 +1,14 @@
+print("Until loop: post-condition loop test")
+
+i = 0
+until i >= 5
+    print(i)
+    i = i + 1
+
+print("")
+print("Until loop: stops when condition becomes true")
+
+x = 10
+until x <= 5
+    print(x)
+    x = x - 1

@@ -35,6 +35,8 @@ pub fn aggregate_patterns() -> PatternSet {
         statements::assignment::patterns(),
         statements::if_else::patterns(),
         statements::while_loop::patterns(),
+        statements::for_loop::patterns(),
+        statements::until_loop::patterns(),
         statements::break_stmt::patterns(),
         statements::continue_stmt::patterns(),
         statements::return_stmt::patterns(),
@@ -72,6 +74,8 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::keyword("if"),
         TokenDefinition::keyword("else"),
         TokenDefinition::keyword("while"),
+        TokenDefinition::keyword("for"),
+        TokenDefinition::keyword("until"),
         TokenDefinition::keyword("break"),
         TokenDefinition::keyword("continue"),
         TokenDefinition::keyword("return"),
@@ -100,12 +104,16 @@ pub fn register_all(registry: &mut Registry) {
     expressions::variable::register(registry);      // Variable references (generic identifier matching) - must come last
 
     // Statement features
+    // Registration order matters: specific keyword handlers must come before assignment
+    // which matches any identifier
     statements::print::register(registry);         // print() statement
     statements::let_mut_binding::register(registry); // let mut binding
     statements::let_binding::register(registry);   // let binding
-    statements::assignment::register(registry);    // Assignment
     statements::if_else::register(registry);       // if/else statements
     statements::while_loop::register(registry);    // while loops
+    statements::for_loop::register(registry);      // for loops (desugars to while) - before assignment!
+    statements::until_loop::register(registry);    // until loops (post-condition loops) - before assignment!
+    statements::assignment::register(registry);    // Assignment - must come after keyword handlers
     statements::break_stmt::register(registry);    // break statement
     statements::continue_stmt::register(registry); // continue statement
     statements::return_stmt::register(registry);   // return statement
