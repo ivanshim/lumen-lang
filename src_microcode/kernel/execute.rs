@@ -356,11 +356,16 @@ fn execute_binary_op(operator: &str, left: &Value, right: &Value) -> Result<Valu
 mod tests {
     use super::*;
 
+    fn test_schema() -> LanguageSchema {
+        crate::languages::lumen_schema::get_schema()
+    }
+
     #[test]
     fn test_literal_execution() {
         let mut env = Environment::new();
         let instr = Instruction::literal(Value::Number(42.0), 0, 2);
-        let (val, flow) = execute(&instr, &mut env).unwrap();
+        let schema = test_schema();
+        let (val, flow) = execute(&instr, &mut env, &schema).unwrap();
         assert_eq!(val, Value::Number(42.0));
         assert_eq!(flow, ControlFlow::Normal);
     }

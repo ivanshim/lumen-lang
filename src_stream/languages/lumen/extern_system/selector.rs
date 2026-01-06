@@ -33,10 +33,15 @@ pub struct SelectorClause {
 /// Parse a selector string into ordered list of resolution clauses
 /// Returns Vec of (backend_option, capability) pairs to try in order
 pub fn parse_selector(input: &str) -> LumenResult<Vec<SelectorClause>> {
-    let input = input.trim();
+    let mut input = input.trim();
 
     if input.is_empty() {
         return Err("Empty selector".into());
+    }
+
+    // Remove a pair of wrapping parentheses so grouped selectors parse like bare ones.
+    while let Some(inner) = strip_wrapping_parens(input) {
+        input = inner.trim();
     }
 
     // Try to find the rightmost ':' that's not inside parentheses
@@ -47,6 +52,15 @@ pub fn parse_selector(input: &str) -> LumenResult<Vec<SelectorClause>> {
         (&input[..pos], &input[pos + 1..])
     } else {
         // No backend, just capability
+        // Check for top-level alternation such as "a|b" or "(fs:impl1)|(impl2)".
+        if let Some(parts) = split_top_level(input, '|') {
+            let mut clauses = Vec::new();
+            for part in parts {
+                clauses.extend(parse_selector(part.as_str())?);
+            }
+            return Ok(clauses);
+        }
+
         ("", input)
     };
 
@@ -89,6 +103,64 @@ fn find_unparensed_colon(s: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// Strip a single layer of wrapping parentheses when they enclose the whole string.
+fn strip_wrapping_parens(input: &str) -> Option<&str> {
+    if input.starts_with('(') && input.ends_with(')') {
+        let mut depth = 0;
+        for (i, ch) in input.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    // If we close the initial '(', ensure it's the last char.
+                    if depth == 0 && i != input.len() - 1 {
+                        return None;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if depth == 0 {
+            return Some(&input[1..input.len() - 1]);
+        }
+    }
+    None
+}
+
+/// Split a string by a separator at top level (not inside parentheses).
+fn split_top_level(input: &str, separator: char) -> Option<Vec<String>> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0;
+    let mut found = false;
+
+    for ch in input.chars() {
+        match ch {
+            '(' => {
+                depth += 1;
+                current.push(ch);
+            }
+            ')' => {
+                depth -= 1;
+                current.push(ch);
+            }
+            c if c == separator && depth == 0 => {
+                found = true;
+                parts.push(current.trim().to_string());
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if found {
+        parts.push(current.trim().to_string());
+        Some(parts)
+    } else {
+        None
+    }
 }
 
 /// Parse a backend list: "fs|mem" or "(fs|mem)" or complex nesting

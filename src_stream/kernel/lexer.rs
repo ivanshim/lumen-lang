@@ -105,6 +105,18 @@ pub fn lex(source: &str, token_reg: &TokenRegistry) -> LumenResult<Vec<SpannedTo
 
         // Try multi-char sequences in descending length order (pre-sorted by registry)
         for &multichar in token_reg.multichar_lexemes() {
+            if !remaining.starts_with(multichar) {
+                continue;
+            }
+
+            // Respect word boundaries for keyword-like tokens to avoid breaking identifiers.
+            if token_reg.requires_word_boundary(multichar) {
+                let end = byte_pos + multichar.len();
+                let left_ok = byte_pos == 0 || !is_identifier_byte(bytes[byte_pos - 1]);
+                let right_ok = end >= bytes.len() || !is_identifier_byte(bytes[end]);
+
+                if !(left_ok && right_ok) {
+                    continue;
             if remaining.starts_with(multichar) {
                 // Check word boundary requirement for this token
                 if token_reg.requires_word_boundary(multichar) {
