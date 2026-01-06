@@ -88,15 +88,14 @@ pub struct VariablePrefix;
 impl ExprPrefix for VariablePrefix {
     fn matches(&self, parser: &Parser) -> bool {
         // Check if lexeme is a valid identifier (starts with letter or underscore)
-        // Exclude only the registered statement keywords (if, else, while, break, continue, print)
+        // Exclude only the registered statement keywords (if, else, while, break, continue, print, fn, let, mut, return)
         // Allow "and", "or", "not", "true", "false", "extern" to pass through - they'll be handled
         // by their own expression handlers (logic, literals, extern_expr)
         let lex = &parser.peek().lexeme;
         let is_identifier = lex.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_');
-        let is_statement_keyword = matches!(lex.as_str(), "if" | "else" | "while" | "break" | "continue" | "print");
+        let is_statement_keyword = matches!(lex.as_str(),
+            "if" | "else" | "while" | "break" | "continue" | "print" | "fn" | "let" | "mut" | "return");
         is_identifier && !is_statement_keyword
-        let is_reserved = matches!(lex.as_str(), "true" | "false" | "not" | "and" | "or" | "if" | "else" | "while" | "print" | "break" | "continue" | "extern" | "fn" | "let" | "mut" | "return");
-        is_identifier && !is_reserved
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
