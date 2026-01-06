@@ -105,18 +105,35 @@ pub fn lex(source: &str, token_reg: &TokenRegistry) -> LumenResult<Vec<SpannedTo
 
         // Try multi-char sequences in descending length order (pre-sorted by registry)
         for &multichar in token_reg.multichar_lexemes() {
-            if !remaining.starts_with(multichar) {
-                continue;
-            }
+            if remaining.starts_with(multichar) {
+                // Check word boundary requirement for this token
+                if token_reg.requires_word_boundary(multichar) {
+                    // Word boundary check: ensure preceding and following bytes are not identifier chars
+                    let preceding_is_ident = byte_pos > 0 &&
+                        (bytes[byte_pos - 1].is_ascii_alphanumeric() || bytes[byte_pos - 1] == b'_');
+                    let following_byte_pos = byte_pos + multichar.len();
+                    let following_is_ident = following_byte_pos < bytes.len() &&
+                        (bytes[following_byte_pos].is_ascii_alphanumeric() || bytes[following_byte_pos] == b'_');
 
-            // Respect word boundaries for keyword-like tokens to avoid breaking identifiers.
-            if token_reg.requires_word_boundary(multichar) {
-                let end = byte_pos + multichar.len();
-                let left_ok = byte_pos == 0 || !is_identifier_byte(bytes[byte_pos - 1]);
-                let right_ok = end >= bytes.len() || !is_identifier_byte(bytes[end]);
+                    // Skip this match if word boundary would be violated
+                    if preceding_is_ident || following_is_ident {
+                        continue;  // Try next multichar sequence
+                    }
+                }
 
-                if !(left_ok && right_ok) {
-                    continue;
+                // Found a multi-char match. Emit it and update position tracking.
+                let lexeme = multichar.to_string();
+                let span = Span::new(byte_pos, byte_pos + multichar.len());
+                out.push(SpannedToken::new(Token::new(lexeme, span), line_no, start_col));
+
+                // Update line/col for the matched sequence
+                for byte in multichar.as_bytes() {
+                    if *byte == b'\n' {
+                        line_no += 1;
+                        col_in_line = 1;
+                    } else {
+                        col_in_line += 1;
+                    }
                 }
             }
 
