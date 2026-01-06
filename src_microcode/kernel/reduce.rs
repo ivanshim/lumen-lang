@@ -626,8 +626,24 @@ impl<'a> Parser<'a> {
             let mut string_val = String::new();
 
             while !self.is_at_end() && self.peek().lexeme != "\"" {
-                string_val.push_str(&self.peek().lexeme);
-                self.advance();
+                // Handle escape sequences
+                if self.peek().lexeme == "\\" {
+                    self.advance();
+                    if !self.is_at_end() {
+                        let next = self.peek().lexeme.clone();
+                        match next.as_str() {
+                            "\"" => { string_val.push('"'); self.advance(); }
+                            "\\" => { string_val.push('\\'); self.advance(); }
+                            "n" => { string_val.push('\n'); self.advance(); }
+                            "t" => { string_val.push('\t'); self.advance(); }
+                            "r" => { string_val.push('\r'); self.advance(); }
+                            _ => { string_val.push_str("\\"); string_val.push_str(&next); self.advance(); }
+                        }
+                    }
+                } else {
+                    string_val.push_str(&self.peek().lexeme);
+                    self.advance();
+                }
             }
 
             if self.is_at_end() {
@@ -643,6 +659,12 @@ impl<'a> Parser<'a> {
             self.advance();
             let bool_val = lexeme == "true" || lexeme == "True";
             return Ok(Instruction::literal(Value::Bool(bool_val), start, self.prev_span().1));
+        }
+
+        // None literal
+        if lexeme == "none" || lexeme == "None" {
+            self.advance();
+            return Ok(Instruction::literal(Value::Null, start, self.prev_span().1));
         }
 
         // Identifier (variable reference or extern function call)
