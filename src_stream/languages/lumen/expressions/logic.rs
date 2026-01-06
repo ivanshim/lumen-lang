@@ -43,7 +43,43 @@ impl LogicInfix {
 
 impl ExprInfix for LogicInfix {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme == self.op
+        // Check if the next characters form "and" or "or" (which are not registered as tokens)
+        let lex = &parser.peek().lexeme;
+
+        // Quick check: first character must match
+        if self.op.chars().next() != lex.chars().next() {
+            return false;
+        }
+
+        // Collect characters to check if they form our operator
+        let mut i = parser.i;
+        let mut collected = String::new();
+
+        for expected_ch in self.op.chars() {
+            if i >= parser.toks.len() {
+                return false;
+            }
+            let actual = &parser.toks[i].tok.lexeme;
+            if actual.len() == 1 && actual.chars().next() == Some(expected_ch) {
+                collected.push(expected_ch);
+                i += 1;
+            } else {
+                return false;
+            }
+        }
+
+        // Make sure next character doesn't extend the operator
+        if i < parser.toks.len() {
+            let next = &parser.toks[i].tok.lexeme;
+            if next.len() == 1 {
+                let next_ch = next.chars().next().unwrap();
+                if next_ch.is_ascii_alphanumeric() || next_ch == '_' {
+                    return false;
+                }
+            }
+        }
+
+        collected == self.op
     }
 
     fn precedence(&self) -> Precedence {
@@ -56,7 +92,10 @@ impl ExprInfix for LogicInfix {
         left: Box<dyn ExprNode>,
         registry: &super::super::registry::Registry,
     ) -> LumenResult<Box<dyn ExprNode>> {
-        parser.advance(); // consume operator
+        // Consume the operator characters
+        for _ in self.op.chars() {
+            parser.advance();
+        }
         parser.skip_tokens();
         let right = parser.parse_expr_prec(registry, self.precedence() + 1)?;
         Ok(Box::new(LogicExpr { left, op: self.op.clone(), right }))
@@ -82,11 +121,50 @@ pub struct NotPrefix;
 
 impl ExprPrefix for NotPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme == "not"
+        // Check if next characters form "not" (which is not registered as a token)
+        let lex = &parser.peek().lexeme;
+
+        // Quick check: first character must be 'n'
+        if lex != "n" {
+            return false;
+        }
+
+        // Collect "n", "o", "t" from character tokens
+        let mut i = parser.i;
+        let mut collected = String::new();
+
+        for expected_ch in "not".chars() {
+            if i >= parser.toks.len() {
+                return false;
+            }
+            let actual = &parser.toks[i].tok.lexeme;
+            if actual.len() == 1 && actual.chars().next() == Some(expected_ch) {
+                collected.push(expected_ch);
+                i += 1;
+            } else {
+                return false;
+            }
+        }
+
+        // Make sure the next character doesn't extend it (like "notion")
+        if i < parser.toks.len() {
+            let next = &parser.toks[i].tok.lexeme;
+            if next.len() == 1 {
+                let next_ch = next.chars().next().unwrap();
+                if next_ch.is_ascii_alphanumeric() || next_ch == '_' {
+                    return false;
+                }
+            }
+        }
+
+        collected == "not"
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
-        parser.advance();
+        // Consume "n", "o", "t"
+        for _ in "not".chars() {
+            parser.advance();
+        }
         parser.skip_tokens();
         let expr = parser.parse_expr_prec(registry, Precedence::Unary)?;
         Ok(Box::new(NotExpr { expr }))
