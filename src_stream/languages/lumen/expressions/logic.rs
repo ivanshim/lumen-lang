@@ -51,6 +51,15 @@ impl ExprInfix for LogicInfix {
         // Fallback: collect characters for character-by-character handlers
         let lex = &parser.peek().lexeme;
 
+        let lex = &parser.peek().lexeme;
+
+        // Case 1: "and"/"or" are registered as keyword tokens (single token)
+        if lex == &self.op {
+            return true;
+        }
+
+        // Case 2: "and"/"or" are split into characters (for backward compatibility with non-registered keywords)
+        // Quick check: first character must match
         if self.op.chars().next() != lex.chars().next() {
             return false;
         }
@@ -99,6 +108,12 @@ impl ExprInfix for LogicInfix {
         if parser.peek().lexeme == self.op {
             parser.advance();
         } else {
+        // Consume the operator - either as a single token or as multiple characters
+        if parser.peek().lexeme == self.op {
+            // Single token operator (registered as keyword)
+            parser.advance();
+        } else {
+            // Multi-character operator (individual character tokens)
             for _ in self.op.chars() {
                 parser.advance();
             }
@@ -134,6 +149,15 @@ impl ExprPrefix for NotPrefix {
 
         let lex = &parser.peek().lexeme;
 
+        let lex = &parser.peek().lexeme;
+
+        // Case 1: "not" is registered as a keyword token (single token)
+        if lex == "not" {
+            return true;
+        }
+
+        // Case 2: "not" is split into characters (for backward compatibility with non-registered keywords)
+        // Quick check: first character must be 'n'
         if lex != "n" {
             return false;
         }
@@ -173,6 +197,12 @@ impl ExprPrefix for NotPrefix {
         if parser.peek().lexeme == "not" {
             parser.advance();
         } else {
+        // Consume "not" - either as a single token or as multiple characters
+        if parser.peek().lexeme == "not" {
+            // Single token operator (registered as keyword)
+            parser.advance();
+        } else {
+            // Multi-character operator (individual character tokens)
             for _ in "not".chars() {
                 parser.advance();
             }

@@ -61,6 +61,12 @@ pub fn register_all(registry: &mut Registry) {
         // Keywords (boundary-sensitive, not skipped)
         TokenDefinition::keyword("let"),
         TokenDefinition::keyword("mut"),
+        // Keywords that require word boundaries (to prevent matching inside identifiers like "test_let" or "no_return")
+        // NOTE: "and", "or", "not" are NOT registered to prevent breaking identifiers like "factorial"
+        // NOTE: "true", "false", "extern" are NOT registered as they have their own expression handlers
+        TokenDefinition::keyword("let"),
+        TokenDefinition::keyword("mut"),
+        // "and", "or", "not" - now registered with word boundaries to prevent breaking identifiers like "android", "north", "notation"
         TokenDefinition::keyword("and"),
         TokenDefinition::keyword("or"),
         TokenDefinition::keyword("not"),
@@ -72,6 +78,7 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::keyword("return"),
         TokenDefinition::keyword("fn"),
         TokenDefinition::recognize("|>"),
+        TokenDefinition::recognize("|>"),  // Pipe operator, not a keyword
         TokenDefinition::keyword("print"),
         // "extern" is NOT registered
         // "true" and "false" are NOT registered
