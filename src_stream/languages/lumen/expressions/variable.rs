@@ -88,9 +88,13 @@ pub struct VariablePrefix;
 impl ExprPrefix for VariablePrefix {
     fn matches(&self, parser: &Parser) -> bool {
         // Check if lexeme is a valid identifier (starts with letter or underscore)
-        // But exclude reserved keywords
+        // Exclude only the registered statement keywords (if, else, while, break, continue, print)
+        // Allow "and", "or", "not", "true", "false", "extern" to pass through - they'll be handled
+        // by their own expression handlers (logic, literals, extern_expr)
         let lex = &parser.peek().lexeme;
         let is_identifier = lex.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_');
+        let is_statement_keyword = matches!(lex.as_str(), "if" | "else" | "while" | "break" | "continue" | "print");
+        is_identifier && !is_statement_keyword
         let is_reserved = matches!(lex.as_str(), "true" | "false" | "not" | "and" | "or" | "if" | "else" | "while" | "print" | "break" | "continue" | "extern" | "fn" | "let" | "mut" | "return");
         is_identifier && !is_reserved
     }
@@ -112,6 +116,10 @@ impl ExprPrefix for VariablePrefix {
             break;
         }
 
+        // Keywords like "and", "or", "not", "true", "false", "extern" will be collected as identifiers
+        // but their own expression handlers should match first (they're registered with higher priority)
+        // If we get here with one of those, it means it wasn't handled by a higher-priority handler,
+        // so we try to treat it as a variable name
         // Check if this is a function call (name followed by '(')
         parser.skip_tokens();
         if parser.peek().lexeme == LPAREN {
