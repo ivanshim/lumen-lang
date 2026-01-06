@@ -1,41 +1,15 @@
-SCALE = 10000000000
-
-x = SCALE / 5
-x2 = (x * x) / SCALE
-
-term = x
-sum1 = term
+pi = 3
 k = 1
 
-while term > 0
-    term = (term * x2) / SCALE
-    k = k + 2
+while k < 50
+    num = 4
+    den = (2 * k) * (2 * k + 1) * (2 * k + 2)
 
-    if (k / 2) * 2 == k
-        sum1 = sum1 - (term / k)
+    if k % 2 == 1
+        pi = pi + (num / den)
     else
-        sum1 = sum1 + (term / k)
+        pi = pi - (num / den)
 
-x = SCALE / 239
-x2 = (x * x) / SCALE
+    k = k + 1
 
-term = x
-sum2 = term
-k = 1
-
-while term > 0
-    term = (term * x2) / SCALE
-    k = k + 2
-
-    if (k / 2) * 2 == k
-        sum2 = sum2 - (term / k)
-    else
-        sum2 = sum2 + (term / k)
-
-pi_scaled = (16 * sum1) - (4 * sum2)
-
-int_part = pi_scaled / SCALE
-frac_part = pi_scaled % SCALE
-
-print(int_part)
-print(frac_part)
+print(pi)
