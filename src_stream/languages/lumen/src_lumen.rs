@@ -27,6 +27,7 @@ pub fn aggregate_patterns() -> PatternSet {
         expressions::logic::patterns(),
         expressions::extern_expr::patterns(),
         expressions::pipe::patterns(),
+        expressions::range_expr::patterns(),
 
         // Statement patterns
         statements::print::patterns(),
@@ -60,6 +61,7 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::recognize(">="),
         TokenDefinition::recognize("**"),
         TokenDefinition::recognize("|>"),  // Pipe operator
+        TokenDefinition::recognize(".."),  // Range operator
 
         // Single-char operators
         TokenDefinition::recognize(":"),   // Type annotation separator
@@ -75,6 +77,7 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::keyword("else"),
         TokenDefinition::keyword("while"),
         TokenDefinition::keyword("for"),
+        TokenDefinition::keyword("in"),     // For-in loop keyword
         TokenDefinition::keyword("until"),
         TokenDefinition::keyword("break"),
         TokenDefinition::keyword("continue"),
@@ -99,6 +102,7 @@ pub fn register_all(registry: &mut Registry) {
     expressions::arithmetic::register(registry);    // Arithmetic operators
     expressions::comparison::register(registry);    // Comparison operators
     expressions::pipe::register(registry);          // Pipe operator
+    expressions::range_expr::register(registry);    // Range operator (..)
     expressions::extern_expr::register(registry);   // extern impurity boundary
     expressions::grouping::register(registry);      // Parenthesized expressions
     expressions::variable::register(registry);      // Variable references (generic identifier matching) - must come last

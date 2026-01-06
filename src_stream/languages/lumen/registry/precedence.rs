@@ -4,6 +4,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Precedence {
     Lowest = 0,
+    Range = 2,
     Pipe = 5,
     Logic = 10,
     Comparison = 20,
