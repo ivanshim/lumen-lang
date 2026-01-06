@@ -8,9 +8,9 @@
 //
 // Parser uses Pratt parsing for expressions + top-down for statements.
 
+use super::eval::Value;
 use super::ingest::Token;
 use super::primitives::Instruction;
-use super::eval::Value;
 use crate::schema::LanguageSchema;
 
 /// Parser: stateful token consumer
@@ -52,7 +52,8 @@ impl<'a> Parser<'a> {
     }
 
     fn skip_whitespace(&mut self) {
-        while self.peek().lexeme == " " || self.peek().lexeme == "\t" || self.peek().lexeme == "\n" {
+        while self.peek().lexeme == " " || self.peek().lexeme == "\t" || self.peek().lexeme == "\n"
+        {
             self.advance();
         }
     }
@@ -105,7 +106,7 @@ impl<'a> Parser<'a> {
 
     /// Parse: let [mut] name [: type] = expr
     fn parse_let(&mut self) -> Result<Instruction, String> {
-        self.advance();  // consume 'let'
+        self.advance(); // consume 'let'
         self.skip_whitespace();
 
         // Skip optional "mut" keyword
@@ -138,7 +139,7 @@ impl<'a> Parser<'a> {
 
     /// Parse: if condition { block } [else { block }]
     fn parse_if(&mut self) -> Result<Instruction, String> {
-        self.advance();  // consume 'if'
+        self.advance(); // consume 'if'
         self.skip_whitespace();
 
         let condition = self.parse_expression()?;
@@ -160,7 +161,7 @@ impl<'a> Parser<'a> {
 
     /// Parse: while condition { block }
     fn parse_while(&mut self) -> Result<Instruction, String> {
-        self.advance();  // consume 'while'
+        self.advance(); // consume 'while'
         self.skip_whitespace();
 
         let condition = self.parse_expression()?;
@@ -173,7 +174,7 @@ impl<'a> Parser<'a> {
 
     /// Parse: return [expr]
     fn parse_return(&mut self) -> Result<Instruction, String> {
-        self.advance();  // consume 'return'
+        self.advance(); // consume 'return'
         self.skip_whitespace();
 
         if self.peek().lexeme == "\n" || self.is_at_end() || self.peek().lexeme == "}" {
@@ -186,7 +187,7 @@ impl<'a> Parser<'a> {
 
     /// Parse: fn name(params) { block }
     fn parse_function_def(&mut self) -> Result<Instruction, String> {
-        self.advance();  // consume 'fn'
+        self.advance(); // consume 'fn'
         self.skip_whitespace();
 
         let name = self.parse_identifier()?;
@@ -209,7 +210,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        self.advance();  // consume ')'
+        self.advance(); // consume ')'
         self.skip_whitespace();
 
         let body = self.parse_block()?;
@@ -398,13 +399,13 @@ impl<'a> Parser<'a> {
 
     /// Parse exponentiation operator (right-associative)
     fn parse_exponentiation(&mut self) -> Result<Instruction, String> {
-        let mut left = self.parse_unary()?;
+        let left = self.parse_unary()?;
         self.skip_whitespace();
 
         if self.peek().lexeme == "**" {
             self.advance();
             self.skip_whitespace();
-            let right = self.parse_exponentiation()?;  // Right-associative!
+            let right = self.parse_exponentiation()?; // Right-associative!
             return Ok(Instruction::binary("**".to_string(), left, right));
         }
 
@@ -431,7 +432,8 @@ impl<'a> Parser<'a> {
         // Numbers
         if lexeme.chars().next().map_or(false, |c| c.is_ascii_digit()) {
             let num_str = self.consume_number()?;
-            let num = num_str.parse::<f64>()
+            let num = num_str
+                .parse::<f64>()
                 .map_err(|_| format!("Invalid number: {}", num_str))?;
             return Ok(Instruction::literal(Value::Number(num)));
         }
@@ -469,7 +471,11 @@ impl<'a> Parser<'a> {
         }
 
         // Identifiers (variables or function calls)
-        if lexeme.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_') {
+        if lexeme
+            .chars()
+            .next()
+            .map_or(false, |c| c.is_alphabetic() || c == '_')
+        {
             let name = self.parse_identifier()?;
             self.skip_whitespace();
 
@@ -487,7 +493,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                self.advance();  // consume ')'
+                self.advance(); // consume ')'
                 return Ok(Instruction::invoke(name, args));
             }
 
@@ -498,8 +504,15 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse identifier (handling multi-char identifiers from character tokens)
+    /// Also consumes multi-char keyword tokens that are part of the identifier
     fn parse_identifier(&mut self) -> Result<String, String> {
-        if !self.peek().lexeme.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_') {
+        if !self
+            .peek()
+            .lexeme
+            .chars()
+            .next()
+            .map_or(false, |c| c.is_alphabetic() || c == '_')
+        {
             return Err(format!("Expected identifier, got: {}", self.peek().lexeme));
         }
 
@@ -507,10 +520,21 @@ impl<'a> Parser<'a> {
         self.advance();
 
         loop {
-            if self.peek().lexeme.len() == 1 {
-                let ch = self.peek().lexeme.as_bytes()[0] as char;
+            let next_lexeme = &self.peek().lexeme;
+
+            // Check if next token is single-char alphanumeric/underscore
+            if next_lexeme.len() == 1 {
+                let ch = next_lexeme.as_bytes()[0] as char;
                 if ch.is_alphanumeric() || ch == '_' {
-                    name.push_str(&self.peek().lexeme);
+                    name.push_str(next_lexeme);
+                    self.advance();
+                    continue;
+                }
+            } else {
+                // Check if multi-char token is all alphabetic/underscore
+                // (which means it could be a keyword that's part of identifier)
+                if next_lexeme.chars().all(|c| c.is_alphabetic() || c == '_') {
+                    name.push_str(next_lexeme);
                     self.advance();
                     continue;
                 }
@@ -545,7 +569,7 @@ impl<'a> Parser<'a> {
 
     /// Consume a string (handling escape sequences)
     fn consume_string(&mut self) -> Result<String, String> {
-        self.advance();  // consume opening quote
+        self.advance(); // consume opening quote
         let mut string_val = String::new();
 
         while self.peek().lexeme != "\"" && !self.is_at_end() {
@@ -554,10 +578,22 @@ impl<'a> Parser<'a> {
                 let token = self.peek();
                 let next = token.lexeme.as_str();
                 match next {
-                    "\"" => { string_val.push('"'); self.advance(); }
-                    "\\" => { string_val.push('\\'); self.advance(); }
-                    "n" => { string_val.push('\n'); self.advance(); }
-                    "t" => { string_val.push('\t'); self.advance(); }
+                    "\"" => {
+                        string_val.push('"');
+                        self.advance();
+                    }
+                    "\\" => {
+                        string_val.push('\\');
+                        self.advance();
+                    }
+                    "n" => {
+                        string_val.push('\n');
+                        self.advance();
+                    }
+                    "t" => {
+                        string_val.push('\t');
+                        self.advance();
+                    }
                     _ => {
                         string_val.push('\\');
                         string_val.push_str(next);
