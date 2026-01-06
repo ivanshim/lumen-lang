@@ -36,12 +36,44 @@ pub struct ExternPrefix;
 
 impl ExprPrefix for ExternPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme == "extern"
+        // Check if the next characters form "extern" (which is not registered as a token)
+        let keyword = "extern";
+        let mut i = parser.i;
+        let mut collected = String::new();
+
+        // Collect characters to check if they form our keyword
+        for expected_ch in keyword.chars() {
+            if i >= parser.toks.len() {
+                return false;
+            }
+            let actual = &parser.toks[i].tok.lexeme;
+            if actual.len() == 1 && actual.chars().next() == Some(expected_ch) {
+                collected.push(expected_ch);
+                i += 1;
+            } else {
+                return false;
+            }
+        }
+
+        // Make sure next character doesn't extend the keyword
+        if i < parser.toks.len() {
+            let next = &parser.toks[i].tok.lexeme;
+            if next.len() == 1 {
+                let next_ch = next.chars().next().unwrap();
+                if next_ch.is_ascii_alphanumeric() || next_ch == '_' {
+                    return false;
+                }
+            }
+        }
+
+        collected == keyword
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
-        // Consume 'extern'
-        parser.advance();
+        // Consume 'extern' (character by character)
+        for _ in "extern".chars() {
+            parser.advance();
+        }
         parser.skip_tokens();
 
         // Expect '('
