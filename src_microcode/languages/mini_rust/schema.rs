@@ -5,7 +5,7 @@ pub fn get_schema() -> LanguageSchema {
 
     // Multichar lexemes (Mini-Rust with brace syntax, not indentation)
     schema.multichar_lexemes = vec![
-        "==", "!=", "<=", ">=", "**", "->",
+        "==", "!=", "<=", ">=", "**", "->", "&&", "||",
         "let", "mut", "if", "else", "while", "for", "break", "continue", "return", "fn",
         "and", "or", "not", "print", "true", "false", "none",
         ":", "=", "+", "-", "*", "/", "%", "<", ">", "!", "&", "|", "^", "~",
@@ -25,8 +25,19 @@ pub fn get_schema() -> LanguageSchema {
         associativity: Associativity::Right,
         short_circuit: false,
     });
+    // Logical operators: both || and 'or', && and 'and'
+    schema.binary_operators.insert("||".to_string(), OperatorInfo {
+        precedence: 2.0,
+        associativity: Associativity::Left,
+        short_circuit: true,
+    });
     schema.binary_operators.insert("or".to_string(), OperatorInfo {
         precedence: 2.0,
+        associativity: Associativity::Left,
+        short_circuit: true,
+    });
+    schema.binary_operators.insert("&&".to_string(), OperatorInfo {
+        precedence: 3.0,
         associativity: Associativity::Left,
         short_circuit: true,
     });
@@ -68,6 +79,10 @@ pub fn get_schema() -> LanguageSchema {
 
     // Unary operators
     schema.unary_operators.insert("not".to_string(), UnaryOperatorInfo {
+        precedence: 7.0,
+        position: UnaryPosition::Prefix,
+    });
+    schema.unary_operators.insert("!".to_string(), UnaryOperatorInfo {
         precedence: 7.0,
         position: UnaryPosition::Prefix,
     });
