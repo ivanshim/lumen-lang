@@ -27,7 +27,7 @@ impl fmt::Display for Value {
             }
             Value::String(s) => write!(f, "{}", s),
             Value::Bool(b) => write!(f, "{}", if *b { "True" } else { "False" }),
-            Value::Null => write!(f, "null"),
+            Value::Null => write!(f, "none"),
         }
     }
 }
