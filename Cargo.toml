@@ -24,3 +24,4 @@ name = "microcode_2"
 path = "src_microcode_2/lib.rs"
 
 [dependencies]
+serde_yaml = "0.9"
