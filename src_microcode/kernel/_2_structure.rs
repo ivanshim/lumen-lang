@@ -11,7 +11,7 @@
 // 3. When indentation decreases, insert }
 // 4. Handle colons as block openers (for languages that use them, like PythonCore)
 
-use super::ingest::Token;
+use super::_1_ingest::Token;
 use crate::schema::LanguageSchema;
 
 /// Process indentation and insert block markers

@@ -9,14 +9,19 @@
 pub mod primitives;
 pub mod eval;
 pub mod env;
-pub mod ingest;
-pub mod structure;
-pub mod reduce;
-pub mod execute;
+
+// 4-stage pipeline modules (in execution order)
+pub mod _1_ingest;
+pub mod _2_structure;
+pub mod _3_reduce;
+pub mod _4_execute;
 
 use crate::schema::LanguageSchema;
 use env::Environment;
-use execute::execute;
+use _4_execute::execute;
+use _1_ingest as ingest;
+use _2_structure as structure;
+use _3_reduce as reduce;
 
 pub use primitives::Instruction;
 pub use eval::Value;
