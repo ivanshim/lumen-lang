@@ -1,0 +1,313 @@
+(*
+   EBNF Grammar for Python 3.14
+
+   Derived from: yaml/python.yaml
+   This grammar represents the official Python 3.14 syntax with:
+   - Indentation-based block structure
+   - Rich expression and statement types
+   - Comprehensive type system
+   - Advanced features (async/await, pattern matching, decorators)
+   - 15 precedence levels for operators
+*)
+
+(* ============================================================================
+   1. LEXICAL TOKENS
+   ============================================================================ *)
+
+(* Keywords *)
+keyword = "False" | "None" | "True" | "and" | "as" | "assert" | "async"
+         | "await" | "break" | "class" | "continue" | "def" | "del" | "elif"
+         | "else" | "except" | "finally" | "for" | "from" | "global" | "if"
+         | "import" | "in" | "is" | "lambda" | "nonlocal" | "not" | "or"
+         | "pass" | "raise" | "return" | "try" | "while" | "with" | "yield"
+         | "match" | "case" ;
+
+(* Operators and delimiters *)
+arithmetic_op = "+" | "-" | "*" | "/" | "//" | "%" | "@" | "**" ;
+comparison_op = "==" | "!=" | "<" | ">" | "<=" | ">=" | "is" | "is not" | "in" | "not in" ;
+logical_op = "and" | "or" | "not" ;
+bitwise_op = "&" | "|" | "^" | "~" | "<<" | ">>" ;
+assignment_op = "=" | "+=" | "-=" | "*=" | "/=" | "//=" | "%=" | "@="
+              | "&=" | "|=" | "^=" | "<<=" | ">>=" | "**=" ;
+other_op = "->" | ":=" | "." | "..." | ":" | "@" ;
+
+operator = arithmetic_op | comparison_op | logical_op | bitwise_op | assignment_op | other_op ;
+
+delimiter = "(" | ")" | "[" | "]" | "{" | "}" | "," | ";" | ":" | "=" | "@" ;
+
+(* Identifiers *)
+identifier = ( "a".."z" | "A".."Z" | "_" ) ( "a".."z" | "A".."Z" | "0".."9" | "_" )* ;
+
+(* Numeric literals *)
+integer_literal = "0".."9"+ ( "_" "0".."9"+ )* ;
+binary_literal = "0b" ( "0" | "1" ) ( "_" ( "0" | "1" ) )* ;
+octal_literal = "0o" ( "0".."7" ) ( "_" ( "0".."7" ) )* ;
+hex_literal = "0x" ( "0".."9" | "a".."f" | "A".."F" )+ ( "_" ( "0".."9" | "a".."f" | "A".."F" ) )* ;
+
+float_literal = "0".."9"+ "." ( "0".."9"+ )? ( ( "e" | "E" ) ( "+" | "-" )? "0".."9"+ )?
+              | "0".."9"* "." "0".."9"+ ( ( "e" | "E" ) ( "+" | "-" )? "0".."9"+ )? ;
+complex_literal = float_literal "j" | integer_literal "j" ;
+
+number_literal = complex_literal | float_literal | binary_literal | octal_literal
+               | hex_literal | integer_literal ;
+
+(* String literals *)
+string_literal = ( '"' ( !'"' | '\"' )* '"' | "'" ( !"'" | "\'" )* "'"
+                | '"""' ( ! '"""' )* '"""' | "'''" ( ! "'''" )* "'''" )
+                | "r" ( '"' | "'" )* | "f" ( '"' | "'" )* ;
+
+(* Boolean and None *)
+boolean_literal = "True" | "False" ;
+none_literal = "None" ;
+
+literal = number_literal | string_literal | boolean_literal | none_literal ;
+
+(* Comments *)
+line_comment = "#" ( ! "\n" )* "\n" ;
+
+(* ============================================================================
+   2. STRUCTURAL RULES
+   ============================================================================ *)
+
+program = statement* EOF ;
+
+block = ":" INDENT statement+ DEDENT ;
+
+(* ============================================================================
+   3. STATEMENTS
+   ============================================================================ *)
+
+statement = simple_statement | compound_statement ;
+
+(* Simple statements *)
+simple_statement = pass_statement | break_statement | continue_statement
+                 | return_statement | yield_statement | raise_statement
+                 | assert_statement | del_statement | assignment_statement
+                 | import_statement | global_statement | nonlocal_statement
+                 | expression_statement ;
+
+pass_statement = "pass" ;
+break_statement = "break" ;
+continue_statement = "continue" ;
+return_statement = "return" expression? ;
+yield_statement = "yield" expression? | "yield" "from" expression ;
+raise_statement = "raise" (expression ("from" expression)?)? ;
+assert_statement = "assert" expression ("," expression)? ;
+del_statement = "del" target_list ;
+assignment_statement = (target_list "=")+ expression ;
+import_statement = import_module | import_from ;
+import_module = "import" dotted_name ("as" identifier)? ;
+import_from = "from" dotted_name "import" ("*" | identifier ("as" identifier)?) ;
+dotted_name = identifier ("." identifier)* ;
+global_statement = "global" identifier ("," identifier)* ;
+nonlocal_statement = "nonlocal" identifier ("," identifier)* ;
+expression_statement = expression ;
+
+target_list = target ("," target)* ;
+target = identifier | attribute_ref | subscription | slicing ;
+attribute_ref = expression "." identifier ;
+subscription = expression "[" expression "]" ;
+slicing = expression "[" (expression ":")? (expression)? (":" expression)? "]" ;
+
+(* Compound statements *)
+compound_statement = if_statement | while_loop | for_loop | try_statement
+                   | with_statement | function_definition | class_definition
+                   | match_statement | async_statement ;
+
+if_statement = "if" expression block ("elif" expression block)* ("else" block)? ;
+
+while_loop = "while" expression block ("else" block)? ;
+
+for_loop = "for" target_list "in" expression_list block ("else" block)? ;
+expression_list = expression ("," expression)* ;
+
+try_statement = "try" block
+               (("except" (exception_type ("as" identifier)?)? block)+
+                ("else" block)? ("finally" block)? |
+                "finally" block) ;
+exception_type = expression ;
+
+with_statement = "with" with_item ("," with_item)* block ;
+with_item = expression ("as" target)? ;
+
+function_definition = decorator* "def" identifier "(" parameter_list? ")"
+                    ("->" type_hint)? block ;
+parameter_list = parameter ("," parameter)* ;
+parameter = identifier (":" type_hint)? ("=" expression)? ;
+decorator = "@" dotted_name ("(" argument_list? ")")? NEWLINE ;
+
+class_definition = decorator* "class" identifier ("(" argument_list? ")")? block ;
+
+match_statement = "match" expression ":" (INDENT case_block+ DEDENT) ;
+case_block = "case" pattern ("if" expression)? ":" block ;
+
+pattern = literal_pattern | capture_pattern | wildcard_pattern
+        | sequence_pattern | mapping_pattern | class_pattern | or_pattern ;
+literal_pattern = literal ;
+capture_pattern = identifier ;
+wildcard_pattern = "_" ;
+sequence_pattern = "[" (pattern ("," pattern)*)? "]" ;
+mapping_pattern = "{" (literal ":" pattern ("," literal ":" pattern)*)? "}" ;
+class_pattern = identifier "(" (pattern ("," pattern)*)? ")" ;
+or_pattern = pattern ("|" pattern)+ ;
+
+async_statement = "async" function_definition | "async" for_loop | "async" with_statement ;
+
+(* ============================================================================
+   4. OPERATORS (ordered by precedence: lowest to highest)
+   ============================================================================ *)
+
+(* Precedence levels (1 = lowest, 15 = highest):
+   1  - Assignment (=, +=, -=, etc.)
+   2  - Lambda expressions
+   3  - Conditional expression (if-else)
+   4  - Logical OR (or)
+   5  - Logical AND (and)
+   6  - Logical NOT (not)
+   7  - Comparisons (==, !=, <, >, <=, >=, is, is not, in, not in)
+   8  - Bitwise OR (|)
+   9  - Bitwise XOR (^)
+   10 - Bitwise AND (&)
+   11 - Shifts (<<, >>)
+   12 - Additive (+, -)
+   13 - Multiplicative (*, /, //, %)
+   14 - @ (matrix multiplication)
+   15 - Unary (+, -, ~)
+   16 - Exponentiation (**)
+   17 - Await (await)
+   18 - Primary (literals, names, calls, etc.)
+*)
+
+(* ============================================================================
+   5. EXPRESSIONS
+   ============================================================================ *)
+
+expression = assignment_expression ;
+
+assignment_expression = lambda_expression
+                       | conditional_expression ;
+
+lambda_expression = "lambda" parameter_list? ":" conditional_expression ;
+
+conditional_expression = logical_or_expression
+                        ("if" logical_or_expression "else" conditional_expression)? ;
+
+logical_or_expression = logical_and_expression ("or" logical_and_expression)* ;
+
+logical_and_expression = logical_not_expression ("and" logical_not_expression)* ;
+
+logical_not_expression = ("not")? comparison_expression ;
+
+comparison_expression = bitwise_or_expression (comparison_op bitwise_or_expression)* ;
+
+bitwise_or_expression = bitwise_xor_expression ("|" bitwise_xor_expression)* ;
+
+bitwise_xor_expression = bitwise_and_expression ("^" bitwise_and_expression)* ;
+
+bitwise_and_expression = shift_expression ("&" shift_expression)* ;
+
+shift_expression = additive_expression
+                 (("<<" | ">>") additive_expression)* ;
+
+additive_expression = multiplicative_expression
+                    (("+" | "-") multiplicative_expression)* ;
+
+multiplicative_expression = matrix_expression
+                           (("*" | "/" | "//" | "%") matrix_expression)* ;
+
+matrix_expression = unary_expression ("@" unary_expression)* ;
+
+unary_expression = ("+" | "-" | "~")? power_expression ;
+
+power_expression = await_expression ("**" unary_expression)? ;
+
+await_expression = "await"? primary_expression ;
+
+primary_expression = atom | atom_trailer* ;
+
+atom = identifier | literal | "(" (yield_expression | expression)? ")"
+     | "[" (comprehension_list)? "]"
+     | "{" (dict_or_set_maker)? "}"
+     | "`expression`" ;
+
+atom_trailer = "(" argument_list? ")" | "[" slice_list "]" | "." identifier ;
+
+comprehension_list = expression comp_for ;
+
+comp_for = "for" target_list "in" logical_or_expression ("if" logical_or_expression)* comp_for? ;
+
+dict_or_set_maker = (key_value ("," key_value)* | expression ("," expression)*) ;
+key_value = expression ":" expression ;
+
+slice_list = slice ("," slice)* ;
+slice = expression? ":" expression? (":" expression?)? | expression ;
+
+yield_expression = "yield" | "yield" "from" expression | "yield" expression ;
+
+argument_list = argument ("," argument)* ;
+argument = expression | identifier "=" expression | "**" expression | "*" expression ;
+
+(* ============================================================================
+   6. TYPE HINTS
+   ============================================================================ *)
+
+type_hint = type_expression ;
+
+type_expression = type_union | type_intersection | type_subscript
+                | type_callable | type_literal | type_identifier ;
+
+type_union = type_intersection ("|" type_intersection)* ;
+
+type_intersection = type_subscript ("&" type_subscript)* ;
+
+type_subscript = type_name ("[" type_parameters "]")? ;
+
+type_callable = "Callable" "[" (type_list)? "->" type_expression "]" ;
+
+type_literal = "Literal" "[" literal ("," literal)* "]" ;
+
+type_identifier = identifier | "..." ;
+type_name = identifier ;
+type_list = type_expression ("," type_expression)* ;
+type_parameters = type_expression ("," type_expression)* ;
+
+(* ============================================================================
+   7. SPECIAL RULES
+   ============================================================================ *)
+
+EOF = end_of_file ;
+
+(* ============================================================================
+   8. NOTES ON SPECIAL CONSTRUCTS
+   ============================================================================ *)
+
+(*
+   Indentation-based block structure:
+   - Colon (:) introduces block
+   - Next line must be indented
+   - INDENT/DEDENT tokens mark block boundaries
+
+   Comprehensions:
+   - List comprehensions: [expr for target in iterable if condition]
+   - Generator expressions: (expr for target in iterable)
+   - Set comprehensions: {expr for target in iterable}
+   - Dictionary comprehensions: {key: value for target in iterable}
+
+   Pattern matching (Python 3.10+):
+   - match statements for exhaustive pattern matching
+   - Supports literal, capture, sequence, mapping, class patterns
+
+   Async support:
+   - async def for async functions
+   - await expressions in async context
+   - async for and async with
+
+   F-strings:
+   - f"string {expression}" syntax
+   - Embedded expressions in string literals
+
+   Type annotations:
+   - Optional parameter annotations: def func(x: int) -> str:
+   - Can use | for union types (Python 3.10+)
+   - Type variables and generics supported
+*)
