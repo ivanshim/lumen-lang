@@ -1,0 +1,199 @@
+(*
+   EBNF Grammar for Mini-Python
+
+   Derived from: yaml/mini-python.yaml
+   This grammar represents a minimal Python subset with:
+   - Indentation-based block structure
+   - Basic control flow (if, for, while)
+   - Function definitions and calls
+   - Print as a built-in function
+*)
+
+(* ============================================================================
+   1. LEXICAL TOKENS
+   ============================================================================ *)
+
+(* Keywords *)
+keyword = "let" | "if" | "else" | "while" | "for" | "in" | "break" | "continue"
+         | "return" | "def" | "true" | "false" | "none" | "print" ;
+
+(* Operators and delimiters *)
+arithmetic_op = "+" | "-" | "*" | "/" | "//" | "%" | "**" ;
+comparison_op = "==" | "!=" | "<" | ">" | "<=" | ">=" ;
+logical_op = "and" | "or" | "not" ;
+assignment_op = "=" ;
+
+operator = arithmetic_op | comparison_op | logical_op | assignment_op ;
+
+delimiter = "(" | ")" | "[" | "]" | "," | ":" | "." ;
+
+(* Identifiers and literals *)
+identifier = ( "a".."z" | "A".."Z" | "_" ) ( "a".."z" | "A".."Z" | "0".."9" | "_" )* ;
+
+integer_literal = "0".."9"+ ;
+float_literal = "0".."9"+ "." "0".."9"+ ;
+number_literal = float_literal | integer_literal ;
+
+string_literal = '"' ( !'"' | '\"' )* '"' | "'" ( !"'" | "\'" )* "'" ;
+
+boolean_literal = "true" | "false" ;
+none_literal = "none" ;
+
+literal = number_literal | string_literal | boolean_literal | none_literal ;
+
+(* Comments *)
+comment = "#" ( ! "\n" )* "\n" ;
+
+
+(* ============================================================================
+   2. STRUCTURAL RULES
+   ============================================================================ *)
+
+program = statement* EOF ;
+
+block = ":" INDENT statement+ DEDENT ;
+
+(* ============================================================================
+   3. STATEMENTS
+   ============================================================================ *)
+
+statement = variable_binding | assignment | if_statement | for_loop
+          | while_loop | break_statement | continue_statement
+          | return_statement | function_definition
+          | print_statement | expression_statement ;
+
+(* Variable binding (Python uses implicit, Mini-Python uses 'let') *)
+variable_binding = "let" identifier "=" expression ;
+
+(* Assignment *)
+assignment = identifier "=" expression ;
+
+(* If statement *)
+if_statement = "if" expression block ("else" block)? ;
+
+(* For loop (Python-style: for x in iterable) *)
+for_loop = "for" identifier "in" expression block ;
+
+(* While loop *)
+while_loop = "while" expression block ;
+
+(* Break and continue *)
+break_statement = "break" ;
+continue_statement = "continue" ;
+
+(* Return statement *)
+return_statement = "return" expression? ;
+
+(* Function definition *)
+function_definition = "def" identifier "(" parameter_list? ")" block ;
+parameter_list = identifier ("," identifier)* ;
+
+(* Print statement *)
+print_statement = "print" "(" argument_list? ")" ;
+
+(* Expression statement *)
+expression_statement = expression ;
+
+(* ============================================================================
+   4. OPERATORS (ordered by precedence: lowest to highest)
+   ============================================================================ *)
+
+(* Precedence levels:
+   1 - assignment (=)
+   2 - logical OR (or)
+   3 - logical AND (and)
+   4 - comparison (==, !=, <, >, <=, >=)
+   5 - additive (+, -)
+   6 - multiplicative (*, /, //, %)
+   7 - exponentiation (**), unary (-, not)
+*)
+
+(* ============================================================================
+   5. EXPRESSIONS
+   ============================================================================ *)
+
+expression = assignment_expression ;
+
+(* Assignment (right-associative) *)
+assignment_expression = logical_or_expression ("=" assignment_expression)? ;
+
+(* Logical OR *)
+logical_or_expression = logical_and_expression ("or" logical_and_expression)* ;
+
+(* Logical AND *)
+logical_and_expression = comparison_expression ("and" comparison_expression)* ;
+
+(* Comparison *)
+comparison_expression = additive_expression (comparison_op additive_expression)* ;
+
+(* Additive *)
+additive_expression = multiplicative_expression
+                    (("+" | "-") multiplicative_expression)* ;
+
+(* Multiplicative *)
+multiplicative_expression = exponentiation_expression
+                           (("*" | "/" | "//" | "%") exponentiation_expression)* ;
+
+(* Exponentiation (right-associative) *)
+exponentiation_expression = unary_expression ("**" exponentiation_expression)? ;
+
+(* Unary *)
+unary_expression = ("-" | "not")? postfix_expression ;
+
+(* Postfix (function calls, indexing) *)
+postfix_expression = primary_expression
+                   (function_call_args | index_access)* ;
+
+function_call_args = "(" argument_list? ")" ;
+argument_list = expression ("," expression)* ;
+
+index_access = "[" expression "]" ;
+
+(* Primary expressions *)
+primary_expression = literal
+                   | identifier
+                   | function_call
+                   | grouping
+                   | list_literal ;
+
+function_call = identifier "(" argument_list? ")" ;
+
+grouping = "(" expression ")" ;
+
+list_literal = "[" (expression ("," expression)*)? "]" ;
+
+(* ============================================================================
+   6. SPECIAL RULES
+   ============================================================================ *)
+
+(* Built-in functions *)
+builtin_function = "print" ;
+
+(* EOF marker *)
+EOF = end_of_file ;
+
+(* ============================================================================
+   7. NOTES ON SPECIAL CONSTRUCTS
+   ============================================================================ *)
+
+(*
+   Indentation-based block structure:
+   - Colon (:) at end of control flow statements
+   - Next line must be indented
+   - INDENT marks block start, DEDENT marks block end
+
+   Operators:
+   - // is integer division
+   - ** is exponentiation
+
+   Print:
+   - Built-in function: print(expr1, expr2, ...)
+   - Supports multiple arguments separated by commas
+
+   Data types:
+   - number (int and float)
+   - string (UTF-8)
+   - boolean (true, false)
+   - none (null value)
+   - list ([expr, expr, ...])
+*)

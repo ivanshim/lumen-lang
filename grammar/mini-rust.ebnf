@@ -1,0 +1,326 @@
+(*
+   EBNF Grammar for Mini-Rust
+
+   Derived from: yaml/mini-rust.yaml
+   This grammar represents a minimal Rust subset with:
+   - Brace-based block structure
+   - Rust-style control flow and pattern matching
+   - Type annotations
+   - Function definitions
+   - Basic item declarations (let, fn)
+*)
+
+(* ============================================================================
+   1. LEXICAL TOKENS
+   ============================================================================ *)
+
+(* Keywords *)
+keyword = "let" | "mut" | "fn" | "if" | "else" | "while" | "for" | "in"
+         | "loop" | "break" | "continue" | "return" | "true" | "false" ;
+
+(* Operators and delimiters *)
+arithmetic_op = "+" | "-" | "*" | "/" | "%" ;
+bitwise_op = "&" | "|" | "^" | "<<" | ">>" | "!" ;
+comparison_op = "==" | "!=" | "<" | ">" | "<=" | ">=" ;
+logical_op = "&&" | "||" ;
+assignment_op = "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" ;
+range_op = ".." | "..=" ;
+type_arrow = "->" ;
+
+operator = arithmetic_op | bitwise_op | comparison_op | logical_op
+         | assignment_op | range_op | type_arrow ;
+
+delimiter = "(" | ")" | "{" | "}" | "[" | "]" | "," | ";" | ":" | "." | "::" ;
+
+(* Identifiers *)
+identifier = ( "a".."z" | "A".."Z" | "_" ) ( "a".."z" | "A".."Z" | "0".."9" | "_" )* ;
+
+(* Numeric literals *)
+integer_literal = ( "0".."9"+ ) ( "_" "0".."9"+ )* ;
+binary_literal = "0b" ( "0" | "1" ) ( "_" ( "0" | "1" ) )* ;
+octal_literal = "0o" ( "0".."7" ) ( "_" ( "0".."7" ) )* ;
+hex_literal = "0x" ( "0".."9" | "a".."f" | "A".."F" )+ ( "_" ( "0".."9" | "a".."f" | "A".."F" ) )* ;
+
+float_literal = "0".."9"+ "." "0".."9"+ ( "e" | "E" ) ( "+" | "-" )? "0".."9"+ ;
+number_literal = binary_literal | octal_literal | hex_literal | float_literal | integer_literal ;
+
+(* String literals *)
+string_literal = '"' ( !'"' | '\"' )* '"' ;
+
+(* Character literal *)
+char_literal = "'" ( !"'" | "\'" ) "'" ;
+
+(* Boolean and unit *)
+boolean_literal = "true" | "false" ;
+
+literal = number_literal | string_literal | char_literal | boolean_literal ;
+
+(* Comments *)
+comment = "//" ( ! "\n" )* "\n" | "/*" ( ! "*/" )* "*/" ;
+
+
+(* ============================================================================
+   2. STRUCTURAL RULES
+   ============================================================================ *)
+
+program = item* EOF ;
+
+(* Block structure (brace-based) *)
+block = "{" statement* "}" ;
+
+(* ============================================================================
+   3. ITEMS AND DECLARATIONS
+   ============================================================================ *)
+
+item = let_binding | function_definition | use_declaration ;
+
+(* Variable binding *)
+let_binding = "let" mutability? identifier type_annotation? ("=" expression)? ";" ;
+mutability = "mut" ;
+
+(* Function definition *)
+function_definition = "fn" identifier "(" parameter_list? ")" return_type? block ;
+parameter_list = identifier type_annotation ("," identifier type_annotation)* ;
+return_type = "->" type_expression ;
+
+(* Use declarations *)
+use_declaration = "use" path ";" ;
+path = identifier ("::" identifier)* ;
+
+(* ============================================================================
+   4. STATEMENTS
+   ============================================================================ *)
+
+statement = expression_statement | let_statement | if_statement
+          | while_loop | for_loop | loop_statement
+          | break_statement | continue_statement | return_statement
+          | block_statement ;
+
+(* Variable binding (statement form) *)
+let_statement = "let" mutability? identifier type_annotation? ("=" expression)? ";" ;
+
+(* Expression statement *)
+expression_statement = expression ";" ;
+
+(* If statement *)
+if_statement = "if" expression block ("else" block)? ;
+
+(* While loop *)
+while_loop = "while" expression block ;
+
+(* For loop *)
+for_loop = "for" identifier "in" range_expression block ;
+range_expression = expression ".." expression | expression "..=" expression ;
+
+(* Infinite loop *)
+loop_statement = "loop" block ;
+
+(* Control flow *)
+break_statement = "break" ";" ;
+continue_statement = "continue" ";" ;
+return_statement = "return" expression? ";" ;
+
+(* Block statement *)
+block_statement = block ;
+
+(* ============================================================================
+   5. OPERATORS (ordered by precedence: lowest to highest)
+   ============================================================================ *)
+
+(* Precedence levels:
+   1  - assignment and compound assignment
+   2  - logical OR (||)
+   3  - logical AND (&&)
+   4  - equality (==, !=)
+   5  - relational (<, >, <=, >=)
+   6  - bitwise OR (|)
+   7  - bitwise XOR (^)
+   8  - bitwise AND (&)
+   9  - shift (<<, >>)
+   10 - range (.., ..=)
+   11 - additive (+, -)
+   12 - multiplicative (*, /, %)
+   13 - exponentiation (right-associative)
+   14 - unary (-, !, *)
+*)
+
+(* ============================================================================
+   6. EXPRESSIONS
+   ============================================================================ *)
+
+expression = assignment_expression ;
+
+(* Assignment (right-associative) *)
+assignment_expression = logical_or_expression
+                       (assignment_op assignment_expression)? ;
+
+(* Logical OR *)
+logical_or_expression = logical_and_expression ("||" logical_and_expression)* ;
+
+(* Logical AND *)
+logical_and_expression = equality_expression ("&&" equality_expression)* ;
+
+(* Equality *)
+equality_expression = relational_expression
+                    (("==" | "!=") relational_expression)* ;
+
+(* Relational *)
+relational_expression = bitwise_or_expression
+                      (("<" | ">" | "<=" | ">=") bitwise_or_expression)* ;
+
+(* Bitwise OR *)
+bitwise_or_expression = bitwise_xor_expression ("|" bitwise_xor_expression)* ;
+
+(* Bitwise XOR *)
+bitwise_xor_expression = bitwise_and_expression ("^" bitwise_and_expression)* ;
+
+(* Bitwise AND *)
+bitwise_and_expression = shift_expression ("&" shift_expression)* ;
+
+(* Shift *)
+shift_expression = additive_expression
+                 (("<<" | ">>") additive_expression)* ;
+
+(* Range expressions *)
+range_expression = additive_expression (range_op additive_expression)? ;
+
+(* Additive *)
+additive_expression = multiplicative_expression
+                    (("+" | "-") multiplicative_expression)* ;
+
+(* Multiplicative *)
+multiplicative_expression = unary_expression
+                           (("*" | "/" | "%") unary_expression)* ;
+
+(* Unary *)
+unary_expression = ("!" | "-" | "*")? postfix_expression ;
+
+(* Postfix (function calls, indexing, method calls, field access) *)
+postfix_expression = primary_expression
+                   (function_call_args | index_access | field_access | method_call)* ;
+
+function_call_args = "(" argument_list? ")" ;
+argument_list = expression ("," expression)* ;
+
+index_access = "[" expression "]" ;
+
+field_access = "." identifier ;
+
+method_call = "." identifier "(" argument_list? ")" ;
+
+(* Primary expressions *)
+primary_expression = literal
+                   | identifier
+                   | grouping
+                   | if_expression
+                   | match_expression
+                   | block_expression
+                   | closure_expression
+                   | tuple_literal
+                   | array_literal ;
+
+grouping = "(" expression ")" ;
+
+if_expression = "if" expression block ("else" block)? ;
+
+match_expression = "match" expression "{" match_arm* "}" ;
+match_arm = pattern "=>" expression "," ;
+pattern = literal | identifier | "_" ;
+
+block_expression = block ;
+
+closure_expression = "|" parameter_list? "|" expression ;
+
+tuple_literal = "(" (expression ("," expression)*)? ")" ;
+
+array_literal = "[" (expression ("," expression)*)? "]" ;
+
+(* ============================================================================
+   7. TYPE ANNOTATIONS
+   ============================================================================ *)
+
+type_annotation = ":" type_expression ;
+
+type_expression = primitive_type
+                | compound_type
+                | pointer_type
+                | function_type ;
+
+(* Primitive types *)
+primitive_type = "i8" | "i16" | "i32" | "i64" | "isize"
+               | "u8" | "u16" | "u32" | "u64" | "usize"
+               | "f32" | "f64"
+               | "bool" | "char" | "str" | "!" ;
+
+(* Compound types *)
+compound_type = tuple_type | array_type | slice_type
+              | struct_type | enum_type | union_type ;
+
+tuple_type = "(" (type_expression ("," type_expression)*)? ")" ;
+
+array_type = "[" type_expression ";" integer_literal "]" ;
+
+slice_type = "[" type_expression "]" ;
+
+struct_type = identifier ("{" field_list "}")? ;
+field_list = identifier ":" type_expression ("," identifier ":" type_expression)* ;
+
+enum_type = identifier ;
+
+union_type = identifier ;
+
+(* Pointer types *)
+pointer_type = "&" mutability? type_expression
+             | "*const" type_expression
+             | "*mut" type_expression ;
+
+(* Function types *)
+function_type = "fn" "(" (type_expression ("," type_expression)*)? ")"
+               "->" type_expression ;
+
+(* ============================================================================
+   8. SPECIAL RULES
+   ============================================================================ *)
+
+(* Identifiers with type parameters *)
+generic_identifier = identifier ("<" type_expression ("," type_expression)* ">")? ;
+
+(* Path expressions *)
+path_expression = identifier ("::" identifier)* ;
+
+(* EOF marker *)
+EOF = end_of_file ;
+
+(* ============================================================================
+   9. NOTES ON SPECIAL CONSTRUCTS
+   ============================================================================ *)
+
+(*
+   Brace-based block structure:
+   - Blocks enclosed in { }
+   - Statements terminated with ;
+   - Semicolon is mandatory for statements
+
+   Type system:
+   - Explicit type annotations: let x: i32 = 5;
+   - Type inference available
+   - Generic types with angle brackets: Vec<i32>
+
+   Range expressions:
+   - .. creates exclusive range (0..10 means 0 to 9)
+   - ..= creates inclusive range (0..=10 means 0 to 10)
+
+   Numeric literals:
+   - Binary: 0b1010
+   - Octal: 0o777
+   - Hexadecimal: 0xABCD
+
+   Control flow:
+   - if, while, for, loop
+   - break and continue for loop control
+   - return for early function exit
+
+   Pattern matching:
+   - match expressions for exhaustive pattern matching
+   - Supports literals, identifiers, and wildcards (_)
+*)
