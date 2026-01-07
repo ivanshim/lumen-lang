@@ -9,7 +9,7 @@
 // Parser uses Pratt parsing for expressions + top-down for statements.
 
 use super::eval::Value;
-use super::ingest::Token;
+use super::_1_ingest::Token;
 use super::primitives::Instruction;
 use crate::schema::LanguageSchema;
 
