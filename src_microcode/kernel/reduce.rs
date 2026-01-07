@@ -90,6 +90,8 @@ impl<'a> Parser<'a> {
             "let" => self.parse_let(),
             "if" => self.parse_if(),
             "while" => self.parse_while(),
+            "for" => self.parse_for(),
+            "until" => self.parse_until(),
             "return" => self.parse_return(),
             "break" => {
                 self.advance();
@@ -170,6 +172,55 @@ impl<'a> Parser<'a> {
         let body = self.parse_block()?;
 
         Ok(Instruction::loop_stmt(condition, body))
+    }
+
+    /// Parse: for var in iterable { block }
+    fn parse_for(&mut self) -> Result<Instruction, String> {
+        self.advance(); // consume 'for'
+        self.skip_whitespace();
+
+        // Parse loop variable name (simple identifier, stop at keywords)
+        if !self
+            .peek()
+            .lexeme
+            .chars()
+            .next()
+            .map_or(false, |c| c.is_alphabetic() || c == '_')
+        {
+            return Err(format!("Expected identifier, got: {}", self.peek().lexeme));
+        }
+        let var = self.peek().lexeme.clone();
+        self.advance();
+        self.skip_whitespace();
+
+        // Expect 'in' keyword
+        if self.peek().lexeme != "in" {
+            return Err(format!("Expected 'in' after for loop variable, got: {}", self.peek().lexeme));
+        }
+        self.advance(); // consume 'in'
+        self.skip_whitespace();
+
+        // Parse iterable expression
+        let iterable = self.parse_expression()?;
+        self.skip_whitespace();
+
+        // Parse block
+        let body = self.parse_block()?;
+
+        Ok(Instruction::for_loop(var, iterable, body))
+    }
+
+    /// Parse: until condition { block }
+    fn parse_until(&mut self) -> Result<Instruction, String> {
+        self.advance(); // consume 'until'
+        self.skip_whitespace();
+
+        let condition = self.parse_expression()?;
+        self.skip_whitespace();
+
+        let body = self.parse_block()?;
+
+        Ok(Instruction::until_loop(condition, body))
     }
 
     /// Parse: return [expr]
@@ -339,7 +390,7 @@ impl<'a> Parser<'a> {
 
     /// Parse comparison operators
     fn parse_comparison(&mut self) -> Result<Instruction, String> {
-        let mut left = self.parse_additive()?;
+        let mut left = self.parse_range()?;
         self.skip_whitespace();
 
         loop {
@@ -349,9 +400,25 @@ impl<'a> Parser<'a> {
             };
             self.advance();
             self.skip_whitespace();
-            let right = self.parse_additive()?;
+            let right = self.parse_range()?;
             self.skip_whitespace();
             left = Instruction::binary(op, left, right);
+        }
+
+        Ok(left)
+    }
+
+    /// Parse range operator (..)
+    fn parse_range(&mut self) -> Result<Instruction, String> {
+        let mut left = self.parse_additive()?;
+        self.skip_whitespace();
+
+        while self.peek().lexeme == ".." {
+            self.advance();
+            self.skip_whitespace();
+            let right = self.parse_additive()?;
+            self.skip_whitespace();
+            left = Instruction::binary("..".to_string(), left, right);
         }
 
         Ok(left)
