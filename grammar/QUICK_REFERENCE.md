@@ -7,8 +7,8 @@ This directory contains **EBNF (Extended Backus-Naur Form) grammars** for 5 prog
 ```
 grammar/
 ├── lumen.ebnf              ← Start here for Lumen language
-├── mini-python.ebnf        ← Minimal Python variant
-├── mini-rust.ebnf          ← Minimal Rust variant
+├── python.ebnf        ← Minimal Python variant
+├── rust.ebnf          ← Minimal Rust variant
 ├── python.ebnf             ← Full Python 3.14 specification
 ├── rust.ebnf               ← Full Rust 1.75+ specification
 ├── README.md               ← Comprehensive documentation
@@ -93,12 +93,12 @@ primary_expression = literal | identifier | ... ;
 
 ### 3. Block Structure
 
-**Indentation-based** (Lumen, Mini-Python, Python):
+**Indentation-based** (Lumen, Python, Python):
 ```ebnf
 block = ":" INDENT statement+ DEDENT ;
 ```
 
-**Brace-based** (Mini-Rust, Rust):
+**Brace-based** (Rust, Rust):
 ```ebnf
 block = "{" statement* "}" ;
 ```
@@ -110,8 +110,8 @@ block = "{" statement* "}" ;
 | File | Language | Block Style | Lines | Complexity |
 |------|----------|-------------|-------|-----------|
 | `lumen.ebnf` | Lumen | Indentation | 259 | Medium |
-| `mini-python.ebnf` | Minimal Python | Indentation | 199 | Low |
-| `mini-rust.ebnf` | Minimal Rust | Braces | 326 | Medium |
+| `python.ebnf` | Minimal Python | Indentation | 199 | Low |
+| `rust.ebnf` | Minimal Rust | Braces | 326 | Medium |
 | `python.ebnf` | Full Python | Indentation | 313 | High |
 | `rust.ebnf` | Full Rust | Braces | 467 | Very High |
 

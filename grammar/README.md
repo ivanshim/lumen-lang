@@ -36,8 +36,8 @@ Grammar for **Lumen** - a minimalist, indentation-based language emphasizing sem
 
 ### Mini Language Variants
 
-#### `mini-python.ebnf`
-Grammar for **Mini-Python** - a minimal Python subset for language comparison studies.
+#### `python.ebnf`
+Grammar for **Python** - a minimal Python subset for language comparison studies.
 
 **Characteristics:**
 - Indentation-based (4-space)
@@ -52,8 +52,8 @@ Grammar for **Mini-Python** - a minimal Python subset for language comparison st
 - No class definitions
 - Built-in `print()` function
 
-#### `mini-rust.ebnf`
-Grammar for **Mini-Rust** - a minimal Rust subset for language comparison studies.
+#### `rust.ebnf`
+Grammar for **Rust** - a minimal Rust subset for language comparison studies.
 
 **Characteristics:**
 - Brace-based block structure
@@ -178,7 +178,7 @@ This reflects the standard EBNF pattern where higher-precedence operators appear
 
 ## Block Structures
 
-### Indentation-Based (Lumen, Mini-Python, Python)
+### Indentation-Based (Lumen, Python, Python)
 
 ```ebnf
 block = ":" INDENT statement+ DEDENT ;
@@ -189,7 +189,7 @@ block = ":" INDENT statement+ DEDENT ;
 - `INDENT` token marks start, `DEDENT` marks end
 - Indentation amount varies: 4 spaces (Lumen, Python), 2 spaces (some variants)
 
-### Brace-Based (Mini-Rust, Rust)
+### Brace-Based (Rust, Rust)
 
 ```ebnf
 block = "{" statement* "}" ;
@@ -227,7 +227,7 @@ type_callable = "Callable" "[" type_list "->" type_expression "]" ;
 
 ## Key Differences Between Languages
 
-| Aspect | Lumen | Mini-Python | Mini-Rust | Python | Rust |
+| Aspect | Lumen | Python | Rust | Python | Rust |
 |--------|-------|-------------|-----------|--------|------|
 | **Block Syntax** | Indentation | Indentation | Braces | Indentation | Braces |
 | **Type Annotations** | Optional | Implicit | Required | Optional | Required |
@@ -317,8 +317,8 @@ For complete language specifications, refer to:
 | Language | File | Lines | Complexity |
 |----------|------|-------|-----------|
 | Lumen | lumen.ebnf | ~380 | Medium |
-| Mini-Python | mini-python.ebnf | ~280 | Low |
-| Mini-Rust | mini-rust.ebnf | ~450 | Medium-High |
+| Python | python.ebnf | ~280 | Low |
+| Rust | rust.ebnf | ~450 | Medium-High |
 | Python | python.ebnf | ~420 | Very High |
 | Rust | rust.ebnf | ~550 | Very High |
 

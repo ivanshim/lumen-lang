@@ -23,8 +23,8 @@
 | File | Lines | Language | Block Style | Coverage |
 |------|-------|----------|-------------|----------|
 | **lumen.ebnf** | 259 | Lumen v2.2 | Indentation | Full |
-| **mini-python.ebnf** | 199 | Minimal Python | Indentation | Educational subset |
-| **mini-rust.ebnf** | 326 | Minimal Rust | Braces | Educational subset |
+| **python.ebnf** | 199 | Minimal Python | Indentation | Educational subset |
+| **rust.ebnf** | 326 | Minimal Rust | Braces | Educational subset |
 | **python.ebnf** | 313 | Python 3.14 | Indentation | Full |
 | **rust.ebnf** | 467 | Rust 1.75+ | Braces | Full |
 
@@ -153,12 +153,12 @@ Key Features:
 
 When to use: Implementing Lumen parsers, learning minimalist language design
 
-#### `mini-python.ebnf` (199 lines)
+#### `python.ebnf` (199 lines)
 **Minimal Python Subset**
 
 Type: Educational variant
 Block Style: Indentation-based (colon + indent)
-Source: `yaml/mini-python.yaml` (305 lines)
+Source: `yaml/python.yaml` (305 lines)
 
 Content:
 - Core Python syntax without advanced features
@@ -169,12 +169,12 @@ Content:
 
 When to use: Language comparison studies, parsing education
 
-#### `mini-rust.ebnf` (326 lines)
+#### `rust.ebnf` (326 lines)
 **Minimal Rust Subset**
 
 Type: Educational variant
 Block Style: Brace-based ({ })
-Source: `yaml/mini-rust.yaml` (427 lines)
+Source: `yaml/rust.yaml` (427 lines)
 
 Content:
 - Core Rust syntax
@@ -267,7 +267,7 @@ When to use: Rust parser implementation, Rust documentation, memory safety analy
 1. Start with lumen.ebnf (smallest)
 2. Understand 8-point structure
 3. Study precedence cascade pattern
-4. Compare with mini-python.ebnf or mini-rust.ebnf
+4. Compare with python.ebnf or rust.ebnf
 ```
 
 ---
@@ -279,8 +279,8 @@ When to use: Rust parser implementation, Rust documentation, memory safety analy
                 YAML Lines    EBNF Lines    Compression Ratio
 ────────────────────────────────────────────────────────────
 lumen.yaml        874           259              30%
-mini-python.yaml  305           199              65%
-mini-rust.yaml    427           326              76%
+python.yaml  305           199              65%
+rust.yaml    427           326              76%
 python.yaml     1,340           313              23%
 rust.yaml       1,311           467              36%
 ────────────────────────────────────────────────────────────
@@ -292,8 +292,8 @@ TOTAL           4,257         1,564            37% average
 Language         Keywords  Operators  Precedence  Statements  Expressions
 ────────────────────────────────────────────────────────────────────────
 Lumen                13         11          7           9           8
-Mini-Python          13          9          7           7           7
-Mini-Rust            29         25         14           9          15
+Python          13          9          7           7           7
+Rust            29         25         14           9          15
 Python               34         20+        15+         21          12
 Rust                 47         30+        14          10          15
 ────────────────────────────────────────────────────────────────────────
@@ -344,7 +344,7 @@ Rust                 47         30+        14          10          15
 | Lumen grammar | lumen.ebnf |
 | Python grammar | python.ebnf |
 | Rust grammar | rust.ebnf |
-| Educational examples | mini-python.ebnf, mini-rust.ebnf |
+| Educational examples | python.ebnf, rust.ebnf |
 
 ### By Audience
 

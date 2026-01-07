@@ -171,7 +171,7 @@ The kernel provides only:
 
 A hypothetical audit of kernel source code would find:
 
-* Zero references to "lumen", "mini_rust", "mini_python", or "languages"
+* Zero references to "lumen", "rust", "python", or "languages"
 * Zero hardcoded keywords, operators, or syntax rules
 * Zero trait definitions for handlers or precedence
 * Zero pattern matching or structural assumptions

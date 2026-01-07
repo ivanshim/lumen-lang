@@ -120,8 +120,8 @@ pub fn get_schema() -> LanguageSchema {
 
 ### Option 2: YAML Data (Runtime Loadable)
 ```yaml
-# languages/mini_python/language.yaml
-name: mini_python
+# languages/python/language.yaml
+name: python
 keywords: [if, while, for, def, class]
 statements:
   print:
@@ -178,15 +178,15 @@ This separation ensures:
 ## Testing
 
 The `test_all` script tests both kernels with all examples:
-- Stream kernel: Fully tested with Lumen, Mini-Python, Mini-Rust
+- Stream kernel: Fully tested with Lumen, Python, Rust
 - Microcode kernel: Lumen support (basic)
 
-**Current Results**: 21 passed, 5 failed (mini_rust parsing issues), 33 skipped
+**Current Results**: 21 passed, 5 failed (rust parsing issues), 33 skipped
 
 ## Future Work
 
 1. **Complete Microcode Lumen**: Add all language features
-2. **Mini-Python/Mini-Rust in Microcode**: Implement schemas and parsing
+2. **Python/Rust in Microcode**: Implement schemas and parsing
 3. **YAML Schema Loading**: Runtime language loading from files
 4. **Extern System**: Full dispatch implementation with capability registry
 5. **Performance**: Optimize tokenization and instruction execution

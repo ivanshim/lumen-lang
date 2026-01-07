@@ -38,9 +38,9 @@ lumen-lang/
 │       │   │   └── mod.rs               # Statements module
 │       │   └── extern_system/           # External function dispatch
 │       │       └── mod.rs               # Extern system module
-│       ├── mini_rust/                   # Mini-Rust language (Rust-style)
-│       │   ├── mod.rs                   # Mini-Rust module exports
-│       │   ├── src_mini_rust.rs         # Main mini-rust entry point
+│       ├── rust/                   # Rust language (Rust-style)
+│       │   ├── mod.rs                   # Rust module exports
+│       │   ├── src_rust.rs         # Main mini-rust entry point
 │       │   ├── registry/                # Token and operator definitions
 │       │   │   └── mod.rs               # Registry module
 │       │   ├── structure/               # Brace and structure handling
@@ -49,9 +49,9 @@ lumen-lang/
 │       │   │   └── mod.rs               # Expressions module
 │       │   └── statements/              # Statement parsing and execution
 │       │       └── mod.rs               # Statements module
-│       └── mini_python/                 # Mini-Python language (Python-style)
-│           ├── mod.rs                   # Mini-Python module exports
-│           ├── src_mini_python.rs       # Main mini-python entry point
+│       └── python/                 # Python language (Python-style)
+│           ├── mod.rs                   # Python module exports
+│           ├── src_python.rs       # Main mini-python entry point
 │           ├── registry/                # Token and operator definitions
 │           │   └── mod.rs               # Registry module
 │           ├── structure/               # Indentation and structure handling
@@ -85,12 +85,12 @@ lumen-lang/
 │   │   │   ├── mod.rs                   # Lumen schemas module exports
 │   │   │   ├── schema.rs                # Declarative language schema
 │   │   │   └── values.rs                # Value handling
-│   │   ├── mini_rust/                   # Mini-Rust language schemas
-│   │   │   ├── mod.rs                   # Mini-Rust schemas module exports
+│   │   ├── rust/                   # Rust language schemas
+│   │   │   ├── mod.rs                   # Rust schemas module exports
 │   │   │   ├── schema.rs                # Declarative language schema
 │   │   │   └── values.rs                # Value handling
-│   │   ├── mini_python/                 # Mini-Python language schemas
-│   │   │   ├── mod.rs                   # Mini-Python schemas module exports
+│   │   ├── python/                 # Python language schemas
+│   │   │   ├── mod.rs                   # Python schemas module exports
 │   │   │   └── values.rs                # Value handling
 │   │   └── alien_lang/                  # Experimental language placeholder
 │   │       └── mod.rs                   # Alien language module
@@ -121,13 +121,13 @@ lumen-lang/
 │   │   ├── extern_09.lm                 # Extern system test 9
 │   │   ├── extern_10.lm                 # Extern system test 10
 │   │   └── extern_11.lm                 # Extern system test 11
-│   ├── mini_python/                     # Mini-Python language examples (5 files)
+│   ├── python/                     # Python language examples (5 files)
 │   │   ├── fibonacci.py                 # Fibonacci sequence computation
 │   │   ├── pi.py                        # Pi calculation
 │   │   ├── e.py                         # Euler's number calculation
 │   │   ├── loop.py                      # Loop demonstration
 │   │   └── demo.py                      # Feature showcase
-│   └── mini_rust/                       # Mini-Rust language examples (5 files)
+│   └── rust/                       # Rust language examples (5 files)
 │       ├── fibonacci.rs                 # Fibonacci sequence computation
 │       ├── pi.rs                        # Pi calculation
 │       ├── e.rs                         # Euler's number calculation

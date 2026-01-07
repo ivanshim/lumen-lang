@@ -33,10 +33,10 @@ Successfully generated 5 complete EBNF grammar specifications from corresponding
 
 ### Mini Language Variants
 
-#### Mini-Python
+#### Python
 
-**File**: `grammar/mini-python.ebnf` (199 lines)
-**Source**: `yaml/mini-python.yaml` (305 lines)
+**File**: `grammar/python.ebnf` (199 lines)
+**Source**: `yaml/python.yaml` (305 lines)
 
 **Coverage**:
 - ✅ 13 keywords (let, if, else, while, for, in, break, continue, return, def, true, false, none, print)
@@ -49,10 +49,10 @@ Successfully generated 5 complete EBNF grammar specifications from corresponding
 - ✅ Built-in print function
 - ✅ Simplified type system (no classes, decorators, or async)
 
-#### Mini-Rust
+#### Rust
 
-**File**: `grammar/mini-rust.ebnf` (326 lines)
-**Source**: `yaml/mini-rust.yaml` (427 lines)
+**File**: `grammar/rust.ebnf` (326 lines)
+**Source**: `yaml/rust.yaml` (427 lines)
 
 **Coverage**:
 - ✅ 29 keywords (let, mut, fn, if, else, while, for, in, loop, break, continue, return, true, false, etc.)
@@ -160,8 +160,8 @@ Successfully generated 5 complete EBNF grammar specifications from corresponding
 | Language | Keywords | Operators | Precedence Levels | Statement Types | Expression Types |
 |----------|----------|-----------|-------------------|-----------------|------------------|
 | Lumen | 13 | 11 | 7 | 9 | 8 |
-| Mini-Python | 13 | 9 | 7 | 7 | 7 |
-| Mini-Rust | 29 | 25 | 14 | 9 | 15 |
+| Python | 13 | 9 | 7 | 7 | 7 |
+| Rust | 29 | 25 | 14 | 9 | 15 |
 | Python | 34 | 20+ | 15+ | 21 | 12 |
 | Rust | 47 | 30+ | 14 | 10 | 15 |
 
@@ -203,12 +203,12 @@ primary_expression = literal | identifier | ... ;
 
 ### 2. Block Structure Handling
 
-**Indentation-based languages** (Lumen, Mini-Python, Python):
+**Indentation-based languages** (Lumen, Python, Python):
 ```ebnf
 block = ":" INDENT statement+ DEDENT ;
 ```
 
-**Brace-based languages** (Mini-Rust, Rust):
+**Brace-based languages** (Rust, Rust):
 ```ebnf
 block = "{" statement* "}" ;
 ```
@@ -218,7 +218,7 @@ block = "{" statement* "}" ;
 ### 3. Type System Representation
 
 - **Lumen**: Optional, simple (primitives, composites, functions)
-- **Mini-Rust & Rust**: Required, comprehensive (generics, lifetimes, traits)
+- **Rust & Rust**: Required, comprehensive (generics, lifetimes, traits)
 - **Python**: Optional, modern (unions, Callable, Literal)
 
 **Rationale**: Reflects actual language requirements and type system complexity
@@ -306,8 +306,8 @@ All EBNF grammars preserve 100% of syntactic information from YAML specification
 | Aspect | YAML | EBNF | Ratio |
 |--------|------|------|-------|
 | Lumen | 874 lines | 259 lines | 0.30 |
-| Mini-Python | 305 lines | 199 lines | 0.65 |
-| Mini-Rust | 427 lines | 326 lines | 0.76 |
+| Python | 305 lines | 199 lines | 0.65 |
+| Rust | 427 lines | 326 lines | 0.76 |
 | Python | 1,340 lines | 313 lines | 0.23 |
 | Rust | 1,311 lines | 467 lines | 0.36 |
 
@@ -323,8 +323,8 @@ All EBNF grammars preserve 100% of syntactic information from YAML specification
 
 ```
 Lumen       - 35 rules, max nesting 4
-Mini-Python - 30 rules, max nesting 4
-Mini-Rust   - 42 rules, max nesting 5
+Python - 30 rules, max nesting 4
+Rust   - 42 rules, max nesting 5
 Python      - 45 rules, max nesting 5
 Rust        - 58 rules, max nesting 6
 ```
@@ -381,7 +381,7 @@ Rust        - 58 rules, max nesting 6
 
 ## Conclusion
 
-The EBNF grammar specifications successfully capture the complete syntactic structure of 5 languages (Lumen, Mini-Python, Mini-Rust, Python, Rust) in a standard, portable format. The grammars are:
+The EBNF grammar specifications successfully capture the complete syntactic structure of 5 languages (Lumen, Python, Rust, Python, Rust) in a standard, portable format. The grammars are:
 
 - ✅ **Complete**: 100% syntactic coverage from YAML sources
 - ✅ **Consistent**: Unified structure and conventions across all files

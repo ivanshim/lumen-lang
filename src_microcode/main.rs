@@ -9,7 +9,7 @@ use std::process;
 
 // Import the microcode_2 library
 use microcode_2::kernel::run;
-use microcode_2::languages::{lumen_schema, mini_rust_schema, mini_python_schema};
+use microcode_2::languages::{lumen_schema, rust_schema, python_schema};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -35,17 +35,17 @@ fn main() {
                 process::exit(1);
             }
         }
-        "mini-rust" => {
-            let schema = mini_rust_schema::get_schema();
+        "rust" => {
+            let schema = rust_schema::get_schema();
             if let Err(e) = run(&source, &schema) {
-                eprintln!("MiniRustError: {}", e);
+                eprintln!("RustError: {}", e);
                 process::exit(1);
             }
         }
-        "mini-python" => {
-            let schema = mini_python_schema::get_schema();
+        "python" => {
+            let schema = python_schema::get_schema();
             if let Err(e) = run(&source, &schema) {
-                eprintln!("MiniPythonError: {}", e);
+                eprintln!("PythonError: {}", e);
                 process::exit(1);
             }
         }
@@ -92,8 +92,8 @@ fn detect_language_from_extension(filepath: &str) -> Option<String> {
 
     let language = match extension {
         "lm" => "lumen",
-        "rs" => "mini-rust",
-        "py" => "mini-python",
+        "rs" => "rust",
+        "py" => "python",
         _ => return None,
     };
 

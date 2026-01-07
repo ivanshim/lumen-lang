@@ -28,8 +28,8 @@ fn main() {
     // Route to appropriate language
     match language.as_str() {
         "lumen" => run_lumen_stream(&source),
-        "mini-rust" => run_mini_rust_stream(&source),
-        "mini-python" => run_mini_python_stream(&source),
+        "rust" => run_rust_stream(&source),
+        "python" => run_python_stream(&source),
         _ => {
             eprintln!("Error: Unknown language '{}'", language);
             process::exit(1);
@@ -70,8 +70,8 @@ fn detect_language_from_extension(filepath: &str) -> Option<String> {
 
     let language = match extension {
         "lm" => "lumen",
-        "rs" => "mini-rust",
-        "py" => "mini-python",
+        "rs" => "rust",
+        "py" => "python",
         _ => return None,
     };
 
@@ -126,15 +126,15 @@ fn run_lumen_stream(source: &str) {
     }
 }
 
-fn run_mini_rust_stream(source: &str) {
+fn run_rust_stream(source: &str) {
     use crate::kernel::lexer::lex;
     use crate::kernel::parser::Parser;
-    use crate::languages::mini_rust::registry::Registry;
+    use crate::languages::rust::registry::Registry;
     use crate::kernel::eval;
-    use crate::languages::mini_rust::structure::structural;
+    use crate::languages::rust::structure::structural;
 
     let mut registry = Registry::new();
-    crate::languages::mini_rust::register_all(&mut registry);
+    crate::languages::rust::register_all(&mut registry);
 
     let raw_tokens = match lex(source, &registry.tokens) {
         Ok(toks) => toks,
@@ -174,15 +174,15 @@ fn run_mini_rust_stream(source: &str) {
     }
 }
 
-fn run_mini_python_stream(source: &str) {
+fn run_python_stream(source: &str) {
     use crate::kernel::lexer::lex;
     use crate::kernel::parser::Parser;
-    use crate::languages::mini_python::registry::Registry;
+    use crate::languages::python::registry::Registry;
     use crate::kernel::eval;
-    use crate::languages::mini_python::structure::structural;
+    use crate::languages::python::structure::structural;
 
     let mut registry = Registry::new();
-    crate::languages::mini_python::register_all(&mut registry);
+    crate::languages::python::register_all(&mut registry);
 
     let raw_tokens = match lex(source, &registry.tokens) {
         Ok(toks) => toks,
