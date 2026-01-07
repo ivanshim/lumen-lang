@@ -7,7 +7,7 @@ Each entry is intentionally self-contained so that it remains meaningful even if
 
 ## v0.0.7 - 2026-01-07
 **Contributors:** Ivan Shim orchestrating, GPT-5.2 consulting, Claude Code Haiku 4.5 coding (Happy Birthday Ivan!)
-**Release:** Codebase cleanup and standardization
+**Release:** Microcode kernel rewritten and optimized (7 primitives retained), codebase cleanup and standardization
 
 ### What was done:
 
