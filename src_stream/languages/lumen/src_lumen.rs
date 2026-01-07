@@ -41,7 +41,7 @@ pub fn aggregate_patterns() -> PatternSet {
         statements::break_stmt::patterns(),
         statements::continue_stmt::patterns(),
         statements::return_stmt::patterns(),
-        statements::fn_definition::patterns(),
+        statements::functions::patterns(),
         statements::expr_stmt::patterns(),
     ];
 
@@ -121,6 +121,6 @@ pub fn register_all(registry: &mut Registry) {
     statements::break_stmt::register(registry);    // break statement
     statements::continue_stmt::register(registry); // continue statement
     statements::return_stmt::register(registry);   // return statement
-    statements::fn_definition::register(registry); // function definition
+    statements::functions::register(registry);     // function definition and registry
     statements::expr_stmt::register(registry);     // expression statements (fallback handler)
 }

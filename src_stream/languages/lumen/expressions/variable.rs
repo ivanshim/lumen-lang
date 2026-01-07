@@ -7,7 +7,7 @@ use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
 use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::{Env, Value};
-use crate::languages::lumen::function_registry;
+use crate::languages::lumen::statements::functions;
 use crate::languages::lumen::structure::structural::{LPAREN, RPAREN};
 
 #[derive(Debug)]
@@ -30,7 +30,7 @@ struct FunctionCallExpr {
 impl ExprNode for FunctionCallExpr {
     fn eval(&self, env: &mut Env) -> LumenResult<Value> {
         // Get function definition
-        let (params, body) = function_registry::get_function(&self.func_name)
+        let (params, body) = functions::get_function(&self.func_name)
             .ok_or_else(|| format!("Undefined function '{}'", self.func_name))?;
 
         // Check argument count

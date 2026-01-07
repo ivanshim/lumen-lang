@@ -13,5 +13,8 @@ pub mod until_loop;
 pub mod return_stmt;
 pub mod let_binding;
 pub mod let_mut_binding;
-pub mod fn_definition;
+pub mod functions;
 pub mod expr_stmt;
+
+// Re-export function utilities for use by expressions
+pub use functions::{get_function, function_exists, get_function_params, clear_functions};

@@ -7,7 +7,7 @@ use crate::kernel::parser::Parser;
 use crate::languages::lumen::patterns::PatternSet;
 use crate::languages::lumen::registry::{ExprInfix, Precedence, Registry};
 use crate::kernel::runtime::{Env, Value};
-use crate::languages::lumen::function_registry;
+use crate::languages::lumen::statements::functions;
 use crate::languages::lumen::structure::structural::{LPAREN, RPAREN};
 
 #[derive(Debug)]
@@ -23,7 +23,7 @@ impl ExprNode for PipeExpr {
         let left_value = self.left.eval(env)?;
 
         // Get function definition
-        let (params, body) = function_registry::get_function(&self.func_name)
+        let (params, body) = functions::get_function(&self.func_name)
             .ok_or_else(|| format!("Undefined function '{}'", self.func_name))?;
 
         // Evaluate other arguments
