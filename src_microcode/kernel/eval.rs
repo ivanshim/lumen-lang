@@ -13,6 +13,10 @@ pub enum Value {
     String(String),
     Bool(bool),
     Null,
+    Range {
+        start: f64,
+        end: f64,
+    },
     Function {
         params: Vec<String>,
         // Body is stored as-is, execution happens in the execute layer
@@ -33,6 +37,9 @@ impl fmt::Display for Value {
             Value::String(s) => write!(f, "{}", s),
             Value::Bool(b) => write!(f, "{}", if *b { "true" } else { "false" }),
             Value::Null => write!(f, "none"),
+            Value::Range { start, end } => {
+                write!(f, "{}..{}", *start as i64, *end as i64)
+            }
             Value::Function { params, body_ref: _ } => {
                 write!(f, "<function({})>", params.join(", "))
             }
@@ -47,6 +54,9 @@ impl PartialEq for Value {
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Null, Value::Null) => true,
+            (Value::Range { start: a_start, end: a_end }, Value::Range { start: b_start, end: b_end }) => {
+                (a_start - b_start).abs() < 1e-10 && (a_end - b_end).abs() < 1e-10
+            }
             _ => false,
         }
     }
@@ -60,6 +70,7 @@ impl Value {
             Value::Null => false,
             Value::Number(n) => *n != 0.0,
             Value::String(s) => !s.is_empty(),
+            Value::Range { .. } => true,
             Value::Function { .. } => true,
         }
     }
@@ -73,6 +84,7 @@ impl Value {
             Value::Null => Ok(0.0),
             Value::String(s) => s.parse::<f64>()
                 .map_err(|_| format!("Cannot coerce '{}' to number", s)),
+            Value::Range { .. } => Err("Cannot coerce range to number".to_string()),
             Value::Function { .. } => Err("Cannot coerce function to number".to_string()),
         }
     }

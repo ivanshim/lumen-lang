@@ -123,6 +123,7 @@ pub fn execute(
                                 Value::String(_) => "string",
                                 Value::Bool(_) => "bool",
                                 Value::Null => "null",
+                                Value::Range { .. } => "range",
                                 Value::Function { .. } => "function",
                             };
                             Ok((Value::String(type_str.to_string()), ControlFlow::Normal))
@@ -231,6 +232,58 @@ pub fn execute(
                     ControlFlow::Break => return Ok((result, ControlFlow::Normal)),
                     ControlFlow::Continue => continue,
                     ControlFlow::Return => return Ok((result, ControlFlow::Return)),
+                }
+            }
+
+            Ok((Value::Null, ControlFlow::Normal))
+        }
+
+        // ForLoop: for var in iterable { body }
+        Instruction::ForLoop { var, iterable, body } => {
+            let (range_val, flow) = execute(iterable, env, _schema)?;
+            if flow != ControlFlow::Normal {
+                return Ok((range_val, flow));
+            }
+
+            // Expect a range value
+            match range_val {
+                Value::Range { start, end } => {
+                    let mut current = start;
+                    while current < end {
+                        env.set(var.clone(), Value::Number(current));
+                        let (result, flow) = execute(body, env, _schema)?;
+                        match flow {
+                            ControlFlow::Normal => {},
+                            ControlFlow::Break => return Ok((result, ControlFlow::Normal)),
+                            ControlFlow::Continue => {},
+                            ControlFlow::Return => return Ok((result, ControlFlow::Return)),
+                        }
+                        current += 1.0;
+                    }
+                    Ok((Value::Null, ControlFlow::Normal))
+                }
+                _ => Err(format!("For loop requires a range, got {}", range_val)),
+            }
+        }
+
+        // UntilLoop: until condition { body } (do-until: execute body first, then check condition)
+        Instruction::UntilLoop { condition, body } => {
+            loop {
+                let (result, flow) = execute(body, env, _schema)?;
+                match flow {
+                    ControlFlow::Normal => {},
+                    ControlFlow::Break => return Ok((result, ControlFlow::Normal)),
+                    ControlFlow::Continue => {},
+                    ControlFlow::Return => return Ok((result, ControlFlow::Return)),
+                }
+
+                let (cond_val, flow) = execute(condition, env, _schema)?;
+                if flow != ControlFlow::Normal {
+                    return Ok((cond_val, flow));
+                }
+
+                if cond_val.to_bool() {
+                    break;
                 }
             }
 
@@ -385,6 +438,10 @@ fn execute_operator(
                 "<=" => Value::Bool(left.to_number()? <= right.to_number()?),
                 ">=" => Value::Bool(left.to_number()? >= right.to_number()?),
                 "**" => Value::Number(left.to_number()?.powf(right.to_number()?)),
+                ".." => Value::Range {
+                    start: left.to_number()?,
+                    end: right.to_number()?,
+                },
                 "and" | "&&" => Value::Bool(left.to_bool() && right.to_bool()),
                 "or" | "||" => Value::Bool(left.to_bool() || right.to_bool()),
                 _ => return Err(format!("Unknown binary operator: {}", op)),

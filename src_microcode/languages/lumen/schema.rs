@@ -14,10 +14,10 @@ pub fn get_schema() -> LanguageSchema {
     // Multichar lexemes (from lumen.yaml lines 99-123)
     schema.multichar_lexemes = vec![
         // Two-char operators
-        "==", "!=", "<=", ">=", "**", "->", "|>",
+        "==", "!=", "<=", ">=", "**", "->", "|>", "..",
 
         // Keywords
-        "let", "mut", "if", "else", "while", "for", "break", "continue", "return", "fn",
+        "let", "mut", "if", "else", "while", "for", "until", "in", "break", "continue", "return", "fn",
         "and", "or", "not", "print", "true", "false", "none", "extern", "type",
 
         // Single-char operators
@@ -27,7 +27,7 @@ pub fn get_schema() -> LanguageSchema {
 
     // Keywords requiring word boundaries
     schema.word_boundary_keywords = vec![
-        "let", "mut", "if", "else", "while", "for", "break", "continue", "return", "fn",
+        "let", "mut", "if", "else", "while", "for", "until", "in", "break", "continue", "return", "fn",
         "and", "or", "not", "print", "true", "false", "none", "extern", "type",
     ];
 

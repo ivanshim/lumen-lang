@@ -91,6 +91,19 @@ pub enum Instruction {
         body: Box<Instruction>,
     },
 
+    // ForLoop: for var in iterable { body }
+    ForLoop {
+        var: String,
+        iterable: Box<Instruction>,
+        body: Box<Instruction>,
+    },
+
+    // UntilLoop: until condition { body } (do-until: execute body first, then check condition)
+    UntilLoop {
+        condition: Box<Instruction>,
+        body: Box<Instruction>,
+    },
+
     // Function definition: store in registry
     // (This is metadata, not execution)
     FunctionDef {
@@ -185,6 +198,23 @@ impl Instruction {
     /// Helper: loop
     pub fn loop_stmt(condition: Instruction, body: Instruction) -> Self {
         Instruction::Loop {
+            condition: Box::new(condition),
+            body: Box::new(body),
+        }
+    }
+
+    /// Helper: for loop
+    pub fn for_loop(var: String, iterable: Instruction, body: Instruction) -> Self {
+        Instruction::ForLoop {
+            var,
+            iterable: Box::new(iterable),
+            body: Box::new(body),
+        }
+    }
+
+    /// Helper: until loop
+    pub fn until_loop(condition: Instruction, body: Instruction) -> Self {
+        Instruction::UntilLoop {
             condition: Box::new(condition),
             body: Box::new(body),
         }
