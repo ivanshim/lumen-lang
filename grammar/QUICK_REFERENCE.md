@@ -37,7 +37,7 @@ keyword = "let" | "mut" | "if" | ... ;
 
 (* Line 80-88: Structural Rules *)
 program = statement* EOF ;
-block = COLON INDENT statement+ DEDENT ;
+block = INDENT statement+ DEDENT ;
 
 (* Line 90-125: Statements *)
 variable_binding = "let" mutability? identifier ... ;
@@ -95,7 +95,7 @@ primary_expression = literal | identifier | ... ;
 
 **Indentation-based** (Lumen, Python, Python):
 ```ebnf
-block = ":" INDENT statement+ DEDENT ;
+block = INDENT statement+ DEDENT ;
 ```
 
 **Brace-based** (Rust, Rust):

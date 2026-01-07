@@ -110,7 +110,7 @@ pub fn get_schema() -> LanguageSchema {
     // Indentation settings (from lumen.yaml lines 124-141)
     schema.indentation_size = 4;
     schema.indentation_char = ' ';
-    schema.block_open_marker = ":".to_string();
+    schema.block_open_marker = "".to_string();  // No marker; indentation alone introduces blocks
     schema.block_close_marker = "DEDENT".to_string();
 
     schema
