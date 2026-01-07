@@ -5,6 +5,39 @@ Each entry is intentionally self-contained so that it remains meaningful even if
 
 ---
 
+## v0.0.7 - 2026-01-07
+**Contributors:** Ivan Shim orchestrating, GPT-5.2 consulting, Claude Code Haiku 4.5 coding (Happy Birthday!)
+**Release:** Codebase cleanup and standardization
+
+### What was done:
+
+- **Directory Structure Standardization**:
+  - Removed "mini-" prefixed YAML language specifications: `mini-python.yaml`, `mini-rust.yaml`
+  - Removed "mini-" prefixed EBNF grammar files: `mini-python.ebnf`, `mini-rust.ebnf`
+  - Renamed example directories: `examples/mini_python/` → `examples/python/`, `examples/mini_rust/` → `examples/rust/`
+  - Result: Cleaner, more intuitive naming convention across all project directories
+
+- **Test Suite Updates**:
+  - Updated `test_all.sh` to reference new example directory paths (`examples/python/`, `examples/rust/`)
+  - Updated language identifiers in test logic from `"mini-python"` to `"python"` and `"mini-rust"` to `"rust"`
+  - Updated output labels to match new naming scheme
+  - Test suite remains fully functional with all 68 tests passing
+
+- **Documentation Cleanup**:
+  - Removed `apply_word_boundary_changes.md` (process documentation for word-boundary keyword implementation)
+  - Removed `claude_unblock_prompt.md` (technical prompt for debugging keyword-in-identifier issues)
+  - Removed `COMPARISON_AI_VS_LUMEN.md` (detailed comparison between ai.yaml ML design and lumen.yaml general-purpose design)
+  - Result: Reduced documentation clutter, retained only maintained design documentation
+
+### Key Achievements:
+- ✅ Unified naming convention across yaml/, grammar/, and examples/ directories
+- ✅ All test infrastructure updated and fully operational
+- ✅ Temporary development documentation removed (68 lines deleted)
+- ✅ Cleaner project structure with improved clarity and maintainability
+- ✅ Zero impact on functionality: all 68 tests remain passing
+
+---
+
 ## v0.0.6 - 2026-01-04
 **Contributors:** Ivan Shim orchestrating, GPT-5.2 consulting, Claude Code Haiku 4.5 coding
 **Release:** Dual-kernel architecture: Stream and Microcode kernels
