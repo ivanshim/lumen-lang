@@ -107,7 +107,7 @@ Each language schema MUST define (and can ONLY define):
 
 Languages can be defined in two ways:
 
-### Option 1: Rust Data (Compiled)
+### Option 1: RustCore Data (Compiled)
 ```rust
 // languages/lumen/language.rs
 pub fn get_schema() -> LanguageSchema {
@@ -120,7 +120,7 @@ pub fn get_schema() -> LanguageSchema {
 
 ### Option 2: YAML Data (Runtime Loadable)
 ```yaml
-# languages/python/language.yaml
+# languages/python_core/language.yaml
 name: python
 keywords: [if, while, for, def, class]
 statements:
@@ -186,7 +186,7 @@ The `test_all` script tests both kernels with all examples:
 ## Future Work
 
 1. **Complete Microcode Lumen**: Add all language features
-2. **Python/Rust in Microcode**: Implement schemas and parsing
+2. **Python/RustCore in Microcode**: Implement schemas and parsing
 3. **YAML Schema Loading**: Runtime language loading from files
 4. **Extern System**: Full dispatch implementation with capability registry
 5. **Performance**: Optimize tokenization and instruction execution

@@ -128,7 +128,7 @@ Each entry is intentionally self-contained so that it remains meaningful even if
 
 ## v0.0.4 - 2026-01-02
 **Contributors:** Ivan Shim, GPT-5.2 prompting & Claude Code Haiku 4.5 coding
-**Release:** Language consolidation and Python addition
+**Release:** Language consolidation and PythonCore addition
 
 ### What was done:
 - **Lexical Scoping Implementation**: Added block-scoped environments with proper variable resolution:
@@ -143,7 +143,7 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   - `src_mini_c/` → `archive/src_mini_c/`
   - `src_mini_apple_pascal/` → `archive/src_mini_apple_pascal/`
   - `src_mini_apple_basic/` → `archive/src_mini_apple_basic/`
-- **Python Implementation**: New language module with full feature parity:
+- **PythonCore Implementation**: New language module with full feature parity:
   - Indentation-based blocks (Python-like syntax)
   - All expression types: literals, variables, arithmetic, comparison, logical
   - All statement types: assignment, if/else, while, print, break, continue
@@ -151,8 +151,8 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   - File extensions: `.py`
 - **Project Cleanup**: Updated `src/main.rs` to support only 3 active languages:
   - Lumen (`.lm`)
-  - Rust (`.rs`)
-  - Python (`.py`)
+  - RustCore (`.rs`)
+  - PythonCore (`.py`)
 - **Test Suite Update**: Modified `test_all.sh` for 3-language support (21 total tests)
 - **Build Status**: All tests passing, zero compilation errors
 

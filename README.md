@@ -8,7 +8,7 @@ A minimal, experimental programming language interpreter framework exploring lan
 
 ### Requirements
 - Git
-- Rust ([https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install))
+- RustCore ([https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install))
 
 ### Installation & Running
 
@@ -25,10 +25,10 @@ cargo run examples/lumen/loop.lm
 # Lumen (Python-style indentation)
 cargo run examples/lumen/fibonacci.lm
 
-# Rust (Rust-style curly braces)
+# RustCore (Rust-style curly braces)
 cargo run examples/rust/demo.rs
 
-# Python (Python-like syntax)
+# PythonCore (Python-like syntax)
 cargo run examples/python/fibonacci.py
 ```
 
@@ -77,9 +77,9 @@ Lumen has **4 independent development tracks**, each with its own architecture a
 - **Role**: Reference implementation demonstrating both kernels
 
 ### Track 4: Other Language Examples
-- **Rust**: `src_stream/languages/rust/` + `src_microcode/languages/rust/`
+- **Rust**: `src_stream/languages/rust_core/` + `src_microcode/languages/rust_core/`
   - Rust-style curly braces and `let` bindings
-- **Python**: `src_stream/languages/python/` + `src_microcode/languages/python/`
+- **Python**: `src_stream/languages/python_core/` + `src_microcode/languages/python_core/`
   - Python-like syntax with indentation
 
 **Key Design Principle**: Each kernel is **completely independent** with zero cross-imports, allowing independent evolution. The `src/main.rs` dispatcher routes between kernels and languages.

@@ -4,9 +4,9 @@
 // The kernel interprets code according to the schema - no language-specific logic in kernel.
 
 pub mod lumen;
-pub mod rust;
-pub mod python;
+pub mod rust_core;
+pub mod python_core;
 
 pub use lumen::schema as lumen_schema;
-pub use rust::schema as rust_schema;
-pub use python::schema as python_schema;
+pub use rust_core::schema as rust_core_schema;
+pub use python_core::schema as python_core_schema;

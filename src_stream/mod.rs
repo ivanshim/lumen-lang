@@ -8,4 +8,4 @@ pub mod kernel;
 pub mod languages;
 
 pub use kernel::*;
-pub use languages::{src_lumen, src_rust, src_python};
+pub use languages::{src_lumen, src_rust_core, src_python_core};

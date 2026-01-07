@@ -23,10 +23,10 @@
 | File | Lines | Language | Block Style | Coverage |
 |------|-------|----------|-------------|----------|
 | **lumen.ebnf** | 259 | Lumen v2.2 | Indentation | Full |
-| **python.ebnf** | 199 | Minimal Python | Indentation | Educational subset |
-| **rust.ebnf** | 326 | Minimal Rust | Braces | Educational subset |
-| **python.ebnf** | 313 | Python 3.14 | Indentation | Full |
-| **rust.ebnf** | 467 | Rust 1.75+ | Braces | Full |
+| **python.ebnf** | 199 | Minimal PythonCore | Indentation | Educational subset |
+| **rust.ebnf** | 326 | Minimal RustCore | Braces | Educational subset |
+| **python.ebnf** | 313 | PythonCore 3.14 | Indentation | Full |
+| **rust.ebnf** | 467 | RustCore 1.75+ | Braces | Full |
 
 ---
 
@@ -154,14 +154,14 @@ Key Features:
 When to use: Implementing Lumen parsers, learning minimalist language design
 
 #### `python.ebnf` (199 lines)
-**Minimal Python Subset**
+**Minimal PythonCore Subset**
 
 Type: Educational variant
 Block Style: Indentation-based (colon + indent)
 Source: `yaml/python.yaml` (305 lines)
 
 Content:
-- Core Python syntax without advanced features
+- Core PythonCore syntax without advanced features
 - No decorators, generators, or comprehensions
 - Simple print function
 - Basic control flow (if, while, for, functions)
@@ -170,24 +170,24 @@ Content:
 When to use: Language comparison studies, parsing education
 
 #### `rust.ebnf` (326 lines)
-**Minimal Rust Subset**
+**Minimal RustCore Subset**
 
 Type: Educational variant
 Block Style: Brace-based ({ })
 Source: `yaml/rust.yaml` (427 lines)
 
 Content:
-- Core Rust syntax
+- Core RustCore syntax
 - Required type annotations
 - Basic generics
 - Pattern matching
 - Basic trait system
 - Simplified module system
 
-When to use: Language comparison studies, teaching Rust basics
+When to use: Language comparison studies, teaching RustCore basics
 
 #### `python.ebnf` (313 lines)
-**Full Python 3.14 Specification**
+**Full PythonCore 3.14 Specification**
 
 Type: Complete language specification
 Block Style: Indentation-based (colon + indent)
@@ -200,16 +200,16 @@ Content:
   - Lambdas, conditionals, comprehensions
   - Generators, containers, primary expressions
 - **Type hints and annotations** (Callable, Union, Literal, etc.)
-- **Pattern matching** (Python 3.10+)
+- **Pattern matching** (PythonCore 3.10+)
 - **Async/await support**
 - **Decorator system**
 - **Exception handling** (try/except/finally)
 - **Context managers** (with/as)
 
-When to use: Python parser implementation, Python documentation
+When to use: PythonCore parser implementation, PythonCore documentation
 
 #### `rust.ebnf` (467 lines)
-**Full Rust 1.75+ Specification**
+**Full RustCore 1.75+ Specification**
 
 Type: Complete language specification
 Block Style: Brace-based ({ })
@@ -232,7 +232,7 @@ Content:
 - **Attribute system**
 - **Module and visibility system**
 
-When to use: Rust parser implementation, Rust documentation, memory safety analysis
+When to use: RustCore parser implementation, RustCore documentation, memory safety analysis
 
 ---
 
@@ -292,10 +292,10 @@ TOTAL           4,257         1,564            37% average
 Language         Keywords  Operators  Precedence  Statements  Expressions
 ────────────────────────────────────────────────────────────────────────
 Lumen                13         11          7           9           8
-Python          13          9          7           7           7
-Rust            29         25         14           9          15
-Python               34         20+        15+         21          12
-Rust                 47         30+        14          10          15
+PythonCore          13          9          7           7           7
+RustCore            29         25         14           9          15
+PythonCore               34         20+        15+         21          12
+RustCore                 47         30+        14          10          15
 ────────────────────────────────────────────────────────────────────────
 ```
 
@@ -342,8 +342,8 @@ Rust                 47         30+        14          10          15
 | General documentation | README.md |
 | Grammar statistics | GENERATION_REPORT.md |
 | Lumen grammar | lumen.ebnf |
-| Python grammar | python.ebnf |
-| Rust grammar | rust.ebnf |
+| PythonCore grammar | python.ebnf |
+| RustCore grammar | rust.ebnf |
 | Educational examples | python.ebnf, rust.ebnf |
 
 ### By Audience
