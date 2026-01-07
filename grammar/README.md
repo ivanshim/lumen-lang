@@ -28,7 +28,7 @@ Grammar for **Lumen** - a minimalist, indentation-based language emphasizing sem
 - Kernel-mapped primitives (execute, assign, branch, loop, return)
 
 **Key Features:**
-- Colon (`:`) introduces indented blocks
+- Indentation (4 spaces) introduces blocks
 - Semicolon or newline terminates statements
 - Half-open ranges: `[start, end)`
 - Short-circuit logical operators
@@ -181,13 +181,13 @@ This reflects the standard EBNF pattern where higher-precedence operators appear
 ### Indentation-Based (Lumen, Python, Python)
 
 ```ebnf
-block = ":" INDENT statement+ DEDENT ;
+block = INDENT statement+ DEDENT ;
 ```
 
-- Colon (`:`) at end of statement introduces block
-- Next line must be indented
+- Indentation at start of block
+- Next line must be indented 4 spaces
 - `INDENT` token marks start, `DEDENT` marks end
-- Indentation amount varies: 4 spaces (Lumen, Python), 2 spaces (some variants)
+- Indentation amount: 4 spaces (Lumen, Python)
 
 ### Brace-Based (Rust, Rust)
 

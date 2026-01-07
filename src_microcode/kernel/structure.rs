@@ -9,7 +9,7 @@
 // 1. Process line-by-line to track indentation
 // 2. When indentation increases, insert {
 // 3. When indentation decreases, insert }
-// 4. Handle colons as block openers
+// 4. Handle colons as block openers (for languages that use them, like PythonCore)
 
 use super::ingest::Token;
 use crate::schema::LanguageSchema;
@@ -87,7 +87,7 @@ pub fn process_structure(
 
         // Process tokens on this line until newline
         while i < tokens.len() && tokens[i].lexeme != "\n" {
-            // If we see a colon, mark end of line for block
+            // If we see a colon, mark end of line for block (for languages like PythonCore)
             if tokens[i].lexeme == ":" && schema.block_open_marker == ":" {
                 result.push(tokens[i].clone());
                 i += 1;

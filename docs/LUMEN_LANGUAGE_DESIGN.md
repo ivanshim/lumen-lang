@@ -26,8 +26,9 @@ If a character, keyword, or rule adds no meaning, it does not belong.
 ## 3. Syntax Hierarchy
 
 - Parentheses exist only for **expression grouping and function calls**
-- Colons and indentation introduce **control-flow blocks**
+- Indentation introduces **control-flow blocks**
 - Bare identifiers represent variables; **no sigils or prefixes**
+- Colons exist only for **type annotations**
 
 These categories must never overlap.
 

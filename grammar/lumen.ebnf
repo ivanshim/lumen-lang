@@ -9,7 +9,7 @@
    - Lowercase with underscores: nonterminals
    - UPPERCASE or quoted: terminals
    - Operators ordered by precedence (lowest to highest)
-   - Indentation-based block structure (colon introduces block, INDENT/DEDENT close)
+   - Indentation-based block structure (INDENT/DEDENT mark blocks)
 *)
 
 (* ============================================================================
@@ -64,7 +64,7 @@ whitespace = " " | "\t" ;
 program = statement* EOF ;
 
 (* Indentation-based blocks *)
-block = COLON INDENT statement+ DEDENT ;
+block = INDENT statement+ DEDENT ;
 
 (* Statements *)
 statement = variable_binding | assignment | if_statement | while_loop
@@ -229,8 +229,7 @@ EOF = end_of_file ;
 
 (*
    Indentation-based structure:
-   - Colon (:) at end of line introduces a block
-   - Next line must be indented (4 spaces)
+   - Indentation (4 spaces) introduces a block
    - INDENT token marks block start
    - DEDENT token marks block end
    - Newlines are statement terminators (unless escaped with backslash)
@@ -238,9 +237,9 @@ EOF = end_of_file ;
 
    Example:
    ```
-   if x > 5:
+   if x > 5
        print(x)
-   else:
+   else
        print("small")
    ```
 
