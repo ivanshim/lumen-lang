@@ -71,8 +71,8 @@ run_test() {
         SKIPPED_TESTS=$((SKIPPED_TESTS + 1))
         case "$language" in
             lumen) LUMEN_SKIPPED=$((LUMEN_SKIPPED + 1)) ;;
-            mini-python) MINIPYTHON_SKIPPED=$((MINIPYTHON_SKIPPED + 1)) ;;
-            mini-rust) MINIRUST_SKIPPED=$((MINIRUST_SKIPPED + 1)) ;;
+            python) MINIPYTHON_SKIPPED=$((MINIPYTHON_SKIPPED + 1)) ;;
+            rust) MINIRUST_SKIPPED=$((MINIRUST_SKIPPED + 1)) ;;
         esac
         return 0
     fi
@@ -95,8 +95,8 @@ run_test() {
         PASSED_TESTS=$((PASSED_TESTS + 1))
         case "$language" in
             lumen) LUMEN_PASSED=$((LUMEN_PASSED + 1)) ;;
-            mini-python) MINIPYTHON_PASSED=$((MINIPYTHON_PASSED + 1)) ;;
-            mini-rust) MINIRUST_PASSED=$((MINIRUST_PASSED + 1)) ;;
+            python) MINIPYTHON_PASSED=$((MINIPYTHON_PASSED + 1)) ;;
+            rust) MINIRUST_PASSED=$((MINIRUST_PASSED + 1)) ;;
         esac
         return 0
     elif [ $exit_code -eq 124 ]; then
@@ -105,8 +105,8 @@ run_test() {
         FAILED_TESTS=$((FAILED_TESTS + 1))
         case "$language" in
             lumen) LUMEN_TIMEOUT=$((LUMEN_TIMEOUT + 1)) ;;
-            mini-python) MINIPYTHON_TIMEOUT=$((MINIPYTHON_TIMEOUT + 1)) ;;
-            mini-rust) MINIRUST_TIMEOUT=$((MINIRUST_TIMEOUT + 1)) ;;
+            python) MINIPYTHON_TIMEOUT=$((MINIPYTHON_TIMEOUT + 1)) ;;
+            rust) MINIRUST_TIMEOUT=$((MINIRUST_TIMEOUT + 1)) ;;
         esac
         return 1
     else
@@ -114,8 +114,8 @@ run_test() {
         FAILED_TESTS=$((FAILED_TESTS + 1))
         case "$language" in
             lumen) LUMEN_FAILED=$((LUMEN_FAILED + 1)) ;;
-            mini-python) MINIPYTHON_FAILED=$((MINIPYTHON_FAILED + 1)) ;;
-            mini-rust) MINIRUST_FAILED=$((MINIRUST_FAILED + 1)) ;;
+            python) MINIPYTHON_FAILED=$((MINIPYTHON_FAILED + 1)) ;;
+            rust) MINIRUST_FAILED=$((MINIRUST_FAILED + 1)) ;;
         esac
         return 1
     fi
@@ -137,25 +137,25 @@ for file in examples/lumen/*.lm; do
 done
 echo ""
 
-# Test mini_python examples with both kernels
-echo -e "${YELLOW}Mini-Python Examples:${NC}"
-for file in examples/mini_python/*.py; do
+# Test python examples with both kernels
+echo -e "${YELLOW}Python Examples:${NC}"
+for file in examples/python/*.py; do
     # Test with stream kernel
-    run_test "$file" "stream" "mini-python"
+    run_test "$file" "stream" "python"
 
     # Test with microcode kernel
-    run_test "$file" "microcode" "mini-python"
+    run_test "$file" "microcode" "python"
 done
 echo ""
 
-# Test mini_rust examples with both kernels
-echo -e "${YELLOW}Mini-Rust Examples:${NC}"
-for file in examples/mini_rust/*.rs; do
+# Test rust examples with both kernels
+echo -e "${YELLOW}Rust Examples:${NC}"
+for file in examples/rust/*.rs; do
     # Test with stream kernel
-    run_test "$file" "stream" "mini-rust"
+    run_test "$file" "stream" "rust"
 
     # Test with microcode kernel
-    run_test "$file" "microcode" "mini-rust"
+    run_test "$file" "microcode" "rust"
 done
 echo ""
 
@@ -167,10 +167,10 @@ echo ""
 echo -e "${BLUE}Lumen:${NC}"
 echo -e "  Passed:  ${GREEN}$LUMEN_PASSED${NC} | Failed: ${RED}$LUMEN_FAILED${NC} | Timeout: ${RED}$LUMEN_TIMEOUT${NC} | Skipped: ${YELLOW}$LUMEN_SKIPPED${NC}"
 echo ""
-echo -e "${BLUE}Mini-Python:${NC}"
+echo -e "${BLUE}Python:${NC}"
 echo -e "  Passed:  ${GREEN}$MINIPYTHON_PASSED${NC} | Failed: ${RED}$MINIPYTHON_FAILED${NC} | Timeout: ${RED}$MINIPYTHON_TIMEOUT${NC} | Skipped: ${YELLOW}$MINIPYTHON_SKIPPED${NC}"
 echo ""
-echo -e "${BLUE}Mini-Rust:${NC}"
+echo -e "${BLUE}Rust:${NC}"
 echo -e "  Passed:  ${GREEN}$MINIRUST_PASSED${NC} | Failed: ${RED}$MINIRUST_FAILED${NC} | Timeout: ${RED}$MINIRUST_TIMEOUT${NC} | Skipped: ${YELLOW}$MINIRUST_SKIPPED${NC}"
 echo ""
 
