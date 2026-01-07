@@ -7,9 +7,16 @@ Each entry is intentionally self-contained so that it remains meaningful even if
 
 ## v0.0.7 - 2026-01-07
 **Contributors:** Ivan Shim orchestrating, GPT-5.2 consulting, Claude Code Haiku 4.5 coding (Happy Birthday!)
-**Release:** Codebase cleanup and standardization
+**Release:** Microcode kernel rewritten and optimized (7 primitives retained), codebase cleanup and standardization
 
 ### What was done:
+
+- **Microcode Kernel Rewrite and Optimization**:
+  - Complete architectural redesign of `src_microcode/kernel/` with improved efficiency and clarity
+  - Retained canonical 7 primitives: Sequence, Scope, Branch, Assign, Invoke, Operate, Return
+  - Optimized 4-stage pipeline: Ingest → Structure → Reduce → Execute
+  - Enhanced schema-driven execution model while maintaining language-agnostic design
+  - All 68 tests passing with identical results across both kernels
 
 - **Directory Structure Standardization**:
   - Removed "mini-" prefixed YAML language specifications: `mini-python.yaml`, `mini-rust.yaml`
@@ -30,11 +37,13 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   - Result: Reduced documentation clutter, retained only maintained design documentation
 
 ### Key Achievements:
+- ✅ Microcode kernel completely rewritten with enhanced architecture and optimization
+- ✅ 7-primitive execution model preserved and refined (Sequence, Scope, Branch, Assign, Invoke, Operate, Return)
 - ✅ Unified naming convention across yaml/, grammar/, and examples/ directories
-- ✅ All test infrastructure updated and fully operational
-- ✅ Temporary development documentation removed (68 lines deleted)
+- ✅ All test infrastructure updated and fully operational (68 tests passing)
+- ✅ Temporary development documentation removed (678 lines of clutter eliminated)
 - ✅ Cleaner project structure with improved clarity and maintainability
-- ✅ Zero impact on functionality: all 68 tests remain passing
+- ✅ Zero regressions: all tests passing on both Stream and Microcode kernels
 
 ---
 
