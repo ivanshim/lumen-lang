@@ -1,10 +1,10 @@
 // Language implementations for stream kernel
 
 pub mod lumen;
-pub mod mini_rust;
-pub mod mini_python;
+pub mod rust_core;
+pub mod python_core;
 
 // Re-export with original names for backwards compatibility
 pub use lumen as src_lumen;
-pub use mini_rust as src_mini_rust;
-pub use mini_python as src_mini_python;
+pub use rust_core as src_rust_core;
+pub use python_core as src_python_core;

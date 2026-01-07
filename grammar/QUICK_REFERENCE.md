@@ -7,10 +7,10 @@ This directory contains **EBNF (Extended Backus-Naur Form) grammars** for 5 prog
 ```
 grammar/
 ├── lumen.ebnf              ← Start here for Lumen language
-├── mini-python.ebnf        ← Minimal Python variant
-├── mini-rust.ebnf          ← Minimal Rust variant
-├── python.ebnf             ← Full Python 3.14 specification
-├── rust.ebnf               ← Full Rust 1.75+ specification
+├── python.ebnf        ← Minimal PythonCore variant
+├── rust.ebnf          ← Minimal RustCore variant
+├── python.ebnf             ← Full PythonCore 3.14 specification
+├── rust.ebnf               ← Full RustCore 1.75+ specification
 ├── README.md               ← Comprehensive documentation
 ├── GENERATION_REPORT.md    ← Detailed analysis
 └── QUICK_REFERENCE.md      ← This file
@@ -93,12 +93,12 @@ primary_expression = literal | identifier | ... ;
 
 ### 3. Block Structure
 
-**Indentation-based** (Lumen, Mini-Python, Python):
+**Indentation-based** (Lumen, Python, Python):
 ```ebnf
 block = ":" INDENT statement+ DEDENT ;
 ```
 
-**Brace-based** (Mini-Rust, Rust):
+**Brace-based** (Rust, Rust):
 ```ebnf
 block = "{" statement* "}" ;
 ```
@@ -110,10 +110,10 @@ block = "{" statement* "}" ;
 | File | Language | Block Style | Lines | Complexity |
 |------|----------|-------------|-------|-----------|
 | `lumen.ebnf` | Lumen | Indentation | 259 | Medium |
-| `mini-python.ebnf` | Minimal Python | Indentation | 199 | Low |
-| `mini-rust.ebnf` | Minimal Rust | Braces | 326 | Medium |
-| `python.ebnf` | Full Python | Indentation | 313 | High |
-| `rust.ebnf` | Full Rust | Braces | 467 | Very High |
+| `python.ebnf` | Minimal PythonCore | Indentation | 199 | Low |
+| `rust.ebnf` | Minimal RustCore | Braces | 326 | Medium |
+| `python.ebnf` | Full PythonCore | Indentation | 313 | High |
+| `rust.ebnf` | Full RustCore | Braces | 467 | Very High |
 
 ### Documentation Files
 
@@ -181,7 +181,7 @@ function_definition = "fn" identifier "(" parameter_list? ")"
 
 This means: `fn name(params) : type: block`
 
-**Rust example**:
+**RustCore example**:
 ```ebnf
 function_definition = "fn" identifier generic_params?
                      "(" parameter_list? ")" return_type? block ;
@@ -201,7 +201,7 @@ This means: `fn name<T>(params) -> RetType { block }`
 6 - Multiplicative (`*`, `/`, `%`)
 7 - Unary (`-`, `not`), Exponentiation (`**`)
 
-### Python (15+ levels)
+### PythonCore (15+ levels)
 1 - Assignment (`=`)
 2 - Lambda
 3 - Conditional (`if`/`else`)
@@ -218,8 +218,8 @@ This means: `fn name<T>(params) -> RetType { block }`
 14 - Exponentiation
 15+ - Unary, Primary
 
-### Rust (14 levels)
-Similar to Python but with assignment, logical operators, bitwise ops
+### RustCore (14 levels)
+Similar to PythonCore but with assignment, logical operators, bitwise ops
 
 ## Block Structure Comparison
 
@@ -233,7 +233,7 @@ else:
 
 **EBNF**: `block = ":" INDENT statement+ DEDENT ;`
 
-### Rust (Braces)
+### RustCore (Braces)
 ```
 if x > 5 {
     println!("{}", x);
@@ -253,13 +253,13 @@ type_expression = primitive_type | composite_type | function_type ;
 primitive_type = "number" | "string" | "boolean" | "none" ;
 ```
 
-### Rust (Required)
+### RustCore (Required)
 ```ebnf
 let x: i32 = 5;
 fn add(a: i32, b: i32) -> i32 { a + b }
 ```
 
-### Python (Optional)
+### PythonCore (Optional)
 ```ebnf
 x: int = 5
 def add(a: int, b: int) -> int: return a + b
@@ -267,7 +267,7 @@ def add(a: int, b: int) -> int: return a + b
 
 ## Key Differences
 
-| Aspect | Lumen | Python | Rust |
+| Aspect | Lumen | PythonCore | RustCore |
 |--------|-------|--------|------|
 | **Block Syntax** | `:` then indent | `:` then indent | `{ }` |
 | **Terminator** | `;` or newline | newline | `;` |

@@ -36,12 +36,12 @@ Grammar for **Lumen** - a minimalist, indentation-based language emphasizing sem
 
 ### Mini Language Variants
 
-#### `mini-python.ebnf`
-Grammar for **Mini-Python** - a minimal Python subset for language comparison studies.
+#### `python.ebnf`
+Grammar for **Python** - a minimal PythonCore subset for language comparison studies.
 
 **Characteristics:**
 - Indentation-based (4-space)
-- Subset of Python 3.x syntax
+- Subset of PythonCore 3.x syntax
 - Focus on core constructs: variables, functions, loops, conditionals
 - Python-style for-in loops
 - List support
@@ -52,8 +52,8 @@ Grammar for **Mini-Python** - a minimal Python subset for language comparison st
 - No class definitions
 - Built-in `print()` function
 
-#### `mini-rust.ebnf`
-Grammar for **Mini-Rust** - a minimal Rust subset for language comparison studies.
+#### `rust.ebnf`
+Grammar for **Rust** - a minimal RustCore subset for language comparison studies.
 
 **Characteristics:**
 - Brace-based block structure
@@ -74,7 +74,7 @@ Grammar for **Mini-Rust** - a minimal Rust subset for language comparison studie
 ### Full Language Specifications
 
 #### `python.ebnf`
-Complete grammar for **Python 3.14** - full official Python syntax.
+Complete grammar for **PythonCore 3.14** - full official PythonCore syntax.
 
 **Characteristics:**
 - Indentation-based blocks
@@ -82,7 +82,7 @@ Complete grammar for **Python 3.14** - full official Python syntax.
 - Comprehensive expression types (generators, comprehensions, lambdas)
 - Both simple and compound statements
 - Rich type hint system
-- Pattern matching (Python 3.10+)
+- Pattern matching (PythonCore 3.10+)
 - Async/await support
 - Decorator system
 - Context managers (with/as)
@@ -97,7 +97,7 @@ Complete grammar for **Python 3.14** - full official Python syntax.
 - Multiple inheritance and metaclasses (in AST)
 
 #### `rust.ebnf`
-Complete grammar for **Rust 1.75+** - full official Rust syntax.
+Complete grammar for **RustCore 1.75+** - full official RustCore syntax.
 
 **Characteristics:**
 - Brace-based blocks
@@ -178,7 +178,7 @@ This reflects the standard EBNF pattern where higher-precedence operators appear
 
 ## Block Structures
 
-### Indentation-Based (Lumen, Mini-Python, Python)
+### Indentation-Based (Lumen, Python, Python)
 
 ```ebnf
 block = ":" INDENT statement+ DEDENT ;
@@ -189,7 +189,7 @@ block = ":" INDENT statement+ DEDENT ;
 - `INDENT` token marks start, `DEDENT` marks end
 - Indentation amount varies: 4 spaces (Lumen, Python), 2 spaces (some variants)
 
-### Brace-Based (Mini-Rust, Rust)
+### Brace-Based (Rust, Rust)
 
 ```ebnf
 block = "{" statement* "}" ;
@@ -209,7 +209,7 @@ composite_type = tuple_type | option_type | result_type ;
 function_type = "fn" "(" ... ")" "->" type_expression ;
 ```
 
-### Rust (comprehensive)
+### RustCore (comprehensive)
 ```ebnf
 type_expression = type_path | reference_type | pointer_type
                 | slice_type | array_type | tuple_type ;
@@ -218,7 +218,7 @@ pointer_type = "*const" type_expression | "*mut" type_expression ;
 generic_params = "<" generic_param ("," generic_param)* ">" ;
 ```
 
-### Python (3.10+ with unions)
+### PythonCore (3.10+ with unions)
 ```ebnf
 type_expression = type_union | type_callable | type_literal ;
 type_union = type_intersection ("|" type_intersection)* ;
@@ -227,13 +227,13 @@ type_callable = "Callable" "[" type_list "->" type_expression "]" ;
 
 ## Key Differences Between Languages
 
-| Aspect | Lumen | Mini-Python | Mini-Rust | Python | Rust |
+| Aspect | Lumen | PythonCore | RustCore | PythonCore | RustCore |
 |--------|-------|-------------|-----------|--------|------|
 | **Block Syntax** | Indentation | Indentation | Braces | Indentation | Braces |
 | **Type Annotations** | Optional | Implicit | Required | Optional | Required |
 | **Operators** | 7 precedence | 7 precedence | 14 precedence | 15+ precedence | 14 precedence |
 | **Pattern Matching** | Planned | None | Basic | Advanced (3.10+) | Advanced |
-| **Generics** | Not in v2.2 | None | Basic | Python 3.10+ | Full |
+| **Generics** | Not in v2.2 | None | Basic | PythonCore 3.10+ | Full |
 | **Async Support** | Planned | None | None | Yes | Yes |
 | **Memory Safety** | Language level | Type-enforced | Borrow checker | Reference counting | Ownership |
 
@@ -309,18 +309,18 @@ additive_expression = multiplicative_expression
 
 For complete language specifications, refer to:
 - **Lumen**: `docs/LUMEN_LANGUAGE_DESIGN.md`, `yaml/lumen.yaml`
-- **Python**: [Python Language Reference](https://docs.python.org/3/reference/)
-- **Rust**: [The Rust Reference](https://doc.rust-lang.org/reference/)
+- **Python**: [PythonCore Language Reference](https://docs.python.org/3/reference/)
+- **Rust**: [The RustCore Reference](https://doc.rust-lang.org/reference/)
 
 ## Files and Line Counts
 
 | Language | File | Lines | Complexity |
 |----------|------|-------|-----------|
 | Lumen | lumen.ebnf | ~380 | Medium |
-| Mini-Python | mini-python.ebnf | ~280 | Low |
-| Mini-Rust | mini-rust.ebnf | ~450 | Medium-High |
-| Python | python.ebnf | ~420 | Very High |
-| Rust | rust.ebnf | ~550 | Very High |
+| PythonCore | python.ebnf | ~280 | Low |
+| RustCore | rust.ebnf | ~450 | Medium-High |
+| PythonCore | python.ebnf | ~420 | Very High |
+| RustCore | rust.ebnf | ~550 | Very High |
 
 ## Special Constructs
 
@@ -369,8 +369,8 @@ To extend:
 
 These EBNF grammars are derived from:
 - **Lumen**: Project specification (`yaml/lumen.yaml`)
-- **Python**: Official Python language reference and `yaml/python.yaml`
-- **Rust**: Official Rust language reference and `yaml/rust.yaml`
+- **Python**: Official PythonCore language reference and `yaml/python.yaml`
+- **Rust**: Official RustCore language reference and `yaml/rust.yaml`
 - **Mini variants**: Project educational subsets
 
 See individual YAML files for detailed attribution and version information.

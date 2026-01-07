@@ -8,7 +8,7 @@ A minimal, experimental programming language interpreter framework exploring lan
 
 ### Requirements
 - Git
-- Rust ([https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install))
+- RustCore ([https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install))
 
 ### Installation & Running
 
@@ -25,11 +25,11 @@ cargo run examples/lumen/loop.lm
 # Lumen (Python-style indentation)
 cargo run examples/lumen/fibonacci.lm
 
-# Mini-Rust (Rust-style curly braces)
-cargo run examples/mini_rust/demo.rs
+# RustCore (Rust-style curly braces)
+cargo run examples/rust/demo.rs
 
-# Mini-Python (Python-like syntax)
-cargo run examples/mini_python/fibonacci.py
+# PythonCore (Python-like syntax)
+cargo run examples/python/fibonacci.py
 ```
 
 ---
@@ -49,8 +49,8 @@ All supported languages include:
 | Language | File Extension | Style | Status |
 |----------|---|---|---|
 | **Lumen** | `.lm` | Python-style indentation | ✅ Active |
-| **Mini-Rust** | `.rs` | Rust-style curly braces | ✅ Active |
-| **Mini-Python** | `.py` | Python-like syntax | ✅ Active |
+| **Rust** | `.rs` | Rust-style curly braces | ✅ Active |
+| **Python** | `.py` | Python-like syntax | ✅ Active |
 
 ---
 
@@ -77,9 +77,9 @@ Lumen has **4 independent development tracks**, each with its own architecture a
 - **Role**: Reference implementation demonstrating both kernels
 
 ### Track 4: Other Language Examples
-- **Mini-Rust**: `src_stream/languages/mini_rust/` + `src_microcode/languages/mini_rust/`
+- **Rust**: `src_stream/languages/rust_core/` + `src_microcode/languages/rust_core/`
   - Rust-style curly braces and `let` bindings
-- **Mini-Python**: `src_stream/languages/mini_python/` + `src_microcode/languages/mini_python/`
+- **Python**: `src_stream/languages/python_core/` + `src_microcode/languages/python_core/`
   - Python-like syntax with indentation
 
 **Key Design Principle**: Each kernel is **completely independent** with zero cross-imports, allowing independent evolution. The `src/main.rs` dispatcher routes between kernels and languages.
@@ -94,7 +94,7 @@ Run the full test suite (68 tests across all kernels and languages):
 ./test_all.sh
 ```
 
-**Current Status**: ✅ **All 68 tests passing** (48 Lumen, 10 Mini-Python, 10 Mini-Rust)
+**Current Status**: ✅ **All 68 tests passing** (48 Lumen, 10 Python, 10 Rust)
 
 ---
 
@@ -129,8 +129,8 @@ Comprehensive documentation is organized in the `docs/` directory:
 
 ### Multi-Language Support
 - **Lumen**: Python-style indentation-based syntax
-- **Mini-Rust**: Rust-style curly brace syntax
-- **Mini-Python**: Python-like syntax with indentation
+- **Rust**: Rust-style curly brace syntax
+- **Python**: Python-like syntax with indentation
 
 ### Language Neutrality
 - Kernel contains zero language-specific assumptions
@@ -168,8 +168,8 @@ Lumen is **not a production language** but an exploration of:
 ```bash
 # Detect language from file extension
 cargo run examples/lumen/fibonacci.lm
-cargo run examples/mini_rust/demo.rs
-cargo run examples/mini_python/fibonacci.py
+cargo run examples/rust/demo.rs
+cargo run examples/python/fibonacci.py
 ```
 
 ### Run with Explicit Kernel Selection
@@ -221,7 +221,7 @@ This project is provided as-is for educational and experimental purposes.
 
 ---
 
-**Status**: ✅ All 68 tests passing (48 Lumen, 10 Mini-Python, 10 Mini-Rust)
+**Status**: ✅ All 68 tests passing (48 Lumen, 10 Python, 10 Rust)
 
 For release notes and version history, see **docs/VERSION_HISTORY.md**
 

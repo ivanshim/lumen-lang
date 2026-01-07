@@ -30,21 +30,21 @@ SKIPPED_TESTS=0
 
 # Language-specific counters
 declare -A LUMEN_PASSED LUMEN_FAILED LUMEN_TIMEOUT LUMEN_SKIPPED
-declare -A MINIPYTHON_PASSED MINIPYTHON_FAILED MINIPYTHON_TIMEOUT MINIPYTHON_SKIPPED
-declare -A MINIRUST_PASSED MINIRUST_FAILED MINIRUST_TIMEOUT MINIRUST_SKIPPED
+declare -A PYTHONCORE_PASSED PYTHONCORE_FAILED PYTHONCORE_TIMEOUT PYTHONCORE_SKIPPED
+declare -A RUSTCORE_PASSED RUSTCORE_FAILED RUSTCORE_TIMEOUT RUSTCORE_SKIPPED
 
 LUMEN_PASSED=0
 LUMEN_FAILED=0
 LUMEN_TIMEOUT=0
 LUMEN_SKIPPED=0
-MINIPYTHON_PASSED=0
-MINIPYTHON_FAILED=0
-MINIPYTHON_TIMEOUT=0
-MINIPYTHON_SKIPPED=0
-MINIRUST_PASSED=0
-MINIRUST_FAILED=0
-MINIRUST_TIMEOUT=0
-MINIRUST_SKIPPED=0
+PYTHONCORE_PASSED=0
+PYTHONCORE_FAILED=0
+PYTHONCORE_TIMEOUT=0
+PYTHONCORE_SKIPPED=0
+RUSTCORE_PASSED=0
+RUSTCORE_FAILED=0
+RUSTCORE_TIMEOUT=0
+RUSTCORE_SKIPPED=0
 
 # Determine whether a combination is supported
 should_skip() {
@@ -71,8 +71,8 @@ run_test() {
         SKIPPED_TESTS=$((SKIPPED_TESTS + 1))
         case "$language" in
             lumen) LUMEN_SKIPPED=$((LUMEN_SKIPPED + 1)) ;;
-            python) MINIPYTHON_SKIPPED=$((MINIPYTHON_SKIPPED + 1)) ;;
-            rust) MINIRUST_SKIPPED=$((MINIRUST_SKIPPED + 1)) ;;
+            python_core) PYTHONCORE_SKIPPED=$((PYTHONCORE_SKIPPED + 1)) ;;
+            rust_core) RUSTCORE_SKIPPED=$((RUSTCORE_SKIPPED + 1)) ;;
         esac
         return 0
     fi
@@ -95,8 +95,8 @@ run_test() {
         PASSED_TESTS=$((PASSED_TESTS + 1))
         case "$language" in
             lumen) LUMEN_PASSED=$((LUMEN_PASSED + 1)) ;;
-            python) MINIPYTHON_PASSED=$((MINIPYTHON_PASSED + 1)) ;;
-            rust) MINIRUST_PASSED=$((MINIRUST_PASSED + 1)) ;;
+            python_core) PYTHONCORE_PASSED=$((PYTHONCORE_PASSED + 1)) ;;
+            rust_core) RUSTCORE_PASSED=$((RUSTCORE_PASSED + 1)) ;;
         esac
         return 0
     elif [ $exit_code -eq 124 ]; then
@@ -105,8 +105,8 @@ run_test() {
         FAILED_TESTS=$((FAILED_TESTS + 1))
         case "$language" in
             lumen) LUMEN_TIMEOUT=$((LUMEN_TIMEOUT + 1)) ;;
-            python) MINIPYTHON_TIMEOUT=$((MINIPYTHON_TIMEOUT + 1)) ;;
-            rust) MINIRUST_TIMEOUT=$((MINIRUST_TIMEOUT + 1)) ;;
+            python_core) PYTHONCORE_TIMEOUT=$((PYTHONCORE_TIMEOUT + 1)) ;;
+            rust_core) RUSTCORE_TIMEOUT=$((RUSTCORE_TIMEOUT + 1)) ;;
         esac
         return 1
     else
@@ -114,8 +114,8 @@ run_test() {
         FAILED_TESTS=$((FAILED_TESTS + 1))
         case "$language" in
             lumen) LUMEN_FAILED=$((LUMEN_FAILED + 1)) ;;
-            python) MINIPYTHON_FAILED=$((MINIPYTHON_FAILED + 1)) ;;
-            rust) MINIRUST_FAILED=$((MINIRUST_FAILED + 1)) ;;
+            python_core) PYTHONCORE_FAILED=$((PYTHONCORE_FAILED + 1)) ;;
+            rust_core) RUSTCORE_FAILED=$((RUSTCORE_FAILED + 1)) ;;
         esac
         return 1
     fi
@@ -141,10 +141,10 @@ echo ""
 echo -e "${YELLOW}Python Examples:${NC}"
 for file in examples/python/*.py; do
     # Test with stream kernel
-    run_test "$file" "stream" "python"
+    run_test "$file" "stream" "python_core"
 
     # Test with microcode kernel
-    run_test "$file" "microcode" "python"
+    run_test "$file" "microcode" "python_core"
 done
 echo ""
 
@@ -152,10 +152,10 @@ echo ""
 echo -e "${YELLOW}Rust Examples:${NC}"
 for file in examples/rust/*.rs; do
     # Test with stream kernel
-    run_test "$file" "stream" "rust"
+    run_test "$file" "stream" "rust_core"
 
     # Test with microcode kernel
-    run_test "$file" "microcode" "rust"
+    run_test "$file" "microcode" "rust_core"
 done
 echo ""
 
@@ -168,10 +168,10 @@ echo -e "${BLUE}Lumen:${NC}"
 echo -e "  Passed:  ${GREEN}$LUMEN_PASSED${NC} | Failed: ${RED}$LUMEN_FAILED${NC} | Timeout: ${RED}$LUMEN_TIMEOUT${NC} | Skipped: ${YELLOW}$LUMEN_SKIPPED${NC}"
 echo ""
 echo -e "${BLUE}Python:${NC}"
-echo -e "  Passed:  ${GREEN}$MINIPYTHON_PASSED${NC} | Failed: ${RED}$MINIPYTHON_FAILED${NC} | Timeout: ${RED}$MINIPYTHON_TIMEOUT${NC} | Skipped: ${YELLOW}$MINIPYTHON_SKIPPED${NC}"
+echo -e "  Passed:  ${GREEN}$PYTHONCORE_PASSED${NC} | Failed: ${RED}$PYTHONCORE_FAILED${NC} | Timeout: ${RED}$PYTHONCORE_TIMEOUT${NC} | Skipped: ${YELLOW}$PYTHONCORE_SKIPPED${NC}"
 echo ""
 echo -e "${BLUE}Rust:${NC}"
-echo -e "  Passed:  ${GREEN}$MINIRUST_PASSED${NC} | Failed: ${RED}$MINIRUST_FAILED${NC} | Timeout: ${RED}$MINIRUST_TIMEOUT${NC} | Skipped: ${YELLOW}$MINIRUST_SKIPPED${NC}"
+echo -e "  Passed:  ${GREEN}$RUSTCORE_PASSED${NC} | Failed: ${RED}$RUSTCORE_FAILED${NC} | Timeout: ${RED}$RUSTCORE_TIMEOUT${NC} | Skipped: ${YELLOW}$RUSTCORE_SKIPPED${NC}"
 echo ""
 
 # Overall Summary
