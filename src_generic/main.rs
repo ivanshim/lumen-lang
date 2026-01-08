@@ -1,5 +1,6 @@
-// Stream Kernel 2: Opaque Analysis Architecture
-// Demonstration of pure kernel with language-specific semantics
+// Generic Kernel: Language-Agnostic Structure Processing
+// Demonstrates pure kernel with language-specific semantic interpretation
+// Built on opaque analysis architecture: kernel does orchestration, languages do interpretation
 
 mod kernel;
 mod languages;
@@ -7,7 +8,7 @@ mod languages;
 use kernel::{Kernel, Token};
 
 fn main() {
-    println!("=== Stream Kernel 2: Opaque Analysis Architecture ===\n");
+    println!("=== Generic Kernel: Language-Agnostic Structure Processing ===\n");
 
     // Example 1: Lumen (indentation-based)
     println!("--- Lumen Example (Indentation-based) ---\n");
