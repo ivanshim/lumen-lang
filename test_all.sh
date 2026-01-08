@@ -126,6 +126,15 @@ echo "  Lumen-Lang Test Suite (All Tests)"
 echo "=========================================="
 echo ""
 
+# First, run unit tests for the new generic kernel
+echo -e "${YELLOW}Generic Kernel Unit Tests:${NC}"
+if cargo test --bin generic 2>&1 | tail -5; then
+    echo -e "${GREEN}✓ Generic kernel tests passed${NC}\n"
+else
+    echo -e "${RED}✗ Generic kernel tests failed!${NC}"
+    exit 1
+fi
+
 # Test lumen examples with both kernels
 echo -e "${YELLOW}Lumen Examples:${NC}"
 for file in examples/lumen/*.lm; do

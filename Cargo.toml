@@ -16,8 +16,8 @@ name = "microcode"
 path = "src_microcode/main.rs"
 
 [[bin]]
-name = "stream2"
-path = "src_stream_2/main.rs"
+name = "generic"
+path = "src_generic/main.rs"
 
 [lib]
 name = "microcode_2"
