@@ -15,6 +15,10 @@ path = "src_stream/main.rs"
 name = "microcode"
 path = "src_microcode/main.rs"
 
+[[bin]]
+name = "stream2"
+path = "src_stream_2/main.rs"
+
 [lib]
 name = "microcode_2"
 path = "src_microcode/lib.rs"
