@@ -1,6 +1,7 @@
-// Generic Kernel: Language-Agnostic Structure Processing
+// Opaque Kernel: Language-Agnostic Structure Processing
 // Demonstrates pure kernel with language-specific semantic interpretation
 // Built on opaque analysis architecture: kernel does orchestration, languages do interpretation
+// Kernel uses Box<dyn Any> for complete semantic blindness
 
 mod kernel;
 mod languages;
@@ -8,7 +9,7 @@ mod languages;
 use kernel::{Kernel, Token};
 
 fn main() {
-    println!("=== Generic Kernel: Language-Agnostic Structure Processing ===\n");
+    println!("=== Opaque Kernel: Language-Agnostic Structure Processing ===\n");
 
     // Example 1: Lumen (indentation-based)
     println!("--- Lumen Example (Indentation-based) ---\n");
