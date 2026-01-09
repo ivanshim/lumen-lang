@@ -177,19 +177,38 @@ pub fn process_indentation(source: &str, raw_tokens: Vec<SpannedToken>) -> Lumen
         }
 
         // Add tokens from this line (from raw_tokens filtered by line number)
-        // IMPORTANT: Filter out single-character whitespace tokens
-        // The kernel lexer is now fully agnostic and emits all characters (including spaces, tabs, newlines)
-        // Lumen's indentation processing needs only the meaningful tokens
+        // Filter out whitespace EXCEPT when inside string literals
+        // The kernel lexer emits all characters including spaces, so we need to reconstruct
+        // which spaces are part of strings vs which are separators
+        let mut in_string_single = false;
+        let mut in_string_double = false;
         for raw_tok in &raw_tokens {
             if raw_tok.line == line_no {
-                // Skip whitespace tokens (single-char spaces, tabs, newlines, carriage returns)
-                if raw_tok.tok.lexeme.len() == 1 {
-                    let ch = raw_tok.tok.lexeme.as_bytes()[0];
-                    if ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' {
-                        continue;
+                let lexeme = &raw_tok.tok.lexeme;
+
+                // Track string delimiters to know when we're inside a string
+                // This is a simple approach: when we see a quote, toggle the flag
+                // Note: This doesn't handle escape sequences perfectly, but it's good enough
+                // because escaped quotes (\' or \") will still appear as separate tokens
+                if lexeme == "'" && !in_string_double {
+                    in_string_single = !in_string_single;
+                    out.push(raw_tok.clone());
+                } else if lexeme == "\"" && !in_string_single {
+                    in_string_double = !in_string_double;
+                    out.push(raw_tok.clone());
+                } else if in_string_single || in_string_double {
+                    // Inside a string - include everything, including whitespace
+                    out.push(raw_tok.clone());
+                } else {
+                    // Outside a string - filter whitespace tokens
+                    if lexeme.len() == 1 {
+                        let ch = lexeme.as_bytes()[0];
+                        if ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' {
+                            continue;  // Skip whitespace outside strings
+                        }
                     }
+                    out.push(raw_tok.clone());
                 }
-                out.push(raw_tok.clone());
             }
         }
 
