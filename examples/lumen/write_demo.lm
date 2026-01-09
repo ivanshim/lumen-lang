@@ -1,0 +1,14 @@
+write("Hello")
+write(" ")
+write("World")
+write("!")
+print("")
+
+write("Numbers: ")
+i = 1
+while i <= 5
+    write(i)
+    if i < 5
+        write(", ")
+    i = i + 1
+print("")

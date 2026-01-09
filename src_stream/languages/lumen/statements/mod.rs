@@ -7,6 +7,7 @@ pub mod break_stmt;
 pub mod continue_stmt;
 pub mod if_else;
 pub mod print;
+pub mod write;
 pub mod while_loop;
 pub mod for_loop;
 pub mod until_loop;

@@ -1,6 +1,7 @@
 use crate::languages::rust_core::prelude::*;
 pub mod assignment;
 pub mod print;
+pub mod write;
 pub mod if_else;
 pub mod while_loop;
 pub mod break_stmt;
@@ -10,6 +11,7 @@ pub mod let_binding;
 pub fn register_all(registry: &mut crate::languages::rust_core::registry::Registry) {
     assignment::register(registry);
     print::register(registry);
+    write::register(registry);
     if_else::register(registry);
     while_loop::register(registry);
     break_stmt::register(registry);
