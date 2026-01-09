@@ -90,7 +90,7 @@ echo ""
 
 # Test lumen examples with all kernels
 echo -e "${YELLOW}Lumen Examples:${NC}"
-for file in examples/lumen/*.lm; do
+for file in examples/lumen/*.lm examples/lumen/constructs/*.lm; do
     for kernel in stream microcode; do
         run_test "$file" "$kernel" "lumen"
     done
