@@ -39,14 +39,8 @@ fn main() {
     // Route to appropriate language - native opaque implementation
     let result = match language.as_str() {
         "lumen" => languages::lumen::run(&source),
-        "rust_core" => {
-            eprintln!("Error: Rust Core support not yet implemented in opaque kernel");
-            process::exit(1);
-        }
-        "python_core" => {
-            eprintln!("Error: Python Core support not yet implemented in opaque kernel");
-            process::exit(1);
-        }
+        "rust_core" => languages::rust_core::run(&source),
+        "python_core" => languages::python_core::run(&source),
         _ => {
             eprintln!("Error: Unknown language '{}'", language);
             process::exit(1);

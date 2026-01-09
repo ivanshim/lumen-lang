@@ -199,6 +199,54 @@ impl Evaluator {
         Ok(ControlFlow::Normal(last_value))
     }
 
+    /// Evaluate an extern function call
+    fn eval_extern_call(&mut self, arguments: &[ExprNode]) -> Result<RuntimeValue, String> {
+        if arguments.is_empty() {
+            return Err("extern requires at least one argument (selector)".to_string());
+        }
+
+        // First argument should be a string literal (selector)
+        let selector = match &arguments[0] {
+            ExprNode::Literal { lexeme, handler_type } if handler_type == "string" => {
+                lexeme.clone()
+            }
+            _ => return Err("extern selector must be a string literal".to_string()),
+        };
+
+        // Evaluate remaining arguments
+        let mut arg_values = Vec::new();
+        for arg in &arguments[1..] {
+            arg_values.push(self.eval_expr(arg)?);
+        }
+
+        // Dispatch to the appropriate extern capability
+        match selector.as_str() {
+            "print_native" => {
+                if arg_values.len() != 1 {
+                    return Err("print_native requires exactly 1 argument".to_string());
+                }
+                print_value(&arg_values[0]);
+                println!();
+                Ok(arg_values[0].clone())
+            }
+            "debug_info" => {
+                if arg_values.len() != 1 {
+                    return Err("debug_info requires exactly 1 argument".to_string());
+                }
+                eprintln!("[DEBUG] {:?}", arg_values[0]);
+                Ok(arg_values[0].clone())
+            }
+            "value_type" => {
+                if arg_values.len() != 1 {
+                    return Err("value_type requires exactly 1 argument".to_string());
+                }
+                let type_str = get_value_type(&arg_values[0]);
+                Ok(Arc::new(type_str))
+            }
+            _ => Err(format!("Unknown extern selector: {}", selector)),
+        }
+    }
+
     /// Evaluate an expression
     fn eval_expr(&mut self, expr: &ExprNode) -> Result<RuntimeValue, String> {
         match expr {
@@ -251,6 +299,11 @@ impl Evaluator {
                     ExprNode::Identifier { name } => name.clone(),
                     _ => return Err("Function call expression not yet supported".to_string()),
                 };
+
+                // Handle extern function calls
+                if func_expr == "extern" {
+                    return self.eval_extern_call(arguments);
+                }
 
                 // Evaluate arguments
                 let mut arg_values = Vec::new();
@@ -327,6 +380,8 @@ fn eval_prefix_op(op: &str, right: &RuntimeValue) -> Result<RuntimeValue, String
         "-" => {
             if let Some(n) = right.downcast_ref::<i64>() {
                 Ok(Arc::new(-n))
+            } else if let Some(f) = right.downcast_ref::<f64>() {
+                Ok(Arc::new(-f))
             } else {
                 Err(format!("Cannot negate non-number"))
             }
@@ -370,8 +425,8 @@ fn eval_infix_op(op: &str, left: &RuntimeValue, right: &RuntimeValue) -> Result<
             "!=" => Ok(Arc::new(l != r)),
             "<" => Ok(Arc::new(l < r)),
             ">" => Ok(Arc::new(l > r)),
-            "<=" => Ok(Arc::new(l <= r)),
-            ">=" => Ok(Arc::new(l >= r)),
+            "<=" | "le" => Ok(Arc::new(l <= r)),
+            ">=" | "ge" => Ok(Arc::new(l >= r)),
             ".." => Ok(Arc::new((*l, *r, false)) as RuntimeValue),
             "..=" => Ok(Arc::new((*l, *r, true)) as RuntimeValue),
             _ => Err(format!("Unknown operator: {}", op)),
@@ -390,9 +445,24 @@ fn eval_infix_op(op: &str, left: &RuntimeValue, right: &RuntimeValue) -> Result<
 
     // Logical operations
     match op {
-        "and" => Ok(Arc::new(is_truthy(left) && is_truthy(right))),
-        "or" => Ok(Arc::new(is_truthy(left) || is_truthy(right))),
+        "and" | "&&" => Ok(Arc::new(is_truthy(left) && is_truthy(right))),
+        "or" | "||" => Ok(Arc::new(is_truthy(left) || is_truthy(right))),
         _ => Err(format!("Type mismatch for operator {}", op)),
+    }
+}
+
+/// Get the type of a runtime value as a string
+fn get_value_type(val: &RuntimeValue) -> String {
+    if val.downcast_ref::<i64>().is_some() {
+        "number".to_string()
+    } else if val.downcast_ref::<bool>().is_some() {
+        "bool".to_string()
+    } else if val.downcast_ref::<String>().is_some() {
+        "string".to_string()
+    } else if val.downcast_ref::<()>().is_some() {
+        "none".to_string()
+    } else {
+        "unknown".to_string()
     }
 }
 
