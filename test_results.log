@@ -1,0 +1,1333 @@
+[0;34mBuilding lumen-lang...[0m
+[0;34mBuilt successfully[0m
+
+==========================================
+  Lumen-Lang Test Suite (All Tests)
+==========================================
+
+[1;33mOpaque Kernel Unit Tests:[0m
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[0;32m✓ Opaque kernel tests passed[0m
+
+[1;33mLumen Examples:[0m
+[0;36m  → comments.lm (stream)[0m
+    Test:CommentsSupport
+    42
+    84
+    30
+    Valueisgreaterthan20
+    0
+    1
+    2
+    Donetestingcomments
+    [0;32m✓ PASS[0m
+[0;36m  → comments.lm (microcode)[0m
+    Test: Comments Support
+    42
+    84
+    30
+    Value is greater than 20
+    0
+    1
+    2
+    Done testing comments
+    [0;32m✓ PASS[0m
+[0;36m  → comments.lm (opaque)[0m
+    Test:CommentsSupport
+    42
+    84
+    30
+    Valueisgreaterthan20
+    0
+    1
+    2
+    Donetestingcomments
+    [0;32m✓ PASS[0m
+[0;36m  → demo.lm (stream)[0m
+    7
+    100
+    0
+    1
+    3
+    6
+    10
+    16
+    23
+    23
+    true
+    false
+    true
+    -7
+    [0;32m✓ PASS[0m
+[0;36m  → demo.lm (microcode)[0m
+    7
+    100
+    0
+    1
+    3
+    6
+    10
+    16
+    23
+    23
+    true
+    false
+    true
+    -7
+    [0;32m✓ PASS[0m
+[0;36m  → demo.lm (opaque)[0m
+    7
+    100
+    0
+    1
+    3
+    6
+    10
+    16
+    23
+    23
+    true
+    false
+    true
+    -7
+    [0;32m✓ PASS[0m
+[0;36m  → e.lm (stream)[0m
+    2.7182818284590455
+    .
+    7182818284.590454
+    [0;32m✓ PASS[0m
+[0;36m  → e.lm (microcode)[0m
+    2.7182818284590455
+    .
+    7182818284
+    [0;32m✓ PASS[0m
+[0;36m  → e.lm (opaque)[0m
+    2.7182818284590455
+    .
+    7182818284.590454
+    [0;32m✓ PASS[0m
+[0;36m  → extern_args.lm (stream)[0m
+    [DEBUG] 99
+    0
+    1
+    [0;32m✓ PASS[0m
+[0;36m  → extern_args.lm (microcode)[0m
+    [DEBUG] 99
+    number
+    bool
+    [0;32m✓ PASS[0m
+[0;36m  → extern_args.lm (opaque)[0m
+    [DEBUG] 99
+    0
+    1
+    [0;32m✓ PASS[0m
+[0;36m  → extern_basic.lm (stream)[0m
+    42
+    42
+    [0;32m✓ PASS[0m
+[0;36m  → extern_basic.lm (microcode)[0m
+    42
+    none
+    [0;32m✓ PASS[0m
+[0;36m  → extern_basic.lm (opaque)[0m
+    42
+    42
+    [0;32m✓ PASS[0m
+[0;36m  → extern_comprehensive.lm (stream)[0m
+    10
+    10
+    20
+    20
+    [DEBUG] 30
+    0
+    [0;32m✓ PASS[0m
+[0;36m  → extern_comprehensive.lm (microcode)[0m
+    10
+    none
+    20
+    none
+    [DEBUG] 30
+    number
+    [0;32m✓ PASS[0m
+[0;36m  → extern_comprehensive.lm (opaque)[0m
+    10
+    10
+    20
+    20
+    [DEBUG] 30
+    0
+    [0;32m✓ PASS[0m
+[0;36m  → extern_debug.lm (stream)[0m
+    [DEBUG] 42
+    42
+    [0;32m✓ PASS[0m
+[0;36m  → extern_debug.lm (microcode)[0m
+    [DEBUG] 42
+    none
+    [0;32m✓ PASS[0m
+[0;36m  → extern_debug.lm (opaque)[0m
+    [DEBUG] 42
+    42
+    [0;32m✓ PASS[0m
+[0;36m  → extern_fallback.lm (stream)[0m
+    55
+    55
+    [0;32m✓ PASS[0m
+[0;36m  → extern_fallback.lm (microcode)[0m
+    55
+    none
+    [0;32m✓ PASS[0m
+[0;36m  → extern_fallback.lm (opaque)[0m
+    55
+    55
+    [0;32m✓ PASS[0m
+[0;36m  → extern_multiarg.lm (stream)[0m
+    15
+    15
+    [0;32m✓ PASS[0m
+[0;36m  → extern_multiarg.lm (microcode)[0m
+    15
+    none
+    [0;32m✓ PASS[0m
+[0;36m  → extern_multiarg.lm (opaque)[0m
+    15
+    15
+    [0;32m✓ PASS[0m
+[0;36m  → extern_simple.lm (stream)[0m
+    42
+    42
+    [0;32m✓ PASS[0m
+[0;36m  → extern_simple.lm (microcode)[0m
+    42
+    none
+    [0;32m✓ PASS[0m
+[0;36m  → extern_simple.lm (opaque)[0m
+    42
+    42
+    [0;32m✓ PASS[0m
+[0;36m  → extern_test.lm (stream)[0m
+    99
+    99
+    [0;32m✓ PASS[0m
+[0;36m  → extern_test.lm (microcode)[0m
+    99
+    none
+    [0;32m✓ PASS[0m
+[0;36m  → extern_test.lm (opaque)[0m
+    99
+    99
+    [0;32m✓ PASS[0m
+[0;36m  → extern_type.lm (stream)[0m
+    0
+    1
+    [0;32m✓ PASS[0m
+[0;36m  → extern_type.lm (microcode)[0m
+    number
+    bool
+    [0;32m✓ PASS[0m
+[0;36m  → extern_type.lm (opaque)[0m
+    0
+    1
+    [0;32m✓ PASS[0m
+[0;36m  → fibonacci.lm (stream)[0m
+    0
+    1
+    1
+    2
+    3
+    5
+    8
+    13
+    21
+    34
+    [0;32m✓ PASS[0m
+[0;36m  → fibonacci.lm (microcode)[0m
+    0
+    1
+    1
+    2
+    3
+    5
+    8
+    13
+    21
+    34
+    [0;32m✓ PASS[0m
+[0;36m  → fibonacci.lm (opaque)[0m
+    0
+    1
+    1
+    2
+    3
+    5
+    8
+    13
+    21
+    34
+    [0;32m✓ PASS[0m
+[0;36m  → for_loop.lm (stream)[0m
+    0
+    1
+    2
+    3
+    4
+    5
+    6
+    7
+    8
+    9
+    [0;32m✓ PASS[0m
+[0;36m  → for_loop.lm (microcode)[0m
+    0
+    1
+    2
+    3
+    4
+    5
+    6
+    7
+    8
+    9
+    [0;32m✓ PASS[0m
+[0;36m  → for_loop.lm (opaque)[0m
+    0
+    1
+    2
+    3
+    4
+    5
+    6
+    7
+    8
+    9
+    [0;32m✓ PASS[0m
+[0;36m  → for_loop_continue.lm (stream)[0m
+    0
+    1
+    2
+    3
+    4
+    6
+    7
+    8
+    9
+    [0;32m✓ PASS[0m
+[0;36m  → for_loop_continue.lm (microcode)[0m
+    0
+    1
+    2
+    3
+    4
+    6
+    7
+    8
+    9
+    [0;32m✓ PASS[0m
+[0;36m  → for_loop_continue.lm (opaque)[0m
+    0
+    1
+    2
+    3
+    4
+    6
+    7
+    8
+    9
+    [0;32m✓ PASS[0m
+[0;36m  → for_loop_control.lm (stream)[0m
+    0
+    1
+    2
+    3
+    4
+    [0;32m✓ PASS[0m
+[0;36m  → for_loop_control.lm (microcode)[0m
+    0
+    1
+    2
+    3
+    4
+    [0;32m✓ PASS[0m
+[0;36m  → for_loop_control.lm (opaque)[0m
+    0
+    1
+    2
+    3
+    4
+    [0;32m✓ PASS[0m
+[0;36m  → functions_basic.lm (stream)[0m
+    Test:BasicFunctions
+    25
+    30
+    Hello,Lumen
+    42
+    19
+    [0;32m✓ PASS[0m
+[0;36m  → functions_basic.lm (microcode)[0m
+    Test: Basic Functions
+    25
+    30
+    Hello, Lumen
+    42
+    19
+    [0;32m✓ PASS[0m
+[0;36m  → functions_basic.lm (opaque)[0m
+    Test:BasicFunctions
+    25
+    30
+    Hello,Lumen
+    42
+    19
+    [0;32m✓ PASS[0m
+[0;36m  → functions_recursion.lm (stream)[0m
+    Test:Recursion
+    Factorialof5:
+    120
+    Countdownfrom3:
+    3
+    2
+    1
+    Done
+    [0;32m✓ PASS[0m
+[0;36m  → functions_recursion.lm (microcode)[0m
+    Test: Recursion
+    Factorial of 5:
+    120
+    Countdown from 3:
+    3
+    2
+    1
+    Done
+    [0;32m✓ PASS[0m
+[0;36m  → functions_recursion.lm (opaque)[0m
+    Test:Recursion
+    Factorialof5:
+    120
+    Countdownfrom3:
+    3
+    2
+    1
+    Done
+    [0;32m✓ PASS[0m
+[0;36m  → let_keyword.lm (stream)[0m
+    Test:letandletmutKeywords
+    letx=10
+    10
+    letmuty=5
+    5
+    Aftery=20:
+    20
+    Afterletx=100(shadowing):
+    100
+    letresult=x+y
+    120
+    test_let():
+    92
+    [0;32m✓ PASS[0m
+[0;36m  → let_keyword.lm (microcode)[0m
+    Test: let and let mut Keywords
+    let x = 10
+    10
+    let mut y = 5
+    5
+    After y = 20:
+    20
+    After let x = 100 (shadowing):
+    100
+    let result = x + y
+    120
+    test_let():
+    92
+    [0;32m✓ PASS[0m
+[0;36m  → let_keyword.lm (opaque)[0m
+    Test:letandletmutKeywords
+    letx=10
+    10
+    letmuty=5
+    5
+    Aftery=20:
+    20
+    Afterletx=100(shadowing):
+    100
+    letresult=x+y
+    120
+    test_let():
+    92
+    [0;32m✓ PASS[0m
+[0;36m  → loop.lm (stream)[0m
+    0
+    1
+    2
+    3
+    4
+    5
+    6
+    7
+    8
+    9
+    [0;32m✓ PASS[0m
+[0;36m  → loop.lm (microcode)[0m
+    0
+    1
+    2
+    3
+    4
+    5
+    6
+    7
+    8
+    9
+    [0;32m✓ PASS[0m
+[0;36m  → loop.lm (opaque)[0m
+    0
+    1
+    2
+    3
+    4
+    5
+    6
+    7
+    8
+    9
+    [0;32m✓ PASS[0m
+[0;36m  → none_type.lm (stream)[0m
+    Test:noneType
+    Callingno_return():
+    Thisfunctionreturnsnoneimplicitly
+    none
+    Callingexplicit_none():
+    Returningnoneexplicitly
+    none
+    conditional_none(5):
+    10
+    conditional_none(-3):
+    none
+    letx=none:
+    none
+    Valueisnone
+    [0;32m✓ PASS[0m
+[0;36m  → none_type.lm (microcode)[0m
+    Test: none Type
+    Calling no_return():
+    This function returns none implicitly
+    none
+    Calling explicit_none():
+    Returning none explicitly
+    none
+    conditional_none(5):
+    10
+    conditional_none(-3):
+    none
+    let x = none:
+    none
+    Value is none
+    Value is not none
+    Value is not none
+    [0;32m✓ PASS[0m
+[0;36m  → none_type.lm (opaque)[0m
+    Test:noneType
+    Callingno_return():
+    Thisfunctionreturnsnoneimplicitly
+    none
+    Callingexplicit_none():
+    Returningnoneexplicitly
+    none
+    conditional_none(5):
+    10
+    conditional_none(-3):
+    none
+    letx=none:
+    none
+    Valueisnone
+    [0;32m✓ PASS[0m
+[0;36m  → operators_complete.lm (stream)[0m
+    Test:CompleteOperators
+    LogicalOR:
+    true
+    true
+    false
+    true
+    xiseitherlessthan3orgreaterthan4
+    Greater-than-or-equal:
+    true
+    true
+    false
+    xisgreaterthanorequalto5
+    Exponentiation:
+    8
+    25
+    1
+    2**3+1=
+    9
+    power(3,4):
+    81
+    Precedencetest:2+3**2
+    11
+    Precedencetest:10/2**2
+    2.5
+    [0;32m✓ PASS[0m
+[0;36m  → operators_complete.lm (microcode)[0m
+    Test: Complete Operators
+    Logical OR:
+    true
+    true
+    false
+    true
+    x is either less than 3 or greater than 4
+    Greater-than-or-equal:
+    true
+    true
+    false
+    x is greater than or equal to 5
+    Exponentiation:
+    8
+    25
+    1
+    2 ** 3 + 1 = 
+    9
+    power(3, 4):
+    81
+    Precedence test: 2 + 3 ** 2
+    11
+    Precedence test: 10 / 2 ** 2
+    2.5
+    [0;32m✓ PASS[0m
+[0;36m  → operators_complete.lm (opaque)[0m
+    Test:CompleteOperators
+    LogicalOR:
+    true
+    true
+    false
+    true
+    xiseitherlessthan3orgreaterthan4
+    Greater-than-or-equal:
+    true
+    true
+    false
+    xisgreaterthanorequalto5
+    Exponentiation:
+    8
+    25
+    1
+    2**3+1=
+    9
+    power(3,4):
+    81
+    Precedencetest:2+3**2
+    11
+    Precedencetest:10/2**2
+    2.5
+    [0;32m✓ PASS[0m
+[0;36m  → pi.lm (stream)[0m
+    3.1415946525910106
+    [0;32m✓ PASS[0m
+[0;36m  → pi.lm (microcode)[0m
+    3.1415946525910106
+    [0;32m✓ PASS[0m
+[0;36m  → pi.lm (opaque)[0m
+    3.1415946525910106
+    [0;32m✓ PASS[0m
+[0;36m  → pipe_operator.lm (stream)[0m
+    Test:PipeOperator
+    Withoutpipe:square(add_one(double(5)))
+    121
+    Withpipe:5|>double()|>add_one()|>square()
+    121
+    10|>double():
+    20
+    3|>double():
+    12
+    [0;32m✓ PASS[0m
+[0;36m  → pipe_operator.lm (microcode)[0m
+    Test: Pipe Operator
+    Without pipe: square(add_one(double(5)))
+    121
+    With pipe: 5 |> double() |> add_one() |> square()
+    121
+    10 |> double():
+    20
+    3 |> double():
+    12
+    [0;32m✓ PASS[0m
+[0;36m  → pipe_operator.lm (opaque)[0m
+    Test:PipeOperator
+    Withoutpipe:square(add_one(double(5)))
+    121
+    Withpipe:5|>double()|>add_one()|>square()
+    121
+    10|>double():
+    20
+    3|>double():
+    12
+    [0;32m✓ PASS[0m
+[0;36m  → return_explicit.lm (stream)[0m
+    Test:ExplicitReturns
+    absolute(-5):
+    5
+    5
+    safe_divide(10,2):
+    5
+    safe_divide(10,0):
+    none
+    find_first_even(1,2,3):
+    2
+    find_first_even(2,5,7):
+    2
+    [0;32m✓ PASS[0m
+[0;36m  → return_explicit.lm (microcode)[0m
+    Test: Explicit Returns
+    absolute(-5):
+    5
+    5
+    safe_divide(10, 2):
+    5
+    safe_divide(10, 0):
+    none
+    find_first_even(1, 2, 3):
+    2
+    find_first_even(2, 5, 7):
+    2
+    [0;32m✓ PASS[0m
+[0;36m  → return_explicit.lm (opaque)[0m
+    Test:ExplicitReturns
+    absolute(-5):
+    5
+    5
+    safe_divide(10,2):
+    5
+    safe_divide(10,0):
+    none
+    find_first_even(1,2,3):
+    2
+    find_first_even(2,5,7):
+    2
+    [0;32m✓ PASS[0m
+[0;36m  → scope_if.lm (stream)[0m
+    20
+    20
+    [0;32m✓ PASS[0m
+[0;36m  → scope_if.lm (microcode)[0m
+    20
+    20
+    [0;32m✓ PASS[0m
+[0;36m  → scope_if.lm (opaque)[0m
+    20
+    20
+    [0;32m✓ PASS[0m
+[0;36m  → scope_leak.lm (stream)[0m
+    100
+    50
+    50
+    [0;32m✓ PASS[0m
+[0;36m  → scope_leak.lm (microcode)[0m
+    100
+    50
+    50
+    [0;32m✓ PASS[0m
+[0;36m  → scope_leak.lm (opaque)[0m
+    100
+    50
+    50
+    [0;32m✓ PASS[0m
+[0;36m  → scope_loop.lm (stream)[0m
+    0
+    1
+    3
+    6
+    10
+    5
+    10
+    [0;32m✓ PASS[0m
+[0;36m  → scope_loop.lm (microcode)[0m
+    0
+    1
+    3
+    6
+    10
+    5
+    10
+    [0;32m✓ PASS[0m
+[0;36m  → scope_loop.lm (opaque)[0m
+    0
+    1
+    3
+    6
+    10
+    5
+    10
+    [0;32m✓ PASS[0m
+[0;36m  → scope_nested.lm (stream)[0m
+    3
+    3
+    3
+    [0;32m✓ PASS[0m
+[0;36m  → scope_nested.lm (microcode)[0m
+    3
+    3
+    3
+    [0;32m✓ PASS[0m
+[0;36m  → scope_nested.lm (opaque)[0m
+    3
+    3
+    3
+    [0;32m✓ PASS[0m
+[0;36m  → scope_shadowing.lm (stream)[0m
+    1
+    10
+    20
+    20
+    [0;32m✓ PASS[0m
+[0;36m  → scope_shadowing.lm (microcode)[0m
+    1
+    10
+    20
+    20
+    [0;32m✓ PASS[0m
+[0;36m  → scope_shadowing.lm (opaque)[0m
+    1
+    10
+    20
+    20
+    [0;32m✓ PASS[0m
+[0;36m  → scope_update.lm (stream)[0m
+    2
+    [0;32m✓ PASS[0m
+[0;36m  → scope_update.lm (microcode)[0m
+    2
+    [0;32m✓ PASS[0m
+[0;36m  → scope_update.lm (opaque)[0m
+    2
+    [0;32m✓ PASS[0m
+[0;36m  → short_circuit.lm (stream)[0m
+    Test:Short-CircuitEvaluation
+    falseandis_even(10):
+    false
+    trueandis_even(10):
+    Checkingif
+    10
+    iseven
+    true
+    trueoris_positive(5):
+    true
+    falseoris_positive(5):
+    Checkingif
+    5
+    ispositive
+    true
+    Testingdivisionbyzeroavoidance:
+    xiszeroorresultisnotgreaterthan5
+    Valueisnotnoneandgreaterthan10
+    [0;32m✓ PASS[0m
+[0;36m  → short_circuit.lm (microcode)[0m
+    Test: Short-Circuit Evaluation
+    false and is_even(10):
+    false
+    true and is_even(10):
+    Checking if 
+    10
+     is even
+    true
+    true or is_positive(5):
+    true
+    false or is_positive(5):
+    Checking if 
+    5
+     is positive
+    true
+    Testing division by zero avoidance:
+    x is zero or result is not greater than 5
+    Value is not none and greater than 10
+    Value is none or not greater than 10
+    [0;32m✓ PASS[0m
+[0;36m  → short_circuit.lm (opaque)[0m
+    Test:Short-CircuitEvaluation
+    falseandis_even(10):
+    false
+    trueandis_even(10):
+    Checkingif
+    10
+    iseven
+    true
+    trueoris_positive(5):
+    true
+    falseoris_positive(5):
+    Checkingif
+    5
+    ispositive
+    true
+    Testingdivisionbyzeroavoidance:
+    xiszeroorresultisnotgreaterthan5
+    Valueisnotnoneandgreaterthan10
+    [0;32m✓ PASS[0m
+[0;36m  → string_basic.lm (stream)[0m
+    helloworld
+    [0;32m✓ PASS[0m
+[0;36m  → string_basic.lm (microcode)[0m
+    hello world
+    [0;32m✓ PASS[0m
+[0;36m  → string_basic.lm (opaque)[0m
+    helloworld
+    [0;32m✓ PASS[0m
+[0;36m  → string_comprehensive.lm (stream)[0m
+    alpha
+    beta
+    aisalpha
+    aandbaredifferent
+    10
+    number
+    [0;32m✓ PASS[0m
+[0;36m  → string_comprehensive.lm (microcode)[0m
+    alpha
+    beta
+    a is alpha
+    a and b are different
+    10
+    number
+    [0;32m✓ PASS[0m
+[0;36m  → string_comprehensive.lm (opaque)[0m
+    alpha
+    beta
+    aisalpha
+    aandbaredifferent
+    10
+    number
+    [0;32m✓ PASS[0m
+[0;36m  → string_equality.lm (stream)[0m
+    true
+    false
+    true
+    [0;32m✓ PASS[0m
+[0;36m  → string_equality.lm (microcode)[0m
+    true
+    false
+    true
+    [0;32m✓ PASS[0m
+[0;36m  → string_equality.lm (opaque)[0m
+    true
+    false
+    true
+    [0;32m✓ PASS[0m
+[0;36m  → string_mixed.lm (stream)[0m
+    value:
+    42
+    correct
+    [0;32m✓ PASS[0m
+[0;36m  → string_mixed.lm (microcode)[0m
+    value: 
+    42
+    correct
+    [0;32m✓ PASS[0m
+[0;36m  → string_mixed.lm (opaque)[0m
+    value:
+    42
+    correct
+    [0;32m✓ PASS[0m
+[0;36m  → type_annotations.lm (stream)[0m
+    Test:TypeAnnotationsonVariables
+    letx:number=42
+    42
+    letmessage:string=
+    Hello,World
+    letflag:boolean=true
+    true
+    letempty:none=none
+    none
+    add(5,3):
+    8
+    greet("Alice"):
+    Hello,Alice
+    process(10,5):
+    25
+    [0;32m✓ PASS[0m
+[0;36m  → type_annotations.lm (microcode)[0m
+    Test: Type Annotations on Variables
+    let x: number = 42
+    42
+    let message: string = 
+    Hello, World
+    let flag: boolean = true
+    true
+    let empty: none = none
+    none
+    add(5, 3):
+    8
+    greet("Alice"):
+    Hello, Alice
+    process(10, 5):
+    25
+    [0;32m✓ PASS[0m
+[0;36m  → type_annotations.lm (opaque)[0m
+    Test:TypeAnnotationsonVariables
+    letx:number=42
+    42
+    letmessage:string=
+    Hello,World
+    letflag:boolean=true
+    true
+    letempty:none=none
+    none
+    add(5,3):
+    8
+    greet("Alice"):
+    Hello,Alice
+    process(10,5):
+    25
+    [0;32m✓ PASS[0m
+[0;36m  → until_loop.lm (stream)[0m
+    Untilloop:post-conditionlooptest
+    0
+    1
+    2
+    3
+    4
+    
+    Untilloop:stopswhenconditionbecomestrue
+    10
+    9
+    8
+    7
+    6
+    [0;32m✓ PASS[0m
+[0;36m  → until_loop.lm (microcode)[0m
+    Until loop: post-condition loop test
+    0
+    1
+    2
+    3
+    4
+    
+    Until loop: stops when condition becomes true
+    10
+    9
+    8
+    7
+    6
+    [0;32m✓ PASS[0m
+[0;36m  → until_loop.lm (opaque)[0m
+    Untilloop:post-conditionlooptest
+    0
+    1
+    2
+    3
+    4
+    
+    Untilloop:stopswhenconditionbecomestrue
+    10
+    9
+    8
+    7
+    6
+    [0;32m✓ PASS[0m
+
+[1;33mPython Examples:[0m
+[0;36m  → demo.py (stream)[0m
+    7
+    100
+    0
+    1
+    3
+    6
+    10
+    16
+    23
+    23
+    True
+    False
+    True
+    -7
+    [0;32m✓ PASS[0m
+[0;36m  → demo.py (microcode)[0m
+    7
+    100
+    0
+    1
+    3
+    6
+    10
+    16
+    23
+    23
+    true
+    false
+    true
+    -7
+    [0;32m✓ PASS[0m
+[0;36m  → demo.py (opaque)[0m
+    7
+    100
+    0
+    1
+    3
+    6
+    10
+    16
+    23
+    23
+    True
+    False
+    True
+    -7
+    [0;32m✓ PASS[0m
+[0;36m  → e.py (stream)[0m
+    2.7182818284590455
+    7182818284.590454
+    [0;32m✓ PASS[0m
+[0;36m  → e.py (microcode)[0m
+    2.7182818284590455
+    7182818284
+    [0;32m✓ PASS[0m
+[0;36m  → e.py (opaque)[0m
+    2.7182818284590455
+    7182818284.590454
+    [0;32m✓ PASS[0m
+[0;36m  → fibonacci.py (stream)[0m
+    0
+    1
+    1
+    2
+    3
+    5
+    8
+    13
+    21
+    34
+    [0;32m✓ PASS[0m
+[0;36m  → fibonacci.py (microcode)[0m
+    0
+    1
+    1
+    2
+    3
+    5
+    8
+    13
+    21
+    34
+    [0;32m✓ PASS[0m
+[0;36m  → fibonacci.py (opaque)[0m
+    0
+    1
+    1
+    2
+    3
+    5
+    8
+    13
+    21
+    34
+    [0;32m✓ PASS[0m
+[0;36m  → loop.py (stream)[0m
+    0
+    1
+    2
+    3
+    4
+    5
+    6
+    7
+    8
+    9
+    [0;32m✓ PASS[0m
+[0;36m  → loop.py (microcode)[0m
+    0
+    1
+    2
+    3
+    4
+    5
+    6
+    7
+    8
+    9
+    [0;32m✓ PASS[0m
+[0;36m  → loop.py (opaque)[0m
+    0
+    1
+    2
+    3
+    4
+    5
+    6
+    7
+    8
+    9
+    [0;32m✓ PASS[0m
+[0;36m  → pi.py (stream)[0m
+    3.1415946525910106
+    [0;32m✓ PASS[0m
+[0;36m  → pi.py (microcode)[0m
+    3.1415946525910106
+    [0;32m✓ PASS[0m
+[0;36m  → pi.py (opaque)[0m
+    3.1415946525910106
+    [0;32m✓ PASS[0m
+
+[1;33mRust Examples:[0m
+[0;36m  → demo.rs (stream)[0m
+    7
+    100
+    0
+    1
+    3
+    6
+    10
+    16
+    23
+    23
+    true
+    false
+    true
+    -7
+    [0;32m✓ PASS[0m
+[0;36m  → demo.rs (microcode)[0m
+    7
+    100
+    0
+    1
+    3
+    6
+    10
+    16
+    23
+    23
+    true
+    false
+    true
+    -7
+    [0;32m✓ PASS[0m
+[0;36m  → demo.rs (opaque)[0m
+    7
+    100
+    0
+    1
+    3
+    6
+    10
+    16
+    23
+    23
+    true
+    false
+    true
+    -7
+    [0;32m✓ PASS[0m
+[0;36m  → e.rs (stream)[0m
+    2.7182818284590455
+    7182818284.590454
+    [0;32m✓ PASS[0m
+[0;36m  → e.rs (microcode)[0m
+    2.7182818284590455
+    7182818284
+    [0;32m✓ PASS[0m
+[0;36m  → e.rs (opaque)[0m
+    2.7182818284590455
+    7182818284.590454
+    [0;32m✓ PASS[0m
+[0;36m  → fibonacci.rs (stream)[0m
+    0
+    1
+    1
+    2
+    3
+    5
+    8
+    13
+    21
+    34
+    [0;32m✓ PASS[0m
+[0;36m  → fibonacci.rs (microcode)[0m
+    0
+    1
+    1
+    2
+    3
+    5
+    8
+    13
+    21
+    34
+    [0;32m✓ PASS[0m
+[0;36m  → fibonacci.rs (opaque)[0m
+    0
+    1
+    1
+    2
+    3
+    5
+    8
+    13
+    21
+    34
+    [0;32m✓ PASS[0m
+[0;36m  → loop.rs (stream)[0m
+    0
+    1
+    2
+    3
+    4
+    5
+    6
+    7
+    8
+    9
+    [0;32m✓ PASS[0m
+[0;36m  → loop.rs (microcode)[0m
+    0
+    1
+    2
+    3
+    4
+    5
+    6
+    7
+    8
+    9
+    [0;32m✓ PASS[0m
+[0;36m  → loop.rs (opaque)[0m
+    0
+    1
+    2
+    3
+    4
+    5
+    6
+    7
+    8
+    9
+    [0;32m✓ PASS[0m
+[0;36m  → pi.rs (stream)[0m
+    3.1415946525910106
+    [0;32m✓ PASS[0m
+[0;36m  → pi.rs (microcode)[0m
+    3.1415946525910106
+    [0;32m✓ PASS[0m
+[0;36m  → pi.rs (opaque)[0m
+    3.1415946525910106
+    [0;32m✓ PASS[0m
+
+==========================================
+  Test Summary by Language
+==========================================
+
+[0;34mLumen:[0m
+  Passed:  [0;32m114[0m | Failed: [0;31m0[0m | Timeout: [0;31m0[0m | Skipped: [1;33m0[0m
+
+[0;34mPython:[0m
+  Passed:  [0;32m15[0m | Failed: [0;31m0[0m | Timeout: [0;31m0[0m | Skipped: [1;33m0[0m
+
+[0;34mRust:[0m
+  Passed:  [0;32m15[0m | Failed: [0;31m0[0m | Timeout: [0;31m0[0m | Skipped: [1;33m0[0m
+
+==========================================
+  Overall Summary
+==========================================
+Total tests:   144
+Passed:        [0;32m144[0m
+Failed:        [0;31m0[0m (includes 0 timeouts)
+Skipped:       [1;33m0[0m
+
+[0;32mAll tests passed![0m
