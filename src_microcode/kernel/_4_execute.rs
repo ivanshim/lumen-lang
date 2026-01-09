@@ -94,6 +94,12 @@ pub fn execute(
                     }
                     Ok((Value::Null, ControlFlow::Normal))
                 }
+                "write" => {
+                    for val in &arg_vals {
+                        print!("{}", val);
+                    }
+                    Ok((Value::Null, ControlFlow::Normal))
+                }
                 "extern" => {
                     // extern(function_name, arg1, arg2, ...)
                     if arg_vals.is_empty() {

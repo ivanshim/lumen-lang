@@ -32,6 +32,7 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::recognize("break"),
         TokenDefinition::recognize("continue"),
         TokenDefinition::recognize("print"),
+        TokenDefinition::recognize("write"),
         TokenDefinition::recognize("true"),
         TokenDefinition::recognize("false"),
     ];
@@ -52,6 +53,7 @@ pub fn register_all(registry: &mut Registry) {
 
     // Statement features
     statements::print::register(registry);          // print! statement
+    statements::write::register(registry);          // write! statement (print without newline)
     statements::let_binding::register(registry);    // let x = expr; (must be before assignment)
     statements::assignment::register(registry);     // var = expr;
     statements::if_else::register(registry);        // if/else statements

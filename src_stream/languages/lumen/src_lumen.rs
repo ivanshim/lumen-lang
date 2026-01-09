@@ -84,6 +84,7 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::keyword("return"),
         TokenDefinition::keyword("fn"),
         TokenDefinition::keyword("print"),
+        TokenDefinition::keyword("write"),
         TokenDefinition::keyword("none"),
         // "extern" is NOT registered - has its own expression handler
         // "true" and "false" are NOT registered - have their own expression handlers
@@ -111,6 +112,7 @@ pub fn register_all(registry: &mut Registry) {
     // Registration order matters: specific keyword handlers must come before assignment
     // which matches any identifier
     statements::print::register(registry);         // print() statement
+    statements::write::register(registry);         // write() statement (print without newline)
     statements::let_mut_binding::register(registry); // let mut binding
     statements::let_binding::register(registry);   // let binding
     statements::if_else::register(registry);       // if/else statements
