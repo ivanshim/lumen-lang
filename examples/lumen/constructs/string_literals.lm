@@ -1,0 +1,46 @@
+single1 = 'hello'
+single2 = 'world'
+print(single1)
+print(single2)
+
+double1 = "hello"
+double2 = "world"
+print(double1)
+print(double2)
+
+print(single1 == double1)
+print(single2 == double2)
+
+escaped_single = 'can\'t'
+print(escaped_single)
+
+literal_n = 'text\nmore'
+print(literal_n)
+
+literal_t = 'text\tmore'
+print(literal_t)
+
+escaped_double = "can't"
+print(escaped_double)
+
+newline_test = "first\nsecond"
+print(newline_test)
+
+tab_test = "col1\tcol2"
+print(tab_test)
+
+escaped_quote = "He said \"hello\""
+print(escaped_quote)
+
+escaped_backslash = "path\\to\\file"
+print(escaped_backslash)
+
+no_interp = "${name}"
+print(no_interp)
+
+no_interp2 = "{count}"
+print(no_interp2)
+
+x = "10"
+no_interp3 = "The answer is ${x}"
+print(no_interp3)

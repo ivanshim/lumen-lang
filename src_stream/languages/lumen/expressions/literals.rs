@@ -165,20 +165,93 @@ impl ExprPrefix for BoolLiteralPrefix {
 #[derive(Debug)]
 struct StringLiteral {
     value: String,
+    is_single_quoted: bool,
 }
 
 impl ExprNode for StringLiteral {
     fn eval(&self, _env: &mut Env) -> LumenResult<Value> {
-        // Remove quotes from the tokenized string: "hello" -> hello
+        // Remove quotes from the tokenized string: "hello" -> hello or 'hello' -> hello
         let content = &self.value[1..self.value.len() - 1];
-        // Process escape sequences
-        let unescaped = content
-            .replace("\\\"", "\"")  // Escaped quote
-            .replace("\\\\", "\\")  // Escaped backslash
-            .replace("\\n", "\n")   // Newline
-            .replace("\\t", "\t");  // Tab
+
+        let unescaped = if self.is_single_quoted {
+            // Single-quoted strings: only process \' and \\ escapes
+            process_single_quote_escapes(content)
+        } else {
+            // Double-quoted strings: process all standard escapes
+            process_double_quote_escapes(content)
+        };
         Ok(Box::new(LumenString::new(unescaped)))
     }
+}
+
+/// Process escape sequences in single-quoted strings: \' and \\
+fn process_single_quote_escapes(s: &str) -> String {
+    let mut result = String::new();
+    let mut chars = s.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            if let Some(&next) = chars.peek() {
+                match next {
+                    '\'' => {
+                        chars.next();  // consume the '
+                        result.push('\'');
+                    }
+                    '\\' => {
+                        chars.next();  // consume the \
+                        result.push('\\');
+                    }
+                    _ => {
+                        result.push(ch);  // backslash followed by other char - keep as-is
+                    }
+                }
+            } else {
+                result.push(ch);  // trailing backslash
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+/// Process escape sequences in double-quoted strings: \", \\, \n, \t
+fn process_double_quote_escapes(s: &str) -> String {
+    let mut result = String::new();
+    let mut chars = s.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            if let Some(&next) = chars.peek() {
+                match next {
+                    '"' => {
+                        chars.next();  // consume the "
+                        result.push('"');
+                    }
+                    '\\' => {
+                        chars.next();  // consume the \
+                        result.push('\\');
+                    }
+                    'n' => {
+                        chars.next();  // consume the n
+                        result.push('\n');
+                    }
+                    't' => {
+                        chars.next();  // consume the t
+                        result.push('\t');
+                    }
+                    _ => {
+                        result.push(ch);  // backslash followed by other char - keep as-is
+                    }
+                }
+            } else {
+                result.push(ch);  // trailing backslash
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
 }
 
 pub struct StringLiteralPrefix;
@@ -223,7 +296,55 @@ impl ExprPrefix for StringLiteralPrefix {
             }
         }
 
-        Ok(Box::new(StringLiteral { value }))
+        Ok(Box::new(StringLiteral { value, is_single_quoted: false }))
+    }
+}
+
+// Single-quoted string literals
+
+pub struct SingleQuotedStringPrefix;
+
+impl ExprPrefix for SingleQuotedStringPrefix {
+    fn matches(&self, parser: &Parser) -> bool {
+        // Check if lexeme starts with a single quote
+        parser.peek().lexeme == "'"
+    }
+
+    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
+        // Consume opening quote
+        let mut value = parser.advance().lexeme;
+
+        // Since the kernel lexer is agnostic, it emits each character separately.
+        // Assemble the full string by consuming characters until closing quote (unescaped).
+        loop {
+            let ch = parser.peek().lexeme.clone();
+
+            // Check for backslash (escape character)
+            if ch == "\\" {
+                value.push_str(&parser.advance().lexeme);
+                // Consume the next character as escaped
+                if parser.i < parser.toks.len() {
+                    value.push_str(&parser.advance().lexeme);
+                }
+                continue;
+            }
+
+            // Check for closing quote
+            if ch == "'" {
+                value.push_str(&parser.advance().lexeme);
+                break;
+            }
+
+            // Add character to string (including whitespace, newlines, etc.)
+            value.push_str(&parser.advance().lexeme);
+
+            // Protect against unterminated strings
+            if parser.i >= parser.toks.len() {
+                return Err("Unterminated string literal".into());
+            }
+        }
+
+        Ok(Box::new(StringLiteral { value, is_single_quoted: true }))
     }
 }
 
@@ -258,7 +379,7 @@ impl ExprPrefix for NoneLiteralPrefix {
 /// Declare what patterns this module recognizes
 pub fn patterns() -> PatternSet {
     PatternSet::new()
-        .with_literals(vec!["true", "false", "none", "\""])
+        .with_literals(vec!["true", "false", "none", "\"", "'"])
         .with_char_classes(vec!["digit", "quote"])
 }
 
@@ -273,4 +394,5 @@ pub fn register(reg: &mut Registry) {
     reg.register_prefix(Box::new(BoolLiteralPrefix));
     reg.register_prefix(Box::new(NoneLiteralPrefix));
     reg.register_prefix(Box::new(StringLiteralPrefix));
+    reg.register_prefix(Box::new(SingleQuotedStringPrefix));
 }
