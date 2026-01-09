@@ -358,6 +358,14 @@ fn eval_infix_op(op: &str, left: &RuntimeValue, right: &RuntimeValue) -> Result<
                     Ok(Arc::new(l % r))
                 }
             }
+            "**" => {
+                // Exponentiation
+                if *r < 0 {
+                    Err("Negative exponent not supported for integer exponentiation".to_string())
+                } else {
+                    Ok(Arc::new((*l as i64).pow(*r as u32)))
+                }
+            }
             "==" => Ok(Arc::new(l == r)),
             "!=" => Ok(Arc::new(l != r)),
             "<" => Ok(Arc::new(l < r)),

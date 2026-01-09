@@ -199,6 +199,19 @@ pub fn lex(source: &str, keywords: &[&str]) -> Vec<Token> {
                 chars.next();
                 col += 1;
             }
+            '*' if chars.clone().nth(1) == Some('*') => {
+                // Exponentiation operator
+                chars.next();
+                col += 1;
+                chars.next();
+                col += 1;
+                tokens.push(Token {
+                    token_type: "operator".to_string(),
+                    lexeme: "**".to_string(),
+                    line,
+                    col: col - 2,
+                });
+            }
             '+' | '-' | '*' | '/' | '%' | '>' | '<' => {
                 let op = ch.to_string();
                 tokens.push(Token {

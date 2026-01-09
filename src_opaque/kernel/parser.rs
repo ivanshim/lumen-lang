@@ -620,14 +620,14 @@ fn parse_additive(parser: &mut Parser) -> Result<ExprNode, String> {
 
 /// Parse multiplication, division, modulo
 fn parse_multiplicative(parser: &mut Parser) -> Result<ExprNode, String> {
-    let mut left = parse_prefix(parser)?;
+    let mut left = parse_exponential(parser)?;
 
     loop {
         if let Some(token) = parser.peek() {
             match token.token_type.as_str() {
                 "operator" if matches!(token.lexeme.as_str(), "*" | "/" | "%") => {
                     let op_token = parser.next().unwrap();
-                    let right = parse_prefix(parser)?;
+                    let right = parse_exponential(parser)?;
                     left = ExprNode::Infix {
                         left: Box::new(left),
                         operator: op_token.lexeme,
@@ -639,6 +639,27 @@ fn parse_multiplicative(parser: &mut Parser) -> Result<ExprNode, String> {
             }
         } else {
             break;
+        }
+    }
+
+    Ok(left)
+}
+
+/// Parse exponentiation (right-associative)
+fn parse_exponential(parser: &mut Parser) -> Result<ExprNode, String> {
+    let mut left = parse_prefix(parser)?;
+
+    if let Some(token) = parser.peek() {
+        if token.token_type == "operator" && token.lexeme == "**" {
+            let op_token = parser.next().unwrap();
+            // Right-associative: recursively call parse_exponential for the right side
+            let right = parse_exponential(parser)?;
+            left = ExprNode::Infix {
+                left: Box::new(left),
+                operator: op_token.lexeme,
+                right: Box::new(right),
+                analysis: (),
+            };
         }
     }
 
