@@ -121,9 +121,9 @@ pub fn parse_program(mut parser: Parser) -> Result<Program, String> {
     let mut statements = Vec::new();
 
     while !parser.is_at_end() {
-        // Skip newlines and markers between statements
+        // Skip newlines, markers, and semicolons between statements
         while parser.consume("newline") || parser.consume("marker_indent_start")
-            || parser.consume("marker_indent_end") {
+            || parser.consume("marker_indent_end") || parser.consume("semicolon") {
         }
 
         if parser.is_at_end() {
@@ -131,7 +131,11 @@ pub fn parse_program(mut parser: Parser) -> Result<Program, String> {
         }
 
         match parse_statement(&mut parser) {
-            Ok(stmt) => statements.push(stmt),
+            Ok(stmt) => {
+                statements.push(stmt);
+                // Consume optional semicolon after statement
+                parser.consume("semicolon");
+            }
             Err(e) => {
                 // For now, report the error but try to continue
                 // In production, you might want to collect all errors
@@ -230,32 +234,55 @@ fn parse_if_statement(parser: &mut Parser) -> Result<StmtNode, String> {
     parser.expect("keyword_if")?;
     let condition = parse_expression(parser)?;
 
-    // Consume newline and markers if present
+    // Consume optional brace or newline/markers
+    let uses_braces = parser.consume("lbrace");
     while parser.consume("newline") || parser.consume("marker_indent_start") {}
 
     let mut then_block = Vec::new();
-    while !parser.is_at_end() && !parser.check("keyword_end") && !parser.check("keyword_else")
-        && !parser.check("marker_indent_end") {
+    let end_markers = if uses_braces {
+        vec!["rbrace", "keyword_else", "keyword_end"]
+    } else {
+        vec!["marker_indent_end", "keyword_else", "keyword_end"]
+    };
+
+    while !parser.is_at_end() && !end_markers.iter().any(|&m| parser.check(m)) {
         if parser.consume("newline") || parser.consume("marker_indent_start")
-            || parser.consume("marker_indent_end") {
+            || parser.consume("marker_indent_end") || parser.consume("semicolon") {
             continue;
         }
         then_block.push(parse_statement(parser)?);
+        parser.consume("semicolon");
+    }
+
+    if uses_braces {
+        parser.consume("rbrace");
     }
 
     let else_block = if parser.check("keyword_else") {
         parser.next();
+        let else_uses_braces = parser.consume("lbrace");
         while parser.consume("newline") || parser.consume("marker_indent_start") {}
 
         let mut block = Vec::new();
-        while !parser.is_at_end() && !parser.check("keyword_end")
-            && !parser.check("marker_indent_end") {
+        let else_end_markers = if else_uses_braces {
+            vec!["rbrace", "keyword_end"]
+        } else {
+            vec!["marker_indent_end", "keyword_end"]
+        };
+
+        while !parser.is_at_end() && !else_end_markers.iter().any(|&m| parser.check(m)) {
             if parser.consume("newline") || parser.consume("marker_indent_start")
-                || parser.consume("marker_indent_end") {
+                || parser.consume("marker_indent_end") || parser.consume("semicolon") {
                 continue;
             }
             block.push(parse_statement(parser)?);
+            parser.consume("semicolon");
         }
+
+        if else_uses_braces {
+            parser.consume("rbrace");
+        }
+
         Some(block)
     } else {
         None
@@ -277,19 +304,28 @@ fn parse_while_statement(parser: &mut Parser) -> Result<StmtNode, String> {
     parser.expect("keyword_while")?;
     let condition = parse_expression(parser)?;
 
+    let uses_braces = parser.consume("lbrace");
     while parser.consume("newline") || parser.consume("marker_indent_start") {}
 
     let mut body = Vec::new();
-    while !parser.is_at_end() && !parser.check("keyword_end")
-        && !parser.check("marker_indent_end") {
+    let end_markers = if uses_braces {
+        vec!["rbrace", "keyword_end"]
+    } else {
+        vec!["marker_indent_end", "keyword_end"]
+    };
+
+    while !parser.is_at_end() && !end_markers.iter().any(|&m| parser.check(m)) {
         if parser.consume("newline") || parser.consume("marker_indent_start")
-            || parser.consume("marker_indent_end") {
+            || parser.consume("marker_indent_end") || parser.consume("semicolon") {
             continue;
         }
         body.push(parse_statement(parser)?);
+        parser.consume("semicolon");
     }
 
-    if parser.check("keyword_end") {
+    if uses_braces {
+        parser.consume("rbrace");
+    } else if parser.check("keyword_end") {
         parser.next();
     }
 
@@ -512,7 +548,7 @@ fn parse_assignment(parser: &mut Parser) -> Result<ExprNode, String> {
 fn parse_logical_or(parser: &mut Parser) -> Result<ExprNode, String> {
     let mut left = parse_logical_and(parser)?;
 
-    while parser.check_lexeme("or") {
+    while parser.check_lexeme("or") || parser.check_lexeme("||") {
         let op_token = parser.next().unwrap();
         let right = parse_logical_and(parser)?;
         left = ExprNode::Infix {
@@ -530,7 +566,7 @@ fn parse_logical_or(parser: &mut Parser) -> Result<ExprNode, String> {
 fn parse_logical_and(parser: &mut Parser) -> Result<ExprNode, String> {
     let mut left = parse_range(parser)?;
 
-    while parser.check_lexeme("and") {
+    while parser.check_lexeme("and") || parser.check_lexeme("&&") {
         let op_token = parser.next().unwrap();
         let right = parse_range(parser)?;
         left = ExprNode::Infix {
