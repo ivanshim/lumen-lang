@@ -505,9 +505,15 @@ impl<'a> Parser<'a> {
             return Ok(Instruction::literal(Value::Number(num)));
         }
 
-        // Strings
+        // Strings - double-quoted
         if lexeme == "\"" {
-            let string_val = self.consume_string()?;
+            let string_val = self.consume_string('"')?;
+            return Ok(Instruction::literal(Value::String(string_val)));
+        }
+
+        // Strings - single-quoted
+        if lexeme == "'" {
+            let string_val = self.consume_string('\'')?;
             return Ok(Instruction::literal(Value::String(string_val)));
         }
 
@@ -635,36 +641,59 @@ impl<'a> Parser<'a> {
     }
 
     /// Consume a string (handling escape sequences)
-    fn consume_string(&mut self) -> Result<String, String> {
+    /// quote_char: '"' for double-quoted strings, '\'' for single-quoted strings
+    fn consume_string(&mut self, quote_char: char) -> Result<String, String> {
+        let quote_str = quote_char.to_string();
         self.advance(); // consume opening quote
         let mut string_val = String::new();
 
-        while self.peek().lexeme != "\"" && !self.is_at_end() {
+        while self.peek().lexeme != quote_str && !self.is_at_end() {
             if self.peek().lexeme == "\\" {
                 self.advance();
                 let token = self.peek();
                 let next = token.lexeme.as_str();
-                match next {
-                    "\"" => {
-                        string_val.push('"');
-                        self.advance();
+
+                if quote_char == '\'' {
+                    // Single-quoted strings: only \' and \\ escapes
+                    match next {
+                        "'" => {
+                            string_val.push('\'');
+                            self.advance();
+                        }
+                        "\\" => {
+                            string_val.push('\\');
+                            self.advance();
+                        }
+                        _ => {
+                            string_val.push('\\');
+                            string_val.push_str(next);
+                            self.advance();
+                        }
                     }
-                    "\\" => {
-                        string_val.push('\\');
-                        self.advance();
-                    }
-                    "n" => {
-                        string_val.push('\n');
-                        self.advance();
-                    }
-                    "t" => {
-                        string_val.push('\t');
-                        self.advance();
-                    }
-                    _ => {
-                        string_val.push('\\');
-                        string_val.push_str(next);
-                        self.advance();
+                } else {
+                    // Double-quoted strings: \", \\, \n, \t escapes
+                    match next {
+                        "\"" => {
+                            string_val.push('"');
+                            self.advance();
+                        }
+                        "\\" => {
+                            string_val.push('\\');
+                            self.advance();
+                        }
+                        "n" => {
+                            string_val.push('\n');
+                            self.advance();
+                        }
+                        "t" => {
+                            string_val.push('\t');
+                            self.advance();
+                        }
+                        _ => {
+                            string_val.push('\\');
+                            string_val.push_str(next);
+                            self.advance();
+                        }
                     }
                 }
             } else {
@@ -674,8 +703,8 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if self.peek().lexeme != "\"" {
-            return Err("Unterminated string".to_string());
+        if self.peek().lexeme != quote_str {
+            return Err(format!("Unterminated {} string", quote_char));
         }
         self.advance();
 

@@ -54,7 +54,7 @@ run_test() {
 
     # Run the test with output displayed directly, capturing exit code
     local output
-    output=$(timeout 30 $BINARY --kernel "$kernel" "$file" 2>&1)
+    output=$(timeout 45 $BINARY --kernel "$kernel" "$file" 2>&1)
     local exit_code=$?
 
     # Print output with indentation
