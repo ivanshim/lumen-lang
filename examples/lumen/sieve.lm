@@ -1,0 +1,22 @@
+print("Sieve of Eratosthenes - Finding all primes up to 1000")
+print("")
+
+n = 1000
+count = 0
+
+i = 2
+while i <= n
+    is_prime = true
+    j = 2
+    while j * j <= i
+        if i % j == 0
+            is_prime = false
+        j = j + 1
+
+    if is_prime
+        count = count + 1
+
+    i = i + 1
+
+print("Total primes found up to 1000: ")
+print(count)
