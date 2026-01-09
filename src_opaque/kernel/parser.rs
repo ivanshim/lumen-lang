@@ -3,6 +3,7 @@
 
 use crate::kernel::ast::{ExprNode, StmtNode, Program};
 use crate::kernel::lexer::Token;
+use crate::kernel::handlers::HandlerRegistry;
 use std::collections::VecDeque;
 
 /// Parser token with position information
@@ -116,8 +117,8 @@ impl Parser {
     }
 }
 
-/// Parse a program from tokens
-pub fn parse_program(mut parser: Parser) -> Result<Program, String> {
+/// Parse a program from tokens using registered statement handlers
+pub fn parse_program(mut parser: Parser, handlers: &HandlerRegistry) -> Result<Program, String> {
     let mut statements = Vec::new();
 
     while !parser.is_at_end() {
@@ -130,7 +131,7 @@ pub fn parse_program(mut parser: Parser) -> Result<Program, String> {
             break;
         }
 
-        match parse_statement(&mut parser) {
+        match parse_statement(&mut parser, handlers) {
             Ok(stmt) => {
                 statements.push(stmt);
                 // Consume optional semicolon after statement
@@ -138,7 +139,6 @@ pub fn parse_program(mut parser: Parser) -> Result<Program, String> {
             }
             Err(e) => {
                 // For now, report the error but try to continue
-                // In production, you might want to collect all errors
                 eprintln!("Parse error: {}", e);
                 parser.synchronize();
             }
@@ -148,32 +148,21 @@ pub fn parse_program(mut parser: Parser) -> Result<Program, String> {
     Ok(Program { statements })
 }
 
-/// Parse a single statement
-pub fn parse_statement(parser: &mut Parser) -> Result<StmtNode, String> {
+/// Parse a single statement using registered handlers
+/// Kernel delegates to language-specific handlers; if none match, falls back to expression statement
+pub fn parse_statement(parser: &mut Parser, handlers: &HandlerRegistry) -> Result<StmtNode, String> {
     if parser.is_at_end() {
         return Err("Unexpected end of input".to_string());
     }
 
+    // Try language-specific handlers first
+    if let Some(result) = handlers.parse_statement(parser) {
+        return result;
+    }
+
+    // Fall back to generic statement types (assignment and expression)
     if let Some(token) = parser.peek() {
         match token.token_type.as_str() {
-            // Keywords that start statements
-            "keyword_if" => parse_if_statement(parser),
-            "keyword_while" => parse_while_statement(parser),
-            "keyword_until" => parse_until_statement(parser),
-            "keyword_for" => parse_for_statement(parser),
-            "keyword_fn" => parse_function_definition(parser),
-            "keyword_let" => parse_let_statement(parser),
-            "keyword_let_mut" => parse_let_mut_statement(parser),
-            "keyword_print" => parse_print_statement(parser),
-            "keyword_return" => parse_return_statement(parser),
-            "keyword_break" => {
-                parser.next();
-                Ok(StmtNode::Break)
-            }
-            "keyword_continue" => {
-                parser.next();
-                Ok(StmtNode::Continue)
-            }
             // Check for assignment (identifier followed by assign operator)
             "identifier" => {
                 // Look ahead to check for assignment, skipping whitespace and markers
@@ -226,309 +215,6 @@ pub fn parse_statement(parser: &mut Parser) -> Result<StmtNode, String> {
     } else {
         Err("Unexpected end of input".to_string())
     }
-}
-
-// Statement parsing helpers (stubs - will be populated with actual Lumen semantics)
-
-fn parse_if_statement(parser: &mut Parser) -> Result<StmtNode, String> {
-    parser.expect("keyword_if")?;
-    let condition = parse_expression(parser)?;
-
-    // Consume optional brace or newline/markers
-    let uses_braces = parser.consume("lbrace");
-    while parser.consume("newline") || parser.consume("marker_indent_start") {}
-
-    let mut then_block = Vec::new();
-    let end_markers = if uses_braces {
-        vec!["rbrace", "keyword_else", "keyword_end"]
-    } else {
-        vec!["marker_indent_end", "keyword_else", "keyword_end"]
-    };
-
-    while !parser.is_at_end() && !end_markers.iter().any(|&m| parser.check(m)) {
-        if parser.consume("newline") || parser.consume("marker_indent_start")
-            || parser.consume("marker_indent_end") || parser.consume("semicolon") {
-            continue;
-        }
-        then_block.push(parse_statement(parser)?);
-        parser.consume("semicolon");
-    }
-
-    if uses_braces {
-        parser.consume("rbrace");
-    }
-
-    let else_block = if parser.check("keyword_else") {
-        parser.next();
-        let else_uses_braces = parser.consume("lbrace");
-        while parser.consume("newline") || parser.consume("marker_indent_start") {}
-
-        let mut block = Vec::new();
-        let else_end_markers = if else_uses_braces {
-            vec!["rbrace", "keyword_end"]
-        } else {
-            vec!["marker_indent_end", "keyword_end"]
-        };
-
-        while !parser.is_at_end() && !else_end_markers.iter().any(|&m| parser.check(m)) {
-            if parser.consume("newline") || parser.consume("marker_indent_start")
-                || parser.consume("marker_indent_end") || parser.consume("semicolon") {
-                continue;
-            }
-            block.push(parse_statement(parser)?);
-            parser.consume("semicolon");
-        }
-
-        if else_uses_braces {
-            parser.consume("rbrace");
-        }
-
-        Some(block)
-    } else {
-        None
-    };
-
-    if parser.check("keyword_end") {
-        parser.next();
-    }
-
-    Ok(StmtNode::If {
-        condition,
-        then_block,
-        else_block,
-        analysis: (),
-    })
-}
-
-fn parse_while_statement(parser: &mut Parser) -> Result<StmtNode, String> {
-    parser.expect("keyword_while")?;
-    let condition = parse_expression(parser)?;
-
-    let uses_braces = parser.consume("lbrace");
-    while parser.consume("newline") || parser.consume("marker_indent_start") {}
-
-    let mut body = Vec::new();
-    let end_markers = if uses_braces {
-        vec!["rbrace", "keyword_end"]
-    } else {
-        vec!["marker_indent_end", "keyword_end"]
-    };
-
-    while !parser.is_at_end() && !end_markers.iter().any(|&m| parser.check(m)) {
-        if parser.consume("newline") || parser.consume("marker_indent_start")
-            || parser.consume("marker_indent_end") || parser.consume("semicolon") {
-            continue;
-        }
-        body.push(parse_statement(parser)?);
-        parser.consume("semicolon");
-    }
-
-    if uses_braces {
-        parser.consume("rbrace");
-    } else if parser.check("keyword_end") {
-        parser.next();
-    }
-
-    Ok(StmtNode::While {
-        condition,
-        body,
-        analysis: (),
-    })
-}
-
-fn parse_until_statement(parser: &mut Parser) -> Result<StmtNode, String> {
-    parser.expect("keyword_until")?;
-    let condition = parse_expression(parser)?;
-
-    while parser.consume("newline") || parser.consume("marker_indent_start") {}
-
-    let mut body = Vec::new();
-    while !parser.is_at_end() && !parser.check("keyword_end")
-        && !parser.check("marker_indent_end") {
-        if parser.consume("newline") || parser.consume("marker_indent_start")
-            || parser.consume("marker_indent_end") {
-            continue;
-        }
-        body.push(parse_statement(parser)?);
-    }
-
-    if parser.check("keyword_end") {
-        parser.next();
-    }
-
-    Ok(StmtNode::Until {
-        condition,
-        body,
-        analysis: (),
-    })
-}
-
-fn parse_for_statement(parser: &mut Parser) -> Result<StmtNode, String> {
-    parser.expect("keyword_for")?;
-    let variable_token = parser.expect("identifier")?;
-    let variable = variable_token.lexeme;
-
-    parser.expect("keyword_in")?;
-    let iterator = parse_expression(parser)?;
-
-    while parser.consume("newline") || parser.consume("marker_indent_start") {}
-
-    let mut body = Vec::new();
-    while !parser.is_at_end() && !parser.check("keyword_end")
-        && !parser.check("marker_indent_end") {
-        if parser.consume("newline") || parser.consume("marker_indent_start")
-            || parser.consume("marker_indent_end") {
-            continue;
-        }
-        body.push(parse_statement(parser)?);
-    }
-
-    if parser.check("keyword_end") {
-        parser.next();
-    }
-
-    Ok(StmtNode::For {
-        variable,
-        iterator,
-        body,
-        analysis: (),
-    })
-}
-
-fn parse_function_definition(parser: &mut Parser) -> Result<StmtNode, String> {
-    parser.expect("keyword_fn")?;
-    let name_token = parser.expect("identifier")?;
-    let name = name_token.lexeme;
-
-    parser.expect("lparen")?;
-    let mut params = Vec::new();
-
-    while !parser.check("rparen") {
-        let param = parser.expect("identifier")?;
-        params.push(param.lexeme);
-
-        if parser.check("comma") {
-            parser.next();
-        } else if !parser.check("rparen") {
-            return Err("Expected comma or )".to_string());
-        }
-    }
-
-    parser.expect("rparen")?;
-
-    while parser.consume("newline") || parser.consume("marker_indent_start") {}
-
-    let mut body = Vec::new();
-    while !parser.is_at_end() && !parser.check("keyword_end")
-        && !parser.check("marker_indent_end") {
-        if parser.consume("newline") || parser.consume("marker_indent_start")
-            || parser.consume("marker_indent_end") {
-            continue;
-        }
-        body.push(parse_statement(parser)?);
-    }
-
-    if parser.check("keyword_end") {
-        parser.next();
-    }
-
-    Ok(StmtNode::FnDef {
-        name,
-        params,
-        body,
-        analysis: (),
-    })
-}
-
-fn parse_let_statement(parser: &mut Parser) -> Result<StmtNode, String> {
-    parser.expect("keyword_let")?;
-
-    // Check if this is "let mut" or just "let"
-    let is_mut = parser.check("keyword_mut");
-    if is_mut {
-        parser.next(); // consume "mut"
-    }
-
-    let name_token = parser.expect("identifier")?;
-    let name = name_token.lexeme;
-
-    let value = if parser.consume("assign") {
-        Some(parse_expression(parser)?)
-    } else {
-        None
-    };
-
-    if is_mut {
-        Ok(StmtNode::LetMut {
-            name,
-            value,
-            analysis: (),
-        })
-    } else {
-        Ok(StmtNode::Let {
-            name,
-            value,
-            analysis: (),
-        })
-    }
-}
-
-fn parse_let_mut_statement(parser: &mut Parser) -> Result<StmtNode, String> {
-    // This is called when we see "keyword_let" and the next token is "keyword_mut"
-    // But with the updated parse_let_statement, we don't need this separately
-    // However, keep it for compatibility if needed
-    parse_let_statement(parser)
-}
-
-fn parse_print_statement(parser: &mut Parser) -> Result<StmtNode, String> {
-    parser.expect("keyword_print")?;
-
-    let mut arguments = Vec::new();
-
-    if parser.consume("lparen") {
-        while !parser.check("rparen") {
-            arguments.push(parse_expression(parser)?);
-
-            if parser.check("comma") {
-                parser.next();
-            } else if !parser.check("rparen") {
-                break;
-            }
-        }
-        parser.expect("rparen")?;
-    } else {
-        // Print with space-separated args
-        while !parser.is_at_end() && !parser.check("newline")
-            && !parser.check("marker_indent_end") && !parser.check("keyword_end") {
-            arguments.push(parse_expression(parser)?);
-            if parser.check("comma") {
-                parser.next();
-            } else {
-                break;
-            }
-        }
-    }
-
-    Ok(StmtNode::Print {
-        arguments,
-        analysis: (),
-    })
-}
-
-fn parse_return_statement(parser: &mut Parser) -> Result<StmtNode, String> {
-    parser.expect("keyword_return")?;
-
-    let value = if !parser.is_at_end() && !parser.check("newline")
-        && !parser.check("marker_indent_end") && !parser.check("keyword_end") {
-        Some(parse_expression(parser)?)
-    } else {
-        None
-    };
-
-    Ok(StmtNode::Return {
-        value,
-        analysis: (),
-    })
 }
 
 /// Parse an expression

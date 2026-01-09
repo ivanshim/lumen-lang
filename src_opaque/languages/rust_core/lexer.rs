@@ -6,7 +6,7 @@ use crate::kernel::lexer::Token;
 pub const RUST_KEYWORDS: &[&str] = &[
     "if", "else", "while", "for", "in",
     "fn", "let", "return", "break", "continue",
-    "print", "true", "false", "True", "False", "None",
+    "true", "false", "True", "False", "None",
 ];
 
 /// Lex Rust source code
