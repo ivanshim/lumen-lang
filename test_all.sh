@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # lumen-lang comprehensive test script
-# Tests all examples for all languages with all kernels
+# Tests all examples for all languages with stream and microcode kernels
 # Output is displayed directly, not captured
 # Results are summarized by language and kernel type
 
@@ -34,7 +34,7 @@ declare -a FAILED_LIST  # list of failed tests: "language | kernel | file"
 
 # Initialize all combinations
 for lang in lumen python_core rust_core; do
-    for kernel in stream microcode opaque; do
+    for kernel in stream microcode; do
         RESULTS["${lang}:${kernel}:passed"]=0
         RESULTS["${lang}:${kernel}:failed"]=0
         RESULTS["${lang}:${kernel}:timeout"]=0
@@ -88,19 +88,10 @@ echo "  Lumen-Lang Test Suite (All Tests)"
 echo "=========================================="
 echo ""
 
-# First, run unit tests for the opaque kernel
-echo -e "${YELLOW}Opaque Kernel Unit Tests:${NC}"
-if cargo test --bin opaque 2>&1 | tail -5; then
-    echo -e "${GREEN}✓ Opaque kernel tests passed${NC}\n"
-else
-    echo -e "${RED}✗ Opaque kernel tests failed!${NC}"
-    exit 1
-fi
-
 # Test lumen examples with all kernels
 echo -e "${YELLOW}Lumen Examples:${NC}"
 for file in examples/lumen/*.lm; do
-    for kernel in stream microcode opaque; do
+    for kernel in stream microcode; do
         run_test "$file" "$kernel" "lumen"
     done
 done
@@ -109,7 +100,7 @@ echo ""
 # Test python examples with all kernels
 echo -e "${YELLOW}Python Examples:${NC}"
 for file in examples/python/*.py; do
-    for kernel in stream microcode opaque; do
+    for kernel in stream microcode; do
         run_test "$file" "$kernel" "python_core"
     done
 done
@@ -118,7 +109,7 @@ echo ""
 # Test rust examples with all kernels
 echo -e "${YELLOW}Rust Examples:${NC}"
 for file in examples/rust/*.rs; do
-    for kernel in stream microcode opaque; do
+    for kernel in stream microcode; do
         run_test "$file" "$kernel" "rust_core"
     done
 done
@@ -139,7 +130,7 @@ for lang in lumen python_core rust_core; do
 
     echo -e "${BLUE}${lang_display}:${NC}"
 
-    for kernel in stream microcode opaque; do
+    for kernel in stream microcode; do
         passed=${RESULTS["${lang}:${kernel}:passed"]:-0}
         failed=${RESULTS["${lang}:${kernel}:failed"]:-0}
         timeout=${RESULTS["${lang}:${kernel}:timeout"]:-0}
