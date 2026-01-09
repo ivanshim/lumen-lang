@@ -15,10 +15,6 @@ path = "src_stream/main.rs"
 name = "microcode"
 path = "src_microcode/main.rs"
 
-[[bin]]
-name = "opaque"
-path = "src_opaque/main.rs"
-
 [lib]
 name = "microcode_2"
 path = "src_microcode/lib.rs"
