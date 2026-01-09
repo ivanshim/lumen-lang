@@ -75,9 +75,16 @@ pub fn lex(source: &str, keywords: &[&str]) -> Vec<Token> {
             c if c.is_ascii_digit() => {
                 let start_col = col;
                 let mut number = String::new();
+                let mut has_dot = false;
 
                 while let Some(&ch) = chars.peek() {
-                    if ch.is_ascii_digit() || ch == '.' {
+                    if ch.is_ascii_digit() {
+                        number.push(ch);
+                        chars.next();
+                        col += 1;
+                    } else if ch == '.' && !has_dot && chars.clone().nth(1) != Some('.') {
+                        // Only include one dot, and not if followed by another dot (range operator)
+                        has_dot = true;
                         number.push(ch);
                         chars.next();
                         col += 1;
@@ -222,6 +229,29 @@ pub fn lex(source: &str, keywords: &[&str]) -> Vec<Token> {
                 });
                 chars.next();
                 col += 1;
+            }
+            '.' if chars.clone().nth(1) == Some('.') => {
+                // Range operator: .. or ..=
+                let start_col = col;
+                chars.next(); // consume first dot
+                col += 1;
+                chars.next(); // consume second dot
+                col += 1;
+
+                let lexeme = if chars.peek() == Some(&'=') {
+                    chars.next();
+                    col += 1;
+                    "..=".to_string()
+                } else {
+                    "..".to_string()
+                };
+
+                tokens.push(Token {
+                    token_type: "range_op".to_string(),
+                    lexeme,
+                    line,
+                    col: start_col,
+                });
             }
             _ => {
                 chars.next();

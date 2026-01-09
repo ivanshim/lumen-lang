@@ -121,10 +121,23 @@ pub fn parse_program(mut parser: Parser) -> Result<Program, String> {
     let mut statements = Vec::new();
 
     while !parser.is_at_end() {
-        if let Ok(stmt) = parse_statement(&mut parser) {
-            statements.push(stmt);
-        } else {
-            parser.synchronize();
+        // Skip newlines and markers between statements
+        while parser.consume("newline") || parser.consume("marker_indent_start")
+            || parser.consume("marker_indent_end") {
+        }
+
+        if parser.is_at_end() {
+            break;
+        }
+
+        match parse_statement(&mut parser) {
+            Ok(stmt) => statements.push(stmt),
+            Err(e) => {
+                // For now, report the error but try to continue
+                // In production, you might want to collect all errors
+                eprintln!("Parse error: {}", e);
+                parser.synchronize();
+            }
         }
     }
 
@@ -157,7 +170,50 @@ pub fn parse_statement(parser: &mut Parser) -> Result<StmtNode, String> {
                 parser.next();
                 Ok(StmtNode::Continue)
             }
-            // Expression statement (identifier or other expression)
+            // Check for assignment (identifier followed by assign operator)
+            "identifier" => {
+                // Look ahead to check for assignment, skipping whitespace and markers
+                let mut lookahead_idx = 1;
+                let mut found_assign = false;
+                while let Some(next_token) = parser.peek_ahead(lookahead_idx) {
+                    if next_token.token_type == "assign" {
+                        found_assign = true;
+                        break;
+                    } else if matches!(next_token.token_type.as_str(),
+                        "newline" | "marker_indent_start" | "marker_indent_end") {
+                        // Skip these tokens when checking for assignment
+                        lookahead_idx += 1;
+                    } else {
+                        // Found a different token, not an assignment
+                        break;
+                    }
+                }
+
+                if found_assign {
+                    // Parse as assignment statement
+                    let target_token = parser.next().unwrap();
+                    let target = target_token.lexeme;
+
+                    // Skip whitespace and markers
+                    while parser.check("newline") || parser.check("marker_indent_start")
+                        || parser.check("marker_indent_end") {
+                        parser.next();
+                    }
+
+                    parser.expect("assign")?;
+                    let value = parse_expression(parser)?;
+                    return Ok(StmtNode::Assign {
+                        target,
+                        value,
+                        analysis: (),
+                    });
+                }
+
+                // Not an assignment, parse as expression statement
+                let expr = parse_expression(parser)?;
+                Ok(StmtNode::Expr { expr })
+            }
+            // Expression statement (other expression)
             _ => {
                 let expr = parse_expression(parser)?;
                 Ok(StmtNode::Expr { expr })
@@ -213,7 +269,7 @@ fn parse_if_statement(parser: &mut Parser) -> Result<StmtNode, String> {
         condition,
         then_block,
         else_block,
-        analysis: Box::new(()),
+        analysis: (),
     })
 }
 
@@ -240,7 +296,7 @@ fn parse_while_statement(parser: &mut Parser) -> Result<StmtNode, String> {
     Ok(StmtNode::While {
         condition,
         body,
-        analysis: Box::new(()),
+        analysis: (),
     })
 }
 
@@ -267,7 +323,7 @@ fn parse_until_statement(parser: &mut Parser) -> Result<StmtNode, String> {
     Ok(StmtNode::Until {
         condition,
         body,
-        analysis: Box::new(()),
+        analysis: (),
     })
 }
 
@@ -299,7 +355,7 @@ fn parse_for_statement(parser: &mut Parser) -> Result<StmtNode, String> {
         variable,
         iterator,
         body,
-        analysis: Box::new(()),
+        analysis: (),
     })
 }
 
@@ -344,12 +400,19 @@ fn parse_function_definition(parser: &mut Parser) -> Result<StmtNode, String> {
         name,
         params,
         body,
-        analysis: Box::new(()),
+        analysis: (),
     })
 }
 
 fn parse_let_statement(parser: &mut Parser) -> Result<StmtNode, String> {
     parser.expect("keyword_let")?;
+
+    // Check if this is "let mut" or just "let"
+    let is_mut = parser.check("keyword_mut");
+    if is_mut {
+        parser.next(); // consume "mut"
+    }
+
     let name_token = parser.expect("identifier")?;
     let name = name_token.lexeme;
 
@@ -359,29 +422,26 @@ fn parse_let_statement(parser: &mut Parser) -> Result<StmtNode, String> {
         None
     };
 
-    Ok(StmtNode::Let {
-        name,
-        value,
-        analysis: Box::new(()),
-    })
+    if is_mut {
+        Ok(StmtNode::LetMut {
+            name,
+            value,
+            analysis: (),
+        })
+    } else {
+        Ok(StmtNode::Let {
+            name,
+            value,
+            analysis: (),
+        })
+    }
 }
 
 fn parse_let_mut_statement(parser: &mut Parser) -> Result<StmtNode, String> {
-    parser.expect("keyword_let_mut")?;
-    let name_token = parser.expect("identifier")?;
-    let name = name_token.lexeme;
-
-    let value = if parser.consume("assign") {
-        Some(parse_expression(parser)?)
-    } else {
-        None
-    };
-
-    Ok(StmtNode::LetMut {
-        name,
-        value,
-        analysis: Box::new(()),
-    })
+    // This is called when we see "keyword_let" and the next token is "keyword_mut"
+    // But with the updated parse_let_statement, we don't need this separately
+    // However, keep it for compatibility if needed
+    parse_let_statement(parser)
 }
 
 fn parse_print_statement(parser: &mut Parser) -> Result<StmtNode, String> {
@@ -415,7 +475,7 @@ fn parse_print_statement(parser: &mut Parser) -> Result<StmtNode, String> {
 
     Ok(StmtNode::Print {
         arguments,
-        analysis: Box::new(()),
+        analysis: (),
     })
 }
 
@@ -431,7 +491,7 @@ fn parse_return_statement(parser: &mut Parser) -> Result<StmtNode, String> {
 
     Ok(StmtNode::Return {
         value,
-        analysis: Box::new(()),
+        analysis: (),
     })
 }
 
@@ -444,13 +504,8 @@ pub fn parse_expression(parser: &mut Parser) -> Result<ExprNode, String> {
 fn parse_assignment(parser: &mut Parser) -> Result<ExprNode, String> {
     let expr = parse_logical_or(parser)?;
 
-    if parser.check("assign") {
-        // This is assignment - but we need to handle it at statement level
-        // For now, treat as error here
-        Err("Assignment must be statement".to_string())
-    } else {
-        Ok(expr)
-    }
+    // Assignment is handled at statement level, so we just return the expression here
+    Ok(expr)
 }
 
 /// Parse logical OR
@@ -464,7 +519,7 @@ fn parse_logical_or(parser: &mut Parser) -> Result<ExprNode, String> {
             left: Box::new(left),
             operator: op_token.lexeme,
             right: Box::new(right),
-            analysis: Box::new(()),
+            analysis: (),
         };
     }
 
@@ -473,17 +528,37 @@ fn parse_logical_or(parser: &mut Parser) -> Result<ExprNode, String> {
 
 /// Parse logical AND
 fn parse_logical_and(parser: &mut Parser) -> Result<ExprNode, String> {
-    let mut left = parse_comparison(parser)?;
+    let mut left = parse_range(parser)?;
 
     while parser.check_lexeme("and") {
         let op_token = parser.next().unwrap();
-        let right = parse_comparison(parser)?;
+        let right = parse_range(parser)?;
         left = ExprNode::Infix {
             left: Box::new(left),
             operator: op_token.lexeme,
             right: Box::new(right),
-            analysis: Box::new(()),
+            analysis: (),
         };
+    }
+
+    Ok(left)
+}
+
+/// Parse range operators (.., ..=)
+fn parse_range(parser: &mut Parser) -> Result<ExprNode, String> {
+    let mut left = parse_comparison(parser)?;
+
+    if let Some(token) = parser.peek() {
+        if token.token_type == "range_op" {
+            let op_token = parser.next().unwrap();
+            let right = parse_comparison(parser)?;
+            left = ExprNode::Infix {
+                left: Box::new(left),
+                operator: op_token.lexeme,
+                right: Box::new(right),
+                analysis: (),
+            };
+        }
     }
 
     Ok(left)
@@ -503,7 +578,7 @@ fn parse_comparison(parser: &mut Parser) -> Result<ExprNode, String> {
                         left: Box::new(left),
                         operator: op_token.lexeme,
                         right: Box::new(right),
-                        analysis: Box::new(()),
+                        analysis: (),
                     };
                 }
                 _ => break,
@@ -530,7 +605,7 @@ fn parse_additive(parser: &mut Parser) -> Result<ExprNode, String> {
                         left: Box::new(left),
                         operator: op_token.lexeme,
                         right: Box::new(right),
-                        analysis: Box::new(()),
+                        analysis: (),
                     };
                 }
                 _ => break,
@@ -557,7 +632,7 @@ fn parse_multiplicative(parser: &mut Parser) -> Result<ExprNode, String> {
                         left: Box::new(left),
                         operator: op_token.lexeme,
                         right: Box::new(right),
-                        analysis: Box::new(()),
+                        analysis: (),
                     };
                 }
                 _ => break,
@@ -580,7 +655,7 @@ fn parse_prefix(parser: &mut Parser) -> Result<ExprNode, String> {
                 return Ok(ExprNode::Prefix {
                     operator: op_token.lexeme,
                     right: Box::new(right),
-                    analysis: Box::new(()),
+                    analysis: (),
                 });
             }
             "keyword_not" => {
@@ -589,7 +664,7 @@ fn parse_prefix(parser: &mut Parser) -> Result<ExprNode, String> {
                 return Ok(ExprNode::Prefix {
                     operator: "not".to_string(),
                     right: Box::new(right),
-                    analysis: Box::new(()),
+                    analysis: (),
                 });
             }
             _ => {}
@@ -622,7 +697,7 @@ fn parse_call(parser: &mut Parser) -> Result<ExprNode, String> {
             expr = ExprNode::Call {
                 function: Box::new(expr),
                 arguments,
-                analysis: Box::new(()),
+                analysis: (),
             };
         } else {
             break;
