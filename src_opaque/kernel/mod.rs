@@ -3,6 +3,11 @@
 // Language provides: analyze() method and handle_change() method
 // Kernel does: the iteration and orchestration
 
+pub mod ast;
+pub mod parser;
+pub mod evaluator;
+pub mod lexer;
+
 use std::any::Any;
 
 #[derive(Debug, Clone)]
