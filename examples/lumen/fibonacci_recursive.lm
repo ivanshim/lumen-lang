@@ -1,0 +1,10 @@
+fn fib(n)
+    if n <= 1
+        n
+    else
+        fib(n - 1) + fib(n - 2)
+
+print("Computing fib(30) using recursion...")
+result = fib(30)
+print("fib(30) = ")
+print(result)
