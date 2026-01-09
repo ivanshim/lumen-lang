@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # lumen-lang comprehensive test script
-# Tests all examples for all languages with both stream and microcode kernels
+# Tests all examples for all languages with all kernels
 # Output is displayed directly, not captured
-# Runs ALL tests without skipping
+# Results are summarized by language and kernel type
 
 # Colors for output
 RED='\033[0;31m'
@@ -28,32 +28,19 @@ FAILED_TESTS=0
 TIMEOUT_TESTS=0
 SKIPPED_TESTS=0
 
-# Language-specific counters
-declare -A LUMEN_PASSED LUMEN_FAILED LUMEN_TIMEOUT LUMEN_SKIPPED
-declare -A PYTHONCORE_PASSED PYTHONCORE_FAILED PYTHONCORE_TIMEOUT PYTHONCORE_SKIPPED
-declare -A RUSTCORE_PASSED RUSTCORE_FAILED RUSTCORE_TIMEOUT RUSTCORE_SKIPPED
+# Store test results: declare associative arrays for per-kernel-per-language stats
+declare -A RESULTS  # format: "language:kernel:status" -> count
+declare -a FAILED_LIST  # list of failed tests: "language | kernel | file"
 
-LUMEN_PASSED=0
-LUMEN_FAILED=0
-LUMEN_TIMEOUT=0
-LUMEN_SKIPPED=0
-PYTHONCORE_PASSED=0
-PYTHONCORE_FAILED=0
-PYTHONCORE_TIMEOUT=0
-PYTHONCORE_SKIPPED=0
-RUSTCORE_PASSED=0
-RUSTCORE_FAILED=0
-RUSTCORE_TIMEOUT=0
-RUSTCORE_SKIPPED=0
-
-# Determine whether a combination is supported
-should_skip() {
-    local language="$1"
-    local kernel="$2"
-
-    # All combinations are now supported - run all tests
-    return 1
-}
+# Initialize all combinations
+for lang in lumen python_core rust_core; do
+    for kernel in stream microcode opaque; do
+        RESULTS["${lang}:${kernel}:passed"]=0
+        RESULTS["${lang}:${kernel}:failed"]=0
+        RESULTS["${lang}:${kernel}:timeout"]=0
+        RESULTS["${lang}:${kernel}:skipped"]=0
+    done
+done
 
 # Function to run a test
 run_test() {
@@ -61,21 +48,6 @@ run_test() {
     local kernel="$2"
     local language="$3"
     local filename=$(basename "$file")
-
-    # Skip unsupported combinations (counted separately)
-    local skip_reason
-    if skip_reason=$(should_skip "$language" "$kernel"); then
-        echo -e "${CYAN}  → ${filename} (${kernel})${NC}"
-        echo -e "    ${YELLOW}⚠ SKIPPED${NC} (${skip_reason})"
-        TOTAL_TESTS=$((TOTAL_TESTS + 1))
-        SKIPPED_TESTS=$((SKIPPED_TESTS + 1))
-        case "$language" in
-            lumen) LUMEN_SKIPPED=$((LUMEN_SKIPPED + 1)) ;;
-            python_core) PYTHONCORE_SKIPPED=$((PYTHONCORE_SKIPPED + 1)) ;;
-            rust_core) RUSTCORE_SKIPPED=$((RUSTCORE_SKIPPED + 1)) ;;
-        esac
-        return 0
-    fi
 
     echo -e "${CYAN}  → ${filename} (${kernel})${NC}"
     TOTAL_TESTS=$((TOTAL_TESTS + 1))
@@ -93,30 +65,20 @@ run_test() {
     if [ $exit_code -eq 0 ]; then
         echo -e "    ${GREEN}✓ PASS${NC}"
         PASSED_TESTS=$((PASSED_TESTS + 1))
-        case "$language" in
-            lumen) LUMEN_PASSED=$((LUMEN_PASSED + 1)) ;;
-            python_core) PYTHONCORE_PASSED=$((PYTHONCORE_PASSED + 1)) ;;
-            rust_core) RUSTCORE_PASSED=$((RUSTCORE_PASSED + 1)) ;;
-        esac
+        RESULTS["${language}:${kernel}:passed"]=$((RESULTS["${language}:${kernel}:passed"] + 1))
         return 0
     elif [ $exit_code -eq 124 ]; then
         echo -e "    ${RED}✗ TIMEOUT${NC}"
         TIMEOUT_TESTS=$((TIMEOUT_TESTS + 1))
         FAILED_TESTS=$((FAILED_TESTS + 1))
-        case "$language" in
-            lumen) LUMEN_TIMEOUT=$((LUMEN_TIMEOUT + 1)) ;;
-            python_core) PYTHONCORE_TIMEOUT=$((PYTHONCORE_TIMEOUT + 1)) ;;
-            rust_core) RUSTCORE_TIMEOUT=$((RUSTCORE_TIMEOUT + 1)) ;;
-        esac
+        RESULTS["${language}:${kernel}:timeout"]=$((RESULTS["${language}:${kernel}:timeout"] + 1))
+        FAILED_LIST+=("${language} | ${kernel} | ${filename}")
         return 1
     else
         echo -e "    ${RED}✗ FAIL${NC}"
         FAILED_TESTS=$((FAILED_TESTS + 1))
-        case "$language" in
-            lumen) LUMEN_FAILED=$((LUMEN_FAILED + 1)) ;;
-            python_core) PYTHONCORE_FAILED=$((PYTHONCORE_FAILED + 1)) ;;
-            rust_core) RUSTCORE_FAILED=$((RUSTCORE_FAILED + 1)) ;;
-        esac
+        RESULTS["${language}:${kernel}:failed"]=$((RESULTS["${language}:${kernel}:failed"] + 1))
+        FAILED_LIST+=("${language} | ${kernel} | ${filename}")
         return 1
     fi
 }
@@ -126,7 +88,7 @@ echo "  Lumen-Lang Test Suite (All Tests)"
 echo "=========================================="
 echo ""
 
-# First, run unit tests for the new opaque kernel
+# First, run unit tests for the opaque kernel
 echo -e "${YELLOW}Opaque Kernel Unit Tests:${NC}"
 if cargo test --bin opaque 2>&1 | tail -5; then
     echo -e "${GREEN}✓ Opaque kernel tests passed${NC}\n"
@@ -138,59 +100,68 @@ fi
 # Test lumen examples with all kernels
 echo -e "${YELLOW}Lumen Examples:${NC}"
 for file in examples/lumen/*.lm; do
-    # Test with stream kernel
-    run_test "$file" "stream" "lumen"
-
-    # Test with microcode kernel
-    run_test "$file" "microcode" "lumen"
-
-    # Test with opaque kernel
-    run_test "$file" "opaque" "lumen"
+    for kernel in stream microcode opaque; do
+        run_test "$file" "$kernel" "lumen"
+    done
 done
 echo ""
 
 # Test python examples with all kernels
 echo -e "${YELLOW}Python Examples:${NC}"
 for file in examples/python/*.py; do
-    # Test with stream kernel
-    run_test "$file" "stream" "python_core"
-
-    # Test with microcode kernel
-    run_test "$file" "microcode" "python_core"
-
-    # Test with opaque kernel
-    run_test "$file" "opaque" "python_core"
+    for kernel in stream microcode opaque; do
+        run_test "$file" "$kernel" "python_core"
+    done
 done
 echo ""
 
 # Test rust examples with all kernels
 echo -e "${YELLOW}Rust Examples:${NC}"
 for file in examples/rust/*.rs; do
-    # Test with stream kernel
-    run_test "$file" "stream" "rust_core"
-
-    # Test with microcode kernel
-    run_test "$file" "microcode" "rust_core"
-
-    # Test with opaque kernel
-    run_test "$file" "opaque" "rust_core"
+    for kernel in stream microcode opaque; do
+        run_test "$file" "$kernel" "rust_core"
+    done
 done
 echo ""
 
-# Detailed Summary by Language
+# Detailed Summary by Language and Kernel
 echo "=========================================="
-echo "  Test Summary by Language"
+echo "  Test Summary (By Language, Then Kernel)"
 echo "=========================================="
 echo ""
-echo -e "${BLUE}Lumen:${NC}"
-echo -e "  Passed:  ${GREEN}$LUMEN_PASSED${NC} | Failed: ${RED}$LUMEN_FAILED${NC} | Timeout: ${RED}$LUMEN_TIMEOUT${NC} | Skipped: ${YELLOW}$LUMEN_SKIPPED${NC}"
-echo ""
-echo -e "${BLUE}Python:${NC}"
-echo -e "  Passed:  ${GREEN}$PYTHONCORE_PASSED${NC} | Failed: ${RED}$PYTHONCORE_FAILED${NC} | Timeout: ${RED}$PYTHONCORE_TIMEOUT${NC} | Skipped: ${YELLOW}$PYTHONCORE_SKIPPED${NC}"
-echo ""
-echo -e "${BLUE}Rust:${NC}"
-echo -e "  Passed:  ${GREEN}$RUSTCORE_PASSED${NC} | Failed: ${RED}$RUSTCORE_FAILED${NC} | Timeout: ${RED}$RUSTCORE_TIMEOUT${NC} | Skipped: ${YELLOW}$RUSTCORE_SKIPPED${NC}"
-echo ""
+
+for lang in lumen python_core rust_core; do
+    case "$lang" in
+        lumen) lang_display="Lumen" ;;
+        python_core) lang_display="Python Core" ;;
+        rust_core) lang_display="Rust Core" ;;
+    esac
+
+    echo -e "${BLUE}${lang_display}:${NC}"
+
+    for kernel in stream microcode opaque; do
+        passed=${RESULTS["${lang}:${kernel}:passed"]:-0}
+        failed=${RESULTS["${lang}:${kernel}:failed"]:-0}
+        timeout=${RESULTS["${lang}:${kernel}:timeout"]:-0}
+        skipped=${RESULTS["${lang}:${kernel}:skipped"]:-0}
+        total=$((passed + failed + timeout + skipped))
+
+        if [ $total -gt 0 ]; then
+            status_color="${GREEN}"
+            if [ $failed -gt 0 ] || [ $timeout -gt 0 ]; then
+                status_color="${RED}"
+            fi
+
+            printf "  %-12s: " "${kernel^}"
+            printf "${status_color}"
+            printf "Passed: %-2d | Failed: %-2d | Timeout: %-2d" "$passed" "$failed" "$timeout"
+            printf "${NC}"
+            [ $skipped -gt 0 ] && printf " | Skipped: %d" "$skipped"
+            echo ""
+        fi
+    done
+    echo ""
+done
 
 # Overall Summary
 echo "=========================================="
@@ -201,6 +172,17 @@ echo -e "Passed:        ${GREEN}$PASSED_TESTS${NC}"
 echo -e "Failed:        ${RED}$FAILED_TESTS${NC} (includes $TIMEOUT_TESTS timeouts)"
 echo -e "Skipped:       ${YELLOW}$SKIPPED_TESTS${NC}"
 echo ""
+
+# List failed tests if any
+if [ $FAILED_TESTS -gt 0 ]; then
+    echo "=========================================="
+    echo "  Failed Tests (Language | Kernel | File)"
+    echo "=========================================="
+    for failed_test in "${FAILED_LIST[@]}"; do
+        echo -e "  ${RED}✗${NC} $failed_test"
+    done
+    echo ""
+fi
 
 if [ $FAILED_TESTS -eq 0 ]; then
     echo -e "${GREEN}All tests passed!${NC}"
