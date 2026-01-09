@@ -1,0 +1,12 @@
+fn factorial(n)
+    if n <= 1
+        1
+    else
+        n * factorial(n - 1)
+
+print("Factorials 1-12: ")
+
+i = 1
+while i <= 12
+    print(factorial(i))
+    i = i + 1
