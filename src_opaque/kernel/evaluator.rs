@@ -338,7 +338,7 @@ fn eval_prefix_op(op: &str, right: &RuntimeValue) -> Result<RuntimeValue, String
 
 /// Evaluate infix operators
 fn eval_infix_op(op: &str, left: &RuntimeValue, right: &RuntimeValue) -> Result<RuntimeValue, String> {
-    // Try numeric operations
+    // Try numeric operations and ranges
     if let (Some(l), Some(r)) = (left.downcast_ref::<i64>(), right.downcast_ref::<i64>()) {
         return match op {
             "+" => Ok(Arc::new(l + r)),
@@ -364,6 +364,8 @@ fn eval_infix_op(op: &str, left: &RuntimeValue, right: &RuntimeValue) -> Result<
             ">" => Ok(Arc::new(l > r)),
             "<=" => Ok(Arc::new(l <= r)),
             ">=" => Ok(Arc::new(l >= r)),
+            ".." => Ok(Arc::new((*l, *r, false)) as RuntimeValue),
+            "..=" => Ok(Arc::new((*l, *r, true)) as RuntimeValue),
             _ => Err(format!("Unknown operator: {}", op)),
         };
     }
