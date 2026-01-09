@@ -3,9 +3,9 @@
 
 use crate::kernel::ast::*;
 use std::any::Any;
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::sync::Arc;
 
 /// Evaluator context with environment
 pub struct Evaluator {
@@ -21,7 +21,7 @@ impl Evaluator {
 
     /// Evaluate a program
     pub fn eval_program(&mut self, program: &Program) -> Result<RuntimeValue, String> {
-        let mut last_value = Box::new(()) as RuntimeValue;
+        let mut last_value = Arc::new(()) as RuntimeValue;
 
         for stmt in &program.statements {
             match self.eval_statement(stmt)? {
@@ -48,26 +48,26 @@ impl Evaluator {
                 let val = if let Some(expr) = value {
                     self.eval_expr(expr)?
                 } else {
-                    Box::new(())
+                    Arc::new(())
                 };
                 self.env.borrow_mut().set(name.clone(), val);
-                Ok(ControlFlow::Normal(Box::new(())))
+                Ok(ControlFlow::Normal(Arc::new(())))
             }
 
             StmtNode::LetMut { name, value, .. } => {
                 let val = if let Some(expr) = value {
                     self.eval_expr(expr)?
                 } else {
-                    Box::new(())
+                    Arc::new(())
                 };
                 self.env.borrow_mut().set(name.clone(), val);
-                Ok(ControlFlow::Normal(Box::new(())))
+                Ok(ControlFlow::Normal(Arc::new(())))
             }
 
             StmtNode::Assign { target, value, .. } => {
                 let val = self.eval_expr(value)?;
                 self.env.borrow_mut().set(target.clone(), val);
-                Ok(ControlFlow::Normal(Box::new(())))
+                Ok(ControlFlow::Normal(Arc::new(())))
             }
 
             StmtNode::If {
@@ -84,7 +84,7 @@ impl Evaluator {
                 } else if let Some(else_stmts) = else_block {
                     self.eval_block(else_stmts)
                 } else {
-                    Ok(ControlFlow::Normal(Box::new(())))
+                    Ok(ControlFlow::Normal(Arc::new(())))
                 }
             }
 
@@ -102,7 +102,7 @@ impl Evaluator {
                         ControlFlow::Normal(_) => {}
                     }
                 }
-                Ok(ControlFlow::Normal(Box::new(())))
+                Ok(ControlFlow::Normal(Arc::new(())))
             }
 
             StmtNode::Until { condition, body, .. } => {
@@ -119,7 +119,7 @@ impl Evaluator {
                         ControlFlow::Normal(_) => {}
                     }
                 }
-                Ok(ControlFlow::Normal(Box::new(())))
+                Ok(ControlFlow::Normal(Arc::new(())))
             }
 
             StmtNode::For {
@@ -136,7 +136,7 @@ impl Evaluator {
                     let end = if inclusive { end + 1 } else { end };
 
                     for i in start..end {
-                        self.env.borrow_mut().set(variable.clone(), Box::new(i));
+                        self.env.borrow_mut().set(variable.clone(), Arc::new(i));
 
                         match self.eval_block(body)? {
                             ControlFlow::Break => break,
@@ -149,12 +149,12 @@ impl Evaluator {
                     return Err("Iterator must be a range".to_string());
                 }
 
-                Ok(ControlFlow::Normal(Box::new(())))
+                Ok(ControlFlow::Normal(Arc::new(())))
             }
 
             StmtNode::FnDef { name, params, body, .. } => {
                 self.env.borrow_mut().define_function(name.clone(), params.clone(), body.clone());
-                Ok(ControlFlow::Normal(Box::new(())))
+                Ok(ControlFlow::Normal(Arc::new(())))
             }
 
             StmtNode::Print { arguments, .. } => {
@@ -166,14 +166,14 @@ impl Evaluator {
                     print_value(&val);
                 }
                 println!();
-                Ok(ControlFlow::Normal(Box::new(())))
+                Ok(ControlFlow::Normal(Arc::new(())))
             }
 
             StmtNode::Return { value, .. } => {
                 let val = if let Some(expr) = value {
                     self.eval_expr(expr)?
                 } else {
-                    Box::new(())
+                    Arc::new(())
                 };
                 Ok(ControlFlow::Return(val))
             }
@@ -185,7 +185,7 @@ impl Evaluator {
 
     /// Evaluate a block of statements
     fn eval_block(&mut self, stmts: &[StmtNode]) -> Result<ControlFlow, String> {
-        let mut last_value = Box::new(()) as RuntimeValue;
+        let mut last_value = Arc::new(()) as RuntimeValue;
 
         for stmt in stmts {
             match self.eval_statement(stmt)? {
@@ -208,13 +208,15 @@ impl Evaluator {
             } => {
                 match handler_type.as_str() {
                     "number" => {
-                        let num = lexeme.parse::<i64>().or_else(|_| lexeme.parse::<f64>().map(|f| f as i64))?;
-                        Ok(Box::new(num))
+                        let num: i64 = lexeme.parse::<i64>().or_else(|_| {
+                            lexeme.parse::<f64>().map(|f| f as i64)
+                        }).map_err(|_| format!("Invalid number: {}", lexeme))?;
+                        Ok(Arc::new(num))
                     }
-                    "string" => Ok(Box::new(lexeme.clone())),
-                    "keyword_true" => Ok(Box::new(true)),
-                    "keyword_false" => Ok(Box::new(false)),
-                    "keyword_none" => Ok(Box::new(())),
+                    "string" => Ok(Arc::new(lexeme.clone())),
+                    "keyword_true" => Ok(Arc::new(true)),
+                    "keyword_false" => Ok(Arc::new(false)),
+                    "keyword_none" => Ok(Arc::new(())),
                     _ => Err(format!("Unknown literal type: {}", handler_type)),
                 }
             }
@@ -280,7 +282,7 @@ impl Evaluator {
                 }
 
                 // Execute function body
-                let mut result = Box::new(()) as RuntimeValue;
+                let mut result = Arc::new(()) as RuntimeValue;
                 for stmt in &body {
                     match self.eval_statement(stmt)? {
                         ControlFlow::Normal(v) => result = v,
@@ -324,12 +326,12 @@ fn eval_prefix_op(op: &str, right: &RuntimeValue) -> Result<RuntimeValue, String
     match op {
         "-" => {
             if let Some(n) = right.downcast_ref::<i64>() {
-                Ok(Box::new(-n))
+                Ok(Arc::new(-n))
             } else {
                 Err(format!("Cannot negate non-number"))
             }
         }
-        "!" | "not" => Ok(Box::new(!is_truthy(right))),
+        "!" | "not" => Ok(Arc::new(!is_truthy(right))),
         _ => Err(format!("Unknown prefix operator: {}", op)),
     }
 }
@@ -339,29 +341,29 @@ fn eval_infix_op(op: &str, left: &RuntimeValue, right: &RuntimeValue) -> Result<
     // Try numeric operations
     if let (Some(l), Some(r)) = (left.downcast_ref::<i64>(), right.downcast_ref::<i64>()) {
         return match op {
-            "+" => Ok(Box::new(l + r)),
-            "-" => Ok(Box::new(l - r)),
-            "*" => Ok(Box::new(l * r)),
+            "+" => Ok(Arc::new(l + r)),
+            "-" => Ok(Arc::new(l - r)),
+            "*" => Ok(Arc::new(l * r)),
             "/" => {
                 if *r == 0 {
                     Err("Division by zero".to_string())
                 } else {
-                    Ok(Box::new(l / r))
+                    Ok(Arc::new(l / r))
                 }
             }
             "%" => {
                 if *r == 0 {
                     Err("Modulo by zero".to_string())
                 } else {
-                    Ok(Box::new(l % r))
+                    Ok(Arc::new(l % r))
                 }
             }
-            "==" => Ok(Box::new(l == r)),
-            "!=" => Ok(Box::new(l != r)),
-            "<" => Ok(Box::new(l < r)),
-            ">" => Ok(Box::new(l > r)),
-            "<=" => Ok(Box::new(l <= r)),
-            ">=" => Ok(Box::new(l >= r)),
+            "==" => Ok(Arc::new(l == r)),
+            "!=" => Ok(Arc::new(l != r)),
+            "<" => Ok(Arc::new(l < r)),
+            ">" => Ok(Arc::new(l > r)),
+            "<=" => Ok(Arc::new(l <= r)),
+            ">=" => Ok(Arc::new(l >= r)),
             _ => Err(format!("Unknown operator: {}", op)),
         };
     }
@@ -369,17 +371,17 @@ fn eval_infix_op(op: &str, left: &RuntimeValue, right: &RuntimeValue) -> Result<
     // String concatenation
     if let (Some(l), Some(r)) = (left.downcast_ref::<String>(), right.downcast_ref::<String>()) {
         return match op {
-            "+" => Ok(Box::new(format!("{}{}", l, r))),
-            "==" => Ok(Box::new(l == r)),
-            "!=" => Ok(Box::new(l != r)),
+            "+" => Ok(Arc::new(format!("{}{}", l, r))),
+            "==" => Ok(Arc::new(l == r)),
+            "!=" => Ok(Arc::new(l != r)),
             _ => Err(format!("Cannot apply {} to strings", op)),
         };
     }
 
     // Logical operations
     match op {
-        "and" => Ok(Box::new(is_truthy(left) && is_truthy(right))),
-        "or" => Ok(Box::new(is_truthy(left) || is_truthy(right))),
+        "and" => Ok(Arc::new(is_truthy(left) && is_truthy(right))),
+        "or" => Ok(Arc::new(is_truthy(left) || is_truthy(right))),
         _ => Err(format!("Type mismatch for operator {}", op)),
     }
 }

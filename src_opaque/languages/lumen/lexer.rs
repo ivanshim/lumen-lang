@@ -5,7 +5,7 @@ use crate::kernel::lexer::Token;
 /// Lumen keywords
 pub const LUMEN_KEYWORDS: &[&str] = &[
     "if", "else", "end", "while", "until", "for", "in",
-    "fn", "let", "let_mut", "return", "break", "continue",
+    "fn", "let", "mut", "return", "break", "continue",
     "print", "true", "false", "none", "and", "or", "not",
 ];
 

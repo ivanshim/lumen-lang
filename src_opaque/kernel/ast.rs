@@ -3,9 +3,11 @@
 
 use std::any::Any;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Opaque analysis type - kernel knows nothing about what this contains
-pub type OpaqueAnalysis = Box<dyn Any + Send + Sync>;
+/// For now using () as placeholder since language modules provide handlers
+pub type OpaqueAnalysis = ();
 
 /// Expression node in the AST
 #[derive(Debug, Clone)]
@@ -140,7 +142,8 @@ pub struct Program {
 }
 
 /// Runtime value - opaque type for any language value
-pub type RuntimeValue = Box<dyn Any + Send + Sync>;
+/// Uses Arc to allow cloning across function calls and returns
+pub type RuntimeValue = Arc<dyn Any + Send + Sync>;
 
 /// Environment for variable and function storage
 #[derive(Debug, Clone)]
@@ -188,7 +191,7 @@ impl ControlFlow {
         match self {
             ControlFlow::Normal(v) => v.clone(),
             ControlFlow::Return(v) => v.clone(),
-            _ => Box::new(()),
+            _ => Arc::new(()),
         }
     }
 }
