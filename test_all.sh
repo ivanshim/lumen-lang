@@ -135,7 +135,7 @@ else
     exit 1
 fi
 
-# Test lumen examples with both kernels
+# Test lumen examples with all kernels
 echo -e "${YELLOW}Lumen Examples:${NC}"
 for file in examples/lumen/*.lm; do
     # Test with stream kernel
@@ -143,10 +143,13 @@ for file in examples/lumen/*.lm; do
 
     # Test with microcode kernel
     run_test "$file" "microcode" "lumen"
+
+    # Test with opaque kernel
+    run_test "$file" "opaque" "lumen"
 done
 echo ""
 
-# Test python examples with both kernels
+# Test python examples with all kernels
 echo -e "${YELLOW}Python Examples:${NC}"
 for file in examples/python/*.py; do
     # Test with stream kernel
@@ -154,10 +157,13 @@ for file in examples/python/*.py; do
 
     # Test with microcode kernel
     run_test "$file" "microcode" "python_core"
+
+    # Test with opaque kernel
+    run_test "$file" "opaque" "python_core"
 done
 echo ""
 
-# Test rust examples with both kernels
+# Test rust examples with all kernels
 echo -e "${YELLOW}Rust Examples:${NC}"
 for file in examples/rust/*.rs; do
     # Test with stream kernel
@@ -165,6 +171,9 @@ for file in examples/rust/*.rs; do
 
     # Test with microcode kernel
     run_test "$file" "microcode" "rust_core"
+
+    # Test with opaque kernel
+    run_test "$file" "opaque" "rust_core"
 done
 echo ""
 
