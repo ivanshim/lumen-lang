@@ -1,0 +1,11 @@
+fn fib_tail(n, a, b)
+    if n == 0
+        a
+    else
+        fib_tail(n - 1, b, a + b)
+
+fn fib(n)
+    fib_tail(n, 0, 1)
+
+write("Fibonacci number at index 100 (tail-recursive): ")
+print(fib(100))
