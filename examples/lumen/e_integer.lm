@@ -16,5 +16,7 @@ while n < 1000
     n = n + 1
     fact = fact * n
 
+write("Digits: ")
+print(precision)
 write("Final: ")
 print(sum)
