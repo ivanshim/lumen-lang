@@ -2,13 +2,11 @@ a = 0
 b = 1
 count = 0
 
-while count <= 1000
-    write(a)
-    if count < 1000
-        write(", ")
+while count < 1000
     next = a + b
     a = b
     b = next
     count = count + 1
 
-print("")
+write("Fibonacci number at index 1000: ")
+print(a)

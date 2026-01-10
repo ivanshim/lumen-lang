@@ -6,13 +6,11 @@ fn fib(n)
     else
         fib(n - 1) + fib(n - 2)
 
-write("Fibonacci sequence (0-1000): ")
-
 i = 0
+result = 0
 while i <= 1000
-    write(fib(i))
-    if i < 1000
-        write(", ")
+    result = fib(i)
     i = i + 1
 
-print("")
+write("Fibonacci number at index 1000: ")
+print(result)
