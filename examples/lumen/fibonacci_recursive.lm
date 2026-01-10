@@ -6,19 +6,11 @@ fn fib(n)
 
 write("Fibonacci sequence (0-30): ")
 
-a = 0
-b = 1
-write(a)
-write(", ")
-write(b)
-
-i = 2
+i = 0
 while i <= 30
-    c = a + b
-    write(", ")
-    write(c)
-    a = b
-    b = c
+    write(fib(i))
+    if i < 30
+        write(", ")
     i = i + 1
 
 print("")
