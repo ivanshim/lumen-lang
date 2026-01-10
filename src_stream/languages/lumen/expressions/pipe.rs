@@ -1,8 +1,10 @@
 // Pipe operator expression: expr |> func(args)
 // Passes the left value as the first argument to the right function
 
+use std::rc::Rc;
+use std::cell::RefCell;
 use crate::languages::lumen::prelude::*;
-use crate::kernel::ast::ExprNode;
+use crate::kernel::ast::{ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
 use crate::languages::lumen::patterns::PatternSet;
 use crate::languages::lumen::registry::{ExprInfix, Precedence, Registry};
@@ -22,8 +24,8 @@ impl ExprNode for PipeExpr {
         // Evaluate the left side
         let left_value = self.left.eval(env)?;
 
-        // Get function definition
-        let (params, body) = functions::get_function(&self.func_name)
+        // Get function definition (includes memoizable flag)
+        let (params, body, memoizable) = functions::get_function(&self.func_name)
             .ok_or_else(|| format!("Undefined function '{}'", self.func_name))?;
 
         // Evaluate other arguments
@@ -42,12 +44,40 @@ impl ExprNode for PipeExpr {
             ));
         }
 
+        // ================================================================
+        // OPTIONAL OPTIMIZATION: Check memoization cache
+        // ================================================================
+        if memoizable {
+            let arg_fingerprint = Env::fingerprint_args(&arg_values);
+            if let Some(cached_result) = env.get_cached(&self.func_name, &arg_fingerprint) {
+                return Ok(cached_result);
+            }
+
+            let result = self.execute_function(&params, &body, &arg_values, env)?;
+            env.cache_result(&self.func_name, &arg_fingerprint, result.clone());
+            return Ok(result);
+        }
+
+        // Default path: execute function without caching
+        self.execute_function(&params, &body, &arg_values, env)
+    }
+}
+
+impl PipeExpr {
+    /// Execute function body and return result.
+    fn execute_function(
+        &self,
+        params: &[String],
+        body: &Rc<RefCell<Vec<Box<dyn StmtNode>>>>,
+        arg_values: &[Value],
+        env: &mut Env,
+    ) -> LumenResult<Value> {
         // Create new scope for function
         env.push_scope();
 
         // Bind parameters to arguments
         for (param, arg_val) in params.iter().zip(arg_values) {
-            env.define(param.clone(), arg_val);
+            env.define(param.clone(), arg_val.clone());
         }
 
         // Execute function body

@@ -84,6 +84,7 @@ fn run_lumen_stream(source: &str) {
     use crate::languages::lumen::registry::Registry;
     use crate::kernel::eval;
     use crate::languages::lumen::structure::structural;
+    use crate::kernel::exec_options::StreamExecutionOptions;
 
     let mut registry = Registry::new();
     crate::languages::lumen::dispatcher::register_all(&mut registry);
@@ -120,7 +121,13 @@ fn run_lumen_stream(source: &str) {
         }
     };
 
-    if let Err(e) = eval::eval(&program) {
+    // Create execution options, checking for memoization flag
+    let mut options = StreamExecutionOptions::new();
+    if env::var("LUMEN_MEMOIZE").is_ok() {
+        options.enable_memoization = true;
+    }
+
+    if let Err(e) = eval::eval_with_options(&program, &options) {
         eprintln!("RuntimeError: {e}");
         process::exit(1);
     }

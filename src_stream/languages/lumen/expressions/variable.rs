@@ -3,7 +3,9 @@ use crate::languages::lumen::prelude::*;
 //
 // Variable reference expression: `x` or function call: `func(args)`
 
-use crate::kernel::ast::ExprNode;
+use std::rc::Rc;
+use std::cell::RefCell;
+use crate::kernel::ast::{ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
 use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::{Env, Value};
@@ -29,8 +31,8 @@ struct FunctionCallExpr {
 
 impl ExprNode for FunctionCallExpr {
     fn eval(&self, env: &mut Env) -> LumenResult<Value> {
-        // Get function definition
-        let (params, body) = functions::get_function(&self.func_name)
+        // Get function definition (includes memoizable flag)
+        let (params, body, memoizable) = functions::get_function(&self.func_name)
             .ok_or_else(|| format!("Undefined function '{}'", self.func_name))?;
 
         // Check argument count
@@ -49,12 +51,55 @@ impl ExprNode for FunctionCallExpr {
             arg_values.push(arg.eval(env)?);
         }
 
+        // ================================================================
+        // OPTIONAL OPTIMIZATION: Check memoization cache
+        // ================================================================
+        // This block is skipped if memoization is disabled (default behavior).
+        // Memoization is safe only for pure functions with no side effects.
+        //
+        // Cache lookup order:
+        // 1. Check if function is marked as memoizable
+        // 2. Generate stable fingerprint from argument values
+        // 3. Query cache - cache returns None if disabled
+        // 4. Return cached result if available (skip execution)
+        //
+        // This maintains the stream kernel's semantics while enabling
+        // optional performance optimization for suitable functions.
+        //
+        if memoizable {
+            let arg_fingerprint = Env::fingerprint_args(&arg_values);
+            if let Some(cached_result) = env.get_cached(&self.func_name, &arg_fingerprint) {
+                // Cache hit: return cached result without executing function
+                return Ok(cached_result);
+            }
+
+            // Cache miss: execute function and store result
+            let result = self.execute_function(&params, &body, &arg_values, env)?;
+            env.cache_result(&self.func_name, &arg_fingerprint, result.clone());
+            return Ok(result);
+        }
+
+        // Default path: execute function without caching
+        self.execute_function(&params, &body, &arg_values, env)
+    }
+}
+
+impl FunctionCallExpr {
+    /// Execute function body and return result.
+    /// This is factored out to be shared between cached and non-cached paths.
+    fn execute_function(
+        &self,
+        params: &[String],
+        body: &Rc<RefCell<Vec<Box<dyn StmtNode>>>>,
+        arg_values: &[Value],
+        env: &mut Env,
+    ) -> LumenResult<Value> {
         // Create new scope for function
         env.push_scope();
 
         // Bind parameters to arguments
         for (param, arg_val) in params.iter().zip(arg_values) {
-            env.define(param.clone(), arg_val);
+            env.define(param.clone(), arg_val.clone());
         }
 
         // Execute function body

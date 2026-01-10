@@ -6,6 +6,7 @@
 
 pub mod ast;
 pub mod eval;
+pub mod exec_options;
 pub mod lexer;
 pub mod parser;
 pub mod registry;
