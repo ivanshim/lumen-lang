@@ -1,7 +1,7 @@
 # Compute pi using Machin's formula with pure integer arithmetic
 # Output: floor(pi * 10^precision)
 
-precision = 100
+precision = 20
 
 scale = 1
 i = 0
