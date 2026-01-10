@@ -18,4 +18,4 @@ pub mod functions;
 pub mod expr_stmt;
 
 // Re-export function utilities for use by expressions
-pub use functions::{get_function, function_exists, get_function_params, clear_functions};
+pub use functions::get_function;

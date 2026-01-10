@@ -28,18 +28,39 @@ pub use eval::Value;
 
 /// Run a program through the microcode kernel
 pub fn run(source: &str, schema: &LanguageSchema) -> Result<Value, String> {
+    let start = std::time::Instant::now();
+
     // Stage 1: Ingest - source → tokens
+    let t1 = std::time::Instant::now();
     let tokens = ingest::lex(source, schema)?;
+    let ingest_time = t1.elapsed();
 
     // Stage 2: Structure - tokens → structured tokens
+    let t2 = std::time::Instant::now();
     let tokens = structure::process_structure(tokens, schema)?;
+    let structure_time = t2.elapsed();
 
     // Stage 3: Reduce - tokens → instructions
+    let t3 = std::time::Instant::now();
     let instr = reduce::parse(tokens, schema)?;
+    let reduce_time = t3.elapsed();
 
     // Stage 4: Execute - instructions → values
+    let t4 = std::time::Instant::now();
     let mut env = Environment::new();
     let (result, _flow) = execute(&instr, &mut env, schema)?;
+    let execute_time = t4.elapsed();
+
+    let total_time = start.elapsed();
+
+    // Only print timing if environment variable is set (for debugging)
+    if std::env::var("LUMEN_TIMING").is_ok() {
+        eprintln!("[TIMING] Ingest:    {:?}", ingest_time);
+        eprintln!("[TIMING] Structure: {:?}", structure_time);
+        eprintln!("[TIMING] Reduce:    {:?}", reduce_time);
+        eprintln!("[TIMING] Execute:   {:?}", execute_time);
+        eprintln!("[TIMING] Total:     {:?}", total_time);
+    }
 
     Ok(result)
 }

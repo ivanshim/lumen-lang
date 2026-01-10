@@ -6,7 +6,6 @@
 
 use crate::kernel::runtime::RuntimeValue;
 use std::any::Any;
-use std::sync::Arc;
 
 /// Lumen number value - stored as string to preserve precision
 #[derive(Debug, Clone, PartialEq)]
@@ -179,69 +178,3 @@ impl RuntimeValue for LumenNone {
     }
 }
 
-/// Lumen function value
-/// Functions store parameter names and are stored in the environment
-/// Body execution happens through the function call mechanism
-#[derive(Debug, Clone)]
-pub struct LumenFunction {
-    pub name: String,
-    pub params: Vec<String>,
-    pub param_types: Vec<Option<String>>, // Optional type annotations
-    pub return_type: Option<String>,       // Optional return type annotation
-}
-
-impl LumenFunction {
-    pub fn new(
-        name: String,
-        params: Vec<String>,
-        param_types: Vec<Option<String>>,
-        return_type: Option<String>,
-    ) -> Self {
-        Self {
-            name,
-            params,
-            param_types,
-            return_type,
-        }
-    }
-}
-
-impl RuntimeValue for LumenFunction {
-    fn clone_boxed(&self) -> Box<dyn RuntimeValue> {
-        Box::new(self.clone())
-    }
-
-    fn as_debug_string(&self) -> String {
-        format!("Function({})", self.name)
-    }
-
-    fn as_display_string(&self) -> String {
-        format!("<function {}>", self.name)
-    }
-
-    fn eq_value(&self, other: &dyn RuntimeValue) -> Result<bool, String> {
-        if let Some(other_fn) = other.as_any().downcast_ref::<LumenFunction>() {
-            Ok(self.name == other_fn.name)
-        } else {
-            Err("Cannot compare function with non-function".to_string())
-        }
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-/// Helper to extract a LumenNone if the value is one.
-pub fn as_none(val: &dyn RuntimeValue) -> Result<&LumenNone, String> {
-    val.as_any()
-        .downcast_ref::<LumenNone>()
-        .ok_or_else(|| "Expected a none value".to_string())
-}
-
-/// Helper to extract a LumenFunction if the value is one.
-pub fn as_function(val: &dyn RuntimeValue) -> Result<&LumenFunction, String> {
-    val.as_any()
-        .downcast_ref::<LumenFunction>()
-        .ok_or_else(|| "Expected a function value".to_string())
-}
