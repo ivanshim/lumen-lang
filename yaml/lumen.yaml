@@ -117,8 +117,7 @@ lexical:
     - "["           # bracket (reserved)
     - "]"           # bracket (reserved)
     - ","           # comma
-    - ";"           # semicolon
-    - ":"           # colon
+    - ":"           # colon (for type annotations)
     - "."           # dot
 
 structure:
@@ -131,13 +130,12 @@ structure:
   eof_handling: "dedent_all"
 
   block_structure:
-    open_marker: "Colon (:) introduces indented block"
-    open_mechanism: "INDENT (via colon)"
+    open_marker: "Indentation (4 spaces) introduces block"
+    open_mechanism: "INDENT (via indentation)"
     close_mechanism: "DEDENT (end of indented block)"
 
   statement_terminators:
     - newline
-    - semicolon (";")
     - explicit_return ("return" keyword)
 
   comments:
@@ -415,7 +413,7 @@ expressions:
 statements:
   variable_binding:
     description: "Bind value to identifier"
-    syntax: "let name = value; or let name: Type = value; or let mut name = value;"
+    syntax: "let name = value or let name: Type = value or let mut name = value"
     mutability_default: "Immutable (cannot be reassigned)"
     mutable: "let mut name = value (can be reassigned)"
     type_annotation: "Optional: let name: Type = value (for clarity)"
@@ -429,7 +427,7 @@ statements:
 
   simple_assignment:
     description: "Update value of mutable variable"
-    syntax: "name = expression;"
+    syntax: "name = expression"
     requirement: "Variable must be declared with 'let mut'"
     type_check: "Right side must match declared type"
     example: "counter = counter + 1"
@@ -440,14 +438,14 @@ statements:
     syntax: "print(expression) or extern(\"print_native\", expression)"
     builtin: "print is shorthand for extern(\"print_native\", ...)"
     note: "Explicit output operation (no implicit prints)"
-    example: "print(\"value: \"); print(42)"
+    example: "print(\"value: \")\nprint(42)"
     kernel_operation: call
 
   if_statement:
     description: "Conditional execution (statement, not expression)"
     syntax: "if condition NEWLINE INDENT statements+ DEDENT [else NEWLINE INDENT statements+ DEDENT]"
     condition: "Must be boolean (true/false, no truthy coercion)"
-    blocks: "Indented blocks following colon"
+    blocks: "Indented blocks following newline"
     example: |
       if x < 10
           print("small")
@@ -498,7 +496,7 @@ statements:
     syntax_with_return_type: "fn name(param1: Type1, param2: Type2) -> ReturnType NEWLINE ..."
     parameters: "Names only (typing optional); can include type annotations"
     return_value: "Last statement value (or explicit return)"
-    implicit_return: "Last expression without semicolon is return value"
+    implicit_return: "Last expression is return value"
     scope: "Parameters are local to function"
     purity: "Default impure; no annotation supported"
     recursion: "Allowed"
@@ -594,7 +592,7 @@ control_flow:
 
   function_return:
     description: "Functions return value of last expression"
-    implicit: "Expression without semicolon is return value"
+    implicit: "Last expression is return value"
     explicit: "return statement for early exit"
     none_return: "Functions with no return value implicitly return none"
     example: |
