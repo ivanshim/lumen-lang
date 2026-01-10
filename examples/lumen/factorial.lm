@@ -4,12 +4,12 @@ fn factorial(n)
     else
         n * factorial(n - 1)
 
-write("Factorials 1-12: ")
+write("Factorials 1-100: ")
 
 i = 1
-while i <= 12
+while i <= 100
     write(factorial(i))
-    if i < 12
+    if i < 100
         write(", ")
     i = i + 1
 
