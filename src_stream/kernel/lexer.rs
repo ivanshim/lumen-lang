@@ -72,15 +72,65 @@ impl SpannedToken {
     }
 }
 
+/// Strip single-line comments from source.
+/// Comments start with # and continue until end of line.
+/// Preserves newlines for correct line counting.
+/// Respects string boundaries: # inside strings is not a comment.
+fn strip_comments(source: &str) -> String {
+    let mut result = String::with_capacity(source.len());
+    let mut chars = source.chars().peekable();
+    let mut in_string = false;
+    let mut string_char = ' ';
+    let mut escape_next = false;
+
+    while let Some(ch) = chars.next() {
+        // Handle escape sequences in strings
+        if escape_next {
+            result.push(ch);
+            escape_next = false;
+            continue;
+        }
+
+        if ch == '\\' && in_string {
+            result.push(ch);
+            escape_next = true;
+            continue;
+        }
+
+        // Track string state (both single and double quotes)
+        if !in_string && (ch == '"' || ch == '\'') {
+            in_string = true;
+            string_char = ch;
+            result.push(ch);
+        } else if in_string && ch == string_char {
+            in_string = false;
+            result.push(ch);
+        } else if !in_string && ch == '#' {
+            // Skip comment until newline (but preserve the newline)
+            while let Some(c) = chars.next() {
+                if c == '\n' {
+                    result.push('\n');
+                    break;
+                }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+
+    result
+}
+
 /// Tokenize source code using pure maximal-munch segmentation.
 /// Language modules provide multi-char sequences via token_reg.
 /// Kernel has ZERO semantic knowledge.
 ///
 /// Algorithm:
-///   1. At each byte position, try to match the longest language-supplied multi-char sequence
-///   2. If no multi-char match, emit a single byte as a token (including all whitespace)
-///   3. Track line/col for every byte (required for error reporting)
-///   4. Never reject any input - all bytes are valid
+///   1. Strip comments from source (# to end of line, respecting strings)
+///   2. At each byte position, try to match the longest language-supplied multi-char sequence
+///   3. If no multi-char match, emit a single byte as a token (including all whitespace)
+///   4. Track line/col for every byte (required for error reporting)
+///   5. Never reject any input - all bytes are valid
 ///
 /// This lexer makes NO assumptions about:
 ///   - What constitutes whitespace or if it's meaningful
@@ -90,6 +140,7 @@ impl SpannedToken {
 ///
 /// All such interpretation is delegated entirely to language modules.
 pub fn lex(source: &str, token_reg: &TokenRegistry) -> LumenResult<Vec<SpannedToken>> {
+    let source = strip_comments(source);
     let mut out = Vec::new();
     let bytes = source.as_bytes();
     let mut byte_pos = 0usize;

@@ -14,8 +14,58 @@ pub struct Token {
     pub col: usize,
 }
 
+/// Strip single-line comments from source.
+/// Comments start with # and continue until end of line.
+/// Preserves newlines for correct line counting.
+/// Respects string boundaries: # inside strings is not a comment.
+fn strip_comments(source: &str) -> String {
+    let mut result = String::with_capacity(source.len());
+    let mut chars = source.chars().peekable();
+    let mut in_string = false;
+    let mut string_char = ' ';
+    let mut escape_next = false;
+
+    while let Some(ch) = chars.next() {
+        // Handle escape sequences in strings
+        if escape_next {
+            result.push(ch);
+            escape_next = false;
+            continue;
+        }
+
+        if ch == '\\' && in_string {
+            result.push(ch);
+            escape_next = true;
+            continue;
+        }
+
+        // Track string state (both single and double quotes)
+        if !in_string && (ch == '"' || ch == '\'') {
+            in_string = true;
+            string_char = ch;
+            result.push(ch);
+        } else if in_string && ch == string_char {
+            in_string = false;
+            result.push(ch);
+        } else if !in_string && ch == '#' {
+            // Skip comment until newline (but preserve the newline)
+            while let Some(c) = chars.next() {
+                if c == '\n' {
+                    result.push('\n');
+                    break;
+                }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+
+    result
+}
+
 /// Tokenize source using schema's multichar sequences
 pub fn lex(source: &str, schema: &LanguageSchema) -> Result<Vec<Token>, String> {
+    let source = strip_comments(source);
     let mut tokens = Vec::new();
     let bytes = source.as_bytes();
     let mut pos = 0;
