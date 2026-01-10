@@ -48,26 +48,6 @@ pub fn get_function(name: &str) -> Option<(Vec<String>, Rc<RefCell<Vec<Box<dyn S
     })
 }
 
-/// Check if a function exists
-pub fn function_exists(name: &str) -> bool {
-    FUNCTION_REGISTRY.with(|registry| {
-        registry.borrow().contains_key(name)
-    })
-}
-
-/// Get function parameter names
-pub fn get_function_params(name: &str) -> Option<Vec<String>> {
-    FUNCTION_REGISTRY.with(|registry| {
-        registry.borrow().get(name).map(|def| def.params.clone())
-    })
-}
-
-/// Clear all function definitions (useful for testing)
-pub fn clear_functions() {
-    FUNCTION_REGISTRY.with(|registry| {
-        registry.borrow_mut().clear();
-    });
-}
 
 // ============================================================================
 // FUNCTION DEFINITION STATEMENT HANDLER
