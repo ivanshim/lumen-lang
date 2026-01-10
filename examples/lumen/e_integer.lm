@@ -1,16 +1,35 @@
 max_terms = 1000
+precision = 10000
+scale = 1
 
+i = 0
+while i < precision
+    scale = scale * 10
+    i = i + 1
+
+sum = scale
 fact = 1
-n = 0
+n = 1
 
-while n < max_terms + 1
+while n < max_terms
+    term = scale / fact
+    sum = sum + term
     n = n + 1
     fact = fact * n
 
+accuracy_fact = 1
+n = 0
+while n < max_terms + 1
+    n = n + 1
+    accuracy_fact = accuracy_fact * n
+
 digits = 0
-temp = fact
+temp = accuracy_fact
 while temp > 0
     temp = temp / 10
     digits = digits + 1
 
+write("Digits of accuracy: ")
 print(digits)
+write("e = ")
+print(sum)
