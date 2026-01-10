@@ -1,5 +1,5 @@
-# Compute π using Machin's formula with pure integer arithmetic
-# Output: ⌊ π × 10^precision ⌋
+# Compute pi using Machin's formula with pure integer arithmetic
+# Output: floor(pi * 10^precision)
 
 precision = 5000
 
