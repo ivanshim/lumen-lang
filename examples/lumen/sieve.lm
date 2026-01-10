@@ -1,6 +1,4 @@
-write("Primes up to 1000: ")
-
-n = 1000
+n = 10000
 count = 0
 
 i = 2
@@ -13,13 +11,9 @@ while i <= n
         j = j + 1
 
     if is_prime
-        write(i)
         count = count + 1
-        if i < n
-            write(", ")
 
     i = i + 1
 
-print("")
-write("Total primes found: ")
+write("Total primes found up to 10000: ")
 print(count)
