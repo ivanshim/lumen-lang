@@ -7,5 +7,5 @@ fn fact_tail(n, acc)
 fn fact(n)
     fact_tail(n, 1)
 
-write("Factorial of 100 (tail-recursive): ")
-print(fact(100))
+write("Factorial of 1000 (tail-recursive): ")
+print(fact(1000))
