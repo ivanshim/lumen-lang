@@ -1,22 +1,16 @@
-precision = 116000
-scale = 1
+max_terms = 1000
 
-i = 0
-while i < precision
-    scale = scale * 10
-    i = i + 1
-
-sum = scale
 fact = 1
-n = 1
+n = 0
 
-while n < 1000
-    term = scale / fact
-    sum = sum + term
+while n < max_terms + 1
     n = n + 1
     fact = fact * n
 
-write("Digits: ")
-print(precision)
-write("Final: ")
-print(sum)
+digits = 0
+temp = fact
+while temp > 0
+    temp = temp / 10
+    digits = digits + 1
+
+print(digits)
