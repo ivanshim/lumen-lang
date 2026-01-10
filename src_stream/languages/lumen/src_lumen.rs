@@ -125,4 +125,26 @@ pub fn register_all(registry: &mut Registry) {
     statements::return_stmt::register(registry);   // return statement
     statements::functions::register(registry);     // function definition and registry
     statements::expr_stmt::register(registry);     // expression statements (fallback handler)
+
+    // --- OPTIONAL OPTIMIZATION: Mark memoizable functions ---
+    // These are pure, deterministic functions with no side effects.
+    // Marking them here enables optional memoization when StreamExecutionOptions::enable_memoization is true.
+    // Default behavior is unchanged (no memoization).
+    register_memoizable_functions();
+}
+
+/// Register functions that are safe to memoize (pure functions).
+/// This is a semantic decision: the function must have no side effects and be deterministic.
+fn register_memoizable_functions() {
+    use crate::languages::lumen::statements::functions;
+
+    // Mark recursive Fibonacci as memoizable
+    // fib(n) = if n <= 1 then n else fib(n-1) + fib(n-2)
+    // This is a pure, deterministic function that benefits from memoization
+    functions::mark_memoizable("fib");
+
+    // Add other memoizable functions here as needed
+    // Example:
+    // functions::mark_memoizable("factorial");
+    // functions::mark_memoizable("fibonacci");
 }
