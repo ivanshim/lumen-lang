@@ -64,14 +64,16 @@ run_test() {
     local end_time=$(date +%s%N)
     local elapsed_ns=$((end_time - start_time))
     local elapsed_ms=$((elapsed_ns / 1000000))
-    local elapsed_sec=$(echo "scale=3; $elapsed_ns / 1000000000" | bc)
 
-    # Format time display
+    # Format time display using pure bash arithmetic (no bc required)
     local time_display
     if [ $elapsed_ms -lt 1000 ]; then
         time_display="${elapsed_ms}ms"
     else
-        time_display="${elapsed_sec}s"
+        # Convert to seconds with 3 decimal places using bash arithmetic
+        local sec=$((elapsed_ns / 1000000000))
+        local remaining_ms=$(( (elapsed_ns % 1000000000) / 1000000 ))
+        time_display=$(printf "%d.%03d" "$sec" "$remaining_ms")s
     fi
 
     # Print output with indentation
