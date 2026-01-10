@@ -6,15 +6,16 @@
 
 use crate::kernel::runtime::RuntimeValue;
 use std::any::Any;
+use num_bigint::BigInt;
 
-/// Lumen number value - stored as string to preserve precision
+/// Lumen number value - stored as BigInt for arbitrary precision
 #[derive(Debug, Clone, PartialEq)]
 pub struct LumenNumber {
-    pub value: String,
+    pub value: BigInt,
 }
 
 impl LumenNumber {
-    pub fn new(value: String) -> Self {
+    pub fn new(value: BigInt) -> Self {
         Self { value }
     }
 }
@@ -25,21 +26,16 @@ impl RuntimeValue for LumenNumber {
     }
 
     fn as_debug_string(&self) -> String {
-        format!("Number(\"{}\")", self.value)
+        format!("Number({})", self.value)
     }
 
     fn as_display_string(&self) -> String {
-        self.value.clone()
+        self.value.to_string()
     }
 
     fn eq_value(&self, other: &dyn RuntimeValue) -> Result<bool, String> {
         if let Some(other_num) = other.as_any().downcast_ref::<LumenNumber>() {
-            // Parse both as floats for numeric comparison
-            let self_n: f64 = self.value.parse()
-                .map_err(|_| "Invalid number format".to_string())?;
-            let other_n: f64 = other_num.value.parse()
-                .map_err(|_| "Invalid number format".to_string())?;
-            Ok(self_n == other_n)
+            Ok(self.value == other_num.value)
         } else {
             Err("Cannot compare number with non-number".to_string())
         }

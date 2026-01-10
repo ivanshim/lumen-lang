@@ -6,6 +6,7 @@ use crate::kernel::parser::Parser;
 use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::{Env, Value};
 use crate::languages::lumen::values::{LumenNumber, LumenBool, LumenString, LumenNone};
+use crate::languages::lumen::numeric;
 
 #[derive(Debug)]
 pub struct NumberLiteral {
@@ -14,7 +15,8 @@ pub struct NumberLiteral {
 
 impl ExprNode for NumberLiteral {
     fn eval(&self, _env: &mut Env) -> LumenResult<Value> {
-        Ok(Box::new(LumenNumber::new(self.value.clone())))
+        let bigint = numeric::parse_number(&self.value)?;
+        Ok(Box::new(LumenNumber::new(bigint)))
     }
 }
 

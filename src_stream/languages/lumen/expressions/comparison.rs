@@ -25,16 +25,8 @@ impl ExprNode for ComparisonExpr {
         // Try numeric comparison first
         if let (Ok(left_num), Ok(right_num)) = (as_number(l.as_ref()), as_number(r.as_ref())) {
             let result = match self.op.as_str() {
-                "==" => {
-                    let an = numeric::parse_number(&left_num.value)?;
-                    let bn = numeric::parse_number(&right_num.value)?;
-                    an == bn
-                }
-                "!=" => {
-                    let an = numeric::parse_number(&left_num.value)?;
-                    let bn = numeric::parse_number(&right_num.value)?;
-                    an != bn
-                }
+                "==" => left_num.value == right_num.value,
+                "!=" => left_num.value != right_num.value,
                 "<" => numeric::compare_lt(&left_num.value, &right_num.value)?,
                 ">" => numeric::compare_gt(&left_num.value, &right_num.value)?,
                 "<=" => numeric::compare_le(&left_num.value, &right_num.value)?,

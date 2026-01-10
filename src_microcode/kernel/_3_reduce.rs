@@ -505,7 +505,7 @@ impl<'a> Parser<'a> {
         if lexeme.chars().next().map_or(false, |c| c.is_ascii_digit()) {
             let num_str = self.consume_number()?;
             let num = num_str
-                .parse::<f64>()
+                .parse::<num_bigint::BigInt>()
                 .map_err(|_| format!("Invalid number: {}", num_str))?;
             return Ok(Instruction::literal(Value::Number(num)));
         }

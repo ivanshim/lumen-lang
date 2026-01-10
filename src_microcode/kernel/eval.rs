@@ -4,18 +4,19 @@
 // No language-specific behavior here.
 
 use std::fmt;
+use num_bigint::BigInt;
 
 /// Runtime value
 /// These are the only things that exist at runtime.
 #[derive(Debug, Clone)]
 pub enum Value {
-    Number(f64),
+    Number(BigInt),
     String(String),
     Bool(bool),
     Null,
     Range {
-        start: f64,
-        end: f64,
+        start: BigInt,
+        end: BigInt,
     },
     Function {
         params: Vec<String>,
@@ -28,17 +29,13 @@ impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Value::Number(n) => {
-                if n.fract() == 0.0 && n.is_finite() {
-                    write!(f, "{}", *n as i64)
-                } else {
-                    write!(f, "{}", n)
-                }
+                write!(f, "{}", n)
             }
             Value::String(s) => write!(f, "{}", s),
             Value::Bool(b) => write!(f, "{}", if *b { "true" } else { "false" }),
             Value::Null => write!(f, "none"),
             Value::Range { start, end } => {
-                write!(f, "{}..{}", *start as i64, *end as i64)
+                write!(f, "{}..{}", start, end)
             }
             Value::Function { params, body_ref: _ } => {
                 write!(f, "<function({})>", params.join(", "))
@@ -50,12 +47,12 @@ impl fmt::Display for Value {
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Value::Number(a), Value::Number(b)) => (a - b).abs() < 1e-10,
+            (Value::Number(a), Value::Number(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Null, Value::Null) => true,
             (Value::Range { start: a_start, end: a_end }, Value::Range { start: b_start, end: b_end }) => {
-                (a_start - b_start).abs() < 1e-10 && (a_end - b_end).abs() < 1e-10
+                a_start == b_start && a_end == b_end
             }
             _ => false,
         }
@@ -68,7 +65,7 @@ impl Value {
         match self {
             Value::Bool(b) => *b,
             Value::Null => false,
-            Value::Number(n) => *n != 0.0,
+            Value::Number(n) => n != &BigInt::from(0),
             Value::String(s) => !s.is_empty(),
             Value::Range { .. } => true,
             Value::Function { .. } => true,
@@ -76,13 +73,13 @@ impl Value {
     }
 
     /// Try to coerce to number
-    pub fn to_number(&self) -> Result<f64, String> {
+    pub fn to_number(&self) -> Result<BigInt, String> {
         match self {
-            Value::Number(n) => Ok(*n),
-            Value::Bool(true) => Ok(1.0),
-            Value::Bool(false) => Ok(0.0),
-            Value::Null => Ok(0.0),
-            Value::String(s) => s.parse::<f64>()
+            Value::Number(n) => Ok(n.clone()),
+            Value::Bool(true) => Ok(BigInt::from(1)),
+            Value::Bool(false) => Ok(BigInt::from(0)),
+            Value::Null => Ok(BigInt::from(0)),
+            Value::String(s) => s.parse::<BigInt>()
                 .map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Range { .. } => Err("Cannot coerce range to number".to_string()),
             Value::Function { .. } => Err("Cannot coerce function to number".to_string()),

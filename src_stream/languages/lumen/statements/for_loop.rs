@@ -14,6 +14,7 @@ use crate::kernel::runtime::Env;
 use crate::languages::lumen::structure::structural;
 use crate::languages::lumen::expressions::range_expr::as_range;
 use crate::languages::lumen::values::LumenNumber;
+use num_bigint::BigInt;
 
 #[derive(Debug)]
 struct ForStmt {
@@ -30,10 +31,10 @@ impl StmtNode for ForStmt {
         // Handle range iteration
         let range = as_range(iterable_val.as_ref())?;
 
-        let mut current = range.start;
+        let mut current = range.start.clone();
         while current < range.end {
             // Set loop variable to current value
-            env.assign(&self.var, Box::new(LumenNumber::new((current as i64).to_string())))?;
+            env.assign(&self.var, Box::new(LumenNumber::new(current.clone())))?;
 
             // Execute loop body with new scope
             env.push_scope();
@@ -57,7 +58,7 @@ impl StmtNode for ForStmt {
                 return Ok(Control::None);
             }
 
-            current += 1.0;
+            current += BigInt::from(1);
         }
 
         Ok(Control::None)
