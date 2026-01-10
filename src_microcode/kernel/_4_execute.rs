@@ -147,45 +147,58 @@ pub fn execute(
                 }
                 _ => {
                     // Check if it's a user-defined function
-                    if let Ok(func_val) = env.get(function) {
-                        if let Value::Function { params, body_ref: _ } = func_val {
-                            // Look up the function body
-                            if let Some(body_instr) = env.functions.get(function).cloned() {
-                                // Check parameter count
-                                if params.len() != arg_vals.len() {
-                                    return Err(format!(
-                                        "Function {} expects {} arguments, got {}",
-                                        function,
-                                        params.len(),
-                                        arg_vals.len()
-                                    ));
+                    if let Ok(_func_val) = env.get(function) {
+                        // Look up the function metadata
+                        if let Some(metadata) = env.functions.get(function).cloned() {
+                            let params = metadata.params.clone();
+                            let body_instr = metadata.body.clone();
+                            let memoizable = metadata.memoizable;
+
+                            // Check parameter count
+                            if params.len() != arg_vals.len() {
+                                return Err(format!(
+                                    "Function {} expects {} arguments, got {}",
+                                    function,
+                                    params.len(),
+                                    arg_vals.len()
+                                ));
+                            }
+
+                            // Semantic memoization: Check cache ONLY if function is marked memoizable
+                            if memoizable {
+                                if let Some(cached_result) = env.get_cached(function, &arg_vals) {
+                                    // Cache hit: return cached result without executing
+                                    return Ok((cached_result, ControlFlow::Normal));
                                 }
+                            }
 
-                                // Create new scope for function execution
-                                env.push_scope();
+                            // Execute function (either not memoizable or cache miss)
+                            env.push_scope();
 
-                                // Bind parameters
-                                for (param, arg) in params.iter().zip(arg_vals.iter()) {
-                                    env.set(param.clone(), arg.clone());
-                                }
+                            // Bind parameters
+                            for (param, arg) in params.iter().zip(arg_vals.iter()) {
+                                env.set(param.clone(), arg.clone());
+                            }
 
-                                // Execute function body
-                                let (result, flow) = execute(&body_instr, env, _schema)?;
+                            // Execute function body
+                            let (result, flow) = execute(&body_instr, env, _schema)?;
 
-                                // Pop scope
-                                env.pop_scope();
+                            // Pop scope
+                            env.pop_scope();
 
-                                // Handle return value
-                                match flow {
-                                    ControlFlow::Return => Ok((result, ControlFlow::Normal)),
-                                    ControlFlow::Normal => Ok((result, ControlFlow::Normal)),
-                                    _ => Ok((result, flow)),
-                                }
-                            } else {
-                                Err(format!("Function body not found for: {}", function))
+                            // Cache result ONLY if function is memoizable
+                            if memoizable {
+                                env.cache_result(function, &arg_vals, result.clone());
+                            }
+
+                            // Handle return value
+                            match flow {
+                                ControlFlow::Return => Ok((result, ControlFlow::Normal)),
+                                ControlFlow::Normal => Ok((result, ControlFlow::Normal)),
+                                _ => Ok((result, flow)),
                             }
                         } else {
-                            Err(format!("Unknown function: {}", function))
+                            Err(format!("Function body not found for: {}", function))
                         }
                     } else {
                         Err(format!("Unknown function: {}", function))
@@ -297,15 +310,15 @@ pub fn execute(
         }
 
         // Function definition: store in environment
+        // Metadata includes memoizable flag from language semantics
         Instruction::FunctionDef {
             name,
             params,
             body,
+            memoizable,
         } => {
-            // Store function metadata: we use a special marker in environment
-            // Since Value::Function only stores param names, we store the body as-is
-            // For actual execution, we'll need to store the whole instruction
-            // For now, store params in the Function value
+            // Store function metadata: params, body, and memoizable flag
+            // The kernel respects the memoizable flag set by the language layer
             env.set(
                 name.clone(),
                 Value::Function {
@@ -313,11 +326,15 @@ pub fn execute(
                     body_ref: name.clone(),
                 },
             );
-            // Also store the actual function body in a separate functions map
-            // This is a workaround since Value::Function can't store the body
-            if !env.functions.contains_key(name) {
-                env.functions.insert(name.clone(), body.as_ref().clone());
-            }
+
+            use super::env::FunctionMetadata;
+            let metadata = FunctionMetadata {
+                params: params.clone(),
+                body: body.as_ref().clone(),
+                memoizable: *memoizable,
+            };
+            env.functions.insert(name.clone(), metadata);
+
             Ok((Value::Null, ControlFlow::Normal))
         }
 

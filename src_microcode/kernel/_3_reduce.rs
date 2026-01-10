@@ -266,10 +266,15 @@ impl<'a> Parser<'a> {
 
         let body = self.parse_block()?;
 
+        // Check if function is marked as memoizable by the language schema
+        // The kernel is language-agnostic: only memoize if explicitly permitted
+        let memoizable = self.schema.memoizable_functions.contains(&name);
+
         Ok(Instruction::FunctionDef {
             name,
             params,
             body: Box::new(body),
+            memoizable,
         })
     }
 

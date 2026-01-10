@@ -106,10 +106,12 @@ pub enum Instruction {
 
     // Function definition: store in registry
     // (This is metadata, not execution)
+    // memoizable: true only if explicitly marked by language semantics
     FunctionDef {
         name: String,
         params: Vec<String>,
         body: Box<Instruction>,
+        memoizable: bool,
     },
 }
 
