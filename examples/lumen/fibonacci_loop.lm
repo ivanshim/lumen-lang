@@ -3,8 +3,12 @@ b = 1
 count = 0
 
 while count < 10
-    print(a)
+    write(a)
+    if count < 9
+        write(", ")
     next = a + b
     a = b
     b = next
     count = count + 1
+
+print("")

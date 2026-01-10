@@ -4,7 +4,13 @@ fn fib(n)
     else
         fib(n - 1) + fib(n - 2)
 
-print("Computing fib(30) using recursion...")
-result = fib(30)
-print("fib(30) = ")
-print(result)
+write("Fibonacci sequence (0-10): ")
+
+i = 0
+while i <= 10
+    write(fib(i))
+    if i < 10
+        write(", ")
+    i = i + 1
+
+print("")
