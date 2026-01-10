@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# lumen-lang comprehensive test script
-# Tests all examples for all languages with stream and microcode kernels
-# Output is displayed directly, not captured
-# Results are summarized by language and kernel type
+# lumen-lang test script
+# Tests examples with stream and microcode kernels
+# Usage: ./test.sh [--lang lumen|rust|python]
+# If --lang is not specified, tests all languages
 
 # Colors for output
 RED='\033[0;31m'
@@ -12,6 +12,27 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
+
+# Parse command-line arguments
+LANG_FILTER=""
+if [[ $# -gt 0 ]]; then
+    if [[ "$1" == "--lang" ]]; then
+        LANG_FILTER="$2"
+        case "$LANG_FILTER" in
+            lumen|rust|python)
+                ;;
+            *)
+                echo -e "${RED}Invalid language: $LANG_FILTER${NC}"
+                echo "Usage: $0 [--lang lumen|rust|python]"
+                exit 1
+                ;;
+        esac
+    else
+        echo -e "${RED}Invalid argument: $1${NC}"
+        echo "Usage: $0 [--lang lumen|rust|python]"
+        exit 1
+    fi
+fi
 
 # Build the project first
 echo -e "${BLUE}Building lumen-lang...${NC}"
@@ -31,6 +52,7 @@ SKIPPED_TESTS=0
 # Store test results: declare associative arrays for per-kernel-per-language stats
 declare -A RESULTS  # format: "language:kernel:status" -> count
 declare -a FAILED_LIST  # list of failed tests: "language | kernel | file"
+declare -a TESTED_LANGUAGES  # track which languages were tested
 
 # Initialize all combinations
 for lang in lumen python_core rust_core; do
@@ -102,37 +124,58 @@ run_test() {
     fi
 }
 
+# Determine title based on language filter
+if [ -z "$LANG_FILTER" ]; then
+    title="All Tests"
+    test_languages=("lumen" "python_core" "rust_core")
+else
+    case "$LANG_FILTER" in
+        lumen) title="Lumen Tests"; test_languages=("lumen") ;;
+        python) title="Python Tests"; test_languages=("python_core") ;;
+        rust) title="Rust Tests"; test_languages=("rust_core") ;;
+    esac
+fi
+
 echo "=========================================="
-echo "  Lumen-Lang Test Suite (All Tests)"
+echo "  Lumen-Lang Test Suite ($title)"
 echo "=========================================="
 echo ""
 
-# Test lumen examples with all kernels
-echo -e "${YELLOW}Lumen Examples:${NC}"
-for file in examples/lumen/*.lm examples/lumen/constructs/*.lm; do
-    for kernel in stream microcode; do
-        run_test "$file" "$kernel" "lumen"
+# Test lumen examples if included
+if [[ " ${test_languages[@]} " =~ " lumen " ]]; then
+    echo -e "${YELLOW}Lumen Examples:${NC}"
+    for file in examples/lumen/*.lm examples/lumen/constructs/*.lm; do
+        for kernel in stream microcode; do
+            run_test "$file" "$kernel" "lumen"
+        done
     done
-done
-echo ""
+    echo ""
+    TESTED_LANGUAGES+=("lumen")
+fi
 
-# Test python examples with all kernels
-echo -e "${YELLOW}Python Examples:${NC}"
-for file in examples/python/*.py; do
-    for kernel in stream microcode; do
-        run_test "$file" "$kernel" "python_core"
+# Test python examples if included
+if [[ " ${test_languages[@]} " =~ " python_core " ]]; then
+    echo -e "${YELLOW}Python Examples:${NC}"
+    for file in examples/python/*.py; do
+        for kernel in stream microcode; do
+            run_test "$file" "$kernel" "python_core"
+        done
     done
-done
-echo ""
+    echo ""
+    TESTED_LANGUAGES+=("python_core")
+fi
 
-# Test rust examples with all kernels
-echo -e "${YELLOW}Rust Examples:${NC}"
-for file in examples/rust/*.rs; do
-    for kernel in stream microcode; do
-        run_test "$file" "$kernel" "rust_core"
+# Test rust examples if included
+if [[ " ${test_languages[@]} " =~ " rust_core " ]]; then
+    echo -e "${YELLOW}Rust Examples:${NC}"
+    for file in examples/rust/*.rs; do
+        for kernel in stream microcode; do
+            run_test "$file" "$kernel" "rust_core"
+        done
     done
-done
-echo ""
+    echo ""
+    TESTED_LANGUAGES+=("rust_core")
+fi
 
 # Detailed Summary by Language and Kernel
 echo "=========================================="
@@ -140,7 +183,7 @@ echo "  Test Summary (By Language, Then Kernel)"
 echo "=========================================="
 echo ""
 
-for lang in lumen python_core rust_core; do
+for lang in "${TESTED_LANGUAGES[@]}"; do
     case "$lang" in
         lumen) lang_display="Lumen" ;;
         python_core) lang_display="Python Core" ;;
