@@ -8,9 +8,9 @@ fn fib(n)
 
 i = 0
 result = 0
-while i <= 10000
+while i <= 1000
     result = fib(i)
     i = i + 1
 
-write("Fibonacci number at index 10000: ")
+write("Fibonacci number at index 1000: ")
 print(result)
