@@ -1,0 +1,11 @@
+fn fact_tail(n, acc)
+    if n <= 1
+        acc
+    else
+        fact_tail(n - 1, acc * n)
+
+fn fact(n)
+    fact_tail(n, 1)
+
+write("Factorial of 100 (tail-recursive): ")
+print(fact(100))
