@@ -1,4 +1,8 @@
-for i in 0..10
+for i in 0..11
     if i == 5
         continue
-    print(i)
+    write(i)
+    if i < 10
+        write(", ")
+
+print("")

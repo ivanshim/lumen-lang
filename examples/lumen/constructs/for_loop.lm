@@ -1,2 +1,6 @@
 for i in 0..10
-    print(i)
+    write(i)
+    if i < 9
+        write(", ")
+
+print("")
