@@ -16,8 +16,5 @@ while n < 1000
     n = n + 1
     fact = fact * n
 
-    if n % 10 == 0
-        print(sum)
-
 write("Final: ")
 print(sum)
