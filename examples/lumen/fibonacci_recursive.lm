@@ -6,12 +6,12 @@ fn fib(n)
     else
         fib(n - 1) + fib(n - 2)
 
-write("Fibonacci sequence (0-30): ")
+write("Fibonacci sequence (0-100): ")
 
 i = 0
-while i <= 30
+while i <= 100
     write(fib(i))
-    if i < 30
+    if i < 100
         write(", ")
     i = i + 1
 
