@@ -16,7 +16,6 @@
 // - Languages manage all dispatch and handler logic
 
 use crate::kernel::parser::Parser;
-use std::collections::HashSet;
 
 pub type LumenResult<T> = Result<T, String>;
 
@@ -46,14 +45,6 @@ pub struct TokenDefinition {
 }
 
 impl TokenDefinition {
-    pub fn new(lexeme: &'static str, skip_during_parsing: bool) -> Self {
-        Self {
-            lexeme,
-            skip_during_parsing,
-            requires_word_boundary: false,
-        }
-    }
-
     /// Create a token that should be recognized but not skipped
     pub fn recognize(lexeme: &'static str) -> Self {
         Self {
@@ -63,16 +54,6 @@ impl TokenDefinition {
         }
     }
 
-    /// Create a token that should be skipped during parsing
-    pub fn skip(lexeme: &'static str) -> Self {
-        Self {
-            lexeme,
-            skip_during_parsing: true,
-            requires_word_boundary: false,
-        }
-    }
-
-    /// Create a keyword token that must respect identifier word boundaries
     /// Create a keyword token that requires word boundaries
     pub fn keyword(lexeme: &'static str) -> Self {
         Self {
@@ -125,33 +106,11 @@ impl TokenRegistry {
         &self.multichar_lexemes
     }
 
-    /// Get the tokens that should be skipped during parsing.
-    /// Used by language-specific parser extension traits.
-    pub fn skip_tokens(&self) -> &[&'static str] {
-        &self.skip_tokens
-    }
-
-    /// Check if a specific lexeme should be skipped during parsing.
-    pub fn is_skip_token(&self, lexeme: &str) -> bool {
-        self.skip_tokens.contains(&lexeme)
-    }
-
-    /// Get the tokens that require word boundaries.
-    /// Used by the lexer to prevent keyword matching inside identifiers.
-    pub fn word_boundary_lexemes(&self) -> &[&'static str] {
-        &self.word_boundary_lexemes
-    }
 
     /// Check if the lexeme requires surrounding word boundaries.
     /// Used by the lexer to avoid splitting identifiers that contain keywords.
     pub fn requires_word_boundary(&self, lexeme: &str) -> bool {
         self.word_boundary_lexemes.iter().any(|&wb| wb == lexeme)
-    }
-
-    /// Get all token definitions.
-    /// Used for inspection and debugging.
-    pub fn token_definitions(&self) -> &[TokenDefinition] {
-        &self.token_defs
     }
 
     /// Rebuild internal caches from token definitions

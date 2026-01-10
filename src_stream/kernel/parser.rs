@@ -11,41 +11,24 @@
 // This parser is language-agnostic and makes no semantic assumptions.
 // Token skipping (whitespace, comments) is handled by language-specific extension traits.
 
-use crate::kernel::ast::{ExprNode};
-use crate::kernel::lexer::{lex, SpannedToken, Token, Span};
-use crate::kernel::registry::{err_at, LumenResult, TokenRegistry};
+use crate::kernel::lexer::{SpannedToken, Token};
+use crate::kernel::registry::{LumenResult, TokenRegistry};
 
 pub struct Parser<'a> {
     pub toks: Vec<SpannedToken>,
     pub i: usize,
-    pub token_registry: &'a TokenRegistry,
+    _token_registry: std::marker::PhantomData<&'a TokenRegistry>,
 }
 
 impl<'a> Parser<'a> {
-    /// Create parser from source and token registry
-    pub fn new(source: &str, token_registry: &'a TokenRegistry) -> LumenResult<Self> {
-        Ok(Self {
-            toks: lex(source, token_registry)?,
-            i: 0,
-            token_registry,
-        })
-    }
-
     /// Create parser with pre-tokenized token stream.
     /// Used when language-specific token processing is needed.
-    pub fn new_with_tokens(toks: Vec<SpannedToken>, token_registry: &'a TokenRegistry) -> LumenResult<Self> {
+    pub fn new_with_tokens(toks: Vec<SpannedToken>, _token_registry: &'a TokenRegistry) -> LumenResult<Self> {
         Ok(Self {
             toks,
             i: 0,
-            token_registry,
+            _token_registry: std::marker::PhantomData,
         })
-    }
-
-    /// Get the byte span of the current token (AUTHORITATIVE position).
-    /// Span is the canonical coordinate system for all core logic.
-    pub fn current_span(&self) -> Span {
-        let t = self.toks.get(self.i).unwrap();
-        t.tok.span
     }
 
     /// Get diagnostic line/column position of current token.
@@ -67,15 +50,6 @@ impl<'a> Parser<'a> {
         let t = self.toks[self.i].tok.clone();
         self.i += 1;
         t
-    }
-
-    pub fn prev_span(&self) -> Span {
-        if self.i > 0 {
-            let t = &self.toks[self.i - 1];
-            t.tok.span
-        } else {
-            Span::new(0, 0)
-        }
     }
 }
 
