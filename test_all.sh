@@ -52,10 +52,27 @@ run_test() {
     echo -e "${CYAN}  → ${filename} (${kernel})${NC}"
     TOTAL_TESTS=$((TOTAL_TESTS + 1))
 
+    # Capture start time in nanoseconds
+    local start_time=$(date +%s%N)
+
     # Run the test with output displayed directly, capturing exit code
     local output
     output=$(timeout 45 $BINARY --kernel "$kernel" "$file" 2>&1)
     local exit_code=$?
+
+    # Capture end time and calculate elapsed time
+    local end_time=$(date +%s%N)
+    local elapsed_ns=$((end_time - start_time))
+    local elapsed_ms=$((elapsed_ns / 1000000))
+    local elapsed_sec=$(echo "scale=3; $elapsed_ns / 1000000000" | bc)
+
+    # Format time display
+    local time_display
+    if [ $elapsed_ms -lt 1000 ]; then
+        time_display="${elapsed_ms}ms"
+    else
+        time_display="${elapsed_sec}s"
+    fi
 
     # Print output with indentation
     if [ -n "$output" ]; then
@@ -63,19 +80,19 @@ run_test() {
     fi
 
     if [ $exit_code -eq 0 ]; then
-        echo -e "    ${GREEN}✓ PASS${NC}"
+        echo -e "    ${GREEN}✓ PASS${NC} (${time_display})"
         PASSED_TESTS=$((PASSED_TESTS + 1))
         RESULTS["${language}:${kernel}:passed"]=$((RESULTS["${language}:${kernel}:passed"] + 1))
         return 0
     elif [ $exit_code -eq 124 ]; then
-        echo -e "    ${RED}✗ TIMEOUT${NC}"
+        echo -e "    ${RED}✗ TIMEOUT${NC} (${time_display})"
         TIMEOUT_TESTS=$((TIMEOUT_TESTS + 1))
         FAILED_TESTS=$((FAILED_TESTS + 1))
         RESULTS["${language}:${kernel}:timeout"]=$((RESULTS["${language}:${kernel}:timeout"] + 1))
         FAILED_LIST+=("${language} | ${kernel} | ${filename}")
         return 1
     else
-        echo -e "    ${RED}✗ FAIL${NC}"
+        echo -e "    ${RED}✗ FAIL${NC} (${time_display})"
         FAILED_TESTS=$((FAILED_TESTS + 1))
         RESULTS["${language}:${kernel}:failed"]=$((RESULTS["${language}:${kernel}:failed"] + 1))
         FAILED_LIST+=("${language} | ${kernel} | ${filename}")
