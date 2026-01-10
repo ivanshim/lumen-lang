@@ -20,11 +20,6 @@ use crate::languages::lumen::structure::structural::{LPAREN, RPAREN};
 pub struct FunctionDef {
     pub params: Vec<String>,
     pub body: Rc<RefCell<Vec<Box<dyn StmtNode>>>>,
-    /// --- OPTIONAL OPTIMIZATION: Function memoizability metadata ---
-    /// When true, this function's results can be cached.
-    /// Default is false (no memoization).
-    /// Set only for pure, deterministic functions with no side effects.
-    pub memoizable: bool,
 }
 
 thread_local! {
@@ -33,48 +28,22 @@ thread_local! {
     static FUNCTION_REGISTRY: RefCell<HashMap<String, FunctionDef>> = RefCell::new(HashMap::new());
 }
 
-// --- MEMOIZABLE FUNCTION REGISTRY ---
-// Explicitly mark which functions are safe to memoize.
-// This is a language semantic decision, not a kernel optimization.
-thread_local! {
-    /// Set of function names that are safe to memoize (pure functions with no side effects)
-    static MEMOIZABLE_FUNCTIONS: RefCell<std::collections::HashSet<String>> = RefCell::new(std::collections::HashSet::new());
-}
-
-/// Mark a function as memoizable (safe to cache results).
-/// This is a semantic decision: the function must be pure with no side effects.
-pub fn mark_memoizable(name: &str) {
-    MEMOIZABLE_FUNCTIONS.with(|set| {
-        set.borrow_mut().insert(name.to_string());
-    });
-}
-
-/// Check if a function is marked as memoizable.
-pub fn is_memoizable(name: &str) -> bool {
-    MEMOIZABLE_FUNCTIONS.with(|set| {
-        set.borrow().contains(name)
-    })
-}
-
 /// Register a function definition with its parameters and body
 pub fn define_function(name: String, params: Vec<String>, body: Vec<Box<dyn StmtNode>>) {
     FUNCTION_REGISTRY.with(|registry| {
-        // Check if this function is marked as memoizable
-        let memoizable = is_memoizable(&name);
         let def = FunctionDef {
             params,
             body: Rc::new(RefCell::new(body)),
-            memoizable,
         };
         registry.borrow_mut().insert(name, def);
     });
 }
 
 /// Get a function definition by name (returns Rc to allow shared access)
-pub fn get_function(name: &str) -> Option<(Vec<String>, Rc<RefCell<Vec<Box<dyn StmtNode>>>>, bool)> {
+pub fn get_function(name: &str) -> Option<(Vec<String>, Rc<RefCell<Vec<Box<dyn StmtNode>>>>)> {
     FUNCTION_REGISTRY.with(|registry| {
         registry.borrow().get(name).map(|def| {
-            (def.params.clone(), Rc::clone(&def.body), def.memoizable)
+            (def.params.clone(), Rc::clone(&def.body))
         })
     })
 }

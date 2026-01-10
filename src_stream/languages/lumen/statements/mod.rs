@@ -15,6 +15,7 @@ pub mod return_stmt;
 pub mod let_binding;
 pub mod let_mut_binding;
 pub mod functions;
+pub mod memoization;
 pub mod expr_stmt;
 
 // Re-export function utilities for use by expressions

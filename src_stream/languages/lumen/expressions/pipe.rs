@@ -24,8 +24,8 @@ impl ExprNode for PipeExpr {
         // Evaluate the left side
         let left_value = self.left.eval(env)?;
 
-        // Get function definition (includes memoizable flag)
-        let (params, body, memoizable) = functions::get_function(&self.func_name)
+        // Get function definition
+        let (params, body) = functions::get_function(&self.func_name)
             .ok_or_else(|| format!("Undefined function '{}'", self.func_name))?;
 
         // Evaluate other arguments
@@ -45,21 +45,20 @@ impl ExprNode for PipeExpr {
         }
 
         // ================================================================
-        // OPTIONAL OPTIMIZATION: Check memoization cache
+        // MEMOIZATION: Gated by execution context (MEMOIZATION = true/false)
         // ================================================================
-        if memoizable {
-            let arg_fingerprint = Env::fingerprint_args(&arg_values);
-            if let Some(cached_result) = env.get_cached(&self.func_name, &arg_fingerprint) {
-                return Ok(cached_result);
-            }
-
-            let result = self.execute_function(&params, &body, &arg_values, env)?;
-            env.cache_result(&self.func_name, &arg_fingerprint, result.clone());
-            return Ok(result);
+        // Cache operations are gated by env.memoization_enabled().
+        // If MEMOIZATION = false (default): no cache lookup/storage
+        // If MEMOIZATION = true: check cache before execution, store after
+        //
+        let arg_fingerprint = Env::fingerprint_args(&arg_values);
+        if let Some(cached_result) = env.get_cached(&self.func_name, &arg_fingerprint) {
+            return Ok(cached_result);
         }
 
-        // Default path: execute function without caching
-        self.execute_function(&params, &body, &arg_values, env)
+        let result = self.execute_function(&params, &body, &arg_values, env)?;
+        env.cache_result(&self.func_name, &arg_fingerprint, result.clone());
+        Ok(result)
     }
 }
 
