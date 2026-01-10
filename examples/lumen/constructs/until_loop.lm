@@ -1,14 +1,21 @@
-print("Until loop: post-condition loop test")
+write("Until loop ascending (0-9): ")
 
 i = 0
-until i >= 5
-    print(i)
+until i >= 10
+    write(i)
+    if i < 9
+        write(", ")
     i = i + 1
 
 print("")
-print("Until loop: stops when condition becomes true")
 
-x = 10
+write("Until loop descending (15-6): ")
+
+x = 15
 until x <= 5
-    print(x)
+    write(x)
+    if x > 6
+        write(", ")
     x = x - 1
+
+print("")
