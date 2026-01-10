@@ -2,9 +2,9 @@ a = 0
 b = 1
 count = 0
 
-while count < 10
+while count < 30
     write(a)
-    if count < 9
+    if count < 29
         write(", ")
     next = a + b
     a = b
