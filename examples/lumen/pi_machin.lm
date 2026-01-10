@@ -3,6 +3,7 @@
 
 precision = 5000
 
+# Build scale = 10^precision
 scale = 1
 i = 0
 while i < precision
@@ -18,8 +19,7 @@ arctan_small = term
 k = 1
 
 while 1 == 1
-    term = term / base_small_sq
-    denom = 2 * k + 1
+    denom = base_small_sq * (2 * k + 1)
     term = term / denom
 
     if term == 0
@@ -41,8 +41,7 @@ arctan_large = term
 k = 1
 
 while 1 == 1
-    term = term / base_large_sq
-    denom = 2 * k + 1
+    denom = base_large_sq * (2 * k + 1)
     term = term / denom
 
     if term == 0
