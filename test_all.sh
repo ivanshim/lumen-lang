@@ -57,7 +57,7 @@ run_test() {
 
     # Run the test with output displayed directly, capturing exit code
     local output
-    output=$(timeout 45 $BINARY --kernel "$kernel" "$file" 2>&1)
+    output=$(timeout 10 $BINARY --kernel "$kernel" "$file" 2>&1)
     local exit_code=$?
 
     # Capture end time and calculate elapsed time
