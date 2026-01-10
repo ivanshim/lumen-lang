@@ -4,13 +4,6 @@ fn fib(n)
     else
         fib(n - 1) + fib(n - 2)
 
-write("Fibonacci sequence (0-10): ")
-
-i = 0
-while i <= 10
-    write(fib(i))
-    if i < 10
-        write(", ")
-    i = i + 1
-
-print("")
+write("Computing fib(30)... Result: ")
+result = fib(30)
+print(result)
