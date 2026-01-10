@@ -8,11 +8,12 @@ use std::collections::HashMap;
 use crate::kernel::runtime::Value;
 
 // ============================================================================
-// MEMOIZATION CACHE (OPTIONAL OPTIMIZATION LAYER)
+// MEMOIZATION CACHE (SEMANTIC OPTIMIZATION LAYER)
 // ============================================================================
 //
-// This cache is created ONLY when memoization is explicitly enabled.
-// When disabled (default), this remains None and has zero overhead.
+// The cache is always created and present (matching microcode kernel design).
+// Memoization is a language semantic decision, not a kernel feature.
+// Only functions explicitly marked as memoizable use the cache.
 //
 // Cache key: (function_name, argument_fingerprint)
 // The argument fingerprint is a stable representation of argument values.
@@ -23,27 +24,21 @@ type MemoKey = (String, String);
 pub struct Env {
     scopes: Vec<HashMap<String, Value>>,
 
-    // --- OPTIONAL OPTIMIZATION: Memoization cache ---
-    // Created ONLY when enable_memoization is true in StreamExecutionOptions.
-    // When None (default), no caching occurs and behavior is unchanged.
-    memoization_cache: Option<HashMap<MemoKey, Value>>,
+    // --- MEMOIZATION CACHE ---
+    // Always created and present.
+    // Only used when a function is explicitly marked as memoizable.
+    // Cache is populated only for memoizable functions; other functions
+    // perform no cache lookups or inserts.
+    memoization_cache: HashMap<MemoKey, Value>,
 }
 
 impl Env {
     /// Create a new environment with a single (global) scope.
+    /// The memoization cache is always created (matching microcode kernel design).
     pub fn new() -> Self {
         Self {
             scopes: vec![HashMap::new()],
-            memoization_cache: None,
-        }
-    }
-
-    /// Create an environment with memoization enabled.
-    /// This is used when StreamExecutionOptions::enable_memoization is true.
-    pub fn with_memoization() -> Self {
-        Self {
-            scopes: vec![HashMap::new()],
-            memoization_cache: Some(HashMap::new()),
+            memoization_cache: HashMap::new(),
         }
     }
 
@@ -107,28 +102,20 @@ impl Env {
         Err(format!("Undefined variable '{}'", name))
     }
 
-    // --- OPTIONAL OPTIMIZATION: Memoization methods ---
-    // These methods are called ONLY when memoization is enabled.
-    // When memoization_cache is None (default), these have zero overhead.
+    // --- MEMOIZATION METHODS ---
+    // Cache is always present. Only memoizable functions use these methods.
 
     /// Check if a result is cached for this function call.
-    /// Returns Some(value) if cached, None if not cached or memoization disabled.
+    /// Returns Some(value) if cached, None if not in cache.
     pub fn get_cached(&self, func_name: &str, arg_fingerprint: &str) -> Option<Value> {
-        if let Some(cache) = &self.memoization_cache {
-            let key = (func_name.to_string(), arg_fingerprint.to_string());
-            cache.get(&key).cloned()
-        } else {
-            None
-        }
+        let key = (func_name.to_string(), arg_fingerprint.to_string());
+        self.memoization_cache.get(&key).cloned()
     }
 
     /// Cache the result of a function call.
-    /// This is a no-op if memoization is disabled.
     pub fn cache_result(&mut self, func_name: &str, arg_fingerprint: &str, result: Value) {
-        if let Some(cache) = &mut self.memoization_cache {
-            let key = (func_name.to_string(), arg_fingerprint.to_string());
-            cache.insert(key, result);
-        }
+        let key = (func_name.to_string(), arg_fingerprint.to_string());
+        self.memoization_cache.insert(key, result);
     }
 
     /// Generate a stable fingerprint from argument values.
