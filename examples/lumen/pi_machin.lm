@@ -14,13 +14,15 @@ base_small = 5
 base_small_sq = base_small * base_small
 
 term = scale / base_small
+remainder = scale % base_small
 arctan_small = term
 k = 1
 
 while 1 == 1
-    term = term / base_small_sq
-    denom = 2 * k + 1
-    term = term / denom
+    numerator = term * (2 * k - 1) + remainder
+    denominator = (2 * k + 1) * base_small_sq
+    term = numerator / denominator
+    remainder = numerator % denominator
 
     if term == 0
         break
@@ -37,13 +39,15 @@ base_large = 239
 base_large_sq = base_large * base_large
 
 term = scale / base_large
+remainder = scale % base_large
 arctan_large = term
 k = 1
 
 while 1 == 1
-    term = term / base_large_sq
-    denom = 2 * k + 1
-    term = term / denom
+    numerator = term * (2 * k - 1) + remainder
+    denominator = (2 * k + 1) * base_large_sq
+    term = numerator / denominator
+    remainder = numerator % denominator
 
     if term == 0
         break
