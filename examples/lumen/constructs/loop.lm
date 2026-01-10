@@ -1,4 +1,8 @@
 x = 0
 while x < 10
-    print(x)
+    write(x)
+    if x < 9
+        write(", ")
     x = x + 1
+
+print("")
