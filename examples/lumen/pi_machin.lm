@@ -19,7 +19,11 @@ arctan_small = term
 k = 1
 
 while 1 == 1
-    denom = base_small_sq * (2 * k + 1)
+    # term = term * (2k-1) / ( (2k+1) * base^2 )
+    numer = 2 * k - 1
+    denom = (2 * k + 1) * base_small_sq
+
+    term = term * numer
     term = term / denom
 
     if term == 0
@@ -41,7 +45,10 @@ arctan_large = term
 k = 1
 
 while 1 == 1
-    denom = base_large_sq * (2 * k + 1)
+    numer = 2 * k - 1
+    denom = (2 * k + 1) * base_large_sq
+
+    term = term * numer
     term = term / denom
 
     if term == 0
