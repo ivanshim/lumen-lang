@@ -78,16 +78,16 @@ impl ExternCapability for ValueType {
         }
 
         let type_code = if as_number(args[0].as_ref()).is_ok() {
-            "0"   // 0 = number
+            0   // 0 = number
         } else if as_bool(args[0].as_ref()).is_ok() {
-            "1"   // 1 = boolean
+            1   // 1 = boolean
         } else if as_string(args[0].as_ref()).is_ok() {
-            "2"   // 2 = string
+            2   // 2 = string
         } else {
             return Err("Unknown value type".to_string());
         };
 
-        Ok(Box::new(LumenNumber::new(type_code.to_string())))
+        Ok(Box::new(LumenNumber::new(num_bigint::BigInt::from(type_code))))
     }
 }
 

@@ -7,6 +7,8 @@ use super::primitives::{Instruction, TransferKind, OperateKind};
 use super::eval::Value;
 use super::env::Environment;
 use crate::schema::LanguageSchema;
+use num_bigint::BigInt;
+use num_traits::cast::ToPrimitive;
 
 /// Execution state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -269,7 +271,7 @@ pub fn execute(
                 Value::Range { start, end } => {
                     let mut current = start;
                     while current < end {
-                        env.set(var.clone(), Value::Number(current));
+                        env.set(var.clone(), Value::Number(current.clone()));
                         let (result, flow) = execute(body, env, _schema)?;
                         match flow {
                             ControlFlow::Normal => {},
@@ -277,7 +279,7 @@ pub fn execute(
                             ControlFlow::Continue => {},
                             ControlFlow::Return => return Ok((result, ControlFlow::Return)),
                         }
-                        current += 1.0;
+                        current += BigInt::from(1);
                     }
                     Ok((Value::Null, ControlFlow::Normal))
                 }
@@ -441,18 +443,18 @@ fn execute_operator(
                 "*" => Value::Number(left.to_number()? * right.to_number()?),
                 "/" => {
                     let r = right.to_number()?;
-                    if r == 0.0 {
+                    if r == BigInt::from(0) {
                         return Err("Division by zero".to_string());
                     }
                     Value::Number(left.to_number()? / r)
                 }
                 "%" => {
-                    let l = left.to_number()? as i64;
-                    let r = right.to_number()? as i64;
-                    if r == 0 {
-                        return Err("Division by zero".to_string());
+                    let l = left.to_number()?;
+                    let r = right.to_number()?;
+                    if r == BigInt::from(0) {
+                        return Err("Modulo by zero".to_string());
                     }
-                    Value::Number((l % r) as f64)
+                    Value::Number(l % r)
                 }
                 "==" => Value::Bool(left == right),
                 "!=" => Value::Bool(left != right),
@@ -460,7 +462,13 @@ fn execute_operator(
                 ">" => Value::Bool(left.to_number()? > right.to_number()?),
                 "<=" => Value::Bool(left.to_number()? <= right.to_number()?),
                 ">=" => Value::Bool(left.to_number()? >= right.to_number()?),
-                "**" => Value::Number(left.to_number()?.powf(right.to_number()?)),
+                "**" => {
+                    let l = left.to_number()?;
+                    let r = right.to_number()?;
+                    let exp = r.to_u32()
+                        .ok_or_else(|| "Exponent too large".to_string())?;
+                    Value::Number(l.pow(exp))
+                }
                 ".." => Value::Range {
                     start: left.to_number()?,
                     end: right.to_number()?,

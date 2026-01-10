@@ -21,3 +21,5 @@ path = "src_microcode/lib.rs"
 
 [dependencies]
 serde_yaml = "0.9"
+num-bigint = "0.4"
+num-traits = "0.2"

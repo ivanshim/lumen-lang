@@ -11,6 +11,7 @@ use crate::kernel::parser::Parser;
 use crate::kernel::runtime::{Env, Value, RuntimeValue};
 use crate::languages::lumen::patterns::PatternSet;
 use crate::languages::lumen::values::as_number;
+use num_bigint::BigInt;
 use std::any::Any;
 
 #[derive(Debug)]
@@ -22,12 +23,12 @@ struct RangeExpr {
 /// Represents a half-open range [start, end)
 #[derive(Debug, Clone)]
 pub struct LumenRange {
-    pub start: f64,
-    pub end: f64,
+    pub start: BigInt,
+    pub end: BigInt,
 }
 
 impl LumenRange {
-    pub fn new(start: f64, end: f64) -> Self {
+    pub fn new(start: BigInt, end: BigInt) -> Self {
         LumenRange { start, end }
     }
 }
@@ -38,11 +39,11 @@ impl RuntimeValue for LumenRange {
     }
 
     fn as_debug_string(&self) -> String {
-        format!("Range({}, {})", self.start as i64, self.end as i64)
+        format!("Range({}, {})", self.start, self.end)
     }
 
     fn as_display_string(&self) -> String {
-        format!("{}..{}", self.start as i64, self.end as i64)
+        format!("{}..{}", self.start, self.end)
     }
 
     fn eq_value(&self, other: &dyn RuntimeValue) -> Result<bool, String> {
@@ -66,12 +67,7 @@ impl ExprNode for RangeExpr {
         let start_num = as_number(start_val.as_ref())?;
         let end_num = as_number(end_val.as_ref())?;
 
-        let start_f64 = start_num.value.parse::<f64>()
-            .map_err(|_| "Failed to parse range start as number".to_string())?;
-        let end_f64 = end_num.value.parse::<f64>()
-            .map_err(|_| "Failed to parse range end as number".to_string())?;
-
-        Ok(Box::new(LumenRange::new(start_f64, end_f64)))
+        Ok(Box::new(LumenRange::new(start_num.value.clone(), end_num.value.clone())))
     }
 }
 
