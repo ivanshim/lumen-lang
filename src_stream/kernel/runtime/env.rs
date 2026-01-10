@@ -8,15 +8,18 @@ use std::collections::HashMap;
 use crate::kernel::runtime::Value;
 
 // ============================================================================
-// MEMOIZATION CACHE (SEMANTIC OPTIMIZATION LAYER)
+// MEMOIZATION CACHE & EXECUTION STATE
 // ============================================================================
 //
-// The cache is always created and present (matching microcode kernel design).
-// Memoization is a language semantic decision, not a kernel feature.
-// Only functions explicitly marked as memoizable use the cache.
+// MEMOIZATION is a system capability that enables/disables function result caching.
+// It is:
+// - Dynamically scoped (affects all calls made while enabled)
+// - Inherited by callees
+// - Automatically restored on scope exit
+// - NOT a normal variable (reserved system identifier)
+// - NOT readable, passable, or storable as data
 //
 // Cache key: (function_name, argument_fingerprint)
-// The argument fingerprint is a stable representation of argument values.
 
 type MemoKey = (String, String);
 
@@ -24,31 +27,66 @@ type MemoKey = (String, String);
 pub struct Env {
     scopes: Vec<HashMap<String, Value>>,
 
+    // --- MEMOIZATION STATE ---
+    // Stack of memoization enabled/disabled states
+    // Allows dynamic scoping with proper nesting
+    memoization_stack: Vec<bool>,
+
     // --- MEMOIZATION CACHE ---
-    // Always created and present.
-    // Only used when a function is explicitly marked as memoizable.
-    // Cache is populated only for memoizable functions; other functions
-    // perform no cache lookups or inserts.
+    // Function call result cache
+    // Only populated when memoization_enabled() is true
     memoization_cache: HashMap<MemoKey, Value>,
 }
 
 impl Env {
     /// Create a new environment with a single (global) scope.
-    /// The memoization cache is always created (matching microcode kernel design).
+    /// Memoization is disabled by default (MEMOIZATION = false).
     pub fn new() -> Self {
         Self {
             scopes: vec![HashMap::new()],
+            memoization_stack: vec![false],  // Default: MEMOIZATION = false
             memoization_cache: HashMap::new(),
         }
     }
 
+    /// Check if memoization is currently enabled.
+    pub fn memoization_enabled(&self) -> bool {
+        self.memoization_stack.last().copied().unwrap_or(false)
+    }
+
+    /// Set memoization state (MEMOIZATION = true/false).
+    /// This is dynamically scoped.
+    pub fn set_memoization(&mut self, enabled: bool) {
+        if let Some(last) = self.memoization_stack.last_mut() {
+            *last = enabled;
+        }
+    }
+
+    /// Push a new memoization state (for nested scopes).
+    /// Called when entering a new scope.
+    fn push_memoization_state(&mut self) {
+        let current = self.memoization_enabled();
+        self.memoization_stack.push(current);
+    }
+
+    /// Pop memoization state (for nested scopes).
+    /// Called when exiting a scope.
+    fn pop_memoization_state(&mut self) {
+        if self.memoization_stack.len() > 1 {
+            self.memoization_stack.pop();
+        }
+    }
+
     /// Enter a new lexical scope.
+    /// Also preserves and manages memoization state for dynamic scoping.
     #[allow(dead_code)]
     pub fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
+        self.push_memoization_state();
     }
 
     /// Exit the current lexical scope.
+    /// Also restores memoization state when exiting.
     #[allow(dead_code)]
     pub fn pop_scope(&mut self) {
         if self.scopes.len() == 1 {
@@ -56,6 +94,7 @@ impl Env {
             return;
         }
         self.scopes.pop();
+        self.pop_memoization_state();
     }
 
     /// Define a new variable in the current scope.
@@ -102,18 +141,25 @@ impl Env {
         Err(format!("Undefined variable '{}'", name))
     }
 
-    // --- MEMOIZATION METHODS ---
-    // Cache is always present. Only memoizable functions use these methods.
+    // --- MEMOIZATION CACHE METHODS ---
+    // Cache operations are gated by memoization_enabled() state.
 
     /// Check if a result is cached for this function call.
-    /// Returns Some(value) if cached, None if not in cache.
+    /// Returns Some(value) only if memoization is enabled AND result is cached.
     pub fn get_cached(&self, func_name: &str, arg_fingerprint: &str) -> Option<Value> {
+        if !self.memoization_enabled() {
+            return None;
+        }
         let key = (func_name.to_string(), arg_fingerprint.to_string());
         self.memoization_cache.get(&key).cloned()
     }
 
     /// Cache the result of a function call.
+    /// Only caches if memoization is enabled.
     pub fn cache_result(&mut self, func_name: &str, arg_fingerprint: &str, result: Value) {
+        if !self.memoization_enabled() {
+            return;
+        }
         let key = (func_name.to_string(), arg_fingerprint.to_string());
         self.memoization_cache.insert(key, result);
     }

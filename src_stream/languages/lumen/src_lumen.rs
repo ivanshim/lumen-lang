@@ -42,6 +42,7 @@ pub fn aggregate_patterns() -> PatternSet {
         statements::continue_stmt::patterns(),
         statements::return_stmt::patterns(),
         statements::functions::patterns(),
+        statements::memoization::patterns(),
         statements::expr_stmt::patterns(),
     ];
 
@@ -86,6 +87,7 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::keyword("print"),
         TokenDefinition::keyword("write"),
         TokenDefinition::keyword("none"),
+        TokenDefinition::keyword("MEMOIZATION"),  // System capability for memoization control
         // "extern" is NOT registered - has its own expression handler
         // "true" and "false" are NOT registered - have their own expression handlers
     ];
@@ -119,32 +121,11 @@ pub fn register_all(registry: &mut Registry) {
     statements::while_loop::register(registry);    // while loops
     statements::for_loop::register(registry);      // for loops (desugars to while) - before assignment!
     statements::until_loop::register(registry);    // until loops (post-condition loops) - before assignment!
+    statements::memoization::register(registry);   // MEMOIZATION = true/false system capability - before assignment!
     statements::assignment::register(registry);    // Assignment - must come after keyword handlers
     statements::break_stmt::register(registry);    // break statement
     statements::continue_stmt::register(registry); // continue statement
     statements::return_stmt::register(registry);   // return statement
     statements::functions::register(registry);     // function definition and registry
     statements::expr_stmt::register(registry);     // expression statements (fallback handler)
-
-    // --- OPTIONAL OPTIMIZATION: Mark memoizable functions ---
-    // These are pure, deterministic functions with no side effects.
-    // Marking them here enables optional memoization when StreamExecutionOptions::enable_memoization is true.
-    // Default behavior is unchanged (no memoization).
-    register_memoizable_functions();
-}
-
-/// Register functions that are safe to memoize (pure functions).
-/// This is a semantic decision: the function must have no side effects and be deterministic.
-fn register_memoizable_functions() {
-    use crate::languages::lumen::statements::functions;
-
-    // Mark recursive Fibonacci as memoizable
-    // fib(n) = if n <= 1 then n else fib(n-1) + fib(n-2)
-    // This is a pure, deterministic function that benefits from memoization
-    functions::mark_memoizable("fib");
-
-    // Add other memoizable functions here as needed
-    // Example:
-    // functions::mark_memoizable("factorial");
-    // functions::mark_memoizable("fibonacci");
 }
