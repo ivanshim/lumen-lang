@@ -1,9 +1,7 @@
-write("Finding primes up to 10000...")
-print("")
-
 n = 10000
 count = 0
 last_prime = 0
+first = true
 
 i = 2
 while i <= n
@@ -17,9 +15,17 @@ while i <= n
     if is_prime
         last_prime = i
         count = count + 1
+        if first
+            write("")
+            write(i)
+            first = false
+        else
+            write(", ")
+            write(i)
 
     i = i + 1
 
+print("")
 write("Last prime before 10000: ")
 print(last_prime)
 write("Total primes found: ")
