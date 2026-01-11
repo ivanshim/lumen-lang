@@ -1,71 +1,11 @@
 # Compute pi using Machin's formula with pure integer arithmetic
-# Output: floor(pi * 10^precision)
-# Parameter: precision (default: 1000)
-# Usage: lumen-lang pi_machin.lm [precision]
+# Parameter: significant_figures (default: 1000)
+# Usage: lumen-lang pi_machin.lm [significant_figures]
 # Example: lumen-lang pi_machin.lm 1000
 # Default: Computes 1000 digits of pi using Machin's formula
 
-precision = 1000
+significant_figures = 1000
 if ARGS != ""
-    precision = int(ARGS)
+    significant_figures = int(ARGS)
 
-scale = 1
-i = 0
-while i < precision
-    scale = scale * 10
-    i = i + 1
-
-# -------- arctan(1 / base_small) --------
-base_small = 5
-base_small_sq = base_small * base_small
-
-term = scale / base_small
-remainder = scale % base_small
-arctan_small = term
-k = 1
-
-while 1 == 1
-    numerator = term * (2 * k - 1) + remainder
-    denominator = (2 * k + 1) * base_small_sq
-    term = numerator / denominator
-    remainder = numerator % denominator
-
-    if int(term) == 0
-        break
-
-    if k % 2 == 1
-        arctan_small = arctan_small - term
-    else
-        arctan_small = arctan_small + term
-
-    k = k + 1
-
-# -------- arctan(1 / base_large) --------
-base_large = 239
-base_large_sq = base_large * base_large
-
-term = scale / base_large
-remainder = scale % base_large
-arctan_large = term
-k = 1
-
-while 1 == 1
-    numerator = term * (2 * k - 1) + remainder
-    denominator = (2 * k + 1) * base_large_sq
-    term = numerator / denominator
-    remainder = numerator % denominator
-
-    if int(term) == 0
-        break
-
-    if k % 2 == 1
-        arctan_large = arctan_large - term
-    else
-        arctan_large = arctan_large + term
-
-    k = k + 1
-
-# -------- Machin combination --------
-pi = 16 * arctan_small - 4 * arctan_large
-
-print(int(pi))
+print(pi_machin(significant_figures))

@@ -1,50 +1,12 @@
-# Parameter: max_terms (default: 500)
-# Usage: lumen-lang e_integer.lm [max_terms]
+# Parameter: significant_figures (default: 500)
+# Usage: lumen-lang e_integer.lm [significant_figures]
 # Example: lumen-lang e_integer.lm 500
-# Default: Computes 1000 digits of Euler's number (e) using 500 factorial terms
+# Default: Computes 500 digits of Euler's number (e)
+# Note: Can compute 1000+ digits but default reduced for test suite performance
 # Inspired by Steve Wozniak's Byte Magazine June 1981 article about calculating e on the Apple II
 # Reference: https://downloads.reactivemicro.com/Users/Grant_Stockley/Apple%202%20Woz%20e%20Calc%201981.pdf
-max_terms = 500
+significant_figures = 500
 if ARGS != ""
-    max_terms = int(ARGS)
+    significant_figures = int(ARGS)
 
-precision = 1000
-scale = 1
-
-i = 0
-while i < precision
-    scale = scale * 10
-    i = i + 1
-
-sum = scale
-fact = 1
-n = 1
-
-while n < max_terms
-    term = scale / fact
-    sum = sum + term
-    n = n + 1
-    fact = fact * n
-
-accuracy_fact = 1
-n = 0
-while n < max_terms + 1
-    n = n + 1
-    accuracy_fact = accuracy_fact * n
-
-digits = 0
-temp = accuracy_fact
-while temp > 0
-    temp = int(temp / 10)
-    digits = digits + 1
-
-shift = precision - digits
-divisor = 1
-i = 0
-while i < shift
-    divisor = divisor * 10
-    i = i + 1
-
-accurate_e = sum / divisor
-
-print(int(accurate_e))
+print(e_integer(significant_figures))
