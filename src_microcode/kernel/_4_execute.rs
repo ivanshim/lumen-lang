@@ -69,6 +69,10 @@ pub fn execute(
 
         // 4. Assign: bind name in current scope
         Instruction::Assign { name, value } => {
+            // ARGS is a system-provided immutable semantic value
+            if name == "ARGS" {
+                return Err("Cannot reassign ARGS (system-provided immutable value)".to_string());
+            }
             let (val, flow) = execute(value, env, _schema)?;
             if flow != ControlFlow::Normal {
                 return Ok((val.clone(), flow));

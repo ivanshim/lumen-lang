@@ -14,8 +14,8 @@ use microcode_2::languages::{lumen_schema, rust_core_schema, python_core_schema}
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    // Parse arguments: [binary] <file> [--lang <language>]
-    let (filepath, language) = parse_args(&args);
+    // Parse arguments: [binary] <file> [--lang <language>] [program_args...]
+    let (filepath, language, program_args) = parse_args(&args);
 
     // Read source file
     let source = match fs::read_to_string(&filepath) {
@@ -30,21 +30,21 @@ fn main() {
     match language.as_str() {
         "lumen" => {
             let schema = lumen_schema::get_schema();
-            if let Err(e) = run(&source, &schema) {
+            if let Err(e) = run(&source, &schema, &program_args) {
                 eprintln!("LumenError: {}", e);
                 process::exit(1);
             }
         }
         "rust_core" => {
             let schema = rust_core_schema::get_schema();
-            if let Err(e) = run(&source, &schema) {
+            if let Err(e) = run(&source, &schema, &program_args) {
                 eprintln!("RustCoreError: {}", e);
                 process::exit(1);
             }
         }
         "python_core" => {
             let schema = python_core_schema::get_schema();
-            if let Err(e) = run(&source, &schema) {
+            if let Err(e) = run(&source, &schema, &program_args) {
                 eprintln!("PythonCoreError: {}", e);
                 process::exit(1);
             }
@@ -56,10 +56,10 @@ fn main() {
     }
 }
 
-fn parse_args(args: &[String]) -> (String, String) {
+fn parse_args(args: &[String]) -> (String, String, Vec<String>) {
     if args.len() < 2 {
         eprintln!(
-            "Usage: {} <file> [--lang <language>]",
+            "Usage: {} <file> [--lang <language>] [program_args...]",
             args.get(0).unwrap_or(&"microcode_2".to_string())
         );
         process::exit(1);
@@ -67,14 +67,17 @@ fn parse_args(args: &[String]) -> (String, String) {
 
     let filepath = args[1].clone();
     let mut language = String::new();
+    let mut program_args = Vec::new();
 
     // Parse --lang flag
+    let mut consumed_until = 2;
     if args.len() > 2 && args[2] == "--lang" {
         if args.len() < 4 {
             eprintln!("Error: --lang requires an argument");
             process::exit(1);
         }
         language = args[3].to_lowercase();
+        consumed_until = 4;
     }
 
     // Auto-detect language if not specified
@@ -83,7 +86,12 @@ fn parse_args(args: &[String]) -> (String, String) {
             .unwrap_or_else(|| "lumen".to_string());
     }
 
-    (filepath, language)
+    // Remaining arguments are program arguments
+    if args.len() > consumed_until {
+        program_args = args[consumed_until..].to_vec();
+    }
+
+    (filepath, language, program_args)
 }
 
 fn detect_language_from_extension(filepath: &str) -> Option<String> {
