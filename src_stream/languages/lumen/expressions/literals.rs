@@ -5,8 +5,9 @@ use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
 use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::{Env, Value};
-use crate::languages::lumen::values::{LumenNumber, LumenBool, LumenString, LumenNone};
+use crate::languages::lumen::values::{LumenNumber, LumenBool, LumenString, LumenNone, LumenRational};
 use crate::languages::lumen::numeric;
+use num_bigint::BigInt;
 
 #[derive(Debug)]
 pub struct NumberLiteral {
@@ -15,8 +16,15 @@ pub struct NumberLiteral {
 
 impl ExprNode for NumberLiteral {
     fn eval(&self, _env: &mut Env) -> LumenResult<Value> {
-        let bigint = numeric::parse_number(&self.value)?;
-        Ok(Box::new(LumenNumber::new(bigint)))
+        let (numerator, denominator) = numeric::parse_number_rational(&self.value)?;
+
+        // If denominator is 1, it's an integer - use Number
+        if denominator == BigInt::from(1) {
+            Ok(Box::new(LumenNumber::new(numerator)))
+        } else {
+            // Otherwise it's a rational number
+            Ok(Box::new(LumenRational::new(numerator, denominator)))
+        }
     }
 }
 
