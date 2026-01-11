@@ -8,5 +8,5 @@ echo "=================================================="
 
 for i in {1..30}; do
     printf "pi(%2d): " "$i"
-    ./target/release/lumen-lang examples/lumen/pi_machin.lm "$i"
+    ./target/release/microcode examples/lumen/pi_machin.lm --lang lumen "$i"
 done
