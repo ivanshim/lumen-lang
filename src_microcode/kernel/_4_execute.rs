@@ -197,54 +197,6 @@ pub fn execute(
                     let str_val = format!("{}", &arg_vals[0]);
                     Ok((Value::String(str_val), ControlFlow::Normal))
                 }
-                "round" => {
-                    // round(x, decimals): round number preserving input type
-                    // - Integer input → Integer output (decimals must be >= 0)
-                    // - Rational input → Rational output
-                    // - Real input → Real output (same precision)
-                    if arg_vals.len() != 2 {
-                        return Err(format!("round() expects 2 arguments, got {}", arg_vals.len()));
-                    }
-
-                    let decimals = match &arg_vals[1] {
-                        Value::Number(n) => {
-                            n.to_i64()
-                                .ok_or_else(|| "Decimals must be an integer".to_string())?
-                        }
-                        _ => return Err("Decimals argument must be an integer".to_string()),
-                    };
-
-                    if decimals < 0 {
-                        return Err("round() decimals argument must be >= 0".to_string());
-                    }
-
-                    let decimals = decimals as usize;
-
-                    match &arg_vals[0] {
-                        Value::Number(n) => {
-                            // Integer → Integer (unchanged)
-                            Ok((Value::Number(n.clone()), ControlFlow::Normal))
-                        }
-                        Value::Real { numerator, denominator, precision } => {
-                            // Real → Real (perform rounding, keep precision)
-                            let (rounded_num, rounded_denom) = round_rational(numerator, denominator, decimals)?;
-                            Ok((Value::Real {
-                                numerator: rounded_num,
-                                denominator: rounded_denom,
-                                precision: *precision,
-                            }, ControlFlow::Normal))
-                        }
-                        Value::Rational { numerator, denominator } => {
-                            // Rational → Rational (perform rounding)
-                            let (rounded_num, rounded_denom) = round_rational(numerator, denominator, decimals)?;
-                            Ok((Value::Rational {
-                                numerator: rounded_num,
-                                denominator: rounded_denom,
-                            }, ControlFlow::Normal))
-                        }
-                        _ => Err("round() requires a number, rational, or real argument".to_string()),
-                    }
-                }
                 "extern" => {
                     // extern(function_name, arg1, arg2, ...)
                     if arg_vals.is_empty() {
@@ -877,41 +829,4 @@ fn reduce_rational(numerator: BigInt, denominator: BigInt) -> Value {
             denominator: reduced_denom,
         }
     }
-}
-
-/// Round a rational number (num/denom) to specified decimal places
-/// Returns (numerator, denominator) of rounded result
-/// Uses round-half-away-from-zero semantics
-fn round_rational(numerator: &BigInt, denominator: &BigInt, decimals: usize) -> Result<(BigInt, BigInt), String> {
-    // Calculate scaling factors
-    let scale = BigInt::from(10).pow(decimals as u32);
-    let scale_plus = &scale * 10;
-
-    // Determine sign and work with absolute values for symmetric rounding
-    let is_negative = numerator < &BigInt::from(0);
-    let abs_num = if is_negative { -numerator } else { numerator.clone() };
-
-    // Scale by 10^(decimals+1) to capture rounding digit
-    let scaled = (&abs_num * &scale_plus) / denominator;
-
-    // Extract rounding digit (ones place) and number before it
-    let ten = BigInt::from(10);
-    let digit_to_round: BigInt = &scaled % &ten;
-    let number_before_digit: BigInt = &scaled / &ten;
-
-    // Round half away from zero: if digit >= 5, increment
-    let rounded_abs = if digit_to_round >= BigInt::from(5) {
-        number_before_digit + 1
-    } else {
-        number_before_digit
-    };
-
-    // Restore sign and return result scaled back to target precision
-    let final_numerator = if is_negative {
-        -rounded_abs
-    } else {
-        rounded_abs
-    };
-
-    Ok((final_numerator, scale))
 }
