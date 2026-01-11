@@ -96,7 +96,12 @@ fn run_lumen_stream(source: &str, program_args: &[String]) {
     let mut registry = Registry::new();
     crate::languages::lumen::dispatcher::register_all(&mut registry);
 
-    let raw_tokens = match lex(source, &registry.tokens) {
+    // Prepend Lumen standard library
+    // The library provides user-facing I/O functions (print, write) built on top of emit() primitive
+    let stdlib_io = include_str!("../library/io.lm");
+    let full_source = format!("{}\n{}", stdlib_io, source);
+
+    let raw_tokens = match lex(&full_source, &registry.tokens) {
         Ok(toks) => toks,
         Err(e) => {
             eprintln!("LexError: {e}");
@@ -104,7 +109,7 @@ fn run_lumen_stream(source: &str, program_args: &[String]) {
         }
     };
 
-    let processed_tokens = match structural::process_indentation(source, raw_tokens) {
+    let processed_tokens = match structural::process_indentation(&full_source, raw_tokens) {
         Ok(toks) => toks,
         Err(e) => {
             eprintln!("IndentationError: {e}");
