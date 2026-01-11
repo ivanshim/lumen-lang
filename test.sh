@@ -2,8 +2,9 @@
 
 # lumen-lang test script
 # Tests examples with stream and microcode kernels
-# Usage: ./test.sh [--lang lumen|rust|python]
+# Usage: ./test.sh [--lang lumen|rust|python] [--omit file1.lm file2.lm ...]
 # If --lang is not specified, tests all languages
+# If --omit is provided, those files are excluded from testing
 
 # Colors for output
 RED='\033[0;31m'
@@ -15,24 +16,37 @@ NC='\033[0m' # No Color
 
 # Parse command-line arguments
 LANG_FILTER=""
-if [[ $# -gt 0 ]]; then
-    if [[ "$1" == "--lang" ]]; then
-        LANG_FILTER="$2"
-        case "$LANG_FILTER" in
-            lumen|rust|python)
-                ;;
-            *)
-                echo -e "${RED}Invalid language: $LANG_FILTER${NC}"
-                echo "Usage: $0 [--lang lumen|rust|python]"
-                exit 1
-                ;;
-        esac
-    else
-        echo -e "${RED}Invalid argument: $1${NC}"
-        echo "Usage: $0 [--lang lumen|rust|python]"
-        exit 1
-    fi
-fi
+declare -a OMIT_FILES=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --lang)
+            LANG_FILTER="$2"
+            case "$LANG_FILTER" in
+                lumen|rust|python)
+                    shift 2
+                    ;;
+                *)
+                    echo -e "${RED}Invalid language: $LANG_FILTER${NC}"
+                    echo "Usage: $0 [--lang lumen|rust|python] [--omit file1.lm file2.lm ...]"
+                    exit 1
+                    ;;
+            esac
+            ;;
+        --omit)
+            shift
+            while [[ $# -gt 0 && "$1" != --* ]]; do
+                OMIT_FILES+=("$1")
+                shift
+            done
+            ;;
+        *)
+            echo -e "${RED}Invalid argument: $1${NC}"
+            echo "Usage: $0 [--lang lumen|rust|python] [--omit file1.lm file2.lm ...]"
+            exit 1
+            ;;
+    esac
+done
 
 # Build the project first
 echo -e "${BLUE}Building lumen-lang...${NC}"
@@ -63,6 +77,18 @@ for lang in lumen python_core rust_core; do
         RESULTS["${lang}:${kernel}:skipped"]=0
     done
 done
+
+# Function to check if a file should be omitted
+should_omit() {
+    local file="$1"
+    local filename=$(basename "$file")
+    for omit in "${OMIT_FILES[@]}"; do
+        if [[ "$filename" == "$omit" ]]; then
+            return 0  # true - should omit
+        fi
+    done
+    return 1  # false - don't omit
+}
 
 # Function to run a test
 run_test() {
@@ -145,6 +171,9 @@ echo ""
 if [[ " ${test_languages[@]} " =~ " lumen " ]]; then
     echo -e "${YELLOW}Lumen Examples:${NC}"
     for file in examples/lumen/*.lm examples/lumen/constructs/*.lm; do
+        if should_omit "$file"; then
+            continue
+        fi
         for kernel in stream microcode; do
             run_test "$file" "$kernel" "lumen"
         done
@@ -157,6 +186,9 @@ fi
 if [[ " ${test_languages[@]} " =~ " python_core " ]]; then
     echo -e "${YELLOW}Python Examples:${NC}"
     for file in examples/python/*.py; do
+        if should_omit "$file"; then
+            continue
+        fi
         for kernel in stream microcode; do
             run_test "$file" "$kernel" "python_core"
         done
@@ -169,6 +201,9 @@ fi
 if [[ " ${test_languages[@]} " =~ " rust_core " ]]; then
     echo -e "${YELLOW}Rust Examples:${NC}"
     for file in examples/rust/*.rs; do
+        if should_omit "$file"; then
+            continue
+        fi
         for kernel in stream microcode; do
             run_test "$file" "$kernel" "rust_core"
         done
