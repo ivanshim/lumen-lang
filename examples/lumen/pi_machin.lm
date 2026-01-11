@@ -4,7 +4,7 @@
 # Usage: lumen-lang pi_machin.lm [precision]
 # Example: lumen-lang pi_machin.lm 1000
 
-precision = 5000
+precision = 100
 if ARGS != ""
     precision = int(ARGS)
 

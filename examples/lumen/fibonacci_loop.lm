@@ -1,7 +1,7 @@
 # Parameter: fib_index (default: 10000)
 # Usage: lumen-lang fibonacci_loop.lm [fib_index]
 # Example: lumen-lang fibonacci_loop.lm 50
-fib_index = 10000
+fib_index = 100
 if ARGS != ""
     fib_index = int(ARGS)
 

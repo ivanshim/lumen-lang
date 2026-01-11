@@ -38,6 +38,9 @@ impl StmtNode for WhileStmt {
                             break;
                         }
                         Control::Continue => break,
+                        Control::ExprValue(_) => {
+                            // Expression statement value - continue loop
+                        }
                         Control::Return(val) => {
                             env.pop_scope();
                             return Ok(Control::Return(val));

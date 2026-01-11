@@ -15,9 +15,10 @@ struct ExprStmt {
 impl StmtNode for ExprStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
         let val = self.expr.eval(env)?;
-        // Expression statements implicitly return their value
-        // (needed for function bodies and implicit returns)
-        Ok(Control::Return(val))
+        // Expression statements return their value as ExprValue.
+        // This allows function bodies to continue executing multiple statements,
+        // while explicit return statements break the loop immediately.
+        Ok(Control::ExprValue(val))
     }
 }
 

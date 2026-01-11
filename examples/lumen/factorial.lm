@@ -1,7 +1,7 @@
-# Parameter: n (default: 1000)
+# Parameter: n (default: 50)
 # Usage: lumen-lang factorial.lm [n]
 # Example: lumen-lang factorial.lm 50
-n = 1000
+n = 50
 if ARGS != ""
     n = int(ARGS)
 
