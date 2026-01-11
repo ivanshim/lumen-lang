@@ -42,4 +42,35 @@ fn e_integer(significant_figures)
         i = i + 1
 
     accurate_e = sum / divisor
-    accurate_e / scale
+
+    # Extract integer and fractional parts for decimal formatting
+    integer_part = accurate_e / scale
+    fractional_part = accurate_e % scale
+
+    # Format as decimal string with proper decimal point placement
+    write(int(integer_part))
+    write(".")
+
+    # Pad and write fractional digits
+    num_digits = 0
+    temp_scale = scale
+    while temp_scale > 1
+        temp_scale = int(temp_scale / 10)
+        num_digits = num_digits + 1
+
+    # Output fractional digits with leading zero padding
+    digit_pos = 0
+    power = 1
+    i = 1
+    while i < num_digits
+        power = power * 10
+        i = i + 1
+
+    while digit_pos < num_digits
+        digit = int(fractional_part / power)
+        write(digit)
+        fractional_part = fractional_part - (digit * power)
+        power = int(power / 10)
+        digit_pos = digit_pos + 1
+
+    none

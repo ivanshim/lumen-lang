@@ -1,0 +1,4 @@
+# Euler's number (e) with default precision (15 digits)
+# fn e_default() - returns e as real number with 15 significant figures
+fn e_default()
+    e_integer(15)
