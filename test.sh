@@ -45,16 +45,31 @@ while [[ $# -gt 0 ]]; do
             done
             ;;
         *)
-            # Check if it's a file
+            # Check if it's a file - first try exact path, then search examples dirs
             if [[ -f "$1" ]]; then
                 SINGLE_FILE="$1"
-                shift
             else
-                echo -e "${RED}Invalid argument: $1${NC}"
-                echo "Usage: $0 [--lang lumen|rust|python] [--omit file1.lm file2.lm ...]"
-                echo "       $0 <file>"
-                exit 1
+                # Search for file in examples directories
+                found_file=""
+                for search_dir in examples/lumen examples/lumen/constructs examples/python examples/rust; do
+                    if [[ -f "$search_dir/$1" ]]; then
+                        found_file="$search_dir/$1"
+                        break
+                    fi
+                done
+
+                if [[ -n "$found_file" ]]; then
+                    SINGLE_FILE="$found_file"
+                else
+                    echo -e "${RED}File not found: $1${NC}"
+                    echo "Searched in: examples/lumen, examples/lumen/constructs, examples/python, examples/rust"
+                    echo "Usage: $0 [--lang lumen|rust|python] [--omit file1.lm file2.lm ...]"
+                    echo "       $0 <filename>           (searches examples/ directories)"
+                    echo "       $0 <full/path/to/file>"
+                    exit 1
+                fi
             fi
+            shift
             ;;
     esac
 done
