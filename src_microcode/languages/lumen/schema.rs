@@ -14,7 +14,7 @@ pub fn get_schema() -> LanguageSchema {
     // Multichar lexemes (from lumen.yaml lines 99-123)
     schema.multichar_lexemes = vec![
         // Two-char operators
-        "==", "!=", "<=", ">=", "**", "->", "|>", "..",
+        "==", "!=", "<=", ">=", "**", "->", "|>", "..", "//",
 
         // Keywords
         "let", "mut", "if", "else", "while", "for", "until", "in", "break", "continue", "return", "fn",
@@ -76,7 +76,7 @@ pub fn get_schema() -> LanguageSchema {
     }
 
     // Multiplicative operators
-    for op in &["*", "/", "%"] {
+    for op in &["*", "/", "%", "//"] {
         schema.binary_operators.insert(op.to_string(), OperatorInfo {
             precedence: 6.0,
             associativity: Associativity::Left,

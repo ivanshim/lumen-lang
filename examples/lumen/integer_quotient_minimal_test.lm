@@ -1,0 +1,61 @@
+# Minimal integer quotient (//) tests
+# Core validation: semantics and identity
+
+write("=== MINIMAL // OPERATOR VALIDATION ===\n\n")
+
+# Test 1: Integer // Integer (positive operands)
+write("1. Integer // Integer (positive): 17 // 5 = ")
+q = 17 // 5
+print(q)
+write("   Identity check: 17 == 5 * 3 + (17 % 5) ? ")
+identity = 5 * q + (17 % 5)
+print(identity == 17)
+write("\n")
+
+# Test 2: Integer // Integer (truncate toward zero, not floor)
+write("2. Truncate toward zero: -17 // 5 = ")
+q = -17 // 5
+print(q)  # Expected: -3 (not -4)
+write("   Identity check: -17 == 5 * (-3) + (-17 % 5) ? ")
+identity = 5 * q + (-17 % 5)
+print(identity == -17)
+write("\n")
+
+# Test 3: Positive // Negative (still truncate toward zero)
+write("3. 17 // -5 = ")
+q = 17 // -5
+print(q)  # Expected: -3
+write("   Identity check: 17 == -5 * (-3) + (17 % -5) ? ")
+identity = -5 * q + (17 % -5)
+print(identity == 17)
+write("\n")
+
+# Test 4: Rational // Integer (type: Rational)
+write("4. Rational // Integer: (17/3) // 2 = ")
+q = (17/3) // 2
+print(q)  # Expected: 2 (rational)
+write("\n")
+
+# Test 5: Rational // Rational (type: Rational)
+write("5. Rational // Rational: (20/3) // (3/2) = ")
+print((20/3) // (3/2))  # Expected: 4
+write("\n")
+
+# Test 6: Real // Integer (type: Real)
+write("6. Real // Integer: 3.5 // 2 = ")
+print(3.5 // 2)  # Expected: 1 (real)
+write("\n")
+
+# Test 7: Operator precedence (same as *, /)
+write("7. Precedence: 20 // 3 * 2 = ")
+result = 20 // 3 * 2
+print(result)  # (20 // 3) * 2 = 6 * 2 = 12
+write("   (should be 12, not 2 or other value)\n")
+write("\n")
+
+# Test 8: Division by zero error handling
+write("8. Division by zero: ")
+write("attempting 10 // 0... ")
+write("(should raise error below)\n")
+write("If you see 'Division by zero' error next, test passed.\n")
+write("\n")
