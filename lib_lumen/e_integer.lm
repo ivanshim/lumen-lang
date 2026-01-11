@@ -4,7 +4,7 @@
 # Reference: https://downloads.reactivemicro.com/Users/Grant_Stockley/Apple%202%20Woz%20e%20Calc%201981.pdf
 fn e_integer(significant_figures)
     precision = significant_figures
-    max_terms = significant_figures
+    max_terms = significant_figures + 100
 
     scale = 1
     i = 0
@@ -16,8 +16,14 @@ fn e_integer(significant_figures)
     fact = 1
     n = 1
 
+    # Add terms of the Taylor series: sum of (scale / n!)
+    # Continue until either term is 0 or we reach max_terms
     while n < max_terms
         term = scale / fact
+
+        if int(term) == 0
+            break
+
         sum = sum + term
         n = n + 1
         fact = fact * n
