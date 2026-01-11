@@ -1,8 +1,14 @@
-fn factorial(n)
-    if n <= 1
+# ===== PARAMETER: Edit this value to test factorial with different numbers =====
+n = 1000
+# ==============================================================================
+
+fn factorial(x)
+    if x <= 1
         1
     else
-        n * factorial(n - 1)
+        x * factorial(x - 1)
 
-write("Factorial of 1000: ")
-print(factorial(1000))
+write("Factorial of ")
+write(n)
+write(": ")
+print(factorial(n))

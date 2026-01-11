@@ -1,3 +1,7 @@
+# ===== PARAMETER: Edit this value to compute Fibonacci at a different index =====
+fib_index = 10000
+# ==============================================================================
+
 MEMOIZATION = true
 
 fn fib(n)
@@ -8,9 +12,11 @@ fn fib(n)
 
 i = 0
 result = 0
-while i <= 10000
+while i <= fib_index
     result = fib(i)
     i = i + 1
 
-write("Fibonacci number at index 10000: ")
+write("Fibonacci number at index ")
+write(fib_index)
+write(": ")
 print(result)
