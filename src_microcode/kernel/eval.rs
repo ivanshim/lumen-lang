@@ -5,6 +5,7 @@
 
 use std::fmt;
 use num_bigint::BigInt;
+use num_traits::Signed;
 
 /// Runtime value
 /// These are the only things that exist at runtime.
@@ -14,6 +15,11 @@ pub enum Value {
     Rational {
         numerator: BigInt,
         denominator: BigInt,
+    },
+    Real {
+        numerator: BigInt,
+        denominator: BigInt,
+        precision: usize, // Number of significant digits
     },
     String(String),
     Bool(bool),
@@ -43,6 +49,27 @@ impl fmt::Display for Value {
                     write!(f, "{}/{}", numerator, denominator)
                 }
             }
+            Value::Real { numerator, denominator, precision: _ } => {
+                // For real, display the decimal representation
+                let int_part = numerator / denominator;
+                let remainder = numerator.clone() - (&int_part * denominator);
+                if remainder == BigInt::from(0) {
+                    write!(f, "{}", int_part)
+                } else {
+                    // Simple decimal rendering (can be improved with proper significant digit handling)
+                    let mut decimal_str = String::new();
+                    let mut rem = remainder.abs();
+                    let denom = denominator.clone();
+                    for _ in 0..20 {  // Show up to 20 decimal places
+                        rem = rem * BigInt::from(10);
+                        let digit = &rem / &denom;
+                        decimal_str.push_str(&digit.to_string());
+                        rem = &rem - (&digit * &denom);
+                        if rem == BigInt::from(0) { break; }
+                    }
+                    write!(f, "{}.{}", int_part, decimal_str)
+                }
+            }
             Value::String(s) => write!(f, "{}", s),
             Value::Bool(b) => write!(f, "{}", if *b { "true" } else { "false" }),
             Value::Null => write!(f, "none"),
@@ -64,6 +91,19 @@ impl PartialEq for Value {
                 // Cross-multiply: a/b == c/d ⟺ ad == bc
                 a_num * b_denom == b_num * a_denom
             }
+            (Value::Real { numerator: a_num, denominator: a_denom, .. }, Value::Real { numerator: b_num, denominator: b_denom, .. }) => {
+                // Compare exact rational values
+                a_num * b_denom == b_num * a_denom
+            }
+            // Allow comparison between real and rational/number
+            (Value::Real { numerator: r_num, denominator: r_denom, .. }, Value::Rational { numerator: q_num, denominator: q_denom }) |
+            (Value::Rational { numerator: q_num, denominator: q_denom }, Value::Real { numerator: r_num, denominator: r_denom, .. }) => {
+                r_num * q_denom == q_num * r_denom
+            }
+            (Value::Real { numerator: r_num, denominator: r_denom, .. }, Value::Number(n)) |
+            (Value::Number(n), Value::Real { numerator: r_num, denominator: r_denom, .. }) => {
+                r_num == n && r_denom == &BigInt::from(1)
+            }
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Null, Value::Null) => true,
@@ -83,6 +123,7 @@ impl Value {
             Value::Null => false,
             Value::Number(n) => n != &BigInt::from(0),
             Value::Rational { numerator, .. } => numerator != &BigInt::from(0),
+            Value::Real { numerator, .. } => numerator != &BigInt::from(0),
             Value::String(s) => !s.is_empty(),
             Value::Range { .. } => true,
             Value::Function { .. } => true,
@@ -94,6 +135,10 @@ impl Value {
         match self {
             Value::Number(n) => Ok(n.clone()),
             Value::Rational { .. } => Err("Cannot coerce rational to integer".to_string()),
+            Value::Real { numerator, denominator, .. } => {
+                // Truncate toward zero: integer division
+                Ok(numerator / denominator)
+            }
             Value::Bool(true) => Ok(BigInt::from(1)),
             Value::Bool(false) => Ok(BigInt::from(0)),
             Value::Null => Ok(BigInt::from(0)),

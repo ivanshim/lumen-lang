@@ -8,6 +8,7 @@ use crate::kernel::runtime::RuntimeValue;
 use std::any::Any;
 use num_bigint::BigInt;
 use num_integer::gcd;
+use num_traits::Signed;
 
 /// Lumen rational number value - stored as (numerator, denominator) in canonical reduced form
 /// Always stored reduced: gcd(numerator, denominator) = 1, denominator > 0
@@ -243,6 +244,142 @@ pub fn as_string(val: &dyn RuntimeValue) -> Result<&LumenString, String> {
     val.as_any()
         .downcast_ref::<LumenString>()
         .ok_or_else(|| "Expected a string value".to_string())
+}
+
+/// Lumen real number value - decimal approximation with configurable precision
+/// Stored as (numerator, denominator) with an associated precision in significant digits
+/// The value is maintained exactly internally but displayed/compared with specified precision
+#[derive(Debug, Clone, PartialEq)]
+pub struct LumenReal {
+    pub numerator: BigInt,
+    pub denominator: BigInt,
+    pub precision: usize, // Number of significant digits
+}
+
+impl LumenReal {
+    /// Create a real from a numerator and denominator with specified precision
+    /// Precision specifies significant digits (default 15)
+    pub fn new(num: BigInt, denom: BigInt, precision: usize) -> Self {
+        // Handle zero denominator
+        if denom == BigInt::from(0) {
+            panic!("Denominator cannot be zero");
+        }
+
+        // If numerator is zero, return 0 with specified precision
+        if num == BigInt::from(0) {
+            return Self {
+                numerator: BigInt::from(0),
+                denominator: BigInt::from(1),
+                precision,
+            };
+        }
+
+        // Normalize sign: always keep denominator positive
+        let (numerator, denominator) = if denom < BigInt::from(0) {
+            (-num, -denom)
+        } else {
+            (num, denom)
+        };
+
+        // Reduce to canonical form by dividing by GCD
+        let g = gcd(numerator.clone(), denominator.clone());
+        Self {
+            numerator: numerator / &g,
+            denominator: denominator / &g,
+            precision,
+        }
+    }
+
+    /// Convert to integer by truncating toward zero
+    pub fn to_integer(&self) -> BigInt {
+        &self.numerator / &self.denominator
+    }
+
+    /// Get string representation with the stored precision
+    /// This renders the decimal with significant figures truncated/rounded
+    pub fn as_decimal_string(&self) -> String {
+        // Simple approach: compute as fixed-point and format
+        // For true significant digit handling, we'd need more sophisticated rounding
+        // For now, we'll compute the result and show it with reasonable precision
+
+        let int_part = self.to_integer();
+        let remainder = self.numerator.clone() - (&int_part * &self.denominator);
+
+        if remainder == BigInt::from(0) {
+            return int_part.to_string();
+        }
+
+        // Compute decimal places needed for precision
+        let mut decimal_str = String::new();
+        let mut digit_count = int_part.to_string().len();
+        let target_digits = self.precision;
+        let mut remainder = remainder.abs();
+
+        // If int part has fewer digits than target, include fractional digits
+        let mut frac_digits = if digit_count >= target_digits {
+            0
+        } else {
+            target_digits - digit_count
+        };
+
+        // Compute fractional part
+        let mut has_nonzero = false;
+        while frac_digits > 0 && remainder > BigInt::from(0) {
+            remainder = remainder * BigInt::from(10);
+            let digit = &remainder / &self.denominator;
+            if digit > BigInt::from(0) || has_nonzero {
+                if !has_nonzero {
+                    decimal_str.push('.');
+                    has_nonzero = true;
+                }
+                decimal_str.push_str(&digit.to_string());
+            }
+            remainder = remainder - (&digit * &self.denominator);
+            frac_digits -= 1;
+        }
+
+        format!("{}{}", int_part, decimal_str)
+    }
+}
+
+impl RuntimeValue for LumenReal {
+    fn clone_boxed(&self) -> Box<dyn RuntimeValue> {
+        Box::new(self.clone())
+    }
+
+    fn as_debug_string(&self) -> String {
+        format!("Real({}/{}, precision={})", self.numerator, self.denominator, self.precision)
+    }
+
+    fn as_display_string(&self) -> String {
+        self.as_decimal_string()
+    }
+
+    fn eq_value(&self, other: &dyn RuntimeValue) -> Result<bool, String> {
+        if let Some(other_real) = other.as_any().downcast_ref::<LumenReal>() {
+            // Compare the exact rational values (precision doesn't affect equality of stored value)
+            Ok(self.numerator == other_real.numerator && self.denominator == other_real.denominator)
+        } else if let Some(other_rat) = other.as_any().downcast_ref::<LumenRational>() {
+            // Compare real with rational
+            Ok(self.numerator == other_rat.numerator && self.denominator == other_rat.denominator)
+        } else if let Some(other_num) = other.as_any().downcast_ref::<LumenNumber>() {
+            // Compare real with integer
+            Ok(self.numerator == other_num.value && self.denominator == BigInt::from(1))
+        } else {
+            Err("Cannot compare real with non-numeric value".to_string())
+        }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// Helper to extract a LumenReal if the value is one.
+pub fn as_real(val: &dyn RuntimeValue) -> Result<&LumenReal, String> {
+    val.as_any()
+        .downcast_ref::<LumenReal>()
+        .ok_or_else(|| "Expected a real value".to_string())
 }
 
 /// Lumen none (null/unit) value

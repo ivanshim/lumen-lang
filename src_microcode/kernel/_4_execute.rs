@@ -122,6 +122,11 @@ pub fn execute(
                             // Already an integer, return unchanged
                             Ok((Value::Number(n.clone()), ControlFlow::Normal))
                         }
+                        Value::Real { numerator, denominator, .. } => {
+                            // Truncate toward zero: integer division
+                            let truncated = numerator / denominator;
+                            Ok((Value::Number(truncated), ControlFlow::Normal))
+                        }
                         Value::Rational { numerator, denominator } => {
                             // Truncate toward zero: integer division
                             let truncated = numerator / denominator;
@@ -134,7 +139,54 @@ pub fn execute(
                                 Err(_) => Err(format!("int(): cannot parse '{}' as integer", s)),
                             }
                         }
-                        _ => Err("int() requires a number, rational, or string argument".to_string()),
+                        _ => Err("int() requires a number, rational, real, or string argument".to_string()),
+                    }
+                }
+                "real" => {
+                    // real(x) or real(x, y): convert to real with configurable precision
+                    // Default precision is 15 significant digits
+                    if arg_vals.is_empty() || arg_vals.len() > 2 {
+                        return Err(format!("real() expects 1 or 2 arguments, got {}", arg_vals.len()));
+                    }
+
+                    let precision = if arg_vals.len() == 2 {
+                        match &arg_vals[1] {
+                            Value::Number(n) => {
+                                n.to_u64()
+                                    .ok_or_else(|| "Precision must be a positive integer".to_string())? as usize
+                            }
+                            _ => return Err("Precision argument must be an integer".to_string()),
+                        }
+                    } else {
+                        15 // Default precision
+                    };
+
+                    match &arg_vals[0] {
+                        Value::Number(n) => {
+                            // Integer → Real
+                            Ok((Value::Real {
+                                numerator: n.clone(),
+                                denominator: BigInt::from(1),
+                                precision,
+                            }, ControlFlow::Normal))
+                        }
+                        Value::Rational { numerator, denominator } => {
+                            // Rational → Real
+                            Ok((Value::Real {
+                                numerator: numerator.clone(),
+                                denominator: denominator.clone(),
+                                precision,
+                            }, ControlFlow::Normal))
+                        }
+                        Value::Real { numerator, denominator, .. } => {
+                            // Real → Real (with new precision)
+                            Ok((Value::Real {
+                                numerator: numerator.clone(),
+                                denominator: denominator.clone(),
+                                precision,
+                            }, ControlFlow::Normal))
+                        }
+                        _ => Err("real() requires a number, rational, or real argument".to_string()),
                     }
                 }
                 "str" => {
@@ -172,6 +224,7 @@ pub fn execute(
                             let type_str = match &extern_args[0] {
                                 Value::Number(_) => "number",
                                 Value::Rational { .. } => "rational",
+                                Value::Real { .. } => "real",
                                 Value::String(_) => "string",
                                 Value::Bool(_) => "bool",
                                 Value::Null => "null",
