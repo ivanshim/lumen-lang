@@ -9,6 +9,7 @@ use super::env::Environment;
 use crate::schema::LanguageSchema;
 use num_bigint::BigInt;
 use num_traits::cast::ToPrimitive;
+use num_integer::gcd;
 
 /// Execution state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,6 +161,7 @@ pub fn execute(
                             }
                             let type_str = match &extern_args[0] {
                                 Value::Number(_) => "number",
+                                Value::Rational { .. } => "rational",
                                 Value::String(_) => "string",
                                 Value::Bool(_) => "bool",
                                 Value::Null => "null",
@@ -401,7 +403,15 @@ fn execute_operator(
             }
 
             let result = match op.as_str() {
-                "-" => Value::Number(-val.to_number()?),
+                "-" => {
+                    match val {
+                        Value::Number(n) => Value::Number(-n),
+                        Value::Rational { numerator, denominator } => {
+                            Value::Rational { numerator: -numerator, denominator }
+                        }
+                        _ => return Err("Cannot negate non-numeric value".to_string()),
+                    }
+                }
                 "not" | "!" => Value::Bool(!val.to_bool()),
                 _ => return Err(format!("Unknown unary operator: {}", op)),
             };
@@ -468,17 +478,118 @@ fn execute_operator(
                     if let (Value::String(_), _) | (_, Value::String(_)) = (&left, &right) {
                         Value::String(format!("{}{}", left, right))
                     } else {
-                        Value::Number(left.to_number()? + right.to_number()?)
+                        // Check if either operand is rational
+                        match (&left, &right) {
+                            (Value::Rational { numerator: l_num, denominator: l_denom },
+                             Value::Rational { numerator: r_num, denominator: r_denom }) => {
+                                // a/b + c/d = (ad + bc) / bd
+                                let num = l_num * r_denom + r_num * l_denom;
+                                let denom = l_denom * r_denom;
+                                reduce_rational(num, denom)
+                            }
+                            (Value::Rational { numerator: l_num, denominator: l_denom },
+                             Value::Number(r_num)) => {
+                                // a/b + c = (a + bc) / b
+                                let num = l_num + r_num * l_denom;
+                                reduce_rational(num, l_denom.clone())
+                            }
+                            (Value::Number(l_num),
+                             Value::Rational { numerator: r_num, denominator: r_denom }) => {
+                                // a + c/d = (ad + c) / d
+                                let num = l_num * r_denom + r_num;
+                                reduce_rational(num, r_denom.clone())
+                            }
+                            _ => Value::Number(left.to_number()? + right.to_number()?)
+                        }
                     }
                 }
-                "-" => Value::Number(left.to_number()? - right.to_number()?),
-                "*" => Value::Number(left.to_number()? * right.to_number()?),
-                "/" => {
-                    let r = right.to_number()?;
-                    if r == BigInt::from(0) {
-                        return Err("Division by zero".to_string());
+                "-" => {
+                    match (&left, &right) {
+                        (Value::Rational { numerator: l_num, denominator: l_denom },
+                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
+                            // a/b - c/d = (ad - bc) / bd
+                            let num = l_num * r_denom - r_num * l_denom;
+                            let denom = l_denom * r_denom;
+                            reduce_rational(num, denom)
+                        }
+                        (Value::Rational { numerator: l_num, denominator: l_denom },
+                         Value::Number(r_num)) => {
+                            // a/b - c = (a - bc) / b
+                            let num = l_num - r_num * l_denom;
+                            reduce_rational(num, l_denom.clone())
+                        }
+                        (Value::Number(l_num),
+                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
+                            // a - c/d = (ad - c) / d
+                            let num = l_num * r_denom - r_num;
+                            reduce_rational(num, r_denom.clone())
+                        }
+                        _ => Value::Number(left.to_number()? - right.to_number()?)
                     }
-                    Value::Number(left.to_number()? / r)
+                }
+                "*" => {
+                    match (&left, &right) {
+                        (Value::Rational { numerator: l_num, denominator: l_denom },
+                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
+                            // a/b * c/d = (ac) / (bd)
+                            let num = l_num * r_num;
+                            let denom = l_denom * r_denom;
+                            reduce_rational(num, denom)
+                        }
+                        (Value::Rational { numerator: l_num, denominator: l_denom },
+                         Value::Number(r_num)) => {
+                            // a/b * c = (ac) / b
+                            let num = l_num * r_num;
+                            reduce_rational(num, l_denom.clone())
+                        }
+                        (Value::Number(l_num),
+                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
+                            // a * c/d = (ac) / d
+                            let num = l_num * r_num;
+                            reduce_rational(num, r_denom.clone())
+                        }
+                        _ => Value::Number(left.to_number()? * right.to_number()?)
+                    }
+                }
+                "/" => {
+                    match (&left, &right) {
+                        (Value::Rational { numerator: l_num, denominator: l_denom },
+                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
+                            // a/b ÷ c/d = (ad) / (bc)
+                            if r_num == &BigInt::from(0) {
+                                return Err("Division by zero".to_string());
+                            }
+                            let num = l_num * r_denom;
+                            let denom = l_denom * r_num;
+                            reduce_rational(num, denom)
+                        }
+                        (Value::Rational { numerator: l_num, denominator: l_denom },
+                         Value::Number(r_num)) => {
+                            // a/b ÷ c = a / (bc)
+                            if r_num == &BigInt::from(0) {
+                                return Err("Division by zero".to_string());
+                            }
+                            let denom = l_denom * r_num;
+                            reduce_rational(l_num.clone(), denom)
+                        }
+                        (Value::Number(l_num),
+                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
+                            // a ÷ c/d = (ad) / c
+                            if r_num == &BigInt::from(0) {
+                                return Err("Division by zero".to_string());
+                            }
+                            let num = l_num * r_denom;
+                            reduce_rational(num, r_num.clone())
+                        }
+                        (Value::Number(l_num), Value::Number(r_num)) => {
+                            // a ÷ b = a/b (produces rational)
+                            if r_num == &BigInt::from(0) {
+                                return Err("Division by zero".to_string());
+                            }
+                            reduce_rational(l_num.clone(), r_num.clone())
+                        }
+                        _ => return Err("Division requires numeric operands".to_string())
+                    }
                 }
                 "%" => {
                     let l = left.to_number()?;
@@ -490,10 +601,110 @@ fn execute_operator(
                 }
                 "==" => Value::Bool(left == right),
                 "!=" => Value::Bool(left != right),
-                "<" => Value::Bool(left.to_number()? < right.to_number()?),
-                ">" => Value::Bool(left.to_number()? > right.to_number()?),
-                "<=" => Value::Bool(left.to_number()? <= right.to_number()?),
-                ">=" => Value::Bool(left.to_number()? >= right.to_number()?),
+                "<" => {
+                    match (&left, &right) {
+                        (Value::Rational { numerator: l_num, denominator: l_denom },
+                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
+                            // a/b < c/d ⟺ ad < bc
+                            let left_cross = l_num * r_denom;
+                            let right_cross = r_num * l_denom;
+                            Value::Bool(left_cross < right_cross)
+                        }
+                        (Value::Rational { numerator: l_num, denominator: l_denom },
+                         Value::Number(r_num)) => {
+                            // a/b < c ⟺ a < bc
+                            let left_cross = l_num;
+                            let right_cross = r_num * l_denom;
+                            Value::Bool(left_cross < &right_cross)
+                        }
+                        (Value::Number(l_num),
+                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
+                            // a < c/d ⟺ ad < c
+                            let left_cross = l_num * r_denom;
+                            let right_cross = r_num;
+                            Value::Bool(&left_cross < right_cross)
+                        }
+                        _ => Value::Bool(left.to_number()? < right.to_number()?)
+                    }
+                }
+                ">" => {
+                    match (&left, &right) {
+                        (Value::Rational { numerator: l_num, denominator: l_denom },
+                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
+                            // a/b > c/d ⟺ ad > bc
+                            let left_cross = l_num * r_denom;
+                            let right_cross = r_num * l_denom;
+                            Value::Bool(left_cross > right_cross)
+                        }
+                        (Value::Rational { numerator: l_num, denominator: l_denom },
+                         Value::Number(r_num)) => {
+                            // a/b > c ⟺ a > bc
+                            let left_cross = l_num;
+                            let right_cross = r_num * l_denom;
+                            Value::Bool(left_cross > &right_cross)
+                        }
+                        (Value::Number(l_num),
+                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
+                            // a > c/d ⟺ ad > c
+                            let left_cross = l_num * r_denom;
+                            let right_cross = r_num;
+                            Value::Bool(&left_cross > right_cross)
+                        }
+                        _ => Value::Bool(left.to_number()? > right.to_number()?)
+                    }
+                }
+                "<=" => {
+                    match (&left, &right) {
+                        (Value::Rational { numerator: l_num, denominator: l_denom },
+                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
+                            // a/b <= c/d ⟺ ad <= bc
+                            let left_cross = l_num * r_denom;
+                            let right_cross = r_num * l_denom;
+                            Value::Bool(left_cross <= right_cross)
+                        }
+                        (Value::Rational { numerator: l_num, denominator: l_denom },
+                         Value::Number(r_num)) => {
+                            // a/b <= c ⟺ a <= bc
+                            let left_cross = l_num;
+                            let right_cross = r_num * l_denom;
+                            Value::Bool(left_cross <= &right_cross)
+                        }
+                        (Value::Number(l_num),
+                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
+                            // a <= c/d ⟺ ad <= c
+                            let left_cross = l_num * r_denom;
+                            let right_cross = r_num;
+                            Value::Bool(&left_cross <= right_cross)
+                        }
+                        _ => Value::Bool(left.to_number()? <= right.to_number()?)
+                    }
+                }
+                ">=" => {
+                    match (&left, &right) {
+                        (Value::Rational { numerator: l_num, denominator: l_denom },
+                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
+                            // a/b >= c/d ⟺ ad >= bc
+                            let left_cross = l_num * r_denom;
+                            let right_cross = r_num * l_denom;
+                            Value::Bool(left_cross >= right_cross)
+                        }
+                        (Value::Rational { numerator: l_num, denominator: l_denom },
+                         Value::Number(r_num)) => {
+                            // a/b >= c ⟺ a >= bc
+                            let left_cross = l_num;
+                            let right_cross = r_num * l_denom;
+                            Value::Bool(left_cross >= &right_cross)
+                        }
+                        (Value::Number(l_num),
+                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
+                            // a >= c/d ⟺ ad >= c
+                            let left_cross = l_num * r_denom;
+                            let right_cross = r_num;
+                            Value::Bool(&left_cross >= right_cross)
+                        }
+                        _ => Value::Bool(left.to_number()? >= right.to_number()?)
+                    }
+                }
                 "**" => {
                     let l = left.to_number()?;
                     let r = right.to_number()?;
@@ -511,6 +722,36 @@ fn execute_operator(
             };
 
             Ok((result, ControlFlow::Normal))
+        }
+    }
+}
+
+/// Reduce a rational to canonical form (GCD reduction) and return as integer if denominator = 1
+fn reduce_rational(numerator: BigInt, denominator: BigInt) -> Value {
+    // Handle zero numerator
+    if numerator == BigInt::from(0) {
+        return Value::Number(BigInt::from(0));
+    }
+
+    // Ensure denominator is always positive (move sign to numerator)
+    let (num, denom) = if denominator < BigInt::from(0) {
+        (-numerator, -denominator)
+    } else {
+        (numerator, denominator)
+    };
+
+    // Reduce by GCD
+    let g = gcd(num.clone(), denom.clone());
+    let reduced_num = &num / &g;
+    let reduced_denom = &denom / &g;
+
+    // If denominator = 1, return as integer
+    if reduced_denom == BigInt::from(1) {
+        Value::Number(reduced_num)
+    } else {
+        Value::Rational {
+            numerator: reduced_num,
+            denominator: reduced_denom,
         }
     }
 }

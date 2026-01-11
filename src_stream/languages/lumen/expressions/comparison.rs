@@ -8,7 +8,7 @@ use crate::kernel::registry::LumenResult;
 use crate::kernel::runtime::{Env, Value};
 use crate::languages::lumen::registry::{ExprInfix, Precedence, Registry};
 use crate::languages::lumen::numeric;
-use crate::languages::lumen::values::{as_number, as_string, LumenBool};
+use crate::languages::lumen::values::{as_number, as_string, as_rational, LumenBool, LumenRational};
 
 #[derive(Debug)]
 struct ComparisonExpr {
@@ -22,7 +22,103 @@ impl ExprNode for ComparisonExpr {
         let l = self.left.eval(env)?;
         let r = self.right.eval(env)?;
 
-        // Try numeric comparison first
+        // Try rational comparison first (handles both rational-to-rational and rational-to-integer)
+        if let (Ok(left_rat), Ok(right_rat)) = (as_rational(l.as_ref()), as_rational(r.as_ref())) {
+            let result = match self.op.as_str() {
+                "==" => (left_rat as &dyn crate::kernel::runtime::RuntimeValue).eq_value(right_rat as &dyn crate::kernel::runtime::RuntimeValue).unwrap_or(false),
+                "!=" => !(left_rat as &dyn crate::kernel::runtime::RuntimeValue).eq_value(right_rat as &dyn crate::kernel::runtime::RuntimeValue).unwrap_or(false),
+                "<" => {
+                    // a/b < c/d ⟺ ad < bc (exact cross-multiplication)
+                    let left_cross = &left_rat.numerator * &right_rat.denominator;
+                    let right_cross = &right_rat.numerator * &left_rat.denominator;
+                    left_cross < right_cross
+                }
+                ">" => {
+                    // a/b > c/d ⟺ ad > bc
+                    let left_cross = &left_rat.numerator * &right_rat.denominator;
+                    let right_cross = &right_rat.numerator * &left_rat.denominator;
+                    left_cross > right_cross
+                }
+                "<=" => {
+                    // a/b <= c/d ⟺ ad <= bc
+                    let left_cross = &left_rat.numerator * &right_rat.denominator;
+                    let right_cross = &right_rat.numerator * &left_rat.denominator;
+                    left_cross <= right_cross
+                }
+                ">=" => {
+                    // a/b >= c/d ⟺ ad >= bc
+                    let left_cross = &left_rat.numerator * &right_rat.denominator;
+                    let right_cross = &right_rat.numerator * &left_rat.denominator;
+                    left_cross >= right_cross
+                }
+                _ => return Err("Invalid comparison operator".into()),
+            };
+            return Ok(Box::new(LumenBool::new(result)));
+        }
+
+        // Try rational vs integer (convert integer to rational first)
+        if let (Ok(left_rat), Ok(right_num)) = (as_rational(l.as_ref()), as_number(r.as_ref())) {
+            let right_rat = LumenRational::new(right_num.value.clone(), num_bigint::BigInt::from(1));
+            let result = match self.op.as_str() {
+                "==" => (left_rat as &dyn crate::kernel::runtime::RuntimeValue).eq_value(&right_rat as &dyn crate::kernel::runtime::RuntimeValue).unwrap_or(false),
+                "!=" => !(left_rat as &dyn crate::kernel::runtime::RuntimeValue).eq_value(&right_rat as &dyn crate::kernel::runtime::RuntimeValue).unwrap_or(false),
+                "<" => {
+                    let left_cross = &left_rat.numerator * &right_rat.denominator;
+                    let right_cross = &right_rat.numerator * &left_rat.denominator;
+                    left_cross < right_cross
+                }
+                ">" => {
+                    let left_cross = &left_rat.numerator * &right_rat.denominator;
+                    let right_cross = &right_rat.numerator * &left_rat.denominator;
+                    left_cross > right_cross
+                }
+                "<=" => {
+                    let left_cross = &left_rat.numerator * &right_rat.denominator;
+                    let right_cross = &right_rat.numerator * &left_rat.denominator;
+                    left_cross <= right_cross
+                }
+                ">=" => {
+                    let left_cross = &left_rat.numerator * &right_rat.denominator;
+                    let right_cross = &right_rat.numerator * &left_rat.denominator;
+                    left_cross >= right_cross
+                }
+                _ => return Err("Invalid comparison operator".into()),
+            };
+            return Ok(Box::new(LumenBool::new(result)));
+        }
+
+        // Try integer vs rational (convert integer to rational first)
+        if let (Ok(left_num), Ok(right_rat)) = (as_number(l.as_ref()), as_rational(r.as_ref())) {
+            let left_rat = LumenRational::new(left_num.value.clone(), num_bigint::BigInt::from(1));
+            let result = match self.op.as_str() {
+                "==" => (&left_rat as &dyn crate::kernel::runtime::RuntimeValue).eq_value(right_rat as &dyn crate::kernel::runtime::RuntimeValue).unwrap_or(false),
+                "!=" => !(&left_rat as &dyn crate::kernel::runtime::RuntimeValue).eq_value(right_rat as &dyn crate::kernel::runtime::RuntimeValue).unwrap_or(false),
+                "<" => {
+                    let left_cross = &left_rat.numerator * &right_rat.denominator;
+                    let right_cross = &right_rat.numerator * &left_rat.denominator;
+                    left_cross < right_cross
+                }
+                ">" => {
+                    let left_cross = &left_rat.numerator * &right_rat.denominator;
+                    let right_cross = &right_rat.numerator * &left_rat.denominator;
+                    left_cross > right_cross
+                }
+                "<=" => {
+                    let left_cross = &left_rat.numerator * &right_rat.denominator;
+                    let right_cross = &right_rat.numerator * &left_rat.denominator;
+                    left_cross <= right_cross
+                }
+                ">=" => {
+                    let left_cross = &left_rat.numerator * &right_rat.denominator;
+                    let right_cross = &right_rat.numerator * &left_rat.denominator;
+                    left_cross >= right_cross
+                }
+                _ => return Err("Invalid comparison operator".into()),
+            };
+            return Ok(Box::new(LumenBool::new(result)));
+        }
+
+        // Try numeric (integer-only) comparison
         if let (Ok(left_num), Ok(right_num)) = (as_number(l.as_ref()), as_number(r.as_ref())) {
             let result = match self.op.as_str() {
                 "==" => left_num.value == right_num.value,
