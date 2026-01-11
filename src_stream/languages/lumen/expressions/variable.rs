@@ -46,8 +46,27 @@ impl ExprNode for FunctionCallExpr {
                     // str(x): convert any value to string
                     return builtin_str(&self.args[0].eval(env)?);
                 }
+                "real" => {
+                    // real(x): convert to real with default precision 15
+                    return builtin_real(&self.args[0].eval(env)?, 15);
+                }
                 _ => {}
             }
+        } else if self.args.len() == 2 && self.func_name == "real" {
+            // real(x, y): convert to real with precision y
+            use crate::languages::lumen::values::LumenNumber;
+            use num_traits::ToPrimitive;
+            let x_val = self.args[0].eval(env)?;
+            let y_val = self.args[1].eval(env)?;
+            // Extract precision from y_val
+            let precision = match y_val.as_any().downcast_ref::<LumenNumber>() {
+                Some(num) => {
+                    num.value.to_u64()
+                        .ok_or_else(|| "Precision must be a positive integer".to_string())? as usize
+                }
+                None => return Err("Precision argument must be an integer".to_string()),
+            };
+            return builtin_real(&x_val, precision);
         }
 
         // Get user-defined function definition
@@ -230,8 +249,15 @@ impl ExprPrefix for VariablePrefix {
 /// - String → parse as base-10 integer (backward compatibility)
 /// This is an explicit, lossy conversion for when integer semantics are needed.
 fn builtin_int(value: &Value) -> LumenResult<Value> {
-    use crate::languages::lumen::values::{LumenString, LumenNumber, LumenRational};
+    use crate::languages::lumen::values::{LumenString, LumenNumber, LumenRational, LumenReal};
     use num_bigint::BigInt;
+
+    // If it's a Real, truncate toward zero
+    if let Some(real) = value.as_any().downcast_ref::<LumenReal>() {
+        // Truncate toward zero: integer division of numerator by denominator
+        let truncated = &real.numerator / &real.denominator;
+        return Ok(Box::new(LumenNumber::new(truncated)));
+    }
 
     // If it's a Rational, truncate toward zero
     if let Some(rational) = value.as_any().downcast_ref::<LumenRational>() {
@@ -252,7 +278,46 @@ fn builtin_int(value: &Value) -> LumenResult<Value> {
         return Ok(Box::new(LumenNumber::new(bigint)));
     }
 
-    Err("int() requires a number, rational, or string argument".to_string())
+    Err("int() requires a number, rational, real, or string argument".to_string())
+}
+
+/// Built-in function: real(x, precision) - Numeric projection to real with configurable precision
+/// - Integer → real (exact)
+/// - Rational → real (stored as exact rational with precision hint for display)
+/// - Real → real (unchanged, or with new precision)
+/// Precision is in significant digits (default 15)
+fn builtin_real(value: &Value, precision: usize) -> LumenResult<Value> {
+    use crate::languages::lumen::values::{LumenNumber, LumenRational, LumenReal};
+    use num_bigint::BigInt;
+
+    // If it's a Real, return with new precision
+    if let Some(real) = value.as_any().downcast_ref::<LumenReal>() {
+        return Ok(Box::new(LumenReal::new(
+            real.numerator.clone(),
+            real.denominator.clone(),
+            precision,
+        )));
+    }
+
+    // If it's a Rational, convert to Real with precision
+    if let Some(rational) = value.as_any().downcast_ref::<LumenRational>() {
+        return Ok(Box::new(LumenReal::new(
+            rational.numerator.clone(),
+            rational.denominator.clone(),
+            precision,
+        )));
+    }
+
+    // If it's a Number (integer), convert to Real
+    if let Some(number) = value.as_any().downcast_ref::<LumenNumber>() {
+        return Ok(Box::new(LumenReal::new(
+            number.value.clone(),
+            BigInt::from(1),
+            precision,
+        )));
+    }
+
+    Err("real() requires a number, rational, or real argument".to_string())
 }
 
 /// Built-in function: str(x) - Convert any value to string
