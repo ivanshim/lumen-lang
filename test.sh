@@ -16,6 +16,42 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
+# Function to display help
+show_help() {
+    echo -e "${BLUE}Lumen-Lang Test Script${NC}\n"
+    echo -e "${BLUE}USAGE:${NC}"
+    echo "  ./test.sh                                    Test all files (all languages)"
+    echo "  ./test.sh --help                             Show this help message"
+    echo "  ./test.sh <filename>                         Test single file with both kernels"
+    echo "  ./test.sh --lang <language>                  Test all files of specific language"
+    echo "  ./test.sh --omit <file1> [file2] ...         Test all but exclude specific files"
+    echo "  ./test.sh --lang <lang> --omit <file>        Combine filters"
+    echo ""
+    echo -e "${BLUE}ARGUMENTS:${NC}"
+    echo "  <filename>              Just the filename (searches examples/ dirs)"
+    echo "                          or full path (e.g., examples/lumen/fibonacci.lm)"
+    echo "  <language>              lumen, python, or rust"
+    echo ""
+    echo -e "${BLUE}OPTIONS:${NC}"
+    echo "  --lang <language>       Test only files of specified language"
+    echo "  --omit <file> ...       Exclude specific files from testing"
+    echo "  --help                  Display this help message"
+    echo ""
+    echo -e "${BLUE}EXAMPLES:${NC}"
+    echo "  ./test.sh                              # Test everything (106 tests)"
+    echo "  ./test.sh fibonacci.lm                 # Test single file"
+    echo "  ./test.sh --lang lumen                 # Test only Lumen files"
+    echo "  ./test.sh --omit factorial.lm          # Test all except factorial"
+    echo "  ./test.sh --lang python --omit demo.py # Combine language and omit filters"
+    echo "  ./test.sh examples/lumen/pi_machin.lm # Test with full path"
+    echo ""
+    echo -e "${BLUE}SEARCH DIRECTORIES:${NC}"
+    echo "  - examples/lumen"
+    echo "  - examples/lumen/constructs"
+    echo "  - examples/python"
+    echo "  - examples/rust"
+}
+
 # Parse command-line arguments
 LANG_FILTER=""
 SINGLE_FILE=""
@@ -23,6 +59,10 @@ declare -a OMIT_FILES=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --help)
+            show_help
+            exit 0
+            ;;
         --lang)
             LANG_FILTER="$2"
             case "$LANG_FILTER" in
