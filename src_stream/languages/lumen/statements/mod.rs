@@ -3,19 +3,19 @@ use crate::languages::lumen::prelude::*;
 // Lumen statement features
 
 pub mod assignment;
-pub mod break_stmt;
-pub mod continue_stmt;
-pub mod if_else;
-pub mod print;
-pub mod write;
-pub mod while_loop;
-pub mod for_loop;
-pub mod until_loop;
+pub mod flow_break;
+pub mod flow_continue;
+pub mod control_if_else;
+pub mod function_print;
+pub mod function_write;
+pub mod control_while;
+pub mod control_for;
+pub mod control_until;
 pub mod return_stmt;
 pub mod let_binding;
 pub mod let_mut_binding;
 pub mod functions;
-pub mod memoization;
+pub mod system_memoization;
 pub mod expr_stmt;
 
 // Re-export function utilities for use by expressions
