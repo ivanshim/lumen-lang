@@ -32,7 +32,7 @@ while n < max_terms + 1
 digits = 0
 temp = accuracy_fact
 while temp > 0
-    temp = temp / 10
+    temp = int(temp / 10)
     digits = digits + 1
 
 shift = precision - digits
@@ -44,4 +44,4 @@ while i < shift
 
 accurate_e = sum / divisor
 
-print(accurate_e)
+print(int(accurate_e))

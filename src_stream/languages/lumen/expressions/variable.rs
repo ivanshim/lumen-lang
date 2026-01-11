@@ -224,23 +224,35 @@ impl ExprPrefix for VariablePrefix {
 // BUILT-IN CONVERSION FUNCTIONS
 // ============================================================================
 
-/// Built-in function: int(x) - Convert string to integer
-/// Parses a string as a base-10 integer with arbitrary precision.
-/// Returns error if x is not a string or if the string cannot be parsed.
+/// Built-in function: int(x) - Numeric projection to integer
+/// - Integer → return unchanged
+/// - Rational → truncate toward zero (discard fractional part)
+/// - String → parse as base-10 integer (backward compatibility)
+/// This is an explicit, lossy conversion for when integer semantics are needed.
 fn builtin_int(value: &Value) -> LumenResult<Value> {
-    use crate::languages::lumen::values::{LumenString, LumenNumber};
+    use crate::languages::lumen::values::{LumenString, LumenNumber, LumenRational};
     use num_bigint::BigInt;
 
-    // Extract string value
-    let string_val = value.as_any()
-        .downcast_ref::<LumenString>()
-        .ok_or_else(|| "int() requires a string argument".to_string())?;
+    // If it's a Rational, truncate toward zero
+    if let Some(rational) = value.as_any().downcast_ref::<LumenRational>() {
+        // Truncate toward zero: integer division of numerator by denominator
+        let truncated = &rational.numerator / &rational.denominator;
+        return Ok(Box::new(LumenNumber::new(truncated)));
+    }
 
-    // Parse as decimal integer
-    let bigint = string_val.value.trim().parse::<BigInt>()
-        .map_err(|_| format!("int(): cannot parse '{}' as integer", string_val.value))?;
+    // If it's already a Number (integer), return unchanged
+    if let Some(number) = value.as_any().downcast_ref::<LumenNumber>() {
+        return Ok(Box::new(number.clone()));
+    }
 
-    Ok(Box::new(LumenNumber::new(bigint)))
+    // If it's a String, parse as decimal integer (backward compatibility)
+    if let Some(string_val) = value.as_any().downcast_ref::<LumenString>() {
+        let bigint = string_val.value.trim().parse::<BigInt>()
+            .map_err(|_| format!("int(): cannot parse '{}' as integer", string_val.value))?;
+        return Ok(Box::new(LumenNumber::new(bigint)));
+    }
+
+    Err("int() requires a number, rational, or string argument".to_string())
 }
 
 /// Built-in function: str(x) - Convert any value to string
