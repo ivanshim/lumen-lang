@@ -20,7 +20,7 @@ NC='\033[0m' # No Color
 show_help() {
     echo -e "${BLUE}Lumen-Lang Test Script${NC}\n"
     echo -e "${BLUE}USAGE:${NC}"
-    echo "  ./test.sh                                    Test all files (all languages)"
+    echo "  ./test.sh                                    Test Lumen files (default)"
     echo "  ./test.sh --help                             Show this help message"
     echo "  ./test.sh <filename>                         Test single file with both kernels"
     echo "  ./test.sh --lang <language>                  Test all files of specific language"
@@ -30,7 +30,7 @@ show_help() {
     echo -e "${BLUE}ARGUMENTS:${NC}"
     echo "  <filename>              Just the filename (searches examples/ dirs)"
     echo "                          or full path (e.g., examples/lumen/fibonacci.lm)"
-    echo "  <language>              lumen, python, or rust"
+    echo "  <language>              all, lumen, python, or rust"
     echo ""
     echo -e "${BLUE}OPTIONS:${NC}"
     echo "  --lang <language>       Test only files of specified language"
@@ -38,10 +38,11 @@ show_help() {
     echo "  --help                  Display this help message"
     echo ""
     echo -e "${BLUE}EXAMPLES:${NC}"
-    echo "  ./test.sh                              # Test everything (106 tests)"
+    echo "  ./test.sh                              # Test Lumen files (default, 48 tests)"
     echo "  ./test.sh fibonacci.lm                 # Test single file"
-    echo "  ./test.sh --lang lumen                 # Test only Lumen files"
-    echo "  ./test.sh --omit factorial.lm          # Test all except factorial"
+    echo "  ./test.sh --lang all                   # Test everything (106 tests)"
+    echo "  ./test.sh --lang python                # Test only Python files"
+    echo "  ./test.sh --omit factorial.lm          # Test Lumen except factorial"
     echo "  ./test.sh --lang python --omit demo.py # Combine language and omit filters"
     echo "  ./test.sh examples/lumen/pi_machin.lm # Test with full path"
     echo ""
@@ -66,12 +67,12 @@ while [[ $# -gt 0 ]]; do
         --lang)
             LANG_FILTER="$2"
             case "$LANG_FILTER" in
-                lumen|rust|python)
+                all|lumen|rust|python)
                     shift 2
                     ;;
                 *)
                     echo -e "${RED}Invalid language: $LANG_FILTER${NC}"
-                    echo "Usage: $0 [--lang lumen|rust|python] [--omit file1.lm file2.lm ...]"
+                    echo "Usage: $0 [--lang all|lumen|rust|python] [--omit file1.lm file2.lm ...]"
                     echo "       $0 <file>"
                     exit 1
                     ;;
@@ -232,10 +233,12 @@ if [ -n "$SINGLE_FILE" ]; then
 else
     # Full test suite mode
     if [ -z "$LANG_FILTER" ]; then
-        title="All Tests"
-        test_languages=("lumen" "python_core" "rust_core")
+        # Default to Lumen tests
+        title="Lumen Tests (default)"
+        test_languages=("lumen")
     else
         case "$LANG_FILTER" in
+            all) title="All Tests"; test_languages=("lumen" "python_core" "rust_core") ;;
             lumen) title="Lumen Tests"; test_languages=("lumen") ;;
             python) title="Python Tests"; test_languages=("python_core") ;;
             rust) title="Rust Tests"; test_languages=("rust_core") ;;
