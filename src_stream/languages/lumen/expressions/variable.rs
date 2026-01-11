@@ -68,21 +68,6 @@ impl ExprNode for FunctionCallExpr {
                 None => return Err("Precision argument must be an integer".to_string()),
             };
             return builtin_real(&x_val, precision);
-        } else if self.args.len() == 2 && self.func_name == "round" {
-            // round(x, decimals): round to specified decimal places, preserving input type
-            use crate::languages::lumen::values::LumenNumber;
-            use num_traits::ToPrimitive;
-            let x_val = self.args[0].eval(env)?;
-            let decimals_val = self.args[1].eval(env)?;
-            // Extract decimals from argument
-            let decimals = match decimals_val.as_any().downcast_ref::<LumenNumber>() {
-                Some(num) => {
-                    num.value.to_i64()
-                        .ok_or_else(|| "Decimals must be an integer".to_string())? as i64
-                }
-                None => return Err("Decimals argument must be an integer".to_string()),
-            };
-            return builtin_round(&x_val, decimals);
         }
 
         // Get user-defined function definition
@@ -364,83 +349,6 @@ fn builtin_emit(value: &Value) -> LumenResult<Value> {
 
     // Return None (null value)
     Ok(Box::new(crate::languages::lumen::values::LumenNone))
-}
-
-/// Built-in function: round(x, decimals) - Round number preserving input type
-/// - Integer input → Integer output (decimals must be >= 0)
-/// - Rational input → Rational output
-/// - Real input → Real output (same precision)
-/// Uses round-half-away-from-zero semantics
-fn builtin_round(value: &Value, decimals: i64) -> LumenResult<Value> {
-    use crate::languages::lumen::values::{LumenNumber, LumenRational, LumenReal};
-    use num_bigint::BigInt;
-
-    if decimals < 0 {
-        return Err("round() decimals argument must be >= 0".to_string());
-    }
-
-    let decimals = decimals as usize;
-
-    // If it's an integer, just return it unchanged (decimals >= 0 already checked)
-    if let Some(number) = value.as_any().downcast_ref::<LumenNumber>() {
-        return Ok(Box::new(number.clone()));
-    }
-
-    // If it's a Real, perform rounding and return Real with same precision
-    if let Some(real) = value.as_any().downcast_ref::<LumenReal>() {
-        let rounded = round_rational(&real.numerator, &real.denominator, decimals)?;
-        return Ok(Box::new(LumenReal::new(
-            rounded.0,
-            rounded.1,
-            real.precision,
-        )));
-    }
-
-    // If it's a Rational, perform rounding and return Rational
-    if let Some(rational) = value.as_any().downcast_ref::<LumenRational>() {
-        let rounded = round_rational(&rational.numerator, &rational.denominator, decimals)?;
-        return Ok(Box::new(LumenRational::new(rounded.0, rounded.1)));
-    }
-
-    Err("round() requires a number, rational, or real argument".to_string())
-}
-
-/// Helper function to round a rational number (num/denom) to specified decimal places
-/// Returns (numerator, denominator) of rounded result
-fn round_rational(numerator: &BigInt, denominator: &BigInt, decimals: usize) -> LumenResult<(BigInt, BigInt)> {
-    use num_bigint::BigInt;
-
-    // Calculate scaling factors
-    let scale = BigInt::from(10).pow(decimals as u32);
-    let scale_plus = &scale * 10;
-
-    // Determine sign and work with absolute values for symmetric rounding
-    let is_negative = numerator < &BigInt::from(0);
-    let abs_num = if is_negative { -numerator } else { numerator.clone() };
-
-    // Scale by 10^(decimals+1) to capture rounding digit
-    let scaled = (&abs_num * &scale_plus) / denominator;
-
-    // Extract rounding digit (ones place) and number before it
-    let ten = BigInt::from(10);
-    let digit_to_round: BigInt = &scaled % &ten;
-    let number_before_digit: BigInt = &scaled / &ten;
-
-    // Round half away from zero: if digit >= 5, increment
-    let rounded_abs = if digit_to_round >= BigInt::from(5) {
-        number_before_digit + 1
-    } else {
-        number_before_digit
-    };
-
-    // Restore sign and return result scaled back to target precision
-    let final_numerator = if is_negative {
-        -rounded_abs
-    } else {
-        rounded_abs
-    };
-
-    Ok((final_numerator, scale))
 }
 
 // --------------------

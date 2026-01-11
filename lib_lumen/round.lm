@@ -1,0 +1,50 @@
+# Rounding utility function
+# fn round(x, decimals) - rounds x to the specified number of decimal places
+# Uses round-half-away-from-zero semantics
+# Example: round(1.235, 2) = 1.24, round(-1.235, 2) = -1.24
+
+fn round(x, decimals)
+    # Calculate 10^decimals as the scaling factor
+    scale = 1
+    i = 0
+    while i < decimals
+        scale = scale * 10
+        i = i + 1
+
+    # Calculate 10^(decimals+1) to capture the rounding digit
+    scale_plus = scale * 10
+
+    # Handle negatives by working with absolute value
+    # This ensures round-half-away-from-zero works symmetrically
+    is_negative = x < 0
+    abs_x = x
+    if is_negative
+        abs_x = x * -1
+
+    # Scale by 10^(decimals+1) to include the rounding decision digit
+    # For example, to round 1.235 to 2 decimals:
+    # - scale_plus = 1000
+    # - scaled = 1235 (with 5 in the ones place representing 0.005)
+    scaled = abs_x * scale_plus
+
+    # Truncate to integer representation
+    int_scaled = int(scaled)
+
+    # Extract the rounding digit (ones place) and the part before it
+    # The rounding digit determines if we round up or down
+    digit_to_round = int_scaled % 10
+    number_before_digit = int(int_scaled / 10)
+
+    # Apply round-half-away-from-zero: if digit >= 5, increment the result
+    rounded_abs = number_before_digit
+    if digit_to_round >= 5
+        rounded_abs = number_before_digit + 1
+
+    # Scale back to the target precision
+    result = rounded_abs / scale
+
+    # Restore sign if the input was negative
+    if is_negative
+        result = result * -1
+
+    result
