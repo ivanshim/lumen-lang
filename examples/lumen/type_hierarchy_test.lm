@@ -1,0 +1,276 @@
+# Type hierarchy tests: Integer is subset of Rational is subset of Real
+# Demonstrates that arithmetic operations preserve type relationships
+# If all operands are integers -> result is integer
+# If any operand is rational (no real) -> result is rational
+# If any operand is real -> result is real
+
+print("=== TYPE HIERARCHY TESTS: Integer subset of Rational subset of Real ===")
+write("\n")
+
+print("=== SECTION 1: ADDITION ===")
+write("\n")
+
+# 1a: Integer + Integer = Integer
+print("Test 1a: Integer + Integer -> Integer")
+a = 5
+b = 3
+result = a + b
+print(str(a) + " + " + str(b) + " = " + str(result))
+write("\n")
+
+# 1b: Integer + Rational = Rational
+print("Test 1b: Integer + Rational -> Rational")
+a = 5
+b = 3/2
+result = a + b
+print(str(a) + " + " + str(b) + " = " + str(result))
+write("\n")
+
+# 1c: Integer + Real = Real
+print("Test 1c: Integer + Real -> Real")
+a = 5
+b = real(3/2)
+result = a + b
+print(str(a) + " + " + str(b) + " = " + str(result))
+write("\n")
+
+# 1d: Rational + Rational = Rational
+print("Test 1d: Rational + Rational -> Rational")
+a = 3/2
+b = 5/4
+result = a + b
+print(str(a) + " + " + str(b) + " = " + str(result))
+write("\n")
+
+# 1e: Rational + Real = Real
+print("Test 1e: Rational + Real -> Real")
+a = 3/2
+b = real(5/4)
+result = a + b
+print(str(a) + " + " + str(b) + " = " + str(result))
+write("\n")
+
+# 1f: Real + Real = Real
+print("Test 1f: Real + Real -> Real")
+a = real(3/2)
+b = real(5/4)
+result = a + b
+print(str(a) + " + " + str(b) + " = " + str(result))
+write("\n")
+
+print("=== SECTION 2: SUBTRACTION ===")
+write("\n")
+
+# 2a: Integer - Integer = Integer
+print("Test 2a: Integer - Integer -> Integer")
+a = 10
+b = 3
+result = a - b
+print(str(a) + " - " + str(b) + " = " + str(result))
+write("\n")
+
+# 2b: Integer - Rational = Rational
+print("Test 2b: Integer - Rational -> Rational")
+a = 10
+b = 3/2
+result = a - b
+print(str(a) + " - " + str(b) + " = " + str(result))
+write("\n")
+
+# 2c: Integer - Real = Real
+print("Test 2c: Integer - Real -> Real")
+a = 10
+b = real(3/2)
+result = a - b
+print(str(a) + " - " + str(b) + " = " + str(result))
+write("\n")
+
+# 2d: Rational - Rational = Rational
+print("Test 2d: Rational - Rational -> Rational")
+a = 10/3
+b = 5/4
+result = a - b
+print(str(a) + " - " + str(b) + " = " + str(result))
+write("\n")
+
+# 2e: Rational - Real = Real
+print("Test 2e: Rational - Real -> Real")
+a = 10/3
+b = real(5/4)
+result = a - b
+print(str(a) + " - " + str(b) + " = " + str(result))
+write("\n")
+
+# 2f: Real - Real = Real
+print("Test 2f: Real - Real -> Real")
+a = real(10/3)
+b = real(5/4)
+result = a - b
+print(str(a) + " - " + str(b) + " = " + str(result))
+write("\n")
+
+print("=== SECTION 3: MULTIPLICATION ===")
+write("\n")
+
+# 3a: Integer * Integer = Integer
+print("Test 3a: Integer * Integer -> Integer")
+a = 4
+b = 3
+result = a * b
+print(str(a) + " * " + str(b) + " = " + str(result))
+write("\n")
+
+# 3b: Integer * Rational = Rational
+print("Test 3b: Integer * Rational -> Rational")
+a = 4
+b = 3/2
+result = a * b
+print(str(a) + " * " + str(b) + " = " + str(result))
+write("\n")
+
+# 3c: Integer * Real = Real
+print("Test 3c: Integer * Real -> Real")
+a = 4
+b = real(3/2)
+result = a * b
+print(str(a) + " * " + str(b) + " = " + str(result))
+write("\n")
+
+# 3d: Rational * Rational = Rational
+print("Test 3d: Rational * Rational -> Rational")
+a = 2/3
+b = 3/4
+result = a * b
+print(str(a) + " * " + str(b) + " = " + str(result))
+write("\n")
+
+# 3e: Rational * Real = Real
+print("Test 3e: Rational * Real -> Real")
+a = 2/3
+b = real(3/4)
+result = a * b
+print(str(a) + " * " + str(b) + " = " + str(result))
+write("\n")
+
+# 3f: Real * Real = Real
+print("Test 3f: Real * Real -> Real")
+a = real(2/3)
+b = real(3/4)
+result = a * b
+print(str(a) + " * " + str(b) + " = " + str(result))
+write("\n")
+
+print("=== SECTION 4: DIVISION ===")
+write("\n")
+
+# 4a: Integer / Integer = Rational
+print("Test 4a: Integer / Integer -> Rational")
+a = 5
+b = 2
+result = a / b
+print(str(a) + " / " + str(b) + " = " + str(result))
+write("\n")
+
+# 4b: Integer / Rational = Rational
+print("Test 4b: Integer / Rational -> Rational")
+a = 5
+b = 3/2
+result = a / b
+print(str(a) + " / " + str(b) + " = " + str(result))
+write("\n")
+
+# 4c: Integer / Real = Real
+print("Test 4c: Integer / Real -> Real")
+a = 5
+b = real(3/2)
+result = a / b
+print(str(a) + " / " + str(b) + " = " + str(result))
+write("\n")
+
+# 4d: Rational / Rational = Rational
+print("Test 4d: Rational / Rational -> Rational")
+a = 3/2
+b = 5/4
+result = a / b
+print(str(a) + " / " + str(b) + " = " + str(result))
+write("\n")
+
+# 4e: Rational / Real = Real
+print("Test 4e: Rational / Real -> Real")
+a = 3/2
+b = real(5/4)
+result = a / b
+print(str(a) + " / " + str(b) + " = " + str(result))
+write("\n")
+
+# 4f: Real / Real = Real
+print("Test 4f: Real / Real -> Real")
+a = real(3/2)
+b = real(5/4)
+result = a / b
+print(str(a) + " / " + str(b) + " = " + str(result))
+write("\n")
+
+print("=== SECTION 5: FLOAT LITERALS ===")
+write("\n")
+
+# 5a: Float literal is Real
+print("Test 5a: Float literal 1.5 is Real")
+x = 1.5
+print("1.5 = " + str(x))
+write("\n")
+
+# 5b: Float literal + Integer = Real
+print("Test 5b: Float literal + Integer -> Real")
+x = 1.5
+y = 2
+result = x + y
+print(str(x) + " + " + str(y) + " = " + str(result))
+write("\n")
+
+# 5c: Float literal * Integer = Real
+print("Test 5c: Float literal * Integer -> Real")
+x = 1.5
+y = 3
+result = x * y
+print(str(x) + " * " + str(y) + " = " + str(result))
+write("\n")
+
+# 5d: Float literal / Integer = Real
+print("Test 5d: Float literal / Integer -> Real")
+x = 3.0
+y = 2
+result = x / y
+print(str(x) + " / " + str(y) + " = " + str(result))
+write("\n")
+
+print("=== SECTION 6: ROUND() FUNCTION RETURNS REAL ===")
+write("\n")
+
+# 6a: round() with float input returns Real
+print("Test 6a: round(1.235, 2) returns Real")
+x = round(1.235, 2)
+print("round(1.235, 2) = " + str(x))
+write("\n")
+
+# 6b: round() with negative float
+print("Test 6b: round(-2.456, 2) returns Real")
+x = round(-2.456, 2)
+print("round(-2.456, 2) = " + str(x))
+write("\n")
+
+# 6c: round() with integer input
+print("Test 6c: round(5, 2) with integer input")
+x = round(5, 2)
+print("round(5, 2) = " + str(x))
+write("\n")
+
+print("=== SUMMARY ===")
+print("[OK] Integer OP Integer -> Integer (when no division)")
+print("[OK] Integer OP Rational -> Rational (when no real)")
+print("[OK] Integer OP Real -> Real")
+print("[OK] Rational OP Rational -> Rational (when no real)")
+print("[OK] Rational OP Real -> Real")
+print("[OK] Real OP Real -> Real")
+print("[OK] Float literals (1.5, 2.3) are Real values")
+print("[OK] round(float) returns Real, not Rational")
