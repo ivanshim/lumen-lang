@@ -374,9 +374,14 @@ expressions:
   function_call:
     description: "Invoke function with arguments"
     syntax: "function_name(arg1, arg2, ...) or function()"
-    arguments: "Evaluated left to right"
+    arguments: "Comma-separated expressions; evaluated left to right"
+    argument_count: "Must match parameter count; mismatches cause runtime error"
+    argument_types: "No static type checking; evaluated and passed as values"
     return_value: "Result of function becomes expression value"
-    example: "add(5, 3) or process(data)"
+    example: |
+      add(5, 3)
+      process(data)
+      fib(10)
     kernel_operation: call
 
   grouping:
@@ -465,6 +470,26 @@ statements:
           counter = counter + 1
     kernel_operation: loop
 
+  for_loop:
+    description: "Iterate over a range or iterable"
+    syntax: "for variable in iterable NEWLINE INDENT statements+ DEDENT"
+    iterable: "Must be a range expression (e.g., 0..10) or other iterable"
+    variable: "Loop variable binding (immutable within loop)"
+    control: "break (exit loop), continue (next iteration)"
+    example: |
+      for i in 0..10
+          print(i)
+    note: "Half-open range [start, end); end value not included"
+    kernel_operation: loop
+
+  until_loop:
+    description: "Loop until condition is true (post-condition loop)"
+    syntax: "until condition NEWLINE INDENT statements+ DEDENT"
+    condition: "Must be boolean expression"
+    control: "break (exit loop), continue (next iteration)"
+    note: "Body executes at least once before condition check"
+    kernel_operation: loop
+
   break_statement:
     description: "Exit innermost loop"
     syntax: "break"
@@ -491,21 +516,28 @@ statements:
     kernel_signal: termination
 
   function_definition:
-    description: "Define named function"
+    description: "Define named function with parameters"
     syntax: "fn name(param1, param2, ...) NEWLINE INDENT statements+ DEDENT"
     syntax_with_return_type: "fn name(param1: Type1, param2: Type2) -> ReturnType NEWLINE ..."
-    parameters: "Names only (typing optional); can include type annotations"
-    return_value: "Last statement value (or explicit return)"
-    implicit_return: "Last expression is return value"
-    scope: "Parameters are local to function"
-    purity: "Default impure; no annotation supported"
-    recursion: "Allowed"
+    parameters: "Comma-separated identifiers; type annotations optional"
+    parameter_types: "Each parameter can have optional type annotation: param: Type"
+    arguments: "When calling function, arguments evaluated left to right and bound to parameters"
+    argument_matching: "Number of arguments must exactly match number of parameters"
+    return_value: "Last expression in function body (implicit return)"
+    explicit_return: "return statement available for early exit with value"
+    scope: "Parameters are local to function; create new scope on call"
+    purity: "Default impure; no purity annotations supported"
+    recursion: "Allowed; functions can call themselves"
     example: |
       fn add(a, b)
           a + b
 
       fn greet(name: String) -> String
           "Hello, " + name
+
+      # Function calls with arguments
+      result = add(5, 3)
+      greeting = greet("World")
     kernel_operation: call
 
   extern_call:
@@ -551,7 +583,13 @@ control_flow:
   looping:
     forms:
       - while
-    condition_requirement: "Must be boolean expression"
+      - for
+      - until
+    descriptions:
+      while: "Loop while condition is true"
+      for: "Iterate over a range: for x in 0..10"
+      until: "Loop until condition is true"
+    condition_requirement: "Must be boolean expression (for/while/until)"
 
   jump:
     break: true
@@ -715,12 +753,6 @@ future_features:
     motivation: "Would enable data abstraction"
     concern: "Requires comprehensive type system"
 
-  for_loop:
-    keyword: "for"
-    status: "Reserved, not implemented"
-    current_alternative: "while loops with manual increment"
-    consideration: "May add if iteration becomes very common"
-
   error_types:
     types: "Result, Option"
     status: "Type system foundation exists, semantics deferred"
@@ -736,7 +768,6 @@ future_features:
 reserved_keywords:
   - match
   - case
-  - for
   - struct
   - enum
   - trait
