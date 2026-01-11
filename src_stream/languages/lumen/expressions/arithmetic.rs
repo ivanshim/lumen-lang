@@ -73,6 +73,52 @@ impl ExprNode for ArithmeticExpr {
             }
         }
 
+        // Fast path for modulo and exponentiation (integer-only operations)
+        // This avoids expensive rational conversion and cloning for these operators
+        if self.op == "%" || self.op == "**" {
+            // Extract integers directly by reference, then clone only if needed
+            let result = if let Ok(num) = as_number(l.as_ref()) {
+                let left_ref = &num.value;
+                if let Ok(num2) = as_number(r.as_ref()) {
+                    let right_ref = &num2.value;
+                    if self.op == "%" {
+                        numeric::modulo(left_ref, right_ref)?
+                    } else {
+                        numeric::power(left_ref, right_ref)?
+                    }
+                } else if let Ok(rat) = as_rational(r.as_ref()) {
+                    if self.op == "%" {
+                        numeric::modulo(left_ref, &rat.numerator)?
+                    } else {
+                        numeric::power(left_ref, &rat.numerator)?
+                    }
+                } else {
+                    return Err("Right operand must be a number".into());
+                }
+            } else if let Ok(rat) = as_rational(l.as_ref()) {
+                let left_ref = &rat.numerator;
+                if let Ok(num) = as_number(r.as_ref()) {
+                    let right_ref = &num.value;
+                    if self.op == "%" {
+                        numeric::modulo(left_ref, right_ref)?
+                    } else {
+                        numeric::power(left_ref, right_ref)?
+                    }
+                } else if let Ok(rat2) = as_rational(r.as_ref()) {
+                    if self.op == "%" {
+                        numeric::modulo(left_ref, &rat2.numerator)?
+                    } else {
+                        numeric::power(left_ref, &rat2.numerator)?
+                    }
+                } else {
+                    return Err("Right operand must be a number".into());
+                }
+            } else {
+                return Err("Left operand must be a number".into());
+            };
+            return Ok(Box::new(LumenNumber::new(result)));
+        }
+
         // Try to extract left and right as numbers (integer or rational)
         let (left_num, left_is_rat) = if let Ok(rat) = as_rational(l.as_ref()) {
             (rat.clone(), true)
@@ -122,21 +168,6 @@ impl ExprNode for ArithmeticExpr {
                 let num = left_num.numerator * &right_num.denominator;
                 let denom = left_num.denominator * right_num.numerator;
                 LumenRational::new(num, denom)
-            }
-            "%" => {
-                // For modulo, extract integer parts from rationals
-                let left_int = &left_num.numerator;
-                let right_int = &right_num.numerator;
-                numeric::modulo(left_int, right_int)?;
-                return Ok(Box::new(LumenNumber::new(numeric::modulo(left_int, right_int)?)));
-            }
-            "**" => {
-                // Exponentiation only works with integers
-                if result_is_rational {
-                    return Err("Exponentiation operator requires integers".into());
-                }
-                numeric::power(&left_num.numerator, &right_num.numerator)?;
-                return Ok(Box::new(LumenNumber::new(numeric::power(&left_num.numerator, &right_num.numerator)?)));
             }
             _ => return Err("Invalid arithmetic operator".into()),
         };
