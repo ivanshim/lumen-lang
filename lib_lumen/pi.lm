@@ -1,0 +1,4 @@
+# Wrapper for pi_machin
+# fn pi(significant_figures) - returns pi with given significant figures
+fn pi(significant_figures)
+    pi_machin(significant_figures)

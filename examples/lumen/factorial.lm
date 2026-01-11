@@ -6,12 +6,6 @@ n = 50
 if ARGS != ""
     n = int(ARGS)
 
-fn factorial(x)
-    if x <= 1
-        1
-    else
-        x * factorial(x - 1)
-
 write("Factorial of ")
 write(n)
 write(": ")

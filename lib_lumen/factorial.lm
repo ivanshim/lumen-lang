@@ -1,0 +1,7 @@
+# Factorial function
+# fn factorial(n) - returns n! as an integer
+fn factorial(n)
+    if n <= 1
+        1
+    else
+        n * factorial(n - 1)
