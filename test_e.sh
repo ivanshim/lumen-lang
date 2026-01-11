@@ -8,5 +8,5 @@ echo "================================================"
 
 for i in {1..30}; do
     printf "e(%2d): " "$i"
-    ./target/release/lumen-lang examples/lumen/e_integer.lm "$i"
+    ./target/release/microcode examples/lumen/e_integer.lm --lang lumen "$i"
 done
