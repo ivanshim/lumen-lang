@@ -1,6 +1,9 @@
-# ===== PARAMETER: Edit this value to compute Fibonacci at a different index =====
+# Parameter: fib_index (default: 10000)
+# Usage: lumen-lang fibonacci_recursive.lm [fib_index]
+# Example: lumen-lang fibonacci_recursive.lm 100
 fib_index = 10000
-# ==============================================================================
+if ARGS != ""
+    fib_index = int(ARGS)
 
 MEMOIZATION = true
 

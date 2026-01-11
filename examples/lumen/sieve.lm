@@ -1,4 +1,10 @@
+# Parameter: n (default: 10000)
+# Usage: lumen-lang sieve.lm [n]
+# Example: lumen-lang sieve.lm 100
 n = 10000
+if ARGS != ""
+    n = int(ARGS)
+
 count = 0
 first = true
 
