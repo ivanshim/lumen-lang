@@ -96,19 +96,22 @@ impl ExprNode for ArithmeticExpr {
                     return Err("Right operand must be a number".into());
                 }
             } else if let Ok(rat) = as_rational(l.as_ref()) {
-                let left_ref = &rat.numerator;
+                // For modulo with rationals, extract integer part first (numerator / denominator)
+                let left_int = &rat.numerator / &rat.denominator;
                 if let Ok(num) = as_number(r.as_ref()) {
                     let right_ref = &num.value;
                     if self.op == "%" {
-                        numeric::modulo(left_ref, right_ref)?
+                        numeric::modulo(&left_int, right_ref)?
                     } else {
-                        numeric::power(left_ref, right_ref)?
+                        numeric::power(&left_int, right_ref)?
                     }
                 } else if let Ok(rat2) = as_rational(r.as_ref()) {
+                    // For modulo with two rationals, extract integer parts from both
+                    let right_int = &rat2.numerator / &rat2.denominator;
                     if self.op == "%" {
-                        numeric::modulo(left_ref, &rat2.numerator)?
+                        numeric::modulo(&left_int, &right_int)?
                     } else {
-                        numeric::power(left_ref, &rat2.numerator)?
+                        numeric::power(&left_int, &right_int)?
                     }
                 } else {
                     return Err("Right operand must be a number".into());
