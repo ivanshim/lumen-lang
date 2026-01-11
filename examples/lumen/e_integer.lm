@@ -1,6 +1,7 @@
 # Parameter: max_terms (default: 500)
 # Usage: lumen-lang e_integer.lm [max_terms]
 # Example: lumen-lang e_integer.lm 500
+# Default: Computes 1000 digits of Euler's number (e) using 500 factorial terms
 max_terms = 500
 if ARGS != ""
     max_terms = int(ARGS)
