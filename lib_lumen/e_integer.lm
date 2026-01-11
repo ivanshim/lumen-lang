@@ -22,30 +22,10 @@ fn e_integer(significant_figures)
         n = n + 1
         fact = fact * n
 
-    accuracy_fact = 1
-    n = 0
-    while n < max_terms + 1
-        n = n + 1
-        accuracy_fact = accuracy_fact * n
-
-    digits = 0
-    temp = accuracy_fact
-    while temp > 0
-        temp = int(temp / 10)
-        digits = digits + 1
-
-    shift = precision - digits
-    divisor = 1
-    i = 0
-    while i < shift
-        divisor = divisor * 10
-        i = i + 1
-
-    accurate_e = sum / divisor
-
+    # sum is now (e * scale), use it directly for formatting
     # Extract integer and fractional parts for decimal formatting
-    integer_part = accurate_e / scale
-    fractional_part = accurate_e % scale
+    integer_part = sum / scale
+    fractional_part = sum % scale
 
     # Format as decimal string with proper decimal point placement
     write(int(integer_part))
