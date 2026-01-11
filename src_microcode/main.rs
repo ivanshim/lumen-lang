@@ -33,7 +33,8 @@ fn main() {
             // Prepend Lumen standard library
             // The library provides user-facing I/O functions (print, write) built on top of emit() primitive
             // Load in order: write.lm first (defines write), then print.lm (depends on write),
-            // then math functions (factorial, e_integer, pi_machin), then defaults and wrappers, then utilities
+            // then math functions (factorial, e_integer, pi_machin), then defaults and wrappers
+            // Note: round() is now a built-in function, no need to include as stdlib
             let stdlib_write = include_str!("../lib_lumen/write.lm");
             let stdlib_print = include_str!("../lib_lumen/print.lm");
             let stdlib_factorial = include_str!("../lib_lumen/factorial.lm");
@@ -43,10 +44,9 @@ fn main() {
             let stdlib_pi_default = include_str!("../lib_lumen/pi_default.lm");
             let stdlib_e = include_str!("../lib_lumen/e.lm");
             let stdlib_pi = include_str!("../lib_lumen/pi.lm");
-            let stdlib_round = include_str!("../lib_lumen/round.lm");
-            let full_source = format!("{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+            let full_source = format!("{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
                 stdlib_write, stdlib_print, stdlib_factorial, stdlib_e_integer,
-                stdlib_pi_machin, stdlib_e_default, stdlib_pi_default, stdlib_e, stdlib_pi, stdlib_round, source);
+                stdlib_pi_machin, stdlib_e_default, stdlib_pi_default, stdlib_e, stdlib_pi, source);
             if let Err(e) = run(&full_source, &schema, &program_args) {
                 eprintln!("LumenError: {}", e);
                 process::exit(1);
