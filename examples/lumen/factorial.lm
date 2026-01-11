@@ -1,6 +1,9 @@
-# ===== PARAMETER: Edit this value to test factorial with different numbers =====
+# Parameter: n (default: 1000)
+# Usage: lumen-lang factorial.lm [n]
+# Example: lumen-lang factorial.lm 50
 n = 1000
-# ==============================================================================
+if ARGS != ""
+    n = int(ARGS)
 
 fn factorial(x)
     if x <= 1

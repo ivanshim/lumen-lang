@@ -1,7 +1,12 @@
 # Compute pi using Machin's formula with pure integer arithmetic
 # Output: floor(pi * 10^precision)
+# Parameter: precision (default: 5000)
+# Usage: lumen-lang pi_machin.lm [precision]
+# Example: lumen-lang pi_machin.lm 1000
 
 precision = 5000
+if ARGS != ""
+    precision = int(ARGS)
 
 scale = 1
 i = 0

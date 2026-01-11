@@ -1,4 +1,10 @@
+# Parameter: max_terms (default: 1000)
+# Usage: lumen-lang e_integer.lm [max_terms]
+# Example: lumen-lang e_integer.lm 500
 max_terms = 1000
+if ARGS != ""
+    max_terms = int(ARGS)
+
 precision = 10000
 scale = 1
 
