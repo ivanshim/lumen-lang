@@ -3,8 +3,10 @@
 # lumen-lang test script
 # Tests examples with stream and microcode kernels
 # Usage: ./test.sh [--lang lumen|rust|python] [--omit file1.lm file2.lm ...]
+#        ./test.sh <file>
 # If --lang is not specified, tests all languages
 # If --omit is provided, those files are excluded from testing
+# If a file path is provided, runs just that file with both kernels
 
 # Colors for output
 RED='\033[0;31m'
@@ -16,6 +18,7 @@ NC='\033[0m' # No Color
 
 # Parse command-line arguments
 LANG_FILTER=""
+SINGLE_FILE=""
 declare -a OMIT_FILES=()
 
 while [[ $# -gt 0 ]]; do
@@ -29,6 +32,7 @@ while [[ $# -gt 0 ]]; do
                 *)
                     echo -e "${RED}Invalid language: $LANG_FILTER${NC}"
                     echo "Usage: $0 [--lang lumen|rust|python] [--omit file1.lm file2.lm ...]"
+                    echo "       $0 <file>"
                     exit 1
                     ;;
             esac
@@ -41,9 +45,16 @@ while [[ $# -gt 0 ]]; do
             done
             ;;
         *)
-            echo -e "${RED}Invalid argument: $1${NC}"
-            echo "Usage: $0 [--lang lumen|rust|python] [--omit file1.lm file2.lm ...]"
-            exit 1
+            # Check if it's a file
+            if [[ -f "$1" ]]; then
+                SINGLE_FILE="$1"
+                shift
+            else
+                echo -e "${RED}Invalid argument: $1${NC}"
+                echo "Usage: $0 [--lang lumen|rust|python] [--omit file1.lm file2.lm ...]"
+                echo "       $0 <file>"
+                exit 1
+            fi
             ;;
     esac
 done
@@ -150,16 +161,31 @@ run_test() {
     fi
 }
 
-# Determine title based on language filter
-if [ -z "$LANG_FILTER" ]; then
-    title="All Tests"
-    test_languages=("lumen" "python_core" "rust_core")
-else
-    case "$LANG_FILTER" in
-        lumen) title="Lumen Tests"; test_languages=("lumen") ;;
-        python) title="Python Tests"; test_languages=("python_core") ;;
-        rust) title="Rust Tests"; test_languages=("rust_core") ;;
+# Determine title and test mode
+if [ -n "$SINGLE_FILE" ]; then
+    # Single file mode
+    filename=$(basename "$SINGLE_FILE")
+    title="Single File Test: $filename"
+
+    # Detect language from file extension
+    case "$SINGLE_FILE" in
+        *.lm) language="lumen" ;;
+        *.py) language="python_core" ;;
+        *.rs) language="rust_core" ;;
+        *) echo -e "${RED}Unknown file type: $SINGLE_FILE${NC}"; exit 1 ;;
     esac
+else
+    # Full test suite mode
+    if [ -z "$LANG_FILTER" ]; then
+        title="All Tests"
+        test_languages=("lumen" "python_core" "rust_core")
+    else
+        case "$LANG_FILTER" in
+            lumen) title="Lumen Tests"; test_languages=("lumen") ;;
+            python) title="Python Tests"; test_languages=("python_core") ;;
+            rust) title="Rust Tests"; test_languages=("rust_core") ;;
+        esac
+    fi
 fi
 
 echo "=========================================="
@@ -167,49 +193,59 @@ echo "  Lumen-Lang Test Suite ($title)"
 echo "=========================================="
 echo ""
 
-# Test lumen examples if included
-if [[ " ${test_languages[@]} " =~ " lumen " ]]; then
-    echo -e "${YELLOW}Lumen Examples:${NC}"
-    for file in examples/lumen/*.lm examples/lumen/constructs/*.lm; do
-        if should_omit "$file"; then
-            continue
-        fi
-        for kernel in stream microcode; do
-            run_test "$file" "$kernel" "lumen"
-        done
+# Run single file if specified
+if [ -n "$SINGLE_FILE" ]; then
+    echo -e "${YELLOW}Testing: $(basename "$SINGLE_FILE")${NC}"
+    for kernel in stream microcode; do
+        run_test "$SINGLE_FILE" "$kernel" "$language"
     done
     echo ""
-    TESTED_LANGUAGES+=("lumen")
-fi
+    TESTED_LANGUAGES+=("$language")
+else
+    # Test lumen examples if included
+    if [[ " ${test_languages[@]} " =~ " lumen " ]]; then
+        echo -e "${YELLOW}Lumen Examples:${NC}"
+        for file in examples/lumen/*.lm examples/lumen/constructs/*.lm; do
+            if should_omit "$file"; then
+                continue
+            fi
+            for kernel in stream microcode; do
+                run_test "$file" "$kernel" "lumen"
+            done
+        done
+        echo ""
+        TESTED_LANGUAGES+=("lumen")
+    fi
 
-# Test python examples if included
-if [[ " ${test_languages[@]} " =~ " python_core " ]]; then
-    echo -e "${YELLOW}Python Examples:${NC}"
-    for file in examples/python/*.py; do
-        if should_omit "$file"; then
-            continue
-        fi
-        for kernel in stream microcode; do
-            run_test "$file" "$kernel" "python_core"
+    # Test python examples if included
+    if [[ " ${test_languages[@]} " =~ " python_core " ]]; then
+        echo -e "${YELLOW}Python Examples:${NC}"
+        for file in examples/python/*.py; do
+            if should_omit "$file"; then
+                continue
+            fi
+            for kernel in stream microcode; do
+                run_test "$file" "$kernel" "python_core"
+            done
         done
-    done
-    echo ""
-    TESTED_LANGUAGES+=("python_core")
-fi
+        echo ""
+        TESTED_LANGUAGES+=("python_core")
+    fi
 
-# Test rust examples if included
-if [[ " ${test_languages[@]} " =~ " rust_core " ]]; then
-    echo -e "${YELLOW}Rust Examples:${NC}"
-    for file in examples/rust/*.rs; do
-        if should_omit "$file"; then
-            continue
-        fi
-        for kernel in stream microcode; do
-            run_test "$file" "$kernel" "rust_core"
+    # Test rust examples if included
+    if [[ " ${test_languages[@]} " =~ " rust_core " ]]; then
+        echo -e "${YELLOW}Rust Examples:${NC}"
+        for file in examples/rust/*.rs; do
+            if should_omit "$file"; then
+                continue
+            fi
+            for kernel in stream microcode; do
+                run_test "$file" "$kernel" "rust_core"
+            done
         done
-    done
-    echo ""
-    TESTED_LANGUAGES+=("rust_core")
+        echo ""
+        TESTED_LANGUAGES+=("rust_core")
+    fi
 fi
 
 # Detailed Summary by Language and Kernel
