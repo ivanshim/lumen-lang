@@ -22,7 +22,6 @@ impl StmtNode for IfStmt {
         let branch_taken = cond_bool.value;
 
         if branch_taken {
-            env.push_scope();
             let mut result = Control::None;
             for stmt in &self.then_block {
                 let ctl = stmt.exec(env)?;
@@ -41,10 +40,8 @@ impl StmtNode for IfStmt {
                     }
                 }
             }
-            env.pop_scope();
             return Ok(result);
         } else if let Some(ref else_block) = self.else_block {
-            env.push_scope();
             let mut result = Control::None;
             for stmt in else_block {
                 let ctl = stmt.exec(env)?;
@@ -63,7 +60,6 @@ impl StmtNode for IfStmt {
                     }
                 }
             }
-            env.pop_scope();
             return Ok(result);
         }
 
