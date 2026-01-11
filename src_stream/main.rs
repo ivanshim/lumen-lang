@@ -98,8 +98,10 @@ fn run_lumen_stream(source: &str, program_args: &[String]) {
 
     // Prepend Lumen standard library
     // The library provides user-facing I/O functions (print, write) built on top of emit() primitive
-    let stdlib_io = include_str!("../library/io.lm");
-    let full_source = format!("{}\n{}", stdlib_io, source);
+    // Load in order: write.lm first (defines write), then print.lm (depends on write)
+    let stdlib_write = include_str!("../lib_lumen/write.lm");
+    let stdlib_print = include_str!("../lib_lumen/print.lm");
+    let full_source = format!("{}\n{}\n{}", stdlib_write, stdlib_print, source);
 
     let raw_tokens = match lex(&full_source, &registry.tokens) {
         Ok(toks) => toks,
