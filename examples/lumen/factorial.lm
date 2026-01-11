@@ -1,0 +1,8 @@
+fn factorial(n)
+    if n <= 1
+        1
+    else
+        n * factorial(n - 1)
+
+write("Factorial of 1000: ")
+print(factorial(1000))
