@@ -8,7 +8,7 @@ use crate::kernel::registry::LumenResult;
 use crate::kernel::runtime::{Env, Value};
 use crate::languages::lumen::registry::{ExprInfix, Precedence, Registry};
 use crate::languages::lumen::numeric;
-use crate::languages::lumen::values::{as_number, as_string, as_rational, LumenBool, LumenRational};
+use crate::languages::lumen::values::{as_number, as_string, as_rational, as_real, LumenBool, LumenRational};
 
 #[derive(Debug)]
 struct ComparisonExpr {
@@ -22,8 +22,20 @@ impl ExprNode for ComparisonExpr {
         let l = self.left.eval(env)?;
         let r = self.right.eval(env)?;
 
-        // Try rational comparison first (handles both rational-to-rational and rational-to-integer)
-        if let (Ok(left_rat), Ok(right_rat)) = (as_rational(l.as_ref()), as_rational(r.as_ref())) {
+        // Check if either operand is Real and convert to Rational-like for comparison
+        let (l_rat_opt, r_rat_opt) = (
+            as_real(l.as_ref())
+                .ok()
+                .map(|real| LumenRational::new(real.numerator.clone(), real.denominator.clone()))
+                .or_else(|| as_rational(l.as_ref()).ok().cloned()),
+            as_real(r.as_ref())
+                .ok()
+                .map(|real| LumenRational::new(real.numerator.clone(), real.denominator.clone()))
+                .or_else(|| as_rational(r.as_ref()).ok().cloned()),
+        );
+
+        // Try rational comparison first (handles rational-to-rational, real-to-real, real-to-rational)
+        if let (Some(left_rat), Some(right_rat)) = (l_rat_opt.as_ref(), r_rat_opt.as_ref()) {
             let result = match self.op.as_str() {
                 "==" => (left_rat as &dyn crate::kernel::runtime::RuntimeValue).eq_value(right_rat as &dyn crate::kernel::runtime::RuntimeValue).unwrap_or(false),
                 "!=" => !(left_rat as &dyn crate::kernel::runtime::RuntimeValue).eq_value(right_rat as &dyn crate::kernel::runtime::RuntimeValue).unwrap_or(false),
@@ -56,12 +68,13 @@ impl ExprNode for ComparisonExpr {
             return Ok(Box::new(LumenBool::new(result)));
         }
 
-        // Try rational vs integer (convert integer to rational first)
-        if let (Ok(left_rat), Ok(right_num)) = (as_rational(l.as_ref()), as_number(r.as_ref())) {
+        // Try rational/real vs integer (convert integer to rational first)
+        let left_rat_maybe = l_rat_opt.clone();
+        if let (Some(left_rat), Ok(right_num)) = (left_rat_maybe, as_number(r.as_ref())) {
             let right_rat = LumenRational::new(right_num.value.clone(), num_bigint::BigInt::from(1));
             let result = match self.op.as_str() {
-                "==" => (left_rat as &dyn crate::kernel::runtime::RuntimeValue).eq_value(&right_rat as &dyn crate::kernel::runtime::RuntimeValue).unwrap_or(false),
-                "!=" => !(left_rat as &dyn crate::kernel::runtime::RuntimeValue).eq_value(&right_rat as &dyn crate::kernel::runtime::RuntimeValue).unwrap_or(false),
+                "==" => (&left_rat as &dyn crate::kernel::runtime::RuntimeValue).eq_value(&right_rat as &dyn crate::kernel::runtime::RuntimeValue).unwrap_or(false),
+                "!=" => !(&left_rat as &dyn crate::kernel::runtime::RuntimeValue).eq_value(&right_rat as &dyn crate::kernel::runtime::RuntimeValue).unwrap_or(false),
                 "<" => {
                     let left_cross = &left_rat.numerator * &right_rat.denominator;
                     let right_cross = &right_rat.numerator * &left_rat.denominator;
@@ -87,12 +100,13 @@ impl ExprNode for ComparisonExpr {
             return Ok(Box::new(LumenBool::new(result)));
         }
 
-        // Try integer vs rational (convert integer to rational first)
-        if let (Ok(left_num), Ok(right_rat)) = (as_number(l.as_ref()), as_rational(r.as_ref())) {
+        // Try integer vs rational/real (convert integer to rational first)
+        let right_rat_maybe = r_rat_opt.clone();
+        if let (Ok(left_num), Some(right_rat)) = (as_number(l.as_ref()), right_rat_maybe) {
             let left_rat = LumenRational::new(left_num.value.clone(), num_bigint::BigInt::from(1));
             let result = match self.op.as_str() {
-                "==" => (&left_rat as &dyn crate::kernel::runtime::RuntimeValue).eq_value(right_rat as &dyn crate::kernel::runtime::RuntimeValue).unwrap_or(false),
-                "!=" => !(&left_rat as &dyn crate::kernel::runtime::RuntimeValue).eq_value(right_rat as &dyn crate::kernel::runtime::RuntimeValue).unwrap_or(false),
+                "==" => (&left_rat as &dyn crate::kernel::runtime::RuntimeValue).eq_value(&right_rat as &dyn crate::kernel::runtime::RuntimeValue).unwrap_or(false),
+                "!=" => !(&left_rat as &dyn crate::kernel::runtime::RuntimeValue).eq_value(&right_rat as &dyn crate::kernel::runtime::RuntimeValue).unwrap_or(false),
                 "<" => {
                     let left_cross = &left_rat.numerator * &right_rat.denominator;
                     let right_cross = &right_rat.numerator * &left_rat.denominator;

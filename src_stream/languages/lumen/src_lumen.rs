@@ -63,6 +63,7 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::recognize("**"),
         TokenDefinition::recognize("|>"),  // Pipe operator
         TokenDefinition::recognize(".."),  // Range operator
+        TokenDefinition::recognize("//"),  // Integer quotient operator
 
         // Single-char operators
         TokenDefinition::recognize(":"),   // Type annotation separator
