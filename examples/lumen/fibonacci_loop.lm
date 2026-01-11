@@ -1,12 +1,18 @@
+# ===== PARAMETER: Edit this value to compute Fibonacci at a different index =====
+fib_index = 10000
+# ==============================================================================
+
 a = 0
 b = 1
 count = 0
 
-while count < 10000
+while count < fib_index
     next = a + b
     a = b
     b = next
     count = count + 1
 
-write("Fibonacci number at index 10000: ")
+write("Fibonacci number at index ")
+write(fib_index)
+write(": ")
 print(a)
