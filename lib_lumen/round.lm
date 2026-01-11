@@ -12,8 +12,8 @@ fn round(x, decimals)
     y = x * scale
 
     if y >= 0
-        r = (y * 2 + 1) / 2
+        r = (y * 2 + 1) // 2
     else
-        r = (y * 2 - 1) / 2
+        r = (y * 2 - 1) // 2
 
     r / scale
