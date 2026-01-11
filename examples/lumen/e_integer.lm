@@ -1,6 +1,9 @@
 # Parameter: max_terms (default: 500)
 # Usage: lumen-lang e_integer.lm [max_terms]
 # Example: lumen-lang e_integer.lm 500
+# Default: Computes 1000 digits of Euler's number (e) using 500 factorial terms
+# Inspired by Steve Wozniak's Byte Magazine June 1981 article about calculating e on the Apple II
+# Reference: https://downloads.reactivemicro.com/Users/Grant_Stockley/Apple%202%20Woz%20e%20Calc%201981.pdf
 max_terms = 500
 if ARGS != ""
     max_terms = int(ARGS)

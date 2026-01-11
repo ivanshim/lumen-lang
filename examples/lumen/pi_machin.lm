@@ -3,6 +3,7 @@
 # Parameter: precision (default: 1000)
 # Usage: lumen-lang pi_machin.lm [precision]
 # Example: lumen-lang pi_machin.lm 1000
+# Default: Computes 1000 digits of pi using Machin's formula
 
 precision = 1000
 if ARGS != ""

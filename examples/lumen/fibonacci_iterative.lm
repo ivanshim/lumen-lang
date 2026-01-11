@@ -1,6 +1,7 @@
 # Parameter: fib_index (default: 5000)
-# Usage: lumen-lang fibonacci_loop.lm [fib_index]
-# Example: lumen-lang fibonacci_loop.lm 5000
+# Usage: lumen-lang fibonacci_iterative.lm [fib_index]
+# Example: lumen-lang fibonacci_iterative.lm 5000
+# Iterative approach: efficient, handles large indices quickly
 fib_index = 5000
 if ARGS != ""
     fib_index = int(ARGS)
