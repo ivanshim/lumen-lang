@@ -31,7 +31,22 @@ struct FunctionCallExpr {
 
 impl ExprNode for FunctionCallExpr {
     fn eval(&self, env: &mut Env) -> LumenResult<Value> {
-        // Get function definition
+        // First, check if this is a built-in conversion function
+        if self.args.len() == 1 {
+            match self.func_name.as_str() {
+                "int" => {
+                    // int(x): convert string to integer
+                    return builtin_int(&self.args[0].eval(env)?);
+                }
+                "str" => {
+                    // str(x): convert integer to string
+                    return builtin_str(&self.args[0].eval(env)?);
+                }
+                _ => {}
+            }
+        }
+
+        // Get user-defined function definition
         let (params, body) = functions::get_function(&self.func_name)
             .ok_or_else(|| format!("Undefined function '{}'", self.func_name))?;
 
@@ -193,6 +208,45 @@ impl ExprPrefix for VariablePrefix {
 
         Ok(Box::new(VarExpr { name }))
     }
+}
+
+// ============================================================================
+// BUILT-IN CONVERSION FUNCTIONS
+// ============================================================================
+
+/// Built-in function: int(x) - Convert string to integer
+/// Parses a string as a base-10 integer with arbitrary precision.
+/// Returns error if x is not a string or if the string cannot be parsed.
+fn builtin_int(value: &Value) -> LumenResult<Value> {
+    use crate::languages::lumen::values::{LumenString, LumenNumber};
+    use num_bigint::BigInt;
+
+    // Extract string value
+    let string_val = value.as_any()
+        .downcast_ref::<LumenString>()
+        .ok_or_else(|| "int() requires a string argument".to_string())?;
+
+    // Parse as decimal integer
+    let bigint = string_val.value.trim().parse::<BigInt>()
+        .map_err(|_| format!("int(): cannot parse '{}' as integer", string_val.value))?;
+
+    Ok(Box::new(LumenNumber::new(bigint)))
+}
+
+/// Built-in function: str(x) - Convert integer to string
+/// Returns the exact decimal representation of an integer.
+/// Returns error if x is not an integer.
+fn builtin_str(value: &Value) -> LumenResult<Value> {
+    use crate::languages::lumen::values::{LumenNumber, LumenString};
+
+    // Extract number value
+    let number_val = value.as_any()
+        .downcast_ref::<LumenNumber>()
+        .ok_or_else(|| "str() requires an integer argument".to_string())?;
+
+    // Convert to string
+    let string = number_val.value.to_string();
+    Ok(Box::new(LumenString::new(string)))
 }
 
 // --------------------

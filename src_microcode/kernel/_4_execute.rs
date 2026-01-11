@@ -106,6 +106,34 @@ pub fn execute(
                     }
                     Ok((Value::Null, ControlFlow::Normal))
                 }
+                "int" => {
+                    // int(x): convert string to integer
+                    if arg_vals.len() != 1 {
+                        return Err(format!("int() expects 1 argument, got {}", arg_vals.len()));
+                    }
+                    match &arg_vals[0] {
+                        Value::String(s) => {
+                            // Parse string as BigInt
+                            match s.trim().parse::<num_bigint::BigInt>() {
+                                Ok(bigint) => Ok((Value::Number(bigint), ControlFlow::Normal)),
+                                Err(_) => Err(format!("int(): cannot parse '{}' as integer", s)),
+                            }
+                        }
+                        _ => Err("int() requires a string argument".to_string()),
+                    }
+                }
+                "str" => {
+                    // str(x): convert integer to string
+                    if arg_vals.len() != 1 {
+                        return Err(format!("str() expects 1 argument, got {}", arg_vals.len()));
+                    }
+                    match &arg_vals[0] {
+                        Value::Number(n) => {
+                            Ok((Value::String(n.to_string()), ControlFlow::Normal))
+                        }
+                        _ => Err("str() requires an integer argument".to_string()),
+                    }
+                }
                 "extern" => {
                     // extern(function_name, arg1, arg2, ...)
                     if arg_vals.is_empty() {
