@@ -829,6 +829,75 @@ fn execute_operator(
                     }
                     Value::Number(l_int % r_int)
                 }
+                "//" => {
+                    // Integer quotient: a // b returns quotient truncating toward zero
+                    // Identity: a == b * (a // b) + (a % b)
+                    match (&left, &right) {
+                        // Integer // Integer = Integer
+                        (Value::Number(l), Value::Number(r)) => {
+                            if *r == BigInt::from(0) {
+                                return Err("Division by zero".to_string());
+                            }
+                            Value::Number(l / r)  // Truncates toward zero in Rust
+                        }
+                        // Integer // Rational = Rational
+                        (Value::Number(l), Value::Rational { numerator: r_num, denominator: r_denom }) => {
+                            if r_num == &BigInt::from(0) {
+                                return Err("Division by zero".to_string());
+                            }
+                            // l // (r_num/r_denom) = (l * r_denom) // r_num
+                            let quot = (l * r_denom) / r_num;
+                            reduce_rational(quot, BigInt::from(1))
+                        }
+                        // Rational // Integer = Rational
+                        (Value::Rational { numerator: l_num, denominator: l_denom }, Value::Number(r)) => {
+                            if *r == BigInt::from(0) {
+                                return Err("Division by zero".to_string());
+                            }
+                            // (l_num/l_denom) // r = l_num // (r * l_denom)
+                            let quot = l_num / (r * l_denom);
+                            reduce_rational(quot, BigInt::from(1))
+                        }
+                        // Rational // Rational = Rational
+                        (Value::Rational { numerator: l_num, denominator: l_denom },
+                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
+                            if r_num == &BigInt::from(0) {
+                                return Err("Division by zero".to_string());
+                            }
+                            // (l_num/l_denom) // (r_num/r_denom) = (l_num * r_denom) // (r_num * l_denom)
+                            let quot = (l_num * r_denom) / (r_num * l_denom);
+                            reduce_rational(quot, BigInt::from(1))
+                        }
+                        // Real // ... = Real
+                        (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec }, _) => {
+                            let (r_num, r_denom) = match &right {
+                                Value::Number(n) => (n.clone(), BigInt::from(1)),
+                                Value::Rational { numerator: n, denominator: d } => (n.clone(), d.clone()),
+                                Value::Real { numerator: n, denominator: d, .. } => (n.clone(), d.clone()),
+                                _ => return Err("Integer quotient requires numeric operands".to_string()),
+                            };
+                            if r_num == BigInt::from(0) {
+                                return Err("Division by zero".to_string());
+                            }
+                            let quot = (l_num * &r_denom) / (&r_num * l_denom);
+                            reduce_real(quot, BigInt::from(1), *l_prec)
+                        }
+                        // ... // Real = Real (symmetric)
+                        (_, Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
+                            if r_num == &BigInt::from(0) {
+                                return Err("Division by zero".to_string());
+                            }
+                            let (l_num, l_denom) = match &left {
+                                Value::Number(n) => (n.clone(), BigInt::from(1)),
+                                Value::Rational { numerator: n, denominator: d } => (n.clone(), d.clone()),
+                                _ => return Err("Integer quotient requires numeric operands".to_string()),
+                            };
+                            let quot = (&l_num * r_denom) / (&l_denom * r_num);
+                            reduce_real(quot, BigInt::from(1), *r_prec)
+                        }
+                        _ => return Err("Integer quotient requires numeric operands".to_string()),
+                    }
+                }
                 "==" => Value::Bool(left == right),
                 "!=" => Value::Bool(left != right),
                 "<" => {

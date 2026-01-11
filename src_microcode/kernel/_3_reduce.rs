@@ -456,7 +456,7 @@ impl<'a> Parser<'a> {
 
         loop {
             let op = match self.peek().lexeme.as_str() {
-                "*" | "/" | "%" => self.peek().lexeme.clone(),
+                "*" | "/" | "%" | "//" => self.peek().lexeme.clone(),
                 _ => break,
             };
             self.advance();
