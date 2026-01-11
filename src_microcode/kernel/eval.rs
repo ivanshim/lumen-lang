@@ -11,6 +11,10 @@ use num_bigint::BigInt;
 #[derive(Debug, Clone)]
 pub enum Value {
     Number(BigInt),
+    Rational {
+        numerator: BigInt,
+        denominator: BigInt,
+    },
     String(String),
     Bool(bool),
     Null,
@@ -31,6 +35,14 @@ impl fmt::Display for Value {
             Value::Number(n) => {
                 write!(f, "{}", n)
             }
+            Value::Rational { numerator, denominator } => {
+                // If denominator is 1, display as integer
+                if denominator == &BigInt::from(1) {
+                    write!(f, "{}", numerator)
+                } else {
+                    write!(f, "{}/{}", numerator, denominator)
+                }
+            }
             Value::String(s) => write!(f, "{}", s),
             Value::Bool(b) => write!(f, "{}", if *b { "true" } else { "false" }),
             Value::Null => write!(f, "none"),
@@ -48,6 +60,10 @@ impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Value::Number(a), Value::Number(b)) => a == b,
+            (Value::Rational { numerator: a_num, denominator: a_denom }, Value::Rational { numerator: b_num, denominator: b_denom }) => {
+                // Cross-multiply: a/b == c/d ⟺ ad == bc
+                a_num * b_denom == b_num * a_denom
+            }
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Null, Value::Null) => true,
@@ -66,6 +82,7 @@ impl Value {
             Value::Bool(b) => *b,
             Value::Null => false,
             Value::Number(n) => n != &BigInt::from(0),
+            Value::Rational { numerator, .. } => numerator != &BigInt::from(0),
             Value::String(s) => !s.is_empty(),
             Value::Range { .. } => true,
             Value::Function { .. } => true,
@@ -76,6 +93,7 @@ impl Value {
     pub fn to_number(&self) -> Result<BigInt, String> {
         match self {
             Value::Number(n) => Ok(n.clone()),
+            Value::Rational { .. } => Err("Cannot coerce rational to integer".to_string()),
             Value::Bool(true) => Ok(BigInt::from(1)),
             Value::Bool(false) => Ok(BigInt::from(0)),
             Value::Null => Ok(BigInt::from(0)),

@@ -41,6 +41,7 @@ name = "lumen-lang"
 version = "0.0.1"
 dependencies = [
  "num-bigint",
+ "num-integer",
  "num-traits",
  "serde_yaml",
 ]
