@@ -595,6 +595,40 @@ fn execute_operator(
                 }
                 "*" => {
                     match (&left, &right) {
+                        // Real * Real = Real
+                        (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
+                         Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
+                            // (a/b) * (c/d) = (ac) / (bd), preserve left precision
+                            let num = l_num * r_num;
+                            let denom = l_denom * r_denom;
+                            reduce_real(num, denom, *l_prec)
+                        }
+                        // Real * Rational = Real
+                        (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
+                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
+                            let num = l_num * r_num;
+                            let denom = l_denom * r_denom;
+                            reduce_real(num, denom, *l_prec)
+                        }
+                        // Real * Number = Real
+                        (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
+                         Value::Number(r_num)) => {
+                            let num = l_num * r_num;
+                            reduce_real(num, l_denom.clone(), *l_prec)
+                        }
+                        // Rational * Real = Real
+                        (Value::Rational { numerator: l_num, denominator: l_denom },
+                         Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
+                            let num = l_num * r_num;
+                            let denom = l_denom * r_denom;
+                            reduce_real(num, denom, *r_prec)
+                        }
+                        // Number * Real = Real
+                        (Value::Number(l_num),
+                         Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
+                            let num = l_num * r_num;
+                            reduce_real(num, r_denom.clone(), *r_prec)
+                        }
                         (Value::Rational { numerator: l_num, denominator: l_denom },
                          Value::Rational { numerator: r_num, denominator: r_denom }) => {
                             // a/b * c/d = (ac) / (bd)
@@ -828,5 +862,35 @@ fn reduce_rational(numerator: BigInt, denominator: BigInt) -> Value {
             numerator: reduced_num,
             denominator: reduced_denom,
         }
+    }
+}
+
+/// Reduce a real to canonical form (like reduce_rational) but preserve precision
+fn reduce_real(numerator: BigInt, denominator: BigInt, precision: usize) -> Value {
+    // Handle zero numerator
+    if numerator == BigInt::from(0) {
+        return Value::Real {
+            numerator: BigInt::from(0),
+            denominator: BigInt::from(1),
+            precision,
+        };
+    }
+
+    // Ensure denominator is always positive (move sign to numerator)
+    let (num, denom) = if denominator < BigInt::from(0) {
+        (-numerator, -denominator)
+    } else {
+        (numerator, denominator)
+    };
+
+    // Reduce by GCD
+    let g = gcd(num.clone(), denom.clone());
+    let reduced_num = &num / &g;
+    let reduced_denom = &denom / &g;
+
+    Value::Real {
+        numerator: reduced_num,
+        denominator: reduced_denom,
+        precision,
     }
 }
