@@ -29,7 +29,7 @@ while 1 == 1
     term = numerator / denominator
     remainder = numerator % denominator
 
-    if term == 0
+    if int(term) == 0
         break
 
     if k % 2 == 1
@@ -54,7 +54,7 @@ while 1 == 1
     term = numerator / denominator
     remainder = numerator % denominator
 
-    if term == 0
+    if int(term) == 0
         break
 
     if k % 2 == 1
@@ -67,4 +67,4 @@ while 1 == 1
 # -------- Machin combination --------
 pi = 16 * arctan_small - 4 * arctan_large
 
-print(pi)
+print(int(pi))

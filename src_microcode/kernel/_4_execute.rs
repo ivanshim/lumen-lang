@@ -110,11 +110,23 @@ pub fn execute(
                     }
                 }
                 "int" => {
-                    // int(x): convert string to integer
+                    // int(x): numeric projection to integer
+                    // - Integer → return unchanged
+                    // - Rational → truncate toward zero
+                    // - String → parse as integer (backward compatibility)
                     if arg_vals.len() != 1 {
                         return Err(format!("int() expects 1 argument, got {}", arg_vals.len()));
                     }
                     match &arg_vals[0] {
+                        Value::Number(n) => {
+                            // Already an integer, return unchanged
+                            Ok((Value::Number(n.clone()), ControlFlow::Normal))
+                        }
+                        Value::Rational { numerator, denominator } => {
+                            // Truncate toward zero: integer division
+                            let truncated = numerator / denominator;
+                            Ok((Value::Number(truncated), ControlFlow::Normal))
+                        }
                         Value::String(s) => {
                             // Parse string as BigInt
                             match s.trim().parse::<num_bigint::BigInt>() {
@@ -122,7 +134,7 @@ pub fn execute(
                                 Err(_) => Err(format!("int(): cannot parse '{}' as integer", s)),
                             }
                         }
-                        _ => Err("int() requires a string argument".to_string()),
+                        _ => Err("int() requires a number, rational, or string argument".to_string()),
                     }
                 }
                 "str" => {
