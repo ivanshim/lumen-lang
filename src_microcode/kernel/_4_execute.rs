@@ -544,8 +544,42 @@ fn execute_operator(
                     if let (Value::String(_), _) | (_, Value::String(_)) = (&left, &right) {
                         Value::String(format!("{}{}", left, right))
                     } else {
-                        // Check if either operand is rational
+                        // Check if either operand is real or rational
                         match (&left, &right) {
+                            // Real + Real = Real
+                            (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
+                             Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
+                                // (a/b) + (c/d) = (ad + bc) / bd, preserve left precision
+                                let num = l_num * r_denom + r_num * l_denom;
+                                let denom = l_denom * r_denom;
+                                reduce_real(num, denom, *l_prec)
+                            }
+                            // Real + Rational = Real
+                            (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
+                             Value::Rational { numerator: r_num, denominator: r_denom }) => {
+                                let num = l_num * r_denom + r_num * l_denom;
+                                let denom = l_denom * r_denom;
+                                reduce_real(num, denom, *l_prec)
+                            }
+                            // Real + Number = Real
+                            (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
+                             Value::Number(r_num)) => {
+                                let num = l_num + r_num * l_denom;
+                                reduce_real(num, l_denom.clone(), *l_prec)
+                            }
+                            // Rational + Real = Real
+                            (Value::Rational { numerator: l_num, denominator: l_denom },
+                             Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
+                                let num = l_num * r_denom + r_num * l_denom;
+                                let denom = l_denom * r_denom;
+                                reduce_real(num, denom, *r_prec)
+                            }
+                            // Number + Real = Real
+                            (Value::Number(l_num),
+                             Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
+                                let num = l_num * r_denom + r_num;
+                                reduce_real(num, r_denom.clone(), *r_prec)
+                            }
                             (Value::Rational { numerator: l_num, denominator: l_denom },
                              Value::Rational { numerator: r_num, denominator: r_denom }) => {
                                 // a/b + c/d = (ad + bc) / bd
@@ -571,6 +605,44 @@ fn execute_operator(
                 }
                 "-" => {
                     match (&left, &right) {
+                        // Real - Real = Real
+                        (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
+                         Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
+                            // (a/b) - (c/d) = (ad - bc) / bd, preserve left precision
+                            let num = l_num * r_denom - r_num * l_denom;
+                            let denom = l_denom * r_denom;
+                            reduce_real(num, denom, *l_prec)
+                        }
+                        // Real - Rational = Real
+                        (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
+                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
+                            // (a/b) - (c/d) = (ad - bc) / bd
+                            let num = l_num * r_denom - r_num * l_denom;
+                            let denom = l_denom * r_denom;
+                            reduce_real(num, denom, *l_prec)
+                        }
+                        // Real - Number = Real
+                        (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
+                         Value::Number(r_num)) => {
+                            // (a/b) - c = (a - bc) / b
+                            let num = l_num - r_num * l_denom;
+                            reduce_real(num, l_denom.clone(), *l_prec)
+                        }
+                        // Rational - Real = Real
+                        (Value::Rational { numerator: l_num, denominator: l_denom },
+                         Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
+                            // (a/b) - (c/d) = (ad - bc) / bd, preserve right precision
+                            let num = l_num * r_denom - r_num * l_denom;
+                            let denom = l_denom * r_denom;
+                            reduce_real(num, denom, *r_prec)
+                        }
+                        // Number - Real = Real
+                        (Value::Number(l_num),
+                         Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
+                            // a - (c/d) = (ad - c) / d, preserve right precision
+                            let num = l_num * r_denom - r_num;
+                            reduce_real(num, r_denom.clone(), *r_prec)
+                        }
                         (Value::Rational { numerator: l_num, denominator: l_denom },
                          Value::Rational { numerator: r_num, denominator: r_denom }) => {
                             // a/b - c/d = (ad - bc) / bd
@@ -653,6 +725,55 @@ fn execute_operator(
                 }
                 "/" => {
                     match (&left, &right) {
+                        // Real / Real = Real
+                        (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
+                         Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
+                            // (a/b) / (c/d) = (ad) / (bc), preserve left precision
+                            if r_num == &BigInt::from(0) {
+                                return Err("Division by zero".to_string());
+                            }
+                            let num = l_num * r_denom;
+                            let denom = l_denom * r_num;
+                            reduce_real(num, denom, *l_prec)
+                        }
+                        // Real / Rational = Real
+                        (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
+                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
+                            if r_num == &BigInt::from(0) {
+                                return Err("Division by zero".to_string());
+                            }
+                            let num = l_num * r_denom;
+                            let denom = l_denom * r_num;
+                            reduce_real(num, denom, *l_prec)
+                        }
+                        // Real / Number = Real
+                        (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
+                         Value::Number(r_num)) => {
+                            if r_num == &BigInt::from(0) {
+                                return Err("Division by zero".to_string());
+                            }
+                            let denom = l_denom * r_num;
+                            reduce_real(l_num.clone(), denom, *l_prec)
+                        }
+                        // Rational / Real = Real
+                        (Value::Rational { numerator: l_num, denominator: l_denom },
+                         Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
+                            if r_num == &BigInt::from(0) {
+                                return Err("Division by zero".to_string());
+                            }
+                            let num = l_num * r_denom;
+                            let denom = l_denom * r_num;
+                            reduce_real(num, denom, *r_prec)
+                        }
+                        // Number / Real = Real
+                        (Value::Number(l_num),
+                         Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
+                            if r_num == &BigInt::from(0) {
+                                return Err("Division by zero".to_string());
+                            }
+                            let num = l_num * r_denom;
+                            reduce_real(num, r_num.clone(), *r_prec)
+                        }
                         (Value::Rational { numerator: l_num, denominator: l_denom },
                          Value::Rational { numerator: r_num, denominator: r_denom }) => {
                             // a/b ÷ c/d = (ad) / (bc)
