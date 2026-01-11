@@ -30,7 +30,11 @@ fn main() {
     match language.as_str() {
         "lumen" => {
             let schema = lumen_schema::get_schema();
-            if let Err(e) = run(&source, &schema, &program_args) {
+            // Prepend Lumen standard library
+            // The library provides user-facing I/O functions (print, write) built on top of emit() primitive
+            let stdlib_io = include_str!("../library/io.lm");
+            let full_source = format!("{}\n{}", stdlib_io, source);
+            if let Err(e) = run(&full_source, &schema, &program_args) {
                 eprintln!("LumenError: {}", e);
                 process::exit(1);
             }

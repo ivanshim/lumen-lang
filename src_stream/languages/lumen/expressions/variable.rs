@@ -31,15 +31,19 @@ struct FunctionCallExpr {
 
 impl ExprNode for FunctionCallExpr {
     fn eval(&self, env: &mut Env) -> LumenResult<Value> {
-        // First, check if this is a built-in conversion function
+        // First, check if this is a built-in primitive function
         if self.args.len() == 1 {
             match self.func_name.as_str() {
+                "emit" => {
+                    // emit(string) - kernel primitive for I/O
+                    return builtin_emit(&self.args[0].eval(env)?);
+                }
                 "int" => {
                     // int(x): convert string to integer
                     return builtin_int(&self.args[0].eval(env)?);
                 }
                 "str" => {
-                    // str(x): convert integer to string
+                    // str(x): convert any value to string
                     return builtin_str(&self.args[0].eval(env)?);
                 }
                 _ => {}
@@ -148,8 +152,9 @@ impl ExprPrefix for VariablePrefix {
         // by their own expression handlers (logic, literals, extern_expr)
         let lex = &parser.peek().lexeme;
         let is_identifier = lex.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_');
+        // Exclude statement keywords but allow builtin functions like emit, int, str
         let is_statement_keyword = matches!(lex.as_str(),
-            "if" | "else" | "while" | "break" | "continue" | "print" | "fn" | "let" | "mut" | "return");
+            "if" | "else" | "while" | "break" | "continue" | "fn" | "let" | "mut" | "return");
         is_identifier && !is_statement_keyword
     }
 
@@ -233,20 +238,34 @@ fn builtin_int(value: &Value) -> LumenResult<Value> {
     Ok(Box::new(LumenNumber::new(bigint)))
 }
 
-/// Built-in function: str(x) - Convert integer to string
-/// Returns the exact decimal representation of an integer.
-/// Returns error if x is not an integer.
+/// Built-in function: str(x) - Convert any value to string
+/// Returns the exact string representation of the value.
+/// Works with any value type (numbers, rationals, strings, etc.)
 fn builtin_str(value: &Value) -> LumenResult<Value> {
-    use crate::languages::lumen::values::{LumenNumber, LumenString};
+    use crate::languages::lumen::values::LumenString;
 
-    // Extract number value
-    let number_val = value.as_any()
-        .downcast_ref::<LumenNumber>()
-        .ok_or_else(|| "str() requires an integer argument".to_string())?;
-
-    // Convert to string
-    let string = number_val.value.to_string();
+    // Convert any value to its string representation
+    let string = value.as_display_string();
     Ok(Box::new(LumenString::new(string)))
+}
+
+/// Built-in function: emit(string) - Kernel primitive for I/O
+/// Writes a string directly to stdout without any formatting.
+/// This is the only I/O side-effect in the kernel.
+/// Accepts a string only - no implicit conversion.
+fn builtin_emit(value: &Value) -> LumenResult<Value> {
+    use crate::languages::lumen::values::LumenString;
+
+    // Extract string value - require explicit string input
+    let string_val = value.as_any()
+        .downcast_ref::<LumenString>()
+        .ok_or_else(|| "emit() requires a string argument".to_string())?;
+
+    // Write to stdout
+    print!("{}", string_val.value);
+
+    // Return None (null value)
+    Ok(Box::new(crate::languages::lumen::values::LumenNone))
 }
 
 // --------------------

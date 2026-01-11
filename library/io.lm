@@ -1,0 +1,22 @@
+# Lumen Standard Library: I/O Functions
+#
+# This library implements user-facing output functions on top of the kernel's
+# primitive emit() function. The emit() function is the only I/O primitive
+# available from the kernel - it accepts a string and writes it to stdout
+# without any formatting, conversion, or newline handling.
+#
+# Higher-level functions layer on top of emit() through str() for conversion.
+
+# write(x) - Kernel-layered output
+# Converts x to a string using str(x) and writes it to stdout.
+# No newline handling - output goes directly without line termination.
+fn write(x)
+    emit(str(x))
+
+# print(x) - User-facing output with newline
+# Writes x to stdout followed by a newline.
+# Implemented by calling write(x) then write("\n"), establishing
+# a clear layering: print = write + newline
+fn print(x)
+    write(x)
+    write("\n")

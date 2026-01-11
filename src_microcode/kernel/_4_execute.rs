@@ -95,17 +95,19 @@ pub fn execute(
 
             // External function dispatch
             match function.as_str() {
-                "print" | "print_native" => {
-                    for val in &arg_vals {
-                        println!("{}", val);
+                "emit" => {
+                    // emit(string) - kernel primitive for output
+                    // Accepts a string only, no implicit conversion
+                    if arg_vals.len() != 1 {
+                        return Err(format!("emit() expects 1 argument, got {}", arg_vals.len()));
                     }
-                    Ok((Value::Null, ControlFlow::Normal))
-                }
-                "write" => {
-                    for val in &arg_vals {
-                        print!("{}", val);
+                    match &arg_vals[0] {
+                        Value::String(s) => {
+                            print!("{}", s);
+                            Ok((Value::Null, ControlFlow::Normal))
+                        }
+                        _ => Err("emit() requires a string argument".to_string()),
                     }
-                    Ok((Value::Null, ControlFlow::Normal))
                 }
                 "int" => {
                     // int(x): convert string to integer
@@ -124,16 +126,12 @@ pub fn execute(
                     }
                 }
                 "str" => {
-                    // str(x): convert integer to string
+                    // str(x): convert any value to string representation
                     if arg_vals.len() != 1 {
                         return Err(format!("str() expects 1 argument, got {}", arg_vals.len()));
                     }
-                    match &arg_vals[0] {
-                        Value::Number(n) => {
-                            Ok((Value::String(n.to_string()), ControlFlow::Normal))
-                        }
-                        _ => Err("str() requires an integer argument".to_string()),
-                    }
+                    let str_val = format!("{}", &arg_vals[0]);
+                    Ok((Value::String(str_val), ControlFlow::Normal))
                 }
                 "extern" => {
                     // extern(function_name, arg1, arg2, ...)

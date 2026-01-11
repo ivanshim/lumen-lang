@@ -30,7 +30,7 @@ pub fn aggregate_patterns() -> PatternSet {
         expressions::range_expr::patterns(),
 
         // Statement patterns
-        statements::function_print::patterns(),
+        statements::function_emit::patterns(),
         statements::let_mut_binding::patterns(),
         statements::let_binding::patterns(),
         statements::assignment::patterns(),
@@ -84,8 +84,7 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::keyword("continue"),
         TokenDefinition::keyword("return"),
         TokenDefinition::keyword("fn"),
-        TokenDefinition::keyword("print"),
-        TokenDefinition::keyword("write"),
+        TokenDefinition::keyword("emit"),
         TokenDefinition::keyword("none"),
         TokenDefinition::keyword("MEMOIZATION"),  // System capability for memoization control
         // "extern" is NOT registered - has its own expression handler
@@ -113,8 +112,7 @@ pub fn register_all(registry: &mut Registry) {
     // Statement features
     // Registration order matters: specific keyword handlers must come before assignment
     // which matches any identifier
-    statements::function_print::register(registry);         // print() statement
-    statements::function_write::register(registry);         // write() statement (print without newline)
+    statements::function_emit::register(registry);         // emit() kernel primitive
     statements::let_mut_binding::register(registry); // let mut binding
     statements::let_binding::register(registry);   // let binding
     statements::control_if_else::register(registry);       // if/else statements
