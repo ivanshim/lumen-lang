@@ -26,9 +26,19 @@ impl StmtNode for IfStmt {
             let mut result = Control::None;
             for stmt in &self.then_block {
                 let ctl = stmt.exec(env)?;
-                if !matches!(ctl, Control::None) {
-                    result = ctl;
-                    break;
+                match ctl {
+                    Control::None => {
+                        // Statement completed normally
+                    }
+                    Control::ExprValue(val) => {
+                        // Update result for implicit return from expression
+                        result = Control::ExprValue(val);
+                    }
+                    // Break/Continue/Return control flow
+                    other => {
+                        result = other;
+                        break;
+                    }
                 }
             }
             env.pop_scope();
@@ -38,9 +48,19 @@ impl StmtNode for IfStmt {
             let mut result = Control::None;
             for stmt in else_block {
                 let ctl = stmt.exec(env)?;
-                if !matches!(ctl, Control::None) {
-                    result = ctl;
-                    break;
+                match ctl {
+                    Control::None => {
+                        // Statement completed normally
+                    }
+                    Control::ExprValue(val) => {
+                        // Update result for implicit return from expression
+                        result = Control::ExprValue(val);
+                    }
+                    // Break/Continue/Return control flow
+                    other => {
+                        result = other;
+                        break;
+                    }
                 }
             }
             env.pop_scope();
