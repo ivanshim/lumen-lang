@@ -86,7 +86,12 @@ impl PipeExpr {
             for stmt in body_ref.iter() {
                 let ctl = stmt.exec(env)?;
                 match ctl {
+                    crate::kernel::ast::Control::ExprValue(val) => {
+                        // Expression statement value - keep as result but continue
+                        result = val;
+                    }
                     crate::kernel::ast::Control::Return(val) => {
+                        // Explicit return - set result and break
                         result = val;
                         break;
                     }

@@ -21,7 +21,8 @@ pub enum Control {
     None,
     Break,
     Continue,
-    Return(Value),
+    ExprValue(Value), // Implicit return from expression statement
+    Return(Value),    // Explicit return statement
 }
 
 pub trait ExprNode: fmt::Debug {

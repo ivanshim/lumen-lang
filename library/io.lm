@@ -12,6 +12,7 @@
 # No newline handling - output goes directly without line termination.
 fn write(x)
     emit(str(x))
+    none
 
 # print(x) - User-facing output with newline
 # Writes x to stdout followed by a newline.
@@ -20,3 +21,4 @@ fn write(x)
 fn print(x)
     write(x)
     write("\n")
+    none

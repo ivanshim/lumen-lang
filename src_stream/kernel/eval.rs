@@ -22,10 +22,13 @@ where
     for stmt in &program.statements {
         match stmt.exec(&mut env)? {
             Control::None => {}
+            Control::ExprValue(_) => {
+                // Expression statement value - ignore at top level and continue
+            }
             Control::Break => break,
             Control::Continue => continue,
             Control::Return(_) => {
-                // Return at top level (outside function) - just stop execution
+                // Explicit return at top level - stop execution
                 break;
             }
         }
