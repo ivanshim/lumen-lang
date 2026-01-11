@@ -37,6 +37,18 @@ philosophy: |
   - side_effects: explicit (no hidden state mutations)
   - semantic_guarantees: portable, implementation-independent semantics
 
+  Value Projections (Core Design):
+  - One semantic value may support multiple coherent projections
+  - Projections are selected by context (operation), not by casting
+  - Example: A Range value (0..10) supports:
+    * Iteration projection (selected by "for" statement)
+    * Display projection (selected by "print" operation)
+    * These are two ways of observing the same semantic object
+  - Identity is invariant: the value doesn't change when observed differently
+  - No type casting, coercion, or explicit conversion syntax is needed
+  - Projections are lossless (no information loss between views)
+  - Future system values (e.g., ARGS) will use this same principle
+
   This specification incorporates:
   - Functions (core abstraction, fits minimalism)
   - Type annotations (optional clarity, Python-style)
@@ -254,6 +266,13 @@ operators:
       benefit: "More readable than nested function calls"
 
 types:
+  semantic_note: |
+    In Lumen's type system, a value's type identifies its semantic kind.
+    A value of a given type may support multiple projections (ways of using it),
+    selected by operation context, not by explicit casting.
+    Example: A Range value has type "range" but admits both iteration and display projections.
+    See value_projections section for detailed semantics.
+
   system:
     primitive:
       number:
@@ -771,6 +790,51 @@ reserved_keywords:
   - struct
   - enum
   - trait
+
+value_projections:
+  principle: |
+    In Lumen, a variable binds to ONE semantic value.
+    That value may support multiple coherent projections, selected by usage context.
+    Projections are not type casts; they are lossless, operation-driven views of the same object.
+
+  key_properties:
+    identity_invariant: "The value's identity does not change when observed differently"
+    operation_driven_selection: "The operation (for, [], print, extern) determines which projection is used"
+    no_implicit_conversion: "No type casting or coercion syntax needed"
+    lossless_coherence: "Projections preserve information; no loss between views"
+    mutually_reinforcing: "Adding new projections must not invalidate existing ones"
+
+  example_range:
+    description: "A Range value (e.g., 0..10) admits multiple projections"
+    iteration_projection:
+      selected_by: "for statement (contextual use)"
+      semantics: "Enumerate start to end-1 as sequence"
+      example: "for i in 0..10 { ... }"
+    display_projection:
+      selected_by: "print operation"
+      semantics: "Render range as human-readable text"
+      example: "print(0..10)"
+    note: "Both views observe the same Range semantic object"
+
+  example_system_value_args:
+    description: "Future system value ARGS will use projection semantics"
+    sequence_projection:
+      selected_by: "for statement"
+      semantics: "Iterate over command-line arguments as strings"
+      example: "for arg in ARGS { ... }"
+    indexing_projection:
+      selected_by: "Indexing operation (future)"
+      semantics: "Access nth argument by position"
+      example: "ARGS[0]"
+    length_projection:
+      selected_by: "extern(\"length\", ...) call"
+      semantics: "Query number of arguments"
+      example: "extern(\"length\", ARGS)"
+    display_projection:
+      selected_by: "print operation"
+      semantics: "Render arguments as human-readable sequence"
+      example: "print(ARGS)"
+    coherence_note: "All projections observe the same semantic ARGS object; no conversion between views"
 
 values:
   number:
