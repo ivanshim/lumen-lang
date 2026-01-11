@@ -30,19 +30,19 @@ pub fn aggregate_patterns() -> PatternSet {
         expressions::range_expr::patterns(),
 
         // Statement patterns
-        statements::print::patterns(),
+        statements::function_print::patterns(),
         statements::let_mut_binding::patterns(),
         statements::let_binding::patterns(),
         statements::assignment::patterns(),
-        statements::if_else::patterns(),
-        statements::while_loop::patterns(),
-        statements::for_loop::patterns(),
-        statements::until_loop::patterns(),
-        statements::break_stmt::patterns(),
-        statements::continue_stmt::patterns(),
+        statements::control_if_else::patterns(),
+        statements::control_while::patterns(),
+        statements::control_for::patterns(),
+        statements::control_until::patterns(),
+        statements::flow_break::patterns(),
+        statements::flow_continue::patterns(),
         statements::return_stmt::patterns(),
         statements::functions::patterns(),
-        statements::memoization::patterns(),
+        statements::system_memoization::patterns(),
         statements::expr_stmt::patterns(),
     ];
 
@@ -113,18 +113,18 @@ pub fn register_all(registry: &mut Registry) {
     // Statement features
     // Registration order matters: specific keyword handlers must come before assignment
     // which matches any identifier
-    statements::print::register(registry);         // print() statement
-    statements::write::register(registry);         // write() statement (print without newline)
+    statements::function_print::register(registry);         // print() statement
+    statements::function_write::register(registry);         // write() statement (print without newline)
     statements::let_mut_binding::register(registry); // let mut binding
     statements::let_binding::register(registry);   // let binding
-    statements::if_else::register(registry);       // if/else statements
-    statements::while_loop::register(registry);    // while loops
-    statements::for_loop::register(registry);      // for loops (desugars to while) - before assignment!
-    statements::until_loop::register(registry);    // until loops (post-condition loops) - before assignment!
-    statements::memoization::register(registry);   // MEMOIZATION = true/false system capability - before assignment!
+    statements::control_if_else::register(registry);       // if/else statements
+    statements::control_while::register(registry);    // while loops
+    statements::control_for::register(registry);      // for loops (desugars to while) - before assignment!
+    statements::control_until::register(registry);    // until loops (post-condition loops) - before assignment!
+    statements::system_memoization::register(registry);   // MEMOIZATION = true/false system capability - before assignment!
     statements::assignment::register(registry);    // Assignment - must come after keyword handlers
-    statements::break_stmt::register(registry);    // break statement
-    statements::continue_stmt::register(registry); // continue statement
+    statements::flow_break::register(registry);    // break statement
+    statements::flow_continue::register(registry); // continue statement
     statements::return_stmt::register(registry);   // return statement
     statements::functions::register(registry);     // function definition and registry
     statements::expr_stmt::register(registry);     // expression statements (fallback handler)
