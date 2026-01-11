@@ -27,7 +27,8 @@ pub use primitives::Instruction;
 pub use eval::Value;
 
 /// Run a program through the microcode kernel
-pub fn run(source: &str, schema: &LanguageSchema) -> Result<Value, String> {
+/// program_args: command-line arguments passed to the program
+pub fn run(source: &str, schema: &LanguageSchema, program_args: &[String]) -> Result<Value, String> {
     let start = std::time::Instant::now();
 
     // Stage 1: Ingest - source → tokens
@@ -48,6 +49,16 @@ pub fn run(source: &str, schema: &LanguageSchema) -> Result<Value, String> {
     // Stage 4: Execute - instructions → values
     let t4 = std::time::Instant::now();
     let mut env = Environment::new();
+
+    // Bind ARGS: system-provided semantic value containing all program arguments as a single string
+    // ARGS is immutable and read-only (cannot be reassigned by user code)
+    let args_str = if program_args.is_empty() {
+        String::new()
+    } else {
+        program_args.join(" ")
+    };
+    env.set("ARGS".to_string(), Value::String(args_str));
+
     let (result, _flow) = execute(&instr, &mut env, schema)?;
     let execute_time = t4.elapsed();
 

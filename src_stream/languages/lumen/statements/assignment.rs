@@ -16,6 +16,10 @@ struct AssignStmt {
 
 impl StmtNode for AssignStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
+        // ARGS is a system-provided immutable semantic value
+        if self.name == "ARGS" {
+            return Err("Cannot reassign ARGS (system-provided immutable value)".to_string());
+        }
         let val: Value = self.expr.eval(env)?;
         env.assign(&self.name, val)?;
         Ok(Control::None)
