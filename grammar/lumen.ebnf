@@ -278,4 +278,37 @@ EOF = end_of_file ;
    - Syntax: # comment text to end of line
    - Single-line comments only; block comments not supported
    - Comments are ignored during parsing
+
+   VALUE PROJECTIONS (Design Principle):
+   ======================================
+   In Lumen, a variable binds to ONE semantic value.
+   That value may support multiple coherent projections, selected by usage.
+
+   Key principle: Usage selects a projection; identity remains constant.
+   This is NOT type casting or coercion.
+
+   Projection Examples:
+   - A Range value (e.g., 0..10) admits:
+     * Iteration projection (for i in 0..10)
+     * Display projection (print(0..10))
+     * These are two ways of observing the same semantic Range object
+
+   - System-provided values like ARGS (future feature) will admit:
+     * Sequence projection (for arg in ARGS)
+     * Indexing projection (ARGS[0])
+     * Length projection (extern("length", ARGS))
+     * Display projection (print(ARGS))
+
+   Implementation Rules:
+   - Operations (iteration, indexing, printing, length) select projections
+   - Assigning a value (x = expr) binds the semantic object
+   - Projections are lossless and coherent (no information loss)
+   - No explicit cast syntax is used or needed
+   - Adding new projections must not invalidate existing ones
+
+   Resolution by Context:
+   - The operation (for, [], print, extern) determines which projection is used
+   - The grammar does not change; projections are semantic, not syntactic
+   - Different operations may project different aspects of the same value
 *)
+
