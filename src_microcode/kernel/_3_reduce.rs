@@ -501,13 +501,21 @@ impl<'a> Parser<'a> {
     fn parse_primary(&mut self) -> Result<Instruction, String> {
         let lexeme = &self.peek().lexeme.clone();
 
-        // Numbers
+        // Numbers (integer or float)
         if lexeme.chars().next().map_or(false, |c| c.is_ascii_digit()) {
             let num_str = self.consume_number()?;
-            let num = num_str
-                .parse::<num_bigint::BigInt>()
-                .map_err(|_| format!("Invalid number: {}", num_str))?;
-            return Ok(Instruction::literal(Value::Number(num)));
+
+            // Check if it's a float (contains decimal point)
+            if num_str.contains('.') {
+                let (numerator, denominator) = Self::parse_float(&num_str)?;
+                return Ok(Instruction::literal(Value::Rational { numerator, denominator }));
+            } else {
+                // Parse as integer
+                let num = num_str
+                    .parse::<num_bigint::BigInt>()
+                    .map_err(|_| format!("Invalid number: {}", num_str))?;
+                return Ok(Instruction::literal(Value::Number(num)));
+            }
         }
 
         // Strings - double-quoted
@@ -643,6 +651,44 @@ impl<'a> Parser<'a> {
         }
 
         Ok(num_str)
+    }
+
+    /// Parse a float string to (numerator, denominator) rational representation
+    /// E.g., "1.5" -> (3, 2), "3.14" -> (314, 100)
+    fn parse_float(num_str: &str) -> Result<(num_bigint::BigInt, num_bigint::BigInt), String> {
+        use num_bigint::BigInt;
+
+        if let Some(dot_pos) = num_str.find('.') {
+            let before_dot = &num_str[..dot_pos];
+            let after_dot = &num_str[dot_pos + 1..];
+
+            // Count decimal places to determine denominator
+            let decimal_places = after_dot.len();
+            let denominator = BigInt::from(10).pow(decimal_places as u32);
+
+            // Parse integer and fractional parts
+            let integer_part: BigInt = if before_dot.is_empty() || before_dot == "-" {
+                BigInt::from(0)
+            } else {
+                before_dot.parse::<BigInt>()
+                    .map_err(|_| format!("Failed to parse number: {}", num_str))?
+            };
+
+            let fractional_part: BigInt = after_dot.parse::<BigInt>()
+                .map_err(|_| format!("Failed to parse number: {}", num_str))?;
+
+            // Combine integer and fractional parts: (integer * 10^decimal_places) + fractional
+            let is_negative = before_dot.starts_with('-');
+            let numerator = if is_negative {
+                integer_part * &denominator - fractional_part
+            } else {
+                integer_part * &denominator + fractional_part
+            };
+
+            Ok((numerator, denominator))
+        } else {
+            Err(format!("parse_float called on non-float: {}", num_str))
+        }
     }
 
     /// Consume a string (handling escape sequences)
