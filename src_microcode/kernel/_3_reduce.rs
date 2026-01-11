@@ -508,7 +508,10 @@ impl<'a> Parser<'a> {
             // Check if it's a float (contains decimal point)
             if num_str.contains('.') {
                 let (numerator, denominator) = Self::parse_float(&num_str)?;
-                return Ok(Instruction::literal(Value::Rational { numerator, denominator }));
+                // Float literals are Real values (not Rational)
+                // Precision is determined by significant figures
+                let precision = Self::calculate_precision(&num_str);
+                return Ok(Instruction::literal(Value::Real { numerator, denominator, precision }));
             } else {
                 // Parse as integer
                 let num = num_str
@@ -651,6 +654,22 @@ impl<'a> Parser<'a> {
         }
 
         Ok(num_str)
+    }
+
+    /// Calculate precision (significant figures) from a float literal string
+    /// E.g., "1.5" -> 15, "3.14" -> 15, "0.05" -> 15 (minimum 15 significant figures)
+    fn calculate_precision(s: &str) -> usize {
+        // Remove decimal point and minus sign
+        let without_dot: String = s.chars().filter(|c| *c != '.' && *c != '-').collect();
+
+        // Count leading zeros to skip them
+        let leading_zeros = without_dot.chars().take_while(|c| *c == '0').count();
+
+        // Significant figures = total digits minus leading zeros
+        let significant_count = without_dot.len().saturating_sub(leading_zeros);
+
+        // Use at least 15 significant figures as default minimum
+        std::cmp::max(significant_count.max(1), 15)
     }
 
     /// Parse a float string to (numerator, denominator) rational representation

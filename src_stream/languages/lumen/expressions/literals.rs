@@ -5,7 +5,7 @@ use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
 use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::{Env, Value};
-use crate::languages::lumen::values::{LumenNumber, LumenBool, LumenString, LumenNone, LumenRational};
+use crate::languages::lumen::values::{LumenNumber, LumenBool, LumenString, LumenNone, LumenRational, LumenReal};
 use crate::languages::lumen::numeric;
 use num_bigint::BigInt;
 
@@ -22,10 +22,28 @@ impl ExprNode for NumberLiteral {
         if denominator == BigInt::from(1) {
             Ok(Box::new(LumenNumber::new(numerator)))
         } else {
-            // Otherwise it's a rational number
-            Ok(Box::new(LumenRational::new(numerator, denominator)))
+            // Float literal with decimal places - create Real value
+            // Precision is determined by significant figures in the literal
+            let precision = calculate_precision(&self.value);
+            Ok(Box::new(LumenReal::new(numerator, denominator, precision)))
         }
     }
+}
+
+/// Calculate precision (significant figures) from a float literal string
+/// E.g., "1.5" -> 2, "3.14" -> 3, "0.05" -> 1
+fn calculate_precision(s: &str) -> usize {
+    // Remove decimal point
+    let without_dot: String = s.chars().filter(|c| *c != '.' && *c != '-').collect();
+
+    // Count leading zeros to skip them
+    let leading_zeros = without_dot.chars().take_while(|c| *c == '0').count();
+
+    // Significant figures = total digits minus leading zeros
+    let significant_count = without_dot.len().saturating_sub(leading_zeros);
+
+    // Use at least 15 significant figures as default minimum
+    std::cmp::max(significant_count.max(1), 15)
 }
 
 pub struct NumberLiteralPrefix;

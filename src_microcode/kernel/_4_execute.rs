@@ -520,6 +520,9 @@ fn execute_operator(
                         Value::Rational { numerator, denominator } => {
                             Value::Rational { numerator: -numerator, denominator }
                         }
+                        Value::Real { numerator, denominator, precision } => {
+                            Value::Real { numerator: -numerator, denominator, precision }
+                        }
                         _ => return Err("Cannot negate non-numeric value".to_string()),
                     }
                 }
