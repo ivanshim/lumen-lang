@@ -124,12 +124,11 @@ impl ExprNode for ArithmeticExpr {
                 LumenRational::new(num, denom)
             }
             "%" => {
-                // Modulo only works with integers
-                if result_is_rational {
-                    return Err("Modulo operator requires integers".into());
-                }
-                numeric::modulo(&left_num.numerator, &right_num.numerator)?;
-                return Ok(Box::new(LumenNumber::new(numeric::modulo(&left_num.numerator, &right_num.numerator)?)));
+                // For modulo, extract integer parts from rationals
+                let left_int = &left_num.numerator;
+                let right_int = &right_num.numerator;
+                numeric::modulo(left_int, right_int)?;
+                return Ok(Box::new(LumenNumber::new(numeric::modulo(left_int, right_int)?)));
             }
             "**" => {
                 // Exponentiation only works with integers

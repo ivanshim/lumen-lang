@@ -590,12 +590,21 @@ fn execute_operator(
                     }
                 }
                 "%" => {
-                    let l = left.to_number()?;
-                    let r = right.to_number()?;
-                    if r == BigInt::from(0) {
+                    // For modulo, extract integer parts from rationals
+                    let l_int = match &left {
+                        Value::Number(n) => n.clone(),
+                        Value::Rational { numerator, denominator } => numerator / denominator,
+                        _ => return Err("Modulo requires numeric operands".to_string()),
+                    };
+                    let r_int = match &right {
+                        Value::Number(n) => n.clone(),
+                        Value::Rational { numerator, denominator } => numerator / denominator,
+                        _ => return Err("Modulo requires numeric operands".to_string()),
+                    };
+                    if r_int == BigInt::from(0) {
                         return Err("Modulo by zero".to_string());
                     }
-                    Value::Number(l % r)
+                    Value::Number(l_int % r_int)
                 }
                 "==" => Value::Bool(left == right),
                 "!=" => Value::Bool(left != right),
