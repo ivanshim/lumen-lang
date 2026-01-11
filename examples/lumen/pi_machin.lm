@@ -8,4 +8,5 @@ significant_figures = 1000
 if ARGS != ""
     significant_figures = int(ARGS)
 
-print(pi_machin(significant_figures))
+pi_machin(significant_figures)
+print("")

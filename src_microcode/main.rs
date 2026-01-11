@@ -33,17 +33,19 @@ fn main() {
             // Prepend Lumen standard library
             // The library provides user-facing I/O functions (print, write) built on top of emit() primitive
             // Load in order: write.lm first (defines write), then print.lm (depends on write),
-            // then math functions (factorial, e_integer, pi_machin), then wrappers (e, pi)
+            // then math functions (factorial, e_integer, pi_machin), then defaults and wrappers
             let stdlib_write = include_str!("../lib_lumen/write.lm");
             let stdlib_print = include_str!("../lib_lumen/print.lm");
             let stdlib_factorial = include_str!("../lib_lumen/factorial.lm");
             let stdlib_e_integer = include_str!("../lib_lumen/e_integer.lm");
             let stdlib_pi_machin = include_str!("../lib_lumen/pi_machin.lm");
+            let stdlib_e_default = include_str!("../lib_lumen/e_default.lm");
+            let stdlib_pi_default = include_str!("../lib_lumen/pi_default.lm");
             let stdlib_e = include_str!("../lib_lumen/e.lm");
             let stdlib_pi = include_str!("../lib_lumen/pi.lm");
-            let full_source = format!("{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+            let full_source = format!("{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
                 stdlib_write, stdlib_print, stdlib_factorial, stdlib_e_integer,
-                stdlib_pi_machin, stdlib_e, stdlib_pi, source);
+                stdlib_pi_machin, stdlib_e_default, stdlib_pi_default, stdlib_e, stdlib_pi, source);
             if let Err(e) = run(&full_source, &schema, &program_args) {
                 eprintln!("LumenError: {}", e);
                 process::exit(1);

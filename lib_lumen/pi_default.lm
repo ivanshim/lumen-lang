@@ -1,0 +1,4 @@
+# Pi with default precision (15 digits)
+# fn pi_default() - returns pi as real number with 15 significant figures
+fn pi_default()
+    pi_machin(15)
