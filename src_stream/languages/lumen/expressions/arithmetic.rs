@@ -78,6 +78,19 @@ impl ExprNode for ArithmeticExpr {
             }
         }
 
+        // Check if either operand is real (Real takes precedence)
+        let (left_real_prec, left_is_real) = if let Ok(real) = as_real(l.as_ref()) {
+            (Some(real.precision), true)
+        } else {
+            (None, false)
+        };
+        let (right_real_prec, right_is_real) = if let Ok(real) = as_real(r.as_ref()) {
+            (Some(real.precision), true)
+        } else {
+            (None, false)
+        };
+        let result_is_real = left_is_real || right_is_real;
+
         // Fast path for modulo, integer quotient, and exponentiation (integer-only operations)
         // For Real values with //, extract the integer part and perform quotient
         // This avoids expensive rational conversion and cloning for these operators
@@ -184,21 +197,17 @@ impl ExprNode for ArithmeticExpr {
             } else {
                 return Err("Left operand must be a number".into());
             };
-            return Ok(Box::new(LumenNumber::new(result)));
-        }
 
-        // Check if either operand is real (Real takes precedence)
-        let (left_real_prec, left_is_real) = if let Ok(real) = as_real(l.as_ref()) {
-            (Some(real.precision), true)
-        } else {
-            (None, false)
-        };
-        let (right_real_prec, right_is_real) = if let Ok(real) = as_real(r.as_ref()) {
-            (Some(real.precision), true)
-        } else {
-            (None, false)
-        };
-        let result_is_real = left_is_real || right_is_real;
+            // Determine result precision for real operations
+            let result_precision = left_real_prec.or(right_real_prec).unwrap_or(15);
+
+            // If result involves Real, return as LumenReal; otherwise as LumenNumber
+            if result_is_real {
+                return Ok(Box::new(LumenReal::new(result, BigInt::from(1), result_precision)));
+            } else {
+                return Ok(Box::new(LumenNumber::new(result)));
+            }
+        }
 
         // Try to extract left and right as numbers (integer, rational, or real)
         let (left_num, left_is_rat) = if let Ok(real) = as_real(l.as_ref()) {
