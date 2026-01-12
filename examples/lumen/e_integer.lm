@@ -9,5 +9,5 @@ significant_figures = 500
 if ARGS != ""
     significant_figures = int(ARGS)
 
-e_integer(significant_figures)
-print("")
+result = e_integer(significant_figures)
+print(result)
