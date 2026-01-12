@@ -1,17 +1,24 @@
 # Pi calculation using Machin's formula
-# fn pi_machin(significant_figures) - returns pi as real number with given significant figures
-# Compute pi using Machin's formula with pure integer arithmetic
-# Output: pi as real number with decimal point placed correctly
-fn pi_machin(significant_figures)
-    precision = significant_figures
+# fn pi_machin(sigfigs) - returns pi rounded to sigfigs significant digits
+# Uses pure integer arithmetic with guard digits
+# No formatting, no output side effects
 
+fn pi_machin(sigfigs)
+    # guard digits for safe rounding (Machin needs them even more than e)
+    guard = 3
+    work = sigfigs + guard
+
+    # pi has exactly 1 digit before decimal
+    decimals = sigfigs - 1
+
+    # build scale = 10^work
     scale = 1
     i = 0
-    while i < precision
+    while i < work
         scale = scale * 10
         i = i + 1
 
-    # -------- arctan(1 / base_small) --------
+    # -------- arctan(1 / 5) --------
     base_small = 5
     base_small_sq = base_small * base_small
 
@@ -36,7 +43,7 @@ fn pi_machin(significant_figures)
 
         k = k + 1
 
-    # -------- arctan(1 / base_large) --------
+    # -------- arctan(1 / 239) --------
     base_large = 239
     base_large_sq = base_large * base_large
 
@@ -62,36 +69,13 @@ fn pi_machin(significant_figures)
         k = k + 1
 
     # -------- Machin combination --------
-    pi = 16 * arctan_small - 4 * arctan_large
+    pi_scaled = 16 * arctan_small - 4 * arctan_large
 
-    # Extract integer and fractional parts for decimal formatting
-    integer_part = pi / scale
-    fractional_part = pi % scale
+    # convert back to real magnitude
+    result = pi_scaled / scale
 
-    # Format as decimal string with proper decimal point placement
-    write(int(integer_part))
-    write(".")
+    # explicit, single rounding step to requested significant digits
+    rounded = round(result, decimals)
 
-    # Pad and write fractional digits
-    num_digits = 0
-    temp_scale = scale
-    while temp_scale > 1
-        temp_scale = int(temp_scale / 10)
-        num_digits = num_digits + 1
-
-    # Output fractional digits with leading zero padding
-    digit_pos = 0
-    power = 1
-    i = 1
-    while i < num_digits
-        power = power * 10
-        i = i + 1
-
-    while digit_pos < num_digits
-        digit = int(fractional_part / power)
-        write(digit)
-        fractional_part = fractional_part - (digit * power)
-        power = int(power / 10)
-        digit_pos = digit_pos + 1
-
-    none
+    # materialise as real with declared precision
+    real(rounded, sigfigs)
