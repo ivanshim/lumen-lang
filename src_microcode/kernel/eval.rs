@@ -49,24 +49,36 @@ impl fmt::Display for Value {
                     write!(f, "{}/{}", numerator, denominator)
                 }
             }
-            Value::Real { numerator, denominator, precision: _ } => {
-                // For real, display the decimal representation
+            Value::Real { numerator, denominator, precision } => {
+                // For real, display the decimal representation with significant digit precision
                 let int_part = numerator / denominator;
                 let remainder = numerator.clone() - (&int_part * denominator);
                 if remainder == BigInt::from(0) {
                     write!(f, "{}", int_part)
                 } else {
-                    // Simple decimal rendering (can be improved with proper significant digit handling)
+                    // Compute decimal places needed for precision
                     let mut decimal_str = String::new();
+                    let digit_count = int_part.to_string().len();
+                    let target_digits = *precision;
                     let mut rem = remainder.abs();
+
+                    // If int part has fewer digits than target, include fractional digits
+                    let mut frac_digits = if digit_count >= target_digits {
+                        0
+                    } else {
+                        target_digits - digit_count
+                    };
+
+                    // Compute fractional part
                     let denom = denominator.clone();
-                    for _ in 0..20 {  // Show up to 20 decimal places
+                    while frac_digits > 0 && rem > BigInt::from(0) {
                         rem = rem * BigInt::from(10);
                         let digit = &rem / &denom;
                         decimal_str.push_str(&digit.to_string());
                         rem = &rem - (&digit * &denom);
-                        if rem == BigInt::from(0) { break; }
+                        frac_digits -= 1;
                     }
+
                     write!(f, "{}.{}", int_part, decimal_str)
                 }
             }
