@@ -40,5 +40,6 @@ fn e_integer(sigfigs)
     # sum now represents e * 10^work
     result = sum / scale
 
-    # round once, explicitly, to requested significant digits
-    round(result, decimals)
+    # round and convert to real with requested significant digits
+    rounded = round(result, decimals)
+    real(rounded, sigfigs)
