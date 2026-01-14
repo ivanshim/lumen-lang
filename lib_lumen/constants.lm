@@ -1,0 +1,64 @@
+# ============================================================
+# Lumen mathematical constants - unified wrapper module
+# All functions delegate to their _1024 counterparts
+# ============================================================
+
+# Core constants
+fn pi(sigfigs)
+    pi_1024(sigfigs)
+
+fn tau(sigfigs)
+    tau_1024(sigfigs)
+
+fn e(sigfigs)
+    e_1024(sigfigs)
+
+
+# Roots and powers
+fn sqrt2(sigfigs)
+    sqrt2_1024(sigfigs)
+
+fn sqrt_pi(sigfigs)
+    sqrt_pi_1024(sigfigs)
+
+fn sqrt_2pi(sigfigs)
+    sqrt_2pi_1024(sigfigs)
+
+fn e2(sigfigs)
+    e2_1024(sigfigs)
+
+
+# Reciprocals
+fn inv_pi(sigfigs)
+    inv_pi_1024(sigfigs)
+
+fn inv_e(sigfigs)
+    inv_e_1024(sigfigs)
+
+fn inv_sqrt_2pi(sigfigs)
+    inv_sqrt_2pi_1024(sigfigs)
+
+
+# Logarithms
+fn ln2(sigfigs)
+    ln2_1024(sigfigs)
+
+fn ln10(sigfigs)
+    ln10_1024(sigfigs)
+
+fn log2e(sigfigs)
+    log2e_1024(sigfigs)
+
+fn log10e(sigfigs)
+    log10e_1024(sigfigs)
+
+
+# Mathematical constants (secondary but useful)
+fn phi(sigfigs)
+    phi_1024(sigfigs)
+
+fn gamma(sigfigs)
+    gamma_1024(sigfigs)
+
+fn two_over_sqrt_pi(sigfigs)
+    two_over_sqrt_pi_1024(sigfigs)
