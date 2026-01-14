@@ -1,0 +1,64 @@
+# ============================================================
+# Lumen mathematical constants with default precision (15 digits)
+# All functions delegate to their full-precision counterparts
+# ============================================================
+
+# Core constants
+fn pi_default()
+    pi(15)
+
+fn tau_default()
+    tau(15)
+
+fn e_default()
+    e(15)
+
+
+# Roots and powers
+fn sqrt2_default()
+    sqrt2(15)
+
+fn sqrt_pi_default()
+    sqrt_pi(15)
+
+fn sqrt_2pi_default()
+    sqrt_2pi(15)
+
+fn e2_default()
+    e2(15)
+
+
+# Reciprocals
+fn inv_pi_default()
+    inv_pi(15)
+
+fn inv_e_default()
+    inv_e(15)
+
+fn inv_sqrt_2pi_default()
+    inv_sqrt_2pi(15)
+
+
+# Logarithms
+fn ln2_default()
+    ln2(15)
+
+fn ln10_default()
+    ln10(15)
+
+fn log2e_default()
+    log2e(15)
+
+fn log10e_default()
+    log10e(15)
+
+
+# Mathematical constants (secondary but useful)
+fn phi_default()
+    phi(15)
+
+fn gamma_default()
+    gamma(15)
+
+fn two_over_sqrt_pi_default()
+    two_over_sqrt_pi(15)
