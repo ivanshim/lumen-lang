@@ -1,4 +1,0 @@
-# Wrapper for e_integer
-# fn e(significant_figures) - returns Euler's number with given significant figures
-fn e(significant_figures)
-    e_integer(significant_figures)
