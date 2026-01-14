@@ -1,0 +1,97 @@
+# ============================================================
+# Lumen 1024-digit numeric constants
+# All constants are stored as scaled integers with exactly
+# 1 digit before the decimal point.
+# Precision beyond 1024 significant digits is an error.
+# ============================================================
+
+# ------------------------------------------------------------
+# Generic helper
+# ------------------------------------------------------------
+
+fn real_from_const(sigfigs, max_sigfigs, scaled)
+    if sigfigs > max_sigfigs
+        error("requested precision exceeds available constant precision")
+
+    decimals = sigfigs - 1
+    scale = 10 ** (max_sigfigs - 1)
+
+    value = scaled / scale
+    rounded = round(value, decimals)
+    real(rounded, sigfigs)
+
+
+# ------------------------------------------------------------
+# Core constants
+# ------------------------------------------------------------
+
+fn pi_1024(sigfigs)
+    real_from_const(sigfigs, 1024, <PI_1024_DIGITS>)
+
+fn tau_1024(sigfigs)
+    real_from_const(sigfigs, 1024, <TAU_1024_DIGITS>)
+
+fn e_1024(sigfigs)
+    real_from_const(sigfigs, 1024, <E_1024_DIGITS>)
+
+
+# ------------------------------------------------------------
+# Roots and powers
+# ------------------------------------------------------------
+
+fn sqrt2_1024(sigfigs)
+    real_from_const(sigfigs, 1024, <SQRT2_1024_DIGITS>)
+
+fn sqrt_pi_1024(sigfigs)
+    real_from_const(sigfigs, 1024, <SQRT_PI_1024_DIGITS>)
+
+fn sqrt_2pi_1024(sigfigs)
+    real_from_const(sigfigs, 1024, <SQRT_2PI_1024_DIGITS>)
+
+fn e2_1024(sigfigs)
+    real_from_const(sigfigs, 1024, <E2_1024_DIGITS>)
+
+
+# ------------------------------------------------------------
+# Reciprocals
+# ------------------------------------------------------------
+
+fn inv_pi_1024(sigfigs)
+    real_from_const(sigfigs, 1024, <INV_PI_1024_DIGITS>)
+
+fn inv_e_1024(sigfigs)
+    real_from_const(sigfigs, 1024, <INV_E_1024_DIGITS>)
+
+fn inv_sqrt_2pi_1024(sigfigs)
+    real_from_const(sigfigs, 1024, <INV_SQRT_2PI_1024_DIGITS>)
+
+
+# ------------------------------------------------------------
+# Logarithms
+# ------------------------------------------------------------
+
+fn ln2_1024(sigfigs)
+    real_from_const(sigfigs, 1024, <LN2_1024_DIGITS>)
+
+fn ln10_1024(sigfigs)
+    real_from_const(sigfigs, 1024, <LN10_1024_DIGITS>)
+
+fn log2e_1024(sigfigs)
+    real_from_const(sigfigs, 1024, <LOG2E_1024_DIGITS>)
+
+fn log10e_1024(sigfigs)
+    real_from_const(sigfigs, 1024, <LOG10E_1024_DIGITS>)
+
+
+# ------------------------------------------------------------
+# Mathematical constants (secondary but useful)
+# ------------------------------------------------------------
+
+fn phi_1024(sigfigs)
+    real_from_const(sigfigs, 1024, <PHI_1024_DIGITS>)
+
+fn gamma_1024(sigfigs)
+    real_from_const(sigfigs, 1024, <GAMMA_1024_DIGITS>)
+
+fn two_over_sqrt_pi_1024(sigfigs)
+    real_from_const(sigfigs, 1024, <TWO_OVER_SQRT_PI_1024_DIGITS>)
