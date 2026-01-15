@@ -35,6 +35,10 @@ pub trait RuntimeValue: Send + Sync {
     /// Support for type-safe downcasting in language code.
     /// Returns this value as a reference to the concrete type (for use with Any::downcast_ref).
     fn as_any(&self) -> &dyn Any;
+
+    /// Support for mutable type-safe downcasting (for mutation).
+    /// Returns a mutable reference for use with Any::downcast_mut.
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 impl Clone for Box<dyn RuntimeValue> {

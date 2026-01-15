@@ -13,3 +13,4 @@ pub mod variable;
 pub mod pipe;
 pub mod range_expr;
 pub mod array_literal;
+pub mod array_index;

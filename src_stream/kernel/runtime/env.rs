@@ -172,6 +172,49 @@ impl Env {
             .collect::<Vec<_>>()
             .join("|")
     }
+
+    /// Mutate an array element at a given index.
+    /// Searches for the array in any scope and mutates it in place.
+    pub fn mutate_array(&mut self, name: &str, index: usize, value: Value) -> Result<(), String> {
+        // Find and mutate in reverse scope order (innermost first)
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(arr_val) = scope.get_mut(name) {
+                // Downcast to LumenArray and mutate
+                // We need to access the raw pointer to mutate
+                // Since Value is Box<dyn RuntimeValue>, we can't directly downcast and mutate
+                // We'll use as_any() to get the concrete type
+
+                use std::any::Any;
+                if let Some(arr) = arr_val.as_any_mut().downcast_mut::<crate::languages::lumen::values::LumenArray>() {
+                    if index >= arr.elements.len() {
+                        return Err(format!("Array index out of bounds"));
+                    }
+                    arr.elements[index] = value;
+                    return Ok(());
+                }
+                return Err(format!("Variable '{}' is not an array", name));
+            }
+        }
+        Err(format!("Undefined variable '{}'", name))
+    }
+
+    /// Append a value to an array.
+    /// Searches for the array in any scope and appends to it in place.
+    pub fn push_array(&mut self, name: &str, value: Value) -> Result<(), String> {
+        // Find and mutate in reverse scope order (innermost first)
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(arr_val) = scope.get_mut(name) {
+                // Downcast to LumenArray and push
+                use std::any::Any;
+                if let Some(arr) = arr_val.as_any_mut().downcast_mut::<crate::languages::lumen::values::LumenArray>() {
+                    arr.elements.push(value);
+                    return Ok(());
+                }
+                return Err(format!("Variable '{}' is not an array", name));
+            }
+        }
+        Err(format!("Undefined variable '{}'", name))
+    }
 }
 
 impl Default for Env {
