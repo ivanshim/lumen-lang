@@ -1,0 +1,24 @@
+# Comprehensive test of array mutation features
+# Tests array indexing (read), indexed assignment (write), and push operations
+
+print("=== Array Features Test ===")
+
+arr = [10, 20, 30]
+write("Array: ")
+print(arr)
+
+write("arr[0] = ")
+print(arr[0])
+
+arr2 = [1, 2, 3]
+arr2[1] = 999
+write("After arr2[1]=999: ")
+print(arr2)
+
+arr3 = []
+push(arr3, 100)
+push(arr3, 200)
+write("After push: ")
+print(arr3)
+
+print("Done!")
