@@ -229,6 +229,7 @@ pub fn execute(
                                 Value::Bool(_) => "bool",
                                 Value::Null => "null",
                                 Value::Range { .. } => "range",
+                                Value::Array(_) => "array",
                                 Value::Function { .. } => "function",
                             };
                             Ok((Value::String(type_str.to_string()), ControlFlow::Normal))
@@ -243,6 +244,10 @@ pub fn execute(
                         }
                         _ => Err(format!("Unknown external function: {}", func_name)),
                     }
+                }
+                "__construct_array" => {
+                    // Construct an array from the evaluated arguments
+                    Ok((Value::Array(arg_vals), ControlFlow::Normal))
                 }
                 _ => {
                     // Check if it's a user-defined function
