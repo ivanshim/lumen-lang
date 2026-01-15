@@ -1,0 +1,3 @@
+# Arrays can contain mixed types
+mixed = [1, "hello", true, none]
+print(mixed)

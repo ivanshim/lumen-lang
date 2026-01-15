@@ -1,0 +1,3 @@
+# Empty array
+empty = []
+print(empty)
