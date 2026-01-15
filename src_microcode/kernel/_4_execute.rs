@@ -84,6 +84,30 @@ pub fn execute(
 
         // 5. Invoke: call external function
         Instruction::Invoke { function, args } => {
+            // Special handling for push: push(arr, value)
+            // First argument should be a Variable (not evaluated), second is the value
+            if function == "push" {
+                if args.len() != 2 {
+                    return Err(format!("push() expects 2 arguments, got {}", args.len()));
+                }
+
+                // Extract array variable name from first argument
+                let arr_name = match &args[0] {
+                    Instruction::Variable(name) => name.clone(),
+                    _ => return Err("First argument to push() must be an array variable name".to_string()),
+                };
+
+                // Evaluate the value to push
+                let (val, flow) = execute(&args[1], env, _schema)?;
+                if flow != ControlFlow::Normal {
+                    return Ok((val, flow));
+                }
+
+                // Push to array
+                env.push_to_array(&arr_name, val.clone())?;
+                return Ok((Value::Null, ControlFlow::Normal));
+            }
+
             let mut arg_vals = Vec::new();
             for arg in args {
                 let (val, flow) = execute(arg, env, _schema)?;
@@ -440,6 +464,34 @@ pub fn execute(
             env.functions.insert(name.clone(), metadata);
 
             Ok((Value::Null, ControlFlow::Normal))
+        }
+
+        // Indexed assignment: arr[index] = value
+        Instruction::IndexedAssign { name, index, value } => {
+            // Evaluate index
+            let (index_val, flow) = execute(index, env, _schema)?;
+            if flow != ControlFlow::Normal {
+                return Ok((index_val, flow));
+            }
+
+            // Evaluate value
+            let (val, flow) = execute(value, env, _schema)?;
+            if flow != ControlFlow::Normal {
+                return Ok((val, flow));
+            }
+
+            // Convert index to usize
+            let idx = match &index_val {
+                Value::Number(n) => {
+                    n.to_usize()
+                        .ok_or_else(|| "Array index out of bounds".to_string())?
+                }
+                _ => return Err("Array index must be a number".to_string()),
+            };
+
+            // Mutate the array
+            env.mutate_array(name, idx, val.clone())?;
+            Ok((val, ControlFlow::Normal))
         }
 
         // Literal: just return the value
@@ -1022,6 +1074,29 @@ fn execute_operator(
                 },
                 "and" | "&&" => Value::Bool(left.to_bool() && right.to_bool()),
                 "or" | "||" => Value::Bool(left.to_bool() || right.to_bool()),
+                "[]" => {
+                    // Array indexing: left is array, right is index
+                    let arr = match left {
+                        Value::Array(ref elements) => elements,
+                        _ => return Err("Cannot index non-array value".to_string()),
+                    };
+
+                    // Convert index to usize
+                    let idx = match &right {
+                        Value::Number(n) => {
+                            n.to_usize()
+                                .ok_or_else(|| "Array index out of bounds".to_string())?
+                        }
+                        _ => return Err("Array index must be a number".to_string()),
+                    };
+
+                    // Bounds check
+                    if idx >= arr.len() {
+                        return Err(format!("Array index {} out of bounds (length: {})", idx, arr.len()));
+                    }
+
+                    arr[idx].clone()
+                }
                 _ => return Err(format!("Unknown binary operator: {}", op)),
             };
 

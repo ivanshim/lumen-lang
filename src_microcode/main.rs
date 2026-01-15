@@ -43,9 +43,11 @@ fn main() {
             let stdlib_constants_1024 = include_str!("../lib_lumen/constants_1024.lm");
             let stdlib_constants = include_str!("../lib_lumen/constants.lm");
             let stdlib_constants_default = include_str!("../lib_lumen/constants_default.lm");
-            let full_source = format!("{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+            let stdlib_primes = include_str!("../lib_lumen/primes.lm");
+            let full_source = format!("{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
                 stdlib_write, stdlib_print, stdlib_factorial, stdlib_round, stdlib_e_integer,
-                stdlib_pi_machin, stdlib_constants_1024, stdlib_constants, stdlib_constants_default, source);
+                stdlib_pi_machin, stdlib_constants_1024, stdlib_constants, stdlib_constants_default,
+                stdlib_primes, source);
             if let Err(e) = run(&full_source, &schema, &program_args) {
                 eprintln!("LumenError: {}", e);
                 process::exit(1);

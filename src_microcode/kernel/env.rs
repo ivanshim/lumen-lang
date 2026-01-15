@@ -99,6 +99,39 @@ impl Environment {
     pub fn exists(&self, name: &str) -> bool {
         self.scopes.iter().rev().any(|scope| scope.contains_key(name))
     }
+
+    /// Mutate array element at index (search from innermost scope upward)
+    pub fn mutate_array(&mut self, name: &str, index: usize, value: Value) -> Result<(), String> {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(current_val) = scope.get_mut(name) {
+                if let Value::Array(arr) = current_val {
+                    if index >= arr.len() {
+                        return Err(format!("Array index {} out of bounds (length: {})", index, arr.len()));
+                    }
+                    arr[index] = value;
+                    return Ok(());
+                } else {
+                    return Err(format!("Variable '{}' is not an array", name));
+                }
+            }
+        }
+        Err(format!("Undefined variable '{}'", name))
+    }
+
+    /// Push value to array (search from innermost scope upward)
+    pub fn push_to_array(&mut self, name: &str, value: Value) -> Result<(), String> {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(current_val) = scope.get_mut(name) {
+                if let Value::Array(arr) = current_val {
+                    arr.push(value);
+                    return Ok(());
+                } else {
+                    return Err(format!("Variable '{}' is not an array", name));
+                }
+            }
+        }
+        Err(format!("Undefined variable '{}'", name))
+    }
 }
 
 impl Default for Environment {
