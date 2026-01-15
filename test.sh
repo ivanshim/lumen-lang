@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # lumen-lang test script
-# Tests examples with stream and microcode kernels
+# Tests examples with stream kernel
 # Usage: ./test.sh [--lang lumen|rust|python] [--omit file1.lm file2.lm ...]
 #        ./test.sh <file>
 # If --lang is not specified, tests all languages
 # If --omit is provided, those files are excluded from testing
-# If a file path is provided, runs just that file with both kernels
+# If a file path is provided, runs just that file
 
 # Colors for output
 RED='\033[0;31m'
@@ -22,7 +22,7 @@ show_help() {
     echo -e "${BLUE}USAGE:${NC}"
     echo "  ./test.sh                                    Test Lumen files (default)"
     echo "  ./test.sh --help                             Show this help message"
-    echo "  ./test.sh <filename>                         Test single file with both kernels"
+    echo "  ./test.sh <filename>                         Test single file"
     echo "  ./test.sh --lang <language>                  Test all files of specific language"
     echo "  ./test.sh --omit <file1> [file2] ...         Test all but exclude specific files"
     echo "  ./test.sh --lang <lang> --omit <file>        Combine filters"
@@ -38,9 +38,9 @@ show_help() {
     echo "  --help                  Display this help message"
     echo ""
     echo -e "${BLUE}EXAMPLES:${NC}"
-    echo "  ./test.sh                              # Test Lumen files (default, 48 tests)"
+    echo "  ./test.sh                              # Test Lumen files (default)"
     echo "  ./test.sh fibonacci.lm                 # Test single file"
-    echo "  ./test.sh --lang all                   # Test everything (106 tests)"
+    echo "  ./test.sh --lang all                   # Test everything"
     echo "  ./test.sh --lang python                # Test only Python files"
     echo "  ./test.sh --omit factorial.lm          # Test Lumen except factorial"
     echo "  ./test.sh --lang python --omit demo.py # Combine language and omit filters"
@@ -123,26 +123,24 @@ if ! cargo build --quiet 2>/dev/null; then
 fi
 echo -e "${BLUE}Built successfully${NC}\n"
 
-BINARY="./target/debug/lumen-lang"
+BINARY="./target/debug/stream"
 TOTAL_TESTS=0
 PASSED_TESTS=0
 FAILED_TESTS=0
 TIMEOUT_TESTS=0
 SKIPPED_TESTS=0
 
-# Store test results: declare associative arrays for per-kernel-per-language stats
-declare -A RESULTS  # format: "language:kernel:status" -> count
-declare -a FAILED_LIST  # list of failed tests: "language | kernel | file"
+# Store test results: declare associative arrays for per-language stats
+declare -A RESULTS  # format: "language:status" -> count
+declare -a FAILED_LIST  # list of failed tests: "language | file"
 declare -a TESTED_LANGUAGES  # track which languages were tested
 
 # Initialize all combinations
 for lang in lumen python_core rust_core; do
-    for kernel in stream microcode; do
-        RESULTS["${lang}:${kernel}:passed"]=0
-        RESULTS["${lang}:${kernel}:failed"]=0
-        RESULTS["${lang}:${kernel}:timeout"]=0
-        RESULTS["${lang}:${kernel}:skipped"]=0
-    done
+    RESULTS["${lang}:passed"]=0
+    RESULTS["${lang}:failed"]=0
+    RESULTS["${lang}:timeout"]=0
+    RESULTS["${lang}:skipped"]=0
 done
 
 # Function to check if a file should be omitted
@@ -160,11 +158,10 @@ should_omit() {
 # Function to run a test
 run_test() {
     local file="$1"
-    local kernel="$2"
-    local language="$3"
+    local language="$2"
     local filename=$(basename "$file")
 
-    echo -e "${CYAN}  → ${filename} (${kernel})${NC}"
+    echo -e "${CYAN}  → ${filename}${NC}"
     TOTAL_TESTS=$((TOTAL_TESTS + 1))
 
     # Capture start time in nanoseconds
@@ -172,7 +169,7 @@ run_test() {
 
     # Run the test with output displayed directly, capturing exit code
     local output
-    output=$(timeout 30 $BINARY --kernel "$kernel" "$file" 2>&1)
+    output=$(timeout 30 $BINARY "$file" 2>&1)
     local exit_code=$?
 
     # Capture end time and calculate elapsed time
@@ -199,20 +196,20 @@ run_test() {
     if [ $exit_code -eq 0 ]; then
         echo -e "    ${GREEN}✓ PASS${NC} (${time_display})"
         PASSED_TESTS=$((PASSED_TESTS + 1))
-        RESULTS["${language}:${kernel}:passed"]=$((RESULTS["${language}:${kernel}:passed"] + 1))
+        RESULTS["${language}:passed"]=$((RESULTS["${language}:passed"] + 1))
         return 0
     elif [ $exit_code -eq 124 ]; then
         echo -e "    ${RED}✗ TIMEOUT${NC} (${time_display})"
         TIMEOUT_TESTS=$((TIMEOUT_TESTS + 1))
         FAILED_TESTS=$((FAILED_TESTS + 1))
-        RESULTS["${language}:${kernel}:timeout"]=$((RESULTS["${language}:${kernel}:timeout"] + 1))
-        FAILED_LIST+=("${language} | ${kernel} | ${filename}")
+        RESULTS["${language}:timeout"]=$((RESULTS["${language}:timeout"] + 1))
+        FAILED_LIST+=("${language} | ${filename}")
         return 1
     else
         echo -e "    ${RED}✗ FAIL${NC} (${time_display})"
         FAILED_TESTS=$((FAILED_TESTS + 1))
-        RESULTS["${language}:${kernel}:failed"]=$((RESULTS["${language}:${kernel}:failed"] + 1))
-        FAILED_LIST+=("${language} | ${kernel} | ${filename}")
+        RESULTS["${language}:failed"]=$((RESULTS["${language}:failed"] + 1))
+        FAILED_LIST+=("${language} | ${filename}")
         return 1
     fi
 }
@@ -254,9 +251,7 @@ echo ""
 # Run single file if specified
 if [ -n "$SINGLE_FILE" ]; then
     echo -e "${YELLOW}Testing: $(basename "$SINGLE_FILE")${NC}"
-    for kernel in stream microcode; do
-        run_test "$SINGLE_FILE" "$kernel" "$language"
-    done
+    run_test "$SINGLE_FILE" "$language"
     echo ""
     TESTED_LANGUAGES+=("$language")
 else
@@ -267,9 +262,7 @@ else
             if should_omit "$file"; then
                 continue
             fi
-            for kernel in stream microcode; do
-                run_test "$file" "$kernel" "lumen"
-            done
+            run_test "$file" "lumen"
         done
         echo ""
         TESTED_LANGUAGES+=("lumen")
@@ -282,9 +275,7 @@ else
             if should_omit "$file"; then
                 continue
             fi
-            for kernel in stream microcode; do
-                run_test "$file" "$kernel" "python_core"
-            done
+            run_test "$file" "python_core"
         done
         echo ""
         TESTED_LANGUAGES+=("python_core")
@@ -297,18 +288,16 @@ else
             if should_omit "$file"; then
                 continue
             fi
-            for kernel in stream microcode; do
-                run_test "$file" "$kernel" "rust_core"
-            done
+            run_test "$file" "rust_core"
         done
         echo ""
         TESTED_LANGUAGES+=("rust_core")
     fi
 fi
 
-# Detailed Summary by Language and Kernel
+# Detailed Summary by Language
 echo "=========================================="
-echo "  Test Summary (By Language, Then Kernel)"
+echo "  Test Summary (By Language)"
 echo "=========================================="
 echo ""
 
@@ -321,29 +310,25 @@ for lang in "${TESTED_LANGUAGES[@]}"; do
 
     echo -e "${BLUE}${lang_display}:${NC}"
 
-    for kernel in stream microcode; do
-        passed=${RESULTS["${lang}:${kernel}:passed"]:-0}
-        failed=${RESULTS["${lang}:${kernel}:failed"]:-0}
-        timeout=${RESULTS["${lang}:${kernel}:timeout"]:-0}
-        skipped=${RESULTS["${lang}:${kernel}:skipped"]:-0}
-        total=$((passed + failed + timeout + skipped))
+    passed=${RESULTS["${lang}:passed"]:-0}
+    failed=${RESULTS["${lang}:failed"]:-0}
+    timeout=${RESULTS["${lang}:timeout"]:-0}
+    skipped=${RESULTS["${lang}:skipped"]:-0}
+    total=$((passed + failed + timeout + skipped))
 
-        if [ $total -gt 0 ]; then
-            status_color="${GREEN}"
-            if [ $failed -gt 0 ] || [ $timeout -gt 0 ]; then
-                status_color="${RED}"
-            fi
-
-            printf "  %-12s: " "${kernel^}"
-            printf "${status_color}"
-            printf "Passed: %-2d | Failed: %-2d | Timeout: %-2d" "$passed" "$failed" "$timeout"
-            printf "${NC}"
-            [ $skipped -gt 0 ] && printf " | Skipped: %d" "$skipped"
-            echo ""
+    if [ $total -gt 0 ]; then
+        status_color="${GREEN}"
+        if [ $failed -gt 0 ] || [ $timeout -gt 0 ]; then
+            status_color="${RED}"
         fi
-    done
-    echo ""
+
+        printf "  Passed: %-2d | Failed: %-2d | Timeout: %-2d" "$passed" "$failed" "$timeout"
+        [ $skipped -gt 0 ] && printf " | Skipped: %d" "$skipped"
+        echo ""
+    fi
 done
+
+echo ""
 
 # Overall Summary
 echo "=========================================="
@@ -358,7 +343,7 @@ echo ""
 # List failed tests if any
 if [ $FAILED_TESTS -gt 0 ]; then
     echo "=========================================="
-    echo "  Failed Tests (Language | Kernel | File)"
+    echo "  Failed Tests (Language | File)"
     echo "=========================================="
     for failed_test in "${FAILED_LIST[@]}"; do
         echo -e "  ${RED}✗${NC} $failed_test"
