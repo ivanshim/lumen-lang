@@ -1,6 +1,6 @@
 # Comprehensive test of all mathematical constants
 # Tests both 50-digit precision and default (15-digit) precision
-# All 18 constants are tested
+# All 15 constants are tested
 
 print("==================================================")
 print("Testing 50-digit precision constants:")
@@ -9,7 +9,6 @@ print("==================================================")
 print("")
 print("Core constants:")
 print(pi(50))
-print(tau(50))
 print(e(50))
 
 print("")
@@ -34,8 +33,6 @@ print(log10e(50))
 
 print("")
 print("Other constants:")
-print(phi(50))
-print(gamma(50))
 print(two_over_sqrt_pi(50))
 
 print("")
@@ -46,7 +43,6 @@ print("==================================================")
 print("")
 print("Core constants (default):")
 print(pi_default())
-print(tau_default())
 print(e_default())
 
 print("")
@@ -71,8 +67,6 @@ print(log10e_default())
 
 print("")
 print("Other constants (default):")
-print(phi_default())
-print(gamma_default())
 print(two_over_sqrt_pi_default())
 
 print("")

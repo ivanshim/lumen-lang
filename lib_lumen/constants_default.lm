@@ -7,9 +7,6 @@
 fn pi_default()
     pi(15)
 
-fn tau_default()
-    tau(15)
-
 fn e_default()
     e(15)
 
@@ -54,11 +51,5 @@ fn log10e_default()
 
 
 # Mathematical constants (secondary but useful)
-fn phi_default()
-    phi(15)
-
-fn gamma_default()
-    gamma(15)
-
 fn two_over_sqrt_pi_default()
     two_over_sqrt_pi(15)
