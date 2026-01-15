@@ -412,3 +412,76 @@ impl RuntimeValue for LumenNone {
     }
 }
 
+/// Lumen array value - heterogeneous collection of values
+#[derive(Debug, Clone, PartialEq)]
+pub struct LumenArray {
+    pub elements: Vec<Box<dyn RuntimeValue>>,
+}
+
+impl LumenArray {
+    pub fn new(elements: Vec<Box<dyn RuntimeValue>>) -> Self {
+        Self { elements }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            elements: Vec::new(),
+        }
+    }
+}
+
+impl RuntimeValue for LumenArray {
+    fn clone_boxed(&self) -> Box<dyn RuntimeValue> {
+        Box::new(self.clone())
+    }
+
+    fn as_debug_string(&self) -> String {
+        let elements_str = self
+            .elements
+            .iter()
+            .map(|e| e.as_debug_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("Array([{}])", elements_str)
+    }
+
+    fn as_display_string(&self) -> String {
+        let elements_str = self
+            .elements
+            .iter()
+            .map(|e| e.as_display_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("[{}]", elements_str)
+    }
+
+    fn eq_value(&self, other: &dyn RuntimeValue) -> Result<bool, String> {
+        if let Some(other_arr) = other.as_any().downcast_ref::<LumenArray>() {
+            if self.elements.len() != other_arr.elements.len() {
+                return Ok(false);
+            }
+            for (a, b) in self.elements.iter().zip(other_arr.elements.iter()) {
+                match a.eq_value(b.as_ref()) {
+                    Ok(true) => continue,
+                    Ok(false) => return Ok(false),
+                    Err(e) => return Err(e),
+                }
+            }
+            Ok(true)
+        } else {
+            Err("Cannot compare array with non-array".to_string())
+        }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// Helper to extract a LumenArray if the value is one.
+pub fn as_array(val: &dyn RuntimeValue) -> Result<&LumenArray, String> {
+    val.as_any()
+        .downcast_ref::<LumenArray>()
+        .ok_or_else(|| "Expected an array value".to_string())
+}
+

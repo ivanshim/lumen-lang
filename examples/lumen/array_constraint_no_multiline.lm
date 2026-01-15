@@ -1,0 +1,15 @@
+# Arrays allow multiline syntax, but other expressions do not
+
+# This is valid - arrays can span multiple lines
+arr = [
+    1,
+    2,
+    3
+]
+
+# This is valid - simple arithmetic on one line
+sum_result = 1 + 2 + 3
+
+# Single line is required for most expressions
+x = 10
+y = 20

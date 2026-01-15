@@ -22,6 +22,7 @@ pub fn aggregate_patterns() -> PatternSet {
         expressions::variable::patterns(),
         expressions::identifier::patterns(),
         expressions::grouping::patterns(),
+        expressions::array_literal::patterns(),
         expressions::arithmetic::patterns(),
         expressions::comparison::patterns(),
         expressions::logic::patterns(),
@@ -108,6 +109,7 @@ pub fn register_all(registry: &mut Registry) {
     expressions::range_expr::register(registry);    // Range operator (..)
     expressions::extern_expr::register(registry);   // extern impurity boundary
     expressions::grouping::register(registry);      // Parenthesized expressions
+    expressions::array_literal::register(registry); // Array literals
     expressions::variable::register(registry);      // Variable references (generic identifier matching) - must come last
 
     // Statement features
