@@ -1,55 +1,78 @@
+# Test whether a number is prime using trial division
 fn is_prime(n)
     if n < 2
         false
-    else
-        if n == 2
-            true
-        else
-            if n % 2 == 0
-                false
-            else
-                let mut i = 3
-                let mut is_prime_val = true
-                while i * i <= n
-                    if n % i == 0
-                        is_prime_val = false
-                    i = i + 2
-                is_prime_val
+    if n == 2
+        true
+    if n % 2 == 0
+        false
+    i = 3
+    while i * i <= n
+        if n % i == 0
+            false
+        i = i + 2
+    true
 
+
+# Return the smallest prime greater than n
 fn next_prime(n)
-    let mut candidate = n + 1
-    while not is_prime(candidate)
-        candidate = candidate + 1
-    candidate
+    k = n + 1
+    while true
+        if is_prime(k)
+            k
+        k = k + 1
 
+
+# Generate all primes up to and including limit
 fn primes_up_to(limit)
-    if limit < 2
-        let empty = []
-        empty
-    else
-        let mut sieve = []
-        let mut i = 0
-        while i <= limit
-            push(sieve, true)
-            i = i + 1
+    sieve = []
+    i = 0
+    while i <= limit
+        push(sieve, true)
+        i = i + 1
 
-        sieve[0] = false
-        sieve[1] = false
+    sieve[0] = false
+    sieve[1] = false
 
-        let mut p = 2
-        while p * p <= limit
-            if sieve[p]
-                let mut multiple = p * p
-                while multiple <= limit
-                    sieve[multiple] = false
-                    multiple = multiple + p
-            p = p + 1
+    p = 2
+    while p * p <= limit
+        if sieve[p]
+            k = p * p
+            while k <= limit
+                sieve[k] = false
+                k = k + p
+        p = p + 1
 
-        let mut primes = []
-        let mut i = 2
-        while i <= limit
-            if sieve[i]
-                push(primes, i)
-            i = i + 1
+    primes = []
+    i = 2
+    while i <= limit
+        if sieve[i]
+            push(primes, i)
+        i = i + 1
+    primes
 
-        primes
+
+# Return the prime factorization of n as an array
+fn prime_factors(n)
+    factors = []
+    d = 2
+    while d * d <= n
+        while n % d == 0
+            push(factors, d)
+            n = n // d
+        d = d + 1
+    if n > 1
+        push(factors, n)
+    factors
+
+
+# Return the unique prime factors of n
+fn unique_prime_factors(n)
+    f = prime_factors(n)
+    u = []
+    i = 0
+    while i < len(f)
+        if i == 0 or f[i] != f[i - 1]
+            push(u, f[i])
+        i = i + 1
+    u
