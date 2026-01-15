@@ -1,0 +1,59 @@
+# Compute the greatest common divisor using Euclid's algorithm
+fn gcd(a, b)
+    while b != 0
+        t = b
+        b = a % b
+        a = t
+    a
+
+
+# Compute the least common multiple using gcd
+fn lcm(a, b)
+    (a * b) // gcd(a, b)
+
+
+# Check whether two integers are coprime
+fn is_coprime(a, b)
+    gcd(a, b) == 1
+
+
+# Compute (base^exp) % mod using fast exponentiation
+fn pow_mod(base, exp, mod)
+    result = 1
+    base = base % mod
+    while exp > 0
+        if exp % 2 == 1
+            result = (result * base) % mod
+        exp = exp // 2
+        base = (base * base) % mod
+    result
+
+
+# Extended Euclidean algorithm returning (g, x, y) such that ax + by = g
+fn extended_gcd(a, b)
+    if b == 0
+        [a, 1, 0]
+    else
+        r = extended_gcd(b, a % b)
+        g = r[0]
+        x = r[2]
+        y = r[1] - (a // b) * r[2]
+        [g, x, y]
+
+
+# Compute the modular multiplicative inverse of a modulo m
+fn mod_inverse(a, m)
+    r = extended_gcd(a, m)
+    if r[0] != 1
+        none
+    else
+        (r[1] % m + m) % m
+
+
+# Perform modular division a / b (mod m)
+fn mod_div(a, b, m)
+    inv = mod_inverse(b, m)
+    if inv == none
+        none
+    else
+        (a * inv) % m
