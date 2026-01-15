@@ -1,0 +1,41 @@
+# RSA cryptography demonstration (educational, not secure)
+
+# 1. Choose two small primes
+p = 61
+q = 53
+
+# 2. Compute modulus
+n = p * q
+
+# 3. Euler totient
+phi = (p - 1) * (q - 1)
+
+# 4. Public exponent
+e = 17
+
+# 5. Private exponent
+d = mod_inverse(e, phi)
+
+# 6. Message
+m = 42
+
+# 7. Encrypt
+cipher = pow_mod(m, e, n)
+
+# 8. Decrypt
+plain = pow_mod(cipher, d, n)
+
+write("n = ")
+print(n)
+write("phi = ")
+print(phi)
+write("public key = ")
+print([e, n])
+write("private key = ")
+print([d, n])
+write("message = ")
+print(m)
+write("cipher = ")
+print(cipher)
+write("decrypted = ")
+print(plain)

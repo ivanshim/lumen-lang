@@ -1,0 +1,49 @@
+# Benchmark naïve exponentiation vs fast modular exponentiation
+# Measures computational effort by repetition, not wall time
+
+base = 7
+exp = 65537
+mod = 1000000007
+
+iterations = 50
+
+print("Benchmarking with:")
+write("base = ")
+print(base)
+write("exp  = ")
+print(exp)
+write("mod  = ")
+print(mod)
+write("iterations = ")
+print(iterations)
+print("")
+
+# -------------------------
+# Naïve exponentiation
+# -------------------------
+print("Naïve exponentiation:")
+
+i = 0
+while i < iterations
+    result = 1
+    j = 0
+    while j < exp
+        result = result * base
+        j = j + 1
+    result = result % mod
+    i = i + 1
+
+print("naïve done")
+print("")
+
+# -------------------------
+# Fast modular exponentiation
+# -------------------------
+print("pow_mod:")
+
+i = 0
+while i < iterations
+    result = pow_mod(base, exp, mod)
+    i = i + 1
+
+print("pow_mod done")
