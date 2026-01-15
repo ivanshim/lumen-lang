@@ -1,0 +1,36 @@
+# Benchmark naive exponentiation with modular reduction
+# Tests repeated exponentiation using simple multiplication loop
+
+base = 7
+exp = 100
+mod = 1000000007
+
+iterations = 50
+
+print("Naive exponentiation benchmark")
+write("base = ")
+print(base)
+write("exp  = ")
+print(exp)
+write("mod  = ")
+print(mod)
+write("iterations = ")
+print(iterations)
+print("")
+
+print("Running naive exponentiation...")
+
+result = 0
+i = 0
+while i < iterations
+    result = 1
+    j = 0
+    while j < exp
+        result = result * base
+        j = j + 1
+    result = result % mod
+    i = i + 1
+
+write("Result: ")
+print(result)
+print("Done!")

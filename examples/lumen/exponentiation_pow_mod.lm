@@ -1,0 +1,31 @@
+# Benchmark fast modular exponentiation using pow_mod()
+# Tests the efficient O(log n) algorithm from number_theory library
+
+base = 7
+exp = 100
+mod = 1000000007
+
+iterations = 50
+
+print("Fast modular exponentiation benchmark")
+write("base = ")
+print(base)
+write("exp  = ")
+print(exp)
+write("mod  = ")
+print(mod)
+write("iterations = ")
+print(iterations)
+print("")
+
+print("Running pow_mod...")
+
+result = 0
+i = 0
+while i < iterations
+    result = pow_mod(base, exp, mod)
+    i = i + 1
+
+write("Result: ")
+print(result)
+print("Done!")
