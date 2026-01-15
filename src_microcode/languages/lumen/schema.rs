@@ -76,7 +76,7 @@ pub fn get_schema() -> LanguageSchema {
     }
 
     // Multiplicative operators
-    for op in &["*", "/", "%", "//"] {
+    for op in &["*", "/", "%", "//", "."] {
         schema.binary_operators.insert(op.to_string(), OperatorInfo {
             precedence: 6.0,
             associativity: Associativity::Left,

@@ -221,6 +221,49 @@ pub fn execute(
                     let str_val = format!("{}", &arg_vals[0]);
                     Ok((Value::String(str_val), ControlFlow::Normal))
                 }
+                "len" => {
+                    // len(x): return length of string or array
+                    // For strings, counts UTF-8 characters (not bytes)
+                    if arg_vals.len() != 1 {
+                        return Err(format!("len() expects 1 argument, got {}", arg_vals.len()));
+                    }
+                    match &arg_vals[0] {
+                        Value::String(s) => {
+                            let len = s.chars().count();
+                            Ok((Value::Number(BigInt::from(len)), ControlFlow::Normal))
+                        }
+                        Value::Array(arr) => {
+                            let len = arr.len();
+                            Ok((Value::Number(BigInt::from(len)), ControlFlow::Normal))
+                        }
+                        _ => Err("len() requires a string or array argument".to_string()),
+                    }
+                }
+                "char_at" => {
+                    // char_at(string, index): return character at index
+                    // Characters are UTF-8 characters (not bytes)
+                    // Returns null if index is out of bounds or negative
+                    if arg_vals.len() != 2 {
+                        return Err(format!("char_at() expects 2 arguments, got {}", arg_vals.len()));
+                    }
+                    match (&arg_vals[0], &arg_vals[1]) {
+                        (Value::String(s), Value::Number(idx)) => {
+                            // Convert index to usize
+                            match idx.to_usize() {
+                                Some(i) => {
+                                    // Get character at index
+                                    match s.chars().nth(i) {
+                                        Some(ch) => Ok((Value::String(ch.to_string()), ControlFlow::Normal)),
+                                        None => Ok((Value::Null, ControlFlow::Normal)), // Out of bounds
+                                    }
+                                }
+                                None => Ok((Value::Null, ControlFlow::Normal)), // Negative or too large
+                            }
+                        }
+                        (Value::String(_), _) => Err("char_at() second argument must be an integer".to_string()),
+                        _ => Err("char_at() first argument must be a string".to_string()),
+                    }
+                }
                 "extern" => {
                     // extern(function_name, arg1, arg2, ...)
                     if arg_vals.is_empty() {
@@ -597,6 +640,13 @@ fn execute_operator(
             }
 
             let result = match op.as_str() {
+                "." => {
+                    // Period operator: string concatenation with automatic coercion
+                    // Coerce both operands to strings using str()
+                    let left_str = format!("{}", left);
+                    let right_str = format!("{}", right);
+                    Value::String(format!("{}{}", left_str, right_str))
+                }
                 "+" => {
                     if let (Value::String(_), _) | (_, Value::String(_)) = (&left, &right) {
                         Value::String(format!("{}{}", left, right))
