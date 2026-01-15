@@ -317,12 +317,25 @@ impl<'a> Parser<'a> {
             self.skip_whitespace();
             let value = self.parse_expression()?;
 
-            // Extract variable name from expression
+            // Handle two cases:
+            // 1. Simple assignment: name = value
             if let Instruction::Variable(name) = expr {
                 return Ok(Instruction::assign(name, value));
-            } else {
-                return Err("Invalid assignment target".to_string());
             }
+
+            // 2. Indexed assignment: arr[i] = value
+            // Check if expr is an Operate::Binary with "[]" operator
+            if let Instruction::Operate { kind: super::primitives::OperateKind::Binary(op), operands } = expr {
+                if op == "[]" && operands.len() == 2 {
+                    // Extract array name from the left operand
+                    if let Instruction::Variable(name) = &operands[0] {
+                        let index = operands[1].clone();
+                        return Ok(Instruction::indexed_assign(name.clone(), index, value));
+                    }
+                }
+            }
+
+            return Err("Invalid assignment target".to_string());
         }
 
         Ok(expr)
@@ -607,10 +620,45 @@ impl<'a> Parser<'a> {
                 }
 
                 self.advance(); // consume ')'
-                return Ok(Instruction::invoke(name, args));
+                let mut expr = Instruction::invoke(name, args);
+
+                // Handle postfix array indexing on function call results: func()[i]
+                while self.peek().lexeme == "[" {
+                    self.advance(); // consume '['
+                    self.skip_whitespace();
+                    let index_expr = self.parse_expression()?;
+                    self.skip_whitespace();
+                    if self.peek().lexeme != "]" {
+                        return Err("Expected ']' after array index".to_string());
+                    }
+                    self.advance(); // consume ']'
+                    self.skip_whitespace();
+
+                    expr = Instruction::binary("[]".to_string(), expr, index_expr);
+                }
+
+                return Ok(expr);
             }
 
-            return Ok(Instruction::variable(name));
+            let mut expr = Instruction::variable(name);
+            self.skip_whitespace();
+
+            // Handle postfix array indexing: var[i]
+            while self.peek().lexeme == "[" {
+                self.advance(); // consume '['
+                self.skip_whitespace();
+                let index_expr = self.parse_expression()?;
+                self.skip_whitespace();
+                if self.peek().lexeme != "]" {
+                    return Err("Expected ']' after array index".to_string());
+                }
+                self.advance(); // consume ']'
+                self.skip_whitespace();
+
+                expr = Instruction::binary("[]".to_string(), expr, index_expr);
+            }
+
+            return Ok(expr);
         }
 
         Err(format!("Unexpected token: {}", lexeme))

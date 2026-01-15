@@ -113,6 +113,13 @@ pub enum Instruction {
         body: Box<Instruction>,
         memoizable: bool,
     },
+
+    // Indexed assignment: arr[index] = value
+    IndexedAssign {
+        name: String,
+        index: Box<Instruction>,
+        value: Box<Instruction>,
+    },
 }
 
 impl Instruction {
@@ -232,6 +239,15 @@ impl Instruction {
         Instruction::Invoke {
             function: "__construct_array".to_string(),
             args: elements,
+        }
+    }
+
+    /// Helper: indexed assignment arr[index] = value
+    pub fn indexed_assign(name: String, index: Instruction, value: Instruction) -> Self {
+        Instruction::IndexedAssign {
+            name,
+            index: Box::new(index),
+            value: Box::new(value),
         }
     }
 }
