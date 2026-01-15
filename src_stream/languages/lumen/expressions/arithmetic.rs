@@ -67,6 +67,17 @@ impl ExprNode for ArithmeticExpr {
         let l = self.left.eval(env)?;
         let r = self.right.eval(env)?;
 
+        // Special handling for . operator: string concatenation with coercion
+        if self.op == "." {
+            use crate::languages::lumen::values::LumenString;
+
+            // Coerce both operands to strings using str()
+            let left_str = l.as_display_string();
+            let right_str = r.as_display_string();
+            let result = format!("{}{}", left_str, right_str);
+            return Ok(Box::new(LumenString::new(result)));
+        }
+
         // Special handling for + operator: can be string concatenation or addition
         if self.op == "+" {
             use crate::languages::lumen::values::{LumenString, as_string};
@@ -318,7 +329,7 @@ impl ExprInfix for ArithmeticInfix {
 /// Declare what patterns this module recognizes
 pub fn patterns() -> PatternSet {
     PatternSet::new()
-        .with_literals(vec!["+", "-", "*", "/", "%", "//", "**"])
+        .with_literals(vec!["+", "-", "*", "/", "%", "//", "**", "."])
 }
 
 // --------------------
@@ -336,4 +347,5 @@ pub fn register(reg: &mut Registry) {
     reg.register_infix(Box::new(ArithmeticInfix::new("%", Precedence::Factor)));
     reg.register_infix(Box::new(ArithmeticInfix::new("//", Precedence::Factor)));
     reg.register_infix(Box::new(ArithmeticInfix::new("**", Precedence::Power)));
+    reg.register_infix(Box::new(ArithmeticInfix::new(".", Precedence::Factor))); // String concatenation with coercion
 }

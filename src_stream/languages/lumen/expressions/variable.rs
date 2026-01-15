@@ -51,23 +51,38 @@ impl ExprNode for FunctionCallExpr {
                     // real(x): convert to real with default precision 15
                     return builtin_real(&self.args[0].eval(env)?, 15);
                 }
+                "len" => {
+                    // len(x): return length of string or array
+                    return builtin_len(&self.args[0].eval(env)?);
+                }
                 _ => {}
             }
-        } else if self.args.len() == 2 && self.func_name == "real" {
-            // real(x, y): convert to real with precision y
-            use crate::languages::lumen::values::LumenNumber;
-            use num_traits::ToPrimitive;
-            let x_val = self.args[0].eval(env)?;
-            let y_val = self.args[1].eval(env)?;
-            // Extract precision from y_val
-            let precision = match y_val.as_any().downcast_ref::<LumenNumber>() {
-                Some(num) => {
-                    num.value.to_u64()
-                        .ok_or_else(|| "Precision must be a positive integer".to_string())? as usize
+        } else if self.args.len() == 2 {
+            match self.func_name.as_str() {
+                "real" => {
+                    // real(x, y): convert to real with precision y
+                    use crate::languages::lumen::values::LumenNumber;
+                    use num_traits::ToPrimitive;
+                    let x_val = self.args[0].eval(env)?;
+                    let y_val = self.args[1].eval(env)?;
+                    // Extract precision from y_val
+                    let precision = match y_val.as_any().downcast_ref::<LumenNumber>() {
+                        Some(num) => {
+                            num.value.to_u64()
+                                .ok_or_else(|| "Precision must be a positive integer".to_string())? as usize
+                        }
+                        None => return Err("Precision argument must be an integer".to_string()),
+                    };
+                    return builtin_real(&x_val, precision);
                 }
-                None => return Err("Precision argument must be an integer".to_string()),
-            };
-            return builtin_real(&x_val, precision);
+                "char_at" => {
+                    // char_at(string, index): return character at index
+                    let str_val = self.args[0].eval(env)?;
+                    let idx_val = self.args[1].eval(env)?;
+                    return builtin_char_at(&str_val, &idx_val);
+                }
+                _ => {}
+            }
         }
 
         // Get user-defined function definition
@@ -330,6 +345,62 @@ fn builtin_str(value: &Value) -> LumenResult<Value> {
     // Convert any value to its string representation
     let string = value.as_display_string();
     Ok(Box::new(LumenString::new(string)))
+}
+
+/// Built-in function: len(x) - Return length of string or array
+/// Returns the number of characters in a string or elements in an array.
+/// For strings, counts UTF-8 characters (not bytes).
+fn builtin_len(value: &Value) -> LumenResult<Value> {
+    use crate::languages::lumen::values::{LumenString, LumenNumber, LumenArray};
+    use num_bigint::BigInt;
+
+    // Check if it's a string
+    if let Some(string_val) = value.as_any().downcast_ref::<LumenString>() {
+        let len = string_val.value.chars().count();
+        return Ok(Box::new(LumenNumber::new(BigInt::from(len))));
+    }
+
+    // Check if it's an array
+    if let Some(array_val) = value.as_any().downcast_ref::<LumenArray>() {
+        let len = array_val.elements.len();
+        return Ok(Box::new(LumenNumber::new(BigInt::from(len))));
+    }
+
+    Err("len() requires a string or array argument".to_string())
+}
+
+/// Built-in function: char_at(string, index) - Return character at index
+/// Returns the character at the given zero-based index.
+/// Characters are UTF-8 characters (not bytes).
+/// Returns none if index is out of bounds or negative.
+fn builtin_char_at(string_val: &Value, index_val: &Value) -> LumenResult<Value> {
+    use crate::languages::lumen::values::{LumenString, LumenNumber, LumenNone};
+    use num_traits::ToPrimitive;
+
+    // Extract string
+    let string = string_val.as_any()
+        .downcast_ref::<LumenString>()
+        .ok_or_else(|| "char_at() first argument must be a string".to_string())?;
+
+    // Extract index
+    let index_num = index_val.as_any()
+        .downcast_ref::<LumenNumber>()
+        .ok_or_else(|| "char_at() second argument must be an integer".to_string())?;
+
+    // Convert index to usize
+    let index = match index_num.value.to_usize() {
+        Some(i) => i,
+        None => {
+            // Negative or too large index
+            return Ok(Box::new(LumenNone));
+        }
+    };
+
+    // Get character at index
+    match string.value.chars().nth(index) {
+        Some(ch) => Ok(Box::new(LumenString::new(ch.to_string()))),
+        None => Ok(Box::new(LumenNone)), // Out of bounds
+    }
 }
 
 /// Built-in function: emit(string) - Kernel primitive for I/O

@@ -1,0 +1,81 @@
+# Test string operations: period operator (.), char_at(), and len()
+
+print("=== String Operations Test ===")
+
+# Test 1: Period operator with strings
+str1 = "Hello"
+str2 = " World"
+result1 = str1 . str2
+write("Period operator (string . string): ")
+print(result1)
+
+# Test 2: Period operator with automatic coercion (number to string)
+num = 42
+result2 = "Answer: " . num
+write("Period operator with number coercion: ")
+print(result2)
+
+# Test 3: Period operator with multiple coercions
+x = 10
+y = 20
+result3 = "Sum: " . (x + y)
+write("Period operator with expression: ")
+print(result3)
+
+# Test 4: len() function with strings
+test_str = "Hello"
+str_len = len(test_str)
+write("len('Hello'): ")
+print(str_len)
+
+# Test 5: len() function with UTF-8 characters
+utf8_str = "abc123"
+utf8_len = len(utf8_str)
+write("len('abc123'): ")
+print(utf8_len)
+
+# Test 6: len() function with empty string
+empty_str = ""
+empty_len = len(empty_str)
+write("len(''): ")
+print(empty_len)
+
+# Test 7: len() function with array
+arr = [1, 2, 3, 4, 5]
+arr_len = len(arr)
+write("len([1,2,3,4,5]): ")
+print(arr_len)
+
+# Test 8: char_at() function - valid index
+text = "Lumen"
+ch0 = char_at(text, 0)
+write("char_at('Lumen', 0): ")
+print(ch0)
+
+ch2 = char_at(text, 2)
+write("char_at('Lumen', 2): ")
+print(ch2)
+
+ch4 = char_at(text, 4)
+write("char_at('Lumen', 4): ")
+print(ch4)
+
+# Test 9: char_at() function - out of bounds (should return null)
+ch_oob = char_at(text, 10)
+write("char_at('Lumen', 10) [out of bounds]: ")
+print(ch_oob)
+
+# Test 10: char_at() function - negative index (should return null)
+ch_neg = char_at(text, -1)
+write("char_at('Lumen', -1) [negative]: ")
+print(ch_neg)
+
+# Test 11: Combining operations
+word = "Test"
+length = len(word)
+first_char = char_at(word, 0)
+result11 = "Word: " . word . ", Length: " . length . ", First: " . first_char
+write("Combined operations: ")
+print(result11)
+
+print("Done!")
