@@ -23,6 +23,7 @@ pub fn aggregate_patterns() -> PatternSet {
         expressions::identifier::patterns(),
         expressions::grouping::patterns(),
         expressions::array_literal::patterns(),
+        expressions::array_index::patterns(),
         expressions::arithmetic::patterns(),
         expressions::comparison::patterns(),
         expressions::logic::patterns(),
@@ -32,8 +33,10 @@ pub fn aggregate_patterns() -> PatternSet {
 
         // Statement patterns
         statements::function_emit::patterns(),
+        statements::push_stmt::patterns(),
         statements::let_mut_binding::patterns(),
         statements::let_binding::patterns(),
+        statements::array_assign::patterns(),
         statements::assignment::patterns(),
         statements::control_if_else::patterns(),
         statements::control_while::patterns(),
@@ -87,6 +90,7 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::keyword("return"),
         TokenDefinition::keyword("fn"),
         TokenDefinition::keyword("emit"),
+        TokenDefinition::keyword("push"),
         TokenDefinition::keyword("none"),
         TokenDefinition::keyword("MEMOIZATION"),  // System capability for memoization control
         // "extern" is NOT registered - has its own expression handler
@@ -110,14 +114,17 @@ pub fn register_all(registry: &mut Registry) {
     expressions::extern_expr::register(registry);   // extern impurity boundary
     expressions::grouping::register(registry);      // Parenthesized expressions
     expressions::array_literal::register(registry); // Array literals
+    expressions::array_index::register(registry);   // Array indexing (infix: arr[i])
     expressions::variable::register(registry);      // Variable references (generic identifier matching) - must come last
 
     // Statement features
     // Registration order matters: specific keyword handlers must come before assignment
     // which matches any identifier
     statements::function_emit::register(registry);         // emit() kernel primitive
+    statements::push_stmt::register(registry);      // push(arr, value) primitive
     statements::let_mut_binding::register(registry); // let mut binding
     statements::let_binding::register(registry);   // let binding
+    statements::array_assign::register(registry);   // Array indexed assignment (arr[i] = value)
     statements::control_if_else::register(registry);       // if/else statements
     statements::control_while::register(registry);    // while loops
     statements::control_for::register(registry);      // for loops (desugars to while) - before assignment!

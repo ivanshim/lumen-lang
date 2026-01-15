@@ -101,6 +101,10 @@ impl RuntimeValue for LumenRational {
     fn as_any(&self) -> &dyn Any {
         self
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 /// Lumen number value - stored as BigInt for arbitrary precision
@@ -137,6 +141,10 @@ impl RuntimeValue for LumenNumber {
     }
 
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 }
@@ -177,6 +185,10 @@ impl RuntimeValue for LumenBool {
     fn as_any(&self) -> &dyn Any {
         self
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 /// Lumen string value
@@ -213,6 +225,10 @@ impl RuntimeValue for LumenString {
     }
 
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 }
@@ -373,6 +389,10 @@ impl RuntimeValue for LumenReal {
     fn as_any(&self) -> &dyn Any {
         self
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 /// Helper to extract a LumenReal if the value is one.
@@ -408,6 +428,10 @@ impl RuntimeValue for LumenNone {
     }
 
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 }
@@ -474,6 +498,10 @@ impl RuntimeValue for LumenArray {
     }
 
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 }

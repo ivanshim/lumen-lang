@@ -1,34 +1,3 @@
-# Parameter: n (default: 10000)
-# Usage: lumen-lang sieve.lm [n]
-# Example: lumen-lang sieve.lm 100
-n = 10000
-if ARGS != ""
-    n = int(ARGS)
-
-count = 0
-first = true
-
-i = 2
-while i <= n
-    is_prime = true
-    j = 2
-    while j * j <= i
-        if i % j == 0
-            is_prime = false
-        j = j + 1
-
-    if is_prime
-        count = count + 1
-        if first
-            write("")
-            write(i)
-            first = false
-        else
-            write(", ")
-            write(i)
-
-    i = i + 1
-
-print("")
-write("Total primes found: ")
-print(count)
+# Find and display all primes up to 10000 using primes_up_to from library
+let result = primes_up_to(10000)
+print(result)

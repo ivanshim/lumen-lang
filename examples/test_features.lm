@@ -1,0 +1,25 @@
+emit("=== Array Features Test ===\n")
+
+let arr = [10, 20, 30]
+emit("Array: ")
+emit(str(arr))
+emit("\n")
+
+emit("arr[0] = ")
+emit(str(arr[0]))
+emit("\n")
+
+let mut arr2 = [1, 2, 3]
+arr2[1] = 999
+emit("After arr2[1]=999: ")
+emit(str(arr2))
+emit("\n")
+
+let mut arr3 = []
+push(arr3, 100)
+push(arr3, 200)
+emit("After push: ")
+emit(str(arr3))
+emit("\n")
+
+emit("Done!\n")

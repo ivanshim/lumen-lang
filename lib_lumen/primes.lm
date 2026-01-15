@@ -1,0 +1,55 @@
+fn is_prime(n)
+    if n < 2
+        false
+    else
+        if n == 2
+            true
+        else
+            if n % 2 == 0
+                false
+            else
+                let mut i = 3
+                let mut is_prime_val = true
+                while i * i <= n
+                    if n % i == 0
+                        is_prime_val = false
+                    i = i + 2
+                is_prime_val
+
+fn next_prime(n)
+    let mut candidate = n + 1
+    while not is_prime(candidate)
+        candidate = candidate + 1
+    candidate
+
+fn primes_up_to(limit)
+    if limit < 2
+        let empty = []
+        empty
+    else
+        let mut sieve = []
+        let mut i = 0
+        while i <= limit
+            push(sieve, true)
+            i = i + 1
+
+        sieve[0] = false
+        sieve[1] = false
+
+        let mut p = 2
+        while p * p <= limit
+            if sieve[p]
+                let mut multiple = p * p
+                while multiple <= limit
+                    sieve[multiple] = false
+                    multiple = multiple + p
+            p = p + 1
+
+        let mut primes = []
+        let mut i = 2
+        while i <= limit
+            if sieve[i]
+                push(primes, i)
+            i = i + 1
+
+        primes

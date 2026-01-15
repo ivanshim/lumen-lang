@@ -43,6 +43,10 @@ impl RuntimeValue for PythonCoreNumber {
     fn as_any(&self) -> &dyn Any {
         self
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -78,6 +82,10 @@ impl RuntimeValue for PythonCoreBool {
     }
 
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 }

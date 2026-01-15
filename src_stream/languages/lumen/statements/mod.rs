@@ -3,6 +3,8 @@ use crate::languages::lumen::prelude::*;
 // Lumen statement features
 
 pub mod assignment;
+pub mod array_assign;
+pub mod push_stmt;
 pub mod flow_break;
 pub mod flow_continue;
 pub mod control_if_else;
