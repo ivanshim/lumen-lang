@@ -1,0 +1,41 @@
+# ============================================================
+# Prime number utilities for Lumen (using functional approach)
+# ============================================================
+# Note: Lumen has immutable values, so we use recursion/accumulation
+# instead of mutable arrays. Array concatenation not supported natively.
+
+# Simple trial division primality test
+fn is_prime(n)
+    if n < 2
+        false
+    else
+        if n == 2
+            true
+        else
+            if n % 2 == 0
+                false
+            else
+                is_prime_trial(n, 3)
+
+fn is_prime_trial(n, divisor)
+    if divisor * divisor <= n
+        if n % divisor == 0
+            false
+        else
+            is_prime_trial(n, divisor + 2)
+    else
+        true
+
+
+# Find next prime after n
+fn next_prime(n)
+    if n < 2
+        2
+    else
+        find_next(n + 1)
+
+fn find_next(candidate)
+    if is_prime(candidate)
+        candidate
+    else
+        find_next(candidate + 1)
