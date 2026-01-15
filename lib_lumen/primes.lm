@@ -1,10 +1,12 @@
 # ============================================================
-# Prime number utilities for Lumen (using functional approach)
+# Prime number utilities for Lumen
 # ============================================================
-# Note: Lumen has immutable values, so we use recursion/accumulation
-# instead of mutable arrays. Array concatenation not supported natively.
 
-# Simple trial division primality test
+# ------------------------------------------------------------
+# is_prime(n)
+# Returns true if n is a prime number, false otherwise
+# Uses trial division up to √n
+# ------------------------------------------------------------
 fn is_prime(n)
     if n < 2
         false
@@ -15,27 +17,71 @@ fn is_prime(n)
             if n % 2 == 0
                 false
             else
-                is_prime_trial(n, 3)
+                is_prime_check(n, 3)
 
-fn is_prime_trial(n, divisor)
-    if divisor * divisor <= n
-        if n % divisor == 0
+fn is_prime_check(n, i)
+    if i * i <= n
+        if n % i == 0
             false
         else
-            is_prime_trial(n, divisor + 2)
+            is_prime_check(n, i + 2)
     else
         true
 
 
-# Find next prime after n
+# ------------------------------------------------------------
+# next_prime(n)
+# Returns the smallest prime strictly greater than n
+# Uses repeated primality testing
+# ------------------------------------------------------------
 fn next_prime(n)
     if n < 2
         2
     else
-        find_next(n + 1)
-
-fn find_next(candidate)
-    if is_prime(candidate)
+        candidate = n + 1
+        if candidate % 2 == 0
+            candidate = candidate + 1
+        while not is_prime(candidate)
+            candidate = candidate + 2
         candidate
+
+
+# ------------------------------------------------------------
+# primes_up_to(limit)
+# Returns an array of all primes <= limit
+# Uses Sieve of Eratosthenes with mutable array
+# ------------------------------------------------------------
+fn primes_up_to(limit)
+    if limit < 2
+        []
     else
-        find_next(candidate + 1)
+        # Initialize boolean array: true means "assumed prime"
+        is_prime_arr = []
+        i = 0
+        while i <= limit
+            push(is_prime_arr, true)
+            i = i + 1
+
+        # Mark 0 and 1 as not prime
+        is_prime_arr[0] = false
+        is_prime_arr[1] = false
+
+        # Sieve: mark multiples of each prime as not prime
+        p = 2
+        while p * p <= limit
+            if is_prime_arr[p]
+                multiple = p * p
+                while multiple <= limit
+                    is_prime_arr[multiple] = false
+                    multiple = multiple + p
+            p = p + 1
+
+        # Collect all primes into result array
+        primes = []
+        i = 2
+        while i <= limit
+            if is_prime_arr[i]
+                push(primes, i)
+            i = i + 1
+
+        primes
