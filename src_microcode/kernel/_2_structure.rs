@@ -24,6 +24,18 @@ pub fn process_structure(
         return Ok(tokens);
     }
 
+    // First pass: track bracket depth globally to identify bracket ranges
+    let mut bracket_depth_by_index = vec![0; tokens.len()];
+    let mut bracket_depth = 0;
+    for (i, token) in tokens.iter().enumerate() {
+        if token.lexeme == "[" {
+            bracket_depth += 1;
+        } else if token.lexeme == "]" {
+            bracket_depth -= 1;
+        }
+        bracket_depth_by_index[i] = bracket_depth;
+    }
+
     let mut result = Vec::new();
     let mut indent_stack = vec![0];
     let mut i = 0;
@@ -58,30 +70,35 @@ pub fn process_structure(
             continue;
         }
 
+        // Check if we're inside brackets - if so, don't process indentation
+        let inside_brackets = i < bracket_depth_by_index.len() && bracket_depth_by_index[i] > 0;
+
         // Convert indent level to indentation units
         let indent_units = indent_level / schema.indentation_size;
         let current_indent = *indent_stack.last().unwrap();
 
-        // Handle indentation changes
-        if indent_units > current_indent {
-            // Indentation increased: insert {
-            indent_stack.push(indent_units);
-            result.push(Token {
-                lexeme: "{".to_string(),
-                span: (tokens[i].span.0, tokens[i].span.0),
-                line: tokens[i].line,
-                col: 0,
-            });
-        } else if indent_units < current_indent {
-            // Indentation decreased: insert } for each level
-            while indent_stack.len() > 1 && *indent_stack.last().unwrap() > indent_units {
-                indent_stack.pop();
+        // Handle indentation changes (but only if not inside brackets)
+        if !inside_brackets {
+            if indent_units > current_indent {
+                // Indentation increased: insert {
+                indent_stack.push(indent_units);
                 result.push(Token {
-                    lexeme: "}".to_string(),
+                    lexeme: "{".to_string(),
                     span: (tokens[i].span.0, tokens[i].span.0),
                     line: tokens[i].line,
                     col: 0,
                 });
+            } else if indent_units < current_indent {
+                // Indentation decreased: insert } for each level
+                while indent_stack.len() > 1 && *indent_stack.last().unwrap() > indent_units {
+                    indent_stack.pop();
+                    result.push(Token {
+                        lexeme: "}".to_string(),
+                        span: (tokens[i].span.0, tokens[i].span.0),
+                        line: tokens[i].line,
+                        col: 0,
+                    });
+                }
             }
         }
 
