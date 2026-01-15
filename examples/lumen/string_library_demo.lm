@@ -1,0 +1,81 @@
+# String library demonstration
+# Shows usage of all string manipulation functions from lib_lumen/string.lm
+
+print("=== String Library Examples ===")
+print("")
+
+# Example 1: substring - extract portion of string
+text = "Hello World"
+write("Original: ")
+print(text)
+write("substring(text, 0, 5): ")
+print(substring(text, 0, 5))
+write("substring(text, 6, 11): ")
+print(substring(text, 6, 11))
+print("")
+
+# Example 2: slice - get everything from index to end
+write("slice(text, 6): ")
+print(slice(text, 6))
+print("")
+
+# Example 3: starts_with - check prefix
+write("starts_with('Hello World', 'Hello'): ")
+print(starts_with(text, "Hello"))
+write("starts_with('Hello World', 'World'): ")
+print(starts_with(text, "World"))
+print("")
+
+# Example 4: ends_with - check suffix
+write("ends_with('Hello World', 'World'): ")
+print(ends_with(text, "World"))
+write("ends_with('Hello World', 'Hello'): ")
+print(ends_with(text, "Hello"))
+print("")
+
+# Example 5: repeat - duplicate string
+write("repeat('Ha', 5): ")
+print(repeat("Ha", 5))
+write("repeat('-=', 10): ")
+print(repeat("-=", 10))
+print("")
+
+# Example 6: join - combine array elements
+fruits = ["apple", "banana", "cherry"]
+write("join(['apple', 'banana', 'cherry'], ', '): ")
+print(join(fruits, ", "))
+write("join(['apple', 'banana', 'cherry'], ' | '): ")
+print(join(fruits, " | "))
+print("")
+
+# Example 7: index_of - find substring position
+sentence = "The quick brown fox jumps over the lazy dog"
+write("index_of('The quick brown fox...', 'fox'): ")
+print(index_of(sentence, "fox"))
+write("index_of('The quick brown fox...', 'cat'): ")
+print(index_of(sentence, "cat"))
+print("")
+
+# Example 8: contains - check if substring exists
+write("contains('The quick brown fox...', 'quick'): ")
+print(contains(sentence, "quick"))
+write("contains('The quick brown fox...', 'slow'): ")
+print(contains(sentence, "slow"))
+print("")
+
+# Practical example: parsing and building strings
+print("=== Practical Example ===")
+name = "Lumen"
+version = "1.0"
+description = "A minimal language"
+
+# Build formatted string using concatenation and repeat
+separator = repeat("-", 40)
+print(separator)
+info = "Project: " . name
+print(info)
+info2 = "Version: " . version
+print(info2)
+info3 = "Description: " . description
+print(info3)
+print(separator)
