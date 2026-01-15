@@ -226,4 +226,12 @@ impl Instruction {
     pub fn scope(instr: Instruction) -> Self {
         Instruction::Scope(Box::new(instr))
     }
+
+    /// Helper: construct array from elements
+    pub fn construct_array(elements: Vec<Instruction>) -> Self {
+        Instruction::Invoke {
+            function: "__construct_array".to_string(),
+            args: elements,
+        }
+    }
 }

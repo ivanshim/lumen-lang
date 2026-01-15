@@ -28,6 +28,7 @@ pub enum Value {
         start: BigInt,
         end: BigInt,
     },
+    Array(Vec<Value>),
     Function {
         params: Vec<String>,
         // Body is stored as-is, execution happens in the execute layer
@@ -88,6 +89,16 @@ impl fmt::Display for Value {
             Value::Range { start, end } => {
                 write!(f, "{}..{}", start, end)
             }
+            Value::Array(elements) => {
+                write!(f, "[")?;
+                for (i, elem) in elements.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", elem)?;
+                }
+                write!(f, "]")
+            }
             Value::Function { params, body_ref: _ } => {
                 write!(f, "<function({})>", params.join(", "))
             }
@@ -122,6 +133,7 @@ impl PartialEq for Value {
             (Value::Range { start: a_start, end: a_end }, Value::Range { start: b_start, end: b_end }) => {
                 a_start == b_start && a_end == b_end
             }
+            (Value::Array(a), Value::Array(b)) => a == b,
             _ => false,
         }
     }
@@ -138,6 +150,7 @@ impl Value {
             Value::Real { numerator, .. } => numerator != &BigInt::from(0),
             Value::String(s) => !s.is_empty(),
             Value::Range { .. } => true,
+            Value::Array(_) => true,
             Value::Function { .. } => true,
         }
     }
@@ -157,6 +170,7 @@ impl Value {
             Value::String(s) => s.parse::<BigInt>()
                 .map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Range { .. } => Err("Cannot coerce range to number".to_string()),
+            Value::Array(_) => Err("Cannot coerce array to number".to_string()),
             Value::Function { .. } => Err("Cannot coerce function to number".to_string()),
         }
     }

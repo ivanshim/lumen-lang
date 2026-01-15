@@ -546,6 +546,30 @@ impl<'a> Parser<'a> {
             return Ok(Instruction::literal(Value::Null));
         }
 
+        // Array literal
+        if lexeme == "[" {
+            self.advance();
+            self.skip_whitespace();
+            let mut elements = Vec::new();
+
+            while self.peek().lexeme != "]" {
+                elements.push(self.parse_expression()?);
+                self.skip_whitespace();
+                if self.peek().lexeme == "," {
+                    self.advance();
+                    self.skip_whitespace();
+                }
+            }
+
+            if self.peek().lexeme != "]" {
+                return Err("Expected ']'".to_string());
+            }
+            self.advance();
+
+            // Return an instruction that constructs an array from the elements
+            return Ok(Instruction::construct_array(elements));
+        }
+
         // Parenthesized expression
         if lexeme == "(" {
             self.advance();
