@@ -1,0 +1,55 @@
+# Return a substring from start (inclusive) to end (exclusive)
+fn substring(s, start, end)
+    i = start
+    out = ""
+    while i < end
+        out = out . char_at(s, i)
+        i = i + 1
+    out
+
+# Return substring from start index to end of string.
+fn slice(s, start)
+    substring(s, start, len(s))
+
+# Return true if string begins with prefix.
+fn starts_with(s, prefix)
+    len(prefix) <= len(s) and substring(s, 0, len(prefix)) == prefix
+
+# Return true if string ends with suffix.
+fn ends_with(s, suffix)
+    len(suffix) <= len(s) and substring(s, len(s) - len(suffix), len(s)) == suffix
+
+# Return string repeated count times.
+fn repeat(s, count)
+    out = ""
+    i = 0
+    while i < count
+        out = out . s
+        i = i + 1
+    out
+
+# Join array of strings using a separator.
+fn join(arr, sep)
+    out = ""
+    n = len(arr)
+    i = 0
+    while i < n
+        if i > 0
+            out = out . sep
+        out = out . arr[i]
+        i = i + 1
+    out
+
+# Return first index of needle in string, or -1 if not found.
+fn index_of(s, needle)
+    n = len(needle)
+    i = 0
+    while i + n <= len(s)
+        if substring(s, i, i + n) == needle
+            return i
+        i = i + 1
+    -1
+
+# Return true if needle occurs anywhere in string.
+fn contains(s, needle)
+    index_of(s, needle) >= 0
