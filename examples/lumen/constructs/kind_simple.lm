@@ -1,0 +1,5 @@
+# Simple kind() test
+print("Testing kind()")
+
+x = 42
+print(kind(x))

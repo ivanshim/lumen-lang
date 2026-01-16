@@ -506,6 +506,49 @@ impl RuntimeValue for LumenArray {
     }
 }
 
+/// Lumen symbol value - represents symbolic constants like kind names
+/// Used for returning category/type information from introspection functions
+#[derive(Debug, Clone, PartialEq)]
+pub struct LumenSymbol {
+    pub name: String,
+}
+
+impl LumenSymbol {
+    pub fn new(name: String) -> Self {
+        Self { name }
+    }
+}
+
+impl RuntimeValue for LumenSymbol {
+    fn clone_boxed(&self) -> Box<dyn RuntimeValue> {
+        Box::new(self.clone())
+    }
+
+    fn as_debug_string(&self) -> String {
+        format!("Symbol({})", self.name)
+    }
+
+    fn as_display_string(&self) -> String {
+        self.name.clone()
+    }
+
+    fn eq_value(&self, other: &dyn RuntimeValue) -> Result<bool, String> {
+        if let Some(other_sym) = other.as_any().downcast_ref::<LumenSymbol>() {
+            Ok(self.name == other_sym.name)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
 /// Helper to extract a LumenArray if the value is one.
 pub fn as_array(val: &dyn RuntimeValue) -> Result<&LumenArray, String> {
     val.as_any()

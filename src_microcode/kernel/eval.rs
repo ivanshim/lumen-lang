@@ -34,6 +34,7 @@ pub enum Value {
         // Body is stored as-is, execution happens in the execute layer
         body_ref: String,  // reference to function registry, not the body itself
     },
+    Symbol(String),  // Symbolic constant (e.g., INTEGER, RATIONAL, etc.)
 }
 
 impl fmt::Display for Value {
@@ -102,6 +103,7 @@ impl fmt::Display for Value {
             Value::Function { params, body_ref: _ } => {
                 write!(f, "<function({})>", params.join(", "))
             }
+            Value::Symbol(s) => write!(f, "{}", s),
         }
     }
 }
@@ -134,6 +136,7 @@ impl PartialEq for Value {
                 a_start == b_start && a_end == b_end
             }
             (Value::Array(a), Value::Array(b)) => a == b,
+            (Value::Symbol(a), Value::Symbol(b)) => a == b,
             _ => false,
         }
     }
@@ -152,6 +155,7 @@ impl Value {
             Value::Range { .. } => true,
             Value::Array(_) => true,
             Value::Function { .. } => true,
+            Value::Symbol(_) => true,
         }
     }
 
@@ -172,6 +176,7 @@ impl Value {
             Value::Range { .. } => Err("Cannot coerce range to number".to_string()),
             Value::Array(_) => Err("Cannot coerce array to number".to_string()),
             Value::Function { .. } => Err("Cannot coerce function to number".to_string()),
+            Value::Symbol(_) => Err("Cannot coerce symbol to number".to_string()),
         }
     }
 }

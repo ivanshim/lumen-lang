@@ -1,0 +1,99 @@
+# Test kind() built-in function
+print("=== kind() Function Tests ===")
+print("")
+
+# Test 1: INTEGER
+print("Test 1: INTEGER")
+write("kind(42) = ")
+print(kind(42))
+
+write("kind(16@FF) = ")
+print(kind(16@FF))
+
+print("")
+
+# Test 2: RATIONAL
+print("Test 2: RATIONAL")
+x = 1/2
+write("kind(1/2) = ")
+print(kind(x))
+
+y = 22/7
+write("kind(22/7) = ")
+print(kind(y))
+
+print("")
+
+# Test 3: REAL
+print("Test 3: REAL")
+write("kind(3.14) = ")
+print(kind(3.14))
+
+write("kind(16@FF.8) = ")
+print(kind(16@FF.8))
+
+write("kind(real(5)) = ")
+print(kind(real(5)))
+
+print("")
+
+# Test 4: STRING
+print("Test 4: STRING")
+write("kind(\"hello\") = ")
+print(kind("hello"))
+
+write("kind('world') = ")
+print(kind('world'))
+
+print("")
+
+# Test 5: BOOLEAN
+print("Test 5: BOOLEAN")
+write("kind(true) = ")
+print(kind(true))
+
+write("kind(false) = ")
+print(kind(false))
+
+print("")
+
+# Test 6: NONE
+print("Test 6: NONE")
+write("kind(none) = ")
+print(kind(none))
+
+print("")
+
+# Test 7: ARRAY
+print("Test 7: ARRAY")
+arr = [1, 2, 3]
+write("kind([1, 2, 3]) = ")
+print(kind(arr))
+
+print("")
+
+# Test 8: Symbol equality
+print("Test 8: Symbol values")
+int_kind = kind(42)
+print(int_kind)
+
+rat_kind = kind(1/2)
+print(rat_kind)
+
+real_kind = kind(3.14)
+print(real_kind)
+
+str_kind = kind("hello")
+print(str_kind)
+
+bool_kind = kind(true)
+print(bool_kind)
+
+none_kind = kind(none)
+print(none_kind)
+
+arr_kind = kind([1, 2])
+print(arr_kind)
+
+print("")
+print("Done!")
