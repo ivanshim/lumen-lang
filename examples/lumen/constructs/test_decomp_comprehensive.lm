@@ -132,16 +132,16 @@ print("")
 # Test 7: Verify kinds of results
 print("Test 7: Kinds verification")
 write("kind(num(1/2)) = ")
-print(kind(num(1/2)))
+print(kind_to_string(kind(num(1/2))))
 
 write("kind(den(1/2)) = ")
-print(kind(den(1/2)))
+print(kind_to_string(kind(den(1/2))))
 
 write("kind(int(3.14)) = ")
-print(kind(int(3.14)))
+print(kind_to_string(kind(int(3.14))))
 
 write("kind(frac(3.14)) = ")
-print(kind(frac(3.14)))
+print(kind_to_string(kind(frac(3.14))))
 
 print("")
 

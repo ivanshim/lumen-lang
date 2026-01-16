@@ -29,16 +29,16 @@ print("")
 # Test kind() of results
 print("Test kinds")
 write("kind(num(22/7)) = ")
-print(kind(num(22/7)))
+print(kind_to_string(kind(num(22/7))))
 
 write("kind(den(22/7)) = ")
-print(kind(den(22/7)))
+print(kind_to_string(kind(den(22/7))))
 
 write("kind(int(3.14)) = ")
-print(kind(int(3.14)))
+print(kind_to_string(kind(int(3.14))))
 
 write("kind(frac(3.14)) = ")
-print(kind(frac(3.14)))
+print(kind_to_string(kind(frac(3.14))))
 
 print("")
 print("Done!")
