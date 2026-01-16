@@ -1,0 +1,175 @@
+# Basic tests for base() library function
+
+# ------------------------------------------------------------
+# Base conversion library
+# ------------------------------------------------------------
+
+alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+fn base(value, radix)
+    if kind(radix) != kind(0)
+        error("base(): radix must be INTEGER")
+
+    if radix < 2 or radix > 36
+        error("base(): radix must be between 2 and 36")
+
+    k = kind(value)
+
+    if k == kind(0)
+        return base_integer(value, radix)
+
+    if k == kind(1/2)
+        return base_rational(value, radix)
+
+    if k == kind(1.0)
+        return base_real(value, radix)
+
+    error("base(): unsupported kind")
+
+fn base_integer(n, radix)
+    if n == 0
+        return "0"
+
+    negative = false
+    if n < 0
+        negative = true
+        n = -n
+
+    result = ""
+
+    while n > 0
+        digit = n % radix
+        result = char_at(alphabet, digit) . result
+        n = n // radix
+
+    if negative
+        result = "-" . result
+
+    result
+
+fn base_rational(r, radix)
+    n = num(r)
+    d = den(r)
+
+    n_str = base_integer(n, radix)
+    d_str = base_integer(d, radix)
+
+    n_str . "/" . d_str
+
+fn base_real(x, radix)
+    i = int(x)
+    f = frac(x)
+
+    int_part = base_integer(i, radix)
+
+    if f == real(0)
+        return int_part
+
+    frac_part = base_frac(f, radix, 16)
+
+    int_part . "." . frac_part
+
+fn base_frac(f, radix, limit)
+    result = ""
+    count = 0
+
+    while count < limit
+        if f == real(0)
+            return result
+
+        f = f * real(radix)
+        digit = int(f)
+        result = result . char_at(alphabet, digit)
+        f = frac(f)
+        count = count + 1
+
+    result
+
+# ------------------------------------------------------------
+# Tests
+# ------------------------------------------------------------
+
+print("=== Basic Base Conversion Tests ===")
+print("")
+
+# Test 1: INTEGER to various bases
+print("Test 1: INTEGER conversions")
+n = 255
+
+write("Decimal 255 in binary: ")
+print(base(n, 2))
+
+write("Decimal 255 in octal: ")
+print(base(n, 8))
+
+write("Decimal 255 in hexadecimal: ")
+print(base(n, 16))
+
+write("Decimal 255 in base 36: ")
+print(base(n, 36))
+
+print("")
+
+# Test 2: RATIONAL conversions
+print("Test 2: RATIONAL conversions")
+r = 22/7
+
+write("22/7 in decimal: ")
+print(base(r, 10))
+
+write("22/7 in binary: ")
+print(base(r, 2))
+
+write("22/7 in hexadecimal: ")
+print(base(r, 16))
+
+print("")
+
+# Test 3: REAL conversions
+print("Test 3: REAL conversions")
+x = 3.14159
+
+write("3.14159 in decimal: ")
+print(base(x, 10))
+
+write("3.14159 in binary: ")
+print(base(x, 2))
+
+write("3.14159 in hexadecimal: ")
+print(base(x, 16))
+
+print("")
+
+# Test 4: Negative numbers
+print("Test 4: Negative numbers")
+write("-42 in binary: ")
+print(base(-42, 2))
+
+write("-42 in hexadecimal: ")
+print(base(-42, 16))
+
+print("")
+
+# Test 5: Zero
+print("Test 5: Zero")
+write("0 in binary: ")
+print(base(0, 2))
+
+write("0 in hexadecimal: ")
+print(base(0, 16))
+
+print("")
+
+# Test 6: Powers of 2
+print("Test 6: Powers of 2")
+write("1024 in binary: ")
+print(base(1024, 2))
+
+write("1024 in octal: ")
+print(base(1024, 8))
+
+write("1024 in hex: ")
+print(base(1024, 16))
+
+print("")
+print("Done!")

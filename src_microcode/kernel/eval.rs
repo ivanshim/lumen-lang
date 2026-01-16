@@ -7,6 +7,19 @@ use std::fmt;
 use num_bigint::BigInt;
 use num_traits::Signed;
 
+/// Kind meta-value enum - the 7 possible runtime type descriptors
+/// These form a closed set defined by the kernel
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KindValue {
+    INTEGER,
+    RATIONAL,
+    REAL,
+    STRING,
+    BOOLEAN,
+    ARRAY,
+    NONE,
+}
+
 /// Runtime value
 /// These are the only things that exist at runtime.
 #[derive(Debug, Clone)]
@@ -34,7 +47,8 @@ pub enum Value {
         // Body is stored as-is, execution happens in the execute layer
         body_ref: String,  // reference to function registry, not the body itself
     },
-    Symbol(String),  // Symbolic constant (e.g., INTEGER, RATIONAL, etc.)
+    Symbol(String),  // Symbolic constant (deprecated, use Kind instead)
+    Kind(KindValue),  // Kernel-level type descriptor meta-value
 }
 
 impl fmt::Display for Value {
@@ -104,6 +118,18 @@ impl fmt::Display for Value {
                 write!(f, "<function({})>", params.join(", "))
             }
             Value::Symbol(s) => write!(f, "{}", s),
+            Value::Kind(k) => {
+                let name = match k {
+                    KindValue::INTEGER => "INTEGER",
+                    KindValue::RATIONAL => "RATIONAL",
+                    KindValue::REAL => "REAL",
+                    KindValue::STRING => "STRING",
+                    KindValue::BOOLEAN => "BOOLEAN",
+                    KindValue::ARRAY => "ARRAY",
+                    KindValue::NONE => "NONE",
+                };
+                write!(f, "{}", name)
+            }
         }
     }
 }
@@ -137,6 +163,7 @@ impl PartialEq for Value {
             }
             (Value::Array(a), Value::Array(b)) => a == b,
             (Value::Symbol(a), Value::Symbol(b)) => a == b,
+            (Value::Kind(a), Value::Kind(b)) => a == b,
             _ => false,
         }
     }
@@ -156,6 +183,7 @@ impl Value {
             Value::Array(_) => true,
             Value::Function { .. } => true,
             Value::Symbol(_) => true,
+            Value::Kind(_) => true,
         }
     }
 
@@ -177,6 +205,7 @@ impl Value {
             Value::Array(_) => Err("Cannot coerce array to number".to_string()),
             Value::Function { .. } => Err("Cannot coerce function to number".to_string()),
             Value::Symbol(_) => Err("Cannot coerce symbol to number".to_string()),
+            Value::Kind(_) => Err("Cannot coerce kind meta-value to number".to_string()),
         }
     }
 }

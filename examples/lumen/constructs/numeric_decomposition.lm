@@ -1,0 +1,181 @@
+# Test numeric decomposition primitives: num(), den(), int(), frac()
+print("=== Numeric Decomposition Tests ===")
+print("")
+
+# Test 1: num() and den() on RATIONAL values
+print("Test 1: num() and den() on RATIONAL")
+r1 = 22/7
+write("r1 = 22/7 = ")
+print(r1)
+write("num(r1) = ")
+print(num(r1))
+write("den(r1) = ")
+print(den(r1))
+write("kind(num(r1)) = ")
+print(kind(num(r1)))
+write("kind(den(r1)) = ")
+print(kind(den(r1)))
+
+print("")
+
+r2 = 1/2
+write("r2 = 1/2 = ")
+print(r2)
+write("num(r2) = ")
+print(num(r2))
+write("den(r2) = ")
+print(den(r2))
+
+print("")
+
+r3 = 355/113
+write("r3 = 355/113 = ")
+print(r3)
+write("num(r3) = ")
+print(num(r3))
+write("den(r3) = ")
+print(den(r3))
+
+print("")
+
+# Test 2: int() and frac() on REAL values
+print("Test 2: int() and frac() on REAL")
+x1 = 3.14159
+write("x1 = 3.14159 = ")
+print(x1)
+write("int(x1) = ")
+print(int(x1))
+write("frac(x1) = ")
+print(frac(x1))
+write("kind(int(x1)) = ")
+print(kind(int(x1)))
+write("kind(frac(x1)) = ")
+print(kind(frac(x1)))
+
+print("")
+
+x2 = 10.5
+write("x2 = 10.5 = ")
+print(x2)
+write("int(x2) = ")
+print(int(x2))
+write("frac(x2) = ")
+print(frac(x2))
+
+print("")
+
+x3 = 0.125
+write("x3 = 0.125 = ")
+print(x3)
+write("int(x3) = ")
+print(int(x3))
+write("frac(x3) = ")
+print(frac(x3))
+
+print("")
+
+# Test 3: Verify the invariant int(x) + frac(x) == x
+print("Test 3: Invariant int(x) + frac(x) == x")
+x = 2.718
+write("x = 2.718 = ")
+print(x)
+i = int(x)
+f = frac(x)
+write("int(x) = ")
+print(i)
+write("frac(x) = ")
+print(f)
+sum = real(i) + f
+write("real(int(x)) + frac(x) = ")
+print(sum)
+write("Equality check: ")
+if sum == x {
+    print("PASS")
+} else {
+    print("FAIL")
+}
+
+print("")
+
+# Test 4: Reconstruct rational from num and den
+print("Test 4: Reconstruct rational from num/den")
+r = 7/12
+write("r = 7/12 = ")
+print(r)
+n = num(r)
+d = den(r)
+write("num(r) = ")
+print(n)
+write("den(r) = ")
+print(d)
+reconstructed = n / d
+write("num(r) / den(r) = ")
+print(reconstructed)
+write("Equality check: ")
+if reconstructed == r {
+    print("PASS")
+} else {
+    print("FAIL")
+}
+
+print("")
+
+# Test 5: Base-N literals with decomposition
+print("Test 5: Base-N literals")
+x = 16@A.8
+write("x = 16@A.8 = ")
+print(x)
+write("kind(x) = ")
+print(kind(x))
+write("int(x) = ")
+print(int(x))
+write("frac(x) = ")
+print(frac(x))
+
+print("")
+
+r = 2@101 / 2@11
+write("r = 2@101 / 2@11 = ")
+print(r)
+write("kind(r) = ")
+print(kind(r))
+write("num(r) = ")
+print(num(r))
+write("den(r) = ")
+print(den(r))
+
+print("")
+
+# Test 6: Edge cases
+print("Test 6: Edge cases")
+
+# Integer part is zero
+x = 0.5
+write("x = 0.5, int(x) = ")
+print(int(x))
+write("frac(x) = ")
+print(frac(x))
+
+print("")
+
+# Fractional part is zero
+x = 5.0
+write("x = 5.0, int(x) = ")
+print(int(x))
+write("frac(x) = ")
+print(frac(x))
+
+print("")
+
+# Negative rational
+r = -22/7
+write("r = -22/7 = ")
+print(r)
+write("num(r) = ")
+print(num(r))
+write("den(r) = ")
+print(den(r))
+
+print("")
+
+print("Done!")

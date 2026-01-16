@@ -1,0 +1,162 @@
+# Round-trip tests: base-N literals → base() conversion
+import("lib_lumen/base.lm")
+
+print("=== Base Round-trip Tests ===")
+print("Testing that base() produces correct representation")
+print("")
+
+# Test 1: Binary literals
+print("Test 1: Binary literals")
+b1 = 2@1010
+write("2@1010 = ")
+print(b1)
+write("base(2@1010, 2) = ")
+print(base(b1, 2))
+print("")
+
+b2 = 2@11111111
+write("2@11111111 = ")
+print(b2)
+write("base(2@11111111, 2) = ")
+print(base(b2, 2))
+print("")
+
+# Test 2: Hexadecimal literals
+print("Test 2: Hexadecimal literals")
+h1 = 16@FF
+write("16@FF = ")
+print(h1)
+write("base(16@FF, 16) = ")
+print(base(h1, 16))
+print("")
+
+h2 = 16@DEADBEEF
+write("16@DEADBEEF = ")
+print(h2)
+write("base(16@DEADBEEF, 16) = ")
+print(base(h2, 16))
+print("")
+
+# Test 3: Octal literals
+print("Test 3: Octal literals")
+o1 = 8@377
+write("8@377 = ")
+print(o1)
+write("base(8@377, 8) = ")
+print(base(o1, 8))
+print("")
+
+# Test 4: Base-36 literals
+print("Test 4: Base-36 literals")
+z1 = 36@Z
+write("36@Z = ")
+print(z1)
+write("base(36@Z, 36) = ")
+print(base(z1, 36))
+print("")
+
+z2 = 36@HELLO
+write("36@HELLO = ")
+print(z2)
+write("base(36@HELLO, 36) = ")
+print(base(z2, 36))
+print("")
+
+# Test 5: Fractional base-N literals
+print("Test 5: Fractional literals")
+f1 = 16@A.8
+write("16@A.8 = ")
+print(f1)
+write("base(16@A.8, 16) = ")
+print(base(f1, 16))
+print("")
+
+f2 = 2@1010.11
+write("2@1010.11 = ")
+print(f2)
+write("base(2@1010.11, 2) = ")
+print(base(f2, 2))
+print("")
+
+# Test 6: Rational from base-N division
+print("Test 6: Rationals from base-N")
+r1 = 16@F / 16@10
+write("16@F / 16@10 = ")
+print(r1)
+write("base(16@F / 16@10, 16) = ")
+print(base(r1, 16))
+print("")
+
+r2 = 2@101 / 2@11
+write("2@101 / 2@11 = ")
+print(r2)
+write("base(2@101 / 2@11, 2) = ")
+print(base(r2, 2))
+print("")
+
+# Test 7: Cross-base conversions
+print("Test 7: Cross-base conversions")
+x = 16@FF
+write("Original hex literal 16@FF = ")
+print(x)
+write("  In binary: ")
+print(base(x, 2))
+write("  In octal: ")
+print(base(x, 8))
+write("  In decimal: ")
+print(base(x, 10))
+write("  In hex: ")
+print(base(x, 16))
+print("")
+
+# Test 8: Verify numerical equivalence
+print("Test 8: Numerical equivalence check")
+dec = 255
+bin = 2@11111111
+oct = 8@377
+hex = 16@FF
+
+write("Decimal: ")
+print(dec)
+write("Binary literal: ")
+print(bin)
+write("Octal literal: ")
+print(oct)
+write("Hex literal: ")
+print(hex)
+
+write("All equal? ")
+if dec == bin and bin == oct and oct == hex
+    print("YES")
+else
+    print("NO")
+
+print("")
+
+# Test 9: Reconstruction accuracy
+print("Test 9: Reconstruction accuracy for fractions")
+original = 10.5
+write("Original: ")
+print(original)
+
+hex_repr = base(original, 16)
+write("Hex representation: ")
+print(hex_repr)
+
+bin_repr = base(original, 2)
+write("Binary representation: ")
+print(bin_repr)
+
+# The literal 16@A.8 should equal 10.5
+reconstructed = 16@A.8
+write("Reconstructed from 16@A.8: ")
+print(reconstructed)
+
+write("Match? ")
+if original == reconstructed
+    print("YES")
+else
+    print("NO")
+
+print("")
+print("All round-trip tests completed!")

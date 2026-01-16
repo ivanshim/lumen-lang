@@ -1,0 +1,34 @@
+# Minimal test for base() function
+
+alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+fn base_integer(n, radix)
+    if n == 0
+        return "0"
+
+    negative = false
+    if n < 0
+        negative = true
+        n = -n
+
+    result = ""
+
+    while n > 0
+        digit = n % radix
+        result = char_at(alphabet, digit) . result
+        n = n // radix
+
+    if negative
+        result = "-" . result
+
+    result
+
+print("Test: Convert 255 to hex")
+result = base_integer(255, 16)
+print(result)
+
+print("Test: Convert 42 to binary")
+result2 = base_integer(42, 2)
+print(result2)
+
+print("Done!")

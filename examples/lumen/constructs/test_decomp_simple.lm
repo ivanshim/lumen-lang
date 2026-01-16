@@ -1,0 +1,44 @@
+# Simple test for numeric decomposition
+print("=== Simple Decomposition Test ===")
+print("")
+
+# Test num() and den()
+print("Test num() and den()")
+r = 22/7
+write("r = 22/7 = ")
+print(r)
+write("num(r) = ")
+print(num(r))
+write("den(r) = ")
+print(den(r))
+
+print("")
+
+# Test int() and frac()
+print("Test int() and frac()")
+x = 3.14
+write("x = 3.14 = ")
+print(x)
+write("int(x) = ")
+print(int(x))
+write("frac(x) = ")
+print(frac(x))
+
+print("")
+
+# Test kind() of results
+print("Test kinds")
+write("kind(num(22/7)) = ")
+print(kind(num(22/7)))
+
+write("kind(den(22/7)) = ")
+print(kind(den(22/7)))
+
+write("kind(int(3.14)) = ")
+print(kind(int(3.14)))
+
+write("kind(frac(3.14)) = ")
+print(kind(frac(3.14)))
+
+print("")
+print("Done!")

@@ -1,0 +1,9 @@
+# Test error cases for numeric decomposition primitives
+print("=== Error Case Tests ===")
+print("These should all produce errors:")
+print("")
+
+# Test 1: num() on non-RATIONAL
+print("Test 1: num() requires RATIONAL")
+write("num(42): ")
+print(num(42))
