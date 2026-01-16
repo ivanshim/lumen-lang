@@ -11,7 +11,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 **Kernel**
 - `emit(string)` — `[kernel]` Write a raw string to stdout; requires a string input and returns `none`.
 
-**Library** (lib_lumen/output.lm)
+**Library** (lib_lumen/str.lm)
 - `write(x)` — `[library]` Convert `x` to a string with `str(x)` and emit without a newline.
 - `print(x)` — `[library]` Write `x` followed by a newline (implemented via `write`).
 
@@ -74,8 +74,8 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `int(x)` — `[kernel]` Integer part of a real value.
 - `frac(x)` — `[kernel]` Fractional part of a real value (same precision as input).
 
-**Library**
-- (none)
+**Library** (lib_lumen/str.lm)
+- `kind_to_string(k)` — `[library]` Convert a KIND meta-value to its canonical uppercase string representation ("INTEGER", "REAL", etc.).
 
 ---
 
@@ -96,11 +96,20 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 **Kernel**
 - `string_a . string_b` — `[kernel]` Concatenate strings with the `.` operator.
-- `str(x)` — `[kernel]` Convert any value to its string representation.
 - `len(x)` — `[kernel]` Length of a string (UTF-8 characters) or an array.
 - `char_at(string, index)` — `[kernel]` Character at a zero-based index (returns `none` if out of bounds).
 - `ord(string)` — `[kernel]` Unicode code point of the first character.
 - `chr(integer)` — `[kernel]` Single-character string for a Unicode code point.
+
+**Library** (lib_lumen/str.lm)
+- `str(x)` — `[library]` Convert any value to its canonical string representation.
+- `is_int(x)` — `[library]` Returns `true` if `x` has INTEGER kind.
+- `is_real(x)` — `[library]` Returns `true` if `x` has REAL kind.
+- `is_rational(x)` — `[library]` Returns `true` if `x` has RATIONAL kind.
+- `is_string(x)` — `[library]` Returns `true` if `x` has STRING kind.
+- `is_bool(x)` — `[library]` Returns `true` if `x` has BOOLEAN kind.
+- `is_array(x)` — `[library]` Returns `true` if `x` has ARRAY kind.
+- `is_none(x)` — `[library]` Returns `true` if `x` has NONE kind.
 
 **Library** (lib_lumen/string.lm)
 - `substring(s, start, end)` — `[library]` Slice string from `start` (inclusive) to `end` (exclusive).
