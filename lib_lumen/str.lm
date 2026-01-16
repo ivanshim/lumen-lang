@@ -43,7 +43,7 @@ fn kind_to_string(k)
         return "ARRAY"
     if k == NONE
         return "NONE"
-    "<unknown kind>"
+    error("kind_to_string: expected KIND meta-value")
 
 
 # Convert any supported value to its canonical string form
@@ -62,7 +62,7 @@ fn str(x)
         return array_to_string(x)
     if is_none(x)
         return none_to_string(x)
-    "<unsupported>"
+    error("str: unsupported value")
 
 
 # Write value to stdout without newline
