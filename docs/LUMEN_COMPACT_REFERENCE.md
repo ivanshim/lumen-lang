@@ -79,6 +79,19 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 ---
 
+## Numeric Literals & Bases [kernel]
+
+**Type hierarchy**
+- `INTEGER` ⊆ `RATIONAL` ⊆ `REAL` (integers are rationals; rationals are reals).
+
+**Base syntax**
+- `@base:digits` — Write a numeric literal in `base` (2..36). Example: `@2:1011` or `@16:ff`.
+
+**Exponent syntax**
+- `value ^ exponent` — Power operator for numeric values.
+
+---
+
 ## String Functions
 
 **Kernel**
