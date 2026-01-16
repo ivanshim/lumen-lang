@@ -4,7 +4,7 @@
 // No language-specific behavior here - just mechanics.
 
 use super::primitives::{Instruction, TransferKind, OperateKind};
-use super::eval::Value;
+use super::eval::{Value, KindValue};
 use super::env::Environment;
 use crate::schema::LanguageSchema;
 use num_bigint::BigInt;
@@ -271,22 +271,22 @@ pub fn execute(
                     }
                 }
                 "kind" => {
-                    // kind(x): return symbolic constant representing value category
-                    // Returns one of: INTEGER, RATIONAL, REAL, IMAGINARY, ARRAY, STRING, BOOLEAN, NONE
+                    // kind(x): return kind meta-value representing value category
+                    // Returns one of the predefined kind constants: INTEGER, RATIONAL, REAL, ARRAY, STRING, BOOLEAN, NONE
                     if arg_vals.len() != 1 {
                         return Err(format!("kind() expects 1 argument, got {}", arg_vals.len()));
                     }
-                    let kind_name = match &arg_vals[0] {
-                        Value::Number(_) => "INTEGER",
-                        Value::Rational { .. } => "RATIONAL",
-                        Value::Real { .. } => "REAL",
-                        Value::Array(_) => "ARRAY",
-                        Value::String(_) => "STRING",
-                        Value::Bool(_) => "BOOLEAN",
-                        Value::Null => "NONE",
+                    let kind_val = match &arg_vals[0] {
+                        Value::Number(_) => KindValue::INTEGER,
+                        Value::Rational { .. } => KindValue::RATIONAL,
+                        Value::Real { .. } => KindValue::REAL,
+                        Value::Array(_) => KindValue::ARRAY,
+                        Value::String(_) => KindValue::STRING,
+                        Value::Bool(_) => KindValue::BOOLEAN,
+                        Value::Null => KindValue::NONE,
                         _ => return Err("kind(): unknown value type".to_string()),
                     };
-                    Ok((Value::Symbol(kind_name.to_string()), ControlFlow::Normal))
+                    Ok((Value::Kind(kind_val), ControlFlow::Normal))
                 }
                 "num" => {
                     // num(x): extract numerator from rational
@@ -385,6 +385,7 @@ pub fn execute(
                                 Value::Array(_) => "array",
                                 Value::Function { .. } => "function",
                                 Value::Symbol(_) => "symbol",
+                                Value::Kind(_) => "kind",
                             };
                             Ok((Value::String(type_str.to_string()), ControlFlow::Normal))
                         }

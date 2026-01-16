@@ -147,9 +147,10 @@ fn run_lumen_stream(source: &str, program_args: &[String]) {
         }
     };
 
-    // Initialize environment with system values (ARGS, etc.)
+    // Initialize environment with system values (ARGS, kind constants, etc.)
     let init_env = move |env: &mut crate::kernel::runtime::Env| {
-        use crate::languages::lumen::values::LumenString;
+        use crate::languages::lumen::values::{LumenString, LumenKind, KindValue};
+
         // Bind ARGS: system-provided semantic value containing all program arguments
         // ARGS is immutable and read-only (cannot be reassigned by user code)
         let args_str = if program_args.is_empty() {
@@ -158,6 +159,17 @@ fn run_lumen_stream(source: &str, program_args: &[String]) {
             program_args.join(" ")
         };
         env.define("ARGS".to_string(), Box::new(LumenString::new(args_str)));
+
+        // Bind kind meta-value constants: INTEGER, RATIONAL, REAL, STRING, BOOLEAN, ARRAY, NONE
+        // These are predefined kernel-level type descriptors that match kind() return values
+        env.define("INTEGER".to_string(), Box::new(LumenKind::new(KindValue::INTEGER)));
+        env.define("RATIONAL".to_string(), Box::new(LumenKind::new(KindValue::RATIONAL)));
+        env.define("REAL".to_string(), Box::new(LumenKind::new(KindValue::REAL)));
+        env.define("STRING".to_string(), Box::new(LumenKind::new(KindValue::STRING)));
+        env.define("BOOLEAN".to_string(), Box::new(LumenKind::new(KindValue::BOOLEAN)));
+        env.define("ARRAY".to_string(), Box::new(LumenKind::new(KindValue::ARRAY)));
+        env.define("NONE".to_string(), Box::new(LumenKind::new(KindValue::NONE)));
+
         Ok(())
     };
 

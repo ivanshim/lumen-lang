@@ -1,0 +1,74 @@
+# Test kind meta-value constants
+print("=== Kind Meta-Value Constants Test ===")
+print("")
+
+# Test 1: Check that constants are available
+print("Test 1: Constants are defined")
+write("INTEGER = ")
+print(INTEGER)
+write("RATIONAL = ")
+print(RATIONAL)
+write("REAL = ")
+print(REAL)
+write("STRING = ")
+print(STRING)
+write("BOOLEAN = ")
+print(BOOLEAN)
+write("ARRAY = ")
+print(ARRAY)
+write("NONE = ")
+print(NONE)
+
+print("")
+
+# Test 2: Use constants with kind()
+print("Test 2: Using constants with kind()")
+write("kind(42) == INTEGER: ")
+print(kind(42) == INTEGER)
+
+write("kind(1/2) == RATIONAL: ")
+print(kind(1/2) == RATIONAL)
+
+write("kind(3.14) == REAL: ")
+print(kind(3.14) == REAL)
+
+write("kind(\"hello\") == STRING: ")
+print(kind("hello") == STRING)
+
+write("kind(true) == BOOLEAN: ")
+print(kind(true) == BOOLEAN)
+
+write("kind([1,2,3]) == ARRAY: ")
+print(kind([1,2,3]) == ARRAY)
+
+write("kind(none) == NONE: ")
+print(kind(none) == NONE)
+
+print("")
+
+# Test 3: Type checking in code
+print("Test 3: Type checking")
+x = 42
+if kind(x) == INTEGER
+    print("x is an INTEGER")
+
+y = 22/7
+if kind(y) == RATIONAL
+    print("y is a RATIONAL")
+
+z = 3.14
+if kind(z) == REAL
+    print("z is a REAL")
+
+print("")
+
+# Test 4: Verify constants are equal to themselves
+print("Test 4: Constant identity")
+write("INTEGER == INTEGER: ")
+print(INTEGER == INTEGER)
+
+write("RATIONAL == RATIONAL: ")
+print(RATIONAL == RATIONAL)
+
+print("")
+print("All tests completed!")

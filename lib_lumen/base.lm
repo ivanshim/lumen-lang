@@ -9,7 +9,7 @@ alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
 # ------------------------------------------------------------
 
 fn base(value, radix)
-    if kind(radix) != kind(0)
+    if kind(radix) != INTEGER
         error("base(): radix must be INTEGER")
 
     if radix < 2 or radix > 36
@@ -17,13 +17,13 @@ fn base(value, radix)
 
     k = kind(value)
 
-    if k == kind(0)
+    if k == INTEGER
         base_integer(value, radix)
 
-    if k == kind(1/2)
+    if k == RATIONAL
         base_rational(value, radix)
 
-    if k == kind(1.0)
+    if k == REAL
         base_real(value, radix)
 
     error("base(): unsupported kind: " . str(k))

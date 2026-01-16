@@ -549,6 +549,71 @@ impl RuntimeValue for LumenSymbol {
     }
 }
 
+/// Kind meta-value enum - the 7 possible runtime type descriptors
+/// These form a closed set defined by the kernel
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KindValue {
+    INTEGER,
+    RATIONAL,
+    REAL,
+    STRING,
+    BOOLEAN,
+    ARRAY,
+    NONE,
+}
+
+/// Lumen kind value - kernel-level type descriptor meta-value
+/// These are NOT data values - they describe the type/kind of data values
+/// Users cannot construct these; they only exist as global constants and kind() return values
+#[derive(Debug, Clone, PartialEq)]
+pub struct LumenKind {
+    pub kind: KindValue,
+}
+
+impl LumenKind {
+    pub fn new(kind: KindValue) -> Self {
+        Self { kind }
+    }
+}
+
+impl RuntimeValue for LumenKind {
+    fn clone_boxed(&self) -> Box<dyn RuntimeValue> {
+        Box::new(self.clone())
+    }
+
+    fn as_debug_string(&self) -> String {
+        format!("Kind({})", self.as_display_string())
+    }
+
+    fn as_display_string(&self) -> String {
+        match self.kind {
+            KindValue::INTEGER => "INTEGER".to_string(),
+            KindValue::RATIONAL => "RATIONAL".to_string(),
+            KindValue::REAL => "REAL".to_string(),
+            KindValue::STRING => "STRING".to_string(),
+            KindValue::BOOLEAN => "BOOLEAN".to_string(),
+            KindValue::ARRAY => "ARRAY".to_string(),
+            KindValue::NONE => "NONE".to_string(),
+        }
+    }
+
+    fn eq_value(&self, other: &dyn RuntimeValue) -> Result<bool, String> {
+        if let Some(other_kind) = other.as_any().downcast_ref::<LumenKind>() {
+            Ok(self.kind == other_kind.kind)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
 /// Helper to extract a LumenArray if the value is one.
 pub fn as_array(val: &dyn RuntimeValue) -> Result<&LumenArray, String> {
     val.as_any()

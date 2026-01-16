@@ -59,6 +59,16 @@ pub fn run(source: &str, schema: &LanguageSchema, program_args: &[String]) -> Re
     };
     env.set("ARGS".to_string(), Value::String(args_str));
 
+    // Bind kind meta-value constants: INTEGER, RATIONAL, REAL, STRING, BOOLEAN, ARRAY, NONE
+    // These are predefined kernel-level type descriptors that match kind() return values
+    env.set("INTEGER".to_string(), Value::Kind(eval::KindValue::INTEGER));
+    env.set("RATIONAL".to_string(), Value::Kind(eval::KindValue::RATIONAL));
+    env.set("REAL".to_string(), Value::Kind(eval::KindValue::REAL));
+    env.set("STRING".to_string(), Value::Kind(eval::KindValue::STRING));
+    env.set("BOOLEAN".to_string(), Value::Kind(eval::KindValue::BOOLEAN));
+    env.set("ARRAY".to_string(), Value::Kind(eval::KindValue::ARRAY));
+    env.set("NONE".to_string(), Value::Kind(eval::KindValue::NONE));
+
     let (result, _flow) = execute(&instr, &mut env, schema)?;
     let execute_time = t4.elapsed();
 
