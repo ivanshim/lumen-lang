@@ -89,11 +89,10 @@ sum = real(i) + f
 write("real(int(x)) + frac(x) = ")
 print(sum)
 write("Equality check: ")
-if sum == x {
+if sum == x
     print("PASS")
-} else {
+else
     print("FAIL")
-}
 
 print("")
 
@@ -112,11 +111,10 @@ reconstructed = n / d
 write("num(r) / den(r) = ")
 print(reconstructed)
 write("Equality check: ")
-if reconstructed == r {
+if reconstructed == r
     print("PASS")
-} else {
+else
     print("FAIL")
-}
 
 print("")
 
