@@ -1,0 +1,109 @@
+# base.lm
+# Numeric base representation utilities (INTEGER, RATIONAL, REAL)
+# Library-level formatting only — always returns STRING
+
+alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+# ------------------------------------------------------------
+# Public entry point
+# ------------------------------------------------------------
+
+fn base(value, radix)
+    if kind(radix) != kind(0)
+        error("base(): radix must be INTEGER")
+
+    if radix < 2 or radix > 36
+        error("base(): radix must be between 2 and 36")
+
+    k = kind(value)
+
+    if k == kind(0)
+        base_integer(value, radix)
+
+    if k == kind(1/2)
+        base_rational(value, radix)
+
+    if k == kind(1.0)
+        base_real(value, radix)
+
+    error("base(): unsupported kind: " . str(k))
+
+# ------------------------------------------------------------
+# INTEGER
+# ------------------------------------------------------------
+
+fn base_integer(n, radix)
+    if n == 0
+        return "0"
+
+    negative = false
+    if n < 0
+        negative = true
+        n = -n
+
+    result = ""
+
+    while n > 0
+        digit = n % radix
+        result = char_at(alphabet, digit) . result
+        n = n // radix      # integer quotient operator
+
+    if negative
+        result = "-" . result
+
+    result
+
+# ------------------------------------------------------------
+# RATIONAL
+# ------------------------------------------------------------
+
+fn base_rational(r, radix)
+    n = num(r)
+    d = den(r)
+
+    n_str = base_integer(n, radix)
+    d_str = base_integer(d, radix)
+
+    n_str . "/" . d_str
+
+# ------------------------------------------------------------
+# REAL
+# ------------------------------------------------------------
+
+# NOTE:
+# - Uses fixed fractional precision
+# - Representation is string-only
+# - No attempt to reconstruct a REAL in another base
+
+fn base_real(x, radix)
+    i = int(x)
+    f = frac(x)
+
+    int_part = base_integer(i, radix)
+
+    if f == 0
+        return int_part
+
+    frac_part = base_frac(f, radix, 16)
+
+    int_part . "." . frac_part
+
+# ------------------------------------------------------------
+# FRACTIONAL helper (REAL only)
+# ------------------------------------------------------------
+
+fn base_frac(f, radix, limit)
+    result = ""
+    count = 0
+
+    while count < limit
+        if f == real(0)
+            return result
+
+        f = f * real(radix)
+        digit = int(f)
+        result = result . char_at(alphabet, digit)
+        f = frac(f)
+        count = count + 1
+
+    result
