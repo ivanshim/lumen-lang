@@ -518,8 +518,8 @@ impl<'a> Parser<'a> {
         if lexeme.chars().next().map_or(false, |c| c.is_ascii_digit()) {
             let num_str = self.consume_number()?;
 
-            // Check if it's a base-N literal (contains '#')
-            if num_str.contains('#') {
+            // Check if it's a base-N literal (contains '@')
+            if num_str.contains('@') {
                 let (numerator, denominator) = Self::parse_base_n_literal(&num_str)?;
                 // Base-N literals with fractional part are Real
                 if denominator != num_bigint::BigInt::from(1) {
@@ -720,7 +720,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Consume a number (handling multi-char numbers and base-N literals)
-    /// For base-N literals: <base>#<digits>[.<fraction>][^<exponent>]
+    /// For base-N literals: <base>@<digits>[.<fraction>][^<exponent>]
     fn consume_number(&mut self) -> Result<String, String> {
         let mut num_str = self.peek().lexeme.clone();
         self.advance();
@@ -730,14 +730,14 @@ impl<'a> Parser<'a> {
             let ch = token.lexeme.as_str();
             if ch.len() == 1 {
                 let b = ch.as_bytes()[0] as char;
-                // Consume digits, '.', '#', and '^' for base-N literals
-                if b.is_ascii_digit() || b == '.' || b == '#' || b == '^' {
+                // Consume digits, '.', '@', and '^' for base-N literals
+                if b.is_ascii_digit() || b == '.' || b == '@' || b == '^' {
                     num_str.push_str(ch);
                     self.advance();
                     continue;
                 }
-                // For base-N literals, also consume letters (a-z, A-Z) after '#'
-                if num_str.contains('#') && (b.is_ascii_lowercase() || b.is_ascii_uppercase()) {
+                // For base-N literals, also consume letters (a-z, A-Z) after '@'
+                if num_str.contains('@') && (b.is_ascii_lowercase() || b.is_ascii_uppercase()) {
                     num_str.push_str(ch);
                     self.advance();
                     continue;
@@ -803,19 +803,19 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse a base-N numeric literal: <base>#<digits>[.<fraction>][^<exponent>]
-    /// Examples: 16#FF, 2#1011, 36#1234.wxyz, 10#123.45^6
+    /// Parse a base-N numeric literal: <base>@<digits>[.<fraction>][^<exponent>]
+    /// Examples: 16@FF, 2@1011, 36@1234.wxyz, 10@123.45^6
     /// Returns (numerator, denominator) where denominator is 1 for integers
     fn parse_base_n_literal(num_str: &str) -> Result<(num_bigint::BigInt, num_bigint::BigInt), String> {
         use num_bigint::BigInt;
         use num_traits::cast::ToPrimitive;
 
-        // Find the '#' separator
-        let hash_pos = num_str.find('#')
-            .ok_or_else(|| format!("Invalid base-N literal: missing '#' in '{}'", num_str))?;
+        // Find the '@' separator
+        let at_pos = num_str.find('@')
+            .ok_or_else(|| format!("Invalid base-N literal: missing '@' in '{}'", num_str))?;
 
         // Parse base (always in decimal)
-        let base_str = &num_str[..hash_pos];
+        let base_str = &num_str[..at_pos];
         let base: u32 = base_str.parse()
             .map_err(|_| format!("Invalid base in literal '{}': base must be decimal integer", num_str))?;
 
@@ -825,10 +825,10 @@ impl<'a> Parser<'a> {
         }
 
         // Parse the rest: <digits>[.<fraction>][^<exponent>]
-        let rest = &num_str[hash_pos + 1..];
+        let rest = &num_str[at_pos + 1..];
 
         if rest.is_empty() {
-            return Err(format!("Invalid base-N literal '{}': missing digits after '#'", num_str));
+            return Err(format!("Invalid base-N literal '{}': missing digits after '@'", num_str));
         }
 
         // Split by '^' for exponent

@@ -1,0 +1,116 @@
+# Test base-N numeric literals
+# Syntax: <base>@<digits>[.<fraction>][^<exponent>]
+
+print("=== Base-N Literal Tests ===")
+print("")
+
+# Test 1: Binary (base 2)
+write("2@1011 = ")
+print(2@1011)
+
+write("2@1111 = ")
+print(2@1111)
+
+print("")
+
+# Test 2: Hexadecimal (base 16)
+write("16@FF = ")
+print(16@FF)
+
+write("16@DEAD = ")
+print(16@DEAD)
+
+write("16@cafe = ")
+print(16@cafe)
+
+print("")
+
+# Test 3: Octal (base 8)
+write("8@777 = ")
+print(8@777)
+
+write("8@100 = ")
+print(8@100)
+
+print("")
+
+# Test 4: Base 36 (maximum)
+write("36@ZZ = ")
+print(36@ZZ)
+
+write("36@abc = ")
+print(36@abc)
+
+print("")
+
+# Test 5: Fractional literals (produce reals)
+write("16@FF.8 = ")
+print(16@FF.8)
+
+write("2@1010.11 = ")
+print(2@1010.11)
+
+write("10@123.456 = ")
+print(10@123.456)
+
+print("")
+
+# Test 6: Exponent notation (exponent in same base)
+write("10@2^3 = ")
+print(10@2^3)
+
+write("16@10^2 = ")
+print(16@10^2)
+
+write("2@10^11 = ")
+print(2@10^11)
+
+print("")
+
+# Test 7: Combined fraction and exponent
+write("16@F.F^1 = ")
+print(16@F.F^1)
+
+write("10@1.5^2 = ")
+print(10@1.5^2)
+
+print("")
+
+# Test 8: Arithmetic with base-N literals
+write("16@10 + 16@20 = ")
+print(16@10 + 16@20)
+
+write("2@1000 * 2@10 = ")
+print(2@1000 * 2@10)
+
+print("")
+
+# Test 9: Division (integer / integer = rational)
+write("16@10 / 2@11 = ")
+result = 16@10 / 2@11
+print(result)
+
+print("")
+
+# Test 10: Comparison
+write("16@FF > 16@FE: ")
+print(16@FF > 16@FE)
+
+write("2@1010 == 10@10: ")
+print(2@1010 == 10@10)
+
+print("")
+
+# Test 11: Mixed bases in expressions
+write("16@A + 8@12 + 2@1010 = ")
+print(16@A + 8@12 + 2@1010)
+
+print("")
+
+# Test 12: Case insensitivity
+write("16@aF == 16@AF: ")
+print(16@aF == 16@AF)
+
+print("")
+
+print("Done!")

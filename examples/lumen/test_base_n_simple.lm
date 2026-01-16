@@ -1,3 +1,0 @@
-# Simple base-N literal test
-x = 16#FF
-print(x)

@@ -7,10 +7,10 @@ use num_traits::cast::ToPrimitive;
 
 /// Parse a numeric string to either BigInt (integer) or a rational representation (numerator, denominator)
 /// Returns (numerator, denominator) where denominator is 1 for integers
-/// Supports both base-10 (e.g., "123.45") and base-N (e.g., "16#FF.AB^C") literals
+/// Supports both base-10 (e.g., "123.45") and base-N (e.g., "16@FF.AB^C") literals
 pub fn parse_number_rational(s: &str) -> LumenResult<(BigInt, BigInt)> {
-    // Check if this is a base-N literal (contains '#')
-    if s.contains('#') {
+    // Check if this is a base-N literal (contains '@')
+    if s.contains('@') {
         return parse_base_n_literal(s);
     }
 
@@ -52,16 +52,16 @@ pub fn parse_number_rational(s: &str) -> LumenResult<(BigInt, BigInt)> {
     }
 }
 
-/// Parse a base-N numeric literal: <base>#<digits>[.<fraction>][^<exponent>]
-/// Examples: 16#FF, 2#1011, 36#1234.wxyz, 10#123.45^6
+/// Parse a base-N numeric literal: <base>@<digits>[.<fraction>][^<exponent>]
+/// Examples: 16@FF, 2@1011, 36@1234.wxyz, 10@123.45^6
 /// Returns (numerator, denominator) where denominator is 1 for integers
 fn parse_base_n_literal(s: &str) -> LumenResult<(BigInt, BigInt)> {
-    // Find the '#' separator
-    let hash_pos = s.find('#')
-        .ok_or_else(|| format!("Invalid base-N literal: missing '#' in '{}'", s))?;
+    // Find the '@' separator
+    let at_pos = s.find('@')
+        .ok_or_else(|| format!("Invalid base-N literal: missing '@' in '{}'", s))?;
 
     // Parse base (always in decimal)
-    let base_str = &s[..hash_pos];
+    let base_str = &s[..at_pos];
     let base: u32 = base_str.parse()
         .map_err(|_| format!("Invalid base in literal '{}': base must be decimal integer", s))?;
 
@@ -71,10 +71,10 @@ fn parse_base_n_literal(s: &str) -> LumenResult<(BigInt, BigInt)> {
     }
 
     // Parse the rest: <digits>[.<fraction>][^<exponent>]
-    let rest = &s[hash_pos + 1..];
+    let rest = &s[at_pos + 1..];
 
     if rest.is_empty() {
-        return Err(format!("Invalid base-N literal '{}': missing digits after '#'", s).into());
+        return Err(format!("Invalid base-N literal '{}': missing digits after '@'", s).into());
     }
 
     // Split by '^' for exponent
