@@ -88,7 +88,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `base@digits` — Write a numeric literal in `base` (2..36), with the base value itself written in base 10. Example: `2@1011` or `16@FF`.
 
 **Exponent syntax**
-- `value ^ exponent` — Power operator for numeric values.
+- `value^exponent` — Power operator for numeric values.
 
 ---
 
