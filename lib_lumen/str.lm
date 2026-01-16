@@ -2,6 +2,10 @@
 fn is_int(x)
     return kind(x) == INTEGER
 
+# Return true if x has RATIONAL kind
+fn is_rational(x)
+    return kind(x) == RATIONAL
+
 # Return true if x has REAL kind
 fn is_real(x)
     return kind(x) == REAL
@@ -9,10 +13,6 @@ fn is_real(x)
 # Return true if x has STRING kind
 fn is_string(x)
     return kind(x) == STRING
-
-# Return true if x has RATIONAL kind
-fn is_rational(x)
-    return kind(x) == RATIONAL
 
 # Return true if x has BOOLEAN kind
 fn is_bool(x)
