@@ -55,6 +55,14 @@ impl ExprNode for FunctionCallExpr {
                     // len(x): return length of string or array
                     return builtin_len(&self.args[0].eval(env)?);
                 }
+                "ord" => {
+                    // ord(s): return decimal integer value of first character
+                    return builtin_ord(&self.args[0].eval(env)?);
+                }
+                "chr" => {
+                    // chr(n): return single-character string for decimal integer
+                    return builtin_chr(&self.args[0].eval(env)?);
+                }
                 _ => {}
             }
         } else if self.args.len() == 2 {
@@ -401,6 +409,55 @@ fn builtin_char_at(string_val: &Value, index_val: &Value) -> LumenResult<Value> 
         Some(ch) => Ok(Box::new(LumenString::new(ch.to_string()))),
         None => Ok(Box::new(LumenNone)), // Out of bounds
     }
+}
+
+/// Built-in function: ord(s) - Return decimal integer value of first character
+/// Returns the UTF-8 code point of the first character in the string.
+/// Errors if the argument is not a string or if the string is empty.
+fn builtin_ord(value: &Value) -> LumenResult<Value> {
+    use crate::languages::lumen::values::{LumenString, LumenNumber};
+    use num_bigint::BigInt;
+
+    // Extract string value
+    let string_val = value.as_any()
+        .downcast_ref::<LumenString>()
+        .ok_or_else(|| "ord() requires a string argument".to_string())?;
+
+    // Check if string is empty
+    if string_val.value.is_empty() {
+        return Err("ord() requires a non-empty string".to_string());
+    }
+
+    // Get first character and convert to Unicode code point (u32)
+    let first_char = string_val.value.chars().next().unwrap();
+    let code_point = first_char as u32;
+
+    // Return as decimal integer
+    Ok(Box::new(LumenNumber::new(BigInt::from(code_point))))
+}
+
+/// Built-in function: chr(n) - Return single-character string for decimal integer
+/// Returns a string containing the character corresponding to the given Unicode code point.
+/// Errors if the argument is not an integer, is negative, or is not a valid Unicode code point.
+fn builtin_chr(value: &Value) -> LumenResult<Value> {
+    use crate::languages::lumen::values::{LumenString, LumenNumber};
+    use num_traits::ToPrimitive;
+
+    // Extract integer value
+    let number_val = value.as_any()
+        .downcast_ref::<LumenNumber>()
+        .ok_or_else(|| "chr() requires an integer argument".to_string())?;
+
+    // Convert to u32 for char conversion
+    let code_point = number_val.value.to_u32()
+        .ok_or_else(|| "chr() argument must be a non-negative integer within valid Unicode range".to_string())?;
+
+    // Convert to char (validates Unicode code point)
+    let character = char::from_u32(code_point)
+        .ok_or_else(|| format!("chr() argument {} is not a valid Unicode code point", code_point))?;
+
+    // Return as single-character string
+    Ok(Box::new(LumenString::new(character.to_string())))
 }
 
 /// Built-in function: emit(string) - Kernel primitive for I/O

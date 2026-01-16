@@ -514,9 +514,22 @@ impl<'a> Parser<'a> {
     fn parse_primary(&mut self) -> Result<Instruction, String> {
         let lexeme = &self.peek().lexeme.clone();
 
-        // Numbers (integer or float)
+        // Numbers (integer or float or base-N)
         if lexeme.chars().next().map_or(false, |c| c.is_ascii_digit()) {
             let num_str = self.consume_number()?;
+
+            // Check if it's a base-N literal (contains '@')
+            if num_str.contains('@') {
+                let (numerator, denominator) = Self::parse_base_n_literal(&num_str)?;
+                // Base-N literals with fractional part are Real
+                if denominator != num_bigint::BigInt::from(1) {
+                    let precision = Self::calculate_precision(&num_str);
+                    return Ok(Instruction::literal(Value::Real { numerator, denominator, precision }));
+                } else {
+                    // Base-N integer literal
+                    return Ok(Instruction::literal(Value::Number(numerator)));
+                }
+            }
 
             // Check if it's a float (contains decimal point)
             if num_str.contains('.') {
@@ -706,7 +719,8 @@ impl<'a> Parser<'a> {
         Ok(name)
     }
 
-    /// Consume a number (handling multi-char numbers)
+    /// Consume a number (handling multi-char numbers and base-N literals)
+    /// For base-N literals: <base>@<digits>[.<fraction>][^<exponent>]
     fn consume_number(&mut self) -> Result<String, String> {
         let mut num_str = self.peek().lexeme.clone();
         self.advance();
@@ -716,7 +730,14 @@ impl<'a> Parser<'a> {
             let ch = token.lexeme.as_str();
             if ch.len() == 1 {
                 let b = ch.as_bytes()[0] as char;
-                if b.is_ascii_digit() || b == '.' {
+                // Consume digits, '.', '@', and '^' for base-N literals
+                if b.is_ascii_digit() || b == '.' || b == '@' || b == '^' {
+                    num_str.push_str(ch);
+                    self.advance();
+                    continue;
+                }
+                // For base-N literals, also consume letters (a-z, A-Z) after '@'
+                if num_str.contains('@') && (b.is_ascii_lowercase() || b.is_ascii_uppercase()) {
                     num_str.push_str(ch);
                     self.advance();
                     continue;
@@ -780,6 +801,128 @@ impl<'a> Parser<'a> {
         } else {
             Err(format!("parse_float called on non-float: {}", num_str))
         }
+    }
+
+    /// Parse a base-N numeric literal: <base>@<digits>[.<fraction>][^<exponent>]
+    /// Examples: 16@FF, 2@1011, 36@1234.wxyz, 10@123.45^6
+    /// Returns (numerator, denominator) where denominator is 1 for integers
+    fn parse_base_n_literal(num_str: &str) -> Result<(num_bigint::BigInt, num_bigint::BigInt), String> {
+        use num_bigint::BigInt;
+        use num_traits::cast::ToPrimitive;
+
+        // Find the '@' separator
+        let at_pos = num_str.find('@')
+            .ok_or_else(|| format!("Invalid base-N literal: missing '@' in '{}'", num_str))?;
+
+        // Parse base (always in decimal)
+        let base_str = &num_str[..at_pos];
+        let base: u32 = base_str.parse()
+            .map_err(|_| format!("Invalid base in literal '{}': base must be decimal integer", num_str))?;
+
+        // Validate base range [2, 36]
+        if base < 2 || base > 36 {
+            return Err(format!("Invalid base {}: must be between 2 and 36", base));
+        }
+
+        // Parse the rest: <digits>[.<fraction>][^<exponent>]
+        let rest = &num_str[at_pos + 1..];
+
+        if rest.is_empty() {
+            return Err(format!("Invalid base-N literal '{}': missing digits after '@'", num_str));
+        }
+
+        // Split by '^' for exponent
+        let (mantissa_str, exp_str) = if let Some(exp_pos) = rest.find('^') {
+            let mantissa = &rest[..exp_pos];
+            let exp = &rest[exp_pos + 1..];
+            if exp.is_empty() {
+                return Err(format!("Invalid base-N literal '{}': missing digits after '^'", num_str));
+            }
+            (mantissa, Some(exp))
+        } else {
+            (rest, None)
+        };
+
+        // Split mantissa by '.' for fractional part
+        let (int_str, frac_str) = if let Some(dot_pos) = mantissa_str.find('.') {
+            let int_part = &mantissa_str[..dot_pos];
+            let frac_part = &mantissa_str[dot_pos + 1..];
+            if frac_part.is_empty() {
+                return Err(format!("Invalid base-N literal '{}': missing digits after '.'", num_str));
+            }
+            (int_part, Some(frac_part))
+        } else {
+            (mantissa_str, None)
+        };
+
+        if int_str.is_empty() {
+            return Err(format!("Invalid base-N literal '{}': missing digits before '.' or '^'", num_str));
+        }
+
+        // Parse integer part
+        let int_value = Self::parse_digits_in_base(int_str, base)
+            .map_err(|e| format!("Invalid base-N literal '{}': {}", num_str, e))?;
+
+        // Parse fractional part if present
+        let (numerator, denominator) = if let Some(frac) = frac_str {
+            let frac_value = Self::parse_digits_in_base(frac, base)
+                .map_err(|e| format!("Invalid base-N literal '{}': {}", num_str, e))?;
+
+            // fractional value = frac_value / base^frac_digits
+            let frac_digits = frac.len() as u32;
+            let frac_denominator = BigInt::from(base).pow(frac_digits);
+
+            // Combined: int_value + frac_value/frac_denominator
+            // = (int_value * frac_denominator + frac_value) / frac_denominator
+            let combined_numerator = int_value * &frac_denominator + frac_value;
+            (combined_numerator, frac_denominator)
+        } else {
+            // Integer literal (no fraction)
+            (int_value, BigInt::from(1))
+        };
+
+        // Apply exponent if present
+        let (final_numerator, final_denominator) = if let Some(exp) = exp_str {
+            let exp_value = Self::parse_digits_in_base(exp, base)
+                .map_err(|e| format!("Invalid base-N literal '{}': exponent {}", num_str, e))?;
+
+            // Convert exponent to u32
+            let exp_u32 = exp_value.to_u32()
+                .ok_or_else(|| format!("Invalid base-N literal '{}': exponent too large", num_str))?;
+
+            // Multiply by base^exponent
+            let multiplier = BigInt::from(base).pow(exp_u32);
+            (numerator * multiplier, denominator)
+        } else {
+            (numerator, denominator)
+        };
+
+        Ok((final_numerator, final_denominator))
+    }
+
+    /// Parse a string of digits in the given base
+    /// Digits: 0-9 for values 0-9, a-z/A-Z for values 10-35
+    fn parse_digits_in_base(digits: &str, base: u32) -> Result<num_bigint::BigInt, String> {
+        use num_bigint::BigInt;
+        let mut result = BigInt::from(0);
+        let base_bigint = BigInt::from(base);
+
+        for ch in digits.chars() {
+            let digit_value = match ch {
+                '0'..='9' => (ch as u32) - ('0' as u32),
+                'a'..='z' => (ch as u32) - ('a' as u32) + 10,
+                'A'..='Z' => (ch as u32) - ('A' as u32) + 10,
+                _ => return Err(format!("invalid digit '{}' for base {}", ch, base)),
+            };
+
+            if digit_value >= base {
+                return Err(format!("digit '{}' (value {}) is not valid in base {}", ch, digit_value, base));
+            }
+
+            result = result * &base_bigint + BigInt::from(digit_value);
+        }
+
+        Ok(result)
     }
 
     /// Consume a string (handling escape sequences)

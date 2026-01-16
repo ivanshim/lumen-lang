@@ -60,11 +60,17 @@ impl ExprPrefix for NumberLiteralPrefix {
 
         // Since the kernel lexer is fully agnostic, it emits each digit as a separate token.
         // We need to consume consecutive digit tokens to build the full number.
+        // For base-N literals: <base>@<digits>[.<fraction>][^<exponent>]
         loop {
-            // Check if next token is a digit
+            // Check if next token is a digit, '.', '@', or '^' (for base-N literals)
             if parser.peek().lexeme.len() == 1 {
                 let ch = parser.peek().lexeme.as_bytes()[0];
-                if ch.is_ascii_digit() || ch == b'.' {
+                if ch.is_ascii_digit() || ch == b'.' || ch == b'@' || ch == b'^' {
+                    value.push_str(&parser.advance().lexeme);
+                    continue;
+                }
+                // For base-N literals, also consume letters (a-z, A-Z) after '@'
+                if value.contains('@') && (ch.is_ascii_lowercase() || ch.is_ascii_uppercase()) {
                     value.push_str(&parser.advance().lexeme);
                     continue;
                 }

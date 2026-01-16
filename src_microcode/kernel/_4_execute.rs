@@ -264,6 +264,45 @@ pub fn execute(
                         _ => Err("char_at() first argument must be a string".to_string()),
                     }
                 }
+                "ord" => {
+                    // ord(s): return decimal integer value of first character
+                    // Returns the UTF-8 code point of the first character
+                    if arg_vals.len() != 1 {
+                        return Err(format!("ord() expects 1 argument, got {}", arg_vals.len()));
+                    }
+                    match &arg_vals[0] {
+                        Value::String(s) => {
+                            // Check if string is empty
+                            if s.is_empty() {
+                                return Err("ord() requires a non-empty string".to_string());
+                            }
+                            // Get first character and convert to Unicode code point
+                            let first_char = s.chars().next().unwrap();
+                            let code_point = first_char as u32;
+                            Ok((Value::Number(BigInt::from(code_point)), ControlFlow::Normal))
+                        }
+                        _ => Err("ord() requires a string argument".to_string()),
+                    }
+                }
+                "chr" => {
+                    // chr(n): return single-character string for decimal integer
+                    // Returns a string containing the character for the given Unicode code point
+                    if arg_vals.len() != 1 {
+                        return Err(format!("chr() expects 1 argument, got {}", arg_vals.len()));
+                    }
+                    match &arg_vals[0] {
+                        Value::Number(n) => {
+                            // Convert to u32 for char conversion
+                            let code_point = n.to_u32()
+                                .ok_or_else(|| "chr() argument must be a non-negative integer within valid Unicode range".to_string())?;
+                            // Convert to char (validates Unicode code point)
+                            let character = char::from_u32(code_point)
+                                .ok_or_else(|| format!("chr() argument {} is not a valid Unicode code point", code_point))?;
+                            Ok((Value::String(character.to_string()), ControlFlow::Normal))
+                        }
+                        _ => Err("chr() requires an integer argument".to_string()),
+                    }
+                }
                 "extern" => {
                     // extern(function_name, arg1, arg2, ...)
                     if arg_vals.is_empty() {

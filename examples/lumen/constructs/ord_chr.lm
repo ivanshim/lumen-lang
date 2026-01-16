@@ -1,0 +1,93 @@
+# Test ord() and chr() built-in functions
+
+print("=== ord() and chr() Tests ===")
+print("")
+
+# Test 1: Basic ASCII characters
+write("ord('A'): ")
+print(ord("A"))
+
+write("ord('Z'): ")
+print(ord("Z"))
+
+write("ord('a'): ")
+print(ord("a"))
+
+write("ord('z'): ")
+print(ord("z"))
+
+write("ord('0'): ")
+print(ord("0"))
+
+write("ord('9'): ")
+print(ord("9"))
+
+print("")
+
+# Test 2: Special characters
+write("ord(' '): ")
+print(ord(" "))
+
+write("ord('!'): ")
+print(ord("!"))
+
+write("ord('?'): ")
+print(ord("?"))
+
+print("")
+
+# Test 3: chr() function
+write("chr(65): ")
+print(chr(65))
+
+write("chr(90): ")
+print(chr(90))
+
+write("chr(97): ")
+print(chr(97))
+
+write("chr(122): ")
+print(chr(122))
+
+write("chr(48): ")
+print(chr(48))
+
+write("chr(57): ")
+print(chr(57))
+
+print("")
+
+# Test 4: Round-trip conversion
+write("chr(ord('H')): ")
+print(chr(ord("H")))
+
+write("ord(chr(72)): ")
+print(ord(chr(72)))
+
+print("")
+
+# Test 5: Multi-character strings (ord only uses first char)
+write("ord('Hello'): ")
+print(ord("Hello"))
+
+print("")
+
+# Test 6: Building strings with chr()
+result = chr(72) . chr(101) . chr(108) . chr(108) . chr(111)
+write("chr(72).chr(101).chr(108).chr(108).chr(111): ")
+print(result)
+
+print("")
+
+# Test 7: Newline and tab
+write("ord(newline): ")
+print(ord("
+"))
+
+write("chr(10) [newline test]: ")
+result_nl = "Line1" . chr(10) . "Line2"
+print(result_nl)
+
+print("")
+
+print("Done!")
