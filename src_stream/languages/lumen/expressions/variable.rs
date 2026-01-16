@@ -39,10 +39,6 @@ impl ExprNode for FunctionCallExpr {
                     // emit(string) - kernel primitive for I/O
                     return builtin_emit(&self.args[0].eval(env)?);
                 }
-                "int" => {
-                    // int(x): convert string to integer
-                    return builtin_int(&self.args[0].eval(env)?);
-                }
                 "str" => {
                     // str(x): convert any value to string
                     return builtin_str(&self.args[0].eval(env)?);
@@ -66,6 +62,22 @@ impl ExprNode for FunctionCallExpr {
                 "kind" => {
                     // kind(x): return symbolic constant representing value category
                     return builtin_kind(&self.args[0].eval(env)?);
+                }
+                "num" => {
+                    // num(x): return numerator of rational (errors on non-rational)
+                    return builtin_num(&self.args[0].eval(env)?);
+                }
+                "den" => {
+                    // den(x): return denominator of rational (errors on non-rational)
+                    return builtin_den(&self.args[0].eval(env)?);
+                }
+                "int" => {
+                    // int(x): return integer part of real (errors on non-real)
+                    return builtin_int_part(&self.args[0].eval(env)?);
+                }
+                "frac" => {
+                    // frac(x): return fractional part of real (errors on non-real)
+                    return builtin_frac(&self.args[0].eval(env)?);
                 }
                 _ => {}
             }
@@ -270,44 +282,6 @@ impl ExprPrefix for VariablePrefix {
 // ============================================================================
 // BUILT-IN CONVERSION FUNCTIONS
 // ============================================================================
-
-/// Built-in function: int(x) - Numeric projection to integer
-/// - Integer → return unchanged
-/// - Rational → truncate toward zero (discard fractional part)
-/// - String → parse as base-10 integer (backward compatibility)
-/// This is an explicit, lossy conversion for when integer semantics are needed.
-fn builtin_int(value: &Value) -> LumenResult<Value> {
-    use crate::languages::lumen::values::{LumenString, LumenNumber, LumenRational, LumenReal};
-    use num_bigint::BigInt;
-
-    // If it's a Real, truncate toward zero
-    if let Some(real) = value.as_any().downcast_ref::<LumenReal>() {
-        // Truncate toward zero: integer division of numerator by denominator
-        let truncated = &real.numerator / &real.denominator;
-        return Ok(Box::new(LumenNumber::new(truncated)));
-    }
-
-    // If it's a Rational, truncate toward zero
-    if let Some(rational) = value.as_any().downcast_ref::<LumenRational>() {
-        // Truncate toward zero: integer division of numerator by denominator
-        let truncated = &rational.numerator / &rational.denominator;
-        return Ok(Box::new(LumenNumber::new(truncated)));
-    }
-
-    // If it's already a Number (integer), return unchanged
-    if let Some(number) = value.as_any().downcast_ref::<LumenNumber>() {
-        return Ok(Box::new(number.clone()));
-    }
-
-    // If it's a String, parse as decimal integer (backward compatibility)
-    if let Some(string_val) = value.as_any().downcast_ref::<LumenString>() {
-        let bigint = string_val.value.trim().parse::<BigInt>()
-            .map_err(|_| format!("int(): cannot parse '{}' as integer", string_val.value))?;
-        return Ok(Box::new(LumenNumber::new(bigint)));
-    }
-
-    Err("int() requires a number, rational, real, or string argument".to_string())
-}
 
 /// Built-in function: real(x, precision) - Numeric projection to real with configurable precision
 /// - Integer → real (exact)
@@ -523,6 +497,80 @@ fn builtin_kind(value: &Value) -> LumenResult<Value> {
 
     // Unknown value type
     Err("kind(): unknown value type".to_string())
+}
+
+/// Built-in function: num(x) - Extract numerator from rational
+/// Valid only for RATIONAL values. Returns the numerator as an INTEGER.
+/// Errors on all other kinds.
+fn builtin_num(value: &Value) -> LumenResult<Value> {
+    use crate::languages::lumen::values::{LumenNumber, LumenRational};
+
+    // Check if it's a Rational
+    if let Some(rational) = value.as_any().downcast_ref::<LumenRational>() {
+        return Ok(Box::new(LumenNumber::new(rational.numerator.clone())));
+    }
+
+    Err("num() requires a rational argument".to_string())
+}
+
+/// Built-in function: den(x) - Extract denominator from rational
+/// Valid only for RATIONAL values. Returns the denominator as an INTEGER.
+/// Errors on all other kinds.
+fn builtin_den(value: &Value) -> LumenResult<Value> {
+    use crate::languages::lumen::values::{LumenNumber, LumenRational};
+
+    // Check if it's a Rational
+    if let Some(rational) = value.as_any().downcast_ref::<LumenRational>() {
+        return Ok(Box::new(LumenNumber::new(rational.denominator.clone())));
+    }
+
+    Err("den() requires a rational argument".to_string())
+}
+
+/// Built-in function: int(x) - Extract integer part from real
+/// Valid only for REAL values. Returns the integer part as an INTEGER.
+/// Must satisfy: int(x) + frac(x) == x
+/// Errors on all other kinds.
+fn builtin_int_part(value: &Value) -> LumenResult<Value> {
+    use crate::languages::lumen::values::{LumenNumber, LumenReal};
+
+    // Check if it's a Real
+    if let Some(real) = value.as_any().downcast_ref::<LumenReal>() {
+        // Integer part: truncate toward zero (integer division)
+        let int_part = &real.numerator / &real.denominator;
+        return Ok(Box::new(LumenNumber::new(int_part)));
+    }
+
+    Err("int() requires a real argument".to_string())
+}
+
+/// Built-in function: frac(x) - Extract fractional part from real
+/// Valid only for REAL values. Returns the fractional part as a REAL.
+/// Must satisfy: int(x) + frac(x) == x
+/// Preserves precision exactly.
+/// Errors on all other kinds.
+fn builtin_frac(value: &Value) -> LumenResult<Value> {
+    use crate::languages::lumen::values::{LumenReal};
+
+    // Check if it's a Real
+    if let Some(real) = value.as_any().downcast_ref::<LumenReal>() {
+        // Fractional part: x - int(x)
+        // If x = numerator/denominator, then:
+        // int(x) = numerator / denominator (integer division)
+        // frac(x) = x - int(x) = numerator/denominator - (numerator / denominator)
+        //         = (numerator - (numerator / denominator) * denominator) / denominator
+        let int_part = &real.numerator / &real.denominator;
+        let frac_numerator = &real.numerator - (&int_part * &real.denominator);
+
+        // Return as REAL with same precision, preserving exact structure
+        return Ok(Box::new(LumenReal::new(
+            frac_numerator,
+            real.denominator.clone(),
+            real.precision,
+        )));
+    }
+
+    Err("frac() requires a real argument".to_string())
 }
 
 // --------------------

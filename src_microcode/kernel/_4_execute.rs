@@ -133,39 +133,6 @@ pub fn execute(
                         _ => Err("emit() requires a string argument".to_string()),
                     }
                 }
-                "int" => {
-                    // int(x): numeric projection to integer
-                    // - Integer → return unchanged
-                    // - Rational → truncate toward zero
-                    // - String → parse as integer (backward compatibility)
-                    if arg_vals.len() != 1 {
-                        return Err(format!("int() expects 1 argument, got {}", arg_vals.len()));
-                    }
-                    match &arg_vals[0] {
-                        Value::Number(n) => {
-                            // Already an integer, return unchanged
-                            Ok((Value::Number(n.clone()), ControlFlow::Normal))
-                        }
-                        Value::Real { numerator, denominator, .. } => {
-                            // Truncate toward zero: integer division
-                            let truncated = numerator / denominator;
-                            Ok((Value::Number(truncated), ControlFlow::Normal))
-                        }
-                        Value::Rational { numerator, denominator } => {
-                            // Truncate toward zero: integer division
-                            let truncated = numerator / denominator;
-                            Ok((Value::Number(truncated), ControlFlow::Normal))
-                        }
-                        Value::String(s) => {
-                            // Parse string as BigInt
-                            match s.trim().parse::<num_bigint::BigInt>() {
-                                Ok(bigint) => Ok((Value::Number(bigint), ControlFlow::Normal)),
-                                Err(_) => Err(format!("int(): cannot parse '{}' as integer", s)),
-                            }
-                        }
-                        _ => Err("int() requires a number, rational, real, or string argument".to_string()),
-                    }
-                }
                 "real" => {
                     // real(x) or real(x, y): convert to real with configurable precision
                     // Default precision is 15 significant digits
@@ -320,6 +287,68 @@ pub fn execute(
                         _ => return Err("kind(): unknown value type".to_string()),
                     };
                     Ok((Value::Symbol(kind_name.to_string()), ControlFlow::Normal))
+                }
+                "num" => {
+                    // num(x): extract numerator from rational
+                    // Valid only for RATIONAL values, returns numerator as INTEGER
+                    if arg_vals.len() != 1 {
+                        return Err(format!("num() expects 1 argument, got {}", arg_vals.len()));
+                    }
+                    match &arg_vals[0] {
+                        Value::Rational { numerator, .. } => {
+                            Ok((Value::Number(numerator.clone()), ControlFlow::Normal))
+                        }
+                        _ => Err("num() requires a rational argument".to_string()),
+                    }
+                }
+                "den" => {
+                    // den(x): extract denominator from rational
+                    // Valid only for RATIONAL values, returns denominator as INTEGER
+                    if arg_vals.len() != 1 {
+                        return Err(format!("den() expects 1 argument, got {}", arg_vals.len()));
+                    }
+                    match &arg_vals[0] {
+                        Value::Rational { denominator, .. } => {
+                            Ok((Value::Number(denominator.clone()), ControlFlow::Normal))
+                        }
+                        _ => Err("den() requires a rational argument".to_string()),
+                    }
+                }
+                "int" => {
+                    // int(x): extract integer part from real
+                    // Valid only for REAL values, returns integer part as INTEGER
+                    if arg_vals.len() != 1 {
+                        return Err(format!("int() expects 1 argument, got {}", arg_vals.len()));
+                    }
+                    match &arg_vals[0] {
+                        Value::Real { numerator, denominator, .. } => {
+                            // Integer part: truncate toward zero (integer division)
+                            let int_part = numerator / denominator;
+                            Ok((Value::Number(int_part), ControlFlow::Normal))
+                        }
+                        _ => Err("int() requires a real argument".to_string()),
+                    }
+                }
+                "frac" => {
+                    // frac(x): extract fractional part from real
+                    // Valid only for REAL values, returns fractional part as REAL
+                    if arg_vals.len() != 1 {
+                        return Err(format!("frac() expects 1 argument, got {}", arg_vals.len()));
+                    }
+                    match &arg_vals[0] {
+                        Value::Real { numerator, denominator, precision } => {
+                            // Fractional part: x - int(x)
+                            // frac(x) = (numerator - (numerator / denominator) * denominator) / denominator
+                            let int_part = numerator / denominator;
+                            let frac_numerator = numerator - (&int_part * denominator);
+                            Ok((Value::Real {
+                                numerator: frac_numerator,
+                                denominator: denominator.clone(),
+                                precision: *precision,
+                            }, ControlFlow::Normal))
+                        }
+                        _ => Err("frac() requires a real argument".to_string()),
+                    }
                 }
                 "extern" => {
                     // extern(function_name, arg1, arg2, ...)
