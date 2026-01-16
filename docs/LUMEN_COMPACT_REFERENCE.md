@@ -65,7 +65,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 ---
 
-## Operators
+## Operators [kernel]
 
 **Arithmetic**
 - `+` Addition
@@ -91,7 +91,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 ---
 
-## Control Flow & Definitions
+## Control Flow & Definitions [kernel]
 
 **Conditionals & Loops**
 - `if` / `else`
