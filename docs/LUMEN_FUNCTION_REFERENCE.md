@@ -20,7 +20,6 @@ This card lists **user-accessible functions** across the kernel primitives and t
 ## Type Conversion & Introspection
 
 **Kernel**
-- `str(x)` — `[kernel]` Convert any value to its string representation.
 - `real(x)` — `[kernel]` Convert integer/rational/real to a real value using default precision (15 sig figs).
 - `real(x, precision)` — `[kernel]` Convert to real with the requested significant-digit precision.
 - `kind(x)` — `[kernel]` Return the kind meta-value (`INTEGER`, `RATIONAL`, `REAL`, `ARRAY`, `STRING`, `BOOLEAN`, `NONE`).
@@ -34,13 +33,15 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 ---
 
-## String & Array Helpers
+## String Functions
 
 **Kernel**
+- `str(x)` — `[kernel]` Convert any value to its string representation.
 - `len(x)` — `[kernel]` Length of a string (UTF-8 characters) or an array.
 - `char_at(string, index)` — `[kernel]` Character at a zero-based index (returns `none` if out of bounds).
 - `ord(string)` — `[kernel]` Unicode code point of the first character.
 - `chr(integer)` — `[kernel]` Single-character string for a Unicode code point.
+- `string_a . string_b` — `[kernel]` Concatenate strings with the `.` operator.
 
 **Library** (lib_lumen/string.lm)
 - `substring(s, start, end)` — `[library]` Slice string from `start` (inclusive) to `end` (exclusive).
