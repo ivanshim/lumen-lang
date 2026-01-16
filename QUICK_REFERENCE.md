@@ -29,12 +29,6 @@
 
 ## Type Conversion Functions
 
-### `str(x)` [KERNEL]
-- **Description**: Convert any value to its string representation
-- **Arguments**: `x` - Any value
-- **Returns**: `string`
-- **Example**: `str(42)` → `"42"`
-
 ### `int(x)` [KERNEL]
 - **Description**: Extract integer part from real number
 - **Arguments**: `x` - A REAL value
@@ -53,6 +47,18 @@
 ---
 
 ## String Functions
+
+### `str(x)` [KERNEL]
+- **Description**: Convert any value to its string representation
+- **Arguments**: `x` - Any value
+- **Returns**: `STRING`
+- **Example**: `str(42)` → `"42"`
+
+### String Concatenation: `.` [KERNEL]
+- **Description**: Concatenate two strings using the period operator
+- **Arguments**: Two STRING values
+- **Returns**: `STRING`
+- **Example**: `"hello" . " " . "world"` → `"hello world"`
 
 ### `len(x)` [KERNEL]
 - **Description**: Return length of string or array
