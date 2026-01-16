@@ -97,10 +97,10 @@ fn run_lumen_stream(source: &str, program_args: &[String]) {
     crate::languages::lumen::dispatcher::register_all(&mut registry);
 
     // Prepend Lumen standard library
-    // The library provides user-facing I/O functions (print, write) built on top of emit() primitive
-    // Load in order: output.lm first (defines write and print),
+    // The library provides user-facing I/O functions (print, write, str) built on top of kernel primitives
+    // Load in order: str.lm first (defines str, write and print),
     // then string utilities, then math functions (factorial, e_integer, pi_machin), then constants (1024-digit, full-precision, defaults)
-    let stdlib_output = include_str!("../lib_lumen/output.lm");
+    let stdlib_str = include_str!("../lib_lumen/str.lm");
     let stdlib_string = include_str!("../lib_lumen/string.lm");
     let stdlib_factorial = include_str!("../lib_lumen/factorial.lm");
     let stdlib_round = include_str!("../lib_lumen/round.lm");
@@ -112,7 +112,7 @@ fn run_lumen_stream(source: &str, program_args: &[String]) {
     let stdlib_constants = include_str!("../lib_lumen/constants.lm");
     let stdlib_constants_default = include_str!("../lib_lumen/constants_default.lm");
     let full_source = format!("{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
-        stdlib_output, stdlib_string, stdlib_factorial, stdlib_round, stdlib_e_integer,
+        stdlib_str, stdlib_string, stdlib_factorial, stdlib_round, stdlib_e_integer,
         stdlib_pi_machin, stdlib_primes, stdlib_number_theory, stdlib_constants_1024, stdlib_constants, stdlib_constants_default, source);
 
     let raw_tokens = match lex(&full_source, &registry.tokens) {

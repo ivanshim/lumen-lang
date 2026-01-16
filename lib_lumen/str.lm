@@ -1,0 +1,45 @@
+# Return true if x has INTEGER kind
+fn is_int(x)
+    return kind(x) == INTEGER
+
+# Return true if x has REAL kind
+fn is_real(x)
+    return kind(x) == REAL
+
+# Return true if x has STRING kind
+fn is_string(x)
+    return kind(x) == STRING
+
+# Return true if x has RATIONAL kind
+fn is_rational(x)
+    return kind(x) == RATIONAL
+
+
+# Convert any supported value to its canonical string form
+fn str(x)
+    if is_int(x)
+        return int_to_string(x)
+
+    if is_real(x)
+        return real_to_string(x)
+
+    if is_rational(x)
+        return rational_to_string(x)
+
+    if is_string(x)
+        return x
+
+    return "<unsupported>"
+
+
+# Write value to stdout without newline
+fn write(x)
+    emit(str(x))
+    none
+
+
+# Write value to stdout followed by newline
+fn print(x)
+    write(x)
+    emit("\n")
+    none
