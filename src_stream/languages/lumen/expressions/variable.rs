@@ -39,10 +39,6 @@ impl ExprNode for FunctionCallExpr {
                     // emit(string) - kernel primitive for I/O
                     return builtin_emit(&self.args[0].eval(env)?);
                 }
-                "str" => {
-                    // str(x): convert any value to string
-                    return builtin_str(&self.args[0].eval(env)?);
-                }
                 "real" => {
                     // real(x): convert to real with default precision 15
                     return builtin_real(&self.args[0].eval(env)?, 15);
@@ -78,6 +74,18 @@ impl ExprNode for FunctionCallExpr {
                 "frac" => {
                     // frac(x): return fractional part of real (errors on non-real)
                     return builtin_frac(&self.args[0].eval(env)?);
+                }
+                "int_to_string" => {
+                    // int_to_string(x): convert integer to string (mechanical primitive)
+                    return builtin_int_to_string(&self.args[0].eval(env)?);
+                }
+                "real_to_string" => {
+                    // real_to_string(x): convert real to string (mechanical primitive)
+                    return builtin_real_to_string(&self.args[0].eval(env)?);
+                }
+                "rational_to_string" => {
+                    // rational_to_string(x): convert rational to string (mechanical primitive)
+                    return builtin_rational_to_string(&self.args[0].eval(env)?);
                 }
                 _ => {}
             }
@@ -322,14 +330,45 @@ fn builtin_real(value: &Value, precision: usize) -> LumenResult<Value> {
     Err("real() requires a number, rational, or real argument".to_string())
 }
 
-/// Built-in function: str(x) - Convert any value to string
-/// Returns the exact string representation of the value.
-/// Works with any value type (numbers, rationals, strings, etc.)
-fn builtin_str(value: &Value) -> LumenResult<Value> {
-    use crate::languages::lumen::values::LumenString;
+/// Built-in function: int_to_string(x) - Convert integer to string (mechanical primitive)
+/// Assumes input is an INTEGER. No type branching. No semantic decisions.
+fn builtin_int_to_string(value: &Value) -> LumenResult<Value> {
+    use crate::languages::lumen::values::{LumenString, LumenNumber};
 
-    // Convert any value to its string representation
-    let string = value.as_display_string();
+    let number = value.as_any()
+        .downcast_ref::<LumenNumber>()
+        .ok_or_else(|| "int_to_string() requires an integer argument".to_string())?;
+
+    Ok(Box::new(LumenString::new(number.value.to_string())))
+}
+
+/// Built-in function: real_to_string(x) - Convert real to string (mechanical primitive)
+/// Assumes input is a REAL. No type branching. No semantic decisions.
+fn builtin_real_to_string(value: &Value) -> LumenResult<Value> {
+    use crate::languages::lumen::values::{LumenString, LumenReal};
+
+    let real = value.as_any()
+        .downcast_ref::<LumenReal>()
+        .ok_or_else(|| "real_to_string() requires a real argument".to_string())?;
+
+    Ok(Box::new(LumenString::new(real.as_decimal_string())))
+}
+
+/// Built-in function: rational_to_string(x) - Convert rational to string (mechanical primitive)
+/// Assumes input is a RATIONAL. No type branching. No semantic decisions.
+fn builtin_rational_to_string(value: &Value) -> LumenResult<Value> {
+    use crate::languages::lumen::values::{LumenString, LumenRational};
+
+    let rational = value.as_any()
+        .downcast_ref::<LumenRational>()
+        .ok_or_else(|| "rational_to_string() requires a rational argument".to_string())?;
+
+    let string = if rational.is_integer() {
+        rational.numerator.to_string()
+    } else {
+        format!("{}/{}", rational.numerator, rational.denominator)
+    };
+
     Ok(Box::new(LumenString::new(string)))
 }
 

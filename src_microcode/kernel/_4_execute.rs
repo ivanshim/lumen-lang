@@ -9,6 +9,7 @@ use super::env::Environment;
 use crate::schema::LanguageSchema;
 use num_bigint::BigInt;
 use num_traits::cast::ToPrimitive;
+use num_traits::Signed;
 use num_integer::gcd;
 
 /// Execution state
@@ -180,13 +181,71 @@ pub fn execute(
                         _ => Err("real() requires a number, rational, or real argument".to_string()),
                     }
                 }
-                "str" => {
-                    // str(x): convert any value to string representation
+                "int_to_string" => {
+                    // int_to_string(x): convert integer to string (mechanical primitive)
+                    // Assumes input is INTEGER. No type branching.
                     if arg_vals.len() != 1 {
-                        return Err(format!("str() expects 1 argument, got {}", arg_vals.len()));
+                        return Err(format!("int_to_string() expects 1 argument, got {}", arg_vals.len()));
                     }
-                    let str_val = format!("{}", &arg_vals[0]);
-                    Ok((Value::String(str_val), ControlFlow::Normal))
+                    match &arg_vals[0] {
+                        Value::Number(n) => Ok((Value::String(n.to_string()), ControlFlow::Normal)),
+                        _ => Err("int_to_string() requires an integer argument".to_string()),
+                    }
+                }
+                "real_to_string" => {
+                    // real_to_string(x): convert real to string (mechanical primitive)
+                    // Assumes input is REAL. No type branching.
+                    if arg_vals.len() != 1 {
+                        return Err(format!("real_to_string() expects 1 argument, got {}", arg_vals.len()));
+                    }
+                    match &arg_vals[0] {
+                        Value::Real { numerator, denominator, precision } => {
+                            // Format real as decimal with precision
+                            let int_part = numerator / denominator;
+                            let remainder = numerator.clone() - (&int_part * denominator);
+                            if remainder == BigInt::from(0) {
+                                Ok((Value::String(int_part.to_string()), ControlFlow::Normal))
+                            } else {
+                                let mut decimal_str = String::new();
+                                let digit_count = int_part.to_string().len();
+                                let target_digits = *precision;
+                                let mut rem = remainder.abs();
+                                let mut frac_digits = if digit_count >= target_digits {
+                                    0
+                                } else {
+                                    target_digits - digit_count
+                                };
+                                let denom = denominator.clone();
+                                while frac_digits > 0 && rem > BigInt::from(0) {
+                                    rem = rem * BigInt::from(10);
+                                    let digit = &rem / &denom;
+                                    decimal_str.push_str(&digit.to_string());
+                                    rem = &rem - (&digit * &denom);
+                                    frac_digits -= 1;
+                                }
+                                Ok((Value::String(format!("{}.{}", int_part, decimal_str)), ControlFlow::Normal))
+                            }
+                        }
+                        _ => Err("real_to_string() requires a real argument".to_string()),
+                    }
+                }
+                "rational_to_string" => {
+                    // rational_to_string(x): convert rational to string (mechanical primitive)
+                    // Assumes input is RATIONAL. No type branching.
+                    if arg_vals.len() != 1 {
+                        return Err(format!("rational_to_string() expects 1 argument, got {}", arg_vals.len()));
+                    }
+                    match &arg_vals[0] {
+                        Value::Rational { numerator, denominator } => {
+                            let string = if denominator == &BigInt::from(1) {
+                                numerator.to_string()
+                            } else {
+                                format!("{}/{}", numerator, denominator)
+                            };
+                            Ok((Value::String(string), ControlFlow::Normal))
+                        }
+                        _ => Err("rational_to_string() requires a rational argument".to_string()),
+                    }
                 }
                 "len" => {
                     // len(x): return length of string or array
