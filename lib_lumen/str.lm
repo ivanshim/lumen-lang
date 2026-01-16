@@ -31,46 +31,38 @@ fn is_none(x)
 fn kind_to_string(k)
     if k == INTEGER
         return "INTEGER"
-    if k == REAL
-        return "REAL"
     if k == RATIONAL
         return "RATIONAL"
-    if k == STRING
-        return "STRING"
+    if k == REAL
+        return "REAL"
     if k == BOOLEAN
         return "BOOLEAN"
+    if k == STRING
+        return "STRING"
     if k == ARRAY
         return "ARRAY"
     if k == NONE
         return "NONE"
-
-    return "<unknown kind>"
+    "<unknown kind>"
 
 
 # Convert any supported value to its canonical string form
 fn str(x)
     if is_int(x)
         return int_to_string(x)
-
-    if is_real(x)
-        return real_to_string(x)
-
     if is_rational(x)
         return rational_to_string(x)
-
-    if is_string(x)
-        return x
-
+    if is_real(x)
+        return real_to_string(x)
     if is_bool(x)
         return bool_to_string(x)
-
+    if is_string(x)
+        return x
     if is_array(x)
         return array_to_string(x)
-
     if is_none(x)
         return none_to_string(x)
-
-    return "<unsupported>"
+    "<unsupported>"
 
 
 # Write value to stdout without newline
