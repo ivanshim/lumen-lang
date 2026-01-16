@@ -247,6 +247,71 @@ pub fn execute(
                         _ => Err("rational_to_string() requires a rational argument".to_string()),
                     }
                 }
+                "bool_to_string" => {
+                    // bool_to_string(x): convert boolean to string (mechanical primitive)
+                    // Assumes input is BOOLEAN. No type branching.
+                    if arg_vals.len() != 1 {
+                        return Err(format!("bool_to_string() expects 1 argument, got {}", arg_vals.len()));
+                    }
+                    match &arg_vals[0] {
+                        Value::Bool(b) => {
+                            let string = if *b { "true" } else { "false" };
+                            Ok((Value::String(string.to_string()), ControlFlow::Normal))
+                        }
+                        _ => Err("bool_to_string() requires a boolean argument".to_string()),
+                    }
+                }
+                "array_to_string" => {
+                    // array_to_string(x): convert array to string (mechanical primitive)
+                    // Assumes input is ARRAY. No type branching.
+                    if arg_vals.len() != 1 {
+                        return Err(format!("array_to_string() expects 1 argument, got {}", arg_vals.len()));
+                    }
+                    match &arg_vals[0] {
+                        Value::Array(elements) => {
+                            let elements_str = elements
+                                .iter()
+                                .map(|e| format!("{}", e))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            Ok((Value::String(format!("[{}]", elements_str)), ControlFlow::Normal))
+                        }
+                        _ => Err("array_to_string() requires an array argument".to_string()),
+                    }
+                }
+                "none_to_string" => {
+                    // none_to_string(x): convert none to string (mechanical primitive)
+                    // Assumes input is NONE. No type branching.
+                    if arg_vals.len() != 1 {
+                        return Err(format!("none_to_string() expects 1 argument, got {}", arg_vals.len()));
+                    }
+                    match &arg_vals[0] {
+                        Value::Null => Ok((Value::String("none".to_string()), ControlFlow::Normal)),
+                        _ => Err("none_to_string() requires a none argument".to_string()),
+                    }
+                }
+                "kind_to_string" => {
+                    // kind_to_string(x): convert kind meta-value to string (mechanical primitive)
+                    // Assumes input is KIND. No type branching.
+                    if arg_vals.len() != 1 {
+                        return Err(format!("kind_to_string() expects 1 argument, got {}", arg_vals.len()));
+                    }
+                    match &arg_vals[0] {
+                        Value::Kind(k) => {
+                            let string = match k {
+                                KindValue::INTEGER => "INTEGER",
+                                KindValue::RATIONAL => "RATIONAL",
+                                KindValue::REAL => "REAL",
+                                KindValue::STRING => "STRING",
+                                KindValue::BOOLEAN => "BOOLEAN",
+                                KindValue::ARRAY => "ARRAY",
+                                KindValue::NONE => "NONE",
+                            };
+                            Ok((Value::String(string.to_string()), ControlFlow::Normal))
+                        }
+                        _ => Err("kind_to_string() requires a kind argument".to_string()),
+                    }
+                }
                 "len" => {
                     // len(x): return length of string or array
                     // For strings, counts UTF-8 characters (not bytes)
@@ -343,6 +408,7 @@ pub fn execute(
                         Value::String(_) => KindValue::STRING,
                         Value::Bool(_) => KindValue::BOOLEAN,
                         Value::Null => KindValue::NONE,
+                        Value::Kind(_) => KindValue::NONE, // KIND-of-KIND returns NONE as placeholder
                         _ => return Err("kind(): unknown value type".to_string()),
                     };
                     Ok((Value::Kind(kind_val), ControlFlow::Normal))
