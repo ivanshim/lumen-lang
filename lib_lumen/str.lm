@@ -14,9 +14,22 @@ fn is_string(x)
 fn is_rational(x)
     return kind(x) == RATIONAL
 
+# Return true if x has BOOLEAN kind
+fn is_bool(x)
+    return kind(x) == BOOLEAN
+
+# Return true if x has ARRAY kind
+fn is_array(x)
+    return kind(x) == ARRAY
+
+# Return true if x has NONE kind
+fn is_none(x)
+    return kind(x) == NONE
+
 
 # Convert any supported value to its canonical string form
 fn str(x)
+    # Check all concrete types first
     if is_int(x)
         return int_to_string(x)
 
@@ -29,7 +42,23 @@ fn str(x)
     if is_string(x)
         return x
 
-    return "<unsupported>"
+    if is_bool(x)
+        return bool_to_string(x)
+
+    if is_array(x)
+        return array_to_string(x)
+
+    # For values with kind(x) == NONE, we need to distinguish between:
+    # - Actual NONE values → use none_to_string()
+    # - KIND meta-values (INTEGER, RATIONAL, etc.) → use kind_to_string()
+    # Since both return NONE from kind(), we check NONE by comparing with none directly
+    # If that fails but kind() == NONE, it must be a KIND meta-value
+    if x == none
+        return none_to_string(x)
+
+    # Fallback: assume it's a KIND meta-value (INTEGER, RATIONAL, REAL, STRING, BOOLEAN, ARRAY, NONE constants)
+    # KIND meta-values have kind(x) == NONE but are not equal to none
+    return kind_to_string(x)
 
 
 # Write value to stdout without newline

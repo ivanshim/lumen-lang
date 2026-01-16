@@ -87,6 +87,22 @@ impl ExprNode for FunctionCallExpr {
                     // rational_to_string(x): convert rational to string (mechanical primitive)
                     return builtin_rational_to_string(&self.args[0].eval(env)?);
                 }
+                "bool_to_string" => {
+                    // bool_to_string(x): convert boolean to string (mechanical primitive)
+                    return builtin_bool_to_string(&self.args[0].eval(env)?);
+                }
+                "array_to_string" => {
+                    // array_to_string(x): convert array to string (mechanical primitive)
+                    return builtin_array_to_string(&self.args[0].eval(env)?);
+                }
+                "none_to_string" => {
+                    // none_to_string(x): convert none to string (mechanical primitive)
+                    return builtin_none_to_string(&self.args[0].eval(env)?);
+                }
+                "kind_to_string" => {
+                    // kind_to_string(x): convert kind meta-value to string (mechanical primitive)
+                    return builtin_kind_to_string(&self.args[0].eval(env)?);
+                }
                 _ => {}
             }
         } else if self.args.len() == 2 {
@@ -372,6 +388,71 @@ fn builtin_rational_to_string(value: &Value) -> LumenResult<Value> {
     Ok(Box::new(LumenString::new(string)))
 }
 
+/// Built-in function: bool_to_string(x) - Convert boolean to string (mechanical primitive)
+/// Assumes input is a BOOLEAN. No type branching. No semantic decisions.
+fn builtin_bool_to_string(value: &Value) -> LumenResult<Value> {
+    use crate::languages::lumen::values::{LumenString, LumenBool};
+
+    let bool_val = value.as_any()
+        .downcast_ref::<LumenBool>()
+        .ok_or_else(|| "bool_to_string() requires a boolean argument".to_string())?;
+
+    let string = if bool_val.value { "true" } else { "false" };
+    Ok(Box::new(LumenString::new(string.to_string())))
+}
+
+/// Built-in function: array_to_string(x) - Convert array to string (mechanical primitive)
+/// Assumes input is an ARRAY. No type branching. No semantic decisions.
+fn builtin_array_to_string(value: &Value) -> LumenResult<Value> {
+    use crate::languages::lumen::values::{LumenString, LumenArray};
+
+    let array_val = value.as_any()
+        .downcast_ref::<LumenArray>()
+        .ok_or_else(|| "array_to_string() requires an array argument".to_string())?;
+
+    let elements_str = array_val.elements
+        .iter()
+        .map(|e| e.as_display_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    Ok(Box::new(LumenString::new(format!("[{}]", elements_str))))
+}
+
+/// Built-in function: none_to_string(x) - Convert none to string (mechanical primitive)
+/// Assumes input is NONE. No type branching. No semantic decisions.
+fn builtin_none_to_string(value: &Value) -> LumenResult<Value> {
+    use crate::languages::lumen::values::{LumenString, LumenNone};
+
+    let _none_val = value.as_any()
+        .downcast_ref::<LumenNone>()
+        .ok_or_else(|| "none_to_string() requires a none argument".to_string())?;
+
+    Ok(Box::new(LumenString::new("none".to_string())))
+}
+
+/// Built-in function: kind_to_string(x) - Convert kind meta-value to string (mechanical primitive)
+/// Assumes input is a KIND. No type branching. No semantic decisions.
+fn builtin_kind_to_string(value: &Value) -> LumenResult<Value> {
+    use crate::languages::lumen::values::{LumenString, LumenKind, KindValue};
+
+    let kind_val = value.as_any()
+        .downcast_ref::<LumenKind>()
+        .ok_or_else(|| "kind_to_string() requires a kind argument".to_string())?;
+
+    let string = match kind_val.kind {
+        KindValue::INTEGER => "INTEGER",
+        KindValue::RATIONAL => "RATIONAL",
+        KindValue::REAL => "REAL",
+        KindValue::STRING => "STRING",
+        KindValue::BOOLEAN => "BOOLEAN",
+        KindValue::ARRAY => "ARRAY",
+        KindValue::NONE => "NONE",
+    };
+
+    Ok(Box::new(LumenString::new(string.to_string())))
+}
+
 /// Built-in function: len(x) - Return length of string or array
 /// Returns the number of characters in a string or elements in an array.
 /// For strings, counts UTF-8 characters (not bytes).
@@ -532,6 +613,12 @@ fn builtin_kind(value: &Value) -> LumenResult<Value> {
 
     if value.as_any().downcast_ref::<LumenNone>().is_some() {
         return Ok(Box::new(LumenKind::new(KindValue::NONE)));
+    }
+
+    if value.as_any().downcast_ref::<LumenKind>().is_some() {
+        // KIND is a meta-value representing types - return a special KIND marker
+        // This allows kind(INTEGER) to work, returning a kind-of-kind meta-value
+        return Ok(Box::new(LumenKind::new(KindValue::NONE))); // Use NONE as placeholder for KIND-of-KIND
     }
 
     // Unknown value type
