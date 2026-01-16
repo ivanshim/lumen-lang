@@ -24,6 +24,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `-` Subtraction
 - `*` Multiplication
 - `/` Division (returns `RATIONAL` for integers, `REAL` for reals)
+- `**` Exponentiation
 - `//` Integer division (quotient)
 - `%` Modulo (remainder)
 - `-` Unary negation
@@ -41,6 +42,10 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `or` Logical OR
 - `not` Logical NOT
 
+**Pipes & Ranges**
+- `value |> fn(args...)` Pipe operator (passes `value` as the first argument).
+- `start..end` Half-open range literal (evaluates to a range value).
+
 ---
 
 ## Control Flow & Definitions [kernel]
@@ -55,6 +60,9 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `break` Exit loop
 - `continue` Next iteration
 - `return value` Return from function
+
+**System Controls**
+- `MEMOIZATION = true|false` Enable/disable memoized function caching (dynamically scoped).
 
 **Definitions & Bindings**
 - `fn name(params)` Function definition
@@ -88,7 +96,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `base@digits` — Write a numeric literal in `base` (2..36), with the base value itself written in base 10. Example: `2@1011` or `16@FF`.
 
 **Exponent syntax**
-- `value^exponent` — Power operator for numeric values.
+- `value**exponent` — Power operator for numeric values.
 
 ---
 
@@ -134,6 +142,11 @@ This card lists **user-accessible functions** across the kernel primitives and t
 **Kernel**
 - `push(arr, value)` — `[kernel]` Append `value` to array `arr` (mutates in place).
 
+**Array Literals & Indexing**
+- `[a, b, c]` — Array literal (trailing comma allowed).
+- `arr[i]` — Array indexing expression.
+- `arr[i] = value` — Array indexed assignment.
+
 **Library**
 - (none)
 
@@ -147,6 +160,13 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 **Library**
 - (none)
+
+---
+
+## Extern Calls
+
+**Kernel**
+- `extern("selector", args...)` — `[kernel]` Call an external capability (selector must be a string literal).
 
 ---
 
