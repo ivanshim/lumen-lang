@@ -56,11 +56,9 @@ fn str(x)
 # Write value to stdout without newline
 fn write(x)
     emit(str(x))
-    none
 
 
 # Write value to stdout followed by newline
 fn print(x)
     write(x)
     emit("\n")
-    none
