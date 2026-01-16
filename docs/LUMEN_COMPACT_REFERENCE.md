@@ -101,8 +101,8 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `ord(string)` — `[kernel]` Unicode code point of the first character.
 - `chr(integer)` — `[kernel]` Single-character string for a Unicode code point.
 - `int_to_string(x)` — `[kernel]` Convert INTEGER to string (mechanical primitive).
-- `real_to_string(x)` — `[kernel]` Convert REAL to string (mechanical primitive).
 - `rational_to_string(x)` — `[kernel]` Convert RATIONAL to string (mechanical primitive).
+- `real_to_string(x)` — `[kernel]` Convert REAL to string (mechanical primitive).
 - `bool_to_string(x)` — `[kernel]` Convert BOOLEAN to string (mechanical primitive).
 - `array_to_string(x)` — `[kernel]` Convert ARRAY to string (mechanical primitive).
 - `none_to_string(x)` — `[kernel]` Convert NONE to string (mechanical primitive).
@@ -110,8 +110,8 @@ This card lists **user-accessible functions** across the kernel primitives and t
 **Library** (lib_lumen/str.lm)
 - `str(x)` — `[library]` Convert any value to its canonical string representation.
 - `is_int(x)` — `[library]` Returns `true` if `x` has INTEGER kind.
-- `is_real(x)` — `[library]` Returns `true` if `x` has REAL kind.
 - `is_rational(x)` — `[library]` Returns `true` if `x` has RATIONAL kind.
+- `is_real(x)` — `[library]` Returns `true` if `x` has REAL kind.
 - `is_string(x)` — `[library]` Returns `true` if `x` has STRING kind.
 - `is_bool(x)` — `[library]` Returns `true` if `x` has BOOLEAN kind.
 - `is_array(x)` — `[library]` Returns `true` if `x` has ARRAY kind.
