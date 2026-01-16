@@ -17,6 +17,52 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 ---
 
+## Operators [kernel]
+
+**Arithmetic**
+- `+` Addition
+- `-` Subtraction
+- `*` Multiplication
+- `/` Division (returns `RATIONAL` for integers, `REAL` for reals)
+- `//` Integer division (quotient)
+- `%` Modulo (remainder)
+- `-` Unary negation
+
+**Comparison**
+- `==` Equal
+- `!=` Not equal
+- `<` Less than
+- `<=` Less than or equal
+- `>` Greater than
+- `>=` Greater than or equal
+
+**Logical**
+- `and` Logical AND
+- `or` Logical OR
+- `not` Logical NOT
+
+---
+
+## Control Flow & Definitions [kernel]
+
+**Conditionals & Loops**
+- `if` / `else`
+- `while`
+- `for ... in ...`
+- `until`
+
+**Flow Keywords**
+- `break` Exit loop
+- `continue` Next iteration
+- `return value` Return from function
+
+**Definitions & Bindings**
+- `fn name(params)` Function definition
+- `let x = value` Immutable binding
+- `let mut x = value` Mutable binding
+
+---
+
 ## Type Conversion & Introspection
 
 **Kernel**
@@ -62,52 +108,6 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 **Library**
 - (none)
-
----
-
-## Operators [kernel]
-
-**Arithmetic**
-- `+` Addition
-- `-` Subtraction
-- `*` Multiplication
-- `/` Division (returns `RATIONAL` for integers, `REAL` for reals)
-- `//` Integer division (quotient)
-- `%` Modulo (remainder)
-- `-` Unary negation
-
-**Comparison**
-- `==` Equal
-- `!=` Not equal
-- `<` Less than
-- `<=` Less than or equal
-- `>` Greater than
-- `>=` Greater than or equal
-
-**Logical**
-- `and` Logical AND
-- `or` Logical OR
-- `not` Logical NOT
-
----
-
-## Control Flow & Definitions [kernel]
-
-**Conditionals & Loops**
-- `if` / `else`
-- `while`
-- `for ... in ...`
-- `until`
-
-**Flow Keywords**
-- `break` Exit loop
-- `continue` Next iteration
-- `return value` Return from function
-
-**Definitions & Bindings**
-- `fn name(params)` Function definition
-- `let x = value` Immutable binding
-- `let mut x = value` Mutable binding
 
 ---
 
