@@ -17,54 +17,6 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 ---
 
-## Type Conversion & Introspection
-
-**Kernel**
-- `real(x)` — `[kernel]` Convert integer/rational/real to a real value using default precision (15 sig figs).
-- `real(x, precision)` — `[kernel]` Convert to real with the requested significant-digit precision.
-- `kind(x)` — `[kernel]` Return the kind meta-value (`INTEGER`, `RATIONAL`, `REAL`, `ARRAY`, `STRING`, `BOOLEAN`, `NONE`).
-- `num(x)` — `[kernel]` Numerator of a rational (errors on non-rationals).
-- `den(x)` — `[kernel]` Denominator of a rational (errors on non-rationals).
-- `int(x)` — `[kernel]` Integer part of a real value.
-- `frac(x)` — `[kernel]` Fractional part of a real value (same precision as input).
-
-**Library**
-- (none)
-
----
-
-## String Functions
-
-**Kernel**
-- `string_a . string_b` — `[kernel]` Concatenate strings with the `.` operator.
-- `str(x)` — `[kernel]` Convert any value to its string representation.
-- `len(x)` — `[kernel]` Length of a string (UTF-8 characters) or an array.
-- `char_at(string, index)` — `[kernel]` Character at a zero-based index (returns `none` if out of bounds).
-- `ord(string)` — `[kernel]` Unicode code point of the first character.
-- `chr(integer)` — `[kernel]` Single-character string for a Unicode code point.
-
-**Library** (lib_lumen/string.lm)
-- `substring(s, start, end)` — `[library]` Slice string from `start` (inclusive) to `end` (exclusive).
-- `slice(s, start)` — `[library]` Slice string from `start` to the end.
-- `starts_with(s, prefix)` — `[library]` True if `s` begins with `prefix`.
-- `ends_with(s, suffix)` — `[library]` True if `s` ends with `suffix`.
-- `repeat(s, count)` — `[library]` Repeat string `count` times.
-- `join(arr, sep)` — `[library]` Join array of strings with a separator.
-- `index_of(s, needle)` — `[library]` Index of first occurrence of `needle` in `s` (or `-1`).
-- `contains(s, needle)` — `[library]` True if `needle` appears in `s`.
-
----
-
-## Array Functions
-
-**Kernel**
-- `push(arr, value)` — `[kernel]` Append `value` to array `arr` (mutates in place).
-
-**Library**
-- (none)
-
----
-
 ## Operators [kernel]
 
 **Arithmetic**
@@ -108,6 +60,67 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `fn name(params)` Function definition
 - `let x = value` Immutable binding
 - `let mut x = value` Mutable binding
+
+---
+
+## Type Conversion & Introspection
+
+**Kernel**
+- `real(x)` — `[kernel]` Convert integer/rational/real to a real value using default precision (15 sig figs).
+- `real(x, precision)` — `[kernel]` Convert to real with the requested significant-digit precision.
+- `kind(x)` — `[kernel]` Return the kind meta-value (`INTEGER`, `RATIONAL`, `REAL`, `ARRAY`, `STRING`, `BOOLEAN`, `NONE`).
+- `num(x)` — `[kernel]` Numerator of a rational (errors on non-rationals).
+- `den(x)` — `[kernel]` Denominator of a rational (errors on non-rationals).
+- `int(x)` — `[kernel]` Integer part of a real value.
+- `frac(x)` — `[kernel]` Fractional part of a real value (same precision as input).
+
+**Library**
+- (none)
+
+---
+
+## Numeric Literals & Bases [kernel]
+
+**Type hierarchy**
+- `INTEGER` ⊆ `RATIONAL` ⊆ `REAL` (integers are rationals; rationals are reals).
+
+**Base syntax**
+- `base@digits` — Write a numeric literal in `base` (2..36), with the base value itself written in base 10. Example: `2@1011` or `16@FF`.
+
+**Exponent syntax**
+- `value^exponent` — Power operator for numeric values.
+
+---
+
+## String Functions
+
+**Kernel**
+- `string_a . string_b` — `[kernel]` Concatenate strings with the `.` operator.
+- `str(x)` — `[kernel]` Convert any value to its string representation.
+- `len(x)` — `[kernel]` Length of a string (UTF-8 characters) or an array.
+- `char_at(string, index)` — `[kernel]` Character at a zero-based index (returns `none` if out of bounds).
+- `ord(string)` — `[kernel]` Unicode code point of the first character.
+- `chr(integer)` — `[kernel]` Single-character string for a Unicode code point.
+
+**Library** (lib_lumen/string.lm)
+- `substring(s, start, end)` — `[library]` Slice string from `start` (inclusive) to `end` (exclusive).
+- `slice(s, start)` — `[library]` Slice string from `start` to the end.
+- `starts_with(s, prefix)` — `[library]` True if `s` begins with `prefix`.
+- `ends_with(s, suffix)` — `[library]` True if `s` ends with `suffix`.
+- `repeat(s, count)` — `[library]` Repeat string `count` times.
+- `join(arr, sep)` — `[library]` Join array of strings with a separator.
+- `index_of(s, needle)` — `[library]` Index of first occurrence of `needle` in `s` (or `-1`).
+- `contains(s, needle)` — `[library]` True if `needle` appears in `s`.
+
+---
+
+## Array Functions
+
+**Kernel**
+- `push(arr, value)` — `[kernel]` Append `value` to array `arr` (mutates in place).
+
+**Library**
+- (none)
 
 ---
 
