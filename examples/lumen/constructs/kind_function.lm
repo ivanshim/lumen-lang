@@ -104,8 +104,8 @@ print(kind([1, 2, 3]))
 write("kind([]) = ")
 print(kind([]))
 
-write("kind([\"a\", \"b\"]) = ")
-print(kind([\"a\", \"b\"]))
+write("kind(['a', 'b']) = ")
+print(kind(['a', 'b']))
 
 print("")
 
@@ -126,19 +126,16 @@ print("")
 
 # Test 12: Kind values can be used in conditional logic
 x = 42
-if kind(x) == kind(0) {
+if kind(x) == kind(0)
     print("x is an INTEGER")
-}
 
 y = 1/3
-if kind(y) == kind(1/2) {
+if kind(y) == kind(1/2)
     print("y is a RATIONAL")
-}
 
 z = 2.718
-if kind(z) == kind(3.14) {
+if kind(z) == kind(3.14)
     print("z is a REAL")
-}
 
 print("")
 
