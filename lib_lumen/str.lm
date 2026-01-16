@@ -27,6 +27,32 @@ fn is_none(x)
     return kind(x) == NONE
 
 
+# Convert a KIND meta-value to its canonical uppercase string
+fn kind_to_string(k)
+    if k == INTEGER
+        "INTEGER"
+    else
+        if k == REAL
+            "REAL"
+        else
+            if k == RATIONAL
+                "RATIONAL"
+            else
+                if k == STRING
+                    "STRING"
+                else
+                    if k == BOOLEAN
+                        "BOOLEAN"
+                    else
+                        if k == ARRAY
+                            "ARRAY"
+                        else
+                            if k == NONE
+                                "NONE"
+                            else
+                                "<unknown kind>"
+
+
 # Convert any supported value to its canonical string form
 fn str(x)
     if is_int(x)
