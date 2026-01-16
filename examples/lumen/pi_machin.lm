@@ -1,12 +1,14 @@
-# Pi calculation using Machin's formula
-# This example requires import() functionality which is not yet implemented
-# See lib_lumen/pi_machin.lm for the implementation
-#
-# When import is available, this will work:
-#   import("lib_lumen/pi_machin.lm")
-#   result = pi_machin(1000)
-#   print(result)
+# Parameter: significant_figures (default: 1000)
+# Usage: lumen-lang pi_machin.lm [significant_figures]
+# Example: lumen-lang pi_machin.lm 1000
+# Default: Computes 1000 digits of pi using Machin's formula
 
-print("NOTE: This example requires import() which is not yet implemented")
-print("See lib_lumen/pi_machin.lm for the pi_machin() implementation")
-print("SKIPPED")
+# import("lib_lumen/pi_machin.lm")  # Not needed - functions already linked from lib_lumen
+
+significant_figures = 1000
+# Note: ARGS parsing with int() doesn't work yet - int() doesn't parse strings
+# if ARGS != ""
+#     significant_figures = int(ARGS)
+
+result = pi_machin(significant_figures)
+print(result)

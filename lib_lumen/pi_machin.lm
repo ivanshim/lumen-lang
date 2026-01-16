@@ -33,7 +33,7 @@ fn pi_machin(sigfigs)
         term = numerator / denominator
         remainder = numerator % denominator
 
-        if int(term) == 0
+        if term < 1
             break
 
         if k % 2 == 1
@@ -58,7 +58,7 @@ fn pi_machin(sigfigs)
         term = numerator / denominator
         remainder = numerator % denominator
 
-        if int(term) == 0
+        if term < 1
             break
 
         if k % 2 == 1
