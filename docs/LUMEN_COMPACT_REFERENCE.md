@@ -1,6 +1,6 @@
-# Lumen Function Quick Reference Card
+# Lumen Compact Reference Card
 
-This card lists **user-accessible functions** across the kernel primitives and the standard Lumen library. For each category, kernel functions are listed first, followed by library functions. Each function is tagged as `[kernel]` or `[library]`.
+This card lists **user-accessible functions** across the kernel primitives and the standard Lumen library, plus core operators and syntax reminders. For each category, kernel functions are listed first, followed by library functions. Each function is tagged as `[kernel]` or `[library]`.
 
 > **Library scope note:** All functions in `lib_lumen/*.lm` become available to users when the corresponding library file is loaded.
 
@@ -52,6 +52,73 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `join(arr, sep)` — `[library]` Join array of strings with a separator.
 - `index_of(s, needle)` — `[library]` Index of first occurrence of `needle` in `s` (or `-1`).
 - `contains(s, needle)` — `[library]` True if `needle` appears in `s`.
+
+---
+
+## Array Functions
+
+**Kernel**
+- `push(arr, value)` — `[kernel]` Append `value` to array `arr` (mutates in place).
+
+**Library**
+- (none)
+
+---
+
+## Operators
+
+**Arithmetic**
+- `+` Addition
+- `-` Subtraction
+- `*` Multiplication
+- `/` Division (returns `RATIONAL` for integers, `REAL` for reals)
+- `//` Integer division (quotient)
+- `%` Modulo (remainder)
+- `-` Unary negation
+
+**Comparison**
+- `==` Equal
+- `!=` Not equal
+- `<` Less than
+- `<=` Less than or equal
+- `>` Greater than
+- `>=` Greater than or equal
+
+**Logical**
+- `and` Logical AND
+- `or` Logical OR
+- `not` Logical NOT
+
+---
+
+## Control Flow & Definitions
+
+**Conditionals & Loops**
+- `if` / `else`
+- `while`
+- `for ... in ...`
+- `until`
+
+**Flow Keywords**
+- `break` Exit loop
+- `continue` Next iteration
+- `return value` Return from function
+
+**Definitions & Bindings**
+- `fn name(params)` Function definition
+- `let x = value` Immutable binding
+- `let mut x = value` Mutable binding
+
+---
+
+## Built-in Kind Constants & Globals
+
+**Kernel**
+- `INTEGER`, `RATIONAL`, `REAL`, `STRING`, `ARRAY`, `BOOLEAN`, `NONE` — Kind meta-values for `kind(x)` checks.
+- `ARGS` — Command-line arguments as a single string.
+
+**Library**
+- (none)
 
 ---
 
