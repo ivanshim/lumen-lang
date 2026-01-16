@@ -63,6 +63,10 @@ impl ExprNode for FunctionCallExpr {
                     // chr(n): return single-character string for decimal integer
                     return builtin_chr(&self.args[0].eval(env)?);
                 }
+                "kind" => {
+                    // kind(x): return symbolic constant representing value category
+                    return builtin_kind(&self.args[0].eval(env)?);
+                }
                 _ => {}
             }
         } else if self.args.len() == 2 {
@@ -477,6 +481,48 @@ fn builtin_emit(value: &Value) -> LumenResult<Value> {
 
     // Return None (null value)
     Ok(Box::new(crate::languages::lumen::values::LumenNone))
+}
+
+/// Built-in function: kind(x) - Return symbolic constant representing value category
+/// Returns one of: INTEGER, RATIONAL, REAL, IMAGINARY, ARRAY, STRING, BOOLEAN, NONE
+/// This is a pure introspection function with no side effects.
+fn builtin_kind(value: &Value) -> LumenResult<Value> {
+    use crate::languages::lumen::values::{
+        LumenNumber, LumenRational, LumenReal, LumenArray,
+        LumenString, LumenBool, LumenNone, LumenSymbol
+    };
+
+    // Check value type and return appropriate symbolic constant
+    if value.as_any().downcast_ref::<LumenNumber>().is_some() {
+        return Ok(Box::new(LumenSymbol::new("INTEGER".to_string())));
+    }
+
+    if value.as_any().downcast_ref::<LumenRational>().is_some() {
+        return Ok(Box::new(LumenSymbol::new("RATIONAL".to_string())));
+    }
+
+    if value.as_any().downcast_ref::<LumenReal>().is_some() {
+        return Ok(Box::new(LumenSymbol::new("REAL".to_string())));
+    }
+
+    if value.as_any().downcast_ref::<LumenArray>().is_some() {
+        return Ok(Box::new(LumenSymbol::new("ARRAY".to_string())));
+    }
+
+    if value.as_any().downcast_ref::<LumenString>().is_some() {
+        return Ok(Box::new(LumenSymbol::new("STRING".to_string())));
+    }
+
+    if value.as_any().downcast_ref::<LumenBool>().is_some() {
+        return Ok(Box::new(LumenSymbol::new("BOOLEAN".to_string())));
+    }
+
+    if value.as_any().downcast_ref::<LumenNone>().is_some() {
+        return Ok(Box::new(LumenSymbol::new("NONE".to_string())));
+    }
+
+    // Unknown value type
+    Err("kind(): unknown value type".to_string())
 }
 
 // --------------------

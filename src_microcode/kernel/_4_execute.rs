@@ -303,6 +303,24 @@ pub fn execute(
                         _ => Err("chr() requires an integer argument".to_string()),
                     }
                 }
+                "kind" => {
+                    // kind(x): return symbolic constant representing value category
+                    // Returns one of: INTEGER, RATIONAL, REAL, IMAGINARY, ARRAY, STRING, BOOLEAN, NONE
+                    if arg_vals.len() != 1 {
+                        return Err(format!("kind() expects 1 argument, got {}", arg_vals.len()));
+                    }
+                    let kind_name = match &arg_vals[0] {
+                        Value::Number(_) => "INTEGER",
+                        Value::Rational { .. } => "RATIONAL",
+                        Value::Real { .. } => "REAL",
+                        Value::Array(_) => "ARRAY",
+                        Value::String(_) => "STRING",
+                        Value::Bool(_) => "BOOLEAN",
+                        Value::Null => "NONE",
+                        _ => return Err("kind(): unknown value type".to_string()),
+                    };
+                    Ok((Value::Symbol(kind_name.to_string()), ControlFlow::Normal))
+                }
                 "extern" => {
                     // extern(function_name, arg1, arg2, ...)
                     if arg_vals.is_empty() {
@@ -337,6 +355,7 @@ pub fn execute(
                                 Value::Range { .. } => "range",
                                 Value::Array(_) => "array",
                                 Value::Function { .. } => "function",
+                                Value::Symbol(_) => "symbol",
                             };
                             Ok((Value::String(type_str.to_string()), ControlFlow::Normal))
                         }
