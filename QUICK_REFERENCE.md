@@ -561,10 +561,6 @@ Lumen supports the following value types:
 - `or` Logical OR
 - `not` Logical NOT
 
-### String Operator
-- `.` String concatenation
-- Example: `"hello" . " " . "world"` → `"hello world"`
-
 ---
 
 ## Control Flow
