@@ -27,6 +27,98 @@
 
 ---
 
+## Operators
+
+### Arithmetic Operators
+- `+` Addition
+- `-` Subtraction
+- `*` Multiplication
+- `/` Division (returns RATIONAL for integers, REAL for reals)
+- `//` Integer division (quotient)
+- `%` Modulo (remainder)
+- `-` Unary negation
+
+### Comparison Operators
+- `==` Equal
+- `!=` Not equal
+- `<` Less than
+- `<=` Less than or equal
+- `>` Greater than
+- `>=` Greater than or equal
+
+### Logical Operators
+- `and` Logical AND
+- `or` Logical OR
+- `not` Logical NOT
+
+---
+
+## Control Flow
+
+### If-Else
+```lumen
+if condition
+    # code
+else
+    # code
+```
+
+### While Loop
+```lumen
+while condition
+    # code
+```
+
+### For Loop
+```lumen
+for variable in array
+    # code
+```
+
+### Until Loop
+```lumen
+until condition
+    # code
+```
+
+### Control Flow Keywords
+- `break` - Exit loop
+- `continue` - Skip to next iteration
+- `return value` - Return from function
+
+---
+
+## Function Definition
+
+```lumen
+fn function_name(param1, param2)
+    # function body
+    return result  # optional explicit return
+    # or implicit return of last expression
+```
+
+---
+
+## Variable Declaration
+
+### Immutable Binding
+```lumen
+let x = 42
+```
+
+### Mutable Binding
+```lumen
+let mut x = 42
+x = 50  # Can reassign
+```
+
+### Simple Assignment
+```lumen
+x = 42  # No let/mut required for assignment
+```
+
+---
+
 ## Type Conversion Functions
 
 ### `int(x)` [KERNEL]
@@ -534,98 +626,6 @@ Lumen supports the following value types:
 
 7. **NONE** - Null/void value
    - Example: `none`
-
----
-
-## Operators
-
-### Arithmetic Operators
-- `+` Addition
-- `-` Subtraction
-- `*` Multiplication
-- `/` Division (returns RATIONAL for integers, REAL for reals)
-- `//` Integer division (quotient)
-- `%` Modulo (remainder)
-- `-` Unary negation
-
-### Comparison Operators
-- `==` Equal
-- `!=` Not equal
-- `<` Less than
-- `<=` Less than or equal
-- `>` Greater than
-- `>=` Greater than or equal
-
-### Logical Operators
-- `and` Logical AND
-- `or` Logical OR
-- `not` Logical NOT
-
----
-
-## Control Flow
-
-### If-Else
-```lumen
-if condition
-    # code
-else
-    # code
-```
-
-### While Loop
-```lumen
-while condition
-    # code
-```
-
-### For Loop
-```lumen
-for variable in array
-    # code
-```
-
-### Until Loop
-```lumen
-until condition
-    # code
-```
-
-### Control Flow Keywords
-- `break` - Exit loop
-- `continue` - Skip to next iteration
-- `return value` - Return from function
-
----
-
-## Function Definition
-
-```lumen
-fn function_name(param1, param2)
-    # function body
-    return result  # optional explicit return
-    # or implicit return of last expression
-```
-
----
-
-## Variable Declaration
-
-### Immutable Binding
-```lumen
-let x = 42
-```
-
-### Mutable Binding
-```lumen
-let mut x = 42
-x = 50  # Can reassign
-```
-
-### Simple Assignment
-```lumen
-x = 42  # No let/mut required for assignment
-```
 
 ---
 
