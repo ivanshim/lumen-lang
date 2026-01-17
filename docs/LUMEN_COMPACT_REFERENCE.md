@@ -112,8 +112,8 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `is_int(x)` — `[library]` Returns `true` if `x` has INTEGER kind.
 - `is_rational(x)` — `[library]` Returns `true` if `x` has RATIONAL kind.
 - `is_real(x)` — `[library]` Returns `true` if `x` has REAL kind.
-- `is_string(x)` — `[library]` Returns `true` if `x` has STRING kind.
 - `is_bool(x)` — `[library]` Returns `true` if `x` has BOOLEAN kind.
+- `is_string(x)` — `[library]` Returns `true` if `x` has STRING kind.
 - `is_array(x)` — `[library]` Returns `true` if `x` has ARRAY kind.
 - `is_null(x)` — `[library]` Returns `true` if `x` has NULL kind.
 
