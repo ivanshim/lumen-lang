@@ -91,7 +91,7 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::keyword("fn"),
         TokenDefinition::keyword("emit"),
         TokenDefinition::keyword("push"),
-        TokenDefinition::keyword("none"),
+        TokenDefinition::keyword("null"),
         TokenDefinition::keyword("MEMOIZATION"),  // System capability for memoization control
         // "extern" is NOT registered - has its own expression handler
         // "true" and "false" are NOT registered - have their own expression handlers
