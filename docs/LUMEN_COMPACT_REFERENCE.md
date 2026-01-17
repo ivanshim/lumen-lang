@@ -242,6 +242,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `two_over_sqrt_pi_1024(sigfigs)` — `[library]` 2/√π from a 1024-digit backing store.
 
 Parameterised precision is supported via the `sigfigs` parameter in functions such as `pi(sigfigs)`, `e(sigfigs)`, etc. (lib_lumen/constants.lm).
+
 Default-precision helpers such as `pi_default()`, `e_default()`, etc. derive their precision from `REAL_DEFAULT_PRECISION` (lib_lumen/constants_default.lm).
 
 ---
