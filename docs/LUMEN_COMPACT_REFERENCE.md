@@ -136,6 +136,8 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `den(x)` — `[kernel]` Denominator of a rational (errors on non-rationals).
 - `int(x)` — `[kernel]` Integer part of a real value.
 - `frac(x)` — `[kernel]` Fractional part of a real value (same precision as input).
+- `REAL_DEFAULT_PRECISION = 15` — `[kernel]` Default significant-digit precision for real conversions.
+- `real(x, precision)` — `[kernel]` Convert integer/rational/real to a real value with the requested significant-digit precision.
 
 **Library** (lib_lumen/numeric.lm)
 - `real_default(x)` — `[library]` Convert numeric value to real using `REAL_DEFAULT_PRECISION`.
@@ -156,8 +158,6 @@ This card lists **user-accessible functions** across the kernel primitives and t
 ## Conversion, Stringification & Output
 
 **Kernel**
-- `REAL_DEFAULT_PRECISION = 15` — `[kernel]` Default significant-digit precision for real conversions.
-- `real(x, precision)` — `[kernel]` Convert integer/rational/real to a real value with the requested significant-digit precision.
 
 ---
 
