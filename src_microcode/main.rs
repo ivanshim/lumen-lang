@@ -32,9 +32,10 @@ fn main() {
             let schema = lumen_schema::get_schema();
             // Prepend Lumen standard library
             // The library provides user-facing I/O functions (print, write, str) built on top of kernel primitives
-            // Load in order: str.lm first (defines str and type checking), output.lm (defines write and print),
+            // Load in order: str.lm first (defines str and type checking), numeric.lm (defines real_default), output.lm (defines write and print),
             // then string utilities, then math functions (factorial, e_integer, pi_machin), then constants (1024-digit, full-precision, defaults)
             let stdlib_str = include_str!("../lib_lumen/str.lm");
+            let stdlib_numeric = include_str!("../lib_lumen/numeric.lm");
             let stdlib_output = include_str!("../lib_lumen/output.lm");
             let stdlib_string = include_str!("../lib_lumen/string.lm");
             let stdlib_factorial = include_str!("../lib_lumen/factorial.lm");
@@ -46,8 +47,8 @@ fn main() {
             let stdlib_constants_default = include_str!("../lib_lumen/constants_default.lm");
             let stdlib_primes = include_str!("../lib_lumen/primes.lm");
             let stdlib_number_theory = include_str!("../lib_lumen/number_theory.lm");
-            let full_source = format!("{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
-                stdlib_str, stdlib_output, stdlib_string, stdlib_factorial, stdlib_round, stdlib_e_integer,
+            let full_source = format!("{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+                stdlib_str, stdlib_numeric, stdlib_output, stdlib_string, stdlib_factorial, stdlib_round, stdlib_e_integer,
                 stdlib_pi_machin, stdlib_constants_1024, stdlib_constants, stdlib_constants_default,
                 stdlib_primes, stdlib_number_theory, source);
             if let Err(e) = run(&full_source, &schema, &program_args) {
