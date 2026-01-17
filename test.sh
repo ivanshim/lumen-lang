@@ -49,6 +49,7 @@ show_help() {
     echo -e "${BLUE}SEARCH DIRECTORIES:${NC}"
     echo "  - examples/lumen"
     echo "  - examples/lumen/constructs"
+    echo "  - examples/lumen/libraries"
     echo "  - examples/python"
     echo "  - examples/rust"
 }
@@ -92,7 +93,7 @@ while [[ $# -gt 0 ]]; do
             else
                 # Search for file in examples directories
                 found_file=""
-                for search_dir in examples/lumen examples/lumen/constructs examples/python examples/rust; do
+                for search_dir in examples/lumen examples/lumen/constructs examples/lumen/libraries examples/python examples/rust; do
                     if [[ -f "$search_dir/$1" ]]; then
                         found_file="$search_dir/$1"
                         break
@@ -103,7 +104,7 @@ while [[ $# -gt 0 ]]; do
                     SINGLE_FILE="$found_file"
                 else
                     echo -e "${RED}File not found: $1${NC}"
-                    echo "Searched in: examples/lumen, examples/lumen/constructs, examples/python, examples/rust"
+                    echo "Searched in: examples/lumen, examples/lumen/constructs, examples/lumen/libraries, examples/python, examples/rust"
                     echo "Usage: $0 [--lang lumen|rust|python] [--omit file1.lm file2.lm ...]"
                     echo "       $0 <filename>           (searches examples/ directories)"
                     echo "       $0 <full/path/to/file>"
@@ -272,7 +273,7 @@ else
     # Test lumen examples if included
     if [[ " ${test_languages[@]} " =~ " lumen " ]]; then
         echo -e "${YELLOW}Lumen Examples:${NC}"
-        for file in examples/lumen/*.lm examples/lumen/constructs/*.lm; do
+        for file in examples/lumen/*.lm examples/lumen/constructs/*.lm examples/lumen/libraries/*.lm; do
             if should_omit "$file"; then
                 continue
             fi
