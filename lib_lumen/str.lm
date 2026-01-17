@@ -63,8 +63,3 @@ fn str(x)
     if is_null(x)
         return null_to_string(x)
     error("str: unsupported value")
-
-
-# Convert to real using default precision
-fn real_default(x)
-    return real(x, REAL_DEFAULT_PRECISION)

@@ -129,6 +129,9 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `int(x)` — `[kernel]` Integer part of a real value.
 - `frac(x)` — `[kernel]` Fractional part of a real value (same precision as input).
 
+**Library** (lib_lumen/numeric.lm)
+- `real_default(x)` — `[library]` Convert numeric value to real using `REAL_DEFAULT_PRECISION`.
+
 ---
 
 ## Conversion, Stringification & Output
@@ -145,7 +148,6 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `null_to_string(x)` — `[kernel]` Convert NULL to string (mechanical primitive).
 
 **Library** (lib_lumen/str.lm)
-- `real_default(x)` — `[library]` Convert to real using `REAL_DEFAULT_PRECISION`.
 - `str(x)` — `[library]` Convert any value to its canonical string representation.
 
 **Library** (lib_lumen/output.lm)
