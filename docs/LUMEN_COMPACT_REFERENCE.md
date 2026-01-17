@@ -80,29 +80,26 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 ## Runtime Kinds & Type Introspection
 
-**Runtime Value Taxonomy**
+### Runtime Value Taxonomy
 
-    - **Presence**
-
- - **Atomic**
-
+**Presence**
+- **Atomic**
   - **Numeric**
-  - `INTEGER`
-  - `RATIONAL`
-  - `REAL`
-  - `COMPLEX` (future implementation)
+    - INTEGER
+    - RATIONAL
+    - REAL
+    - COMPLEX *(future implementation)*
+  - **Symbolic**
+    - BOOLEAN
+    - STRING
 
- -**Symbolic**
-  - `BOOLEAN`
-  - `STRING`
+- **Composite**
+  - **Structural**
+    - ARRAY
 
- - **Composite**
+**Absence**
+- NULL
 
- - **Structural**
-  - `ARRAY`
-
-- **Absence**
-  - `NULL`
 
 **Kernel**
 - `kind(x)` — `[kernel]` Return the kind meta-value (`INTEGER`, `RATIONAL`, `REAL`, `COMPLEX` (future implementation), `BOOLEAN`, `STRING`, `ARRAY`, `NULL`).
