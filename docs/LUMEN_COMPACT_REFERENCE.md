@@ -6,18 +6,30 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 ---
 
-## Output / I-O
+## Core Syntax, Evaluation & Control Flow
 
-**Kernel**
-- `emit(string)` — `[kernel]` Write a raw string to stdout; requires a string input and returns `none`.
+**Conditionals & Loops**
+- `if` / `else`
+- `while`
+- `for ... in ...`
+- `until`
 
-**Library** (lib_lumen/str.lm)
-- `write(x)` — `[library]` Convert `x` to a string with `str(x)` and emit without a newline.
-- `print(x)` — `[library]` Write `x` followed by a newline (implemented via `write`).
+**Flow Keywords**
+- `break` Exit loop
+- `continue` Next iteration
+- `return value` Return from function
+
+**System Controls**
+- `MEMOIZATION = true|false` Enable/disable memoized function caching (dynamically scoped).
+
+**Definitions & Bindings**
+- `fn name(params)` Function definition
+- `let x = value` Immutable binding
+- `let mut x = value` Mutable binding
 
 ---
 
-## Operators [kernel]
+## Operators & Expression Composition
 
 **Arithmetic**
 - `+` Addition
@@ -48,49 +60,10 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 ---
 
-## Control Flow & Definitions [kernel]
-
-**Conditionals & Loops**
-- `if` / `else`
-- `while`
-- `for ... in ...`
-- `until`
-
-**Flow Keywords**
-- `break` Exit loop
-- `continue` Next iteration
-- `return value` Return from function
-
-**System Controls**
-- `MEMOIZATION = true|false` Enable/disable memoized function caching (dynamically scoped).
-
-**Definitions & Bindings**
-- `fn name(params)` Function definition
-- `let x = value` Immutable binding
-- `let mut x = value` Mutable binding
-
----
-
-## Type Conversion & Introspection
-
-**Kernel**
-- `real(x)` — `[kernel]` Convert integer/rational/real to a real value using default precision (15 sig figs).
-- `real(x, precision)` — `[kernel]` Convert to real with the requested significant-digit precision.
-- `kind(x)` — `[kernel]` Return the kind meta-value (`INTEGER`, `RATIONAL`, `REAL`, `ARRAY`, `STRING`, `BOOLEAN`, `NONE`).
-- `num(x)` — `[kernel]` Numerator of a rational (errors on non-rationals).
-- `den(x)` — `[kernel]` Denominator of a rational (errors on non-rationals).
-- `int(x)` — `[kernel]` Integer part of a real value.
-- `frac(x)` — `[kernel]` Fractional part of a real value (same precision as input).
-
-**Library** (lib_lumen/str.lm)
-- `kind_to_string(k)` — `[library]` Convert a KIND meta-value to its canonical uppercase string representation ("INTEGER", "REAL", etc.).
-
----
-
-## Numeric Literals & Bases [kernel]
+## Primitive Values & Literals
 
 **Type hierarchy**
-- `INTEGER` ⊆ `RATIONAL` ⊆ `REAL` ⊆ `COMPLEX` (future implementation) (integers are rationals; rationals are reals).
+- `INTEGER` ⊆ `RATIONAL` ⊆ `REAL` ⊆ `COMPLEX` (future implementation)
 
 **Base syntax**
 - `base@digits` — Write a numeric literal in `base` (2..36), with the base value itself written in base 10. Example: `2@1011` or `16@FF`.
@@ -98,32 +71,71 @@ This card lists **user-accessible functions** across the kernel primitives and t
 **Exponent syntax**
 - `value**exponent` — Power operator for numeric values.
 
+**Array Literals & Indexing**
+- `[a, b, c]` — Array literal (trailing comma allowed).
+- `arr[i]` — Array indexing expression.
+- `arr[i] = value` — Array indexed assignment.
+
 ---
 
-## String Functions
+## Runtime Kinds & Type Introspection
 
 **Kernel**
-- `string_a . string_b` — `[kernel]` Concatenate strings with the `.` operator.
-- `len(x)` — `[kernel]` Length of a string (UTF-8 characters) or an array.
-- `char_at(string, index)` — `[kernel]` Character at a zero-based index (returns `none` if out of bounds).
-- `ord(string)` — `[kernel]` Unicode code point of the first character.
-- `chr(integer)` — `[kernel]` Single-character string for a Unicode code point.
-- `int_to_string(x)` — `[kernel]` Convert INTEGER to string (mechanical primitive).
-- `rational_to_string(x)` — `[kernel]` Convert RATIONAL to string (mechanical primitive).
-- `real_to_string(x)` — `[kernel]` Convert REAL to string (mechanical primitive).
-- `bool_to_string(x)` — `[kernel]` Convert BOOLEAN to string (mechanical primitive).
-- `array_to_string(x)` — `[kernel]` Convert ARRAY to string (mechanical primitive).
-- `none_to_string(x)` — `[kernel]` Convert NONE to string (mechanical primitive).
+- `kind(x)` — `[kernel]` Return the kind meta-value (`INTEGER`, `RATIONAL`, `REAL`, `COMPLEX` (future implementation), `BOOLEAN`, `STRING`, `ARRAY`, `NULL`).
+- `INTEGER`, `RATIONAL`, `REAL`, `COMPLEX` (future implementation), `BOOLEAN`, `STRING`, `ARRAY`, `NULL` — Kind meta-values for `kind(x)` checks.
+- `ARGS` — Command-line arguments as a single string.
 
 **Library** (lib_lumen/str.lm)
-- `str(x)` — `[library]` Convert any value to its canonical string representation.
+- `kind_to_string(k)` — `[library]` Convert a KIND meta-value to its canonical uppercase string representation ("INTEGER", "REAL", etc.).
 - `is_int(x)` — `[library]` Returns `true` if `x` has INTEGER kind.
 - `is_rational(x)` — `[library]` Returns `true` if `x` has RATIONAL kind.
 - `is_real(x)` — `[library]` Returns `true` if `x` has REAL kind.
 - `is_string(x)` — `[library]` Returns `true` if `x` has STRING kind.
 - `is_bool(x)` — `[library]` Returns `true` if `x` has BOOLEAN kind.
 - `is_array(x)` — `[library]` Returns `true` if `x` has ARRAY kind.
-- `is_none(x)` — `[library]` Returns `true` if `x` has NONE kind.
+- `is_null(x)` — `[library]` Returns `true` if `x` has NULL kind.
+
+---
+
+## Numeric Structure & Decomposition
+
+**Kernel**
+- `num(x)` — `[kernel]` Numerator of a rational (errors on non-rationals).
+- `den(x)` — `[kernel]` Denominator of a rational (errors on non-rationals).
+- `int(x)` — `[kernel]` Integer part of a real value.
+- `frac(x)` — `[kernel]` Fractional part of a real value (same precision as input).
+
+---
+
+## Conversion, Stringification & Output
+
+**Kernel**
+- `REAL_DEFAULT_PRECISION = 15` — `[kernel]` Default significant-digit precision for real conversions.
+- `real(x, precision)` — `[kernel]` Convert integer/rational/real to a real value with the requested significant-digit precision.
+- `emit(string)` — `[kernel]` Write a raw string to stdout; requires a string input and returns `null`.
+- `int_to_string(x)` — `[kernel]` Convert INTEGER to string (mechanical primitive).
+- `rational_to_string(x)` — `[kernel]` Convert RATIONAL to string (mechanical primitive).
+- `real_to_string(x)` — `[kernel]` Convert REAL to string (mechanical primitive).
+- `bool_to_string(x)` — `[kernel]` Convert BOOLEAN to string (mechanical primitive).
+- `array_to_string(x)` — `[kernel]` Convert ARRAY to string (mechanical primitive).
+- `null_to_string(x)` — `[kernel]` Convert NULL to string (mechanical primitive).
+
+**Library** (lib_lumen/str.lm)
+- `real_default(x)` — `[library]` Convert to real using `REAL_DEFAULT_PRECISION`.
+- `str(x)` — `[library]` Convert any value to its canonical string representation.
+- `write(x)` — `[library]` Convert `x` to a string with `str(x)` and emit without a newline.
+- `print(x)` — `[library]` Write `x` followed by a newline (implemented via `write`).
+
+---
+
+## Strings & Text Processing
+
+**Kernel**
+- `string_a . string_b` — `[kernel]` Concatenate strings with the `.` operator.
+- `len(x)` — `[kernel]` Length of a string (UTF-8 characters) or an array.
+- `char_at(string, index)` — `[kernel]` Character at a zero-based index (returns `null` if out of bounds).
+- `ord(string)` — `[kernel]` Unicode code point of the first character.
+- `chr(integer)` — `[kernel]` Single-character string for a Unicode code point.
 
 **Library** (lib_lumen/string.lm)
 - `substring(s, start, end)` — `[library]` Slice string from `start` (inclusive) to `end` (exclusive).
@@ -137,33 +149,17 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 ---
 
-## Array Functions
+## Arrays & Collections
 
 **Kernel**
 - `push(arr, value)` — `[kernel]` Append `value` to array `arr` (mutates in place).
 
-**Array Literals & Indexing**
-- `[a, b, c]` — Array literal (trailing comma allowed).
-- `arr[i]` — Array indexing expression.
-- `arr[i] = value` — Array indexed assignment.
-
 **Library**
 - (none)
 
 ---
 
-## Built-in Kind Constants & Globals
-
-**Kernel**
-- `INTEGER`, `RATIONAL`, `REAL`, `COMPLEX` (future implementation), `BOOLEAN`, `STRING`, `ARRAY`, `NONE` — Kind meta-values for `kind(x)` checks.
-- `ARGS` — Command-line arguments as a single string.
-
-**Library**
-- (none)
-
----
-
-## Extern Calls
+## External Interaction
 
 **Kernel**
 - `extern("selector", args...)` — `[kernel]` Call an external capability (selector must be a string literal).
@@ -184,7 +180,9 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 ---
 
-## Rounding & Factorial
+## Mathematics Libraries
+
+**Rounding & Factorial**
 
 **Kernel**
 - (none)
@@ -193,25 +191,21 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `round(x, decimals)` — `[library]` Round using round-half-away-from-zero semantics. (lib_lumen/round.lm)
 - `factorial(n)` — `[library]` Recursive integer factorial. (lib_lumen/factorial.lm)
 
----
-
-## Number Theory
+**Number Theory**
 
 **Kernel**
 - (none)
 
 **Library** (lib_lumen/number_theory.lm)
-- `gcd(a, b)` — `[library]` Greatest common divisor (Euclid’s algorithm).
+- `gcd(a, b)` — `[library]` Greatest common divisor (Euclid's algorithm).
 - `lcm(a, b)` — `[library]` Least common multiple.
 - `is_coprime(a, b)` — `[library]` True if `a` and `b` are coprime.
 - `pow_mod(base, exp, mod)` — `[library]` Fast modular exponentiation.
 - `extended_gcd(a, b)` — `[library]` Returns `[g, x, y]` where `ax + by = g`.
-- `mod_inverse(a, m)` — `[library]` Modular inverse or `none` if it does not exist.
+- `mod_inverse(a, m)` — `[library]` Modular inverse or `null` if it does not exist.
 - `mod_div(a, b, m)` — `[library]` Modular division `a / b (mod m)` using `mod_inverse`.
 
----
-
-## Prime Utilities
+**Prime Utilities**
 
 **Kernel**
 - (none)
@@ -225,53 +219,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 ---
 
-## Constants (significant digits)
-
-**Kernel**
-- (none)
-
-**Library** (lib_lumen/constants.lm)
-- `pi(sigfigs)` — `[library]` π with `sigfigs` significant digits.
-- `e(sigfigs)` — `[library]` e with `sigfigs` significant digits.
-- `sqrt2(sigfigs)` — `[library]` √2 with `sigfigs` significant digits.
-- `sqrt_pi(sigfigs)` — `[library]` √π with `sigfigs` significant digits.
-- `sqrt_2pi(sigfigs)` — `[library]` √(2π) with `sigfigs` significant digits.
-- `e2(sigfigs)` — `[library]` e² with `sigfigs` significant digits.
-- `inv_pi(sigfigs)` — `[library]` 1/π with `sigfigs` significant digits.
-- `inv_e(sigfigs)` — `[library]` 1/e with `sigfigs` significant digits.
-- `inv_sqrt_2pi(sigfigs)` — `[library]` 1/√(2π) with `sigfigs` significant digits.
-- `ln2(sigfigs)` — `[library]` ln(2) with `sigfigs` significant digits.
-- `ln10(sigfigs)` — `[library]` ln(10) with `sigfigs` significant digits.
-- `log2e(sigfigs)` — `[library]` log₂(e) with `sigfigs` significant digits.
-- `log10e(sigfigs)` — `[library]` log₁₀(e) with `sigfigs` significant digits.
-- `two_over_sqrt_pi(sigfigs)` — `[library]` 2/√π with `sigfigs` significant digits.
-
----
-
-## Constants (default precision)
-
-**Kernel**
-- (none)
-
-**Library** (lib_lumen/constants_default.lm)
-- `pi_default()` — `[library]` π with default precision (15 sig figs).
-- `e_default()` — `[library]` e with default precision (15 sig figs).
-- `sqrt2_default()` — `[library]` √2 with default precision (15 sig figs).
-- `sqrt_pi_default()` — `[library]` √π with default precision (15 sig figs).
-- `sqrt_2pi_default()` — `[library]` √(2π) with default precision (15 sig figs).
-- `e2_default()` — `[library]` e² with default precision (15 sig figs).
-- `inv_pi_default()` — `[library]` 1/π with default precision (15 sig figs).
-- `inv_e_default()` — `[library]` 1/e with default precision (15 sig figs).
-- `inv_sqrt_2pi_default()` — `[library]` 1/√(2π) with default precision (15 sig figs).
-- `ln2_default()` — `[library]` ln(2) with default precision (15 sig figs).
-- `ln10_default()` — `[library]` ln(10) with default precision (15 sig figs).
-- `log2e_default()` — `[library]` log₂(e) with default precision (15 sig figs).
-- `log10e_default()` — `[library]` log₁₀(e) with default precision (15 sig figs).
-- `two_over_sqrt_pi_default()` — `[library]` 2/√π with default precision (15 sig figs).
-
----
-
-## Constants (1024-digit backing)
+## Constants with 1024-Digit Backing Stores
 
 **Kernel**
 - (none)
@@ -293,6 +241,9 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `log10e_1024(sigfigs)` — `[library]` log₁₀(e) from a 1024-digit backing store.
 - `two_over_sqrt_pi_1024(sigfigs)` — `[library]` 2/√π from a 1024-digit backing store.
 
+Parameterised precision is supported via the `sigfigs` parameter in functions such as `pi(sigfigs)`, `e(sigfigs)`, etc. (lib_lumen/constants.lm).
+Default-precision helpers such as `pi_default()`, `e_default()`, etc. derive their precision from `REAL_DEFAULT_PRECISION` (lib_lumen/constants_default.lm).
+
 ---
 
 ## Series-Based Constants
@@ -301,5 +252,5 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - (none)
 
 **Library**
-- `pi_machin(sigfigs)` — `[library]` π via Machin’s formula (integer arithmetic). (lib_lumen/pi_machin.lm)
+- `pi_machin(sigfigs)` — `[library]` π via Machin's formula (integer arithmetic). (lib_lumen/pi_machin.lm)
 - `e_integer(sigfigs)` — `[library]` e via integer Taylor series with guard digits. (lib_lumen/e_integer.lm)
