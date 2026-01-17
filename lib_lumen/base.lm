@@ -18,13 +18,13 @@ fn base(value, radix)
     k = kind(value)
 
     if k == INTEGER
-        base_integer(value, radix)
+        return base_integer(value, radix)
 
     if k == RATIONAL
-        base_rational(value, radix)
+        return base_rational(value, radix)
 
     if k == REAL
-        base_real(value, radix)
+        return base_real(value, radix)
 
     error("base(): unsupported kind: " . str(k))
 

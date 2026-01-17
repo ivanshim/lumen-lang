@@ -7,3 +7,9 @@ fn write(x)
 fn print(x)
     write(x)
     emit("\n")
+
+
+# Print error message and halt execution
+fn error(msg)
+    print("ERROR: " . msg)
+    1 / 0  # Halt execution via division by zero
