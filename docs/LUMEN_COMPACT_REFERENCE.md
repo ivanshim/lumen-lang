@@ -79,7 +79,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 **Presence**
 - **Atomic**
-  - **Numeric** (Type hierarchy)
+  - **Numeric** *(Type hierarchy)*
     - INTEGER ⊆
     - RATIONAL ⊆
     - REAL ⊆
