@@ -200,7 +200,7 @@ impl FunctionCallExpr {
         }
 
         // Execute function body
-        let mut result = Box::new(crate::languages::lumen::values::LumenNone) as Value;
+        let mut result = Box::new(crate::languages::lumen::values::LumenNull) as Value;
         {
             let body_ref = body.borrow();
             for stmt in body_ref.iter() {
@@ -478,9 +478,9 @@ fn builtin_len(value: &Value) -> LumenResult<Value> {
 /// Built-in function: char_at(string, index) - Return character at index
 /// Returns the character at the given zero-based index.
 /// Characters are UTF-8 characters (not bytes).
-/// Returns none if index is out of bounds or negative.
+/// Returns null if index is out of bounds or negative.
 fn builtin_char_at(string_val: &Value, index_val: &Value) -> LumenResult<Value> {
-    use crate::languages::lumen::values::{LumenString, LumenNumber, LumenNone};
+    use crate::languages::lumen::values::{LumenString, LumenNumber, LumenNull};
     use num_traits::ToPrimitive;
 
     // Extract string
@@ -498,14 +498,14 @@ fn builtin_char_at(string_val: &Value, index_val: &Value) -> LumenResult<Value> 
         Some(i) => i,
         None => {
             // Negative or too large index
-            return Ok(Box::new(LumenNone));
+            return Ok(Box::new(LumenNull));
         }
     };
 
     // Get character at index
     match string.value.chars().nth(index) {
         Some(ch) => Ok(Box::new(LumenString::new(ch.to_string()))),
-        None => Ok(Box::new(LumenNone)), // Out of bounds
+        None => Ok(Box::new(LumenNull)), // Out of bounds
     }
 }
 
