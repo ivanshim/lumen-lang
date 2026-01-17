@@ -217,10 +217,6 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `parse_int(s)` — `[library]` Parse a base-10 integer from a string.
 - `int_to_decimal_string(n)` — `[library]` Convert integer to base-10 string.
 
-**Character Utilities**
-- `map_chars(s, f)` — `[library]` Apply a function to each character and rebuild string.
-- `filter_chars(s, pred)` — `[library]` Keep only characters that satisfy predicate.
-
 ---
 
 ## Arrays & Collections

@@ -1,0 +1,193 @@
+# Character Utilities Examples
+# Demonstrates manual character-by-character processing patterns
+
+print("=== Manual Character Mapping Patterns ===")
+print("")
+
+# Manually map characters to uppercase
+print("Manual uppercase mapping:")
+fn manual_to_upper(s)
+    let result = ""
+    let i = 0
+    while i < len(s)
+        result = result . to_upper_char(char_at(s, i))
+        i = i + 1
+    result
+
+let s1 = "hello world"
+let s1_upper = manual_to_upper(s1)
+print("  '" . s1 . "' -> '" . s1_upper . "'")  # HELLO WORLD
+print("")
+
+# Custom mapping: shift digits by 1
+print("Custom character mapping (shift digits):")
+fn shift_digits_in_string(s)
+    let result = ""
+    let i = 0
+    while i < len(s)
+        let c = char_at(s, i)
+        if is_digit(c)
+            let o = ord(c)
+            let shifted = ((o - ord("0") + 1) % 10) + ord("0")
+            result = result . chr(shifted)
+        else
+            result = result . c
+        i = i + 1
+    result
+
+let s2 = "abc123xyz789"
+let s2_shifted = shift_digits_in_string(s2)
+print("  '" . s2 . "' -> '" . s2_shifted . "'")  # abc234xyz890
+print("")
+
+# Character filtering patterns
+print("=== Manual Character Filtering Patterns ===")
+print("")
+
+# Filter to keep only digits
+print("Keep only digits:")
+fn keep_only_digits(s)
+    let result = ""
+    let i = 0
+    while i < len(s)
+        let c = char_at(s, i)
+        if is_digit(c)
+            result = result . c
+        i = i + 1
+    result
+
+let s3 = "abc123def456"
+let s3_digits = keep_only_digits(s3)
+print("  '" . s3 . "' -> '" . s3_digits . "'")  # 123456
+print("")
+
+# Filter to keep only letters
+print("Keep only letters:")
+fn keep_only_letters(s)
+    let result = ""
+    let i = 0
+    while i < len(s)
+        let c = char_at(s, i)
+        if is_alpha(c)
+            result = result . c
+        i = i + 1
+    result
+
+let s4 = "hello123world456"
+let s4_letters = keep_only_letters(s4)
+print("  '" . s4 . "' -> '" . s4_letters . "'")  # helloworld
+print("")
+
+# Custom filter: keep only uppercase
+print("Keep only uppercase letters:")
+fn keep_only_uppercase(s)
+    let result = ""
+    let i = 0
+    while i < len(s)
+        let c = char_at(s, i)
+        let o = ord(c)
+        if o >= ord("A") and o <= ord("Z")
+            result = result . c
+        i = i + 1
+    result
+
+let s5 = "HeLLo WoRLd"
+let s5_upper = keep_only_uppercase(s5)
+print("  '" . s5 . "' -> '" . s5_upper . "'")  # HLWRL
+print("")
+
+# Practical example: remove spaces
+print("=== Practical Example: Remove Spaces ===")
+fn remove_spaces(s)
+    let result = ""
+    let i = 0
+    while i < len(s)
+        let c = char_at(s, i)
+        if c != " "
+            result = result . c
+        i = i + 1
+    result
+
+let sentences = ["hello world", "the quick brown fox", "a b c d"]
+let i = 0
+while i < len(sentences)
+    let s = sentences[i]
+    let no_spaces = remove_spaces(s)
+    print("  '" . s . "' -> '" . no_spaces . "'")
+    i = i + 1
+print("")
+
+# Practical example: sanitize input (keep only alphanumeric)
+print("=== Practical Example: Sanitize Input ===")
+fn sanitize_input(s)
+    let result = ""
+    let i = 0
+    while i < len(s)
+        let c = char_at(s, i)
+        if is_alnum(c)
+            result = result . c
+        i = i + 1
+    result
+
+let inputs = ["hello@world", "user_123", "test!@#$%", "abc123xyz"]
+let i = 0
+while i < len(inputs)
+    let s = inputs[i]
+    let sanitized = sanitize_input(s)
+    print("  '" . s . "' -> '" . sanitized . "'")
+    i = i + 1
+print("")
+
+# Practical example: extract numbers from mixed string
+print("=== Practical Example: Extract Number ===")
+fn extract_digits(s)
+    let result = ""
+    let i = 0
+    while i < len(s)
+        let c = char_at(s, i)
+        if is_digit(c)
+            result = result . c
+        i = i + 1
+    result
+
+fn extract_number(s)
+    let digits = extract_digits(s)
+    if len(digits) == 0
+        return null
+    parse_int(digits)
+
+let mixed_strings = ["Order #12345", "Price: $99", "No digits here", "Year2025"]
+let i = 0
+while i < len(mixed_strings)
+    let s = mixed_strings[i]
+    let num = extract_number(s)
+    if is_null(num)
+        print("  '" . s . "' -> no number found")
+    else
+        print("  '" . s . "' -> extracted: " . str(num))
+    i = i + 1
+print("")
+
+# Practical example: alternating case
+print("=== Practical Example: Alternating Case ===")
+fn alternating_case(s)
+    let result = ""
+    let uppercase_next = true
+    let i = 0
+    while i < len(s)
+        let c = char_at(s, i)
+        if not is_alpha(c)
+            result = result . c
+        else
+            if uppercase_next
+                result = result . to_upper_char(c)
+                uppercase_next = false
+            else
+                result = result . to_lower_char(c)
+                uppercase_next = true
+        i = i + 1
+    result
+
+let s6 = "hello world"
+let s6_alternating = alternating_case(s6)
+print("  '" . s6 . "' -> '" . s6_alternating . "'")  # HeLlO wOrLd

@@ -70,26 +70,24 @@ fn reverse(s)
 # True if string consists only of digits
 fn is_numeric_string(s)
     if len(s) == 0
-        false
-    else
-        let i = 0
-        while i < len(s)
-            if not is_digit(char_at(s, i))
-                false
-            i = i + 1
-        true
+        return false
+    let i = 0
+    while i < len(s)
+        if not is_digit(char_at(s, i))
+            return false
+        i = i + 1
+    true
 
 # True if string consists only of ASCII letters
 fn is_alpha_string(s)
     if len(s) == 0
-        false
-    else
-        let i = 0
-        while i < len(s)
-            if not is_alpha(char_at(s, i))
-                false
-            i = i + 1
-        true
+        return false
+    let i = 0
+    while i < len(s)
+        if not is_alpha(char_at(s, i))
+            return false
+        i = i + 1
+    true
 
 
 # Numeric parsing helpers built from ord/chr
@@ -118,26 +116,3 @@ fn int_to_decimal_string(n)
             result = chr(ord("0") + d) . result
             x = x // 10
         result
-
-
-# Character mapping utilities
-
-# Apply a function to each character and rebuild string
-fn map_chars(s, f)
-    let result = ""
-    let i = 0
-    while i < len(s)
-        result = result . f(char_at(s, i))
-        i = i + 1
-    result
-
-# Keep only characters that satisfy predicate
-fn filter_chars(s, pred)
-    let result = ""
-    let i = 0
-    while i < len(s)
-        let c = char_at(s, i)
-        if pred(c)
-            result = result . c
-        i = i + 1
-    result
