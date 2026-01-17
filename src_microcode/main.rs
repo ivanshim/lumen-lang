@@ -11,6 +11,11 @@ use std::process;
 use microcode_2::kernel::run;
 use microcode_2::languages::{lumen_schema, rust_core_schema, python_core_schema};
 
+// Build-time packaging: embedded .lm file list from lib_lumen/prelude.rs
+mod embedded_files {
+    include!("../lib_lumen/prelude.rs");
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
@@ -122,25 +127,13 @@ fn detect_language_from_extension(filepath: &str) -> Option<String> {
     Some(language.to_string())
 }
 
-/// Embedded virtual filesystem: maps file paths to their compile-time embedded contents
-/// The kernel has no knowledge of what these files contain or their purpose
+/// Generic embedded file lookup: queries the embedded virtual filesystem by path
+/// The kernel performs a simple path-based lookup with no semantic knowledge
 fn get_embedded_file(path: &str) -> Option<&'static str> {
-    match path {
-        "lib_lumen/str.lm" => Some(include_str!("../lib_lumen/str.lm")),
-        "lib_lumen/numeric.lm" => Some(include_str!("../lib_lumen/numeric.lm")),
-        "lib_lumen/output.lm" => Some(include_str!("../lib_lumen/output.lm")),
-        "lib_lumen/string.lm" => Some(include_str!("../lib_lumen/string.lm")),
-        "lib_lumen/factorial.lm" => Some(include_str!("../lib_lumen/factorial.lm")),
-        "lib_lumen/round.lm" => Some(include_str!("../lib_lumen/round.lm")),
-        "lib_lumen/e_integer.lm" => Some(include_str!("../lib_lumen/e_integer.lm")),
-        "lib_lumen/pi_machin.lm" => Some(include_str!("../lib_lumen/pi_machin.lm")),
-        "lib_lumen/primes.lm" => Some(include_str!("../lib_lumen/primes.lm")),
-        "lib_lumen/number_theory.lm" => Some(include_str!("../lib_lumen/number_theory.lm")),
-        "lib_lumen/constants_1024.lm" => Some(include_str!("../lib_lumen/constants_1024.lm")),
-        "lib_lumen/constants.lm" => Some(include_str!("../lib_lumen/constants.lm")),
-        "lib_lumen/constants_default.lm" => Some(include_str!("../lib_lumen/constants_default.lm")),
-        _ => None,
-    }
+    embedded_files::EMBEDDED_FILES
+        .iter()
+        .find(|(p, _)| *p == path)
+        .map(|(_, contents)| *contents)
 }
 
 /// Process include directives in source code
