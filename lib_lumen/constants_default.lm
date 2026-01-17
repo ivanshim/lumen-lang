@@ -1,18 +1,11 @@
-# ============================================================
-# Lumen mathematical constants with default precision
-# using REAL_DEFAULT_PRECISION
-# All functions delegate to their full-precision counterparts
-# ============================================================
-
-# Core constants
+## Core constants at default precision
 fn pi_default()
     pi(REAL_DEFAULT_PRECISION)
 
 fn e_default()
     e(REAL_DEFAULT_PRECISION)
 
-
-# Roots and powers
+## Roots and powers
 fn sqrt2_default()
     sqrt2(REAL_DEFAULT_PRECISION)
 
@@ -25,8 +18,7 @@ fn sqrt_2pi_default()
 fn e2_default()
     e2(REAL_DEFAULT_PRECISION)
 
-
-# Reciprocals
+## Reciprocals
 fn inv_pi_default()
     inv_pi(REAL_DEFAULT_PRECISION)
 
@@ -36,8 +28,7 @@ fn inv_e_default()
 fn inv_sqrt_2pi_default()
     inv_sqrt_2pi(REAL_DEFAULT_PRECISION)
 
-
-# Logarithms
+## Logarithms
 fn ln2_default()
     ln2(REAL_DEFAULT_PRECISION)
 
@@ -50,7 +41,6 @@ fn log2e_default()
 fn log10e_default()
     log10e(REAL_DEFAULT_PRECISION)
 
-
-# Mathematical constants (secondary but useful)
+## Other constants
 fn two_over_sqrt_pi_default()
     two_over_sqrt_pi(REAL_DEFAULT_PRECISION)

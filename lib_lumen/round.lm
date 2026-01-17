@@ -1,7 +1,4 @@
-# Rounding utility function
-# fn round(x, decimals) - rounds x to the specified number of decimal places
-# Uses round-half-away-from-zero semantics
-
+# Round x to specified decimal places using round-half-away-from-zero
 fn round(x, decimals)
     scale = 1
     i = 0

@@ -1,33 +1,33 @@
-# Return true if x has INTEGER kind
+## Kind predicates
+# Returns true if x has INTEGER kind
 fn is_int(x)
     return kind(x) == INTEGER
 
-# Return true if x has RATIONAL kind
+# Returns true if x has RATIONAL kind
 fn is_rational(x)
     return kind(x) == RATIONAL
 
-# Return true if x has REAL kind
+# Returns true if x has REAL kind
 fn is_real(x)
     return kind(x) == REAL
 
-# Return true if x has BOOLEAN kind
+# Returns true if x has BOOLEAN kind
 fn is_bool(x)
     return kind(x) == BOOLEAN
 
-# Return true if x has STRING kind
+# Returns true if x has STRING kind
 fn is_string(x)
     return kind(x) == STRING
 
-# Return true if x has ARRAY kind
+# Returns true if x has ARRAY kind
 fn is_array(x)
     return kind(x) == ARRAY
 
-# Return true if x has NULL kind
+# Returns true if x has NULL kind
 fn is_null(x)
     return kind(x) == NULL
 
-
-# Convert a KIND meta-value to its canonical uppercase string
+# Convert a KIND meta-value to its canonical uppercase string representation
 fn kind_to_string(k)
     if is_int(k)
         return "INTEGER"
@@ -45,8 +45,7 @@ fn kind_to_string(k)
         return "NULL"
     error("kind_to_string: expected KIND meta-value")
 
-
-# Convert any supported value to its canonical string form
+# Convert any value to its canonical string representation
 fn str(x)
     if is_int(x)
         return int_to_string(x)

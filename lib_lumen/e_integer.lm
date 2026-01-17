@@ -1,8 +1,4 @@
-# Euler's number (e) calculation
-# fn e_integer(sigfigs) - returns e rounded to sigfigs significant digits
-# Uses scaled integer Taylor series with guard digits
-# No formatting, no output side effects
-
+# Compute e to sigfigs significant digits using Taylor series
 fn e_integer(sigfigs)
     # number of guard digits for safe rounding
     guard = 3

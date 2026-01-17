@@ -1,13 +1,6 @@
-# base.lm
-# Numeric base representation utilities (INTEGER, RATIONAL, REAL)
-# Library-level formatting only — always returns STRING
-
 alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
 
-# ------------------------------------------------------------
-# Public entry point
-# ------------------------------------------------------------
-
+# Convert integer/rational/real to a string in the given base (2..36)
 fn base(value, radix)
     if kind(radix) != INTEGER
         error("base(): radix must be INTEGER")
@@ -28,10 +21,7 @@ fn base(value, radix)
 
     error("base(): unsupported kind: " . str(k))
 
-# ------------------------------------------------------------
-# INTEGER
-# ------------------------------------------------------------
-
+# Base conversion for integers
 fn base_integer(n, radix)
     if n == 0
         return "0"
@@ -53,10 +43,7 @@ fn base_integer(n, radix)
 
     result
 
-# ------------------------------------------------------------
-# RATIONAL
-# ------------------------------------------------------------
-
+# Base conversion for rationals (numerator/denominator)
 fn base_rational(r, radix)
     n = num(r)
     d = den(r)
@@ -66,15 +53,7 @@ fn base_rational(r, radix)
 
     n_str . "/" . d_str
 
-# ------------------------------------------------------------
-# REAL
-# ------------------------------------------------------------
-
-# NOTE:
-# - Uses fixed fractional precision
-# - Representation is string-only
-# - No attempt to reconstruct a REAL in another base
-
+# Base conversion for reals with fixed fractional precision
 fn base_real(x, radix)
     i = int(x)
     f = frac(x)
@@ -88,10 +67,7 @@ fn base_real(x, radix)
 
     int_part . "." . frac_part
 
-# ------------------------------------------------------------
-# FRACTIONAL helper (REAL only)
-# ------------------------------------------------------------
-
+# Fractional helper used by base_real
 fn base_frac(f, radix, limit)
     result = ""
     count = 0

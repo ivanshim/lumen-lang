@@ -1,4 +1,4 @@
-# Test whether a number is prime using trial division
+# Trial-division primality test
 fn is_prime(n)
     if n < 2
         false
@@ -13,8 +13,7 @@ fn is_prime(n)
         i = i + 2
     true
 
-
-# Return the smallest prime greater than n
+# Smallest prime greater than n
 fn next_prime(n)
     k = n + 1
     while true
@@ -22,8 +21,7 @@ fn next_prime(n)
             k
         k = k + 1
 
-
-# Generate all primes up to and including limit
+# Sieve of Eratosthenes, inclusive
 fn primes_up_to(limit)
     sieve = []
     i = 0
@@ -51,8 +49,7 @@ fn primes_up_to(limit)
         i = i + 1
     primes
 
-
-# Return the prime factorization of n as an array
+# Prime factorization (with repeats)
 fn prime_factors(n)
     factors = []
     d = 2
@@ -65,8 +62,7 @@ fn prime_factors(n)
         push(factors, n)
     factors
 
-
-# Return the unique prime factors of n
+# Unique prime factors of n
 fn unique_prime_factors(n)
     f = prime_factors(n)
     u = []
