@@ -402,28 +402,28 @@ pub fn as_real(val: &dyn RuntimeValue) -> Result<&LumenReal, String> {
         .ok_or_else(|| "Expected a real value".to_string())
 }
 
-/// Lumen none (null/unit) value
+/// Lumen null (unit) value
 #[derive(Debug, Clone, PartialEq)]
-pub struct LumenNone;
+pub struct LumenNull;
 
-impl RuntimeValue for LumenNone {
+impl RuntimeValue for LumenNull {
     fn clone_boxed(&self) -> Box<dyn RuntimeValue> {
         Box::new(self.clone())
     }
 
     fn as_debug_string(&self) -> String {
-        "none".to_string()
+        "null".to_string()
     }
 
     fn as_display_string(&self) -> String {
-        "none".to_string()
+        "null".to_string()
     }
 
     fn eq_value(&self, other: &dyn RuntimeValue) -> Result<bool, String> {
-        if other.as_any().downcast_ref::<LumenNone>().is_some() {
+        if other.as_any().downcast_ref::<LumenNull>().is_some() {
             Ok(true)
         } else {
-            Err("Cannot compare none with non-none value".to_string())
+            Err("Cannot compare null with non-null value".to_string())
         }
     }
 
@@ -559,7 +559,7 @@ pub enum KindValue {
     STRING,
     BOOLEAN,
     ARRAY,
-    NONE,
+    NULL,
 }
 
 /// Lumen kind value - kernel-level type descriptor meta-value
@@ -593,7 +593,7 @@ impl RuntimeValue for LumenKind {
             KindValue::STRING => "STRING".to_string(),
             KindValue::BOOLEAN => "BOOLEAN".to_string(),
             KindValue::ARRAY => "ARRAY".to_string(),
-            KindValue::NONE => "NONE".to_string(),
+            KindValue::NULL => "NULL".to_string(),
         }
     }
 

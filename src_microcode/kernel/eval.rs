@@ -17,7 +17,7 @@ pub enum KindValue {
     STRING,
     BOOLEAN,
     ARRAY,
-    NONE,
+    NULL,
 }
 
 /// Runtime value
@@ -100,7 +100,7 @@ impl fmt::Display for Value {
             }
             Value::String(s) => write!(f, "{}", s),
             Value::Bool(b) => write!(f, "{}", if *b { "true" } else { "false" }),
-            Value::Null => write!(f, "none"),
+            Value::Null => write!(f, "null"),
             Value::Range { start, end } => {
                 write!(f, "{}..{}", start, end)
             }
@@ -126,7 +126,7 @@ impl fmt::Display for Value {
                     KindValue::STRING => "STRING",
                     KindValue::BOOLEAN => "BOOLEAN",
                     KindValue::ARRAY => "ARRAY",
-                    KindValue::NONE => "NONE",
+                    KindValue::NULL => "NULL",
                 };
                 write!(f, "{}", name)
             }

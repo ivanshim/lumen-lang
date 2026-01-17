@@ -80,7 +80,7 @@ impl PipeExpr {
         }
 
         // Execute function body
-        let mut result = Box::new(crate::languages::lumen::values::LumenNone) as Value;
+        let mut result = Box::new(crate::languages::lumen::values::LumenNull) as Value;
         {
             let body_ref = body.borrow();
             for stmt in body_ref.iter() {

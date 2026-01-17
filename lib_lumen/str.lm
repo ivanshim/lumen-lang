@@ -22,9 +22,9 @@ fn is_string(x)
 fn is_array(x)
     return kind(x) == ARRAY
 
-# Return true if x has NONE kind
-fn is_none(x)
-    return kind(x) == NONE
+# Return true if x has NULL kind
+fn is_null(x)
+    return kind(x) == NULL
 
 
 # Convert a KIND meta-value to its canonical uppercase string
@@ -41,8 +41,8 @@ fn kind_to_string(k)
         return "STRING"
     if k == ARRAY
         return "ARRAY"
-    if k == NONE
-        return "NONE"
+    if k == NULL
+        return "NULL"
     error("kind_to_string: expected KIND meta-value")
 
 
@@ -60,9 +60,14 @@ fn str(x)
         return x
     if is_array(x)
         return array_to_string(x)
-    if is_none(x)
-        return none_to_string(x)
+    if is_null(x)
+        return null_to_string(x)
     error("str: unsupported value")
+
+
+# Convert to real using default precision
+fn real_default(x)
+    return real(x, REAL_DEFAULT_PRECISION)
 
 
 # Write value to stdout without newline

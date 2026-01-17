@@ -5,7 +5,7 @@ use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
 use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::{Env, Value};
-use crate::languages::lumen::values::{LumenNumber, LumenBool, LumenString, LumenNone, LumenRational, LumenReal};
+use crate::languages::lumen::values::{LumenNumber, LumenBool, LumenString, LumenNull, LumenRational, LumenReal};
 use crate::languages::lumen::numeric;
 use num_bigint::BigInt;
 
@@ -389,7 +389,7 @@ struct NoneLiteral;
 
 impl ExprNode for NoneLiteral {
     fn eval(&self, _env: &mut Env) -> LumenResult<Value> {
-        Ok(Box::new(LumenNone))
+        Ok(Box::new(LumenNull))
     }
 }
 
