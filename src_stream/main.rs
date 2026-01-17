@@ -86,8 +86,29 @@ fn detect_language_from_extension(filepath: &str) -> Option<String> {
     Some(language.to_string())
 }
 
-/// Process include directives in Lumen source code
-/// Recursively expands `include "path"` directives by loading and inlining files
+/// Embedded virtual filesystem: maps file paths to their compile-time embedded contents
+/// The kernel has no knowledge of what these files contain or their purpose
+fn get_embedded_file(path: &str) -> Option<&'static str> {
+    match path {
+        "lib_lumen/str.lm" => Some(include_str!("../lib_lumen/str.lm")),
+        "lib_lumen/numeric.lm" => Some(include_str!("../lib_lumen/numeric.lm")),
+        "lib_lumen/output.lm" => Some(include_str!("../lib_lumen/output.lm")),
+        "lib_lumen/string.lm" => Some(include_str!("../lib_lumen/string.lm")),
+        "lib_lumen/factorial.lm" => Some(include_str!("../lib_lumen/factorial.lm")),
+        "lib_lumen/round.lm" => Some(include_str!("../lib_lumen/round.lm")),
+        "lib_lumen/e_integer.lm" => Some(include_str!("../lib_lumen/e_integer.lm")),
+        "lib_lumen/pi_machin.lm" => Some(include_str!("../lib_lumen/pi_machin.lm")),
+        "lib_lumen/primes.lm" => Some(include_str!("../lib_lumen/primes.lm")),
+        "lib_lumen/number_theory.lm" => Some(include_str!("../lib_lumen/number_theory.lm")),
+        "lib_lumen/constants_1024.lm" => Some(include_str!("../lib_lumen/constants_1024.lm")),
+        "lib_lumen/constants.lm" => Some(include_str!("../lib_lumen/constants.lm")),
+        "lib_lumen/constants_default.lm" => Some(include_str!("../lib_lumen/constants_default.lm")),
+        _ => None,
+    }
+}
+
+/// Process include directives in source code
+/// Recursively expands `include "path"` directives by inlining embedded file contents
 fn process_includes(source: &str) -> Result<String, String> {
     let mut result = String::new();
     let mut processed_files = std::collections::HashSet::new();
@@ -117,26 +138,12 @@ fn process_includes(source: &str) -> Result<String, String> {
                 }
                 processed_files.insert(path.to_string());
 
-                // Load the included file at compile time
-                let included_content = match path {
-                    "lib_lumen/str.lm" => include_str!("../lib_lumen/str.lm"),
-                    "lib_lumen/numeric.lm" => include_str!("../lib_lumen/numeric.lm"),
-                    "lib_lumen/output.lm" => include_str!("../lib_lumen/output.lm"),
-                    "lib_lumen/string.lm" => include_str!("../lib_lumen/string.lm"),
-                    "lib_lumen/factorial.lm" => include_str!("../lib_lumen/factorial.lm"),
-                    "lib_lumen/round.lm" => include_str!("../lib_lumen/round.lm"),
-                    "lib_lumen/e_integer.lm" => include_str!("../lib_lumen/e_integer.lm"),
-                    "lib_lumen/pi_machin.lm" => include_str!("../lib_lumen/pi_machin.lm"),
-                    "lib_lumen/primes.lm" => include_str!("../lib_lumen/primes.lm"),
-                    "lib_lumen/number_theory.lm" => include_str!("../lib_lumen/number_theory.lm"),
-                    "lib_lumen/constants_1024.lm" => include_str!("../lib_lumen/constants_1024.lm"),
-                    "lib_lumen/constants.lm" => include_str!("../lib_lumen/constants.lm"),
-                    "lib_lumen/constants_default.lm" => include_str!("../lib_lumen/constants_default.lm"),
-                    _ => return Err(format!("Unknown library file: {}", path)),
-                };
+                // Retrieve from embedded virtual filesystem
+                let file_contents = get_embedded_file(path)
+                    .ok_or_else(|| format!("File not found in embedded filesystem: {}", path))?;
 
                 // Recursively process the included file
-                process_recursive(included_content, processed_files, result)?;
+                process_recursive(file_contents, processed_files, result)?;
                 result.push('\n');
             } else {
                 // Regular line - keep it
@@ -161,12 +168,12 @@ fn run_lumen_stream(source: &str, program_args: &[String]) {
     let mut registry = Registry::new();
     crate::languages::lumen::dispatcher::register_all(&mut registry);
 
-    // Load bootstrap file (prelude.lm) which is a minimal manifest of include directives
-    // The kernel loads only this one file; all library composition happens at the Lumen level
-    let prelude_source = include_str!("../lib_lumen/prelude.lm");
+    // Load bootstrap file (prelude.lm) before user code
+    // The kernel has no semantic knowledge of what this file does or contains
+    let bootstrap_source = include_str!("../lib_lumen/prelude.lm");
 
-    // Process include directives to expand the standard library
-    let expanded_prelude = match process_includes(prelude_source) {
+    // Process include directives in bootstrap file
+    let expanded_bootstrap = match process_includes(bootstrap_source) {
         Ok(expanded) => expanded,
         Err(e) => {
             eprintln!("Include error: {}", e);
@@ -174,7 +181,7 @@ fn run_lumen_stream(source: &str, program_args: &[String]) {
         }
     };
 
-    let full_source = format!("{}\n{}", expanded_prelude, source);
+    let full_source = format!("{}\n{}", expanded_bootstrap, source);
 
     let raw_tokens = match lex(&full_source, &registry.tokens) {
         Ok(toks) => toks,
