@@ -187,6 +187,42 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 ---
 
+## Character Classification & String Transformation
+
+**Kernel**
+- (none)
+
+**Library** (lib_lumen/string_ord_chr.lm)
+
+**Character Predicates**
+- `is_ascii(c)` — `[library]` True if character is ASCII (code point < 128).
+- `is_digit(c)` — `[library]` True if character is a decimal digit (0-9).
+- `is_alpha(c)` — `[library]` True if character is ASCII alphabetic (A-Z, a-z).
+- `is_alnum(c)` — `[library]` True if character is ASCII alphanumeric.
+
+**Character Transformation**
+- `to_upper_char(c)` — `[library]` Convert ASCII character to uppercase.
+- `to_lower_char(c)` — `[library]` Convert ASCII character to lowercase.
+
+**String Transformation**
+- `to_upper(s)` — `[library]` Convert string to uppercase (ASCII only).
+- `to_lower(s)` — `[library]` Convert string to lowercase (ASCII only).
+- `reverse(s)` — `[library]` Reverse characters in a string.
+
+**String Predicates**
+- `is_numeric_string(s)` — `[library]` True if string consists only of digits.
+- `is_alpha_string(s)` — `[library]` True if string consists only of ASCII letters.
+
+**Numeric Parsing**
+- `parse_int(s)` — `[library]` Parse a base-10 integer from a string.
+- `int_to_decimal_string(n)` — `[library]` Convert integer to base-10 string.
+
+**Character Utilities**
+- `map_chars(s, f)` — `[library]` Apply a function to each character and rebuild string.
+- `filter_chars(s, pred)` — `[library]` Keep only characters that satisfy predicate.
+
+---
+
 ## Arrays & Collections
 
 **Kernel**
