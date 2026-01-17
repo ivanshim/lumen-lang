@@ -22,7 +22,7 @@ fn base(value, radix)
         return base_rational(value, radix)
 
     if k == kind(1.0)
-        return base_real(value, radix)
+        return base_real_default(value, radix)
 
     error("base(): unsupported kind")
 
@@ -56,13 +56,13 @@ fn base_rational(r, radix)
 
     n_str . "/" . d_str
 
-fn base_real(x, radix)
+fn base_real_default(x, radix)
     i = int(x)
     f = frac(x)
 
     int_part = base_integer(i, radix)
 
-    if f == real(0)
+    if f == real_default(0)
         return int_part
 
     frac_part = base_frac(f, radix, 16)
@@ -74,10 +74,10 @@ fn base_frac(f, radix, limit)
     count = 0
 
     while count < limit
-        if f == real(0)
+        if f == real_default(0)
             return result
 
-        f = f * real(radix)
+        f = f * real_default(radix)
         digit = int(f)
         result = result . char_at(alphabet, digit)
         f = frac(f)

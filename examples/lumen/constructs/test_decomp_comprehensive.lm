@@ -58,8 +58,8 @@ x = 2.718
 print(x)
 i = int(x)
 f = frac(x)
-sum = real(i) + f
-write("real(int(x)) + frac(x) = ")
+sum = real_default(i) + f
+write("real_default(int(x)) + frac(x) = ")
 print(sum)
 
 print("")

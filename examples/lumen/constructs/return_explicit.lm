@@ -5,7 +5,7 @@ fn absolute(x)
 
 fn safe_divide(a, b)
     if b == 0
-        return none
+        return null
     a / b
 
 fn find_first_even(a, b, c)

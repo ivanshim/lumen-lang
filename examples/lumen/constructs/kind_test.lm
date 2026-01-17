@@ -32,8 +32,8 @@ print(kind_to_string(kind(3.14)))
 write("kind(16@FF.8) = ")
 print(kind_to_string(kind(16@FF.8)))
 
-write("kind(real(5)) = ")
-print(kind_to_string(kind(real(5))))
+write("kind(real_default(5)) = ")
+print(kind_to_string(kind(real_default(5))))
 
 print("")
 
@@ -57,10 +57,10 @@ print(kind_to_string(kind(false)))
 
 print("")
 
-# Test 6: NONE
-print("Test 6: NONE")
-write("kind(none) = ")
-print(kind_to_string(kind(none)))
+# Test 6: NULL
+print("Test 6: NULL")
+write("kind(null) = ")
+print(kind_to_string(kind(null)))
 
 print("")
 
@@ -89,8 +89,8 @@ print(kind_to_string(str_kind))
 bool_kind = kind(true)
 print(kind_to_string(bool_kind))
 
-none_kind = kind(none)
-print(kind_to_string(none_kind))
+null_kind = kind(null)
+print(kind_to_string(null_kind))
 
 arr_kind = kind([1, 2])
 print(kind_to_string(arr_kind))
