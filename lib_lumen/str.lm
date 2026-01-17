@@ -29,19 +29,19 @@ fn is_null(x)
 
 # Convert a KIND meta-value to its canonical uppercase string
 fn kind_to_string(k)
-    if k == INTEGER
+    if is_int(k)
         return "INTEGER"
-    if k == RATIONAL
+    if is_rational(k)
         return "RATIONAL"
-    if k == REAL
+    if is_real(k)
         return "REAL"
-    if k == BOOLEAN
+    if is_bool(k)
         return "BOOLEAN"
-    if k == STRING
+    if is_string(k)
         return "STRING"
-    if k == ARRAY
+    if is_array(k)
         return "ARRAY"
-    if k == NULL
+    if is_null(k)
         return "NULL"
     error("kind_to_string: expected KIND meta-value")
 
