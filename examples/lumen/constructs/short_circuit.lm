@@ -36,10 +36,10 @@ else
     print("x is zero or result is not greater than 5")
 
 fn safe_check(value)
-    if value != none and value > 10
-        print("Value is not none and greater than 10")
+    if value != null and value > 10
+        print("Value is not null and greater than 10")
     else
-        print("Value is none or not greater than 10")
+        print("Value is null or not greater than 10")
 
 safe_check(15)
 safe_check(5)

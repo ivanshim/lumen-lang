@@ -1,42 +1,42 @@
 fn no_return()
-    print("This function returns none implicitly")
+    print("This function returns null implicitly")
 
-fn explicit_none()
-    print("Returning none explicitly")
-    return none
+fn explicit_null()
+    print("Returning null explicitly")
+    return null
 
-fn conditional_none(x)
+fn conditional_null(x)
     if x < 0
-        return none
+        return null
     else
         return x * 2
 
-print("Test: none Type")
+print("Test: null Type")
 
 print("Calling no_return():")
 result1 = no_return()
 print(result1)
 
-print("Calling explicit_none():")
-result2 = explicit_none()
+print("Calling explicit_null():")
+result2 = explicit_null()
 print(result2)
 
-print("conditional_none(5):")
-print(conditional_none(5))
+print("conditional_null(5):")
+print(conditional_null(5))
 
-print("conditional_none(-3):")
-print(conditional_none(-3))
+print("conditional_null(-3):")
+print(conditional_null(-3))
 
-let x = none
-print("let x = none:")
+let x = null
+print("let x = null:")
 print(x)
 
 fn check_value(val)
-    if val == none
-        print("Value is none")
+    if val == null
+        print("Value is null")
     else
-        print("Value is not none")
+        print("Value is not null")
 
-check_value(none)
+check_value(null)
 check_value(42)
 check_value("hello")

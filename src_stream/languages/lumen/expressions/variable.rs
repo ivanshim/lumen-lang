@@ -95,9 +95,9 @@ impl ExprNode for FunctionCallExpr {
                     // array_to_string(x): convert array to string (mechanical primitive)
                     return builtin_array_to_string(&self.args[0].eval(env)?);
                 }
-                "none_to_string" => {
-                    // none_to_string(x): convert none to string (mechanical primitive)
-                    return builtin_none_to_string(&self.args[0].eval(env)?);
+                "null_to_string" => {
+                    // null_to_string(x): convert null to string (mechanical primitive)
+                    return builtin_null_to_string(&self.args[0].eval(env)?);
                 }
                 "kind_to_string" => {
                     // kind_to_string(x): convert kind meta-value to string (mechanical primitive)
@@ -200,7 +200,7 @@ impl FunctionCallExpr {
         }
 
         // Execute function body
-        let mut result = Box::new(crate::languages::lumen::values::LumenNone) as Value;
+        let mut result = Box::new(crate::languages::lumen::values::LumenNull) as Value;
         {
             let body_ref = body.borrow();
             for stmt in body_ref.iter() {
@@ -419,16 +419,16 @@ fn builtin_array_to_string(value: &Value) -> LumenResult<Value> {
     Ok(Box::new(LumenString::new(format!("[{}]", elements_str))))
 }
 
-/// Built-in function: none_to_string(x) - Convert none to string (mechanical primitive)
-/// Assumes input is NONE. No type branching. No semantic decisions.
-fn builtin_none_to_string(value: &Value) -> LumenResult<Value> {
-    use crate::languages::lumen::values::{LumenString, LumenNone};
+/// Built-in function: null_to_string(x) - Convert null to string (mechanical primitive)
+/// Assumes input is NULL. No type branching. No semantic decisions.
+fn builtin_null_to_string(value: &Value) -> LumenResult<Value> {
+    use crate::languages::lumen::values::{LumenString, LumenNull};
 
-    let _none_val = value.as_any()
-        .downcast_ref::<LumenNone>()
-        .ok_or_else(|| "none_to_string() requires a none argument".to_string())?;
+    let _null_val = value.as_any()
+        .downcast_ref::<LumenNull>()
+        .ok_or_else(|| "null_to_string() requires a null argument".to_string())?;
 
-    Ok(Box::new(LumenString::new("none".to_string())))
+    Ok(Box::new(LumenString::new("null".to_string())))
 }
 
 /// Built-in function: kind_to_string(x) - Convert kind meta-value to string (mechanical primitive)
@@ -447,7 +447,7 @@ fn builtin_kind_to_string(value: &Value) -> LumenResult<Value> {
         KindValue::STRING => "STRING",
         KindValue::BOOLEAN => "BOOLEAN",
         KindValue::ARRAY => "ARRAY",
-        KindValue::NONE => "NONE",
+        KindValue::NULL => "NULL",
     };
 
     Ok(Box::new(LumenString::new(string.to_string())))
@@ -478,9 +478,9 @@ fn builtin_len(value: &Value) -> LumenResult<Value> {
 /// Built-in function: char_at(string, index) - Return character at index
 /// Returns the character at the given zero-based index.
 /// Characters are UTF-8 characters (not bytes).
-/// Returns none if index is out of bounds or negative.
+/// Returns null if index is out of bounds or negative.
 fn builtin_char_at(string_val: &Value, index_val: &Value) -> LumenResult<Value> {
-    use crate::languages::lumen::values::{LumenString, LumenNumber, LumenNone};
+    use crate::languages::lumen::values::{LumenString, LumenNumber, LumenNull};
     use num_traits::ToPrimitive;
 
     // Extract string
@@ -498,14 +498,14 @@ fn builtin_char_at(string_val: &Value, index_val: &Value) -> LumenResult<Value> 
         Some(i) => i,
         None => {
             // Negative or too large index
-            return Ok(Box::new(LumenNone));
+            return Ok(Box::new(LumenNull));
         }
     };
 
     // Get character at index
     match string.value.chars().nth(index) {
         Some(ch) => Ok(Box::new(LumenString::new(ch.to_string()))),
-        None => Ok(Box::new(LumenNone)), // Out of bounds
+        None => Ok(Box::new(LumenNull)), // Out of bounds
     }
 }
 
@@ -573,17 +573,17 @@ fn builtin_emit(value: &Value) -> LumenResult<Value> {
     // Write to stdout
     print!("{}", string_val.value);
 
-    // Return None (null value)
-    Ok(Box::new(crate::languages::lumen::values::LumenNone))
+    // Return null value
+    Ok(Box::new(crate::languages::lumen::values::LumenNull))
 }
 
 /// Built-in function: kind(x) - Return kind meta-value representing value category
-/// Returns one of the predefined kind constants: INTEGER, RATIONAL, REAL, ARRAY, STRING, BOOLEAN, NONE
+/// Returns one of the predefined kind constants: INTEGER, RATIONAL, REAL, ARRAY, STRING, BOOLEAN, NULL
 /// This is a pure introspection function with no side effects.
 fn builtin_kind(value: &Value) -> LumenResult<Value> {
     use crate::languages::lumen::values::{
         LumenNumber, LumenRational, LumenReal, LumenArray,
-        LumenString, LumenBool, LumenNone, LumenKind, KindValue
+        LumenString, LumenBool, LumenNull, LumenKind, KindValue
     };
 
     // Check value type and return appropriate kind meta-value
@@ -611,14 +611,14 @@ fn builtin_kind(value: &Value) -> LumenResult<Value> {
         return Ok(Box::new(LumenKind::new(KindValue::BOOLEAN)));
     }
 
-    if value.as_any().downcast_ref::<LumenNone>().is_some() {
-        return Ok(Box::new(LumenKind::new(KindValue::NONE)));
+    if value.as_any().downcast_ref::<LumenNull>().is_some() {
+        return Ok(Box::new(LumenKind::new(KindValue::NULL)));
     }
 
     if value.as_any().downcast_ref::<LumenKind>().is_some() {
         // KIND is a meta-value representing types - return a special KIND marker
         // This allows kind(INTEGER) to work, returning a kind-of-kind meta-value
-        return Ok(Box::new(LumenKind::new(KindValue::NONE))); // Use NONE as placeholder for KIND-of-KIND
+        return Ok(Box::new(LumenKind::new(KindValue::NULL))); // Use NULL as placeholder for KIND-of-KIND
     }
 
     // Unknown value type

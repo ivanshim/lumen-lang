@@ -566,8 +566,8 @@ impl<'a> Parser<'a> {
             return Ok(Instruction::literal(Value::Bool(val)));
         }
 
-        // None
-        if lexeme == "none" {
+        // Null
+        if lexeme == "null" {
             self.advance();
             return Ok(Instruction::literal(Value::Null));
         }

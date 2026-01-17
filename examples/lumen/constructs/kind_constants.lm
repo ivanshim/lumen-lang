@@ -16,8 +16,8 @@ write("BOOLEAN = ")
 print(kind_to_string(BOOLEAN))
 write("ARRAY = ")
 print(kind_to_string(ARRAY))
-write("NONE = ")
-print(kind_to_string(NONE))
+write("NULL = ")
+print(kind_to_string(NULL))
 
 print("")
 
@@ -41,8 +41,8 @@ print(kind(true) == BOOLEAN)
 write("kind([1,2,3]) == ARRAY: ")
 print(kind([1,2,3]) == ARRAY)
 
-write("kind(none) == NONE: ")
-print(kind(none) == NONE)
+write("kind(null) == NULL: ")
+print(kind(null) == NULL)
 
 print("")
 

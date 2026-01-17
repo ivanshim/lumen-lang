@@ -5,7 +5,7 @@ use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
 use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::{Env, Value};
-use crate::languages::lumen::values::{LumenNumber, LumenBool, LumenString, LumenNone, LumenRational, LumenReal};
+use crate::languages::lumen::values::{LumenNumber, LumenBool, LumenString, LumenNull, LumenRational, LumenReal};
 use crate::languages::lumen::numeric;
 use num_bigint::BigInt;
 
@@ -389,7 +389,7 @@ struct NoneLiteral;
 
 impl ExprNode for NoneLiteral {
     fn eval(&self, _env: &mut Env) -> LumenResult<Value> {
-        Ok(Box::new(LumenNone))
+        Ok(Box::new(LumenNull))
     }
 }
 
@@ -397,11 +397,11 @@ pub struct NoneLiteralPrefix;
 
 impl ExprPrefix for NoneLiteralPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme == "none"
+        parser.peek().lexeme == "null"
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
-        parser.advance(); // consume 'none'
+        parser.advance(); // consume 'null'
         Ok(Box::new(NoneLiteral))
     }
 }
@@ -413,7 +413,7 @@ impl ExprPrefix for NoneLiteralPrefix {
 /// Declare what patterns this module recognizes
 pub fn patterns() -> PatternSet {
     PatternSet::new()
-        .with_literals(vec!["true", "false", "none", "\"", "'"])
+        .with_literals(vec!["true", "false", "null", "\"", "'"])
         .with_char_classes(vec!["digit", "quote"])
 }
 

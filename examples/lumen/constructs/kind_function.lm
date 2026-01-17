@@ -58,12 +58,12 @@ print(kind_to_string(kind(2@1010.11)))
 
 print("")
 
-# Test 6: REAL - real() conversions
-write("kind(real(5)) = ")
-print(kind_to_string(kind(real(5))))
+# Test 6: REAL - real_default() conversions
+write("kind(real_default(5)) = ")
+print(kind_to_string(kind(real_default(5))))
 
-write("kind(real(1/3)) = ")
-print(kind_to_string(kind(real(1/3))))
+write("kind(real_default(1/3)) = ")
+print(kind_to_string(kind(real_default(1/3))))
 
 print("")
 
@@ -91,9 +91,9 @@ print(kind_to_string(kind(1 == 1)))
 
 print("")
 
-# Test 9: NONE
-write("kind(none) = ")
-print(kind_to_string(kind(none)))
+# Test 9: NULL
+write("kind(null) = ")
+print(kind_to_string(kind(null)))
 
 print("")
 
@@ -119,8 +119,8 @@ print(kind(42) == kind(1/2))
 write("kind(1/2) == kind(3/4): ")
 print(kind(1/2) == kind(3/4))
 
-write("kind(3.14) == kind(real(5)): ")
-print(kind(3.14) == kind(real(5)))
+write("kind(3.14) == kind(real_default(5)): ")
+print(kind(3.14) == kind(real_default(5)))
 
 print("")
 
@@ -170,8 +170,8 @@ print(kind_to_string(str_sym))
 bool_sym = kind(true)
 print(kind_to_string(bool_sym))
 
-none_sym = kind(none)
-print(kind_to_string(none_sym))
+null_sym = kind(null)
+print(kind_to_string(null_sym))
 
 arr_sym = kind([1, 2, 3])
 print(kind_to_string(arr_sym))

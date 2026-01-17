@@ -29,7 +29,7 @@ write("\n")
 # 1c: Integer + Real = Real
 print("Test 1c: Integer + Real -> Real")
 a = 5
-b = real(3/2)
+b = real_default(3/2)
 result = a + b
 print(str(a) + " + " + str(b) + " = " + str(result))
 write("\n")
@@ -45,15 +45,15 @@ write("\n")
 # 1e: Rational + Real = Real
 print("Test 1e: Rational + Real -> Real")
 a = 3/2
-b = real(5/4)
+b = real_default(5/4)
 result = a + b
 print(str(a) + " + " + str(b) + " = " + str(result))
 write("\n")
 
 # 1f: Real + Real = Real
 print("Test 1f: Real + Real -> Real")
-a = real(3/2)
-b = real(5/4)
+a = real_default(3/2)
+b = real_default(5/4)
 result = a + b
 print(str(a) + " + " + str(b) + " = " + str(result))
 write("\n")
@@ -80,7 +80,7 @@ write("\n")
 # 2c: Integer - Real = Real
 print("Test 2c: Integer - Real -> Real")
 a = 10
-b = real(3/2)
+b = real_default(3/2)
 result = a - b
 print(str(a) + " - " + str(b) + " = " + str(result))
 write("\n")
@@ -96,15 +96,15 @@ write("\n")
 # 2e: Rational - Real = Real
 print("Test 2e: Rational - Real -> Real")
 a = 10/3
-b = real(5/4)
+b = real_default(5/4)
 result = a - b
 print(str(a) + " - " + str(b) + " = " + str(result))
 write("\n")
 
 # 2f: Real - Real = Real
 print("Test 2f: Real - Real -> Real")
-a = real(10/3)
-b = real(5/4)
+a = real_default(10/3)
+b = real_default(5/4)
 result = a - b
 print(str(a) + " - " + str(b) + " = " + str(result))
 write("\n")
@@ -131,7 +131,7 @@ write("\n")
 # 3c: Integer * Real = Real
 print("Test 3c: Integer * Real -> Real")
 a = 4
-b = real(3/2)
+b = real_default(3/2)
 result = a * b
 print(str(a) + " * " + str(b) + " = " + str(result))
 write("\n")
@@ -147,15 +147,15 @@ write("\n")
 # 3e: Rational * Real = Real
 print("Test 3e: Rational * Real -> Real")
 a = 2/3
-b = real(3/4)
+b = real_default(3/4)
 result = a * b
 print(str(a) + " * " + str(b) + " = " + str(result))
 write("\n")
 
 # 3f: Real * Real = Real
 print("Test 3f: Real * Real -> Real")
-a = real(2/3)
-b = real(3/4)
+a = real_default(2/3)
+b = real_default(3/4)
 result = a * b
 print(str(a) + " * " + str(b) + " = " + str(result))
 write("\n")
@@ -182,7 +182,7 @@ write("\n")
 # 4c: Integer / Real = Real
 print("Test 4c: Integer / Real -> Real")
 a = 5
-b = real(3/2)
+b = real_default(3/2)
 result = a / b
 print(str(a) + " / " + str(b) + " = " + str(result))
 write("\n")
@@ -198,15 +198,15 @@ write("\n")
 # 4e: Rational / Real = Real
 print("Test 4e: Rational / Real -> Real")
 a = 3/2
-b = real(5/4)
+b = real_default(5/4)
 result = a / b
 print(str(a) + " / " + str(b) + " = " + str(result))
 write("\n")
 
 # 4f: Real / Real = Real
 print("Test 4f: Real / Real -> Real")
-a = real(3/2)
-b = real(5/4)
+a = real_default(3/2)
+b = real_default(5/4)
 result = a / b
 print(str(a) + " / " + str(b) + " = " + str(result))
 write("\n")

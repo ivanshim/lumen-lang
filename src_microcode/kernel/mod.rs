@@ -22,6 +22,7 @@ use _4_execute::execute;
 use _1_ingest as ingest;
 use _2_structure as structure;
 use _3_reduce as reduce;
+use num_bigint::BigInt;
 
 pub use primitives::Instruction;
 pub use eval::Value;
@@ -59,7 +60,7 @@ pub fn run(source: &str, schema: &LanguageSchema, program_args: &[String]) -> Re
     };
     env.set("ARGS".to_string(), Value::String(args_str));
 
-    // Bind kind meta-value constants: INTEGER, RATIONAL, REAL, STRING, BOOLEAN, ARRAY, NONE
+    // Bind kind meta-value constants: INTEGER, RATIONAL, REAL, STRING, BOOLEAN, ARRAY, NULL
     // These are predefined kernel-level type descriptors that match kind() return values
     env.set("INTEGER".to_string(), Value::Kind(eval::KindValue::INTEGER));
     env.set("RATIONAL".to_string(), Value::Kind(eval::KindValue::RATIONAL));
@@ -67,7 +68,10 @@ pub fn run(source: &str, schema: &LanguageSchema, program_args: &[String]) -> Re
     env.set("STRING".to_string(), Value::Kind(eval::KindValue::STRING));
     env.set("BOOLEAN".to_string(), Value::Kind(eval::KindValue::BOOLEAN));
     env.set("ARRAY".to_string(), Value::Kind(eval::KindValue::ARRAY));
-    env.set("NONE".to_string(), Value::Kind(eval::KindValue::NONE));
+    env.set("NULL".to_string(), Value::Kind(eval::KindValue::NULL));
+
+    // Bind kernel constant: REAL_DEFAULT_PRECISION
+    env.set("REAL_DEFAULT_PRECISION".to_string(), Value::Number(BigInt::from(15)));
 
     let (result, _flow) = execute(&instr, &mut env, schema)?;
     let execute_time = t4.elapsed();

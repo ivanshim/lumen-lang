@@ -135,22 +135,17 @@ pub fn execute(
                     }
                 }
                 "real" => {
-                    // real(x) or real(x, y): convert to real with configurable precision
-                    // Default precision is 15 significant digits
-                    if arg_vals.is_empty() || arg_vals.len() > 2 {
-                        return Err(format!("real() expects 1 or 2 arguments, got {}", arg_vals.len()));
+                    // real(x, precision): convert to real with specified precision
+                    if arg_vals.len() != 2 {
+                        return Err(format!("real() expects 2 arguments, got {}", arg_vals.len()));
                     }
 
-                    let precision = if arg_vals.len() == 2 {
-                        match &arg_vals[1] {
-                            Value::Number(n) => {
-                                n.to_u64()
-                                    .ok_or_else(|| "Precision must be a positive integer".to_string())? as usize
-                            }
-                            _ => return Err("Precision argument must be an integer".to_string()),
+                    let precision = match &arg_vals[1] {
+                        Value::Number(n) => {
+                            n.to_u64()
+                                .ok_or_else(|| "Precision must be a positive integer".to_string())? as usize
                         }
-                    } else {
-                        15 // Default precision
+                        _ => return Err("Precision argument must be an integer".to_string()),
                     };
 
                     match &arg_vals[0] {
@@ -279,15 +274,15 @@ pub fn execute(
                         _ => Err("array_to_string() requires an array argument".to_string()),
                     }
                 }
-                "none_to_string" => {
-                    // none_to_string(x): convert none to string (mechanical primitive)
-                    // Assumes input is NONE. No type branching.
+                "null_to_string" => {
+                    // null_to_string(x): convert null to string (mechanical primitive)
+                    // Assumes input is NULL. No type branching.
                     if arg_vals.len() != 1 {
-                        return Err(format!("none_to_string() expects 1 argument, got {}", arg_vals.len()));
+                        return Err(format!("null_to_string() expects 1 argument, got {}", arg_vals.len()));
                     }
                     match &arg_vals[0] {
-                        Value::Null => Ok((Value::String("none".to_string()), ControlFlow::Normal)),
-                        _ => Err("none_to_string() requires a none argument".to_string()),
+                        Value::Null => Ok((Value::String("null".to_string()), ControlFlow::Normal)),
+                        _ => Err("null_to_string() requires a null argument".to_string()),
                     }
                 }
                 "kind_to_string" => {
@@ -305,7 +300,7 @@ pub fn execute(
                                 KindValue::STRING => "STRING",
                                 KindValue::BOOLEAN => "BOOLEAN",
                                 KindValue::ARRAY => "ARRAY",
-                                KindValue::NONE => "NONE",
+                                KindValue::NULL => "NULL",
                             };
                             Ok((Value::String(string.to_string()), ControlFlow::Normal))
                         }
@@ -396,7 +391,7 @@ pub fn execute(
                 }
                 "kind" => {
                     // kind(x): return kind meta-value representing value category
-                    // Returns one of the predefined kind constants: INTEGER, RATIONAL, REAL, ARRAY, STRING, BOOLEAN, NONE
+                    // Returns one of the predefined kind constants: INTEGER, RATIONAL, REAL, ARRAY, STRING, BOOLEAN, NULL
                     if arg_vals.len() != 1 {
                         return Err(format!("kind() expects 1 argument, got {}", arg_vals.len()));
                     }
@@ -407,8 +402,8 @@ pub fn execute(
                         Value::Array(_) => KindValue::ARRAY,
                         Value::String(_) => KindValue::STRING,
                         Value::Bool(_) => KindValue::BOOLEAN,
-                        Value::Null => KindValue::NONE,
-                        Value::Kind(_) => KindValue::NONE, // KIND-of-KIND returns NONE as placeholder
+                        Value::Null => KindValue::NULL,
+                        Value::Kind(_) => KindValue::NULL, // KIND-of-KIND returns NULL as placeholder
                         _ => return Err("kind(): unknown value type".to_string()),
                     };
                     Ok((Value::Kind(kind_val), ControlFlow::Normal))

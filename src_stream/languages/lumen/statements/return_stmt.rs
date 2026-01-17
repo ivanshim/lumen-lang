@@ -17,7 +17,7 @@ impl StmtNode for ReturnStmt {
         let val = if let Some(ref expr) = self.value {
             expr.eval(env)?
         } else {
-            Box::new(crate::languages::lumen::values::LumenNone) as crate::kernel::runtime::Value
+            Box::new(crate::languages::lumen::values::LumenNull) as crate::kernel::runtime::Value
         };
 
         Ok(Control::Return(val))

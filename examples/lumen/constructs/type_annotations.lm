@@ -12,8 +12,8 @@ let flag: boolean = true
 print("let flag: boolean = true")
 print(flag)
 
-let empty: none = none
-print("let empty: none = none")
+let empty: null = null
+print("let empty: null = null")
 print(empty)
 
 fn add(a, b)
