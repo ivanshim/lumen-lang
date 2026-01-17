@@ -81,6 +81,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 ## Runtime Kinds & Type Introspection
 
 **Runtime Value Taxonomy**
+
     - **Presence**
 
  - **Atomic**
