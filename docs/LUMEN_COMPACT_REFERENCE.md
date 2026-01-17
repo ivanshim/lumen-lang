@@ -145,8 +145,10 @@ This card lists **user-accessible functions** across the kernel primitives and t
 **Library** (lib_lumen/str.lm)
 - `real_default(x)` — `[library]` Convert to real using `REAL_DEFAULT_PRECISION`.
 - `str(x)` — `[library]` Convert any value to its canonical string representation.
+
+**Library** (lib_lumen/output.lm)
 - `write(x)` — `[library]` Convert `x` to a string with `str(x)` and emit without a newline.
-- `print(x)` — `[library]` Write `x` followed by a newline (implemented via `write`).
+- `print(x)` — `[library]` Write `x` followed by a newline.
 
 ---
 
