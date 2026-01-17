@@ -1,8 +1,4 @@
-# Pi calculation using Machin's formula
-# fn pi_machin(sigfigs) - returns pi rounded to sigfigs significant digits
-# Uses pure integer arithmetic with guard digits
-# No formatting, no output side effects
-
+# Compute pi to sigfigs significant digits using Machin's formula
 fn pi_machin(sigfigs)
     # guard digits for safe rounding (Machin needs them even more than e)
     guard = 3

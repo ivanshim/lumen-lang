@@ -1,3 +1,3 @@
-# Convert to real using default precision
+# Convert numeric value to real using REAL_DEFAULT_PRECISION
 fn real_default(x)
     return real(x, REAL_DEFAULT_PRECISION)

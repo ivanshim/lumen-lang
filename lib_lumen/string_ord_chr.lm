@@ -1,5 +1,4 @@
-# ASCII character classification helpers built on ord/chr
-
+## Character classification using ord/chr primitives
 # True if character is ASCII
 fn is_ascii(c)
     ord(c) < 128
@@ -34,9 +33,7 @@ fn to_lower_char(c)
     else
         c
 
-
-# String transformations built from character primitives
-
+## String transformations
 # Convert string to uppercase (ASCII)
 fn to_upper(s)
     let result = ""
@@ -64,9 +61,7 @@ fn reverse(s)
         i = i - 1
     result
 
-
-# String predicates using ord-based character inspection
-
+## String content validation
 # True if string consists only of digits
 fn is_numeric_string(s)
     if len(s) == 0
@@ -89,9 +84,7 @@ fn is_alpha_string(s)
         i = i + 1
     true
 
-
-# Numeric parsing helpers built from ord/chr
-
+## Numeric string parsing and formatting
 # Parse a base-10 integer from a string
 fn parse_int(s)
     let value = 0
