@@ -111,7 +111,15 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 ---
 
-## Value Introspection & Representation
+## Value Representation
+
+**Kernel**
+- `int_to_string(x)` — `[kernel]` Convert INTEGER to string (mechanical primitive).
+- `rational_to_string(x)` — `[kernel]` Convert RATIONAL to string (mechanical primitive).
+- `real_to_string(x)` — `[kernel]` Convert REAL to string (mechanical primitive).
+- `bool_to_string(x)` — `[kernel]` Convert BOOLEAN to string (mechanical primitive).
+- `array_to_string(x)` — `[kernel]` Convert ARRAY to string (mechanical primitive).
+- `null_to_string(x)` — `[kernel]` Convert NULL to string (mechanical primitive).
 
 **Library** (lib_lumen/str.lm)
 - `is_int(x)` — `[library]` Returns `true` if `x` has INTEGER kind.
@@ -139,22 +147,22 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 ---
 
+## Output
+
+**Kernel**
+- `emit(string)` — `[kernel]` Write a raw string to stdout; requires a string input and returns `null`.
+
+**Library** (lib_lumen/output.lm)
+- `write(x)` — `[library]` Convert `x` to a string with `str(x)` and emit without a newline.
+- `print(x)` — `[library]` Write `x` followed by a newline.
+
+---
+
 ## Conversion, Stringification & Output
 
 **Kernel**
 - `REAL_DEFAULT_PRECISION = 15` — `[kernel]` Default significant-digit precision for real conversions.
 - `real(x, precision)` — `[kernel]` Convert integer/rational/real to a real value with the requested significant-digit precision.
-- `emit(string)` — `[kernel]` Write a raw string to stdout; requires a string input and returns `null`.
-- `int_to_string(x)` — `[kernel]` Convert INTEGER to string (mechanical primitive).
-- `rational_to_string(x)` — `[kernel]` Convert RATIONAL to string (mechanical primitive).
-- `real_to_string(x)` — `[kernel]` Convert REAL to string (mechanical primitive).
-- `bool_to_string(x)` — `[kernel]` Convert BOOLEAN to string (mechanical primitive).
-- `array_to_string(x)` — `[kernel]` Convert ARRAY to string (mechanical primitive).
-- `null_to_string(x)` — `[kernel]` Convert NULL to string (mechanical primitive).
-
-**Library** (lib_lumen/output.lm)
-- `write(x)` — `[library]` Convert `x` to a string with `str(x)` and emit without a newline.
-- `print(x)` — `[library]` Write `x` followed by a newline.
 
 ---
 
