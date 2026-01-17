@@ -1,5 +1,5 @@
 # Round-trip tests: base-N literals → base() conversion
-import("lib_lumen/base.lm")
+# base.lm is automatically available via prelude
 
 print("=== Base Round-trip Tests ===")
 print("Testing that base() produces correct representation")

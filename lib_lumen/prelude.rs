@@ -7,6 +7,7 @@ pub static EMBEDDED_FILES: &[(&str, &str)] = &[
     ("lib_lumen/output.lm", include_str!("output.lm")),
     ("lib_lumen/string.lm", include_str!("string.lm")),
     ("lib_lumen/string_ord_chr.lm", include_str!("string_ord_chr.lm")),
+    ("lib_lumen/base.lm", include_str!("base.lm")),
     ("lib_lumen/factorial.lm", include_str!("factorial.lm")),
     ("lib_lumen/round.lm", include_str!("round.lm")),
     ("lib_lumen/e_integer.lm", include_str!("e_integer.lm")),
