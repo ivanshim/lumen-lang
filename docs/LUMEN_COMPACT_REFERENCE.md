@@ -90,7 +90,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 ## Numeric Literals & Bases [kernel]
 
 **Type hierarchy**
-- `INTEGER` ⊆ `RATIONAL` ⊆ `REAL` (integers are rationals; rationals are reals).
+- `INTEGER` ⊆ `RATIONAL` ⊆ `REAL` ⊆ `COMPLEX` (future implementation) (integers are rationals; rationals are reals).
 
 **Base syntax**
 - `base@digits` — Write a numeric literal in `base` (2..36), with the base value itself written in base 10. Example: `2@1011` or `16@FF`.
@@ -155,7 +155,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 ## Built-in Kind Constants & Globals
 
 **Kernel**
-- `INTEGER`, `RATIONAL`, `REAL`, `STRING`, `ARRAY`, `BOOLEAN`, `NONE` — Kind meta-values for `kind(x)` checks.
+- `INTEGER`, `RATIONAL`, `REAL`, `COMPLEX` (future implementation), `BOOLEAN`, `STRING`, `ARRAY`, `NONE` — Kind meta-values for `kind(x)` checks.
 - `ARGS` — Command-line arguments as a single string.
 
 **Library**
