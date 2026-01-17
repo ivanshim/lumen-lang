@@ -18,7 +18,7 @@ pub fn get_schema() -> LanguageSchema {
 
         // Keywords
         "let", "mut", "if", "else", "while", "for", "until", "in", "break", "continue", "return", "fn",
-        "and", "or", "not", "print", "true", "false", "none", "extern", "type",
+        "and", "or", "not", "print", "true", "false", "null", "extern", "type",
 
         // Single-char operators
         ":", "=", "+", "-", "*", "/", "%", "<", ">", "!", "&", "|", "^", "~",
@@ -28,7 +28,7 @@ pub fn get_schema() -> LanguageSchema {
     // Keywords requiring word boundaries
     schema.word_boundary_keywords = vec![
         "let", "mut", "if", "else", "while", "for", "until", "in", "break", "continue", "return", "fn",
-        "and", "or", "not", "print", "true", "false", "none", "extern", "type",
+        "and", "or", "not", "print", "true", "false", "null", "extern", "type",
     ];
 
     // Statement terminators
@@ -104,7 +104,7 @@ pub fn get_schema() -> LanguageSchema {
     // Keywords
     schema.keywords = vec![
         "let", "mut", "if", "else", "while", "for", "break", "continue", "return", "fn",
-        "and", "or", "not", "print", "true", "false", "none", "extern", "type",
+        "and", "or", "not", "print", "true", "false", "null", "extern", "type",
     ].into_iter().map(|s| s.to_string()).collect();
 
     // Indentation settings (from lumen.yaml lines 124-141)

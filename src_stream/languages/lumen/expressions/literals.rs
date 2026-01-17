@@ -397,11 +397,11 @@ pub struct NoneLiteralPrefix;
 
 impl ExprPrefix for NoneLiteralPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme == "none"
+        parser.peek().lexeme == "null"
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
-        parser.advance(); // consume 'none'
+        parser.advance(); // consume 'null'
         Ok(Box::new(NoneLiteral))
     }
 }
@@ -413,7 +413,7 @@ impl ExprPrefix for NoneLiteralPrefix {
 /// Declare what patterns this module recognizes
 pub fn patterns() -> PatternSet {
     PatternSet::new()
-        .with_literals(vec!["true", "false", "none", "\"", "'"])
+        .with_literals(vec!["true", "false", "null", "\"", "'"])
         .with_char_classes(vec!["digit", "quote"])
 }
 
