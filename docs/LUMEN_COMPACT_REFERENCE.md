@@ -83,9 +83,9 @@ This card lists **user-accessible functions** across the kernel primitives and t
 **Presence**
 - **Atomic**
   - **Numeric**
-    - INTEGER
-    - RATIONAL
-    - REAL
+    - INTEGER ⊆
+    - RATIONAL ⊆
+    - REAL ⊆
     - COMPLEX *(future implementation)*
   - **Symbolic**
     - BOOLEAN
