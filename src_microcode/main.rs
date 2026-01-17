@@ -30,27 +30,20 @@ fn main() {
     match language.as_str() {
         "lumen" => {
             let schema = lumen_schema::get_schema();
-            // Prepend Lumen standard library
-            // The library provides user-facing I/O functions (print, write, str) built on top of kernel primitives
-            // Load in order: str.lm first (defines str and type checking), numeric.lm (defines real_default), output.lm (defines write and print),
-            // then string utilities, then math functions (factorial, e_integer, pi_machin), then constants (1024-digit, full-precision, defaults)
-            let stdlib_str = include_str!("../lib_lumen/str.lm");
-            let stdlib_numeric = include_str!("../lib_lumen/numeric.lm");
-            let stdlib_output = include_str!("../lib_lumen/output.lm");
-            let stdlib_string = include_str!("../lib_lumen/string.lm");
-            let stdlib_factorial = include_str!("../lib_lumen/factorial.lm");
-            let stdlib_round = include_str!("../lib_lumen/round.lm");
-            let stdlib_e_integer = include_str!("../lib_lumen/e_integer.lm");
-            let stdlib_pi_machin = include_str!("../lib_lumen/pi_machin.lm");
-            let stdlib_constants_1024 = include_str!("../lib_lumen/constants_1024.lm");
-            let stdlib_constants = include_str!("../lib_lumen/constants.lm");
-            let stdlib_constants_default = include_str!("../lib_lumen/constants_default.lm");
-            let stdlib_primes = include_str!("../lib_lumen/primes.lm");
-            let stdlib_number_theory = include_str!("../lib_lumen/number_theory.lm");
-            let full_source = format!("{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
-                stdlib_str, stdlib_numeric, stdlib_output, stdlib_string, stdlib_factorial, stdlib_round, stdlib_e_integer,
-                stdlib_pi_machin, stdlib_constants_1024, stdlib_constants, stdlib_constants_default,
-                stdlib_primes, stdlib_number_theory, source);
+            // Load bootstrap file (prelude.lm) which is a minimal manifest of include directives
+            // The kernel loads only this one file; all library composition happens at the Lumen level
+            let prelude_source = include_str!("../lib_lumen/prelude.lm");
+
+            // Process include directives to expand the standard library
+            let expanded_prelude = match process_includes(prelude_source) {
+                Ok(expanded) => expanded,
+                Err(e) => {
+                    eprintln!("Include error: {}", e);
+                    process::exit(1);
+                }
+            };
+
+            let full_source = format!("{}\n{}", expanded_prelude, source);
             if let Err(e) = run(&full_source, &schema, &program_args) {
                 eprintln!("LumenError: {}", e);
                 process::exit(1);
@@ -127,4 +120,69 @@ fn detect_language_from_extension(filepath: &str) -> Option<String> {
     };
 
     Some(language.to_string())
+}
+
+/// Process include directives in Lumen source code
+/// Recursively expands `include "path"` directives by loading and inlining files
+fn process_includes(source: &str) -> Result<String, String> {
+    let mut result = String::new();
+    let mut processed_files = std::collections::HashSet::new();
+
+    fn process_recursive(
+        source: &str,
+        processed_files: &mut std::collections::HashSet<String>,
+        result: &mut String,
+    ) -> Result<(), String> {
+        for line in source.lines() {
+            let trimmed = line.trim();
+
+            // Check if line is an include directive
+            if trimmed.starts_with("include ") {
+                // Extract the file path from: include "path"
+                let rest = trimmed.strip_prefix("include ").unwrap().trim();
+
+                if !rest.starts_with('"') || !rest.ends_with('"') {
+                    return Err(format!("Invalid include syntax: {}", line));
+                }
+
+                let path = &rest[1..rest.len()-1];
+
+                // Prevent circular includes
+                if processed_files.contains(path) {
+                    continue; // Skip already processed files
+                }
+                processed_files.insert(path.to_string());
+
+                // Load the included file at compile time
+                let included_content = match path {
+                    "lib_lumen/str.lm" => include_str!("../lib_lumen/str.lm"),
+                    "lib_lumen/numeric.lm" => include_str!("../lib_lumen/numeric.lm"),
+                    "lib_lumen/output.lm" => include_str!("../lib_lumen/output.lm"),
+                    "lib_lumen/string.lm" => include_str!("../lib_lumen/string.lm"),
+                    "lib_lumen/factorial.lm" => include_str!("../lib_lumen/factorial.lm"),
+                    "lib_lumen/round.lm" => include_str!("../lib_lumen/round.lm"),
+                    "lib_lumen/e_integer.lm" => include_str!("../lib_lumen/e_integer.lm"),
+                    "lib_lumen/pi_machin.lm" => include_str!("../lib_lumen/pi_machin.lm"),
+                    "lib_lumen/primes.lm" => include_str!("../lib_lumen/primes.lm"),
+                    "lib_lumen/number_theory.lm" => include_str!("../lib_lumen/number_theory.lm"),
+                    "lib_lumen/constants_1024.lm" => include_str!("../lib_lumen/constants_1024.lm"),
+                    "lib_lumen/constants.lm" => include_str!("../lib_lumen/constants.lm"),
+                    "lib_lumen/constants_default.lm" => include_str!("../lib_lumen/constants_default.lm"),
+                    _ => return Err(format!("Unknown library file: {}", path)),
+                };
+
+                // Recursively process the included file
+                process_recursive(included_content, processed_files, result)?;
+                result.push('\n');
+            } else {
+                // Regular line - keep it
+                result.push_str(line);
+                result.push('\n');
+            }
+        }
+        Ok(())
+    }
+
+    process_recursive(source, &mut processed_files, &mut result)?;
+    Ok(result)
 }
