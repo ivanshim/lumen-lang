@@ -107,8 +107,11 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `INTEGER`, `RATIONAL`, `REAL`, `COMPLEX` (future implementation), `BOOLEAN`, `STRING`, `ARRAY`, `NULL` — Kind meta-values for `kind(x)` checks.
 - `ARGS` — Command-line arguments as a single string.
 
+---
+
+## Value Introspection & Representation
+
 **Library** (lib_lumen/str.lm)
-- `kind_to_string(k)` — `[library]` Convert a KIND meta-value to its canonical uppercase string representation ("INTEGER", "REAL", etc.).
 - `is_int(x)` — `[library]` Returns `true` if `x` has INTEGER kind.
 - `is_rational(x)` — `[library]` Returns `true` if `x` has RATIONAL kind.
 - `is_real(x)` — `[library]` Returns `true` if `x` has REAL kind.
@@ -116,6 +119,8 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `is_string(x)` — `[library]` Returns `true` if `x` has STRING kind.
 - `is_array(x)` — `[library]` Returns `true` if `x` has ARRAY kind.
 - `is_null(x)` — `[library]` Returns `true` if `x` has NULL kind.
+- `kind_to_string(k)` — `[library]` Convert a KIND meta-value to its canonical uppercase string representation ("INTEGER", "REAL", etc.).
+- `str(x)` — `[library]` Convert any value to its canonical string representation.
 
 ---
 
@@ -144,9 +149,6 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `bool_to_string(x)` — `[kernel]` Convert BOOLEAN to string (mechanical primitive).
 - `array_to_string(x)` — `[kernel]` Convert ARRAY to string (mechanical primitive).
 - `null_to_string(x)` — `[kernel]` Convert NULL to string (mechanical primitive).
-
-**Library** (lib_lumen/str.lm)
-- `str(x)` — `[library]` Convert any value to its canonical string representation.
 
 **Library** (lib_lumen/output.lm)
 - `write(x)` — `[library]` Convert `x` to a string with `str(x)` and emit without a newline.
