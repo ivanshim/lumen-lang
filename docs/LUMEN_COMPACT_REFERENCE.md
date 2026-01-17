@@ -62,9 +62,6 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 ## Primitive Values & Literals
 
-**Type hierarchy**
-- `INTEGER` ⊆ `RATIONAL` ⊆ `REAL` ⊆ `COMPLEX` (future implementation)
-
 **Base syntax**
 - `base@digits` — Write a numeric literal in `base` (2..36), with the base value itself written in base 10. Example: `2@1011` or `16@FF`.
 
@@ -82,7 +79,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 **Presence**
 - **Atomic**
-  - **Numeric**
+  - **Numeric** (Type hierarchy)
     - INTEGER ⊆
     - RATIONAL ⊆
     - REAL ⊆
