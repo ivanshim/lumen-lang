@@ -216,6 +216,10 @@ This card lists **user-accessible functions** across the kernel primitives and t
 **Numeric Parsing**
 - `parse_int(s)` — `[library]` Parse a base-10 integer from a string.
 - `int_to_decimal_string(n)` — `[library]` Convert integer to base-10 string.
+- `string_to_value(s)` — `[library]` Parse string to numeric value (supports base prefixes, rationals, reals, exponents).
+- `parse_number(s, i)` — `[library]` Parse numeric literal starting at index i, returns [value, new_index].
+- `parse_digits(s, i, base)` — `[library]` Parse base-N digits starting at index i, returns [value, scale, new_index].
+- `digit_value(c)` — `[library]` Convert character to digit value (0-35), or -1 if invalid.
 
 ---
 
