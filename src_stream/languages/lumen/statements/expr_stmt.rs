@@ -44,7 +44,8 @@ impl StmtHandler for ExprStmtHandler {
         // - literal (number, string, true, false, none)
         // - unary operator (-, not)
         // - grouping (
-        if lexeme == "(" || lexeme == "-" || lexeme == "not" {
+        // - array literal [
+        if lexeme == "(" || lexeme == "[" || lexeme == "-" || lexeme == "not" {
             return true;
         }
 
