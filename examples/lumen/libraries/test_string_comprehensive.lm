@@ -90,13 +90,13 @@ fn extract_all_numbers(s)
             current_num = current_num . c
         else
             if len(current_num) > 0
-                push(numbers, parse_int(current_num))
+                push(numbers, string_to_value(current_num))
                 current_num = ""
         i = i + 1
 
     # Don't forget last number if string ends with a digit
     if len(current_num) > 0
-        push(numbers, parse_int(current_num))
+        push(numbers, string_to_value(current_num))
 
     numbers
 
