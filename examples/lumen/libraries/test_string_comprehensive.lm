@@ -25,9 +25,11 @@ fn has_alpha_char(s)
 
 fn has_upper_char(s)
     let i = 0
+    let c = ""
+    let o = 0
     while i < len(s)
-        let c = char_at(s, i)
-        let o = ord(c)
+        c = char_at(s, i)
+        o = ord(c)
         if o >= ord("A") and o <= ord("Z")
             return true
         i = i + 1
@@ -35,9 +37,11 @@ fn has_upper_char(s)
 
 fn has_lower_char(s)
     let i = 0
+    let c = ""
+    let o = 0
     while i < len(s)
-        let c = char_at(s, i)
-        let o = ord(c)
+        c = char_at(s, i)
+        o = ord(c)
         if o >= ord("a") and o <= ord("z")
             return true
         i = i + 1
@@ -83,9 +87,10 @@ fn extract_all_numbers(s)
     let numbers = []
     let current_num = ""
     let i = 0
+    let c = ""
 
     while i < len(s)
-        let c = char_at(s, i)
+        c = char_at(s, i)
         if is_digit(c)
             current_num = current_num . c
         else
@@ -116,9 +121,11 @@ let texts = [
     "Year 2025 day 17"
 ]
 let i = 0
+let text = ""
+let sum = 0
 while i < len(texts)
-    let text = texts[i]
-    let sum = sum_numbers_in_text(text)
+    text = texts[i]
+    sum = sum_numbers_in_text(text)
     print("  '" . text . "'")
     print("    Sum: " . str(sum))
     i = i + 1
@@ -132,8 +139,9 @@ fn normalize_string(s)
     let lower = to_lower(s)
     let result = ""
     let i = 0
+    let c = ""
     while i < len(lower)
-        let c = char_at(lower, i)
+        c = char_at(lower, i)
         if is_alnum(c)
             result = result . c
         i = i + 1
@@ -149,10 +157,13 @@ let pairs = [
     ["Different", "Strings"]
 ]
 let i = 0
+let a = ""
+let b = ""
+let match = false
 while i < len(pairs)
-    let a = pairs[i][0]
-    let b = pairs[i][1]
-    let match = strings_match_normalized(a, b)
+    a = pairs[i][0]
+    b = pairs[i][1]
+    match = strings_match_normalized(a, b)
     print("  '" . a . "' vs '" . b . "': " . str(match))
     i = i + 1
 print("")
@@ -164,10 +175,11 @@ fn generate_acronym(phrase)
     let words = []
     let current_word = ""
     let i = 0
+    let c = ""
 
     # Split by spaces
     while i < len(phrase)
-        let c = char_at(phrase, i)
+        c = char_at(phrase, i)
         if c == " "
             if len(current_word) > 0
                 push(words, current_word)
@@ -182,12 +194,13 @@ fn generate_acronym(phrase)
 
     # Take first letter of each word
     let acronym = ""
-    let i = 0
-    while i < len(words)
-        let word = words[i]
+    let j = 0
+    let word = ""
+    while j < len(words)
+        word = words[j]
         if len(word) > 0
             acronym = acronym . to_upper_char(char_at(word, 0))
-        i = i + 1
+        j = j + 1
 
     acronym
 
@@ -198,9 +211,11 @@ let phrases = [
     "You Only Live Once"
 ]
 let i = 0
+let phrase = ""
+let acronym = ""
 while i < len(phrases)
-    let phrase = phrases[i]
-    let acronym = generate_acronym(phrase)
+    phrase = phrases[i]
+    acronym = generate_acronym(phrase)
     print("  '" . phrase . "' -> " . acronym)
     i = i + 1
 print("")
@@ -225,27 +240,32 @@ fn caesar_shift_char(c)
 fn caesar_encrypt(s)
     let result = ""
     let i = 0
+    let c = ""
+    let o = 0
+    let shifted = 0
     while i < len(s)
-        let c = char_at(s, i)
+        c = char_at(s, i)
         if not is_alpha(c)
             result = result . c
         else
-            let o = ord(c)
+            o = ord(c)
             if o >= ord("a") and o <= ord("z")
                 # Lowercase: shift within a-z
-                let shifted = ((o - ord("a") + 3) % 26) + ord("a")
+                shifted = ((o - ord("a") + 3) % 26) + ord("a")
                 result = result . chr(shifted)
             else
                 # Uppercase: shift within A-Z
-                let shifted = ((o - ord("A") + 3) % 26) + ord("A")
+                shifted = ((o - ord("A") + 3) % 26) + ord("A")
                 result = result . chr(shifted)
         i = i + 1
     result
 
 let messages = ["hello world", "LUMEN LANG", "Test 123"]
 let i = 0
+let msg = ""
+let encrypted = ""
 while i < len(messages)
-    let msg = messages[i]
-    let encrypted = caesar_encrypt(msg)
+    msg = messages[i]
+    encrypted = caesar_encrypt(msg)
     print("  '" . msg . "' -> '" . encrypted . "'")
     i = i + 1
