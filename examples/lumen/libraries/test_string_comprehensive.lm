@@ -8,7 +8,7 @@ print("")
 print("Password Strength Validator:")
 
 fn has_digit_char(s)
-    let i = 0
+    i = 0
     while i < len(s)
         if is_digit(char_at(s, i))
             return true
@@ -16,7 +16,7 @@ fn has_digit_char(s)
     false
 
 fn has_alpha_char(s)
-    let i = 0
+    i = 0
     while i < len(s)
         if is_alpha(char_at(s, i))
             return true
@@ -24,9 +24,9 @@ fn has_alpha_char(s)
     false
 
 fn has_upper_char(s)
-    let i = 0
-    let c = ""
-    let o = 0
+    i = 0
+    c = ""
+    o = 0
     while i < len(s)
         c = char_at(s, i)
         o = ord(c)
@@ -36,9 +36,9 @@ fn has_upper_char(s)
     false
 
 fn has_lower_char(s)
-    let i = 0
-    let c = ""
-    let o = 0
+    i = 0
+    c = ""
+    o = 0
     while i < len(s)
         c = char_at(s, i)
         o = ord(c)
@@ -73,8 +73,8 @@ fn validate_password(pwd)
     print("    STRONG: All requirements met")
     return true
 
-let passwords = ["abc123", "PASSWORD123", "Pass123", "MyP@ssw0rd"]
-let i = 0
+passwords = ["abc123", "PASSWORD123", "Pass123", "MyP@ssw0rd"]
+i = 0
 while i < len(passwords)
     validate_password(passwords[i])
     i = i + 1
@@ -84,10 +84,10 @@ print("")
 print("Extract and Sum Numbers from Text:")
 
 fn extract_all_numbers(s)
-    let numbers = []
-    let current_num = ""
-    let i = 0
-    let c = ""
+    numbers = []
+    current_num = ""
+    i = 0
+    c = ""
 
     while i < len(s)
         c = char_at(s, i)
@@ -106,23 +106,23 @@ fn extract_all_numbers(s)
     numbers
 
 fn sum_numbers_in_text(s)
-    let nums = extract_all_numbers(s)
-    let sum = 0
-    let i = 0
+    nums = extract_all_numbers(s)
+    sum = 0
+    i = 0
     while i < len(nums)
         sum = sum + nums[i]
         i = i + 1
     sum
 
-let texts = [
+texts = [
     "I have 5 apples and 3 oranges",
     "Order #123 total: 45 items",
     "No numbers here",
     "Year 2025 day 17"
 ]
-let i = 0
-let text = ""
-let sum = 0
+i = 0
+text = ""
+sum = 0
 while i < len(texts)
     text = texts[i]
     sum = sum_numbers_in_text(text)
@@ -136,10 +136,10 @@ print("Normalize and Compare Strings:")
 
 fn normalize_string(s)
     # Convert to lowercase and remove non-alphanumeric manually
-    let lower = to_lower(s)
-    let result = ""
-    let i = 0
-    let c = ""
+    lower = to_lower(s)
+    result = ""
+    i = 0
+    c = ""
     while i < len(lower)
         c = char_at(lower, i)
         if is_alnum(c)
@@ -150,16 +150,16 @@ fn normalize_string(s)
 fn strings_match_normalized(a, b)
     normalize_string(a) == normalize_string(b)
 
-let pairs = [
+pairs = [
     ["Hello World", "hello world"],
     ["Test-123", "TEST123"],
     ["Lumen Lang", "LumenLang"],
     ["Different", "Strings"]
 ]
-let i = 0
-let a = ""
-let b = ""
-let match = false
+i = 0
+a = ""
+b = ""
+match = false
 while i < len(pairs)
     a = pairs[i][0]
     b = pairs[i][1]
@@ -172,10 +172,10 @@ print("")
 print("Generate Acronym from Phrase:")
 
 fn generate_acronym(phrase)
-    let words = []
-    let current_word = ""
-    let i = 0
-    let c = ""
+    words = []
+    current_word = ""
+    i = 0
+    c = ""
 
     # Split by spaces
     while i < len(phrase)
@@ -193,9 +193,9 @@ fn generate_acronym(phrase)
         push(words, current_word)
 
     # Take first letter of each word
-    let acronym = ""
-    let j = 0
-    let word = ""
+    acronym = ""
+    j = 0
+    word = ""
     while j < len(words)
         word = words[j]
         if len(word) > 0
@@ -204,15 +204,15 @@ fn generate_acronym(phrase)
 
     acronym
 
-let phrases = [
+phrases = [
     "As Soon As Possible",
     "Frequently Asked Questions",
     "Light Amplification by Stimulated Emission of Radiation",
     "You Only Live Once"
 ]
-let i = 0
-let phrase = ""
-let acronym = ""
+i = 0
+phrase = ""
+acronym = ""
 while i < len(phrases)
     phrase = phrases[i]
     acronym = generate_acronym(phrase)
@@ -227,22 +227,22 @@ fn caesar_shift_char(c)
     if not is_alpha(c)
         return c
 
-    let o = ord(c)
+    o = ord(c)
     if o >= ord("a") and o <= ord("z")
         # Lowercase: shift within a-z
-        let shifted = ((o - ord("a") + 3) % 26) + ord("a")
+        shifted = ((o - ord("a") + 3) % 26) + ord("a")
         chr(shifted)
     else
         # Uppercase: shift within A-Z
-        let shifted = ((o - ord("A") + 3) % 26) + ord("A")
+        shifted = ((o - ord("A") + 3) % 26) + ord("A")
         chr(shifted)
 
 fn caesar_encrypt(s)
-    let result = ""
-    let i = 0
-    let c = ""
-    let o = 0
-    let shifted = 0
+    result = ""
+    i = 0
+    c = ""
+    o = 0
+    shifted = 0
     while i < len(s)
         c = char_at(s, i)
         if not is_alpha(c)
@@ -260,10 +260,10 @@ fn caesar_encrypt(s)
         i = i + 1
     result
 
-let messages = ["hello world", "LUMEN LANG", "Test 123"]
-let i = 0
-let msg = ""
-let encrypted = ""
+messages = ["hello world", "LUMEN LANG", "Test 123"]
+i = 0
+msg = ""
+encrypted = ""
 while i < len(messages)
     msg = messages[i]
     encrypted = caesar_encrypt(msg)
