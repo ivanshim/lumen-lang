@@ -28,11 +28,7 @@ fn parse_digits(s, i, base)
         scale = scale * base
         i = i + 1
 
-    result = []
-    result[0] = value
-    result[1] = scale
-    result[2] = i
-    result
+    [value, scale, i]
 
 
 # Parse a full numeric literal (base, integer, fraction, exponent) and return [value, new_index]
@@ -50,10 +46,7 @@ fn parse_number(s, i)
 
     # no digits → not a number
     if i == start
-        out = []
-        out[0] = 0
-        out[1] = start
-        return out
+        return [0, start]
 
     base = 10
     value = base_prefix
@@ -95,10 +88,7 @@ fn parse_number(s, i)
 
         value = value * pow
 
-    out = []
-    out[0] = value
-    out[1] = i
-    out
+    [value, i]
 
 
 # Convert a string into a numeric value or return the original string if parsing fails
