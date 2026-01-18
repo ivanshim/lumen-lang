@@ -20,7 +20,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `return value` Return from function
 
 **System Controls**
-- `MEMOIZATION = true|false` Enable/disable memoized function caching (dynamically scoped).
+- `MEMOIZATION = true|false` Enable/disable memoized function caching (dynamically scoped). Particularly effective for recursive functions (e.g. naive recursive Fibonacci).
 
 **Definitions & Bindings**
 - `fn name(params)` Function definition
