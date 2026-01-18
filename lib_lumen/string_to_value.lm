@@ -1,105 +1,134 @@
-# string_to_value.lm
-# Parse string representations back into numeric values
-# Inverse of numeric_to_base_string() family
+# Convert a character into its numeric digit value (0–35), or -1 if invalid
+fn digit_value(c)
+    if is_digit(c)
+        return ord(c) - ord("0")
 
-# Parse a string into its numeric value
-# Supports:
-#   - Base-prefixed integers: "16@ff" → 255, "2@1010" → 10
-#   - Base-prefixed rationals: "16@f/16@10" → 15/16
-#   - Base-prefixed reals: "16@a.8" → 10.5, "2@1010.11" → 10.75
-#   - Plain decimal: "42" → 42, "3.14" → 3.14, "22/7" → 22/7
+    if c >= "A" and c <= "Z"
+        return ord(c) - ord("A") + 10
+
+    if c >= "a" and c <= "z"
+        return ord(c) - ord("a") + 10
+
+    return -1
+
+
+# Parse a contiguous run of base-N digits and return [value, scale, new_index]
+fn parse_digits(s, i, base)
+    value = 0
+    scale = 1
+
+    while i < len(s)
+        c = char_at(s, i)
+        d = digit_value(c)
+
+        if d < 0 or d >= base
+            break
+
+        value = value * base + d
+        scale = scale * base
+        i = i + 1
+
+    result = []
+    result[0] = value
+    result[1] = scale
+    result[2] = i
+    result
+
+
+# Parse a full numeric literal (base, integer, fraction, exponent) and return [value, new_index]
+fn parse_number(s, i)
+    start = i
+    base_prefix = 0
+
+    # leading base-10 digits (base or value prefix)
+    while i < len(s)
+        c = char_at(s, i)
+        if not is_digit(c)
+            break
+        base_prefix = base_prefix * 10 + (ord(c) - ord("0"))
+        i = i + 1
+
+    # no digits → not a number
+    if i == start
+        out = []
+        out[0] = 0
+        out[1] = start
+        return out
+
+    base = 10
+    value = base_prefix
+
+    # optional base reassignment
+    if i < len(s) and char_at(s, i) == "@"
+        base = base_prefix
+        if base < 2 or base > 36
+            error("invalid base")
+
+        i = i + 1
+        r = parse_digits(s, i, base)
+        value = r[0]
+        i = r[2]
+
+    # optional fractional part
+    if i < len(s) and char_at(s, i) == "."
+        i = i + 1
+        r2 = parse_digits(s, i, base)
+        frac_val = r2[0]
+        frac_scale = r2[1]
+        i = r2[2]
+
+        if frac_scale > 1
+            value = value + frac_val / frac_scale
+
+    # optional exponent (base-aware)
+    if i < len(s) and char_at(s, i) == "^"
+        i = i + 1
+        r3 = parse_digits(s, i, base)
+        exp = r3[0]
+        i = r3[2]
+
+        pow = 1
+        j = 0
+        while j < exp
+            pow = pow * base
+            j = j + 1
+
+        value = value * pow
+
+    out = []
+    out[0] = value
+    out[1] = i
+    out
+
+
+# Convert a string into a numeric value or return the original string if parsing fails
 fn string_to_value(s)
-    # Handle empty string
-    if s == ""
-        error("string_to_value(): empty string")
+    if len(s) == 0
+        return 0
 
-    # Check if string contains base prefix (radix@...)
-    at_pos = string_index_of(s, "@")
+    i = 0
 
-    if at_pos >= 0
-        # Extract radix from prefix
-        # radix_str = substring(s, 0, at_pos)
-        # radix = parse_int(radix_str)
+    # parse numerator
+    r = parse_number(s, i)
+    num = r[0]
+    i = r[1]
 
-        # Validate radix is in range 2..36
-        # if radix < 2 or radix > 36
-        #     error("string_to_value(): radix must be between 2 and 36")
+    # optional rational denominator
+    if i < len(s) and char_at(s, i) == "/"
+        i = i + 1
+        if i == len(s)
+            return s
 
-        # Extract value part after @
-        # value_str = substring(s, at_pos + 1, ...)
+        r2 = parse_number(s, i)
+        denom = r2[0]
+        i = r2[1]
 
-        # Determine type: rational (contains /), real (contains .), or integer
-        # if contains "/"
-        #     return parse_rational_with_base(value_str, radix)
-        # else if contains "."
-        #     return parse_real_with_base(value_str, radix)
-        # else
-        #     return parse_integer_with_base(value_str, radix)
+        if i != len(s)
+            return s
 
-        error("string_to_value(): base-prefixed parsing not yet implemented")
-    else
-        # No base prefix - assume decimal (base 10)
-        # if contains "/"
-        #     return parse_rational_decimal(s)
-        # else if contains "."
-        #     return parse_real_decimal(s)
-        # else
-        #     return parse_int(s)  # Already exists in prelude
+        return num / denom
 
-        error("string_to_value(): decimal parsing not yet implemented")
+    if i == len(s)
+        return num
 
-# Parse integer from base-N string (without prefix)
-# Example: parse_integer_with_base("ff", 16) → 255
-fn parse_integer_with_base(s, radix)
-    # Handle negative sign
-    # Handle each digit character
-    # Convert character to digit value (0-9, a-z)
-    # Accumulate: result = result * radix + digit_value
-    error("parse_integer_with_base(): not yet implemented")
-
-# Parse rational from base-N string (without prefix)
-# Example: parse_rational_with_base("f/10", 16) → 15/16
-fn parse_rational_with_base(s, radix)
-    # Split on "/" to get numerator and denominator strings
-    # Parse each part as integer in the given base
-    # Return numerator / denominator
-    error("parse_rational_with_base(): not yet implemented")
-
-# Parse real from base-N string (without prefix)
-# Example: parse_real_with_base("a.8", 16) → 10.5
-fn parse_real_with_base(s, radix)
-    # Split on "." to get integer and fractional parts
-    # Parse integer part
-    # Parse fractional part digit by digit
-    # Combine: int_part + frac_part
-    error("parse_real_with_base(): not yet implemented")
-
-# Parse rational from decimal string
-# Example: parse_rational_decimal("22/7") → 22/7
-fn parse_rational_decimal(s)
-    # Split on "/"
-    # Parse numerator and denominator as decimal integers
-    # Return numerator / denominator
-    error("parse_rational_decimal(): not yet implemented")
-
-# Parse real from decimal string
-# Example: parse_real_decimal("3.14159") → 3.14159
-fn parse_real_decimal(s)
-    # Split on "."
-    # Parse integer part
-    # Parse fractional part
-    # Combine with proper precision
-    error("parse_real_decimal(): not yet implemented")
-
-# Helper: find first occurrence of substring in string
-# Returns index or -1 if not found
-fn string_index_of(haystack, needle)
-    error("string_index_of(): not yet implemented")
-
-# Helper: extract substring from start to end index
-fn substring(s, start, end)
-    error("substring(): not yet implemented")
-
-# Helper: check if string contains a character
-fn string_contains(s, ch)
-    error("string_contains(): not yet implemented")
+    s

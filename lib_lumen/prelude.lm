@@ -5,7 +5,7 @@
 # ============================================================
 
 include "lib_lumen/value_to_string.lm"
-include "lib_lumen/parse_value.lm"
+include "lib_lumen/string_to_value.lm"
 include "lib_lumen/numeric.lm"
 include "lib_lumen/output.lm"
 include "lib_lumen/string.lm"
