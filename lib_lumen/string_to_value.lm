@@ -94,7 +94,7 @@ fn parse_number(s, i)
             while j < exp
                 pow = pow * base
                 j = j + 1
-            result_value = result_value * pow
+            result_value = pow
         else
             # Compute result_value^exp
             result_pow = 1
