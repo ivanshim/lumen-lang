@@ -159,4 +159,14 @@ else
     print("NO")
 
 print("")
+
+# Test 10: Large base-36 literal
+print("Test 10: Large base-36 literal")
+pangram = 36@the0quick0brown0fox0jumps0over0the0lazy0dog
+write("36@the0quick0brown0fox0jumps0over0the0lazy0dog = ")
+print(pangram)
+write("numeric_to_base_string(36@the0quick0brown0fox0jumps0over0the0lazy0dog, 36) = ")
+print(numeric_to_base_string(pangram, 36))
+print("")
+
 print("All round-trip tests completed!")
