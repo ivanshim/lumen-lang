@@ -3,15 +3,11 @@ fn digit_value(c)
     if is_digit(c)
         return ord(c) - ord("0")
 
-    code = ord(c)
+    if c >= "A" and c <= "Z"
+        return ord(c) - ord("A") + 10
 
-    # Uppercase A-Z
-    if code >= ord("A") and code <= ord("Z")
-        return (code - ord("A")) + 10
-
-    # Lowercase a-z
-    if code >= ord("a") and code <= ord("z")
-        return (code - ord("a")) + 10
+    if c >= "a" and c <= "z"
+        return ord(c) - ord("a") + 10
 
     return -1
 
@@ -32,10 +28,14 @@ fn parse_digits(s, i, base)
         scale = scale * base
         i = i + 1
 
-    return [value, scale, i]
+    result = []
+    result[0] = value
+    result[1] = scale
+    result[2] = i
+    result
 
 
-# Parse a full numeric literal (base, integer, fraction, exponent) and return [result_value, new_index]
+# Parse a full numeric literal (base, integer, fraction, exponent) and return [value, new_index]
 fn parse_number(s, i)
     start = i
     base_prefix = 0
@@ -50,22 +50,23 @@ fn parse_number(s, i)
 
     # no digits → not a number
     if i == start
-        return [0, start]
+        out = []
+        out[0] = 0
+        out[1] = start
+        return out
 
     base = 10
-    result_value = base_prefix
-    has_base_prefix = false
+    value = base_prefix
 
     # optional base reassignment
     if i < len(s) and char_at(s, i) == "@"
         base = base_prefix
-        has_base_prefix = true
         if base < 2 or base > 36
             error("invalid base")
 
         i = i + 1
         r = parse_digits(s, i, base)
-        result_value = r[0]
+        value = r[0]
         i = r[2]
 
     # optional fractional part
@@ -77,35 +78,27 @@ fn parse_number(s, i)
         i = r2[2]
 
         if frac_scale > 1
-            result_value = result_value + frac_val / frac_scale
+            value = value + frac_val / frac_scale
 
-    # optional exponent
+    # optional exponent (base-aware)
     if i < len(s) and char_at(s, i) == "^"
         i = i + 1
         r3 = parse_digits(s, i, base)
         exp = r3[0]
         i = r3[2]
 
-        # If no base prefix (@), compute result_value^exp
-        # If has base prefix, compute result_value * base^exp (scientific notation)
-        if has_base_prefix
-            pow = 1
-            j = 0
-            while j < exp
-                pow = pow * base
-                j = j + 1
-            result_value = pow
-        else
-            # Compute result_value^exp
-            result_pow = 1
-            k = 0
-            base_for_power = result_value
-            while k < exp
-                result_pow = result_pow * base_for_power
-                k = k + 1
-            result_value = result_pow
+        pow = 1
+        j = 0
+        while j < exp
+            pow = pow * base
+            j = j + 1
 
-    return [result_value, i]
+        value = value * pow
+
+    out = []
+    out[0] = value
+    out[1] = i
+    out
 
 
 # Convert a string into a numeric value or return the original string if parsing fails
@@ -138,4 +131,4 @@ fn string_to_value(s)
     if i == len(s)
         return num
 
-    return s
+    s
