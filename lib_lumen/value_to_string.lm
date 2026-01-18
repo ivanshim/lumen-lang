@@ -82,13 +82,13 @@ fn numeric_to_base_string(value, radix)
         error("numeric_to_base_string(): radix must be between 2 and 36")
 
     if is_int(value)
-        integer_to_base_string(value, radix)
+        return integer_to_base_string(value, radix)
 
     if is_rational(value)
-        rational_to_base_string(value, radix)
+        return rational_to_base_string(value, radix)
 
     if is_real(value)
-        real_to_base_string(value, radix)
+        return real_to_base_string(value, radix)
 
     error("numeric_to_base_string(): unsupported kind: " . kind_to_string(kind(value)))
 
