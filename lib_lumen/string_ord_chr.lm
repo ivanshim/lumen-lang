@@ -73,17 +73,3 @@ fn is_alpha_string(s)
         i = i + 1
     true
 
-## Internal helpers (deprecated - use string_to_value for new code)
-# DEPRECATED: Parse a base-10 integer from a string
-# Note: Kept temporarily for backwards compatibility; use string_to_value instead
-fn parse_int(s)
-    let value = 0
-    let i = 0
-    while i < len(s)
-        let c = char_at(s, i)
-        if not is_digit(c)
-            error("parse_int: invalid digit")
-        value = value * 10 + (ord(c) - ord("0"))
-        i = i + 1
-    value
-

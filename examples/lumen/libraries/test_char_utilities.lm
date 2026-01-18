@@ -154,7 +154,7 @@ fn extract_number(s)
     let digits = extract_digits(s)
     if len(digits) == 0
         return null
-    parse_int(digits)
+    string_to_value(digits)
 
 let mixed_strings = ["Order #12345", "Price: $99", "No digits here", "Year2025"]
 let i = 0
