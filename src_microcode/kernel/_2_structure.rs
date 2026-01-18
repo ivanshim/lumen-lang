@@ -28,12 +28,12 @@ pub fn process_structure(
     let mut bracket_depth_by_index = vec![0; tokens.len()];
     let mut bracket_depth = 0;
     for (i, token) in tokens.iter().enumerate() {
+        bracket_depth_by_index[i] = bracket_depth;
         if token.lexeme == "[" {
             bracket_depth += 1;
         } else if token.lexeme == "]" {
             bracket_depth -= 1;
         }
-        bracket_depth_by_index[i] = bracket_depth;
     }
 
     let mut result = Vec::new();
