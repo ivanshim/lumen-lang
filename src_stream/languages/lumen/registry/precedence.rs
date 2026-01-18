@@ -28,13 +28,14 @@ impl std::ops::Add<i32> for Precedence {
         let v = self as i32 + rhs;
         match v {
             v if v <= 0 => Precedence::Lowest,
-            v if v < 10 => Precedence::Pipe,
-            v if v < 20 => Precedence::Logic,
-            v if v < 30 => Precedence::Comparison,
-            v if v < 40 => Precedence::Term,
-            v if v < 45 => Precedence::Factor,
-            v if v < 50 => Precedence::Power,
-            v if v < 60 => Precedence::Unary,
+            v if v <= 2 => Precedence::Range,
+            v if v <= 5 => Precedence::Pipe,
+            v if v <= 10 => Precedence::Logic,
+            v if v <= 20 => Precedence::Comparison,
+            v if v <= 30 => Precedence::Term,
+            v if v <= 40 => Precedence::Factor,
+            v if v <= 45 => Precedence::Power,
+            v if v <= 50 => Precedence::Unary,
             _ => Precedence::Call,
         }
     }
