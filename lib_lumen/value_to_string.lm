@@ -112,7 +112,7 @@ fn integer_to_base_string(n, radix)
     if negative
         result = "-" . result
 
-    result
+    int_to_string(radix) . "@" . result
 
 # Base conversion for rationals (numerator/denominator).
 fn rational_to_base_string(r, radix)
