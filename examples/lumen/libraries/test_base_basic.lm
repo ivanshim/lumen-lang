@@ -1,4 +1,4 @@
-# Basic tests for base() library function
+# Basic tests for numeric_to_base_string() library function
 
 # ------------------------------------------------------------
 # Base conversion library
@@ -6,27 +6,27 @@
 
 alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
 
-fn base(value, radix)
+fn numeric_to_base_string(value, radix)
     if kind(radix) != kind(0)
-        error("base(): radix must be INTEGER")
+        error("numeric_to_base_string(): radix must be INTEGER")
 
     if radix < 2 or radix > 36
-        error("base(): radix must be between 2 and 36")
+        error("numeric_to_base_string(): radix must be between 2 and 36")
 
     k = kind(value)
 
     if k == kind(0)
-        return base_integer(value, radix)
+        return integer_to_base_string(value, radix)
 
     if k == kind(1/2)
-        return base_rational(value, radix)
+        return rational_to_base_string(value, radix)
 
     if k == kind(1.0)
-        return base_real_default(value, radix)
+        return real_to_base_string(value, radix)
 
-    error("base(): unsupported kind")
+    error("numeric_to_base_string(): unsupported kind")
 
-fn base_integer(n, radix)
+fn integer_to_base_string(n, radix)
     if n == 0
         return "0"
 
@@ -47,20 +47,20 @@ fn base_integer(n, radix)
 
     result
 
-fn base_rational(r, radix)
+fn rational_to_base_string(r, radix)
     n = num(r)
     d = den(r)
 
-    n_str = base_integer(n, radix)
-    d_str = base_integer(d, radix)
+    n_str = integer_to_base_string(n, radix)
+    d_str = integer_to_base_string(d, radix)
 
     n_str . "/" . d_str
 
-fn base_real_default(x, radix)
+fn real_to_base_string(x, radix)
     i = int(x)
     f = frac(x)
 
-    int_part = base_integer(i, radix)
+    int_part = integer_to_base_string(i, radix)
 
     if f == real_default(0)
         return int_part
@@ -97,16 +97,16 @@ print("Test 1: INTEGER conversions")
 n = 255
 
 write("Decimal 255 in binary: ")
-print(base(n, 2))
+print(numeric_to_base_string(n, 2))
 
 write("Decimal 255 in octal: ")
-print(base(n, 8))
+print(numeric_to_base_string(n, 8))
 
 write("Decimal 255 in hexadecimal: ")
-print(base(n, 16))
+print(numeric_to_base_string(n, 16))
 
 write("Decimal 255 in base 36: ")
-print(base(n, 36))
+print(numeric_to_base_string(n, 36))
 
 print("")
 
@@ -115,13 +115,13 @@ print("Test 2: RATIONAL conversions")
 r = 22/7
 
 write("22/7 in decimal: ")
-print(base(r, 10))
+print(numeric_to_base_string(r, 10))
 
 write("22/7 in binary: ")
-print(base(r, 2))
+print(numeric_to_base_string(r, 2))
 
 write("22/7 in hexadecimal: ")
-print(base(r, 16))
+print(numeric_to_base_string(r, 16))
 
 print("")
 
@@ -130,46 +130,46 @@ print("Test 3: REAL conversions")
 x = 3.14159
 
 write("3.14159 in decimal: ")
-print(base(x, 10))
+print(numeric_to_base_string(x, 10))
 
 write("3.14159 in binary: ")
-print(base(x, 2))
+print(numeric_to_base_string(x, 2))
 
 write("3.14159 in hexadecimal: ")
-print(base(x, 16))
+print(numeric_to_base_string(x, 16))
 
 print("")
 
 # Test 4: Negative numbers
 print("Test 4: Negative numbers")
 write("-42 in binary: ")
-print(base(-42, 2))
+print(numeric_to_base_string(-42, 2))
 
 write("-42 in hexadecimal: ")
-print(base(-42, 16))
+print(numeric_to_base_string(-42, 16))
 
 print("")
 
 # Test 5: Zero
 print("Test 5: Zero")
 write("0 in binary: ")
-print(base(0, 2))
+print(numeric_to_base_string(0, 2))
 
 write("0 in hexadecimal: ")
-print(base(0, 16))
+print(numeric_to_base_string(0, 16))
 
 print("")
 
 # Test 6: Powers of 2
 print("Test 6: Powers of 2")
 write("1024 in binary: ")
-print(base(1024, 2))
+print(numeric_to_base_string(1024, 2))
 
 write("1024 in octal: ")
-print(base(1024, 8))
+print(numeric_to_base_string(1024, 8))
 
 write("1024 in hex: ")
-print(base(1024, 16))
+print(numeric_to_base_string(1024, 16))
 
 print("")
 print("Done!")

@@ -1,5 +1,5 @@
-# Comprehensive tests for base() library function
-# base.lm is automatically available via prelude
+# Comprehensive tests for numeric_to_base_string() library function
+import("lib_lumen/base.lm")
 
 print("=== Comprehensive Base Conversion Tests ===")
 print("")
@@ -21,7 +21,7 @@ while i < len(values)
         write("  Base ")
         write(b)
         write(": ")
-        print(base(n, b))
+        print(numeric_to_base_string(n, b))
         j = j + 1
 
     print("")
@@ -31,26 +31,26 @@ while i < len(values)
 print("Test 2: Large integers")
 big = 1000000
 write("1000000 in hex: ")
-print(base(big, 16))
+print(numeric_to_base_string(big, 16))
 
 write("1000000 in base 36: ")
-print(base(big, 36))
+print(numeric_to_base_string(big, 36))
 
 print("")
 
 # Test 3: Negative integers in various bases
 print("Test 3: Negative integers")
 write("-255 in binary: ")
-print(base(-255, 2))
+print(numeric_to_base_string(-255, 2))
 
 write("-255 in octal: ")
-print(base(-255, 8))
+print(numeric_to_base_string(-255, 8))
 
 write("-255 in hex: ")
-print(base(-255, 16))
+print(numeric_to_base_string(-255, 16))
 
 write("-1 in binary: ")
-print(base(-1, 2))
+print(numeric_to_base_string(-1, 2))
 
 print("")
 
@@ -65,13 +65,13 @@ while i < len(rationals)
     print(r)
 
     write("  Binary: ")
-    print(base(r, 2))
+    print(numeric_to_base_string(r, 2))
 
     write("  Decimal: ")
-    print(base(r, 10))
+    print(numeric_to_base_string(r, 10))
 
     write("  Hex: ")
-    print(base(r, 16))
+    print(numeric_to_base_string(r, 16))
 
     print("")
     i = i + 1
@@ -79,42 +79,42 @@ while i < len(rationals)
 # Test 5: REALs with fractional parts
 print("Test 5: REAL conversions with fractions")
 write("Pi approximation 3.14159 in decimal: ")
-print(base(3.14159, 10))
+print(numeric_to_base_string(3.14159, 10))
 
 write("Pi approximation 3.14159 in binary: ")
-print(base(3.14159, 2))
+print(numeric_to_base_string(3.14159, 2))
 
 write("Pi approximation 3.14159 in hex: ")
-print(base(3.14159, 16))
+print(numeric_to_base_string(3.14159, 16))
 
 print("")
 
 write("0.5 in binary: ")
-print(base(0.5, 2))
+print(numeric_to_base_string(0.5, 2))
 
 write("0.5 in hex: ")
-print(base(0.5, 16))
+print(numeric_to_base_string(0.5, 16))
 
 print("")
 
 write("10.25 in binary: ")
-print(base(10.25, 2))
+print(numeric_to_base_string(10.25, 2))
 
 write("10.25 in hex: ")
-print(base(10.25, 16))
+print(numeric_to_base_string(10.25, 16))
 
 print("")
 
 # Test 6: Edge case bases
 print("Test 6: Minimum and maximum bases")
 write("42 in base 2: ")
-print(base(42, 2))
+print(numeric_to_base_string(42, 2))
 
 write("42 in base 36: ")
-print(base(42, 36))
+print(numeric_to_base_string(42, 36))
 
 write("1000 in base 36: ")
-print(base(1000, 36))
+print(numeric_to_base_string(1000, 36))
 
 print("")
 
@@ -125,15 +125,15 @@ original = 16@FF
 print(original)
 
 write("To base 16: ")
-hex_str = base(original, 16)
+hex_str = numeric_to_base_string(original, 16)
 print(hex_str)
 
 write("To base 2: ")
-bin_str = base(original, 2)
+bin_str = numeric_to_base_string(original, 2)
 print(bin_str)
 
 write("To base 10: ")
-dec_str = base(original, 10)
+dec_str = numeric_to_base_string(original, 10)
 print(dec_str)
 
 print("")
@@ -141,32 +141,32 @@ print("")
 # Test 8: Special REAL cases
 print("Test 8: Special REAL cases")
 write("Integer REAL 5.0 in hex: ")
-print(base(5.0, 16))
+print(numeric_to_base_string(5.0, 16))
 
 write("Small fraction 0.125 in binary: ")
-print(base(0.125, 2))
+print(numeric_to_base_string(0.125, 2))
 
 write("Small fraction 0.125 in hex: ")
-print(base(0.125, 16))
+print(numeric_to_base_string(0.125, 16))
 
 print("")
 
 # Test 9: Mixed base demonstrations
 print("Test 9: Base 12 (duodecimal)")
 write("144 in base 12: ")
-print(base(144, 12))
+print(numeric_to_base_string(144, 12))
 
 write("11/12 in base 12: ")
-print(base(11/12, 12))
+print(numeric_to_base_string(11/12, 12))
 
 print("")
 
 print("Test 10: Base 3 (ternary)")
 write("27 in base 3: ")
-print(base(27, 3))
+print(numeric_to_base_string(27, 3))
 
 write("2/3 in base 3: ")
-print(base(2/3, 3))
+print(numeric_to_base_string(2/3, 3))
 
 print("")
 print("All tests completed!")

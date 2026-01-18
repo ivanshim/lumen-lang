@@ -1,8 +1,8 @@
-# Minimal test for base() function
+# Minimal test for integer_to_base_string() function
 
 alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
 
-fn base_integer(n, radix)
+fn integer_to_base_string(n, radix)
     if n == 0
         return "0"
 
@@ -24,11 +24,11 @@ fn base_integer(n, radix)
     result
 
 print("Test: Convert 255 to hex")
-result = base_integer(255, 16)
+result = integer_to_base_string(255, 16)
 print(result)
 
 print("Test: Convert 42 to binary")
-result2 = base_integer(42, 2)
+result2 = integer_to_base_string(42, 2)
 print(result2)
 
 print("Done!")

@@ -1,28 +1,34 @@
 alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
 
-# Convert integer/rational/real to a string in the given base (2..36)
-fn base(value, radix)
+# ------------------------------------------------------------
+# Public entry point
+# ------------------------------------------------------------
+
+fn numeric_to_base_string(value, radix)
     if kind(radix) != INTEGER
-        error("base(): radix must be INTEGER")
+        error("numeric_to_base_string(): radix must be INTEGER")
 
     if radix < 2 or radix > 36
-        error("base(): radix must be between 2 and 36")
+        error("numeric_to_base_string(): radix must be between 2 and 36")
 
     k = kind(value)
 
     if k == INTEGER
-        return base_integer(value, radix)
+        integer_to_base_string(value, radix)
 
     if k == RATIONAL
-        return base_rational(value, radix)
+        rational_to_base_string(value, radix)
 
     if k == REAL
-        return base_real(value, radix)
+        real_to_base_string(value, radix)
 
-    error("base(): unsupported kind: " . str(k))
+    error("numeric_to_base_string(): unsupported kind: " . str(k))
 
-# Base conversion for integers
-fn base_integer(n, radix)
+# ------------------------------------------------------------
+# INTEGER
+# ------------------------------------------------------------
+
+fn integer_to_base_string(n, radix)
     if n == 0
         return "0"
 
@@ -43,22 +49,33 @@ fn base_integer(n, radix)
 
     result
 
-# Base conversion for rationals (numerator/denominator)
-fn base_rational(r, radix)
+# ------------------------------------------------------------
+# RATIONAL
+# ------------------------------------------------------------
+
+fn rational_to_base_string(r, radix)
     n = num(r)
     d = den(r)
 
-    n_str = base_integer(n, radix)
-    d_str = base_integer(d, radix)
+    n_str = integer_to_base_string(n, radix)
+    d_str = integer_to_base_string(d, radix)
 
     n_str . "/" . d_str
 
-# Base conversion for reals with fixed fractional precision
-fn base_real(x, radix)
+# ------------------------------------------------------------
+# REAL
+# ------------------------------------------------------------
+
+# NOTE:
+# - Uses fixed fractional precision
+# - Representation is string-only
+# - No attempt to reconstruct a REAL in another base
+
+fn real_to_base_string(x, radix)
     i = int(x)
     f = frac(x)
 
-    int_part = base_integer(i, radix)
+    int_part = integer_to_base_string(i, radix)
 
     if f == 0
         return int_part
