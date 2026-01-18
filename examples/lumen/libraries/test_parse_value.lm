@@ -1,0 +1,91 @@
+# Test parse_value.lm - parsing strings to values
+
+print("=== String to Value Parsing Tests ===")
+print("")
+
+# Test 1: Parse base-prefixed integers
+print("Test 1: Base-prefixed integers")
+write("string_to_value('16@ff') = ")
+print(string_to_value("16@ff"))
+write("string_to_value('2@1010') = ")
+print(string_to_value("2@1010"))
+write("string_to_value('8@377') = ")
+print(string_to_value("8@377"))
+write("string_to_value('36@hello') = ")
+print(string_to_value("36@hello"))
+print("")
+
+# Test 2: Parse decimal integers
+print("Test 2: Decimal integers")
+write("string_to_value('42') = ")
+print(string_to_value("42"))
+write("string_to_value('255') = ")
+print(string_to_value("255"))
+write("string_to_value('-17') = ")
+print(string_to_value("-17"))
+print("")
+
+# Test 3: Parse base-prefixed reals
+print("Test 3: Base-prefixed reals")
+write("string_to_value('16@a.8') = ")
+print(string_to_value("16@a.8"))
+write("string_to_value('2@1010.11') = ")
+print(string_to_value("2@1010.11"))
+print("")
+
+# Test 4: Parse decimal reals
+print("Test 4: Decimal reals")
+write("string_to_value('3.14159') = ")
+print(string_to_value("3.14159"))
+write("string_to_value('10.5') = ")
+print(string_to_value("10.5"))
+print("")
+
+# Test 5: Parse base-prefixed rationals
+print("Test 5: Base-prefixed rationals")
+write("string_to_value('16@f/16@10') = ")
+print(string_to_value("16@f/16@10"))
+write("string_to_value('2@101/2@11') = ")
+print(string_to_value("2@101/2@11"))
+print("")
+
+# Test 6: Parse decimal rationals
+print("Test 6: Decimal rationals")
+write("string_to_value('22/7') = ")
+print(string_to_value("22/7"))
+write("string_to_value('15/16') = ")
+print(string_to_value("15/16"))
+print("")
+
+# Test 7: Round-trip test
+print("Test 7: Round-trip conversion")
+original_str = "16@deadbeef"
+write("Original string: ")
+print(original_str)
+
+parsed = string_to_value(original_str)
+write("Parsed value: ")
+print(parsed)
+
+converted_back = numeric_to_base_string(parsed, 16)
+write("Converted back: ")
+print(converted_back)
+
+write("Match? ")
+if converted_back == original_str
+    print("YES")
+else
+    print("NO (case difference is ok)")
+print("")
+
+# Test 8: Large base-36 number
+print("Test 8: Large base-36 number")
+large_str = "36@the0quick0brown0fox"
+write("string_to_value('36@the0quick0brown0fox') = ")
+parsed_large = string_to_value(large_str)
+print(parsed_large)
+write("Convert back: ")
+print(numeric_to_base_string(parsed_large, 36))
+print("")
+
+print("All parsing tests completed!")
