@@ -75,24 +75,22 @@ alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 # Convert integer/rational/real to a string in the given base (2..36).
 fn numeric_to_base_string(value, radix)
-    if kind(radix) != INTEGER
+    if not is_int(radix)
         error("numeric_to_base_string(): radix must be INTEGER")
 
     if radix < 2 or radix > 36
         error("numeric_to_base_string(): radix must be between 2 and 36")
 
-    k = kind(value)
-
-    if k == INTEGER
+    if is_int(value)
         integer_to_base_string(value, radix)
 
-    if k == RATIONAL
+    if is_rational(value)
         rational_to_base_string(value, radix)
 
-    if k == REAL
+    if is_real(value)
         real_to_base_string(value, radix)
 
-    error("numeric_to_base_string(): unsupported kind: " . str(k))
+    error("numeric_to_base_string(): unsupported kind: " . kind_to_string(kind(value)))
 
 # Base conversion for integers.
 fn integer_to_base_string(n, radix)
