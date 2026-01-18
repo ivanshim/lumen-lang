@@ -1,7 +1,7 @@
 # Slice string from start (inclusive) to end (exclusive)
 fn substring(s, start, end)
-    i = start
-    out = ""
+    let i = start
+    let out = ""
     while i < end
         out = out . char_at(s, i)
         i = i + 1
@@ -21,8 +21,8 @@ fn ends_with(s, suffix)
 
 # Repeat string count times
 fn repeat(s, count)
-    out = ""
-    i = 0
+    let out = ""
+    let i = 0
     while i < count
         out = out . s
         i = i + 1
@@ -30,9 +30,9 @@ fn repeat(s, count)
 
 # Join array of strings with a separator
 fn join(arr, sep)
-    out = ""
-    n = len(arr)
-    i = 0
+    let out = ""
+    let n = len(arr)
+    let i = 0
     while i < n
         if i > 0
             out = out . sep
@@ -42,8 +42,8 @@ fn join(arr, sep)
 
 # Index of first occurrence of needle in s (or -1)
 fn index_of(s, needle)
-    n = len(needle)
-    i = 0
+    let n = len(needle)
+    let i = 0
     while i + n <= len(s)
         if substring(s, i, i + n) == needle
             return i
