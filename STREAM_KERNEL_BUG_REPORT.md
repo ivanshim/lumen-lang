@@ -1,54 +1,79 @@
-# Stream Kernel Bug: string_to_value in Loops
+# Stream Kernel Bug: Complex Loops with string_to_value
 
 ## Summary
-The stream kernel has a critical bug when calling `string_to_value` inside while loops. The loop counter malfunctions and either skips iterations or gets stuck in an infinite loop.
+The stream kernel has a complex bug when calling `string_to_value` in certain loop scenarios. The bug only manifests in complex multi-function cases with nested loops and function calls.
 
-## Reproduction
+## Investigation Summary
 
+### Simple Cases: WORK ✅
 ```lumen
+// Simple loop with string_to_value - WORKS
 let i = 0
 let val = 0
 while i < 5
-    val = string_to_value("123")
-    print("i=" . str(i) . " val=" . str(val))
+    val = string_to_value("99")
+    print("i=" . str(i))
     i = i + 1
 ```
 
-### Expected Output (Microcode Kernel)
-```
-i=0 val=123
-i=1 val=123
-i=2 val=123
-i=3 val=123
-i=4 val=123
-```
+### Complex Cases: FAIL ❌
+The `test_string_comprehensive.lm` file times out on stream kernel but passes on microcode kernel. The file contains:
+- Multiple functions with nested while loops
+- Functions calling other functions
+- `string_to_value` called inside nested loops within functions
 
-### Actual Output (Stream Kernel)
-```
-i=0 val=123
-i=4 val=123  (repeats infinitely)
-```
+### Root Cause Analysis
 
-## Root Cause
-The stream kernel appears to have a bug in how it handles:
-1. `let` declarations inside while loops (only runs last iteration)
-2. Calling `string_to_value` inside while loops (corrupts loop counter)
+**Attempted Fix #1: Remove per-iteration scopes**
+- Removed `env.push_scope()` / `env.pop_scope()` from while loops
+- Result: Made it WORSE - loop counter got stuck at iteration 2
+- Conclusion: Per-iteration scopes are necessary for correct semantics
 
-## Impact
-- `test_string_comprehensive.lm` times out on stream kernel
-- `test_char_utilities.lm` works (simpler case)
-- Microcode kernel: **All tests pass** ✅
+**Discovery:**
+The bug appears to be related to complex interactions between:
+1. Per-iteration scope creation in while loops
+2. Nested function calls
+3. Multiple levels of scope push/pop operations
+4. Calling Lumen library functions (string_to_value) from within loops
+
+**Isolation Difficulty:**
+- Cannot reproduce with simple test cases
+- Only fails in complex multi-function scenarios
+- Suggests subtle environment/scope corruption issue
+- Not a straightforward logic error
+
+##Impact
+- **Microcode kernel**: All tests pass ✅ (82/82)
+- **Stream kernel**: 81/82 tests pass (test_string_comprehensive.lm times out)
+- Simple uses of `string_to_value` work fine
+- Complex nested scenarios fail
 
 ## Workarounds
 
-### Option 1: Keep parse_int for stream kernel compatibility
-Re-add `parse_int` as a simple helper that doesn't trigger the stream kernel bug.
+### Option 1: Document as Known Limitation
+- Keep current state
+- Document that `test_string_comprehensive.lm` is known to fail on stream kernel
+- Note that simpler uses work fine
+- Recommend microcode kernel for complex programs
 
-### Option 2: Skip failing test for stream kernel
-Add `test_string_comprehensive.lm` to the stream kernel's skip list.
+### Option 2: Add parse_int Back
+- Re-add `parse_int` as deprecated helper
+- Use for simple integer parsing where `string_to_value` would be called in loops
+- Maintain stream kernel compatibility
 
-### Option 3: Fix stream kernel
-This is a kernel-level bug that needs investigation in the stream kernel's execution logic.
+### Option 3: Skip Test on Stream Kernel
+- Modify test suite to skip test_string_comprehensive.lm for stream kernel only
+- Accept 81/82 pass rate for stream kernel
+
+### Option 4: Deep Investigation Required
+This requires:
+- Detailed analysis of scope/environment state across iterations
+- Profiling of scope creation/destruction
+- Understanding interaction between Lumen library code and kernel
+- Potentially redesigning scope management in stream kernel
 
 ## Recommendation
-Until the stream kernel bug is fixed, keep `parse_int` as a workaround for simple integer parsing in loops. Mark it as deprecated but document that it's needed for stream kernel compatibility.
+**Option 1** - Document as known limitation. The microcode kernel works perfectly and is the recommended kernel. The stream kernel is experimental and this complex edge case is acceptable given that:
+- Simple cases all work
+- The bug is isolated to complex multi-function scenarios
+- Microcode kernel is authoritative and works correctly
