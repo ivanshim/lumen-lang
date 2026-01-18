@@ -58,10 +58,6 @@ pub struct LanguageSchema {
     /// Block structure markers (e.g., ":" for Lumen)
     pub block_open_marker: String,
     pub block_close_marker: String,
-
-    /// Functions marked as memoizable by the language layer
-    /// The kernel only memoizes when explicitly permitted by semantics
-    pub memoizable_functions: HashSet<String>,
 }
 
 impl LanguageSchema {
@@ -78,7 +74,6 @@ impl LanguageSchema {
             indentation_char: ' ',
             block_open_marker: ":".to_string(),
             block_close_marker: "DEDENT".to_string(),
-            memoizable_functions: HashSet::new(),
         }
     }
 

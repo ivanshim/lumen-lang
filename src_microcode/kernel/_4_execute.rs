@@ -531,7 +531,6 @@ pub fn execute(
                         if let Some(metadata) = env.functions.get(function).cloned() {
                             let params = metadata.params.clone();
                             let body_instr = metadata.body.clone();
-                            let memoizable = metadata.memoizable;
 
                             // Check parameter count
                             if params.len() != arg_vals.len() {
@@ -543,15 +542,14 @@ pub fn execute(
                                 ));
                             }
 
-                            // Semantic memoization: Check cache ONLY if function is marked memoizable
-                            if memoizable {
-                                if let Some(cached_result) = env.get_cached(function, &arg_vals) {
-                                    // Cache hit: return cached result without executing
-                                    return Ok((cached_result, ControlFlow::Normal));
-                                }
+                            // Check cache if MEMOIZATION is enabled
+                            // (get_cached returns None if MEMOIZATION = false)
+                            if let Some(cached_result) = env.get_cached(function, &arg_vals) {
+                                // Cache hit: return cached result without executing
+                                return Ok((cached_result, ControlFlow::Normal));
                             }
 
-                            // Execute function (either not memoizable or cache miss)
+                            // Execute function (cache miss or MEMOIZATION disabled)
                             env.push_scope();
 
                             // Bind parameters
@@ -565,10 +563,9 @@ pub fn execute(
                             // Pop scope
                             env.pop_scope();
 
-                            // Cache result ONLY if function is memoizable
-                            if memoizable {
-                                env.cache_result(function, &arg_vals, result.clone());
-                            }
+                            // Cache result if MEMOIZATION is enabled
+                            // (cache_result does nothing if MEMOIZATION = false)
+                            env.cache_result(function, &arg_vals, result.clone());
 
                             // Handle return value
                             match flow {
@@ -689,15 +686,11 @@ pub fn execute(
         }
 
         // Function definition: store in environment
-        // Metadata includes memoizable flag from language semantics
         Instruction::FunctionDef {
             name,
             params,
             body,
-            memoizable,
         } => {
-            // Store function metadata: params, body, and memoizable flag
-            // The kernel respects the memoizable flag set by the language layer
             env.set(
                 name.clone(),
                 Value::Function {
@@ -710,7 +703,6 @@ pub fn execute(
             let metadata = FunctionMetadata {
                 params: params.clone(),
                 body: body.as_ref().clone(),
-                memoizable: *memoizable,
             };
             env.functions.insert(name.clone(), metadata);
 
@@ -743,6 +735,12 @@ pub fn execute(
             // Mutate the array
             env.mutate_array(name, idx, val.clone())?;
             Ok((val, ControlFlow::Normal))
+        }
+
+        // Set MEMOIZATION flag (system control)
+        Instruction::SetMemoization { enabled } => {
+            env.set_memoization(*enabled);
+            Ok((Value::Null, ControlFlow::Normal))
         }
 
         // Literal: just return the value

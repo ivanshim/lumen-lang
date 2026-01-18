@@ -12,7 +12,6 @@ use std::collections::HashMap;
 pub struct FunctionMetadata {
     pub params: Vec<String>,
     pub body: Instruction,
-    pub memoizable: bool,
 }
 
 /// Cache key: (function_name, argument_hashes)
@@ -26,31 +25,55 @@ type Scope = HashMap<String, Value>;
 /// Top of stack is current scope.
 pub struct Environment {
     scopes: Vec<Scope>,
-    /// Store function metadata (params, body, memoizable flag)
+    /// Store function metadata (params, body)
     pub functions: HashMap<String, FunctionMetadata>,
     /// Call cache: (function_name, argument_values_repr) -> result
-    /// Only populated for memoizable functions
+    /// Only populated when MEMOIZATION is enabled
     call_cache: HashMap<CacheKey, Value>,
+    /// MEMOIZATION state stack (dynamically scoped)
+    /// Allows dynamic scoping with proper nesting
+    memoization_stack: Vec<bool>,
 }
 
 impl Environment {
     /// Create new environment with global scope
+    /// MEMOIZATION is disabled by default (MEMOIZATION = false)
     pub fn new() -> Self {
         Environment {
             scopes: vec![HashMap::new()],
             functions: HashMap::new(),
             call_cache: HashMap::new(),
+            memoization_stack: vec![false], // Default: MEMOIZATION = false
         }
     }
 
-    /// Get cached result for a function call (if memoizable and cached)
+    /// Check if memoization is currently enabled
+    pub fn memoization_enabled(&self) -> bool {
+        self.memoization_stack.last().copied().unwrap_or(false)
+    }
+
+    /// Set memoization state (MEMOIZATION = true/false)
+    /// This is dynamically scoped
+    pub fn set_memoization(&mut self, enabled: bool) {
+        if let Some(last) = self.memoization_stack.last_mut() {
+            *last = enabled;
+        }
+    }
+
+    /// Get cached result for a function call (if MEMOIZATION enabled and cached)
     pub fn get_cached(&self, func_name: &str, args: &[Value]) -> Option<Value> {
+        if !self.memoization_enabled() {
+            return None;
+        }
         let cache_key = (func_name.to_string(), Self::args_to_key(args));
         self.call_cache.get(&cache_key).cloned()
     }
 
-    /// Cache a function result (only called for memoizable functions)
+    /// Cache a function result (only if MEMOIZATION is enabled)
     pub fn cache_result(&mut self, func_name: &str, args: &[Value], result: Value) {
+        if !self.memoization_enabled() {
+            return;
+        }
         let cache_key = (func_name.to_string(), Self::args_to_key(args));
         self.call_cache.insert(cache_key, result);
     }
@@ -65,15 +88,21 @@ impl Environment {
             .join("|")
     }
 
-    /// Push new scope
+    /// Push new scope (inherits memoization state)
     pub fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
+        // Inherit current memoization state
+        let current_memo = self.memoization_enabled();
+        self.memoization_stack.push(current_memo);
     }
 
-    /// Pop current scope
+    /// Pop current scope (restores previous memoization state)
     pub fn pop_scope(&mut self) {
         if self.scopes.len() > 1 {
             self.scopes.pop();
+            if self.memoization_stack.len() > 1 {
+                self.memoization_stack.pop();
+            }
         }
     }
 

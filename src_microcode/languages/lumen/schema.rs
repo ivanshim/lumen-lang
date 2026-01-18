@@ -113,10 +113,5 @@ pub fn get_schema() -> LanguageSchema {
     schema.block_open_marker = "".to_string();  // No marker; indentation alone introduces blocks
     schema.block_close_marker = "DEDENT".to_string();
 
-    // Mark functions as memoizable (language semantics decision)
-    // These functions are pure and deterministic - safe to cache results
-    // The kernel only memoizes functions explicitly marked here
-    schema.memoizable_functions.insert("fib".to_string());
-
     schema
 }
