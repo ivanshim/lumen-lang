@@ -216,47 +216,10 @@ This card lists **user-accessible functions** across the kernel primitives and t
 **Numeric Parsing**
 - `parse_int(s)` — `[library]` Parse a base-10 integer from a string.
 - `int_to_decimal_string(n)` — `[library]` Convert integer to base-10 string.
-
----
-
-## String to Value Parsing
-
-**Library** (lib_lumen/string_to_value.lm)
-
-Parse strings into numeric values with support for arbitrary bases, rationals, reals, and exponents.
-
-**Main Function**
-- `string_to_value(s)` — `[library]` Parse a string into a numeric value. Returns the parsed number, or the original string if parsing fails.
-
-**Supported Formats**
-- **Integers**: `"42"`, `"16@ff"`, `"2@1010"`, `"36@hello"`
-- **Reals**: `"3.14"`, `"16@a.8"`, `"2@1010.11"`
-- **Rationals**: `"22/7"`, `"16@f/10"`, `"2@101/11"`
-- **Exponents**: `"16@ff^2"`, `"10@123^3"` (base-aware exponentiation using `^`)
-- **Base Prefix**: `base@digits` where base is 2-36 (written in decimal)
-
-**Examples**
-```lumen
-string_to_value("255")           # → 255
-string_to_value("16@ff")         # → 255
-string_to_value("2@1010")        # → 10
-string_to_value("16@a.8")        # → 10.5
-string_to_value("22/7")          # → 22/7 (rational)
-string_to_value("16@10^2")       # → 256 (16^2 in base 16)
-string_to_value("not_a_number")  # → "not_a_number" (returns original)
-```
-
-**Helper Functions**
+- `string_to_value(s)` — `[library]` Parse string to numeric value (supports base prefixes, rationals, reals, exponents).
+- `parse_number(s, i)` — `[library]` Parse numeric literal starting at index i, returns [value, new_index].
+- `parse_digits(s, i, base)` — `[library]` Parse base-N digits starting at index i, returns [value, scale, new_index].
 - `digit_value(c)` — `[library]` Convert character to digit value (0-35), or -1 if invalid.
-- `parse_digits(s, i, base)` — `[library]` Parse contiguous base-N digits starting at index `i`. Returns `[value, scale, new_index]`.
-- `parse_number(s, i)` — `[library]` Parse a full numeric literal starting at index `i`. Returns `[value, new_index]`.
-
-**Notes**
-- Empty string returns `0`
-- Invalid input returns the original string unchanged
-- Exponentiation uses `^` syntax (not `**`) to avoid ambiguity
-- Base must be between 2 and 36
-- Fractional parts use `/` for exact rationals or `.` for real approximations
 
 ---
 
