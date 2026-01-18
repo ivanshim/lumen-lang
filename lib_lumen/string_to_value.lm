@@ -34,7 +34,7 @@ fn parse_digits(s, i, base)
     if i == start
         error("expected digit")
 
-    return [value, scale, i]
+    [value, scale, i]
 
 
 # Parse a full numeric literal (base, integer, fraction, exponent) and return [value, new_index]
@@ -94,7 +94,7 @@ fn parse_number(s, i)
 
         value = pow
 
-    return [value, i]
+    [value, i]
 
 
 # Convert a string into a numeric value or return the original string if parsing fails
