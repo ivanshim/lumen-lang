@@ -74,7 +74,7 @@ fn parse_number(s, i)
         if frac_scale > 1
             value = value + frac_val / frac_scale
 
-    # optional exponent (base-aware)
+    # optional exponent (value-aware)
     if i < len(s) and char_at(s, i) == "^"
         i = i + 1
         r3 = parse_digits(s, i, base)
@@ -84,7 +84,7 @@ fn parse_number(s, i)
         pow = 1
         j = 0
         while j < exp
-            pow = pow * base
+            pow = pow * value
             j = j + 1
 
         value = pow
