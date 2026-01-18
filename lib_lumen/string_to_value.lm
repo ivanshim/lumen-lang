@@ -35,7 +35,7 @@ fn parse_digits(s, i, base)
     return [value, scale, i]
 
 
-# Parse a full numeric literal (base, integer, fraction, exponent) and return [value, new_index]
+# Parse a full numeric literal (base, integer, fraction, exponent) and return [result_value, new_index]
 fn parse_number(s, i)
     start = i
     base_prefix = 0
@@ -53,17 +53,19 @@ fn parse_number(s, i)
         return [0, start]
 
     base = 10
-    value = base_prefix
+    result_value = base_prefix
+    has_base_prefix = false
 
     # optional base reassignment
     if i < len(s) and char_at(s, i) == "@"
         base = base_prefix
+        has_base_prefix = true
         if base < 2 or base > 36
             error("invalid base")
 
         i = i + 1
         r = parse_digits(s, i, base)
-        value = r[0]
+        result_value = r[0]
         i = r[2]
 
     # optional fractional part
@@ -75,24 +77,35 @@ fn parse_number(s, i)
         i = r2[2]
 
         if frac_scale > 1
-            value = value + frac_val / frac_scale
+            result_value = result_value + frac_val / frac_scale
 
-    # optional exponent (base-aware)
+    # optional exponent
     if i < len(s) and char_at(s, i) == "^"
         i = i + 1
         r3 = parse_digits(s, i, base)
         exp = r3[0]
         i = r3[2]
 
-        pow = 1
-        j = 0
-        while j < exp
-            pow = pow * base
-            j = j + 1
+        # If no base prefix (@), compute result_value^exp
+        # If has base prefix, compute result_value * base^exp (scientific notation)
+        if has_base_prefix
+            pow = 1
+            j = 0
+            while j < exp
+                pow = pow * base
+                j = j + 1
+            result_value = result_value * pow
+        else
+            # Compute result_value^exp
+            result_pow = 1
+            k = 0
+            base_for_power = result_value
+            while k < exp
+                result_pow = result_pow * base_for_power
+                k = k + 1
+            result_value = result_pow
 
-        value = value * pow
-
-    return [value, i]
+    return [result_value, i]
 
 
 # Convert a string into a numeric value or return the original string if parsing fails
