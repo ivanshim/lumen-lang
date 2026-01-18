@@ -266,15 +266,10 @@ impl<'a> Parser<'a> {
 
         let body = self.parse_block()?;
 
-        // Check if function is marked as memoizable by the language schema
-        // The kernel is language-agnostic: only memoize if explicitly permitted
-        let memoizable = self.schema.memoizable_functions.contains(&name);
-
         Ok(Instruction::FunctionDef {
             name,
             params,
             body: Box::new(body),
-            memoizable,
         })
     }
 
@@ -317,8 +312,33 @@ impl<'a> Parser<'a> {
             self.skip_whitespace();
             let value = self.parse_expression()?;
 
-            // Handle two cases:
-            // 1. Simple assignment: name = value
+            // Handle three cases:
+            // 1. MEMOIZATION assignment (system control)
+            if let Instruction::Variable(name) = &expr {
+                if name == "MEMOIZATION" {
+                    // Extract boolean value from either Variable or Literal
+                    match &value {
+                        Instruction::Variable(bool_str) => {
+                            match bool_str.as_str() {
+                                "true" => return Ok(Instruction::SetMemoization { enabled: true }),
+                                "false" => return Ok(Instruction::SetMemoization { enabled: false }),
+                                _ => return Err(format!("MEMOIZATION must be set to 'true' or 'false', got: {}", bool_str)),
+                            }
+                        }
+                        Instruction::Literal(val) => {
+                            if let crate::kernel::eval::Value::Bool(b) = val {
+                                return Ok(Instruction::SetMemoization { enabled: *b });
+                            }
+                            return Err("MEMOIZATION must be set to a boolean literal (true or false)".to_string());
+                        }
+                        _ => {
+                            return Err("MEMOIZATION must be set to a boolean literal (true or false)".to_string());
+                        }
+                    }
+                }
+            }
+
+            // 2. Simple assignment: name = value
             if let Instruction::Variable(name) = expr {
                 return Ok(Instruction::assign(name, value));
             }

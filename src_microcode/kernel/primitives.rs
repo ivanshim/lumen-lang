@@ -106,12 +106,10 @@ pub enum Instruction {
 
     // Function definition: store in registry
     // (This is metadata, not execution)
-    // memoizable: true only if explicitly marked by language semantics
     FunctionDef {
         name: String,
         params: Vec<String>,
         body: Box<Instruction>,
-        memoizable: bool,
     },
 
     // Indexed assignment: arr[index] = value
@@ -119,6 +117,11 @@ pub enum Instruction {
         name: String,
         index: Box<Instruction>,
         value: Box<Instruction>,
+    },
+
+    // Set MEMOIZATION flag (system control)
+    SetMemoization {
+        enabled: bool,
     },
 }
 
