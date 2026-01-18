@@ -62,17 +62,6 @@ fn reverse(s)
     result
 
 ## String content validation
-# True if string consists only of digits
-fn is_numeric_string(s)
-    if len(s) == 0
-        return false
-    let i = 0
-    while i < len(s)
-        if not is_digit(char_at(s, i))
-            return false
-        i = i + 1
-    true
-
 # True if string consists only of ASCII letters
 fn is_alpha_string(s)
     if len(s) == 0
@@ -84,8 +73,9 @@ fn is_alpha_string(s)
         i = i + 1
     true
 
-## Numeric string parsing and formatting
-# Parse a base-10 integer from a string
+## Internal helpers (deprecated - use string_to_value for new code)
+# DEPRECATED: Parse a base-10 integer from a string
+# Note: Kept temporarily for backwards compatibility; use string_to_value instead
 fn parse_int(s)
     let value = 0
     let i = 0
@@ -97,15 +87,3 @@ fn parse_int(s)
         i = i + 1
     value
 
-# Convert integer to base-10 string
-fn int_to_decimal_string(n)
-    if n == 0
-        "0"
-    else
-        let result = ""
-        let x = n
-        while x > 0
-            let d = x % 10
-            result = chr(ord("0") + d) . result
-            x = x // 10
-        result
