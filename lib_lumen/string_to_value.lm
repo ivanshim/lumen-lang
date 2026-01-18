@@ -10,7 +10,7 @@ fn digit_value(c)
     if code >= ord("a") and code <= ord("z")
         return code - ord("a") + 10
 
-    return -1
+    -1
 
 
 # Parse a contiguous run of base-N digits and return [value, scale, new_index]
