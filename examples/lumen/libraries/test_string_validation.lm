@@ -1,0 +1,69 @@
+# String Validation Examples
+# Demonstrates is_numeric_string, is_alpha_string
+
+print("=== String Content Validation ===")
+print("")
+
+# Test numeric string validation
+print("Numeric string validation:")
+print("  is_numeric_string('123'): " . str(is_numeric_string("123")))         # true
+print("  is_numeric_string('456789'): " . str(is_numeric_string("456789")))   # true
+print("  is_numeric_string('0'): " . str(is_numeric_string("0")))             # true
+print("  is_numeric_string('12a34'): " . str(is_numeric_string("12a34")))     # false
+print("  is_numeric_string('hello'): " . str(is_numeric_string("hello")))     # false
+print("  is_numeric_string(''): " . str(is_numeric_string("")))               # false (empty)
+print("")
+
+# Test alphabetic string validation
+print("Alphabetic string validation:")
+print("  is_alpha_string('hello'): " . str(is_alpha_string("hello")))         # true
+print("  is_alpha_string('WORLD'): " . str(is_alpha_string("WORLD")))         # true
+print("  is_alpha_string('LuMeN'): " . str(is_alpha_string("LuMeN")))         # true
+print("  is_alpha_string('hello123'): " . str(is_alpha_string("hello123")))   # false
+print("  is_alpha_string('hello world'): " . str(is_alpha_string("hello world"))) # false (space)
+print("  is_alpha_string(''): " . str(is_alpha_string("")))                   # false (empty)
+print("")
+
+# Practical example: input validation
+print("=== Practical Example: Input Validation ===")
+
+fn validate_age_input(s)
+    if not is_numeric_string(s)
+        print("  '" . s . "' - INVALID: must be numeric")
+        return false
+
+    let age = parse_int(s)
+    if age < 0 or age > 150
+        print("  '" . s . "' - INVALID: age out of range")
+        return false
+
+    print("  '" . s . "' - VALID age: " . str(age))
+    return true
+
+let age_inputs = ["25", "abc", "150", "-5", "999", "42"]
+let i = 0
+while i < len(age_inputs)
+    validate_age_input(age_inputs[i])
+    i = i + 1
+print("")
+
+# Practical example: name validation
+print("=== Practical Example: Name Validation ===")
+
+fn validate_name_input(s)
+    if len(s) == 0
+        print("  '" . s . "' - INVALID: name cannot be empty")
+        return false
+
+    if not is_alpha_string(s)
+        print("  '" . s . "' - INVALID: name must contain only letters")
+        return false
+
+    print("  '" . s . "' - VALID name")
+    return true
+
+let name_inputs = ["Alice", "Bob123", "Charlie", "", "Dave_Smith"]
+let i = 0
+while i < len(name_inputs)
+    validate_name_input(name_inputs[i])
+    i = i + 1

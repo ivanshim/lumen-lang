@@ -1,9 +1,14 @@
-# Write value to stdout without newline
+# Convert x to a string with str(x) and emit without a newline
 fn write(x)
     emit(str(x))
 
-
-# Write value to stdout followed by newline
+# Write x followed by a newline
 fn print(x)
     write(x)
     emit("\n")
+
+
+# Print error message and halt execution
+fn error(msg)
+    print("ERROR: " . msg)
+    1 / 0  # Halt execution via division by zero

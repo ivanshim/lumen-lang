@@ -11,6 +11,11 @@ use std::process;
 use microcode_2::kernel::run;
 use microcode_2::languages::{lumen_schema, rust_core_schema, python_core_schema};
 
+// Build-time packaging: embedded .lm file list from lib_lumen/prelude.rs
+mod embedded_files {
+    include!("../lib_lumen/prelude.rs");
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
@@ -30,27 +35,20 @@ fn main() {
     match language.as_str() {
         "lumen" => {
             let schema = lumen_schema::get_schema();
-            // Prepend Lumen standard library
-            // The library provides user-facing I/O functions (print, write, str) built on top of kernel primitives
-            // Load in order: str.lm first (defines str and type checking), numeric.lm (defines real_default), output.lm (defines write and print),
-            // then string utilities, then math functions (factorial, e_integer, pi_machin), then constants (1024-digit, full-precision, defaults)
-            let stdlib_str = include_str!("../lib_lumen/str.lm");
-            let stdlib_numeric = include_str!("../lib_lumen/numeric.lm");
-            let stdlib_output = include_str!("../lib_lumen/output.lm");
-            let stdlib_string = include_str!("../lib_lumen/string.lm");
-            let stdlib_factorial = include_str!("../lib_lumen/factorial.lm");
-            let stdlib_round = include_str!("../lib_lumen/round.lm");
-            let stdlib_e_integer = include_str!("../lib_lumen/e_integer.lm");
-            let stdlib_pi_machin = include_str!("../lib_lumen/pi_machin.lm");
-            let stdlib_constants_1024 = include_str!("../lib_lumen/constants_1024.lm");
-            let stdlib_constants = include_str!("../lib_lumen/constants.lm");
-            let stdlib_constants_default = include_str!("../lib_lumen/constants_default.lm");
-            let stdlib_primes = include_str!("../lib_lumen/primes.lm");
-            let stdlib_number_theory = include_str!("../lib_lumen/number_theory.lm");
-            let full_source = format!("{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
-                stdlib_str, stdlib_numeric, stdlib_output, stdlib_string, stdlib_factorial, stdlib_round, stdlib_e_integer,
-                stdlib_pi_machin, stdlib_constants_1024, stdlib_constants, stdlib_constants_default,
-                stdlib_primes, stdlib_number_theory, source);
+            // Load bootstrap file (prelude.lm) before user code
+            // The kernel has no semantic knowledge of what this file does or contains
+            let bootstrap_source = include_str!("../lib_lumen/prelude.lm");
+
+            // Process include directives in bootstrap file
+            let expanded_bootstrap = match process_includes(bootstrap_source) {
+                Ok(expanded) => expanded,
+                Err(e) => {
+                    eprintln!("Include error: {}", e);
+                    process::exit(1);
+                }
+            };
+
+            let full_source = format!("{}\n{}", expanded_bootstrap, source);
             if let Err(e) = run(&full_source, &schema, &program_args) {
                 eprintln!("LumenError: {}", e);
                 process::exit(1);
@@ -127,4 +125,64 @@ fn detect_language_from_extension(filepath: &str) -> Option<String> {
     };
 
     Some(language.to_string())
+}
+
+/// Generic embedded file lookup: queries the embedded virtual filesystem by path
+/// The kernel performs a simple path-based lookup with no semantic knowledge
+fn get_embedded_file(path: &str) -> Option<&'static str> {
+    embedded_files::EMBEDDED_FILES
+        .iter()
+        .find(|(p, _)| *p == path)
+        .map(|(_, contents)| *contents)
+}
+
+/// Process include directives in source code
+/// Recursively expands `include "path"` directives by inlining embedded file contents
+fn process_includes(source: &str) -> Result<String, String> {
+    let mut result = String::new();
+    let mut processed_files = std::collections::HashSet::new();
+
+    fn process_recursive(
+        source: &str,
+        processed_files: &mut std::collections::HashSet<String>,
+        result: &mut String,
+    ) -> Result<(), String> {
+        for line in source.lines() {
+            let trimmed = line.trim();
+
+            // Check if line is an include directive
+            if trimmed.starts_with("include ") {
+                // Extract the file path from: include "path"
+                let rest = trimmed.strip_prefix("include ").unwrap().trim();
+
+                if !rest.starts_with('"') || !rest.ends_with('"') {
+                    return Err(format!("Invalid include syntax: {}", line));
+                }
+
+                let path = &rest[1..rest.len()-1];
+
+                // Prevent circular includes
+                if processed_files.contains(path) {
+                    continue; // Skip already processed files
+                }
+                processed_files.insert(path.to_string());
+
+                // Retrieve from embedded virtual filesystem
+                let file_contents = get_embedded_file(path)
+                    .ok_or_else(|| format!("File not found in embedded filesystem: {}", path))?;
+
+                // Recursively process the included file
+                process_recursive(file_contents, processed_files, result)?;
+                result.push('\n');
+            } else {
+                // Regular line - keep it
+                result.push_str(line);
+                result.push('\n');
+            }
+        }
+        Ok(())
+    }
+
+    process_recursive(source, &mut processed_files, &mut result)?;
+    Ok(result)
 }

@@ -1,0 +1,68 @@
+# String Transformation Examples
+# Demonstrates to_upper, to_lower, to_upper_char, to_lower_char, reverse
+
+print("=== String Case Transformation ===")
+print("")
+
+# Convert strings to uppercase
+print("Uppercase conversion:")
+print("  to_upper('hello'): " . to_upper("hello"))           # HELLO
+print("  to_upper('world'): " . to_upper("world"))           # WORLD
+print("  to_upper('Hello123'): " . to_upper("Hello123"))     # HELLO123
+print("")
+
+# Convert strings to lowercase
+print("Lowercase conversion:")
+print("  to_lower('HELLO'): " . to_lower("HELLO"))           # hello
+print("  to_lower('WORLD'): " . to_lower("WORLD"))           # world
+print("  to_lower('Hello123'): " . to_lower("Hello123"))     # hello123
+print("")
+
+# Single character transformations
+print("Single character transformations:")
+print("  to_upper_char('a'): " . to_upper_char("a"))         # A
+print("  to_upper_char('z'): " . to_upper_char("z"))         # Z
+print("  to_lower_char('A'): " . to_lower_char("A"))         # a
+print("  to_lower_char('Z'): " . to_lower_char("Z"))         # z
+print("  to_upper_char('5'): " . to_upper_char("5"))         # 5 (unchanged)
+print("  to_lower_char('5'): " . to_lower_char("5"))         # 5 (unchanged)
+print("")
+
+# String reversal
+print("String reversal:")
+print("  reverse('abc'): " . reverse("abc"))                 # cba
+print("  reverse('hello'): " . reverse("hello"))             # olleh
+print("  reverse('racecar'): " . reverse("racecar"))         # racecar
+print("  reverse('12345'): " . reverse("12345"))             # 54321
+print("")
+
+# Practical example: title case
+print("=== Practical Example: Title Case ===")
+
+fn to_title_case(s)
+    if len(s) == 0
+        return s
+    to_upper_char(char_at(s, 0)) . slice(to_lower(s), 1)
+
+let words = ["hello", "world", "lumen", "PROGRAMMING"]
+let i = 0
+while i < len(words)
+    let word = words[i]
+    print("  " . word . " -> " . to_title_case(word))
+    i = i + 1
+print("")
+
+# Practical example: palindrome checker
+print("=== Practical Example: Palindrome Checker ===")
+
+fn is_palindrome(s)
+    let normalized = to_lower(s)
+    normalized == reverse(normalized)
+
+let test_words = ["racecar", "hello", "madam", "world", "level"]
+let i = 0
+while i < len(test_words)
+    let word = test_words[i]
+    let is_pal = is_palindrome(word)
+    print("  '" . word . "' is palindrome: " . str(is_pal))
+    i = i + 1

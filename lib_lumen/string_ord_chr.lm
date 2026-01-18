@@ -1,0 +1,111 @@
+## Character classification using ord/chr primitives
+# True if character is ASCII
+fn is_ascii(c)
+    ord(c) < 128
+
+# True if character is a decimal digit
+fn is_digit(c)
+    let o = ord(c)
+    o >= ord("0") and o <= ord("9")
+
+# True if character is ASCII alphabetic
+fn is_alpha(c)
+    let o = ord(c)
+    (o >= ord("A") and o <= ord("Z")) or (o >= ord("a") and o <= ord("z"))
+
+# True if character is ASCII alphanumeric
+fn is_alnum(c)
+    is_alpha(c) or is_digit(c)
+
+# Convert ASCII character to uppercase
+fn to_upper_char(c)
+    let o = ord(c)
+    if o >= ord("a") and o <= ord("z")
+        chr(o - 32)
+    else
+        c
+
+# Convert ASCII character to lowercase
+fn to_lower_char(c)
+    let o = ord(c)
+    if o >= ord("A") and o <= ord("Z")
+        chr(o + 32)
+    else
+        c
+
+## String transformations
+# Convert string to uppercase (ASCII)
+fn to_upper(s)
+    let result = ""
+    let i = 0
+    while i < len(s)
+        result = result . to_upper_char(char_at(s, i))
+        i = i + 1
+    result
+
+# Convert string to lowercase (ASCII)
+fn to_lower(s)
+    let result = ""
+    let i = 0
+    while i < len(s)
+        result = result . to_lower_char(char_at(s, i))
+        i = i + 1
+    result
+
+# Reverse characters in a string
+fn reverse(s)
+    let result = ""
+    let i = len(s) - 1
+    while i >= 0
+        result = result . char_at(s, i)
+        i = i - 1
+    result
+
+## String content validation
+# True if string consists only of digits
+fn is_numeric_string(s)
+    if len(s) == 0
+        return false
+    let i = 0
+    while i < len(s)
+        if not is_digit(char_at(s, i))
+            return false
+        i = i + 1
+    true
+
+# True if string consists only of ASCII letters
+fn is_alpha_string(s)
+    if len(s) == 0
+        return false
+    let i = 0
+    while i < len(s)
+        if not is_alpha(char_at(s, i))
+            return false
+        i = i + 1
+    true
+
+## Numeric string parsing and formatting
+# Parse a base-10 integer from a string
+fn parse_int(s)
+    let value = 0
+    let i = 0
+    while i < len(s)
+        let c = char_at(s, i)
+        if not is_digit(c)
+            error("parse_int: invalid digit")
+        value = value * 10 + (ord(c) - ord("0"))
+        i = i + 1
+    value
+
+# Convert integer to base-10 string
+fn int_to_decimal_string(n)
+    if n == 0
+        "0"
+    else
+        let result = ""
+        let x = n
+        while x > 0
+            let d = x % 10
+            result = chr(ord("0") + d) . result
+            x = x // 10
+        result

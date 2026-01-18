@@ -1,0 +1,251 @@
+# Comprehensive String Processing Example
+# Demonstrates combining multiple string_ord_chr functions for practical tasks
+
+print("=== Text Processing Pipeline ===")
+print("")
+
+# Example 1: Password strength validator
+print("Password Strength Validator:")
+
+fn has_digit_char(s)
+    let i = 0
+    while i < len(s)
+        if is_digit(char_at(s, i))
+            return true
+        i = i + 1
+    false
+
+fn has_alpha_char(s)
+    let i = 0
+    while i < len(s)
+        if is_alpha(char_at(s, i))
+            return true
+        i = i + 1
+    false
+
+fn has_upper_char(s)
+    let i = 0
+    while i < len(s)
+        let c = char_at(s, i)
+        let o = ord(c)
+        if o >= ord("A") and o <= ord("Z")
+            return true
+        i = i + 1
+    false
+
+fn has_lower_char(s)
+    let i = 0
+    while i < len(s)
+        let c = char_at(s, i)
+        let o = ord(c)
+        if o >= ord("a") and o <= ord("z")
+            return true
+        i = i + 1
+    false
+
+fn validate_password(pwd)
+    print("  Password: '" . pwd . "'")
+
+    if len(pwd) < 8
+        print("    WEAK: Too short (minimum 8 characters)")
+        return false
+
+    if not has_digit_char(pwd)
+        print("    WEAK: Must contain at least one digit")
+        return false
+
+    if not has_alpha_char(pwd)
+        print("    WEAK: Must contain at least one letter")
+        return false
+
+    if not has_upper_char(pwd)
+        print("    WEAK: Must contain at least one uppercase letter")
+        return false
+
+    if not has_lower_char(pwd)
+        print("    WEAK: Must contain at least one lowercase letter")
+        return false
+
+    print("    STRONG: All requirements met")
+    return true
+
+let passwords = ["abc123", "PASSWORD123", "Pass123", "MyP@ssw0rd"]
+let i = 0
+while i < len(passwords)
+    validate_password(passwords[i])
+    i = i + 1
+print("")
+
+# Example 2: Extract and sum numbers from text
+print("Extract and Sum Numbers from Text:")
+
+fn extract_all_numbers(s)
+    let numbers = []
+    let current_num = ""
+    let i = 0
+
+    while i < len(s)
+        let c = char_at(s, i)
+        if is_digit(c)
+            current_num = current_num . c
+        else
+            if len(current_num) > 0
+                push(numbers, parse_int(current_num))
+                current_num = ""
+        i = i + 1
+
+    # Don't forget last number if string ends with a digit
+    if len(current_num) > 0
+        push(numbers, parse_int(current_num))
+
+    numbers
+
+fn sum_numbers_in_text(s)
+    let nums = extract_all_numbers(s)
+    let sum = 0
+    let i = 0
+    while i < len(nums)
+        sum = sum + nums[i]
+        i = i + 1
+    sum
+
+let texts = [
+    "I have 5 apples and 3 oranges",
+    "Order #123 total: 45 items",
+    "No numbers here",
+    "Year 2025 day 17"
+]
+let i = 0
+while i < len(texts)
+    let text = texts[i]
+    let sum = sum_numbers_in_text(text)
+    print("  '" . text . "'")
+    print("    Sum: " . str(sum))
+    i = i + 1
+print("")
+
+# Example 3: Normalize and compare strings
+print("Normalize and Compare Strings:")
+
+fn normalize_string(s)
+    # Convert to lowercase and remove non-alphanumeric manually
+    let lower = to_lower(s)
+    let result = ""
+    let i = 0
+    while i < len(lower)
+        let c = char_at(lower, i)
+        if is_alnum(c)
+            result = result . c
+        i = i + 1
+    result
+
+fn strings_match_normalized(a, b)
+    normalize_string(a) == normalize_string(b)
+
+let pairs = [
+    ["Hello World", "hello world"],
+    ["Test-123", "TEST123"],
+    ["Lumen Lang", "LumenLang"],
+    ["Different", "Strings"]
+]
+let i = 0
+while i < len(pairs)
+    let a = pairs[i][0]
+    let b = pairs[i][1]
+    let match = strings_match_normalized(a, b)
+    print("  '" . a . "' vs '" . b . "': " . str(match))
+    i = i + 1
+print("")
+
+# Example 4: Generate acronym from phrase
+print("Generate Acronym from Phrase:")
+
+fn generate_acronym(phrase)
+    let words = []
+    let current_word = ""
+    let i = 0
+
+    # Split by spaces
+    while i < len(phrase)
+        let c = char_at(phrase, i)
+        if c == " "
+            if len(current_word) > 0
+                push(words, current_word)
+                current_word = ""
+        else
+            current_word = current_word . c
+        i = i + 1
+
+    # Add last word
+    if len(current_word) > 0
+        push(words, current_word)
+
+    # Take first letter of each word
+    let acronym = ""
+    let i = 0
+    while i < len(words)
+        let word = words[i]
+        if len(word) > 0
+            acronym = acronym . to_upper_char(char_at(word, 0))
+        i = i + 1
+
+    acronym
+
+let phrases = [
+    "As Soon As Possible",
+    "Frequently Asked Questions",
+    "Light Amplification by Stimulated Emission of Radiation",
+    "You Only Live Once"
+]
+let i = 0
+while i < len(phrases)
+    let phrase = phrases[i]
+    let acronym = generate_acronym(phrase)
+    print("  '" . phrase . "' -> " . acronym)
+    i = i + 1
+print("")
+
+# Example 5: Simple Caesar cipher
+print("Simple Caesar Cipher (letters only, shift by 3):")
+
+fn caesar_shift_char(c)
+    if not is_alpha(c)
+        return c
+
+    let o = ord(c)
+    if o >= ord("a") and o <= ord("z")
+        # Lowercase: shift within a-z
+        let shifted = ((o - ord("a") + 3) % 26) + ord("a")
+        chr(shifted)
+    else
+        # Uppercase: shift within A-Z
+        let shifted = ((o - ord("A") + 3) % 26) + ord("A")
+        chr(shifted)
+
+fn caesar_encrypt(s)
+    let result = ""
+    let i = 0
+    while i < len(s)
+        let c = char_at(s, i)
+        if not is_alpha(c)
+            result = result . c
+        else
+            let o = ord(c)
+            if o >= ord("a") and o <= ord("z")
+                # Lowercase: shift within a-z
+                let shifted = ((o - ord("a") + 3) % 26) + ord("a")
+                result = result . chr(shifted)
+            else
+                # Uppercase: shift within A-Z
+                let shifted = ((o - ord("A") + 3) % 26) + ord("A")
+                result = result . chr(shifted)
+        i = i + 1
+    result
+
+let messages = ["hello world", "LUMEN LANG", "Test 123"]
+let i = 0
+while i < len(messages)
+    let msg = messages[i]
+    let encrypted = caesar_encrypt(msg)
+    print("  '" . msg . "' -> '" . encrypted . "'")
+    i = i + 1
