@@ -1,0 +1,160 @@
+# Test string_to_value parsing function
+
+print("=== String to Value Parsing Tests ===")
+print("")
+
+# Test 1: Decimal integers
+print("Test 1: Decimal integers")
+write("string_to_value('42') = ")
+print(string_to_value("42"))
+write("string_to_value('255') = ")
+print(string_to_value("255"))
+write("string_to_value('0') = ")
+print(string_to_value("0"))
+print("")
+
+# Test 2: Base-prefixed integers
+print("Test 2: Base-prefixed integers")
+write("string_to_value('16@ff') = ")
+print(string_to_value("16@ff"))
+write("string_to_value('16@FF') = ")
+print(string_to_value("16@FF"))
+write("string_to_value('2@1010') = ")
+print(string_to_value("2@1010"))
+write("string_to_value('8@377') = ")
+print(string_to_value("8@377"))
+write("string_to_value('36@hello') = ")
+print(string_to_value("36@hello"))
+write("string_to_value('36@WORLD') = ")
+print(string_to_value("36@WORLD"))
+print("")
+
+# Test 3: Decimal reals
+print("Test 3: Decimal reals")
+write("string_to_value('3.14') = ")
+print(string_to_value("3.14"))
+write("string_to_value('10.5') = ")
+print(string_to_value("10.5"))
+write("string_to_value('0.25') = ")
+print(string_to_value("0.25"))
+print("")
+
+# Test 4: Base-prefixed reals
+print("Test 4: Base-prefixed reals")
+write("string_to_value('16@a.8') = ")
+print(string_to_value("16@a.8"))
+write("string_to_value('2@1010.11') = ")
+print(string_to_value("2@1010.11"))
+write("string_to_value('16@10.4') = ")
+print(string_to_value("16@10.4"))
+print("")
+
+# Test 5: Decimal rationals
+print("Test 5: Decimal rationals")
+write("string_to_value('22/7') = ")
+print(string_to_value("22/7"))
+write("string_to_value('1/2') = ")
+print(string_to_value("1/2"))
+write("string_to_value('355/113') = ")
+print(string_to_value("355/113"))
+print("")
+
+# Test 6: Base-prefixed rationals
+print("Test 6: Base-prefixed rationals")
+write("string_to_value('16@f/16@10') = ")
+print(string_to_value("16@f/16@10"))
+write("string_to_value('2@101/2@11') = ")
+print(string_to_value("2@101/2@11"))
+print("")
+
+# Test 7: Exponents in decimal
+print("Test 7: Exponents in decimal")
+write("string_to_value('10@2^3') = ")
+print(string_to_value("10@2^3"))
+write("string_to_value('10@10^2') = ")
+print(string_to_value("10@10^2"))
+write("string_to_value('5^3') = ")
+print(string_to_value("5^3"))
+print("")
+
+# Test 8: Exponents in other bases
+print("Test 8: Exponents in other bases")
+write("string_to_value('16@10^2') = ")
+print(string_to_value("16@10^2"))
+write("string_to_value('2@10^8') = ")
+print(string_to_value("2@10^8"))
+write("string_to_value('16@ff^2') = ")
+print(string_to_value("16@ff^2"))
+print("")
+
+# Test 9: Edge cases - empty and zero
+print("Test 9: Edge cases")
+write("string_to_value('') = ")
+print(string_to_value(""))
+write("string_to_value('0') = ")
+print(string_to_value("0"))
+write("string_to_value('16@0') = ")
+print(string_to_value("16@0"))
+print("")
+
+# Test 10: Invalid inputs (should return original string)
+print("Test 10: Invalid inputs (returns original string)")
+write("string_to_value('hello') = ")
+print(string_to_value("hello"))
+write("string_to_value('not_a_number') = ")
+print(string_to_value("not_a_number"))
+write("string_to_value('16@gg') = ")
+print(string_to_value("16@gg"))
+write("string_to_value('abc/def') = ")
+print(string_to_value("abc/def"))
+print("")
+
+# Test 11: Round-trip with numeric_to_base_string
+print("Test 11: Round-trip test")
+original = "16@deadbeef"
+write("Original: ")
+print(original)
+
+parsed = string_to_value(original)
+write("Parsed: ")
+print(parsed)
+
+converted = numeric_to_base_string(parsed, 16)
+write("Back to string: ")
+print(converted)
+
+write("Match (case-insensitive)? ")
+if converted == original or converted == "16@deadbeef"
+    print("YES")
+else
+    print("NO - got: " . converted)
+print("")
+
+# Test 12: Large base-36 value
+print("Test 12: Large base-36 value")
+large = "36@the0quick0brown0fox0jumps0over0the0lazy0dog"
+write("Input: 36@the0quick0brown0fox0jumps0over0the0lazy0dog")
+print("")
+parsed_large = string_to_value(large)
+write("Parsed: ")
+print(parsed_large)
+converted_large = numeric_to_base_string(parsed_large, 36)
+write("Converted back: ")
+print(converted_large)
+print("")
+
+# Test 13: Fractional with exponent
+print("Test 13: Real with exponent")
+write("string_to_value('10@1.5^2') = ")
+print(string_to_value("10@1.5^2"))
+print("")
+
+# Test 14: Various base limits
+print("Test 14: Base limits")
+write("string_to_value('2@1') = ")
+print(string_to_value("2@1"))
+write("string_to_value('36@z') = ")
+print(string_to_value("36@z"))
+print("")
+
+print("All string_to_value tests completed!")
