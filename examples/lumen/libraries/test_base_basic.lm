@@ -65,11 +65,11 @@ fn real_to_base_string(x, radix)
     if f == real_default(0)
         return int_part
 
-    frac_part = base_frac(f, radix, 16)
+    frac_part = frac_to_base_string(f, radix, REAL_DEFAULT_PRECISION)
 
     int_part . "." . frac_part
 
-fn base_frac(f, radix, limit)
+fn frac_to_base_string(f, radix, limit)
     result = ""
     count = 0
 

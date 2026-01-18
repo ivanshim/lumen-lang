@@ -1,5 +1,5 @@
 # Comprehensive tests for numeric_to_base_string() library function
-import("lib_lumen/base.lm")
+import("lib_lumen/numeric_to_base_string.lm")
 
 print("=== Comprehensive Base Conversion Tests ===")
 print("")
