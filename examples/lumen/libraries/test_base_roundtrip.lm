@@ -1,5 +1,5 @@
 # Round-trip tests: base-N literals → numeric_to_base_string() conversion
-import("lib_lumen/numeric_to_base_string.lm")
+import("lib_lumen/value_to_string.lm")
 
 print("=== Base Round-trip Tests ===")
 print("Testing that numeric_to_base_string() produces correct representation")
