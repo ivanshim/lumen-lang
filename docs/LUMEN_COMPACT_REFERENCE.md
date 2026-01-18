@@ -116,7 +116,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `array_to_string(x)` — `[kernel]` Convert ARRAY to string (mechanical primitive).
 - `null_to_string(x)` — `[kernel]` Convert NULL to string (mechanical primitive).
 
-**Library** (lib_lumen/str.lm)
+**Library** (lib_lumen/value_to_string.lm)
 - `is_int(x)` — `[library]` Returns `true` if `x` has INTEGER kind.
 - `is_rational(x)` — `[library]` Returns `true` if `x` has RATIONAL kind.
 - `is_real(x)` — `[library]` Returns `true` if `x` has REAL kind.
@@ -126,6 +126,11 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `is_null(x)` — `[library]` Returns `true` if `x` has NULL kind.
 - `kind_to_string(k)` — `[library]` Convert a KIND meta-value to its canonical uppercase string representation ("INTEGER", "REAL", etc.).
 - `str(x)` — `[library]` Convert any value to its canonical string representation.
+- `numeric_to_base_string(value, radix)` — `[library]` Convert integer/rational/real to a string in the given base (2..36).
+- `integer_to_base_string(n, radix)` — `[library]` Base conversion for integers.
+- `rational_to_base_string(r, radix)` — `[library]` Base conversion for rationals (numerator/denominator).
+- `real_to_base_string(x, radix)` — `[library]` Base conversion for reals with fixed fractional precision.
+- `frac_to_base_string(f, radix, limit)` — `[library]` Fractional helper used by real_to_base_string.
 
 ---
 
@@ -228,20 +233,6 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 **Kernel**
 - `extern("selector", args...)` — `[kernel]` Call an external capability (selector must be a string literal).
-
----
-
-## Numeric Formatting (Bases)
-
-**Kernel**
-- (none)
-
-**Library** (lib_lumen/numeric_to_base_string.lm)
-- `numeric_to_base_string(value, radix)` — `[library]` Convert integer/rational/real to a string in the given base (2..36).
-- `integer_to_base_string(n, radix)` — `[library]` Base conversion for integers.
-- `rational_to_base_string(r, radix)` — `[library]` Base conversion for rationals (numerator/denominator).
-- `real_to_base_string(x, radix)` — `[library]` Base conversion for reals with fixed fractional precision.
-- `frac_to_base_string(f, radix, limit)` — `[library]` Fractional helper used by real_to_base_string.
 
 ---
 

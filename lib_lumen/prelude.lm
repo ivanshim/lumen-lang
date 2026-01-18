@@ -4,12 +4,11 @@
 # It contains only include directives, not library implementations.
 # ============================================================
 
-include "lib_lumen/str.lm"
+include "lib_lumen/value_to_string.lm"
 include "lib_lumen/numeric.lm"
 include "lib_lumen/output.lm"
 include "lib_lumen/string.lm"
 include "lib_lumen/string_ord_chr.lm"
-include "lib_lumen/numeric_to_base_string.lm"
 include "lib_lumen/factorial.lm"
 include "lib_lumen/round.lm"
 include "lib_lumen/e_integer.lm"
