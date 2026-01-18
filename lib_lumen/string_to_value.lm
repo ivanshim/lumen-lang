@@ -15,6 +15,7 @@ fn digit_value(c)
 
 # Parse a contiguous run of base-N digits and return [value, scale, new_index]
 fn parse_digits(s, i, base)
+    start = i
     value = 0
     scale = 1
 
@@ -28,6 +29,10 @@ fn parse_digits(s, i, base)
         value = value * base + d
         scale = scale * base
         i = i + 1
+
+    # ERROR only if no digits were consumed
+    if i == start
+        error("expected digit")
 
     return [value, scale, i]
 
