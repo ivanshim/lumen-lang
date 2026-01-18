@@ -8,43 +8,43 @@ print("")
 print("Password Strength Validator:")
 
 fn has_digit_char(s)
-    i = 0
-    while i < len(s)
-        if is_digit(char_at(s, i))
+    digit_i = 0
+    while digit_i < len(s)
+        if is_digit(char_at(s, digit_i))
             return true
-        i = i + 1
+        digit_i = digit_i + 1
     false
 
 fn has_alpha_char(s)
-    i = 0
-    while i < len(s)
-        if is_alpha(char_at(s, i))
+    alpha_i = 0
+    while alpha_i < len(s)
+        if is_alpha(char_at(s, alpha_i))
             return true
-        i = i + 1
+        alpha_i = alpha_i + 1
     false
 
 fn has_upper_char(s)
-    i = 0
+    upper_i = 0
     c = ""
     o = 0
-    while i < len(s)
-        c = char_at(s, i)
+    while upper_i < len(s)
+        c = char_at(s, upper_i)
         o = ord(c)
         if o >= ord("A") and o <= ord("Z")
             return true
-        i = i + 1
+        upper_i = upper_i + 1
     false
 
 fn has_lower_char(s)
-    i = 0
+    lower_i = 0
     c = ""
     o = 0
-    while i < len(s)
-        c = char_at(s, i)
+    while lower_i < len(s)
+        c = char_at(s, lower_i)
         o = ord(c)
         if o >= ord("a") and o <= ord("z")
             return true
-        i = i + 1
+        lower_i = lower_i + 1
     false
 
 fn validate_password(pwd)
@@ -74,10 +74,10 @@ fn validate_password(pwd)
     return true
 
 passwords = ["abc123", "PASSWORD123", "Pass123", "MyP@ssw0rd"]
-i = 0
-while i < len(passwords)
-    validate_password(passwords[i])
-    i = i + 1
+pwd_i = 0
+while pwd_i < len(passwords)
+    validate_password(passwords[pwd_i])
+    pwd_i = pwd_i + 1
 print("")
 
 # Example 2: Extract and sum numbers from text
@@ -86,18 +86,18 @@ print("Extract and Sum Numbers from Text:")
 fn extract_all_numbers(s)
     numbers = []
     current_num = ""
-    i = 0
+    extract_i = 0
     c = ""
 
-    while i < len(s)
-        c = char_at(s, i)
+    while extract_i < len(s)
+        c = char_at(s, extract_i)
         if is_digit(c)
             current_num = current_num . c
         else
             if len(current_num) > 0
                 push(numbers, string_to_value(current_num))
                 current_num = ""
-        i = i + 1
+        extract_i = extract_i + 1
 
     # Don't forget last number if string ends with a digit
     if len(current_num) > 0
@@ -108,10 +108,10 @@ fn extract_all_numbers(s)
 fn sum_numbers_in_text(s)
     nums = extract_all_numbers(s)
     sum = 0
-    i = 0
-    while i < len(nums)
-        sum = sum + nums[i]
-        i = i + 1
+    sum_i = 0
+    while sum_i < len(nums)
+        sum = sum + nums[sum_i]
+        sum_i = sum_i + 1
     sum
 
 texts = [
@@ -120,15 +120,15 @@ texts = [
     "No numbers here",
     "Year 2025 day 17"
 ]
-i = 0
+text_i = 0
 text = ""
 sum = 0
-while i < len(texts)
-    text = texts[i]
+while text_i < len(texts)
+    text = texts[text_i]
     sum = sum_numbers_in_text(text)
     print("  '" . text . "'")
     print("    Sum: " . str(sum))
-    i = i + 1
+    text_i = text_i + 1
 print("")
 
 # Example 3: Normalize and compare strings
@@ -138,13 +138,13 @@ fn normalize_string(s)
     # Convert to lowercase and remove non-alphanumeric manually
     lower = to_lower(s)
     result = ""
-    i = 0
+    normalize_i = 0
     c = ""
-    while i < len(lower)
-        c = char_at(lower, i)
+    while normalize_i < len(lower)
+        c = char_at(lower, normalize_i)
         if is_alnum(c)
             result = result . c
-        i = i + 1
+        normalize_i = normalize_i + 1
     result
 
 fn strings_match_normalized(a, b)
@@ -156,16 +156,16 @@ pairs = [
     ["Lumen Lang", "LumenLang"],
     ["Different", "Strings"]
 ]
-i = 0
+pair_i = 0
 a = ""
 b = ""
 match = false
-while i < len(pairs)
-    a = pairs[i][0]
-    b = pairs[i][1]
+while pair_i < len(pairs)
+    a = pairs[pair_i][0]
+    b = pairs[pair_i][1]
     match = strings_match_normalized(a, b)
     print("  '" . a . "' vs '" . b . "': " . str(match))
-    i = i + 1
+    pair_i = pair_i + 1
 print("")
 
 # Example 4: Generate acronym from phrase
@@ -174,19 +174,19 @@ print("Generate Acronym from Phrase:")
 fn generate_acronym(phrase)
     words = []
     current_word = ""
-    i = 0
+    acronym_i = 0
     c = ""
 
     # Split by spaces
-    while i < len(phrase)
-        c = char_at(phrase, i)
+    while acronym_i < len(phrase)
+        c = char_at(phrase, acronym_i)
         if c == " "
             if len(current_word) > 0
                 push(words, current_word)
                 current_word = ""
         else
             current_word = current_word . c
-        i = i + 1
+        acronym_i = acronym_i + 1
 
     # Add last word
     if len(current_word) > 0
@@ -194,13 +194,13 @@ fn generate_acronym(phrase)
 
     # Take first letter of each word
     acronym = ""
-    j = 0
+    acronym_j = 0
     word = ""
-    while j < len(words)
-        word = words[j]
+    while acronym_j < len(words)
+        word = words[acronym_j]
         if len(word) > 0
             acronym = acronym . to_upper_char(char_at(word, 0))
-        j = j + 1
+        acronym_j = acronym_j + 1
 
     acronym
 
@@ -210,14 +210,14 @@ phrases = [
     "Light Amplification by Stimulated Emission of Radiation",
     "You Only Live Once"
 ]
-i = 0
+phrase_i = 0
 phrase = ""
 acronym = ""
-while i < len(phrases)
-    phrase = phrases[i]
+while phrase_i < len(phrases)
+    phrase = phrases[phrase_i]
     acronym = generate_acronym(phrase)
     print("  '" . phrase . "' -> " . acronym)
-    i = i + 1
+    phrase_i = phrase_i + 1
 print("")
 
 # Example 5: Simple Caesar cipher
@@ -239,12 +239,12 @@ fn caesar_shift_char(c)
 
 fn caesar_encrypt(s)
     result = ""
-    i = 0
+    caesar_i = 0
     c = ""
     o = 0
     shifted = 0
-    while i < len(s)
-        c = char_at(s, i)
+    while caesar_i < len(s)
+        c = char_at(s, caesar_i)
         if not is_alpha(c)
             result = result . c
         else
@@ -257,15 +257,15 @@ fn caesar_encrypt(s)
                 # Uppercase: shift within A-Z
                 shifted = ((o - ord("A") + 3) % 26) + ord("A")
                 result = result . chr(shifted)
-        i = i + 1
+        caesar_i = caesar_i + 1
     result
 
 messages = ["hello world", "LUMEN LANG", "Test 123"]
-i = 0
+msg_i = 0
 msg = ""
 encrypted = ""
-while i < len(messages)
-    msg = messages[i]
+while msg_i < len(messages)
+    msg = messages[msg_i]
     encrypted = caesar_encrypt(msg)
     print("  '" . msg . "' -> '" . encrypted . "'")
-    i = i + 1
+    msg_i = msg_i + 1
