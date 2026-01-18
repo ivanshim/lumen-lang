@@ -3,11 +3,12 @@ fn digit_value(c)
     if is_digit(c)
         return ord(c) - ord("0")
 
-    if c >= "A" and c <= "Z"
-        return ord(c) - ord("A") + 10
+    code = ord(c)
+    if code >= ord("A") and code <= ord("Z")
+        return code - ord("A") + 10
 
-    if c >= "a" and c <= "z"
-        return ord(c) - ord("a") + 10
+    if code >= ord("a") and code <= ord("z")
+        return code - ord("a") + 10
 
     return -1
 
@@ -28,7 +29,7 @@ fn parse_digits(s, i, base)
         scale = scale * base
         i = i + 1
 
-    [value, scale, i]
+    return [value, scale, i]
 
 
 # Parse a full numeric literal (base, integer, fraction, exponent) and return [value, new_index]
@@ -88,7 +89,7 @@ fn parse_number(s, i)
 
         value = value * pow
 
-    [value, i]
+    return [value, i]
 
 
 # Convert a string into a numeric value or return the original string if parsing fails
