@@ -183,9 +183,9 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `chr(integer)` — `[kernel]` Single-character string for a Unicode code point.
 
 **Library** (lib_lumen/string.lm)
-- `substring(s, start, end)` — `[library]` Slice string from `start` (inclusive) to `end` (exclusive).
-- `substring_end(s, from)` — `[library]` Slice string from `from` to the end.
-- `substring_start(s, to)` — `[library]` Slice string from the beginning to `to` (exclusive).
+- `substring(s, from_start, to_end)` — `[library]` Slice string from `from_start` (inclusive) to `to_end` (exclusive).
+- `substring_end(s, from_here)` — `[library]` Slice string from `from_here` to the end.
+- `substring_start(s, to_here)` — `[library]` Slice string from the beginning to `to_here` (exclusive).
 - `starts_with(s, prefix)` — `[library]` True if `s` begins with `prefix`.
 - `ends_with(s, suffix)` — `[library]` True if `s` ends with `suffix`.
 - `repeat_string(s, repetitions)` — `[library]` Repeat string `repetitions` times.
@@ -218,8 +218,8 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `reverse(s)` — `[library]` Reverse characters in a string.
 - `capitalize_first_word(s)` — `[library]` Capitalize the first word of a string (ASCII only).
 - `capitalize_words(s)` — `[library]` Capitalize the first letter of each word in a string (ASCII only).
-- `trim_left(s)` — `[library]` Remove leading ASCII whitespace.
-- `trim_right(s)` — `[library]` Remove trailing ASCII whitespace.
+- `trim_start(s)` — `[library]` Remove leading ASCII whitespace.
+- `trim_end(s)` — `[library]` Remove trailing ASCII whitespace.
 - `trim(s)` — `[library]` Remove leading and trailing ASCII whitespace.
 
 **String Predicates**
