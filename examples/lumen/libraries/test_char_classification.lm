@@ -6,34 +6,34 @@ print("")
 
 # Test ASCII detection
 print("ASCII characters:")
-print("  is_ascii('A'): " . str(is_ascii("A")))      # true
-print("  is_ascii('5'): " . str(is_ascii("5")))      # true
-print("  is_ascii(' '): " . str(is_ascii(" ")))      # true
+print("  is_ascii('A'): " . value_to_string(is_ascii("A")))      # true
+print("  is_ascii('5'): " . value_to_string(is_ascii("5")))      # true
+print("  is_ascii(' '): " . value_to_string(is_ascii(" ")))      # true
 print("")
 
 # Test digit detection
 print("Digit detection:")
-print("  is_digit('0'): " . str(is_digit("0")))      # true
-print("  is_digit('9'): " . str(is_digit("9")))      # true
-print("  is_digit('a'): " . str(is_digit("a")))      # false
-print("  is_digit('A'): " . str(is_digit("A")))      # false
+print("  is_digit('0'): " . value_to_string(is_digit("0")))      # true
+print("  is_digit('9'): " . value_to_string(is_digit("9")))      # true
+print("  is_digit('a'): " . value_to_string(is_digit("a")))      # false
+print("  is_digit('A'): " . value_to_string(is_digit("A")))      # false
 print("")
 
 # Test alphabetic detection
 print("Alphabetic detection:")
-print("  is_alpha('a'): " . str(is_alpha("a")))      # true
-print("  is_alpha('Z'): " . str(is_alpha("Z")))      # true
-print("  is_alpha('5'): " . str(is_alpha("5")))      # false
-print("  is_alpha('!'): " . str(is_alpha("!")))      # false
+print("  is_alpha('a'): " . value_to_string(is_alpha("a")))      # true
+print("  is_alpha('Z'): " . value_to_string(is_alpha("Z")))      # true
+print("  is_alpha('5'): " . value_to_string(is_alpha("5")))      # false
+print("  is_alpha('!'): " . value_to_string(is_alpha("!")))      # false
 print("")
 
 # Test alphanumeric detection
 print("Alphanumeric detection:")
-print("  is_alnum('a'): " . str(is_alnum("a")))      # true
-print("  is_alnum('Z'): " . str(is_alnum("Z")))      # true
-print("  is_alnum('5'): " . str(is_alnum("5")))      # true
-print("  is_alnum('!'): " . str(is_alnum("!")))      # false
-print("  is_alnum(' '): " . str(is_alnum(" ")))      # false
+print("  is_alnum('a'): " . value_to_string(is_alnum("a")))      # true
+print("  is_alnum('Z'): " . value_to_string(is_alnum("Z")))      # true
+print("  is_alnum('5'): " . value_to_string(is_alnum("5")))      # true
+print("  is_alnum('!'): " . value_to_string(is_alnum("!")))      # false
+print("  is_alnum(' '): " . value_to_string(is_alnum(" ")))      # false
 print("")
 
 # Practical example: validate username characters
@@ -47,5 +47,5 @@ let i = 0
 while i < len(test_chars)
     let c = test_chars[i]
     let valid = is_valid_username_char(c)
-    print("  '" . c . "' is valid username char: " . str(valid))
+    print("  '" . c . "' is valid username char: " . value_to_string(valid))
     i = i + 1

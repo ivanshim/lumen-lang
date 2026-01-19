@@ -125,7 +125,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `is_array(x)` — `[library]` Returns `true` if `x` has ARRAY kind.
 - `is_null(x)` — `[library]` Returns `true` if `x` has NULL kind.
 - `kind_to_string(k)` — `[library]` Convert a KIND meta-value to its canonical uppercase string representation ("INTEGER", "REAL", etc.).
-- `str(x)` — `[library]` Convert any value to its canonical string representation.
+- `value_to_string(x)` — `[library]` Convert any value to its canonical string representation.
 - `numeric_to_base_string(value, radix)` — `[library]` Convert integer/rational/real to a string in the given base (2..36).
 - `integer_to_base_string(n, radix)` — `[library]` Base conversion for integers.
 - `rational_to_base_string(r, radix)` — `[library]` Base conversion for rationals (numerator/denominator).
@@ -162,7 +162,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `emit(string)` — `[kernel]` Write a raw string to stdout; requires a string input and returns `null`.
 
 **Library** (lib_lumen/output.lm)
-- `write(x)` — `[library]` Convert `x` to a string with `str(x)` and emit without a newline.
+- `write(x)` — `[library]` Convert `x` to a string with `value_to_string(x)` and emit without a newline.
 - `print(x)` — `[library]` Write `x` followed by a newline.
 
 ---

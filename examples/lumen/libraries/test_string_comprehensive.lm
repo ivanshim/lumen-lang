@@ -127,7 +127,7 @@ while text_i < len(texts)
     text = texts[text_i]
     sum = sum_numbers_in_text(text)
     print("  '" . text . "'")
-    print("    Sum: " . str(sum))
+    print("    Sum: " . value_to_string(sum))
     text_i = text_i + 1
 print("")
 
@@ -164,7 +164,7 @@ while pair_i < len(pairs)
     a = pairs[pair_i][0]
     b = pairs[pair_i][1]
     match = strings_match_normalized(a, b)
-    print("  '" . a . "' vs '" . b . "': " . str(match))
+    print("  '" . a . "' vs '" . b . "': " . value_to_string(match))
     pair_i = pair_i + 1
 print("")
 
