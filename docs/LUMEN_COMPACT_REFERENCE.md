@@ -106,7 +106,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 ---
 
-## Value Representation
+## Value-String Conversions
 
 **Kernel**
 - `int_to_string(x)` — `[kernel]` Convert INTEGER to string (mechanical primitive).
@@ -131,6 +131,12 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `rational_to_base_string(r, radix)` — `[library]` Base conversion for rationals (numerator/denominator).
 - `real_to_base_string(x, radix)` — `[library]` Base conversion for reals with fixed fractional precision.
 - `frac_to_base_string(f, radix, limit)` — `[library]` Fractional helper used by real_to_base_string.
+
+**Library** (lib_lumen/string_to_value.lm)
+- `string_to_value(s)` — `[library]` Parse string to numeric value (supports base prefixes, rationals, reals, exponents).
+- `parse_number(s, i)` — `[library]` Parse numeric literal starting at index i, returns [value, new_index].
+- `parse_digits(s, i, base)` — `[library]` Parse base-N digits starting at index i, returns [value, scale, new_index].
+- `digit_value(c)` — `[library]` Convert character to digit value (0-35), or -1 if invalid.
 
 ---
 
@@ -210,16 +216,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `reverse(s)` — `[library]` Reverse characters in a string.
 
 **String Predicates**
-- `is_numeric_string(s)` — `[library]` True if string consists only of digits.
 - `is_alpha_string(s)` — `[library]` True if string consists only of ASCII letters.
-
-**Numeric Parsing**
-- `parse_int(s)` — `[library]` Parse a base-10 integer from a string.
-- `int_to_decimal_string(n)` — `[library]` Convert integer to base-10 string.
-- `string_to_value(s)` — `[library]` Parse string to numeric value (supports base prefixes, rationals, reals, exponents).
-- `parse_number(s, i)` — `[library]` Parse numeric literal starting at index i, returns [value, new_index].
-- `parse_digits(s, i, base)` — `[library]` Parse base-N digits starting at index i, returns [value, scale, new_index].
-- `digit_value(c)` — `[library]` Convert character to digit value (0-35), or -1 if invalid.
 
 ---
 
