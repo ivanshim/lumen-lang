@@ -184,13 +184,13 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 **Library** (lib_lumen/string.lm)
 - `substring(s, start, end)` — `[library]` Slice string from `start` (inclusive) to `end` (exclusive).
-- `slice(s, start)` — `[library]` Slice string from `start` to the end.
+- `slice_end(s, from)` — `[library]` Slice string from `from` to the end.
 - `starts_with(s, prefix)` — `[library]` True if `s` begins with `prefix`.
 - `ends_with(s, suffix)` — `[library]` True if `s` ends with `suffix`.
-- `repeat(s, count)` — `[library]` Repeat string `count` times.
-- `join(arr, sep)` — `[library]` Join array of strings with a separator.
+- `repeat_string(s, repetitions)` — `[library]` Repeat string `repetitions` times.
+- `join_strings(arr, separator)` — `[library]` Join array of strings with a separator.
 - `index_of(s, needle)` — `[library]` Index of first occurrence of `needle` in `s` (or `-1`).
-- `contains(s, needle)` — `[library]` True if `needle` appears in `s`.
+- `has_substring(s, needle)` — `[library]` True if `needle` appears in `s`.
 
 ---
 

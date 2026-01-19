@@ -42,7 +42,7 @@ print("=== Practical Example: Title Case ===")
 fn to_title_case(s)
     if len(s) == 0
         return s
-    to_upper_char(char_at(s, 0)) . slice(to_lower(s), 1)
+    to_upper_char(char_at(s, 0)) . slice_end(to_lower(s), 1)
 
 words = ["hello", "world", "lumen", "PROGRAMMING"]
 i = 0

@@ -7,9 +7,9 @@ fn substring(s, start, end)
         i = i + 1
     out
 
-# Slice string from start to the end
-fn slice(s, start)
-    substring(s, start, len(s))
+# Slice string from from to the end
+fn slice_end(s, from)
+    substring(s, from, len(s))
 
 # True if s begins with prefix
 fn starts_with(s, prefix)
@@ -19,23 +19,23 @@ fn starts_with(s, prefix)
 fn ends_with(s, suffix)
     len(suffix) <= len(s) and substring(s, len(s) - len(suffix), len(s)) == suffix
 
-# Repeat string count times
-fn repeat(s, count)
+# Repeat string repetitions times
+fn repeat_string(s, repetitions)
     out = ""
     i = 0
-    while i < count
+    while i < repetitions
         out = out . s
         i = i + 1
     out
 
 # Join array of strings with a separator
-fn join(arr, sep)
+fn join_strings(arr, separator)
     out = ""
     n = len(arr)
     i = 0
     while i < n
         if i > 0
-            out = out . sep
+            out = out . separator
         out = out . arr[i]
         i = i + 1
     out
@@ -51,5 +51,5 @@ fn index_of(s, needle)
     -1
 
 # True if needle appears in s
-fn contains(s, needle)
+fn has_substring(s, needle)
     index_of(s, needle) >= 0
