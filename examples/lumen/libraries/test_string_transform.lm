@@ -1,31 +1,31 @@
 # String Transformation Examples
-# Demonstrates to_upper, to_lower, to_upper_char, to_lower_char, reverse
+# Demonstrates string_to_upper, string_to_lower, char_to_upper, char_to_lower, reverse_characters
 
 print("=== String Case Transformation ===")
 print("")
 
 # Convert strings to uppercase
 print("Uppercase conversion:")
-print("  to_upper('hello'): " . to_upper("hello"))           # HELLO
-print("  to_upper('world'): " . to_upper("world"))           # WORLD
-print("  to_upper('Hello123'): " . to_upper("Hello123"))     # HELLO123
+print("  string_to_upper('hello'): " . string_to_upper("hello"))           # HELLO
+print("  string_to_upper('world'): " . string_to_upper("world"))           # WORLD
+print("  string_to_upper('Hello123'): " . string_to_upper("Hello123"))     # HELLO123
 print("")
 
 # Convert strings to lowercase
 print("Lowercase conversion:")
-print("  to_lower('HELLO'): " . to_lower("HELLO"))           # hello
-print("  to_lower('WORLD'): " . to_lower("WORLD"))           # world
-print("  to_lower('Hello123'): " . to_lower("Hello123"))     # hello123
+print("  string_to_lower('HELLO'): " . string_to_lower("HELLO"))           # hello
+print("  string_to_lower('WORLD'): " . string_to_lower("WORLD"))           # world
+print("  string_to_lower('Hello123'): " . string_to_lower("Hello123"))     # hello123
 print("")
 
 # Single character transformations
 print("Single character transformations:")
-print("  to_upper_char('a'): " . to_upper_char("a"))         # A
-print("  to_upper_char('z'): " . to_upper_char("z"))         # Z
-print("  to_lower_char('A'): " . to_lower_char("A"))         # a
-print("  to_lower_char('Z'): " . to_lower_char("Z"))         # z
-print("  to_upper_char('5'): " . to_upper_char("5"))         # 5 (unchanged)
-print("  to_lower_char('5'): " . to_lower_char("5"))         # 5 (unchanged)
+print("  char_to_upper('a'): " . char_to_upper("a"))         # A
+print("  char_to_upper('z'): " . char_to_upper("z"))         # Z
+print("  char_to_lower('A'): " . char_to_lower("A"))         # a
+print("  char_to_lower('Z'): " . char_to_lower("Z"))         # z
+print("  char_to_upper('5'): " . char_to_upper("5"))         # 5 (unchanged)
+print("  char_to_lower('5'): " . char_to_lower("5"))         # 5 (unchanged)
 print("")
 
 # String reversal
@@ -42,7 +42,7 @@ print("=== Practical Example: Title Case ===")
 fn to_title_case(s)
     if len(s) == 0
         return s
-    to_upper_char(char_at(s, 0)) . substring_end(to_lower(s), 1)
+    char_to_upper(char_at(s, 0)) . substring_end(string_to_lower(s), 1)
 
 words = ["hello", "world", "lumen", "PROGRAMMING"]
 i = 0
@@ -56,7 +56,7 @@ print("")
 print("=== Practical Example: Palindrome Checker ===")
 
 fn is_palindrome(s)
-    normalized = to_lower(s)
+    normalized = string_to_lower(s)
     normalized == reverse_characters(normalized)
 
 test_words = ["racecar", "hello", "madam", "world", "level"]

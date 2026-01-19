@@ -209,12 +209,12 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `is_alnum(c)` — `[library]` True if character is ASCII alphanumeric.
 
 **Character Transformation**
-- `to_upper_char(c)` — `[library]` Convert ASCII character to uppercase.
-- `to_lower_char(c)` — `[library]` Convert ASCII character to lowercase.
+- `char_to_upper(c)` — `[library]` Convert ASCII character to uppercase.
+- `char_to_lower(c)` — `[library]` Convert ASCII character to lowercase.
 
 **String Transformation**
-- `to_upper(s)` — `[library]` Convert string to uppercase (ASCII only).
-- `to_lower(s)` — `[library]` Convert string to lowercase (ASCII only).
+- `string_to_upper(s)` — `[library]` Convert string to uppercase (ASCII only).
+- `string_to_lower(s)` — `[library]` Convert string to lowercase (ASCII only).
 - `reverse_characters(s)` — `[library]` Reverse the characters of a string.
 - `capitalize_first_word(s)` — `[library]` Capitalize the first word of a string (ASCII only).
 - `capitalize_words(s)` — `[library]` Capitalize the first letter of each word in a string (ASCII only).

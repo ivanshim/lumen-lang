@@ -136,7 +136,7 @@ print("Normalize and Compare Strings:")
 
 fn normalize_string(s)
     # Convert to lowercase and remove non-alphanumeric manually
-    lower = to_lower(s)
+    lower = string_to_lower(s)
     result = ""
     normalize_i = 0
     c = ""
@@ -199,7 +199,7 @@ fn generate_acronym(phrase)
     while acronym_j < len(words)
         word = words[acronym_j]
         if len(word) > 0
-            acronym = acronym . to_upper_char(char_at(word, 0))
+            acronym = acronym . char_to_upper(char_at(word, 0))
         acronym_j = acronym_j + 1
 
     acronym
