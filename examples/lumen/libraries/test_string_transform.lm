@@ -44,10 +44,10 @@ fn to_title_case(s)
         return s
     to_upper_char(char_at(s, 0)) . slice(to_lower(s), 1)
 
-let words = ["hello", "world", "lumen", "PROGRAMMING"]
-let i = 0
+words = ["hello", "world", "lumen", "PROGRAMMING"]
+i = 0
 while i < len(words)
-    let word = words[i]
+    word = words[i]
     print("  " . word . " -> " . to_title_case(word))
     i = i + 1
 print("")
@@ -56,13 +56,13 @@ print("")
 print("=== Practical Example: Palindrome Checker ===")
 
 fn is_palindrome(s)
-    let normalized = to_lower(s)
+    normalized = to_lower(s)
     normalized == reverse(normalized)
 
-let test_words = ["racecar", "hello", "madam", "world", "level"]
-let i = 0
+test_words = ["racecar", "hello", "madam", "world", "level"]
+i = 0
 while i < len(test_words)
-    let word = test_words[i]
-    let is_pal = is_palindrome(word)
+    word = test_words[i]
+    is_pal = is_palindrome(word)
     print("  '" . word . "' is palindrome: " . str(is_pal))
     i = i + 1
