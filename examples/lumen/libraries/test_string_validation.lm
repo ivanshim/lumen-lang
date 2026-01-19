@@ -29,8 +29,8 @@ fn validate_name_input(s)
     print("  '" . s . "' - VALID name")
     return true
 
-let name_inputs = ["Alice", "Bob123", "Charlie", "", "Dave_Smith"]
-let i = 0
+name_inputs = ["Alice", "Bob123", "Charlie", "", "Dave_Smith"]
+i = 0
 while i < len(name_inputs)
     validate_name_input(name_inputs[i])
     i = i + 1

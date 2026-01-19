@@ -24,8 +24,8 @@ impl StmtNode for WhileStmt {
             let cond_bool = as_bool(cond.as_ref())?;
 
             if cond_bool.value {
-                // Each iteration gets its own scope
-                env.push_scope();
+                // Loop body executes in the same scope as the enclosing function
+                // No scope is created (matches Microcode kernel behavior)
                 let mut break_occurred = false;
                 for stmt in &self.body {
                     match stmt.exec(env)? {
@@ -38,13 +38,11 @@ impl StmtNode for WhileStmt {
                             // Expression statement value - continue loop
                         }
                         Control::Return(val) => {
-                            env.pop_scope();
                             return Ok(Control::Return(val));
                         }
                         Control::None => {}
                     }
                 }
-                env.pop_scope();
                 if break_occurred {
                     return Ok(Control::None);
                 }

@@ -36,8 +36,7 @@ impl StmtNode for ForStmt {
             // Set loop variable to current value
             env.assign(&self.var, Box::new(LumenNumber::new(current.clone())))?;
 
-            // Execute loop body with new scope
-            env.push_scope();
+            // Execute loop body in same scope (matches Microcode kernel)
             let mut break_occurred = false;
             for stmt in &self.body {
                 match stmt.exec(env)? {
@@ -50,13 +49,11 @@ impl StmtNode for ForStmt {
                         // Expression statement value - continue loop
                     }
                     Control::Return(val) => {
-                        env.pop_scope();
                         return Ok(Control::Return(val));
                     }
                     Control::None => {}
                 }
             }
-            env.pop_scope();
             if break_occurred {
                 return Ok(Control::None);
             }

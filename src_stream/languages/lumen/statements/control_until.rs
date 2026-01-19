@@ -25,8 +25,7 @@ struct UntilStmt {
 impl StmtNode for UntilStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
         loop {
-            // Execute body first (at least once)
-            env.push_scope();
+            // Execute body first (at least once) in same scope (matches Microcode kernel)
             let mut break_occurred = false;
             for stmt in &self.body {
                 match stmt.exec(env)? {
@@ -39,13 +38,11 @@ impl StmtNode for UntilStmt {
                         // Expression statement value - continue loop
                     }
                     Control::Return(val) => {
-                        env.pop_scope();
                         return Ok(Control::Return(val));
                     }
                     Control::None => {}
                 }
             }
-            env.pop_scope();
 
             if break_occurred {
                 return Ok(Control::None);
