@@ -1,15 +1,19 @@
 # Slice string from start (inclusive) to end (exclusive)
 fn substring(s, start, end)
-    i = start
+    index = start
     out = ""
-    while i < end
-        out = out . char_at(s, i)
-        i = i + 1
+    while index < end
+        out = out . char_at(s, index)
+        index = index + 1
     out
 
-# Slice string from from to the end
-fn slice_end(s, from)
+# Slice string from start to the end
+fn substring_end(s, from)
     substring(s, from, len(s))
+
+# Slice string from the beginning to end (exclusive)
+fn substring_start(s, to)
+    substring(s, 0, to)
 
 # True if s begins with prefix
 fn starts_with(s, prefix)

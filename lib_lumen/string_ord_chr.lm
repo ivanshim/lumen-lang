@@ -115,7 +115,7 @@ fn trim_left(s)
     while i < len(s) and is_whitespace(char_at(s, i))
         i = i + 1
 
-    slice_end(s, i)
+    substring_end(s, i)
 
 # Remove trailing ASCII whitespace
 fn trim_right(s)
