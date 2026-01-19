@@ -217,6 +217,9 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `reverse(s)` — `[library]` Reverse characters in a string.
 - `capitalize_first_word(s)` — `[library]` Capitalize the first word of a string (ASCII only).
 - `capitalize_words(s)` — `[library]` Capitalize the first letter of each word in a string (ASCII only).
+- `trim_left(s)` — `[library]` Remove leading ASCII whitespace.
+- `trim_right(s)` — `[library]` Remove trailing ASCII whitespace.
+- `trim(s)` — `[library]` Remove leading and trailing ASCII whitespace.
 
 **String Predicates**
 - `is_alpha_string(s)` — `[library]` True if string consists only of ASCII letters.
