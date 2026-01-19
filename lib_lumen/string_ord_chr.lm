@@ -61,6 +61,48 @@ fn reverse(s)
         i = i - 1
     result
 
+# Capitalize the first word of a string (ASCII only)
+fn capitalize_first_word(s)
+    result = ""
+    i = 0
+    done = false
+
+    while i < len(s)
+        c = char_at(s, i)
+
+        if not done and is_alpha(c)
+            result = result . to_upper_char(c)
+            done = true
+        else
+            result = result . c
+
+        i = i + 1
+
+    result
+
+# Capitalize the first letter of each word (ASCII only)
+fn capitalize_words(s)
+    result = ""
+    i = 0
+    at_word_start = true
+
+    while i < len(s)
+        c = char_at(s, i)
+
+        if is_alpha(c)
+            if at_word_start
+                result = result . to_upper_char(c)
+                at_word_start = false
+            else
+                result = result . c
+        else
+            result = result . c
+            at_word_start = true
+
+        i = i + 1
+
+    result
+
 ## String content validation
 # True if string consists only of ASCII letters
 fn is_alpha_string(s)
