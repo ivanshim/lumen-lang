@@ -18,7 +18,7 @@ fn is_alnum(c)
     is_alpha(c) or is_digit(c)
 
 # Convert ASCII character to uppercase
-fn to_upper_char(c)
+fn char_to_upper(c)
     o = ord(c)
     if o >= ord("a") and o <= ord("z")
         chr(o - 32)
@@ -26,7 +26,7 @@ fn to_upper_char(c)
         c
 
 # Convert ASCII character to lowercase
-fn to_lower_char(c)
+fn char_to_lower(c)
     o = ord(c)
     if o >= ord("A") and o <= ord("Z")
         chr(o + 32)
@@ -35,20 +35,20 @@ fn to_lower_char(c)
 
 ## String transformations
 # Convert string to uppercase (ASCII)
-fn to_upper(s)
+fn string_to_upper(s)
     result = ""
     i = 0
     while i < len(s)
-        result = result . to_upper_char(char_at(s, i))
+        result = result . char_to_upper(char_at(s, i))
         i = i + 1
     result
 
 # Convert string to lowercase (ASCII)
-fn to_lower(s)
+fn string_to_lower(s)
     result = ""
     i = 0
     while i < len(s)
-        result = result . to_lower_char(char_at(s, i))
+        result = result . char_to_lower(char_at(s, i))
         i = i + 1
     result
 
@@ -71,7 +71,7 @@ fn capitalize_first_word(s)
         c = char_at(s, i)
 
         if not done and is_alpha(c)
-            result = result . to_upper_char(c)
+            result = result . char_to_upper(c)
             done = true
         else
             result = result . c
@@ -91,7 +91,7 @@ fn capitalize_words(s)
 
         if is_alpha(c)
             if at_word_start
-                result = result . to_upper_char(c)
+                result = result . char_to_upper(c)
                 at_word_start = false
             else
                 result = result . c

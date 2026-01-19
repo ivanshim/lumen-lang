@@ -10,7 +10,7 @@ fn manual_to_upper(s)
     let result = ""
     let i = 0
     while i < len(s)
-        result = result . to_upper_char(char_at(s, i))
+        result = result . char_to_upper(char_at(s, i))
         i = i + 1
     result
 
@@ -180,10 +180,10 @@ fn alternating_case(s)
             result = result . c
         else
             if uppercase_next
-                result = result . to_upper_char(c)
+                result = result . char_to_upper(c)
                 uppercase_next = false
             else
-                result = result . to_lower_char(c)
+                result = result . char_to_lower(c)
                 uppercase_next = true
         i = i + 1
     result
