@@ -88,7 +88,7 @@ fn numeric_to_base_string(value, radix)
         return rational_to_base_string(value, radix)
 
     if is_real(value)
-        return real_to_base_string(value, radix)
+        return real_to_base_string_default(value, radix)
 
     error("numeric_to_base_string(): unsupported kind: " . kind_to_string(kind(value)))
 
@@ -124,19 +124,23 @@ fn rational_to_base_string(r, radix)
 
     n_str . "/" . d_str
 
-# Base conversion for reals with fixed fractional precision.
-fn real_to_base_string(x, radix)
-    i = int(x)
-    f = frac(x)
+# Base conversion for reals with specified fractional precision.
+fn real_to_base_string(value, radix, precision)
+    i = int(value)
+    f = frac(value)
 
     int_part = integer_to_base_string(i, radix)
 
     if f == 0
         return int_part
 
-    frac_part = frac_to_base_string(f, radix, REAL_DEFAULT_PRECISION)
+    frac_part = frac_to_base_string(f, radix, precision)
 
     int_part . "." . frac_part
+
+# Base conversion for reals with default fractional precision.
+fn real_to_base_string_default(value, radix)
+    real_to_base_string(value, radix, REAL_DEFAULT_PRECISION)
 
 # Fractional helper used by real_to_base_string.
 fn frac_to_base_string(f, radix, limit)
