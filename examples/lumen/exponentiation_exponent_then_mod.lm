@@ -1,4 +1,4 @@
-# Benchmark fast modular exponentiation using pow_mod()
+# Benchmark fast modular exponentiation using exponent_then_mod()
 # Tests the efficient O(log n) algorithm from number_theory library
 
 base = 7
@@ -18,12 +18,12 @@ write("iterations = ")
 print(iterations)
 print("")
 
-print("Running pow_mod...")
+print("Running exponent_then_mod...")
 
 result = 0
 i = 0
 while i < iterations
-    result = pow_mod(base, exp, mod)
+    result = exponent_then_mod(base, exp, mod)
     i = i + 1
 
 write("Result: ")

@@ -14,15 +14,15 @@ fn lcm(a, b)
 fn is_coprime(a, b)
     gcd(a, b) == 1
 
-# Fast modular exponentiation
-fn pow_mod(base, exp, mod)
+# Fast (base ^ exponent) % mod modulus
+fn exponent_then_mod(base, exponent, modulus)
     result = 1
-    base = base % mod
-    while exp > 0
-        if exp % 2 == 1
-            result = (result * base) % mod
-        exp = exp // 2
-        base = (base * base) % mod
+    base = base % modulus
+    while exponent > 0
+        if exponent % 2 == 1
+            result = (result * base) % modulus
+        exponent = exponent // 2
+        base = (base * base) % modulus
     result
 
 # Returns [g, x, y] where ax + by = g

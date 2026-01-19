@@ -264,7 +264,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `gcd(a, b)` — `[library]` Greatest common divisor (Euclid's algorithm).
 - `lcm(a, b)` — `[library]` Least common multiple.
 - `is_coprime(a, b)` — `[library]` True if `a` and `b` are coprime.
-- `pow_mod(base, exp, mod)` — `[library]` Fast modular exponentiation.
+- `exponent_then_mod(base, exponent, modulus)` — `[library]` Fast (base ^ exponent) % mod modulus.
 - `extended_gcd(a, b)` — `[library]` Returns `[g, x, y]` where `ax + by = g`.
 - `mod_inverse(a, m)` — `[library]` Modular inverse or `null` if it does not exist.
 - `mod_div(a, b, m)` — `[library]` Modular division `a / b (mod m)` using `mod_inverse`.
