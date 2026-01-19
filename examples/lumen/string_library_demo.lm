@@ -14,9 +14,9 @@ write("substring(text, 6, 11): ")
 print(substring(text, 6, 11))
 print("")
 
-# Example 2: slice - get everything from index to end
-write("slice(text, 6): ")
-print(slice(text, 6))
+# Example 2: slice_end - get everything from index to end
+write("slice_end(text, 6): ")
+print(slice_end(text, 6))
 print("")
 
 # Example 3: starts_with - check prefix
@@ -33,19 +33,19 @@ write("ends_with('Hello World', 'Hello'): ")
 print(ends_with(text, "Hello"))
 print("")
 
-# Example 5: repeat - duplicate string
-write("repeat('Ha', 5): ")
-print(repeat("Ha", 5))
-write("repeat('-=', 10): ")
-print(repeat("-=", 10))
+# Example 5: repeat_string - duplicate string
+write("repeat_string('Ha', 5): ")
+print(repeat_string("Ha", 5))
+write("repeat_string('-=', 10): ")
+print(repeat_string("-=", 10))
 print("")
 
-# Example 6: join - combine array elements
+# Example 6: join_strings - combine array elements
 fruits = ["apple", "banana", "cherry"]
-write("join(['apple', 'banana', 'cherry'], ', '): ")
-print(join(fruits, ", "))
-write("join(['apple', 'banana', 'cherry'], ' | '): ")
-print(join(fruits, " | "))
+write("join_strings(['apple', 'banana', 'cherry'], ', '): ")
+print(join_strings(fruits, ", "))
+write("join_strings(['apple', 'banana', 'cherry'], ' | '): ")
+print(join_strings(fruits, " | "))
 print("")
 
 # Example 7: index_of - find substring position
@@ -56,11 +56,11 @@ write("index_of('The quick brown fox...', 'cat'): ")
 print(index_of(sentence, "cat"))
 print("")
 
-# Example 8: contains - check if substring exists
-write("contains('The quick brown fox...', 'quick'): ")
-print(contains(sentence, "quick"))
-write("contains('The quick brown fox...', 'slow'): ")
-print(contains(sentence, "slow"))
+# Example 8: has_substring - check if substring exists
+write("has_substring('The quick brown fox...', 'quick'): ")
+print(has_substring(sentence, "quick"))
+write("has_substring('The quick brown fox...', 'slow'): ")
+print(has_substring(sentence, "slow"))
 print("")
 
 # Practical example: parsing and building strings
@@ -69,8 +69,8 @@ name = "Lumen"
 version = "1.0"
 description = "A minimal language"
 
-# Build formatted string using concatenation and repeat
-separator = repeat("-", 40)
+# Build formatted string using concatenation and repeat_string
+separator = repeat_string("-", 40)
 print(separator)
 info = "Project: " . name
 print(info)
