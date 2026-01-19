@@ -14,33 +14,38 @@ write("substring(text, 6, 11): ")
 print(substring(text, 6, 11))
 print("")
 
-# Example 2: slice_end - get everything from index to end
-write("slice_end(text, 6): ")
-print(slice_end(text, 6))
+# Example 2: substring_end - get everything from index to end
+write("substring_end(text, 6): ")
+print(substring_end(text, 6))
 print("")
 
-# Example 3: starts_with - check prefix
+# Example 3: substring_start - get everything from beginning to index
+write("substring_start(text, 5): ")
+print(substring_start(text, 5))
+print("")
+
+# Example 4: starts_with - check prefix
 write("starts_with('Hello World', 'Hello'): ")
 print(starts_with(text, "Hello"))
 write("starts_with('Hello World', 'World'): ")
 print(starts_with(text, "World"))
 print("")
 
-# Example 4: ends_with - check suffix
+# Example 5: ends_with - check suffix
 write("ends_with('Hello World', 'World'): ")
 print(ends_with(text, "World"))
 write("ends_with('Hello World', 'Hello'): ")
 print(ends_with(text, "Hello"))
 print("")
 
-# Example 5: repeat_string - duplicate string
+# Example 6: repeat_string - duplicate string
 write("repeat_string('Ha', 5): ")
 print(repeat_string("Ha", 5))
 write("repeat_string('-=', 10): ")
 print(repeat_string("-=", 10))
 print("")
 
-# Example 6: join_strings - combine array elements
+# Example 7: join_strings - combine array elements
 fruits = ["apple", "banana", "cherry"]
 write("join_strings(['apple', 'banana', 'cherry'], ', '): ")
 print(join_strings(fruits, ", "))
@@ -48,7 +53,7 @@ write("join_strings(['apple', 'banana', 'cherry'], ' | '): ")
 print(join_strings(fruits, " | "))
 print("")
 
-# Example 7: index_of - find substring position
+# Example 8: index_of - find substring position
 sentence = "The quick brown fox jumps over the lazy dog"
 write("index_of('The quick brown fox...', 'fox'): ")
 print(index_of(sentence, "fox"))
@@ -56,7 +61,7 @@ write("index_of('The quick brown fox...', 'cat'): ")
 print(index_of(sentence, "cat"))
 print("")
 
-# Example 8: has_substring - check if substring exists
+# Example 9: has_substring - check if substring exists
 write("has_substring('The quick brown fox...', 'quick'): ")
 print(has_substring(sentence, "quick"))
 write("has_substring('The quick brown fox...', 'slow'): ")
