@@ -14,7 +14,7 @@ fn lcm(a, b)
 fn is_coprime(a, b)
     gcd(a, b) == 1
 
-# Fast (base ^ exponent) % mod
+# Fast (base ^ exponent) % mod modulus
 fn exponent_then_mod(base, exponent, mod)
     result = 1
     base = base % mod
