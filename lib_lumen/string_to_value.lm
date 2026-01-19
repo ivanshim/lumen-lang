@@ -1,5 +1,5 @@
 # Convert a character into its numeric digit value (0–35), or -1 if invalid
-fn digit_value(c)
+fn character_to_value(c)
     if is_digit(c)
         return ord(c) - ord("0")
 
@@ -14,14 +14,14 @@ fn digit_value(c)
 
 
 # Parse a contiguous run of base-N digits and return [value, scale, new_index]
-fn parse_digits(s, i, base)
+fn digits_to_base_value(s, i, base)
     start = i
     value = 0
     scale = 1
 
     while i < len(s)
         c = char_at(s, i)
-        d = digit_value(c)
+        d = character_to_value(c)
 
         if d < 0 or d >= base
             break
@@ -38,7 +38,7 @@ fn parse_digits(s, i, base)
 
 
 # Parse a full numeric literal (base, integer, fraction, exponent) and return [value, new_index]
-fn parse_number(s, i)
+fn numeric_literal_to_value(s, i)
     start = i
     base_prefix = 0
 
@@ -64,14 +64,14 @@ fn parse_number(s, i)
             error("invalid base")
 
         i = i + 1
-        r = parse_digits(s, i, base)
+        r = digits_to_base_value(s, i, base)
         value = r[0]
         i = r[2]
 
     # optional fractional part
     if i < len(s) and char_at(s, i) == "."
         i = i + 1
-        r2 = parse_digits(s, i, base)
+        r2 = digits_to_base_value(s, i, base)
         frac_val = r2[0]
         frac_scale = r2[1]
         i = r2[2]
@@ -82,7 +82,7 @@ fn parse_number(s, i)
     # optional exponent (value-aware)
     if i < len(s) and char_at(s, i) == "^"
         i = i + 1
-        r3 = parse_digits(s, i, base)
+        r3 = digits_to_base_value(s, i, base)
         exp = r3[0]
         i = r3[2]
 
@@ -105,7 +105,7 @@ fn string_to_value(s)
     i = 0
 
     # parse numerator
-    r = parse_number(s, i)
+    r = numeric_literal_to_value(s, i)
     num = r[0]
     i = r[1]
 
@@ -115,7 +115,7 @@ fn string_to_value(s)
         if i == len(s)
             return s
 
-        r2 = parse_number(s, i)
+        r2 = numeric_literal_to_value(s, i)
         denom = r2[0]
         i = r2[1]
 
