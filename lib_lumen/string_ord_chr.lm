@@ -52,13 +52,13 @@ fn to_lower(s)
         i = i + 1
     result
 
-# Reverse characters in a string
-fn reverse(s)
+# Reverse the characters of a string
+fn reverse_characters(s)
     result = ""
-    i = len(s) - 1
-    while i >= 0
-        result = result . char_at(s, i)
-        i = i - 1
+    index = len(s) - 1
+    while index >= 0
+        result = result . char_at(s, index)
+        index = index - 1
     result
 
 # Capitalize the first word of a string (ASCII only)

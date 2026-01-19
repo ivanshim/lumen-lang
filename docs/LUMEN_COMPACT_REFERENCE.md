@@ -215,7 +215,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 **String Transformation**
 - `to_upper(s)` — `[library]` Convert string to uppercase (ASCII only).
 - `to_lower(s)` — `[library]` Convert string to lowercase (ASCII only).
-- `reverse(s)` — `[library]` Reverse characters in a string.
+- `reverse_characters(s)` — `[library]` Reverse the characters of a string.
 - `capitalize_first_word(s)` — `[library]` Capitalize the first word of a string (ASCII only).
 - `capitalize_words(s)` — `[library]` Capitalize the first letter of each word in a string (ASCII only).
 - `trim_start(s)` — `[library]` Remove leading ASCII whitespace.

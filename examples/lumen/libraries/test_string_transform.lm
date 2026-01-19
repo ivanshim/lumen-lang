@@ -30,10 +30,10 @@ print("")
 
 # String reversal
 print("String reversal:")
-print("  reverse('abc'): " . reverse("abc"))                 # cba
-print("  reverse('hello'): " . reverse("hello"))             # olleh
-print("  reverse('racecar'): " . reverse("racecar"))         # racecar
-print("  reverse('12345'): " . reverse("12345"))             # 54321
+print("  reverse_characters('abc'): " . reverse_characters("abc"))                 # cba
+print("  reverse_characters('hello'): " . reverse_characters("hello"))             # olleh
+print("  reverse_characters('racecar'): " . reverse_characters("racecar"))         # racecar
+print("  reverse_characters('12345'): " . reverse_characters("12345"))             # 54321
 print("")
 
 # Practical example: title case
@@ -57,7 +57,7 @@ print("=== Practical Example: Palindrome Checker ===")
 
 fn is_palindrome(s)
     normalized = to_lower(s)
-    normalized == reverse(normalized)
+    normalized == reverse_characters(normalized)
 
 test_words = ["racecar", "hello", "madam", "world", "level"]
 i = 0
