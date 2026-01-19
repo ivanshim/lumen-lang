@@ -191,8 +191,9 @@ impl FunctionCallExpr {
         arg_values: &[Value],
         env: &mut Env,
     ) -> LumenResult<Value> {
-        // Create new scope for function
-        env.push_scope();
+        // Create new scope for function with RAII guard
+        // The guard automatically pops the scope on ANY exit (return, break, error)
+        let _scope_guard = env.push_scope_guarded();
 
         // Bind parameters to arguments
         for (param, arg_val) in params.iter().zip(arg_values) {
@@ -214,18 +215,18 @@ impl FunctionCallExpr {
                         // Explicit return - set result and break
                         result = val;
                         break;
+                        // _scope_guard drops here, automatically calling env.pop_scope()
                     }
                     crate::kernel::ast::Control::Break | crate::kernel::ast::Control::Continue => {
                         return Err("break/continue outside of loop".into());
+                        // _scope_guard drops here, automatically calling env.pop_scope()
                     }
                     crate::kernel::ast::Control::None => {}
                 }
             }
         }
 
-        // Exit function scope
-        env.pop_scope();
-
+        // _scope_guard drops here on normal exit, automatically calling env.pop_scope()
         Ok(result)
     }
 }

@@ -1,0 +1,15 @@
+# Test case demonstrating the scope leak bug fix
+# Before fix: calling same function twice would hang
+# After fix: works correctly
+
+fn count_to_three()
+    i = 0
+    while i < 3
+        i = i + 1
+    return i
+
+# This used to hang on the second call (scope leak from first call)
+print("First call: " . str(count_to_three()))
+print("Second call: " . str(count_to_three()))
+print("Third call: " . str(count_to_three()))
+print("All calls completed successfully!")
