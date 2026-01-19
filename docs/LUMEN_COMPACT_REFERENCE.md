@@ -135,9 +135,9 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 **Library** (lib_lumen/string_to_value.lm)
 - `string_to_value(s)` — `[library]` Parse string to numeric value (supports base prefixes, rationals, reals, exponents).
-- `parse_number(s, i)` — `[library]` Parse numeric literal starting at index i, returns [value, new_index].
-- `parse_digits(s, i, base)` — `[library]` Parse base-N digits starting at index i, returns [value, scale, new_index].
-- `digit_value(c)` — `[library]` Convert character to digit value (0-35), or -1 if invalid.
+- `numeric_literal_to_value(s, i)` — `[library]` Parse numeric literal starting at index i, returns [value, new_index].
+- `digits_to_base_value(s, i, base)` — `[library]` Parse base-N digits starting at index i, returns [value, scale, new_index].
+- `character_to_value(c)` — `[library]` Convert character to digit value (0-35), or -1 if invalid.
 
 ---
 
