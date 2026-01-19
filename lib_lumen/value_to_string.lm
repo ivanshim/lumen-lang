@@ -50,7 +50,7 @@ fn kind_to_string(k)
     error("kind_to_string: expected KIND meta-value")
 
 # Convert any value to its canonical string representation
-fn str(x)
+fn value_to_string(x)
     if is_int(x)
         return int_to_string(x)
     if is_rational(x)
@@ -65,7 +65,7 @@ fn str(x)
         return array_to_string(x)
     if is_null(x)
         return null_to_string(x)
-    error("str: unsupported value")
+    error("value_to_string: unsupported value")
 
 # ------------------------------------------------------------
 # Base conversion utilities

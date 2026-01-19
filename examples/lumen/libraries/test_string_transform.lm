@@ -64,5 +64,5 @@ i = 0
 while i < len(test_words)
     word = test_words[i]
     is_pal = is_palindrome(word)
-    print("  '" . word . "' is palindrome: " . str(is_pal))
+    print("  '" . word . "' is palindrome: " . value_to_string(is_pal))
     i = i + 1

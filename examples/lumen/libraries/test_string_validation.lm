@@ -6,12 +6,12 @@ print("")
 
 # Test alphabetic string validation
 print("Alphabetic string validation:")
-print("  is_alpha_string('hello'): " . str(is_alpha_string("hello")))         # true
-print("  is_alpha_string('WORLD'): " . str(is_alpha_string("WORLD")))         # true
-print("  is_alpha_string('LuMeN'): " . str(is_alpha_string("LuMeN")))         # true
-print("  is_alpha_string('hello123'): " . str(is_alpha_string("hello123")))   # false
-print("  is_alpha_string('hello world'): " . str(is_alpha_string("hello world"))) # false (space)
-print("  is_alpha_string(''): " . str(is_alpha_string("")))                   # false (empty)
+print("  is_alpha_string('hello'): " . value_to_string(is_alpha_string("hello")))         # true
+print("  is_alpha_string('WORLD'): " . value_to_string(is_alpha_string("WORLD")))         # true
+print("  is_alpha_string('LuMeN'): " . value_to_string(is_alpha_string("LuMeN")))         # true
+print("  is_alpha_string('hello123'): " . value_to_string(is_alpha_string("hello123")))   # false
+print("  is_alpha_string('hello world'): " . value_to_string(is_alpha_string("hello world"))) # false (space)
+print("  is_alpha_string(''): " . value_to_string(is_alpha_string("")))                   # false (empty)
 print("")
 
 # Practical example: name validation

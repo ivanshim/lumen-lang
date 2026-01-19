@@ -31,6 +31,6 @@ else
     print("real_default(2) == 2: false")
 
 # Test 6: Type introspection (might not be available, but try)
-print("Test 6: str(real_default)")
+print("Test 6: value_to_string(real_default)")
 r = real_default(22/7)
 print(r)

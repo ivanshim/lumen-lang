@@ -15,7 +15,7 @@ print("Test 1a: Integer + Integer -> Integer")
 a = 5
 b = 3
 result = a + b
-print(str(a) + " + " + str(b) + " = " + str(result))
+print(value_to_string(a) + " + " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 # 1b: Integer + Rational = Rational
@@ -23,7 +23,7 @@ print("Test 1b: Integer + Rational -> Rational")
 a = 5
 b = 3/2
 result = a + b
-print(str(a) + " + " + str(b) + " = " + str(result))
+print(value_to_string(a) + " + " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 # 1c: Integer + Real = Real
@@ -31,7 +31,7 @@ print("Test 1c: Integer + Real -> Real")
 a = 5
 b = real_default(3/2)
 result = a + b
-print(str(a) + " + " + str(b) + " = " + str(result))
+print(value_to_string(a) + " + " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 # 1d: Rational + Rational = Rational
@@ -39,7 +39,7 @@ print("Test 1d: Rational + Rational -> Rational")
 a = 3/2
 b = 5/4
 result = a + b
-print(str(a) + " + " + str(b) + " = " + str(result))
+print(value_to_string(a) + " + " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 # 1e: Rational + Real = Real
@@ -47,7 +47,7 @@ print("Test 1e: Rational + Real -> Real")
 a = 3/2
 b = real_default(5/4)
 result = a + b
-print(str(a) + " + " + str(b) + " = " + str(result))
+print(value_to_string(a) + " + " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 # 1f: Real + Real = Real
@@ -55,7 +55,7 @@ print("Test 1f: Real + Real -> Real")
 a = real_default(3/2)
 b = real_default(5/4)
 result = a + b
-print(str(a) + " + " + str(b) + " = " + str(result))
+print(value_to_string(a) + " + " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 print("=== SECTION 2: SUBTRACTION ===")
@@ -66,7 +66,7 @@ print("Test 2a: Integer - Integer -> Integer")
 a = 10
 b = 3
 result = a - b
-print(str(a) + " - " + str(b) + " = " + str(result))
+print(value_to_string(a) + " - " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 # 2b: Integer - Rational = Rational
@@ -74,7 +74,7 @@ print("Test 2b: Integer - Rational -> Rational")
 a = 10
 b = 3/2
 result = a - b
-print(str(a) + " - " + str(b) + " = " + str(result))
+print(value_to_string(a) + " - " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 # 2c: Integer - Real = Real
@@ -82,7 +82,7 @@ print("Test 2c: Integer - Real -> Real")
 a = 10
 b = real_default(3/2)
 result = a - b
-print(str(a) + " - " + str(b) + " = " + str(result))
+print(value_to_string(a) + " - " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 # 2d: Rational - Rational = Rational
@@ -90,7 +90,7 @@ print("Test 2d: Rational - Rational -> Rational")
 a = 10/3
 b = 5/4
 result = a - b
-print(str(a) + " - " + str(b) + " = " + str(result))
+print(value_to_string(a) + " - " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 # 2e: Rational - Real = Real
@@ -98,7 +98,7 @@ print("Test 2e: Rational - Real -> Real")
 a = 10/3
 b = real_default(5/4)
 result = a - b
-print(str(a) + " - " + str(b) + " = " + str(result))
+print(value_to_string(a) + " - " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 # 2f: Real - Real = Real
@@ -106,7 +106,7 @@ print("Test 2f: Real - Real -> Real")
 a = real_default(10/3)
 b = real_default(5/4)
 result = a - b
-print(str(a) + " - " + str(b) + " = " + str(result))
+print(value_to_string(a) + " - " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 print("=== SECTION 3: MULTIPLICATION ===")
@@ -117,7 +117,7 @@ print("Test 3a: Integer * Integer -> Integer")
 a = 4
 b = 3
 result = a * b
-print(str(a) + " * " + str(b) + " = " + str(result))
+print(value_to_string(a) + " * " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 # 3b: Integer * Rational = Rational
@@ -125,7 +125,7 @@ print("Test 3b: Integer * Rational -> Rational")
 a = 4
 b = 3/2
 result = a * b
-print(str(a) + " * " + str(b) + " = " + str(result))
+print(value_to_string(a) + " * " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 # 3c: Integer * Real = Real
@@ -133,7 +133,7 @@ print("Test 3c: Integer * Real -> Real")
 a = 4
 b = real_default(3/2)
 result = a * b
-print(str(a) + " * " + str(b) + " = " + str(result))
+print(value_to_string(a) + " * " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 # 3d: Rational * Rational = Rational
@@ -141,7 +141,7 @@ print("Test 3d: Rational * Rational -> Rational")
 a = 2/3
 b = 3/4
 result = a * b
-print(str(a) + " * " + str(b) + " = " + str(result))
+print(value_to_string(a) + " * " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 # 3e: Rational * Real = Real
@@ -149,7 +149,7 @@ print("Test 3e: Rational * Real -> Real")
 a = 2/3
 b = real_default(3/4)
 result = a * b
-print(str(a) + " * " + str(b) + " = " + str(result))
+print(value_to_string(a) + " * " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 # 3f: Real * Real = Real
@@ -157,7 +157,7 @@ print("Test 3f: Real * Real -> Real")
 a = real_default(2/3)
 b = real_default(3/4)
 result = a * b
-print(str(a) + " * " + str(b) + " = " + str(result))
+print(value_to_string(a) + " * " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 print("=== SECTION 4: DIVISION ===")
@@ -168,7 +168,7 @@ print("Test 4a: Integer / Integer -> Rational")
 a = 5
 b = 2
 result = a / b
-print(str(a) + " / " + str(b) + " = " + str(result))
+print(value_to_string(a) + " / " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 # 4b: Integer / Rational = Rational
@@ -176,7 +176,7 @@ print("Test 4b: Integer / Rational -> Rational")
 a = 5
 b = 3/2
 result = a / b
-print(str(a) + " / " + str(b) + " = " + str(result))
+print(value_to_string(a) + " / " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 # 4c: Integer / Real = Real
@@ -184,7 +184,7 @@ print("Test 4c: Integer / Real -> Real")
 a = 5
 b = real_default(3/2)
 result = a / b
-print(str(a) + " / " + str(b) + " = " + str(result))
+print(value_to_string(a) + " / " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 # 4d: Rational / Rational = Rational
@@ -192,7 +192,7 @@ print("Test 4d: Rational / Rational -> Rational")
 a = 3/2
 b = 5/4
 result = a / b
-print(str(a) + " / " + str(b) + " = " + str(result))
+print(value_to_string(a) + " / " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 # 4e: Rational / Real = Real
@@ -200,7 +200,7 @@ print("Test 4e: Rational / Real -> Real")
 a = 3/2
 b = real_default(5/4)
 result = a / b
-print(str(a) + " / " + str(b) + " = " + str(result))
+print(value_to_string(a) + " / " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 # 4f: Real / Real = Real
@@ -208,7 +208,7 @@ print("Test 4f: Real / Real -> Real")
 a = real_default(3/2)
 b = real_default(5/4)
 result = a / b
-print(str(a) + " / " + str(b) + " = " + str(result))
+print(value_to_string(a) + " / " + value_to_string(b) + " = " + value_to_string(result))
 write("\n")
 
 print("=== SECTION 5: FLOAT LITERALS ===")
@@ -217,7 +217,7 @@ write("\n")
 # 5a: Float literal is Real
 print("Test 5a: Float literal 1.5 is Real")
 x = 1.5
-print("1.5 = " + str(x))
+print("1.5 = " + value_to_string(x))
 write("\n")
 
 # 5b: Float literal + Integer = Real
@@ -225,7 +225,7 @@ print("Test 5b: Float literal + Integer -> Real")
 x = 1.5
 y = 2
 result = x + y
-print(str(x) + " + " + str(y) + " = " + str(result))
+print(value_to_string(x) + " + " + value_to_string(y) + " = " + value_to_string(result))
 write("\n")
 
 # 5c: Float literal * Integer = Real
@@ -233,7 +233,7 @@ print("Test 5c: Float literal * Integer -> Real")
 x = 1.5
 y = 3
 result = x * y
-print(str(x) + " * " + str(y) + " = " + str(result))
+print(value_to_string(x) + " * " + value_to_string(y) + " = " + value_to_string(result))
 write("\n")
 
 # 5d: Float literal / Integer = Real
@@ -241,7 +241,7 @@ print("Test 5d: Float literal / Integer -> Real")
 x = 3.0
 y = 2
 result = x / y
-print(str(x) + " / " + str(y) + " = " + str(result))
+print(value_to_string(x) + " / " + value_to_string(y) + " = " + value_to_string(result))
 write("\n")
 
 print("=== SECTION 6: ROUND() FUNCTION RETURNS REAL ===")
@@ -250,19 +250,19 @@ write("\n")
 # 6a: round() with float input returns Real
 print("Test 6a: round(1.235, 2) returns Real")
 x = round(1.235, 2)
-print("round(1.235, 2) = " + str(x))
+print("round(1.235, 2) = " + value_to_string(x))
 write("\n")
 
 # 6b: round() with negative float
 print("Test 6b: round(-2.456, 2) returns Real")
 x = round(-2.456, 2)
-print("round(-2.456, 2) = " + str(x))
+print("round(-2.456, 2) = " + value_to_string(x))
 write("\n")
 
 # 6c: round() with integer input
 print("Test 6c: round(5, 2) with integer input")
 x = round(5, 2)
-print("round(5, 2) = " + str(x))
+print("round(5, 2) = " + value_to_string(x))
 write("\n")
 
 print("=== SUMMARY ===")

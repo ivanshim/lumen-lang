@@ -9,7 +9,7 @@ fn count_to_three()
     return i
 
 # This used to hang on the second call (scope leak from first call)
-print("First call: " . str(count_to_three()))
-print("Second call: " . str(count_to_three()))
-print("Third call: " . str(count_to_three()))
+print("First call: " . value_to_string(count_to_three()))
+print("Second call: " . value_to_string(count_to_three()))
+print("Third call: " . value_to_string(count_to_three()))
 print("All calls completed successfully!")

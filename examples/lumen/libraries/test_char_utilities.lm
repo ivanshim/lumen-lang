@@ -164,7 +164,7 @@ while i < len(mixed_strings)
     if is_null(num)
         print("  '" . s . "' -> no number found")
     else
-        print("  '" . s . "' -> extracted: " . str(num))
+        print("  '" . s . "' -> extracted: " . value_to_string(num))
     i = i + 1
 print("")
 
