@@ -2,11 +2,12 @@
 
 # lumen-lang test script
 # Tests examples with both stream and microcode kernels
-# Usage: ./test.sh [--lang lumen|rust|python] [--omit file1.lm file2.lm ...]
+# Usage: ./test.sh [--lang lumen|rust|python] [--kernel stream|microcode] [--omit file1.lm file2.lm ...]
 #        ./test.sh <file>
 # If --lang is not specified, tests all languages
+# If --kernel is not specified, tests both kernels
 # If --omit is provided, those files are excluded from testing
-# If a file path is provided, runs just that file with both kernels
+# If a file path is provided, runs just that file with selected kernel(s)
 
 # Colors for output
 RED='\033[0;31m'
@@ -24,27 +25,33 @@ show_help() {
     echo "  ./test.sh --help                             Show this help message"
     echo "  ./test.sh <filename>                         Test single file"
     echo "  ./test.sh --lang <language>                  Test all files of specific language"
+    echo "  ./test.sh --kernel <kernel>                  Test with specific kernel only"
     echo "  ./test.sh --omit <file1> [file2] ...         Test all but exclude specific files"
-    echo "  ./test.sh --lang <lang> --omit <file>        Combine filters"
+    echo "  ./test.sh --lang <lang> --kernel <kernel>    Combine filters"
     echo ""
     echo -e "${BLUE}ARGUMENTS:${NC}"
     echo "  <filename>              Just the filename (searches examples/ dirs)"
     echo "                          or full path (e.g., examples/lumen/fibonacci.lm)"
     echo "  <language>              all, lumen, python, or rust"
+    echo "  <kernel>                stream or microcode"
     echo ""
     echo -e "${BLUE}OPTIONS:${NC}"
     echo "  --lang <language>       Test only files of specified language"
+    echo "  --kernel <kernel>       Test with stream or microcode kernel only (default: both)"
     echo "  --omit <file> ...       Exclude specific files from testing"
     echo "  --help                  Display this help message"
     echo ""
     echo -e "${BLUE}EXAMPLES:${NC}"
-    echo "  ./test.sh                              # Test Lumen files (default)"
-    echo "  ./test.sh fibonacci.lm                 # Test single file"
-    echo "  ./test.sh --lang all                   # Test everything"
-    echo "  ./test.sh --lang python                # Test only Python files"
-    echo "  ./test.sh --omit factorial.lm          # Test Lumen except factorial"
-    echo "  ./test.sh --lang python --omit demo.py # Combine language and omit filters"
-    echo "  ./test.sh examples/lumen/pi_machin.lm # Test with full path"
+    echo "  ./test.sh                                   # Test Lumen files (default)"
+    echo "  ./test.sh fibonacci.lm                      # Test single file with both kernels"
+    echo "  ./test.sh --lang all                        # Test everything"
+    echo "  ./test.sh --lang python                     # Test only Python files"
+    echo "  ./test.sh --kernel stream                   # Test with stream kernel only"
+    echo "  ./test.sh --kernel microcode                # Test with microcode kernel only"
+    echo "  ./test.sh --lang lumen --kernel stream      # Lumen files with stream kernel"
+    echo "  ./test.sh --omit factorial.lm               # Test Lumen except factorial"
+    echo "  ./test.sh --lang python --omit demo.py      # Combine language and omit filters"
+    echo "  ./test.sh examples/lumen/pi_machin.lm      # Test with full path"
     echo ""
     echo -e "${BLUE}SEARCH DIRECTORIES:${NC}"
     echo "  - examples/lumen"
@@ -56,6 +63,7 @@ show_help() {
 
 # Parse command-line arguments
 LANG_FILTER=""
+KERNEL_FILTER=""
 SINGLE_FILE=""
 declare -a OMIT_FILES=()
 
@@ -73,7 +81,21 @@ while [[ $# -gt 0 ]]; do
                     ;;
                 *)
                     echo -e "${RED}Invalid language: $LANG_FILTER${NC}"
-                    echo "Usage: $0 [--lang all|lumen|rust|python] [--omit file1.lm file2.lm ...]"
+                    echo "Usage: $0 [--lang all|lumen|rust|python] [--kernel stream|microcode] [--omit file1.lm file2.lm ...]"
+                    echo "       $0 <file>"
+                    exit 1
+                    ;;
+            esac
+            ;;
+        --kernel)
+            KERNEL_FILTER="$2"
+            case "$KERNEL_FILTER" in
+                stream|microcode)
+                    shift 2
+                    ;;
+                *)
+                    echo -e "${RED}Invalid kernel: $KERNEL_FILTER${NC}"
+                    echo "Usage: $0 [--lang all|lumen|rust|python] [--kernel stream|microcode] [--omit file1.lm file2.lm ...]"
                     echo "       $0 <file>"
                     exit 1
                     ;;
@@ -105,7 +127,7 @@ while [[ $# -gt 0 ]]; do
                 else
                     echo -e "${RED}File not found: $1${NC}"
                     echo "Searched in: examples/lumen, examples/lumen/constructs, examples/lumen/libraries, examples/python, examples/rust"
-                    echo "Usage: $0 [--lang lumen|rust|python] [--omit file1.lm file2.lm ...]"
+                    echo "Usage: $0 [--lang lumen|rust|python] [--kernel stream|microcode] [--omit file1.lm file2.lm ...]"
                     echo "       $0 <filename>           (searches examples/ directories)"
                     echo "       $0 <full/path/to/file>"
                     exit 1
@@ -256,6 +278,13 @@ else
     fi
 fi
 
+# Determine which kernels to test
+if [ -z "$KERNEL_FILTER" ]; then
+    test_kernels=("stream" "microcode")
+else
+    test_kernels=("$KERNEL_FILTER")
+fi
+
 echo "=========================================="
 echo "  Lumen-Lang Test Suite ($title)"
 echo "=========================================="
@@ -264,7 +293,7 @@ echo ""
 # Run single file if specified
 if [ -n "$SINGLE_FILE" ]; then
     echo -e "${YELLOW}Testing: $(basename "$SINGLE_FILE")${NC}"
-    for kernel in stream microcode; do
+    for kernel in "${test_kernels[@]}"; do
         run_test "$SINGLE_FILE" "$kernel" "$language"
     done
     echo ""
@@ -277,7 +306,7 @@ else
             if should_omit "$file"; then
                 continue
             fi
-            for kernel in stream microcode; do
+            for kernel in "${test_kernels[@]}"; do
                 run_test "$file" "$kernel" "lumen"
             done
         done
@@ -292,7 +321,7 @@ else
             if should_omit "$file"; then
                 continue
             fi
-            for kernel in stream microcode; do
+            for kernel in "${test_kernels[@]}"; do
                 run_test "$file" "$kernel" "python_core"
             done
         done
@@ -307,7 +336,7 @@ else
             if should_omit "$file"; then
                 continue
             fi
-            for kernel in stream microcode; do
+            for kernel in "${test_kernels[@]}"; do
                 run_test "$file" "$kernel" "rust_core"
             done
         done
@@ -331,7 +360,7 @@ for lang in "${TESTED_LANGUAGES[@]}"; do
 
     echo -e "${BLUE}${lang_display}:${NC}"
 
-    for kernel in stream microcode; do
+    for kernel in "${test_kernels[@]}"; do
         passed=${RESULTS["${lang}:${kernel}:passed"]:-0}
         failed=${RESULTS["${lang}:${kernel}:failed"]:-0}
         timeout=${RESULTS["${lang}:${kernel}:timeout"]:-0}
