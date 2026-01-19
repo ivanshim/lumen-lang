@@ -129,7 +129,8 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `numeric_to_base_string(value, radix)` — `[library]` Convert integer/rational/real to a string in the given base (2..36).
 - `integer_to_base_string(n, radix)` — `[library]` Base conversion for integers.
 - `rational_to_base_string(r, radix)` — `[library]` Base conversion for rationals (numerator/denominator).
-- `real_to_base_string(x, radix)` — `[library]` Base conversion for reals with fixed fractional precision.
+- `real_to_base_string(value, radix, precision)` — `[library]` Base conversion for reals with specified fractional precision.
+- `real_to_base_string_default(value, radix)` — `[library]` Base conversion for reals using `REAL_DEFAULT_PRECISION`.
 - `frac_to_base_string(f, radix, limit)` — `[library]` Fractional helper used by real_to_base_string.
 
 **Library** (lib_lumen/string_to_value.lm)
