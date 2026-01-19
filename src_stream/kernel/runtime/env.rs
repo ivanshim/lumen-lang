@@ -112,17 +112,12 @@ impl Env {
         }
     }
 
-    /// Assign to a variable, searching parent scopes.
-    /// If the variable exists in any enclosing scope, update it there.
-    /// If not found, create it in the current scope.
+    /// Assign to a variable in the current scope only.
+    /// Always creates or updates the variable in the current scope,
+    /// never searches or modifies parent scopes.
+    /// This matches the Microcode kernel's scoping behavior.
     pub fn assign(&mut self, name: &str, value: Value) -> Result<(), String> {
-        for scope in self.scopes.iter_mut().rev() {
-            if scope.contains_key(name) {
-                scope.insert(name.to_string(), value);
-                return Ok(());
-            }
-        }
-        // Variable not found in any scope; create in current scope.
+        // Always set in current scope, don't search parent scopes
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name.to_string(), value);
         }
