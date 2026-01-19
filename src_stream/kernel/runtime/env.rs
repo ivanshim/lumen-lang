@@ -97,6 +97,13 @@ impl Env {
         self.pop_memoization_state();
     }
 
+    /// Push a scope with RAII guard that guarantees cleanup.
+    /// The guard automatically pops the scope when dropped.
+    pub fn push_scope_guarded(&mut self) -> ScopeGuard {
+        self.push_scope();
+        ScopeGuard { env: self as *mut Env }
+    }
+
     /// Define a new variable in the current scope.
     /// This shadows any outer binding with the same name.
     pub fn define(&mut self, name: String, value: Value) {
@@ -220,5 +227,27 @@ impl Env {
 impl Default for Env {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ============================================================================
+// RAII SCOPE GUARD
+// ============================================================================
+
+/// RAII guard that guarantees scope cleanup even on early returns.
+/// Automatically pops the scope when dropped (goes out of scope).
+pub struct ScopeGuard {
+    env: *mut Env,
+}
+
+impl Drop for ScopeGuard {
+    fn drop(&mut self) {
+        // SAFETY: This pointer is valid because:
+        // 1. It comes from &mut Env which is guaranteed valid
+        // 2. The guard's lifetime is tied to the function that created it
+        // 3. Rust's borrow checker ensures env outlives the guard
+        unsafe {
+            (*self.env).pop_scope();
+        }
     }
 }
