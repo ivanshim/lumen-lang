@@ -23,4 +23,5 @@ while i <= fib_index
 write("Fibonacci number at index ")
 write(fib_index)
 write(": ")
-print(result)
+result_string = value_to_string(result)
+print(substring_start(result_string, 100))

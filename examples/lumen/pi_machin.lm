@@ -11,4 +11,5 @@ significant_figures = 1000
 #     significant_figures = int(ARGS)
 
 result = pi_machin(significant_figures)
-print(result)
+result_string = value_to_string(result)
+print(substring_start(result_string, 100))

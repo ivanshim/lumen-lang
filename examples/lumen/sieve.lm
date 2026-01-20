@@ -1,3 +1,4 @@
 # Find and display all primes up to 10000 using primes_up_to from library
 result = primes_up_to(10000)
-print(result)
+result_string = value_to_string(result)
+print(substring_start(result_string, 100))
