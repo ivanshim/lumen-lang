@@ -51,13 +51,13 @@ impl ExprNode for PipeExpr {
         // If MEMOIZATION = false (default): no cache lookup/storage
         // If MEMOIZATION = true: check cache before execution, store after
         //
-        let arg_fingerprint = Env::fingerprint_args(&arg_values);
-        if let Some(cached_result) = env.get_cached(&self.func_name, &arg_fingerprint) {
+        // Performance: fingerprint only computed when memoization enabled
+        if let Some(cached_result) = env.get_cached(&self.func_name, &arg_values) {
             return Ok(cached_result);
         }
 
         let result = self.execute_function(&params, &body, &arg_values, env)?;
-        env.cache_result(&self.func_name, &arg_fingerprint, result.clone());
+        env.cache_result(&self.func_name, &arg_values, result.clone());
         Ok(result)
     }
 }

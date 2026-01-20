@@ -165,8 +165,8 @@ impl ExprNode for FunctionCallExpr {
         // - Inherited by function calls
         // - Automatically restored on scope exit
         //
-        let arg_fingerprint = Env::fingerprint_args(&arg_values);
-        if let Some(cached_result) = env.get_cached(&self.func_name, &arg_fingerprint) {
+        // Performance: fingerprint only computed when memoization enabled
+        if let Some(cached_result) = env.get_cached(&self.func_name, &arg_values) {
             // Cache hit: return cached result without executing function
             return Ok(cached_result);
         }
@@ -175,7 +175,7 @@ impl ExprNode for FunctionCallExpr {
         let result = self.execute_function(&params, &body, &arg_values, env)?;
 
         // Cache result if memoization is enabled
-        env.cache_result(&self.func_name, &arg_fingerprint, result.clone());
+        env.cache_result(&self.func_name, &arg_values, result.clone());
 
         Ok(result)
     }

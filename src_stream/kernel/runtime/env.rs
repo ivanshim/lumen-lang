@@ -148,21 +148,25 @@ impl Env {
 
     /// Check if a result is cached for this function call.
     /// Returns Some(value) only if memoization is enabled AND result is cached.
-    pub fn get_cached(&self, func_name: &str, arg_fingerprint: &str) -> Option<Value> {
+    /// Only computes fingerprint if memoization is enabled (performance optimization).
+    pub fn get_cached(&self, func_name: &str, args: &[Value]) -> Option<Value> {
         if !self.memoization_enabled() {
             return None;
         }
-        let key = (func_name.to_string(), arg_fingerprint.to_string());
+        let arg_fingerprint = Self::fingerprint_args(args);
+        let key = (func_name.to_string(), arg_fingerprint);
         self.memoization_cache.get(&key).cloned()
     }
 
     /// Cache the result of a function call.
     /// Only caches if memoization is enabled.
-    pub fn cache_result(&mut self, func_name: &str, arg_fingerprint: &str, result: Value) {
+    /// Only computes fingerprint if memoization is enabled (performance optimization).
+    pub fn cache_result(&mut self, func_name: &str, args: &[Value], result: Value) {
         if !self.memoization_enabled() {
             return;
         }
-        let key = (func_name.to_string(), arg_fingerprint.to_string());
+        let arg_fingerprint = Self::fingerprint_args(args);
+        let key = (func_name.to_string(), arg_fingerprint);
         self.memoization_cache.insert(key, result);
     }
 
