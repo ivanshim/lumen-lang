@@ -55,6 +55,10 @@ impl ExprNode for FunctionCallExpr {
                     // chr(n): return single-character string for decimal integer
                     return builtin_chr(&self.args[0].eval(env)?);
                 }
+                "error" => {
+                    // error(message): abort execution with error message
+                    return builtin_error(&self.args[0].eval(env)?);
+                }
                 "kind" => {
                     // kind(x): return symbolic constant representing value category
                     return builtin_kind(&self.args[0].eval(env)?);
@@ -557,6 +561,22 @@ fn builtin_chr(value: &Value) -> LumenResult<Value> {
 
     // Return as single-character string
     Ok(Box::new(LumenString::new(character.to_string())))
+}
+
+/// Built-in function: error(message) - Abort execution with error message
+/// Immediately propagates the error message to halt execution.
+/// This is a kernel primitive for unified error handling.
+/// No I/O is performed - the error is propagated via Result.
+fn builtin_error(msg_val: &Value) -> LumenResult<Value> {
+    use crate::languages::lumen::values::LumenString;
+
+    // Extract string message
+    let msg = msg_val.as_any()
+        .downcast_ref::<LumenString>()
+        .ok_or_else(|| "error() argument must be a string".to_string())?;
+
+    // Return error to abort execution (no I/O)
+    Err(msg.value.clone())
 }
 
 /// Built-in function: emit(string) - Kernel primitive for I/O

@@ -244,6 +244,13 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 ---
 
+## Error Handling
+
+**Kernel**
+- `error(message)` — `[kernel]` Abort execution immediately with the given error message string. Never returns.
+
+---
+
 ## Mathematics Libraries
 
 **Rounding & Factorial**
