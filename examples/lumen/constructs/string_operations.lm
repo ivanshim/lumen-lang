@@ -46,7 +46,7 @@ arr_len = len(arr)
 write("len([1,2,3,4,5]): ")
 print(arr_len)
 
-# Test 8: char_at() function - valid index
+# Test 8: char_at() function - valid indices (strict, errors on out-of-bounds)
 text = "Lumen"
 ch0 = char_at(text, 0)
 write("char_at('Lumen', 0): ")
@@ -60,22 +60,36 @@ ch4 = char_at(text, 4)
 write("char_at('Lumen', 4): ")
 print(ch4)
 
-# Test 9: char_at() function - out of bounds (should return null)
-ch_oob = char_at(text, 10)
-write("char_at('Lumen', 10) [out of bounds]: ")
+# Test 9: char_at_or_null() function - permissive wrapper (returns null instead of error)
+print("")
+print("=== Testing char_at_or_null (permissive wrapper) ===")
+
+# Valid index
+ch_valid = char_at_or_null(text, 1)
+write("char_at_or_null('Lumen', 1): ")
+print(ch_valid)
+
+# Out of bounds - returns null gracefully
+ch_oob = char_at_or_null(text, 10)
+write("char_at_or_null('Lumen', 10) [out of bounds]: ")
 print(ch_oob)
 
-# Test 10: char_at() function - negative index (should return null)
-ch_neg = char_at(text, -1)
-write("char_at('Lumen', -1) [negative]: ")
+# Negative index - returns null gracefully
+ch_neg = char_at_or_null(text, -1)
+write("char_at_or_null('Lumen', -1) [negative]: ")
 print(ch_neg)
 
-# Test 11: Combining operations
+# Edge case: exactly at length
+ch_edge = char_at_or_null(text, 5)
+write("char_at_or_null('Lumen', 5) [at length]: ")
+print(ch_edge)
+
+# Test 10: Combining operations
 word = "Test"
 length = len(word)
 first_char = char_at(word, 0)
-result11 = "Word: " . word . ", Length: " . length . ", First: " . first_char
+result10 = "Word: " . word . ", Length: " . length . ", First: " . first_char
 write("Combined operations: ")
-print(result11)
+print(result10)
 
 print("Done!")
