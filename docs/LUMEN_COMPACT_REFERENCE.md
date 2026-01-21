@@ -263,55 +263,60 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `round(x, decimals)` — `[library]` Round using round-half-away-from-zero semantics. (lib_lumen/round.lm)
 - `factorial(n)` — `[library]` Recursive integer factorial. (lib_lumen/factorial.lm)
 
-**Multiplicative Modular Arithmetic — (ℤ/mℤ)×**
+**Modular Arithmetic**
 
 **Kernel**
 - (none)
 
 **Library** (lib_lumen/modular_arithmetic.lm)
 
-This module implements the multiplicative group of integers modulo m. The group (ℤ/mℤ)× consists of all integers in [0, m) that are coprime to m (i.e., units under multiplication mod m).
+This module contains ONLY closed operations in ℤ/mℤ. These functions perform arithmetic within the ring of integers modulo m, taking elements of ℤ/mℤ and returning elements of ℤ/mℤ. They do not analyze structure, test properties, or construct group elements.
 
-*Core Arithmetic Functions:*
+- `mod_mult(a, b, m)` — `[library]` Modular multiplication: `(a * b) mod m`. Closed binary operation in ℤ/mℤ.
+- `mod_pow(base, exp, m)` — `[library]` Modular exponentiation: `(base ^ exp) mod m`. Closed operation using binary exponentiation.
+
+**Number Theory**
+
+**Kernel**
+- (none)
+
+**Library** (lib_lumen/number_theory.lm)
+
+This module contains functions that analyze, construct, or reason about modular structures but do not perform modular arithmetic themselves. These include gatekeepers, group structure analysis, group properties, computational problems, and characters.
+
+*Core Integer & Gatekeeper Functions:*
 - `gcd(a, b)` — `[library]` Greatest common divisor (Euclidean algorithm).
 - `extended_gcd(a, b)` — `[library]` Returns `[g, x, y]` where `ax + by = g = gcd(a, b)`.
+- `lcm(a, b)` — `[library]` Least common multiple.
+- `is_coprime(a, b)` — `[library]` True if `a` and `b` are coprime (gcd = 1).
 - `mod_inverse(a, m)` — `[library]` Modular multiplicative inverse of `a` mod `m`. Errors if `gcd(a, m) ≠ 1`.
-- `mod_pow(base, exp, m)` — `[library]` Fast modular exponentiation: `(base ^ exp) mod m`.
-- `mod_mult(a, b, m)` — `[library]` Modular multiplication: `(a * b) mod m`.
+- `mod_div(a, b, m)` — `[library]` Modular division `a / b (mod m)`. Returns `null` if `b` is not invertible.
 
 *Factorization Support:*
 - `prime_factors(n)` — `[library]` Prime factorization (with repetition) using trial division.
 - `is_prime(n)` — `[library]` Deterministic primality test (trial division).
 - `factorize_phi(m)` — `[library]` Factor Euler's totient φ(m) by factoring `m`.
 
-*Group Structure Functions:*
+*Group Structure over ℤ/mℤ:*
 - `euler_phi(m)` — `[library]` Euler's totient function φ(m) = |(ℤ/mℤ)×|.
 - `is_unit(a, m)` — `[library]` Returns `true` iff `gcd(a, m) = 1`.
 - `units_mod_m(m)` — `[library]` Return all elements of (ℤ/mℤ)×.
 - `group_order(m)` — `[library]` Returns |(ℤ/mℤ)×| (equals `euler_phi(m)`).
 - `element_order(a, m)` — `[library]` Order of element `a` in (ℤ/mℤ)×. Errors if `a` is not a unit.
 
-*Group Property Functions:*
+*Group Properties:*
 - `is_cyclic(m)` — `[library]` Determine whether (ℤ/mℤ)× is cyclic.
 - `primitive_root(m)` — `[library]` Return one generator if cyclic, otherwise error.
 - `all_primitive_roots(m)` — `[library]` Return all generators if cyclic, otherwise error.
+
+*Computational Problems:*
 - `discrete_log(base, value, m)` — `[library]` Solve `base^x ≡ value (mod m)` using baby-step giant-step.
 
-*Character & Homomorphism Functions:*
+*Characters & Homomorphisms:*
 - `legendre_symbol(a, p)` — `[library]` Quadratic character `(a/p)` for odd prime `p`.
 - `jacobi_symbol(a, n)` — `[library]` Generalized Jacobi symbol for odd `n`.
 - `kronecker_symbol(a, n)` — `[library]` Fully generalized Kronecker symbol.
 - `dirichlet_characters(m)` — `[library]` Generate the character group modulo `m` (currently returns principal character only).
-
-**Number Theory — General Utilities**
-
-**Kernel**
-- (none)
-
-**Library** (lib_lumen/number_theory.lm)
-- `lcm(a, b)` — `[library]` Least common multiple.
-- `is_coprime(a, b)` — `[library]` True if `a` and `b` are coprime.
-- `mod_div(a, b, m)` — `[library]` Modular division `a / b (mod m)`. Returns `null` if `b` is not invertible mod `m`.
 
 **Prime Number Utilities**
 

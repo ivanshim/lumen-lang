@@ -3,15 +3,13 @@
 # ============================================================================
 #
 # Note: Core primality testing and factorization functions (is_prime,
-# prime_factors) have been moved to lib_lumen/modular_arithmetic.lm
-# which implements the multiplicative group (ℤ/mℤ)×.
+# prime_factors) are now in lib_lumen/number_theory.lm
 #
-# This file retains prime number utilities that are not core to
-# modular arithmetic.
+# This file retains prime number utilities that enumerate or search for primes.
 # ============================================================================
 
 # Smallest prime greater than n
-# Note: Uses is_prime() from modular_arithmetic.lm
+# Note: Uses is_prime() from number_theory.lm
 fn next_prime(n)
     k = n + 1
     while true
@@ -49,7 +47,7 @@ fn primes_up_to(limit)
     primes
 
 # Unique prime factors of n
-# Note: Uses prime_factors() from modular_arithmetic.lm
+# Note: Uses prime_factors() from number_theory.lm
 fn unique_prime_factors(n)
     f = prime_factors(n)
     u = []

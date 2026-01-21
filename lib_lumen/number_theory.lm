@@ -1,33 +1,572 @@
 # ============================================================================
-# Number Theory — General Utilities
+# Number Theory — Analysis and Structure of ℤ/mℤ
 # ============================================================================
 #
-# Note: Core modular arithmetic functions (gcd, extended_gcd, mod_inverse,
-# mod_pow, etc.) have been moved to lib_lumen/modular_arithmetic.lm
-# which implements the multiplicative group (ℤ/mℤ)×.
+# This module contains functions that analyze, construct, or reason about
+# modular structures, but do not perform modular arithmetic themselves.
 #
-# This file retains general number-theoretic utilities that are not
-# specific to multiplicative modular arithmetic.
+# Modular arithmetic operations (closed operations in ℤ/mℤ) are in
+# lib_lumen/modular_arithmetic.lm
+#
+# Functions here include:
+# - Gatekeepers (gcd, coprimality tests, modular inverse)
+# - Group structure (Euler phi, units, group order, element order)
+# - Group properties (cyclicity, generators)
+# - Computational problems (discrete logarithm)
+# - Characters and homomorphisms (Legendre, Jacobi, Kronecker symbols)
+# - Factorization support (prime testing, prime factorization)
+#
 # ============================================================================
 
+# ----------------------------------------------------------------------------
+# Core Integer & Gatekeeper Functions
+# ----------------------------------------------------------------------------
+
+# Greatest common divisor (Euclidean algorithm)
+fn gcd(a, b)
+    while b != 0
+        t = b
+        b = a % b
+        a = t
+    a
+
+# Extended Euclidean algorithm
+# Returns [g, x, y] such that ax + by = g where g = gcd(a, b)
+fn extended_gcd(a, b)
+    if b == 0
+        return [a, 1, 0]
+    else
+        r = extended_gcd(b, a % b)
+        g = r[0]
+        x = r[2]
+        y = r[1] - (a // b) * r[2]
+        return [g, x, y]
+
 # Least common multiple
-# Note: Uses gcd() from modular_arithmetic.lm
 fn lcm(a, b)
     (a * b) // gcd(a, b)
 
-# True if a and b are coprime
-# Note: Uses gcd() from modular_arithmetic.lm
+# True if a and b are coprime (i.e., gcd(a, b) = 1)
 fn is_coprime(a, b)
     gcd(a, b) == 1
 
+# Modular multiplicative inverse of a modulo m
+# Returns the unique x in [0, m) such that (a * x) == 1 (mod m)
+# Errors if gcd(a, m) != 1 (i.e., a is not a unit mod m)
+fn mod_inverse(a, m)
+    r = extended_gcd(a, m)
+    if r[0] != 1
+        error("mod_inverse: inverse does not exist (gcd(a, m) != 1)")
+    else
+        return (r[1] % m + m) % m
+
 # Modular division a / b (mod m) using modular inverse
 # Returns null if b is not invertible mod m
-# Note: Uses mod_inverse() from modular_arithmetic.lm
 fn mod_div(a, b, m)
-    inv = mod_inverse(b, m)
-    # mod_inverse now errors instead of returning null, so we need to handle this differently
-    # For backward compatibility, we check if b is invertible first
+    # Check if b is invertible first
     if gcd(b, m) != 1
         return null
     else
+        inv = mod_inverse(b, m)
         return (a * inv) % m
+
+# ----------------------------------------------------------------------------
+# Factorization Support
+# ----------------------------------------------------------------------------
+
+# Prime factorization using trial division
+# Returns array of prime factors (with repetition)
+fn prime_factors(n)
+    if n < 2
+        return []
+    factors = []
+    d = 2
+    while d * d <= n
+        while n % d == 0
+            push(factors, d)
+            n = n // d
+        d = d + 1
+    if n > 1
+        push(factors, n)
+    factors
+
+# Deterministic primality test (trial division)
+fn is_prime(n)
+    if n < 2
+        return false
+    if n == 2
+        return true
+    if n % 2 == 0
+        return false
+    i = 3
+    while i * i <= n
+        if n % i == 0
+            return false
+        i = i + 2
+    true
+
+# Factor Euler's totient phi(m) by factoring m
+# Returns array of [prime, exponent] pairs for the factorization of phi(m)
+fn factorize_phi(m)
+    if m == 1
+        return []
+
+    # Get prime factorization of m
+    factors = prime_factors(m)
+
+    # Count multiplicities
+    prime_counts = []
+    i = 0
+    while i < len(factors)
+        p = factors[i]
+        count = 0
+        while i < len(factors) and factors[i] == p
+            count = count + 1
+            i = i + 1
+        # For p^k in factorization of m, phi(p^k) = p^(k-1) * (p-1)
+        # So phi(m) contains factors from (p-1) and p^(k-1)
+
+        # Add factors from p^(k-1)
+        if count > 1
+            j = 0
+            while j < count - 1
+                push(prime_counts, p)
+                j = j + 1
+
+        # Add factors from (p-1)
+        p_minus_1_factors = prime_factors(p - 1)
+        j = 0
+        while j < len(p_minus_1_factors)
+            push(prime_counts, p_minus_1_factors[j])
+            j = j + 1
+
+    # Now convert to [prime, exponent] format
+    prime_counts = sort_integers(prime_counts)
+    result = []
+    i = 0
+    while i < len(prime_counts)
+        p = prime_counts[i]
+        count = 0
+        while i < len(prime_counts) and prime_counts[i] == p
+            count = count + 1
+            i = i + 1
+        push(result, [p, count])
+    result
+
+# Helper: simple integer sort (bubble sort is fine for small arrays)
+fn sort_integers(arr)
+    n = len(arr)
+    if n <= 1
+        return arr
+    # Make a copy
+    sorted = []
+    i = 0
+    while i < n
+        push(sorted, arr[i])
+        i = i + 1
+    # Bubble sort
+    i = 0
+    while i < n - 1
+        j = 0
+        while j < n - i - 1
+            if sorted[j] > sorted[j + 1]
+                temp = sorted[j]
+                sorted[j] = sorted[j + 1]
+                sorted[j + 1] = temp
+            j = j + 1
+        i = i + 1
+    sorted
+
+# Integer square root (helper for discrete_log)
+fn isqrt(n)
+    if n == 0
+        return 0
+    # Newton's method
+    x = n
+    while true
+        x1 = (x + n // x) // 2
+        if x1 >= x
+            return x
+        x = x1
+
+# ----------------------------------------------------------------------------
+# Group Structure over ℤ/mℤ
+# ----------------------------------------------------------------------------
+
+# Euler's totient function phi(m)
+# Returns the count of integers in [1, m] that are coprime to m
+# This equals the order of the multiplicative group (ℤ/mℤ)×
+fn euler_phi(m)
+    if m == 1
+        return 1
+
+    result = m
+    factors = prime_factors(m)
+
+    # Remove duplicates to get unique prime factors
+    unique_primes = []
+    i = 0
+    while i < len(factors)
+        p = factors[i]
+        if len(unique_primes) == 0 or unique_primes[len(unique_primes) - 1] != p
+            push(unique_primes, p)
+        i = i + 1
+
+    # Apply formula: phi(m) = m * ∏(1 - 1/p) for each prime p dividing m
+    i = 0
+    while i < len(unique_primes)
+        p = unique_primes[i]
+        result = result - result // p
+        i = i + 1
+
+    result
+
+# Check if a is a unit modulo m (i.e., gcd(a, m) = 1)
+fn is_unit(a, m)
+    gcd(a % m, m) == 1
+
+# Return all elements of the multiplicative group (ℤ/mℤ)×
+# These are all integers in [0, m) that are coprime to m
+fn units_mod_m(m)
+    units = []
+    i = 0
+    while i < m
+        if is_unit(i, m)
+            push(units, i)
+        i = i + 1
+    units
+
+# Group order: |(ℤ/mℤ)×| = phi(m)
+fn group_order(m)
+    euler_phi(m)
+
+# Order of element a in (ℤ/mℤ)×
+# Returns the smallest positive integer k such that a^k == 1 (mod m)
+# Errors if a is not a unit
+fn element_order(a, m)
+    if not is_unit(a, m)
+        error("element_order: element is not a unit mod m")
+
+    # The order must divide phi(m)
+    phi = euler_phi(m)
+
+    # Try divisors of phi(m) in increasing order
+    order = 1
+    while order <= phi
+        if mod_pow(a, order, m) == 1
+            # Verify this is the minimal such value by checking it divides phi(m)
+            if phi % order == 0
+                return order
+        order = order + 1
+
+    # Should never reach here if mathematics is correct
+    error("element_order: failed to find order (internal error)")
+
+# ----------------------------------------------------------------------------
+# Group Properties
+# ----------------------------------------------------------------------------
+
+# Determine whether (ℤ/mℤ)× is cyclic
+# The group is cyclic iff m is 1, 2, 4, p^k, or 2p^k for odd prime p
+fn is_cyclic(m)
+    if m == 1 or m == 2 or m == 4
+        return true
+
+    # Check if m = p^k for odd prime p
+    if m % 2 == 1
+        factors = prime_factors(m)
+        if len(factors) == 0
+            return false
+        first = factors[0]
+        i = 1
+        while i < len(factors)
+            if factors[i] != first
+                return false
+            i = i + 1
+        return true
+
+    # Check if m = 2 * p^k for odd prime p
+    if m % 2 == 0
+        m_half = m // 2
+        if m_half % 2 == 1
+            factors = prime_factors(m_half)
+            if len(factors) == 0
+                return false
+            first = factors[0]
+            i = 1
+            while i < len(factors)
+                if factors[i] != first
+                    return false
+                i = i + 1
+            return true
+
+    false
+
+# Find one primitive root (generator) of (ℤ/mℤ)×
+# Returns a generator if the group is cyclic, otherwise errors
+fn primitive_root(m)
+    if not is_cyclic(m)
+        error("primitive_root: group is not cyclic")
+
+    phi = euler_phi(m)
+
+    # Find the prime factors of phi(m)
+    phi_factors = prime_factors(phi)
+    unique_phi_primes = []
+    i = 0
+    while i < len(phi_factors)
+        p = phi_factors[i]
+        if len(unique_phi_primes) == 0 or unique_phi_primes[len(unique_phi_primes) - 1] != p
+            push(unique_phi_primes, p)
+        i = i + 1
+
+    # Try each candidate a
+    a = 2
+    while a < m
+        if is_unit(a, m)
+            # Check if a is a generator by verifying a^(phi(m)/p) != 1 (mod m) for all prime divisors p of phi(m)
+            is_generator = true
+            i = 0
+            while i < len(unique_phi_primes)
+                p = unique_phi_primes[i]
+                if mod_pow(a, phi // p, m) == 1
+                    is_generator = false
+                i = i + 1
+
+            if is_generator
+                return a
+        a = a + 1
+
+    # Should never reach here if is_cyclic is correct
+    error("primitive_root: failed to find generator (internal error)")
+
+# Find all primitive roots (generators) of (ℤ/mℤ)×
+# Returns array of all generators if the group is cyclic, otherwise errors
+fn all_primitive_roots(m)
+    if not is_cyclic(m)
+        error("all_primitive_roots: group is not cyclic")
+
+    phi = euler_phi(m)
+    g = primitive_root(m)
+
+    # All generators are of the form g^k where gcd(k, phi(m)) = 1
+    generators = []
+    k = 1
+    while k < phi
+        if gcd(k, phi) == 1
+            push(generators, mod_pow(g, k, m))
+        k = k + 1
+
+    generators
+
+# ----------------------------------------------------------------------------
+# Computational Problems
+# ----------------------------------------------------------------------------
+
+# Discrete logarithm: find x such that base^x == value (mod m)
+# Uses baby-step giant-step algorithm
+# Returns x if it exists, otherwise errors
+fn discrete_log(base, value, m)
+    if not is_unit(base, m)
+        error("discrete_log: base is not a unit mod m")
+    if not is_unit(value, m)
+        error("discrete_log: value is not a unit mod m")
+
+    # For small m, use simple brute force
+    phi = euler_phi(m)
+
+    # Baby-step giant-step
+    # Let n = ceil(sqrt(phi(m)))
+    # Compute baby steps: base^j for j = 0, 1, ..., n-1
+    # Compute giant steps: value * (base^(-n))^i for i = 0, 1, ..., n-1
+
+    n = isqrt(phi) + 1
+
+    # Baby steps: store base^j -> j
+    baby_steps = []  # Will store [value, index] pairs
+    current = 1
+    j = 0
+    while j < n
+        push(baby_steps, [current, j])
+        current = mod_mult(current, base, m)
+        j = j + 1
+
+    # Compute base^(-n) mod m
+    base_inv = mod_inverse(base, m)
+    giant_step = mod_pow(base_inv, n, m)
+
+    # Giant steps
+    gamma = value
+    i = 0
+    while i < n
+        # Check if gamma is in baby_steps
+        j = 0
+        while j < len(baby_steps)
+            if baby_steps[j][0] == gamma
+                # Found: base^(baby_steps[j][1]) == value * (base^(-n))^i (mod m)
+                # So base^(baby_steps[j][1] + n*i) == value (mod m)
+                result = baby_steps[j][1] + n * i
+                if result < phi
+                    return result
+            j = j + 1
+
+        gamma = mod_mult(gamma, giant_step, m)
+        i = i + 1
+
+    error("discrete_log: no solution found")
+
+# ----------------------------------------------------------------------------
+# Characters & Homomorphisms
+# ----------------------------------------------------------------------------
+
+# Legendre symbol (a/p) for odd prime p
+# Returns:
+#   0 if a == 0 (mod p)
+#   1 if a is a quadratic residue mod p
+#  -1 if a is a quadratic non-residue mod p
+fn legendre_symbol(a, p)
+    if not is_prime(p) or p == 2
+        error("legendre_symbol: p must be an odd prime")
+
+    a = a % p
+    if a == 0
+        return 0
+
+    # Use Euler's criterion: (a/p) == a^((p-1)/2) (mod p)
+    result = mod_pow(a, (p - 1) // 2, p)
+    if result == 1
+        return 1
+    else
+        return -1
+
+# Jacobi symbol (a/n) for odd n
+# Generalization of Legendre symbol
+fn jacobi_symbol(a, n)
+    if n <= 0 or n % 2 == 0
+        error("jacobi_symbol: n must be a positive odd integer")
+
+    if n == 1
+        return 1
+
+    a = a % n
+    result = 1
+
+    while a != 0
+        # Remove factors of 2 from a
+        while a % 2 == 0
+            a = a // 2
+            # (2/n) = 1 if n == ±1 (mod 8), -1 if n == ±3 (mod 8)
+            n_mod_8 = n % 8
+            if n_mod_8 == 3 or n_mod_8 == 5
+                result = -result
+
+        # Swap using quadratic reciprocity
+        # (a/n)(n/a) = (-1)^((a-1)(n-1)/4)
+        temp = a
+        a = n
+        n = temp
+
+        if a % 4 == 3 and n % 4 == 3
+            result = -result
+
+        a = a % n
+
+    if n == 1
+        return result
+    else
+        return 0
+
+# Kronecker symbol (a/n) - fully generalized
+# Extends Jacobi symbol to all integers n
+fn kronecker_symbol(a, n)
+    # Handle n = 0
+    if n == 0
+        if a == 1 or a == -1
+            return 1
+        else
+            return 0
+
+    # Handle n < 0: (a/-n) = (a/n) if a >= 0, -(a/n) if a < 0
+    if n < 0
+        if a < 0
+            return -kronecker_symbol(a, -n)
+        else
+            return kronecker_symbol(a, -n)
+
+    # Now n > 0
+
+    # Handle n = 1
+    if n == 1
+        return 1
+
+    # Factor out powers of 2 from n
+    # (a/2n') = (a/2)(a/n')
+    e = 0
+    n_odd = n
+    while n_odd % 2 == 0
+        e = e + 1
+        n_odd = n_odd // 2
+
+    # Compute (a/2^e)
+    if e > 0
+        a_mod_8 = ((a % 8) + 8) % 8
+        if e == 1
+            # (a/2) = 0 if a even, 1 if a == ±1 (mod 8), -1 if a == ±3 (mod 8)
+            if a % 2 == 0
+                symbol_2 = 0
+            else
+                if a_mod_8 == 1 or a_mod_8 == 7
+                    symbol_2 = 1
+                else
+                    symbol_2 = -1
+        else
+            # (a/2^e) = 0 if a even, (a/2) if e >= 1
+            if a % 2 == 0
+                symbol_2 = 0
+            else
+                if a_mod_8 == 1 or a_mod_8 == 7
+                    symbol_2 = 1
+                else
+                    symbol_2 = -1
+
+        if symbol_2 == 0
+            return 0
+    else
+        symbol_2 = 1
+
+    # Compute (a/n_odd) using Jacobi symbol
+    if n_odd == 1
+        symbol_odd = 1
+    else
+        symbol_odd = jacobi_symbol(a, n_odd)
+
+    symbol_2 * symbol_odd
+
+# Dirichlet characters modulo m
+# Returns an array representing the character group Ĝ where G = (ℤ/mℤ)×
+# Each character is represented as an array of values χ(1), χ(2), ..., χ(m-1)
+# where χ(a) = 0 if gcd(a,m) > 1
+fn dirichlet_characters(m)
+    if m == 1
+        # Trivial case: only the trivial character
+        return [[]]
+
+    phi = euler_phi(m)
+    units = units_mod_m(m)
+
+    # For simplicity, we only compute the principal character
+    # A full implementation would compute all phi(m) characters
+    # This would require understanding the group structure more deeply
+
+    principal = []
+    a = 1
+    while a < m
+        if is_unit(a, m)
+            push(principal, 1)
+        else
+            push(principal, 0)
+        a = a + 1
+
+    # Return array containing just the principal character
+    # A complete implementation would generate all characters
+    [principal]
