@@ -1,5 +1,6 @@
 # Test base-N numeric literals
-# Syntax: <base>@<digits>[.<fraction>][^<exponent>]
+# Syntax: <base>@<digits>[.<fraction>]
+# Note: Numeric literals are atomic. Use ** operator for exponentiation.
 
 print("=== Base-N Literal Tests ===")
 print("")
@@ -55,24 +56,24 @@ print(10@123.456)
 
 print("")
 
-# Test 6: Exponent notation (exponent in same base)
-write("10@2^3 = ")
-print(10@2^3)
+# Test 6: Expression-level exponentiation with base-N literals
+write("(10@2) ** 3 = ")
+print((10@2) ** 3)
 
-write("16@10^2 = ")
-print(16@10^2)
+write("(16@10) ** 2 = ")
+print((16@10) ** 2)
 
-write("2@10^11 = ")
-print(2@10^11)
+write("(2@10) ** 11 = ")
+print((2@10) ** 11)
 
 print("")
 
-# Test 7: Combined fraction and exponent
-write("16@F.F^1 = ")
-print(16@F.F^1)
+# Test 7: Exponentiation with fractional base-N literals
+write("(16@F.F) ** 1 = ")
+print((16@F.F) ** 1)
 
-write("10@1.5^2 = ")
-print(10@1.5^2)
+write("(10@1.5) ** 2 = ")
+print((10@1.5) ** 2)
 
 print("")
 
