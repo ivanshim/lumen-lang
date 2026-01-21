@@ -1,53 +1,33 @@
-# Greatest common divisor (Euclid's algorithm)
-fn gcd(a, b)
-    while b != 0
-        t = b
-        b = a % b
-        a = t
-    a
+# ============================================================================
+# Number Theory — General Utilities
+# ============================================================================
+#
+# Note: Core modular arithmetic functions (gcd, extended_gcd, mod_inverse,
+# mod_pow, etc.) have been moved to lib_lumen/modular_arithmetic.lm
+# which implements the multiplicative group (ℤ/mℤ)×.
+#
+# This file retains general number-theoretic utilities that are not
+# specific to multiplicative modular arithmetic.
+# ============================================================================
 
 # Least common multiple
+# Note: Uses gcd() from modular_arithmetic.lm
 fn lcm(a, b)
     (a * b) // gcd(a, b)
 
 # True if a and b are coprime
+# Note: Uses gcd() from modular_arithmetic.lm
 fn is_coprime(a, b)
     gcd(a, b) == 1
 
-# Fast (base ^ exponent) % modulus, used in cryptographic algorithms
-fn exponent_then_mod(base, exponent, modulus)
-    result = 1
-    base = base % modulus
-    while exponent > 0
-        if exponent % 2 == 1
-            result = (result * base) % modulus
-        exponent = exponent // 2
-        base = (base * base) % modulus
-    result
-
-# Returns [g, x, y] where ax + by = g
-fn extended_gcd(a, b)
-    if b == 0
-        return [a, 1, 0]
-    else
-        r = extended_gcd(b, a % b)
-        g = r[0]
-        x = r[2]
-        y = r[1] - (a // b) * r[2]
-        return [g, x, y]
-
-# Modular inverse or null if it does not exist
-fn mod_inverse(a, m)
-    r = extended_gcd(a, m)
-    if r[0] != 1
-        return null
-    else
-        return (r[1] % m + m) % m
-
-# Modular division a / b (mod m) using mod_inverse
+# Modular division a / b (mod m) using modular inverse
+# Returns null if b is not invertible mod m
+# Note: Uses mod_inverse() from modular_arithmetic.lm
 fn mod_div(a, b, m)
     inv = mod_inverse(b, m)
-    if inv == null
+    # mod_inverse now errors instead of returning null, so we need to handle this differently
+    # For backward compatibility, we check if b is invertible first
+    if gcd(b, m) != 1
         return null
     else
         return (a * inv) % m
