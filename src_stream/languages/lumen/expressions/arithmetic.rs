@@ -13,6 +13,7 @@ use crate::kernel::runtime::{Env, Value};
 use crate::languages::lumen::numeric;
 use crate::languages::lumen::values::{LumenNumber, LumenRational, LumenReal, as_number, as_rational, as_real};
 use num_bigint::BigInt;
+use num_traits::ToPrimitive;
 
 #[derive(Debug)]
 struct UnaryMinusExpr {
@@ -102,10 +103,10 @@ impl ExprNode for ArithmeticExpr {
         };
         let result_is_real = left_is_real || right_is_real;
 
-        // Fast path for modulo, integer quotient, and exponentiation (integer-only operations)
-        // For Real values with //, extract the integer part and perform quotient
+        // Fast path for modulo and integer quotient (integer-only operations)
+        // For Real values, extract the integer part and perform the operation
         // This avoids expensive rational conversion and cloning for these operators
-        if self.op == "%" || self.op == "//" || self.op == "**" {
+        if self.op == "%" || self.op == "//" {
             // Extract integers directly by reference, then clone only if needed
             let result = if let Ok(real) = as_real(l.as_ref()) {
                 let left_int = &real.numerator / &real.denominator;
@@ -116,10 +117,8 @@ impl ExprNode for ArithmeticExpr {
                             return Err("Division by zero".into());
                         }
                         &left_int / &right_int
-                    } else if self.op == "%" {
-                        numeric::modulo(&left_int, &right_int)?
                     } else {
-                        numeric::power(&left_int, &right_int)?
+                        numeric::modulo(&left_int, &right_int)?
                     }
                 } else if let Ok(num) = as_number(r.as_ref()) {
                     if self.op == "//" {
@@ -127,10 +126,8 @@ impl ExprNode for ArithmeticExpr {
                             return Err("Division by zero".into());
                         }
                         &left_int / &num.value
-                    } else if self.op == "%" {
-                        numeric::modulo(&left_int, &num.value)?
                     } else {
-                        numeric::power(&left_int, &num.value)?
+                        numeric::modulo(&left_int, &num.value)?
                     }
                 } else if let Ok(rat) = as_rational(r.as_ref()) {
                     if self.op == "//" {
@@ -138,10 +135,8 @@ impl ExprNode for ArithmeticExpr {
                             return Err("Division by zero".into());
                         }
                         &left_int / &rat.numerator
-                    } else if self.op == "%" {
-                        numeric::modulo(&left_int, &rat.numerator)?
                     } else {
-                        numeric::power(&left_int, &rat.numerator)?
+                        numeric::modulo(&left_int, &rat.numerator)?
                     }
                 } else {
                     return Err("Right operand must be a number".into());
@@ -152,24 +147,20 @@ impl ExprNode for ArithmeticExpr {
                     let right_ref = &num2.value;
                     if self.op == "%" {
                         numeric::modulo(left_ref, right_ref)?
-                    } else if self.op == "//" {
+                    } else {
                         if right_ref == &BigInt::from(0) {
                             return Err("Division by zero".into());
                         }
                         left_ref / right_ref
-                    } else {
-                        numeric::power(left_ref, right_ref)?
                     }
                 } else if let Ok(rat) = as_rational(r.as_ref()) {
                     if self.op == "%" {
                         numeric::modulo(left_ref, &rat.numerator)?
-                    } else if self.op == "//" {
+                    } else {
                         if rat.numerator == BigInt::from(0) {
                             return Err("Division by zero".into());
                         }
                         left_ref / &rat.numerator
-                    } else {
-                        numeric::power(left_ref, &rat.numerator)?
                     }
                 } else {
                     return Err("Right operand must be a number".into());
@@ -181,26 +172,22 @@ impl ExprNode for ArithmeticExpr {
                     let right_ref = &num.value;
                     if self.op == "%" {
                         numeric::modulo(&left_int, right_ref)?
-                    } else if self.op == "//" {
+                    } else {
                         if right_ref == &BigInt::from(0) {
                             return Err("Division by zero".into());
                         }
                         &left_int / right_ref
-                    } else {
-                        numeric::power(&left_int, right_ref)?
                     }
                 } else if let Ok(rat2) = as_rational(r.as_ref()) {
                     // For modulo/quotient with two rationals, extract integer parts from both
                     let right_int = &rat2.numerator / &rat2.denominator;
                     if self.op == "%" {
                         numeric::modulo(&left_int, &right_int)?
-                    } else if self.op == "//" {
+                    } else {
                         if right_int == BigInt::from(0) {
                             return Err("Division by zero".into());
                         }
                         &left_int / &right_int
-                    } else {
-                        numeric::power(&left_int, &right_int)?
                     }
                 } else {
                     return Err("Right operand must be a number".into());
@@ -217,6 +204,54 @@ impl ExprNode for ArithmeticExpr {
                 return Ok(Box::new(LumenReal::new(result, BigInt::from(1), result_precision)));
             } else {
                 return Ok(Box::new(LumenNumber::new(result)));
+            }
+        }
+
+        // Handle exponentiation separately (base can be any numeric type, exponent must be integer)
+        if self.op == "**" {
+            // Extract base as rational (supports integer, rational, and real)
+            let base_num = if let Ok(real) = as_real(l.as_ref()) {
+                LumenRational::new(real.numerator.clone(), real.denominator.clone())
+            } else if let Ok(rat) = as_rational(l.as_ref()) {
+                rat.clone()
+            } else if let Ok(num) = as_number(l.as_ref()) {
+                LumenRational::new(num.value.clone(), BigInt::from(1))
+            } else {
+                return Err("Left operand must be a number".into());
+            };
+
+            // Extract exponent as integer (truncate rational/real to integer)
+            let exp_int = if let Ok(num) = as_number(r.as_ref()) {
+                num.value.clone()
+            } else if let Ok(rat) = as_rational(r.as_ref()) {
+                &rat.numerator / &rat.denominator
+            } else if let Ok(real) = as_real(r.as_ref()) {
+                &real.numerator / &real.denominator
+            } else {
+                return Err("Right operand must be a number".into());
+            };
+
+            // Convert exponent to u32 for pow operation
+            let exp_u32 = exp_int.to_u32()
+                .ok_or_else(|| "Exponent too large".to_string())?;
+
+            // Compute base^exp for rational: (a/b)^n = a^n / b^n
+            let result_num = base_num.numerator.pow(exp_u32);
+            let result_denom = base_num.denominator.pow(exp_u32);
+            let result_rational = LumenRational::new(result_num, result_denom);
+
+            // Determine result precision for real operations
+            let result_precision = left_real_prec.or(right_real_prec).unwrap_or(15);
+
+            // If result involves Real, return as LumenReal; otherwise check if rational or integer
+            if result_is_real {
+                return Ok(Box::new(LumenReal::new(result_rational.numerator, result_rational.denominator, result_precision)));
+            } else if result_rational.denominator == BigInt::from(1) {
+                // Result is an integer
+                return Ok(Box::new(LumenNumber::new(result_rational.numerator)));
+            } else {
+                // Result is a rational
+                return Ok(Box::new(result_rational));
             }
         }
 
