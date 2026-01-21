@@ -483,9 +483,9 @@ fn builtin_len(value: &Value) -> LumenResult<Value> {
 /// Built-in function: char_at(string, index) - Return character at index
 /// Returns the character at the given zero-based index.
 /// Characters are UTF-8 characters (not bytes).
-/// Returns null if index is out of bounds or negative.
+/// Errors if index is out of bounds or negative (strict, truth-preserving semantics).
 fn builtin_char_at(string_val: &Value, index_val: &Value) -> LumenResult<Value> {
-    use crate::languages::lumen::values::{LumenString, LumenNumber, LumenNull};
+    use crate::languages::lumen::values::{LumenString, LumenNumber};
     use num_traits::ToPrimitive;
 
     // Extract string
@@ -503,14 +503,14 @@ fn builtin_char_at(string_val: &Value, index_val: &Value) -> LumenResult<Value> 
         Some(i) => i,
         None => {
             // Negative or too large index
-            return Ok(Box::new(LumenNull));
+            return Err("char_at index out of bounds".to_string());
         }
     };
 
     // Get character at index
     match string.value.chars().nth(index) {
         Some(ch) => Ok(Box::new(LumenString::new(ch.to_string()))),
-        None => Ok(Box::new(LumenNull)), // Out of bounds
+        None => Err("char_at index out of bounds".to_string()), // Out of bounds
     }
 }
 

@@ -1,3 +1,13 @@
+# Permissive wrapper for char_at - returns null instead of erroring on out-of-bounds
+# Returns the character at the given zero-based index, or null if:
+# - index is negative
+# - index >= len(s)
+# - index cannot be represented as a valid integer
+fn char_at_or_null(s, index)
+    if index < 0 or index >= len(s)
+        return null
+    char_at(s, index)
+
 # Slice string from from_start (inclusive) to to_end (exclusive)
 fn substring(s, from_start, to_end)
     index = from_start
