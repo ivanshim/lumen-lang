@@ -389,6 +389,21 @@ pub fn execute(
                         _ => Err("chr() requires an integer argument".to_string()),
                     }
                 }
+                "error" => {
+                    // error(message): abort execution with error message
+                    // Kernel primitive for unified error handling
+                    // No I/O is performed - the error is propagated via Result
+                    if arg_vals.len() != 1 {
+                        return Err(format!("error() expects 1 argument, got {}", arg_vals.len()));
+                    }
+                    match &arg_vals[0] {
+                        Value::String(s) => {
+                            // Return error to abort execution (no I/O)
+                            Err(s.clone())
+                        }
+                        _ => Err("error() argument must be a string".to_string()),
+                    }
+                }
                 "kind" => {
                     // kind(x): return kind meta-value representing value category
                     // Returns one of the predefined kind constants: INTEGER, RATIONAL, REAL, ARRAY, STRING, BOOLEAN, NULL
