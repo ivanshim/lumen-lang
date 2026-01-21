@@ -36,7 +36,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `-` Subtraction
 - `*` Multiplication
 - `/` Division (returns `RATIONAL` for integers, `REAL` for reals)
-- `**` Exponentiation
+- `**` Exponentiation (the only exponentiation operator; `^` is not valid)
 - `//` Integer division (quotient)
 - `%` Modulo (remainder)
 - `-` Unary negation
@@ -62,11 +62,14 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 ## Primitive Values & Literals
 
-**Base syntax**
-- `base@digits` — Write a numeric literal in `base` (2..36), with the base value itself written in base 10. Example: `2@1011` or `16@FF`.
+**Numeric Literals**
 
-**Exponent syntax in numeric literals**
-- `value^exponent` — Exponent notation in numeric literal strings (e.g., `"5^3"` for 5×10³). Used by `string_to_value()` for scientific notation parsing.
+Numeric literals are atomic values and do not contain exponents or other operators.
+
+- `base@digits` — Write a numeric literal in `base` (2..36), with the base value itself written in base 10. Example: `2@1011` or `16@FF`.
+- `digits.digits` — Decimal point for fractional values (works with any base).
+
+Exponentiation is an expression-level operation and is never part of numeric literal syntax. Use the `**` operator for exponentiation (e.g., `10 ** 3` or `(16@ff) ** 2`).
 
 **Array Literals & Indexing**
 - `[a, b, c]` — Array literal (trailing comma allowed).

@@ -67,24 +67,24 @@ write("string_to_value('2@101/2@11') = ")
 print(string_to_value("2@101/2@11"))
 print("")
 
-# Test 7: Exponents in decimal
-print("Test 7: Exponents in decimal")
-write("string_to_value('10@2^3') = ")
-print(string_to_value("10@2^3"))
-write("string_to_value('10@10^2') = ")
-print(string_to_value("10@10^2"))
-write("string_to_value('5^3') = ")
-print(string_to_value("5^3"))
+# Test 7: Expression-level exponentiation (** operator)
+print("Test 7: Expression-level exponentiation")
+write("(10@2) ** 3 = ")
+print((10@2) ** 3)
+write("(10@10) ** 2 = ")
+print((10@10) ** 2)
+write("5 ** 3 = ")
+print(5 ** 3)
 print("")
 
-# Test 8: Exponents in other bases
-print("Test 8: Exponents in other bases")
-write("string_to_value('16@10^2') = ")
-print(string_to_value("16@10^2"))
-write("string_to_value('2@10^1000') = ")
-print(string_to_value("2@10^1000"))
-write("string_to_value('16@ff^2') = ")
-print(string_to_value("16@ff^2"))
+# Test 8: Exponentiation with non-decimal bases
+print("Test 8: Exponentiation with non-decimal bases")
+write("(16@10) ** 2 = ")
+print((16@10) ** 2)
+write("(2@10) ** 1000 = ")
+print((2@10) ** 1000)
+write("(16@ff) ** 2 = ")
+print((16@ff) ** 2)
 print("")
 
 # Test 9: Edge cases - empty and zero
@@ -143,10 +143,10 @@ write("Converted back: ")
 print(converted_large)
 print("")
 
-# Test 13: Fractional with exponent
-print("Test 13: Real with exponent")
-write("string_to_value('10@1.5^2') = ")
-print(string_to_value("10@1.5^2"))
+# Test 13: Real value exponentiation
+print("Test 13: Real value exponentiation")
+write("(10@1.5) ** 2 = ")
+print((10@1.5) ** 2)
 print("")
 
 # Test 14: Various base limits
