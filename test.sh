@@ -17,6 +17,13 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
+# Log output to test.log file in addition to console
+# Re-execute script with tee if not already logging
+if [ -z "$TEST_LOGGING" ]; then
+    export TEST_LOGGING=1
+    exec "$0" "$@" 2>&1 | tee test.log
+fi
+
 # Function to display help
 show_help() {
     echo -e "${BLUE}Lumen-Lang Test Script${NC}\n"

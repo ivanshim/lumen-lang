@@ -4,3 +4,4 @@ Cargo.lock
 
 # Debug files
 *.pdb
+test.log
