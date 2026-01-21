@@ -263,30 +263,64 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `round(x, decimals)` — `[library]` Round using round-half-away-from-zero semantics. (lib_lumen/round.lm)
 - `factorial(n)` — `[library]` Recursive integer factorial. (lib_lumen/factorial.lm)
 
-**Number Theory**
+**Multiplicative Modular Arithmetic — (ℤ/mℤ)×**
+
+**Kernel**
+- (none)
+
+**Library** (lib_lumen/modular_arithmetic.lm)
+
+This module implements the multiplicative group of integers modulo m. The group (ℤ/mℤ)× consists of all integers in [0, m) that are coprime to m (i.e., units under multiplication mod m).
+
+*Core Arithmetic Functions:*
+- `gcd(a, b)` — `[library]` Greatest common divisor (Euclidean algorithm).
+- `extended_gcd(a, b)` — `[library]` Returns `[g, x, y]` where `ax + by = g = gcd(a, b)`.
+- `mod_inverse(a, m)` — `[library]` Modular multiplicative inverse of `a` mod `m`. Errors if `gcd(a, m) ≠ 1`.
+- `mod_pow(base, exp, m)` — `[library]` Fast modular exponentiation: `(base ^ exp) mod m`.
+- `mod_mult(a, b, m)` — `[library]` Modular multiplication: `(a * b) mod m`.
+
+*Factorization Support:*
+- `prime_factors(n)` — `[library]` Prime factorization (with repetition) using trial division.
+- `is_prime(n)` — `[library]` Deterministic primality test (trial division).
+- `factorize_phi(m)` — `[library]` Factor Euler's totient φ(m) by factoring `m`.
+
+*Group Structure Functions:*
+- `euler_phi(m)` — `[library]` Euler's totient function φ(m) = |(ℤ/mℤ)×|.
+- `is_unit(a, m)` — `[library]` Returns `true` iff `gcd(a, m) = 1`.
+- `units_mod_m(m)` — `[library]` Return all elements of (ℤ/mℤ)×.
+- `group_order(m)` — `[library]` Returns |(ℤ/mℤ)×| (equals `euler_phi(m)`).
+- `element_order(a, m)` — `[library]` Order of element `a` in (ℤ/mℤ)×. Errors if `a` is not a unit.
+
+*Group Property Functions:*
+- `is_cyclic(m)` — `[library]` Determine whether (ℤ/mℤ)× is cyclic.
+- `primitive_root(m)` — `[library]` Return one generator if cyclic, otherwise error.
+- `all_primitive_roots(m)` — `[library]` Return all generators if cyclic, otherwise error.
+- `discrete_log(base, value, m)` — `[library]` Solve `base^x ≡ value (mod m)` using baby-step giant-step.
+
+*Character & Homomorphism Functions:*
+- `legendre_symbol(a, p)` — `[library]` Quadratic character `(a/p)` for odd prime `p`.
+- `jacobi_symbol(a, n)` — `[library]` Generalized Jacobi symbol for odd `n`.
+- `kronecker_symbol(a, n)` — `[library]` Fully generalized Kronecker symbol.
+- `dirichlet_characters(m)` — `[library]` Generate the character group modulo `m` (currently returns principal character only).
+
+**Number Theory — General Utilities**
 
 **Kernel**
 - (none)
 
 **Library** (lib_lumen/number_theory.lm)
-- `gcd(a, b)` — `[library]` Greatest common divisor (Euclid's algorithm).
 - `lcm(a, b)` — `[library]` Least common multiple.
 - `is_coprime(a, b)` — `[library]` True if `a` and `b` are coprime.
-- `exponent_then_mod(base, exponent, modulus)` — `[library]` Fast (base ^ exponent) % modulus, used in cryptographic algorithms.
-- `extended_gcd(a, b)` — `[library]` Returns `[g, x, y]` where `ax + by = g`.
-- `mod_inverse(a, m)` — `[library]` Modular inverse or `null` if it does not exist.
-- `mod_div(a, b, m)` — `[library]` Modular division `a / b (mod m)` using `mod_inverse`.
+- `mod_div(a, b, m)` — `[library]` Modular division `a / b (mod m)`. Returns `null` if `b` is not invertible mod `m`.
 
-**Prime Utilities**
+**Prime Number Utilities**
 
 **Kernel**
 - (none)
 
 **Library** (lib_lumen/primes.lm)
-- `is_prime(n)` — `[library]` Trial-division primality test.
 - `next_prime(n)` — `[library]` Smallest prime greater than `n`.
 - `primes_up_to(limit)` — `[library]` Sieve of Eratosthenes, inclusive.
-- `prime_factors(n)` — `[library]` Prime factorization (with repeats).
 - `unique_prime_factors(n)` — `[library]` Unique prime factors of `n`.
 
 ---

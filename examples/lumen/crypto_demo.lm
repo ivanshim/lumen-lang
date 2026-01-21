@@ -20,10 +20,10 @@ d = mod_inverse(e, phi)
 m = 42
 
 # 7. Encrypt
-cipher = exponent_then_mod(m, e, n)
+cipher = mod_pow(m, e, n)
 
 # 8. Decrypt
-plain = exponent_then_mod(cipher, d, n)
+plain = mod_pow(cipher, d, n)
 
 write("n = ")
 print(n)
