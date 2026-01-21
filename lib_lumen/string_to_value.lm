@@ -79,21 +79,7 @@ fn numeric_literal_to_value(s, i)
         if frac_scale > 1
             value = value + frac_val / frac_scale
 
-    # optional exponent (value-aware)
-    if i < len(s) and char_at(s, i) == "^"
-        i = i + 1
-        r3 = digits_to_base_value(s, i, base)
-        exp = r3[0]
-        i = r3[2]
-
-        pow = 1
-        j = 0
-        while j < exp
-            pow = pow * value
-            j = j + 1
-
-        value = pow
-
+    # Numeric literals are atomic; exponentiation is handled at the expression level.
     [value, i]
 
 
