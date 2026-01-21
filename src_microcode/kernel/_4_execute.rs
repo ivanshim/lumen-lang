@@ -328,7 +328,7 @@ pub fn execute(
                 "char_at" => {
                     // char_at(string, index): return character at index
                     // Characters are UTF-8 characters (not bytes)
-                    // Returns null if index is out of bounds or negative
+                    // Errors if index is out of bounds or negative (strict, truth-preserving semantics)
                     if arg_vals.len() != 2 {
                         return Err(format!("char_at() expects 2 arguments, got {}", arg_vals.len()));
                     }
@@ -340,10 +340,10 @@ pub fn execute(
                                     // Get character at index
                                     match s.chars().nth(i) {
                                         Some(ch) => Ok((Value::String(ch.to_string()), ControlFlow::Normal)),
-                                        None => Ok((Value::Null, ControlFlow::Normal)), // Out of bounds
+                                        None => Err("char_at index out of bounds".to_string()), // Out of bounds
                                     }
                                 }
-                                None => Ok((Value::Null, ControlFlow::Normal)), // Negative or too large
+                                None => Err("char_at index out of bounds".to_string()), // Negative or too large
                             }
                         }
                         (Value::String(_), _) => Err("char_at() second argument must be an integer".to_string()),

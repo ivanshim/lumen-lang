@@ -178,11 +178,12 @@ This card lists **user-accessible functions** across the kernel primitives and t
 **Kernel**
 - `string_a . string_b` — `[kernel]` Concatenate strings with the `.` operator.
 - `len(x)` — `[kernel]` Length of a string (UTF-8 characters) or an array.
-- `char_at(string, index)` — `[kernel]` Character at a zero-based index (returns `null` if out of bounds).
+- `char_at(string, index)` — `[kernel]` Character at a zero-based index (errors if out of bounds).
 - `ord(string)` — `[kernel]` Unicode code point of the first character.
 - `chr(integer)` — `[kernel]` Single-character string for a Unicode code point.
 
 **Library** (lib_lumen/string.lm)
+- `char_at_or_null(s, index)` — `[library]` Character at index, or `null` if out of bounds (permissive wrapper for `char_at`).
 - `substring(s, from_start, to_end)` — `[library]` Slice string from `from_start` (inclusive) to `to_end` (exclusive).
 - `substring_end(s, from_here)` — `[library]` Slice string from `from_here` to the end.
 - `substring_start(s, to_here)` — `[library]` Slice string from the beginning to `to_here` (exclusive).
