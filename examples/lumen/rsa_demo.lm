@@ -1,0 +1,206 @@
+# RSA cryptography demonstration (educational, not secure)
+#
+# This demo illustrates the complete RSA algorithm including:
+# - Key generation with validation
+# - Encryption and decryption
+# - Digital signatures and verification
+# - Proper precondition checking
+#
+# WARNING: Uses small primes for educational purposes only.
+# Real RSA requires primes of at least 2048 bits.
+
+print("=== RSA Cryptography Demonstration ===")
+print("")
+
+# ============================================================================
+# Step 1: Choose two distinct primes p and q
+# ============================================================================
+
+print("Step 1: Key Generation")
+print("----------------------")
+
+p = 61
+q = 53
+
+write("Selected prime p = ")
+print(p)
+write("Selected prime q = ")
+print(q)
+
+# Validate that p and q are actually prime
+if not is_prime(p)
+    error("p must be prime")
+
+if not is_prime(q)
+    error("q must be prime")
+
+if p == q
+    error("p and q must be distinct")
+
+print("")
+
+# ============================================================================
+# Step 2: Compute n = p * q (the modulus)
+# ============================================================================
+
+n = p * q
+write("Computed n = p * q = ")
+print(n)
+print("")
+
+# ============================================================================
+# Step 3: Compute Euler's totient phi(n) = (p-1)(q-1)
+# ============================================================================
+
+phi = (p - 1) * (q - 1)
+write("Computed phi(n) = (p-1)(q-1) = ")
+print(phi)
+print("")
+
+# ============================================================================
+# Step 4: Choose public exponent e
+# Must satisfy: 1 < e < phi(n) and gcd(e, phi(n)) = 1
+# ============================================================================
+
+e = 17
+
+write("Selected public exponent e = ")
+print(e)
+
+# Validate e is in valid range
+if e <= 1 or e >= phi
+    error("e must satisfy 1 < e < phi(n)")
+
+# Validate e is coprime to phi(n)
+if not is_coprime(e, phi)
+    error("e must be coprime to phi(n)")
+
+write("Verified gcd(e, phi(n)) = ")
+print(gcd(e, phi))
+print("")
+
+# ============================================================================
+# Step 5: Compute private exponent d
+# Must satisfy: d * e == 1 (mod phi(n))
+# ============================================================================
+
+d = mod_inverse(e, phi)
+write("Computed private exponent d = ")
+print(d)
+
+# Verify the modular inverse relationship
+verification = (d * e) % phi
+write("Verification: d * e mod phi(n) = ")
+print(verification)
+
+if verification != 1
+    error("Private key computation failed: d * e mod phi(n) must equal 1")
+
+print("")
+
+# ============================================================================
+# Display the keys
+# ============================================================================
+
+print("=== Generated Keys ===")
+write("Public key:  (e, n) = (")
+write(e)
+write(", ")
+write(n)
+print(")")
+write("Private key: (d, n) = (")
+write(d)
+write(", ")
+write(n)
+print(")")
+print("")
+
+# ============================================================================
+# Step 6: Encryption and Decryption
+# ============================================================================
+
+print("=== Encryption and Decryption ===")
+print("")
+
+# Choose a message
+m = 42
+
+write("Original message m = ")
+print(m)
+
+# Validate message is in valid range [0, n)
+if m < 0 or m >= n
+    error("Message must be in range [0, n)")
+
+# Encrypt: c = m^e mod n
+cipher = mod_pow(m, e, n)
+write("Encrypted cipher c = m^e mod n = ")
+print(cipher)
+
+# Decrypt: m' = c^d mod n
+decrypted = mod_pow(cipher, d, n)
+write("Decrypted message m' = c^d mod n = ")
+print(decrypted)
+
+# Verify decryption succeeded
+if decrypted == m
+    print("SUCCESS: Decryption successful: m' = m")
+else
+    error("Decryption failed")
+
+print("")
+
+# ============================================================================
+# Step 7: Digital Signature and Verification
+# ============================================================================
+
+print("=== Digital Signature ===")
+print("")
+
+# Message to sign (can be same or different)
+message_to_sign = 100
+
+write("Message to sign = ")
+print(message_to_sign)
+
+# Validate message is in valid range
+if message_to_sign < 0 or message_to_sign >= n
+    error("Message to sign must be in range [0, n)")
+
+# Sign: s = m^d mod n (encrypt with private key)
+signature = mod_pow(message_to_sign, d, n)
+write("Digital signature s = m^d mod n = ")
+print(signature)
+
+# Verify: m' = s^e mod n (decrypt with public key)
+verified_message = mod_pow(signature, e, n)
+write("Verified message m' = s^e mod n = ")
+print(verified_message)
+
+# Check signature validity
+if verified_message == message_to_sign
+    print("SUCCESS: Signature verification successful")
+else
+    error("Signature verification failed")
+
+print("")
+
+# ============================================================================
+# Summary
+# ============================================================================
+
+print("=== Summary ===")
+print("")
+print("RSA Properties Demonstrated:")
+print("1. Key Generation: Generated (e,n) and (d,n) from primes p and q")
+print("2. Encryption: c = m^e mod n")
+print("3. Decryption: m = c^d mod n")
+print("4. Digital Signature: s = m^d mod n")
+print("5. Signature Verification: m = s^e mod n")
+print("")
+print("Mathematical Correctness:")
+print("  (m^e)^d == m^(ed) == m^1 == m (mod n)")
+print("  because ed == 1 (mod phi(n)) by construction")
+print("")
+print("Security Note: This demo uses 6-bit primes. Real RSA requires")
+print("              at least 2048-bit primes for security.")
