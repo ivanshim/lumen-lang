@@ -130,7 +130,7 @@ print(m)
 
 # Validate message is in valid range [0, n)
 if m < 0 or m >= n
-    error("Message must be in range [0, n)")
+    error("Message must be in range 0 to n-1")
 
 # Encrypt: c = m^e mod n
 cipher = mod_pow(m, e, n)
@@ -165,7 +165,7 @@ print(message_to_sign)
 
 # Validate message is in valid range
 if message_to_sign < 0 or message_to_sign >= n
-    error("Message to sign must be in range [0, n)")
+    error("Message to sign must be in range 0 to n-1")
 
 # Sign: s = m^d mod n (encrypt with private key)
 signature = mod_pow(message_to_sign, d, n)
