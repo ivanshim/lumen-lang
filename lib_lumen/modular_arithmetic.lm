@@ -61,10 +61,6 @@ fn mod_pow(base, exp, m)
 fn mod_mult(a, b, m)
     (a * b) % m
 
-# Backward compatibility alias for mod_pow
-fn exponent_then_mod(base, exponent, modulus)
-    mod_pow(base, exponent, modulus)
-
 # ----------------------------------------------------------------------------
 # Factorization Support
 # ----------------------------------------------------------------------------
