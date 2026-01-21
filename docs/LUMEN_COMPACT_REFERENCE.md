@@ -65,8 +65,8 @@ This card lists **user-accessible functions** across the kernel primitives and t
 **Base syntax**
 - `base@digits` — Write a numeric literal in `base` (2..36), with the base value itself written in base 10. Example: `2@1011` or `16@FF`.
 
-**Exponent syntax**
-- `value**exponent` — Power operator for numeric values.
+**Exponent syntax in numeric literals**
+- `value^exponent` — Exponent notation in numeric literal strings (e.g., `"5^3"` for 5×10³). Used by `string_to_value()` for scientific notation parsing.
 
 **Array Literals & Indexing**
 - `[a, b, c]` — Array literal (trailing comma allowed).
