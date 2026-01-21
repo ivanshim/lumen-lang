@@ -1333,11 +1333,49 @@ fn execute_operator(
                     }
                 }
                 "**" => {
-                    let l = left.to_number()?;
-                    let r = right.to_number()?;
-                    let exp = r.to_u32()
+                    // Extract base as rational (supports Number, Rational, and Real)
+                    let (base_num, base_denom, is_real, precision) = match left {
+                        Value::Number(n) => (n.clone(), BigInt::from(1), false, 0),
+                        Value::Rational { numerator, denominator } => {
+                            (numerator.clone(), denominator.clone(), false, 0)
+                        }
+                        Value::Real { numerator, denominator, precision } => {
+                            (numerator.clone(), denominator.clone(), true, precision)
+                        }
+                        _ => return Err("Left operand must be a number".to_string()),
+                    };
+
+                    // Extract exponent as integer (truncate Rational/Real to integer)
+                    let exp_int = match &right {
+                        Value::Number(n) => n.clone(),
+                        Value::Rational { numerator, denominator } => numerator / denominator,
+                        Value::Real { numerator, denominator, .. } => numerator / denominator,
+                        _ => return Err("Right operand must be a number".to_string()),
+                    };
+
+                    // Convert exponent to u32 for pow operation
+                    let exp_u32 = exp_int.to_u32()
                         .ok_or_else(|| "Exponent too large".to_string())?;
-                    Value::Number(l.pow(exp))
+
+                    // Compute base^exp for rational: (a/b)^n = a^n / b^n
+                    let result_num = base_num.pow(exp_u32);
+                    let result_denom = base_denom.pow(exp_u32);
+
+                    // Return appropriate type based on input
+                    if is_real {
+                        Value::Real {
+                            numerator: result_num,
+                            denominator: result_denom,
+                            precision,
+                        }
+                    } else if result_denom == BigInt::from(1) {
+                        Value::Number(result_num)
+                    } else {
+                        Value::Rational {
+                            numerator: result_num,
+                            denominator: result_denom,
+                        }
+                    }
                 }
                 ".." => Value::Range {
                     start: left.to_number()?,
