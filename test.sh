@@ -22,6 +22,7 @@ NC='\033[0m' # No Color
 if [ -z "$TEST_LOGGING" ]; then
     export TEST_LOGGING=1
     exec "$0" "$@" 2>&1 | tee test.log
+    exit 1  # Safety net - should never reach here since exec replaces the process
 fi
 
 # Function to display help
