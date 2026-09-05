@@ -1,15 +1,15 @@
-// Lumen prelude - convenient import for handler modules
-// All expression, statement, and structure modules can use:
+// Lumen prelude: the imports every handler module needs.
 // use crate::languages::lumen::prelude::*;
 
 pub use crate::kernel::ast::{ExprNode, StmtNode};
 pub use crate::kernel::parser::Parser;
-pub use crate::kernel::registry::{KernelResult as LumenResult, err_at};
+pub use crate::kernel::registry::{err_at, KernelResult as LumenResult};
 pub use crate::languages::lumen::registry::{
-    ExprPrefix, ExprInfix, StmtHandler, Registry, Precedence, parse_expr_with_prec,
+    parse_expr_with_prec, ExprInfix, ExprPrefix, Precedence, Registry, StmtHandler,
 };
 
-// Extension trait for Parser to support Lumen expression parsing
+/// Lumen's view of the kernel parser: expression entry points and the
+/// tokens Lumen treats as insignificant between other tokens.
 pub trait LumenParserExt {
     fn parse_expr_prec(&mut self, registry: &Registry, min_prec: Precedence) -> LumenResult<Box<dyn ExprNode>>;
     fn parse_expr(&mut self, registry: &Registry) -> LumenResult<Box<dyn ExprNode>>;
@@ -25,18 +25,14 @@ impl LumenParserExt for Parser<'_> {
         parse_expr_with_prec(self, registry, Precedence::Lowest)
     }
 
+    /// Skip whitespace and line breaks. Comments were removed before lexing.
     fn skip_tokens(&mut self) {
         while self.i < self.toks.len() {
             let lexeme = &self.toks[self.i].tok.lexeme;
-
-            // Skip whitespace and newlines
-            if lexeme.len() == 1 {
-                let ch = lexeme.as_bytes()[0];
-                if ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' {
-                    self.i += 1;
-                    continue;
-                }
-
+            if lexeme.len() == 1 && matches!(lexeme.as_bytes()[0], b' ' | b'\t' | b'\n' | b'\r') {
+                self.i += 1;
+                continue;
+            }
             break;
         }
     }

@@ -1,155 +1,257 @@
-// Stage 1: Ingest - Lossless tokenization
+// Stage 1: Ingest — source text → tokens.
 //
-// Convert source → tokens using schema.
-// Key principle: tokens are MEANINGFUL units (not characters).
-// Strings are atomic, keywords are identified, operators are complete.
+// Tokens are meaningful units: words, numbers, strings (already unescaped),
+// operators, line ends and leading indentation. What counts as a comment,
+// a string delimiter, an escape or an operator comes from the schema; the
+// scanning algorithms are the kernel's.
 
 use crate::schema::LanguageSchema;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Word,
+    Number,
+    Str,
+    Op,
+    Newline,
+    /// Leading whitespace of a non-blank line; `width` holds its size.
+    Indent,
+    Eof,
+}
+
 #[derive(Debug, Clone)]
 pub struct Token {
-    pub lexeme: String,
-    pub span: (usize, usize),  // byte range in source
+    pub kind: Kind,
+    pub text: String,
+    pub width: usize,
     pub line: usize,
     pub col: usize,
 }
 
-/// Strip single-line comments from source.
-/// Comments start with # and continue until end of line.
-/// Preserves newlines for correct line counting.
-/// Respects string boundaries: # inside strings is not a comment.
-fn strip_comments(source: &str) -> String {
-    let mut result = String::with_capacity(source.len());
-    let mut chars = source.chars().peekable();
-    let mut in_string = false;
-    let mut string_char = ' ';
-    let mut escape_next = false;
-
-    while let Some(ch) = chars.next() {
-        // Handle escape sequences in strings
-        if escape_next {
-            result.push(ch);
-            escape_next = false;
-            continue;
-        }
-
-        if ch == '\\' && in_string {
-            result.push(ch);
-            escape_next = true;
-            continue;
-        }
-
-        // Track string state (both single and double quotes)
-        if !in_string && (ch == '"' || ch == '\'') {
-            in_string = true;
-            string_char = ch;
-            result.push(ch);
-        } else if in_string && ch == string_char {
-            in_string = false;
-            result.push(ch);
-        } else if !in_string && ch == '#' {
-            // Skip comment until newline (but preserve the newline)
-            while let Some(c) = chars.next() {
-                if c == '\n' {
-                    result.push('\n');
-                    break;
-                }
-            }
-        } else {
-            result.push(ch);
-        }
+impl Token {
+    fn new(kind: Kind, text: String, line: usize, col: usize) -> Self {
+        Token { kind, text, width: 0, line, col }
     }
 
-    result
+    pub fn is(&self, kind: Kind, text: &str) -> bool {
+        self.kind == kind && self.text == text
+    }
 }
 
-/// Tokenize source using schema's multichar sequences
+/// Remove line comments introduced by the schema's marker, outside strings,
+/// keeping newlines so line numbers stay stable.
+fn strip_comments(source: &str, schema: &LanguageSchema) -> String {
+    let marker = match &schema.lexical.comment {
+        Some(m) if !m.is_empty() => m.as_str(),
+        _ => return source.to_string(),
+    };
+    let mut out = String::with_capacity(source.len());
+    let mut rest = source;
+    let mut in_string: Option<char> = None;
+    let mut escaped = false;
+    while let Some(ch) = rest.chars().next() {
+        if let Some(q) = in_string {
+            out.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == q {
+                in_string = None;
+            }
+            rest = &rest[ch.len_utf8()..];
+            continue;
+        }
+        if schema.lexical.quotes.contains(&ch) {
+            in_string = Some(ch);
+            out.push(ch);
+            rest = &rest[ch.len_utf8()..];
+            continue;
+        }
+        if rest.starts_with(marker) {
+            rest = match rest.find('\n') {
+                Some(nl) => &rest[nl..],
+                None => "",
+            };
+            continue;
+        }
+        out.push(ch);
+        rest = &rest[ch.len_utf8()..];
+    }
+    out
+}
+
+fn is_word_start(c: char) -> bool {
+    c.is_alphabetic() || c == '_'
+}
+
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
 pub fn lex(source: &str, schema: &LanguageSchema) -> Result<Vec<Token>, String> {
-    let source = strip_comments(source);
+    let source = strip_comments(source, schema);
+    let operators = schema.operators_longest_first();
+    let number = &schema.lexical.number;
+    let chars: Vec<char> = source.chars().collect();
     let mut tokens = Vec::new();
-    let bytes = source.as_bytes();
-    let mut pos = 0;
+    let mut i = 0;
     let mut line = 1;
     let mut col = 1;
+    let mut at_line_start = true;
 
-    while pos < bytes.len() {
-        let start_col = col;
-        let remaining = &source[pos..];
-
-        // Try multichar sequences first (sorted by length, longest first)
-        let mut matched = false;
-
-        for &seq in &schema.multichar_lexemes {
-            if remaining.starts_with(seq) {
-                // Check word boundary for keywords
-                let is_keyword = seq.chars().all(|c| c.is_alphabetic() || c == '_');
-                if is_keyword {
-                    let after_pos = pos + seq.len();
-                    if after_pos < bytes.len() {
-                        let next_byte = bytes[after_pos];
-                        let next_ch = next_byte as char;
-                        if next_ch.is_alphanumeric() || next_ch == '_' {
-                            continue;  // Word boundary violated, try next
-                        }
-                    }
-                }
-
-                // Matched! Add token.
-                tokens.push(Token {
-                    lexeme: seq.to_string(),
-                    span: (pos, pos + seq.len()),
-                    line,
-                    col: start_col,
-                });
-
-                // Update position
-                for ch in seq.chars() {
-                    if ch == '\n' {
-                        line += 1;
-                        col = 1;
-                    } else {
-                        col += 1;
-                    }
-                }
-
-                pos += seq.len();
-                matched = true;
-                break;
+    while i < chars.len() {
+        if at_line_start {
+            // Measure indentation; blank lines produce nothing at all.
+            let mut width = 0;
+            let mut j = i;
+            while j < chars.len() && (chars[j] == ' ' || chars[j] == '\t') {
+                width += if chars[j] == '\t' { schema.structure.indent_size } else { 1 };
+                j += 1;
             }
+            let line_end = chars[j..].iter().position(|&c| c == '\n').map(|p| j + p).unwrap_or(chars.len());
+            let blank = chars[j..line_end].iter().all(|c| c.is_whitespace());
+            if blank {
+                i = if line_end < chars.len() { line_end + 1 } else { line_end };
+                line += 1;
+                col = 1;
+                continue;
+            }
+            let mut tok = Token::new(Kind::Indent, String::new(), line, 1);
+            tok.width = width;
+            tokens.push(tok);
+            col += j - i;
+            i = j;
+            at_line_start = false;
         }
 
-        if matched {
+        let c = chars[i];
+
+        if c == '\n' {
+            tokens.push(Token::new(Kind::Newline, "\n".to_string(), line, col));
+            i += 1;
+            line += 1;
+            col = 1;
+            at_line_start = true;
             continue;
         }
 
-        // No multichar match: emit single byte as token
-        let byte = bytes[pos];
-        let ch = byte as char;
-
-        tokens.push(Token {
-            lexeme: ch.to_string(),
-            span: (pos, pos + 1),
-            line,
-            col: start_col,
-        });
-
-        if byte == b'\n' {
-            line += 1;
-            col = 1;
-        } else {
+        if c == ' ' || c == '\t' || c == '\r' {
+            i += 1;
             col += 1;
+            continue;
         }
 
-        pos += 1;
+        let start_col = col;
+
+        // Strings: delimiter from the schema, escapes from its table.
+        if schema.lexical.quotes.contains(&c) {
+            let quote = c;
+            let escapes = schema.lexical.escapes.get(&quote);
+            let mut text = String::new();
+            i += 1;
+            col += 1;
+            let mut closed = false;
+            while i < chars.len() {
+                let ch = chars[i];
+                if ch == '\\' && i + 1 < chars.len() {
+                    let next = chars[i + 1];
+                    match escapes.and_then(|table| table.get(&next)) {
+                        Some(replacement) => text.push_str(replacement),
+                        None => {
+                            text.push('\\');
+                            text.push(next);
+                        }
+                    }
+                    i += 2;
+                    col += 2;
+                    continue;
+                }
+                if ch == quote {
+                    closed = true;
+                    i += 1;
+                    col += 1;
+                    break;
+                }
+                if ch == '\n' {
+                    line += 1;
+                    col = 0;
+                }
+                text.push(ch);
+                i += 1;
+                col += 1;
+            }
+            if !closed {
+                return Err(format!("Unterminated {} string", quote));
+            }
+            tokens.push(Token::new(Kind::Str, text, line, start_col));
+            continue;
+        }
+
+        // Numbers: digits, then either a base-N tail or a decimal fraction.
+        if c.is_ascii_digit() {
+            let mut text = String::new();
+            while i < chars.len() && chars[i].is_ascii_digit() {
+                text.push(chars[i]);
+                i += 1;
+            }
+            let at_base_marker = number.base_marker.map_or(false, |m| i < chars.len() && chars[i] == m);
+            if at_base_marker {
+                text.push(chars[i]);
+                i += 1;
+                while i < chars.len() {
+                    let ch = chars[i];
+                    let next_is_digit = i + 1 < chars.len() && chars[i + 1].is_ascii_alphanumeric();
+                    if ch.is_ascii_alphanumeric()
+                        || (number.decimal_point == Some(ch) && next_is_digit)
+                        || (number.exponent_marker == Some(ch) && next_is_digit)
+                    {
+                        text.push(ch);
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+            } else if let Some(point) = number.decimal_point {
+                if i + 1 < chars.len() && chars[i] == point && chars[i + 1].is_ascii_digit() {
+                    text.push(point);
+                    i += 1;
+                    while i < chars.len() && chars[i].is_ascii_digit() {
+                        text.push(chars[i]);
+                        i += 1;
+                    }
+                }
+            }
+            col += text.len();
+            tokens.push(Token::new(Kind::Number, text, line, start_col));
+            continue;
+        }
+
+        // Words: identifiers and keywords alike; meaning is decided later.
+        if is_word_start(c) {
+            let mut text = String::new();
+            while i < chars.len() && is_word_char(chars[i]) {
+                text.push(chars[i]);
+                i += 1;
+            }
+            col += text.chars().count();
+            tokens.push(Token::new(Kind::Word, text, line, start_col));
+            continue;
+        }
+
+        // Operators and punctuation: longest match from the schema.
+        let rest: String = chars[i..].iter().take(8).collect();
+        match operators.iter().find(|op| rest.starts_with(*op)) {
+            Some(op) => {
+                let n = op.chars().count();
+                tokens.push(Token::new(Kind::Op, op.to_string(), line, start_col));
+                i += n;
+                col += n;
+            }
+            None => return Err(format!("Unexpected character '{}' at {}:{}", c, line, col)),
+        }
     }
 
-    // Add EOF marker
-    tokens.push(Token {
-        lexeme: "EOF".to_string(),
-        span: (pos, pos),
-        line,
-        col,
-    });
-
+    tokens.push(Token::new(Kind::Eof, "EOF".to_string(), line, col));
     Ok(tokens)
 }

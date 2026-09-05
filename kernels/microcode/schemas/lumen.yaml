@@ -1,0 +1,136 @@
+# Lumen, as data for the microcode kernel.
+# Python-style indentation, exact numbers, a pipe operator and a small set
+# of built-ins on which the standard library (lib_lumen/) is written.
+name: lumen
+error_prefix: LumenError
+
+lexical:
+  comment: "#"
+  quotes: ['"', "'"]
+  escapes:
+    '"': { n: "\n", t: "\t", "\\": "\\", '"': '"' }
+    "'": { "'": "'", "\\": "\\" }
+  number:
+    decimal_point: "."
+    base_marker: "@"
+    exponent_marker: "^"
+  operators:
+    - "=="
+    - "!="
+    - "<="
+    - ">="
+    - "**"
+    - "->"
+    - "|>"
+    - ".."
+    - "//"
+    - ":"
+    - "="
+    - "+"
+    - "-"
+    - "*"
+    - "/"
+    - "%"
+    - "<"
+    - ">"
+    - "!"
+    - "("
+    - ")"
+    - "["
+    - "]"
+    - "{"
+    - "}"
+    - ","
+    - "."
+    - ";"
+
+structure:
+  blocks: indentation
+  indent_size: 4
+  block_open: "{"
+  block_close: "}"
+  terminators: [";"]
+  group: { open: "(", close: ")" }
+  call: { open: "(", close: ")", separator: "," }
+  array: { open: "[", close: "]", separator: "," }
+
+literals:
+  true: [true]
+  false: [false]
+  null: [null]
+
+operators:
+  binary:
+    "|>": { precedence: 0.5, associativity: left, op: pipe }
+    "or": { precedence: 2, associativity: left, op: or }
+    "and": { precedence: 3, associativity: left, op: and }
+    "==": { precedence: 4, associativity: left, op: eq }
+    "!=": { precedence: 4, associativity: left, op: ne }
+    "<": { precedence: 4, associativity: left, op: lt }
+    ">": { precedence: 4, associativity: left, op: gt }
+    "<=": { precedence: 4, associativity: left, op: le }
+    ">=": { precedence: 4, associativity: left, op: ge }
+    "..": { precedence: 4.5, associativity: left, op: range }
+    "+": { precedence: 5, associativity: left, op: add }
+    "-": { precedence: 5, associativity: left, op: sub }
+    "*": { precedence: 6, associativity: left, op: mul }
+    "/": { precedence: 6, associativity: left, op: div }
+    "%": { precedence: 6, associativity: left, op: rem }
+    "//": { precedence: 6, associativity: left, op: quot }
+    ".": { precedence: 6, associativity: left, op: concat }
+    "**": { precedence: 7, associativity: right, op: pow }
+  unary:
+    "-": { precedence: 8, op: negate }
+    "not": { precedence: 8, op: not }
+    "!": { precedence: 8, op: not }
+
+statements:
+  assignment: "="
+  binding: { keyword: let, mutable_modifier: mut, type_annotation: ":" }
+  branch: { keyword: if, else_keyword: else }
+  loop_while: { keyword: while }
+  loop_until: { keyword: until }
+  loop_for: { keyword: for, in_keyword: in }
+  return: { keyword: return }
+  break: { keyword: break }
+  continue: { keyword: continue }
+  function: { keyword: fn }
+
+# Surface names that reach kernel built-ins. Everything else (print, write,
+# string helpers, number theory) is Lumen code in lib_lumen/.
+functions:
+  emit: emit
+  real: real
+  int_to_string: int_to_string
+  real_to_string: real_to_string
+  rational_to_string: rational_to_string
+  bool_to_string: bool_to_string
+  array_to_string: array_to_string
+  null_to_string: null_to_string
+  kind_to_string: kind_to_string
+  len: len
+  char_at: char_at
+  ord: ord
+  chr: chr
+  error: error
+  kind: kind
+  num: num
+  den: den
+  int: int
+  frac: frac
+  extern: extern
+  push: push
+
+system:
+  args: ARGS
+  memoization: MEMOIZATION
+  kinds:
+    INTEGER: integer
+    RATIONAL: rational
+    REAL: real
+    STRING: string
+    BOOLEAN: boolean
+    ARRAY: array
+    NULL: null
+  integer_constants:
+    REAL_DEFAULT_PRECISION: 15

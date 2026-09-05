@@ -1,1024 +1,589 @@
-// Stage 3: Reduce - Token stream → Instruction tree
+// Stage 3: Reduce — tokens → instruction tree.
 //
-// Parse tokens into Instruction tree using 7 primitives.
-// All semantics come from:
-// - Schema (operator precedence, statement patterns)
-// - Value types (what data exists)
-// - Environment (where data lives)
-//
-// Parser uses Pratt parsing for expressions + top-down for statements.
+// Statements are recognised by the keywords the schema assigns to each
+// statement form; expressions are parsed by precedence climbing over the
+// schema's operator tables. Every construct reduces to the primitive
+// instruction set: `for` and `until` loops, function definitions, indexed
+// assignment and the pipe operator are desugared here.
 
-use super::eval::Value;
-use super::_1_ingest::Token;
-use super::primitives::Instruction;
-use crate::schema::LanguageSchema;
+use std::rc::Rc;
 
-/// Parser: stateful token consumer
+use num_bigint::BigInt;
+use num_traits::ToPrimitive;
+
+use super::_1_ingest::{Kind, Token};
+use super::instruction::{Instruction, Target, TransferKind};
+use super::value::{FunctionDef, Value};
+use crate::schema::{Assoc, LanguageSchema, Op};
+
+pub fn parse(tokens: &[Token], schema: &LanguageSchema) -> Result<Instruction, String> {
+    let mut parser = Parser { tokens, pos: 0, schema, hidden: 0 };
+    parser.program()
+}
+
 struct Parser<'a> {
     tokens: &'a [Token],
     pos: usize,
-    #[allow(dead_code)]
     schema: &'a LanguageSchema,
+    /// Counter for hidden bindings introduced by desugaring.
+    hidden: usize,
 }
 
+const EPSILON: f32 = 0.001;
+
 impl<'a> Parser<'a> {
-    fn new(tokens: &'a [Token], schema: &'a LanguageSchema) -> Self {
-        Parser {
-            tokens,
-            pos: 0,
-            schema,
-        }
+    // ---------- token access ----------
+
+    fn peek(&self) -> &Token {
+        &self.tokens[self.pos.min(self.tokens.len() - 1)]
     }
 
-    fn peek(&self) -> Token {
-        self.tokens.get(self.pos).cloned().unwrap_or_else(|| Token {
-            lexeme: "EOF".to_string(),
-            span: (0, 0),
-            line: 0,
-            col: 0,
-        })
+    fn peek_at(&self, offset: usize) -> &Token {
+        &self.tokens[(self.pos + offset).min(self.tokens.len() - 1)]
     }
 
     fn advance(&mut self) -> Token {
-        let token = self.peek();
-        if self.pos < self.tokens.len() {
+        let tok = self.peek().clone();
+        if self.pos < self.tokens.len() - 1 {
             self.pos += 1;
         }
-        token
+        tok
     }
 
-    fn is_at_end(&self) -> bool {
-        self.peek().lexeme == "EOF"
+    fn at_end(&self) -> bool {
+        self.peek().kind == Kind::Eof
     }
 
-    fn skip_whitespace(&mut self) {
-        while self.peek().lexeme == " " || self.peek().lexeme == "\t" || self.peek().lexeme == "\n"
-        {
+    fn is_word(&self, word: &str) -> bool {
+        self.peek().is(Kind::Word, word)
+    }
+
+    fn is_op(&self, op: &str) -> bool {
+        self.peek().is(Kind::Op, op)
+    }
+
+    fn is_terminator(&self) -> bool {
+        let tok = self.peek();
+        tok.kind == Kind::Newline || (tok.kind == Kind::Op && self.schema.is_terminator(&tok.text))
+    }
+
+    fn skip_terminators(&mut self) {
+        while !self.at_end() && self.is_terminator() {
             self.advance();
         }
     }
 
-    /// Parse a program (sequence of statements)
-    fn parse_program(&mut self) -> Result<Instruction, String> {
+    fn expect_op(&mut self, op: &str, context: &str) -> Result<(), String> {
+        if self.is_op(op) {
+            self.advance();
+            Ok(())
+        } else {
+            Err(format!("Expected '{}' {}, got '{}'", op, context, self.peek().text))
+        }
+    }
+
+    fn expect_word(&mut self, context: &str) -> Result<String, String> {
+        if self.peek().kind == Kind::Word {
+            Ok(self.advance().text)
+        } else {
+            Err(format!("Expected identifier {}, got '{}'", context, self.peek().text))
+        }
+    }
+
+    fn hidden_name(&mut self, purpose: &str) -> String {
+        self.hidden += 1;
+        format!("#{}{}", purpose, self.hidden)
+    }
+
+    // ---------- statements ----------
+
+    fn program(&mut self) -> Result<Instruction, String> {
         let mut stmts = Vec::new();
-
-        while !self.is_at_end() {
-            self.skip_whitespace();
-            if self.is_at_end() {
-                break;
-            }
-
-            let stmt = self.parse_statement()?;
-            stmts.push(stmt);
-            self.skip_whitespace();
-
-            // Skip optional semicolon after statement
-            if self.peek().lexeme == ";" {
-                self.advance();
-                self.skip_whitespace();
-            }
+        self.skip_terminators();
+        while !self.at_end() {
+            stmts.push(self.statement()?);
+            self.skip_terminators();
         }
-
-        Ok(Instruction::sequence(stmts))
+        Ok(Instruction::Sequence(stmts))
     }
 
-    /// Parse a statement
-    fn parse_statement(&mut self) -> Result<Instruction, String> {
-        let keyword = &self.peek().lexeme.clone();
-
-        match keyword.as_str() {
-            "let" => self.parse_let(),
-            "if" => self.parse_if(),
-            "while" => self.parse_while(),
-            "for" => self.parse_for(),
-            "until" => self.parse_until(),
-            "return" => self.parse_return(),
-            "break" => {
-                self.advance();
-                Ok(Instruction::break_stmt())
-            }
-            "continue" => {
-                self.advance();
-                Ok(Instruction::continue_stmt())
-            }
-            "fn" => self.parse_function_def(),
-            _ => self.parse_assignment_or_expression(),
+    fn block(&mut self) -> Result<Instruction, String> {
+        let open = self.schema.structure.block_open.clone();
+        let close = self.schema.structure.block_close.clone();
+        self.skip_terminators();
+        self.expect_op(&open, "to open a block")?;
+        let mut stmts = Vec::new();
+        self.skip_terminators();
+        while !self.is_op(&close) && !self.at_end() {
+            stmts.push(self.statement()?);
+            self.skip_terminators();
         }
+        self.expect_op(&close, "to close a block")?;
+        Ok(Instruction::Sequence(stmts))
     }
 
-    /// Parse: let [mut] name [: type] = expr
-    fn parse_let(&mut self) -> Result<Instruction, String> {
-        self.advance(); // consume 'let'
-        self.skip_whitespace();
-
-        // Skip optional "mut" keyword
-        if self.peek().lexeme == "mut" {
-            self.advance();
-            self.skip_whitespace();
+    fn statement(&mut self) -> Result<Instruction, String> {
+        let schema: &'a LanguageSchema = self.schema;
+        let s = &schema.statements;
+        if self.peek().kind == Kind::Word {
+            let word = self.peek().text.clone();
+            if s.binding.as_ref().map_or(false, |b| b.keyword == word) {
+                return self.binding();
+            }
+            if s.branch.as_ref().map_or(false, |b| b.keyword == word) {
+                return self.branch();
+            }
+            if s.loop_while.as_ref().map_or(false, |k| k.keyword == word) {
+                return self.while_loop();
+            }
+            if s.loop_until.as_ref().map_or(false, |k| k.keyword == word) {
+                return self.until_loop();
+            }
+            if s.loop_for.as_ref().map_or(false, |f| f.keyword == word) {
+                return self.for_loop();
+            }
+            if s.return_.as_ref().map_or(false, |k| k.keyword == word) {
+                return self.return_stmt();
+            }
+            if s.break_.as_ref().map_or(false, |k| k.keyword == word) {
+                self.advance();
+                return Ok(Instruction::transfer(TransferKind::Break, None));
+            }
+            if s.continue_.as_ref().map_or(false, |k| k.keyword == word) {
+                self.advance();
+                return Ok(Instruction::transfer(TransferKind::Continue, None));
+            }
+            if s.function.as_ref().map_or(false, |k| k.keyword == word) {
+                return self.function_def();
+            }
+            if s.pass.as_ref().map_or(false, |k| k.keyword == word) {
+                self.advance();
+                return Ok(Instruction::Sequence(Vec::new()));
+            }
         }
+        self.assignment_or_expression()
+    }
 
-        let name = self.parse_identifier()?;
-        self.skip_whitespace();
-
-        // Skip optional type annotation ": type"
-        if self.peek().lexeme == ":" {
-            self.advance();
-            self.skip_whitespace();
-            // Skip the type name
-            let _ = self.parse_identifier();
-            self.skip_whitespace();
+    fn binding(&mut self) -> Result<Instruction, String> {
+        let binding = self.schema.statements.binding.clone().expect("binding form present");
+        self.advance(); // keyword
+        if let Some(modifier) = &binding.mutable_modifier {
+            if self.is_word(modifier) {
+                self.advance();
+            }
         }
-
-        if self.peek().lexeme != "=" {
-            return Err("Expected '=' in let binding".to_string());
+        let name = self.expect_word("after the binding keyword")?;
+        if let Some(annotation) = &binding.type_annotation {
+            if self.is_op(annotation) {
+                self.advance();
+                self.expect_word("as a type name")?;
+            }
         }
-        self.advance();
-        self.skip_whitespace();
-
-        let value = self.parse_expression()?;
+        let assign = self.assignment_op()?;
+        self.expect_op(&assign, "in a binding")?;
+        let value = self.expression(0.0)?;
         Ok(Instruction::assign(name, value))
     }
 
-    /// Parse: if condition { block } [else { block }]
-    fn parse_if(&mut self) -> Result<Instruction, String> {
-        self.advance(); // consume 'if'
-        self.skip_whitespace();
+    fn assignment_op(&self) -> Result<String, String> {
+        self.schema
+            .statements
+            .assignment
+            .clone()
+            .ok_or_else(|| "This language has no assignment operator".to_string())
+    }
 
-        let condition = self.parse_expression()?;
-        self.skip_whitespace();
+    fn branch(&mut self) -> Result<Instruction, String> {
+        let branch = self.schema.statements.branch.clone().expect("branch form present");
+        self.advance(); // if / elif
+        let condition = self.expression(0.0)?;
+        let then_branch = self.block()?;
 
-        let then_block = self.parse_block()?;
-        self.skip_whitespace();
+        // An else or elif may follow on the same line or after line ends.
+        let mut look = 0;
+        while self.peek_at(look).kind == Kind::Newline
+            || (self.peek_at(look).kind == Kind::Op && self.schema.is_terminator(&self.peek_at(look).text))
+        {
+            look += 1;
+        }
+        let next = self.peek_at(look);
+        let is_elif = branch.elif_keyword.as_deref().map_or(false, |k| next.is(Kind::Word, k));
+        let is_else = next.is(Kind::Word, &branch.else_keyword);
 
-        let else_block = if self.peek().lexeme == "else" {
-            self.advance();
-            self.skip_whitespace();
-            Some(self.parse_block()?)
+        let else_branch = if is_elif {
+            self.pos += look;
+            Some(self.branch()?)
+        } else if is_else {
+            self.pos += look;
+            self.advance(); // else
+            if self.is_word(&branch.keyword) {
+                Some(self.branch()?) // else if
+            } else {
+                Some(self.block()?)
+            }
         } else {
             None
         };
 
-        Ok(Instruction::branch(condition, then_block, else_block))
-    }
-
-    /// Parse: while condition { block }
-    fn parse_while(&mut self) -> Result<Instruction, String> {
-        self.advance(); // consume 'while'
-        self.skip_whitespace();
-
-        let condition = self.parse_expression()?;
-        self.skip_whitespace();
-
-        let body = self.parse_block()?;
-
-        Ok(Instruction::loop_stmt(condition, body))
-    }
-
-    /// Parse: for var in iterable { block }
-    fn parse_for(&mut self) -> Result<Instruction, String> {
-        self.advance(); // consume 'for'
-        self.skip_whitespace();
-
-        // Parse loop variable name (simple identifier, stop at keywords)
-        if !self
-            .peek()
-            .lexeme
-            .chars()
-            .next()
-            .map_or(false, |c| c.is_alphabetic() || c == '_')
-        {
-            return Err(format!("Expected identifier, got: {}", self.peek().lexeme));
-        }
-        let var = self.peek().lexeme.clone();
-        self.advance();
-        self.skip_whitespace();
-
-        // Expect 'in' keyword
-        if self.peek().lexeme != "in" {
-            return Err(format!("Expected 'in' after for loop variable, got: {}", self.peek().lexeme));
-        }
-        self.advance(); // consume 'in'
-        self.skip_whitespace();
-
-        // Parse iterable expression
-        let iterable = self.parse_expression()?;
-        self.skip_whitespace();
-
-        // Parse block
-        let body = self.parse_block()?;
-
-        Ok(Instruction::for_loop(var, iterable, body))
-    }
-
-    /// Parse: until condition { block }
-    fn parse_until(&mut self) -> Result<Instruction, String> {
-        self.advance(); // consume 'until'
-        self.skip_whitespace();
-
-        let condition = self.parse_expression()?;
-        self.skip_whitespace();
-
-        let body = self.parse_block()?;
-
-        Ok(Instruction::until_loop(condition, body))
-    }
-
-    /// Parse: return [expr]
-    fn parse_return(&mut self) -> Result<Instruction, String> {
-        self.advance(); // consume 'return'
-        self.skip_whitespace();
-
-        if self.peek().lexeme == "\n" || self.is_at_end() || self.peek().lexeme == "}" {
-            Ok(Instruction::return_stmt(None))
-        } else {
-            let expr = self.parse_expression()?;
-            Ok(Instruction::return_stmt(Some(expr)))
-        }
-    }
-
-    /// Parse: fn name(params) { block }
-    fn parse_function_def(&mut self) -> Result<Instruction, String> {
-        self.advance(); // consume 'fn'
-        self.skip_whitespace();
-
-        let name = self.parse_identifier()?;
-        self.skip_whitespace();
-
-        if self.peek().lexeme != "(" {
-            return Err("Expected '(' after function name".to_string());
-        }
-        self.advance();
-        self.skip_whitespace();
-
-        // Parse parameters
-        let mut params = Vec::new();
-        while self.peek().lexeme != ")" {
-            params.push(self.parse_identifier()?);
-            self.skip_whitespace();
-            if self.peek().lexeme == "," {
-                self.advance();
-                self.skip_whitespace();
-            }
-        }
-
-        self.advance(); // consume ')'
-        self.skip_whitespace();
-
-        let body = self.parse_block()?;
-
-        Ok(Instruction::FunctionDef {
-            name,
-            params,
-            body: Box::new(body),
+        Ok(Instruction::Branch {
+            condition: Box::new(condition),
+            then_branch: Box::new(then_branch),
+            else_branch: else_branch.map(Box::new),
         })
     }
 
-    /// Parse a block: { statements }
-    fn parse_block(&mut self) -> Result<Instruction, String> {
-        if self.peek().lexeme != "{" {
-            return Err("Expected '{'".to_string());
-        }
+    fn while_loop(&mut self) -> Result<Instruction, String> {
         self.advance();
-        self.skip_whitespace();
-
-        let mut stmts = Vec::new();
-        while self.peek().lexeme != "}" && !self.is_at_end() {
-            let stmt = self.parse_statement()?;
-            stmts.push(stmt);
-            self.skip_whitespace();
-
-            // Skip optional semicolon or newline after statement
-            if self.peek().lexeme == ";" || self.peek().lexeme == "\n" {
-                self.advance();
-                self.skip_whitespace();
-            }
-        }
-
-        if self.peek().lexeme != "}" {
-            return Err("Expected '}'".to_string());
-        }
-        self.advance();
-
-        Ok(Instruction::sequence(stmts))
+        let condition = self.expression(0.0)?;
+        let body = self.block()?;
+        Ok(Instruction::Loop { condition: Box::new(condition), body: Box::new(body), step: None })
     }
 
-    /// Parse assignment or expression statement
-    fn parse_assignment_or_expression(&mut self) -> Result<Instruction, String> {
-        let expr = self.parse_expression()?;
-        self.skip_whitespace();
+    /// `until cond { body }` runs the body first and stops once cond holds:
+    /// an unconditional loop whose step breaks when the condition is true.
+    fn until_loop(&mut self) -> Result<Instruction, String> {
+        self.advance();
+        let condition = self.expression(0.0)?;
+        let body = self.block()?;
+        let stop = Instruction::Branch {
+            condition: Box::new(condition),
+            then_branch: Box::new(Instruction::transfer(TransferKind::Break, None)),
+            else_branch: None,
+        };
+        Ok(Instruction::Loop {
+            condition: Box::new(Instruction::Literal(Value::Bool(true))),
+            body: Box::new(body),
+            step: Some(Box::new(stop)),
+        })
+    }
 
-        if self.peek().lexeme == "=" {
+    /// `for v in range { body }` binds v to the range start and loops while
+    /// v is below the range end, stepping by one after each pass.
+    fn for_loop(&mut self) -> Result<Instruction, String> {
+        let form = self.schema.statements.loop_for.clone().expect("for form present");
+        self.advance();
+        let var = self.expect_word("as the loop variable")?;
+        if !self.is_word(&form.in_keyword) {
+            return Err(format!("Expected '{}' after for loop variable, got: {}", form.in_keyword, self.peek().text));
+        }
+        self.advance();
+        let iterable = self.expression(0.0)?;
+        let body = self.block()?;
+
+        let range = self.hidden_name("range");
+        let bind_range = Instruction::assign(range.clone(), iterable);
+        let bind_var =
+            Instruction::assign(var.clone(), Instruction::unary(Op::RangeStart, Instruction::Variable(range.clone())));
+        let condition = Instruction::binary(
+            Op::Lt,
+            Instruction::Variable(var.clone()),
+            Instruction::unary(Op::RangeEnd, Instruction::Variable(range)),
+        );
+        let step = Instruction::assign(
+            var.clone(),
+            Instruction::binary(Op::Add, Instruction::Variable(var), Instruction::Literal(Value::Number(BigInt::from(1)))),
+        );
+        Ok(Instruction::Sequence(vec![
+            bind_range,
+            bind_var,
+            Instruction::Loop { condition: Box::new(condition), body: Box::new(body), step: Some(Box::new(step)) },
+        ]))
+    }
+
+    fn return_stmt(&mut self) -> Result<Instruction, String> {
+        self.advance();
+        let close = self.schema.structure.block_close.clone();
+        if self.is_terminator() || self.at_end() || self.is_op(&close) {
+            Ok(Instruction::transfer(TransferKind::Return, None))
+        } else {
+            let value = self.expression(0.0)?;
+            Ok(Instruction::transfer(TransferKind::Return, Some(value)))
+        }
+    }
+
+    /// A function definition becomes a binding of a function value.
+    fn function_def(&mut self) -> Result<Instruction, String> {
+        self.advance();
+        let name = self.expect_word("after the function keyword")?;
+        let call = self.schema.structure.call.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
+        self.expect_op(&call.open, "after function name")?;
+        let mut params = Vec::new();
+        while !self.is_op(&call.close) && !self.at_end() {
+            params.push(self.expect_word("as a parameter name")?);
+            if let Some(sep) = &call.separator {
+                if self.is_op(sep) {
+                    self.advance();
+                }
+            }
+        }
+        self.expect_op(&call.close, "after parameters")?;
+        let body = self.block()?;
+        let def = FunctionDef { name: name.clone(), params, body };
+        Ok(Instruction::assign(name, Instruction::Literal(Value::Function(Rc::new(def)))))
+    }
+
+    fn assignment_or_expression(&mut self) -> Result<Instruction, String> {
+        let expr = self.expression(0.0)?;
+        let assign = match &self.schema.statements.assignment {
+            Some(op) if self.is_op(op) => op.clone(),
+            _ => return Ok(expr),
+        };
+        self.advance();
+        let value = self.expression(0.0)?;
+        match expr {
+            Instruction::Variable(name) => Ok(Instruction::assign(name, value)),
+            Instruction::Operate { op: Op::Index, mut operands } if operands.len() == 2 => {
+                let index = operands.pop().unwrap();
+                match operands.pop().unwrap() {
+                    Instruction::Variable(name) => Ok(Instruction::Assign {
+                        target: Target::Index { name, index: Box::new(index) },
+                        value: Box::new(value),
+                    }),
+                    _ => Err("Invalid assignment target".to_string()),
+                }
+            }
+            _ => Err(format!("Invalid assignment target before '{}'", assign)),
+        }
+    }
+
+    // ---------- expressions ----------
+
+    fn expression(&mut self, min_prec: f32) -> Result<Instruction, String> {
+        let mut left = self.prefix()?;
+        loop {
+            let tok = self.peek();
+            if tok.kind != Kind::Op && tok.kind != Kind::Word {
+                break;
+            }
+            let info = match self.schema.operators.binary.get(&tok.text).cloned() {
+                Some(info) => info,
+                None => break,
+            };
+            if info.precedence < min_prec {
+                break;
+            }
             self.advance();
-            self.skip_whitespace();
-            let value = self.parse_expression()?;
-
-            // Handle three cases:
-            // 1. MEMOIZATION assignment (system control)
-            if let Instruction::Variable(name) = &expr {
-                if name == "MEMOIZATION" {
-                    // Extract boolean value from either Variable or Literal
-                    match &value {
-                        Instruction::Variable(bool_str) => {
-                            match bool_str.as_str() {
-                                "true" => return Ok(Instruction::SetMemoization { enabled: true }),
-                                "false" => return Ok(Instruction::SetMemoization { enabled: false }),
-                                _ => return Err(format!("MEMOIZATION must be set to 'true' or 'false', got: {}", bool_str)),
-                            }
-                        }
-                        Instruction::Literal(val) => {
-                            if let crate::kernel::eval::Value::Bool(b) = val {
-                                return Ok(Instruction::SetMemoization { enabled: *b });
-                            }
-                            return Err("MEMOIZATION must be set to a boolean literal (true or false)".to_string());
-                        }
-                        _ => {
-                            return Err("MEMOIZATION must be set to a boolean literal (true or false)".to_string());
-                        }
+            let next_min = if info.associativity == Assoc::Left { info.precedence + EPSILON } else { info.precedence };
+            let right = self.expression(next_min)?;
+            left = match info.op {
+                Op::Pipe => match right {
+                    Instruction::Invoke { function, mut args } => {
+                        args.insert(0, left);
+                        Instruction::Invoke { function, args }
                     }
-                }
-            }
+                    _ => return Err("Pipe operator requires a function call on the right side".to_string()),
+                },
+                op => Instruction::binary(op, left, right),
+            };
+        }
+        Ok(left)
+    }
 
-            // 2. Simple assignment: name = value
-            if let Instruction::Variable(name) = expr {
-                return Ok(Instruction::assign(name, value));
-            }
+    fn prefix(&mut self) -> Result<Instruction, String> {
+        let tok = self.peek().clone();
+        let schema: &'a LanguageSchema = self.schema;
+        let structure = &schema.structure;
 
-            // 2. Indexed assignment: arr[i] = value
-            // Check if expr is an Operate::Binary with "[]" operator
-            if let Instruction::Operate { kind: super::primitives::OperateKind::Binary(op), operands } = expr {
-                if op == "[]" && operands.len() == 2 {
-                    // Extract array name from the left operand
-                    if let Instruction::Variable(name) = &operands[0] {
-                        let index = operands[1].clone();
-                        return Ok(Instruction::indexed_assign(name.clone(), index, value));
-                    }
-                }
+        // Unary operators (words such as `not` or symbols such as `-`).
+        if tok.kind == Kind::Op || tok.kind == Kind::Word {
+            if let Some(info) = schema.operators.unary.get(&tok.text).cloned() {
+                self.advance();
+                let operand = self.expression(info.precedence)?;
+                return Ok(Instruction::unary(info.op, operand));
             }
-
-            return Err("Invalid assignment target".to_string());
         }
 
+        let primary = match tok.kind {
+            Kind::Number => {
+                self.advance();
+                Instruction::Literal(self.number_literal(&tok.text)?)
+            }
+            Kind::Str => {
+                self.advance();
+                Instruction::Literal(Value::String(tok.text))
+            }
+            Kind::Word => {
+                let lits = &schema.literals;
+                if lits.true_words.contains(&tok.text) {
+                    self.advance();
+                    Instruction::Literal(Value::Bool(true))
+                } else if lits.false_words.contains(&tok.text) {
+                    self.advance();
+                    Instruction::Literal(Value::Bool(false))
+                } else if lits.null_words.contains(&tok.text) {
+                    self.advance();
+                    Instruction::Literal(Value::Null)
+                } else {
+                    self.advance();
+                    match structure.call.clone() {
+                        Some(call) if self.is_op(&call.open) => {
+                            self.advance();
+                            let args = self.list(&call.close, call.separator.as_deref())?;
+                            Instruction::Invoke { function: tok.text, args }
+                        }
+                        _ => Instruction::Variable(tok.text),
+                    }
+                }
+            }
+            Kind::Op => {
+                if let Some(group) = structure.group.clone() {
+                    if tok.text == group.open {
+                        self.advance();
+                        let inner = self.expression(0.0)?;
+                        self.expect_op(&group.close, "to close a group")?;
+                        return self.postfix(inner);
+                    }
+                }
+                if let Some(array) = structure.array.clone() {
+                    if tok.text == array.open {
+                        self.advance();
+                        let elements = self.list(&array.close, array.separator.as_deref())?;
+                        return self.postfix(Instruction::Operate { op: Op::ArrayLiteral, operands: elements });
+                    }
+                }
+                return Err(format!("Unexpected token: {}", tok.text));
+            }
+            Kind::Newline | Kind::Eof | Kind::Indent => {
+                return Err("Expected an expression".to_string());
+            }
+        };
+        self.postfix(primary)
+    }
+
+    /// Postfix indexing: `expr[index]`, repeatable.
+    fn postfix(&mut self, mut expr: Instruction) -> Result<Instruction, String> {
+        let array = match self.schema.structure.array.clone() {
+            Some(a) => a,
+            None => return Ok(expr),
+        };
+        while self.is_op(&array.open) {
+            self.advance();
+            let index = self.expression(0.0)?;
+            self.expect_op(&array.close, "after array index")?;
+            expr = Instruction::binary(Op::Index, expr, index);
+        }
         Ok(expr)
     }
 
-    /// Parse expression (lowest precedence)
-    fn parse_expression(&mut self) -> Result<Instruction, String> {
-        self.parse_pipe()
-    }
-
-    /// Parse pipe operator (lowest precedence: 0.5)
-    fn parse_pipe(&mut self) -> Result<Instruction, String> {
-        let mut left = self.parse_logical_or()?;
-        self.skip_whitespace();
-
-        while self.peek().lexeme == "|>" {
-            self.advance();
-            self.skip_whitespace();
-            let right = self.parse_logical_or()?;
-            self.skip_whitespace();
-            left = Instruction::binary("|>".to_string(), left, right);
-        }
-
-        Ok(left)
-    }
-
-    /// Parse logical OR (lowest precedence after assignment)
-    fn parse_logical_or(&mut self) -> Result<Instruction, String> {
-        let mut left = self.parse_logical_and()?;
-        self.skip_whitespace();
-
-        loop {
-            match self.peek().lexeme.as_str() {
-                "or" | "||" => {
-                    let op = self.peek().lexeme.clone();
+    /// Comma-separated expressions up to `close`, which is consumed.
+    fn list(&mut self, close: &str, separator: Option<&str>) -> Result<Vec<Instruction>, String> {
+        let mut items = Vec::new();
+        while !self.is_op(close) {
+            if self.at_end() {
+                return Err(format!("Expected '{}'", close));
+            }
+            items.push(self.expression(0.0)?);
+            match separator {
+                Some(sep) if self.is_op(sep) => {
                     self.advance();
-                    self.skip_whitespace();
-                    let right = self.parse_logical_and()?;
-                    self.skip_whitespace();
-                    left = Instruction::binary(op, left, right);
                 }
-                _ => break,
+                _ => {}
             }
         }
-
-        Ok(left)
-    }
-
-    /// Parse logical AND
-    fn parse_logical_and(&mut self) -> Result<Instruction, String> {
-        let mut left = self.parse_comparison()?;
-        self.skip_whitespace();
-
-        loop {
-            match self.peek().lexeme.as_str() {
-                "and" | "&&" => {
-                    let op = self.peek().lexeme.clone();
-                    self.advance();
-                    self.skip_whitespace();
-                    let right = self.parse_comparison()?;
-                    self.skip_whitespace();
-                    left = Instruction::binary(op, left, right);
-                }
-                _ => break,
-            }
-        }
-
-        Ok(left)
-    }
-
-    /// Parse comparison operators
-    fn parse_comparison(&mut self) -> Result<Instruction, String> {
-        let mut left = self.parse_range()?;
-        self.skip_whitespace();
-
-        loop {
-            let op = match self.peek().lexeme.as_str() {
-                "==" | "!=" | "<" | ">" | "<=" | ">=" => self.peek().lexeme.clone(),
-                _ => break,
-            };
-            self.advance();
-            self.skip_whitespace();
-            let right = self.parse_range()?;
-            self.skip_whitespace();
-            left = Instruction::binary(op, left, right);
-        }
-
-        Ok(left)
-    }
-
-    /// Parse range operator (..)
-    fn parse_range(&mut self) -> Result<Instruction, String> {
-        let mut left = self.parse_additive()?;
-        self.skip_whitespace();
-
-        while self.peek().lexeme == ".." {
-            self.advance();
-            self.skip_whitespace();
-            let right = self.parse_additive()?;
-            self.skip_whitespace();
-            left = Instruction::binary("..".to_string(), left, right);
-        }
-
-        Ok(left)
-    }
-
-    /// Parse additive operators
-    fn parse_additive(&mut self) -> Result<Instruction, String> {
-        let mut left = self.parse_multiplicative()?;
-        self.skip_whitespace();
-
-        loop {
-            let op = match self.peek().lexeme.as_str() {
-                "+" | "-" => self.peek().lexeme.clone(),
-                _ => break,
-            };
-            self.advance();
-            self.skip_whitespace();
-            let right = self.parse_multiplicative()?;
-            self.skip_whitespace();
-            left = Instruction::binary(op, left, right);
-        }
-
-        Ok(left)
-    }
-
-    /// Parse multiplicative operators
-    fn parse_multiplicative(&mut self) -> Result<Instruction, String> {
-        let mut left = self.parse_exponentiation()?;
-        self.skip_whitespace();
-
-        loop {
-            let op = match self.peek().lexeme.as_str() {
-                "*" | "/" | "%" | "//" | "." => self.peek().lexeme.clone(),
-                _ => break,
-            };
-            self.advance();
-            self.skip_whitespace();
-            let right = self.parse_exponentiation()?;
-            self.skip_whitespace();
-            left = Instruction::binary(op, left, right);
-        }
-
-        Ok(left)
-    }
-
-    /// Parse exponentiation operator (right-associative)
-    fn parse_exponentiation(&mut self) -> Result<Instruction, String> {
-        let left = self.parse_unary()?;
-        self.skip_whitespace();
-
-        if self.peek().lexeme == "**" {
-            self.advance();
-            self.skip_whitespace();
-            let right = self.parse_exponentiation()?; // Right-associative!
-            return Ok(Instruction::binary("**".to_string(), left, right));
-        }
-
-        Ok(left)
-    }
-
-    /// Parse unary operators
-    fn parse_unary(&mut self) -> Result<Instruction, String> {
-        let op = match self.peek().lexeme.as_str() {
-            "-" | "not" | "!" => self.peek().lexeme.clone(),
-            _ => return self.parse_primary(),
-        };
-
         self.advance();
-        self.skip_whitespace();
-        let operand = self.parse_unary()?;
-        Ok(Instruction::unary(op, operand))
+        Ok(items)
     }
 
-    /// Parse primary expression
-    fn parse_primary(&mut self) -> Result<Instruction, String> {
-        let lexeme = &self.peek().lexeme.clone();
+    // ---------- number literals ----------
 
-        // Numbers (integer or float or base-N)
-        if lexeme.chars().next().map_or(false, |c| c.is_ascii_digit()) {
-            let num_str = self.consume_number()?;
-
-            // Check if it's a base-N literal (contains '@')
-            if num_str.contains('@') {
-                let (numerator, denominator) = Self::parse_base_n_literal(&num_str)?;
-                // Base-N literals with fractional part are Real
-                if denominator != num_bigint::BigInt::from(1) {
-                    let precision = Self::calculate_precision(&num_str);
-                    return Ok(Instruction::literal(Value::Real { numerator, denominator, precision }));
+    fn number_literal(&self, text: &str) -> Result<Value, String> {
+        let syntax = &self.schema.lexical.number;
+        if let Some(marker) = syntax.base_marker {
+            if text.contains(marker) {
+                let (numerator, denominator) = parse_base_n(text, marker, syntax.decimal_point, syntax.exponent_marker)?;
+                return Ok(if denominator == BigInt::from(1) {
+                    Value::Number(numerator)
                 } else {
-                    // Base-N integer literal
-                    return Ok(Instruction::literal(Value::Number(numerator)));
-                }
-            }
-
-            // Check if it's a float (contains decimal point)
-            if num_str.contains('.') {
-                let (numerator, denominator) = Self::parse_float(&num_str)?;
-                // Float literals are Real values (not Rational)
-                // Precision is determined by significant figures
-                let precision = Self::calculate_precision(&num_str);
-                return Ok(Instruction::literal(Value::Real { numerator, denominator, precision }));
-            } else {
-                // Parse as integer
-                let num = num_str
-                    .parse::<num_bigint::BigInt>()
-                    .map_err(|_| format!("Invalid number: {}", num_str))?;
-                return Ok(Instruction::literal(Value::Number(num)));
+                    Value::Real { numerator, denominator, precision: significant_figures(text) }
+                });
             }
         }
-
-        // Strings - double-quoted
-        if lexeme == "\"" {
-            let string_val = self.consume_string('"')?;
-            return Ok(Instruction::literal(Value::String(string_val)));
-        }
-
-        // Strings - single-quoted
-        if lexeme == "'" {
-            let string_val = self.consume_string('\'')?;
-            return Ok(Instruction::literal(Value::String(string_val)));
-        }
-
-        // Booleans
-        if lexeme == "true" || lexeme == "false" {
-            let val = lexeme == "true";
-            self.advance();
-            return Ok(Instruction::literal(Value::Bool(val)));
-        }
-
-        // Null
-        if lexeme == "null" {
-            self.advance();
-            return Ok(Instruction::literal(Value::Null));
-        }
-
-        // Array literal
-        if lexeme == "[" {
-            self.advance();
-            self.skip_whitespace();
-            let mut elements = Vec::new();
-
-            while self.peek().lexeme != "]" {
-                elements.push(self.parse_expression()?);
-                self.skip_whitespace();
-                if self.peek().lexeme == "," {
-                    self.advance();
-                    self.skip_whitespace();
-                }
-            }
-
-            if self.peek().lexeme != "]" {
-                return Err("Expected ']'".to_string());
-            }
-            self.advance();
-
-            // Return an instruction that constructs an array from the elements
-            return Ok(Instruction::construct_array(elements));
-        }
-
-        // Parenthesized expression
-        if lexeme == "(" {
-            self.advance();
-            self.skip_whitespace();
-            let expr = self.parse_expression()?;
-            self.skip_whitespace();
-            if self.peek().lexeme != ")" {
-                return Err("Expected ')'".to_string());
-            }
-            self.advance();
-            return Ok(expr);
-        }
-
-        // Identifiers (variables or function calls)
-        if lexeme
-            .chars()
-            .next()
-            .map_or(false, |c| c.is_alphabetic() || c == '_')
-        {
-            let name = self.parse_identifier()?;
-            self.skip_whitespace();
-
-            if self.peek().lexeme == "(" {
-                self.advance();
-                self.skip_whitespace();
-
-                let mut args = Vec::new();
-                while self.peek().lexeme != ")" {
-                    args.push(self.parse_expression()?);
-                    self.skip_whitespace();
-                    if self.peek().lexeme == "," {
-                        self.advance();
-                        self.skip_whitespace();
-                    }
-                }
-
-                self.advance(); // consume ')'
-                let mut expr = Instruction::invoke(name, args);
-
-                // Handle postfix array indexing on function call results: func()[i]
-                while self.peek().lexeme == "[" {
-                    self.advance(); // consume '['
-                    self.skip_whitespace();
-                    let index_expr = self.parse_expression()?;
-                    self.skip_whitespace();
-                    if self.peek().lexeme != "]" {
-                        return Err("Expected ']' after array index".to_string());
-                    }
-                    self.advance(); // consume ']'
-                    self.skip_whitespace();
-
-                    expr = Instruction::binary("[]".to_string(), expr, index_expr);
-                }
-
-                return Ok(expr);
-            }
-
-            let mut expr = Instruction::variable(name);
-            self.skip_whitespace();
-
-            // Handle postfix array indexing: var[i]
-            while self.peek().lexeme == "[" {
-                self.advance(); // consume '['
-                self.skip_whitespace();
-                let index_expr = self.parse_expression()?;
-                self.skip_whitespace();
-                if self.peek().lexeme != "]" {
-                    return Err("Expected ']' after array index".to_string());
-                }
-                self.advance(); // consume ']'
-                self.skip_whitespace();
-
-                expr = Instruction::binary("[]".to_string(), expr, index_expr);
-            }
-
-            return Ok(expr);
-        }
-
-        Err(format!("Unexpected token: {}", lexeme))
-    }
-
-    /// Parse identifier (handling multi-char identifiers from character tokens)
-    /// Also consumes multi-char keyword tokens that are part of the identifier
-    fn parse_identifier(&mut self) -> Result<String, String> {
-        if !self
-            .peek()
-            .lexeme
-            .chars()
-            .next()
-            .map_or(false, |c| c.is_alphabetic() || c == '_')
-        {
-            return Err(format!("Expected identifier, got: {}", self.peek().lexeme));
-        }
-
-        let mut name = self.peek().lexeme.clone();
-        self.advance();
-
-        loop {
-            let next_lexeme = &self.peek().lexeme;
-
-            // Check if next token is single-char alphanumeric/underscore
-            if next_lexeme.len() == 1 {
-                let ch = next_lexeme.as_bytes()[0] as char;
-                if ch.is_alphanumeric() || ch == '_' {
-                    name.push_str(next_lexeme);
-                    self.advance();
-                    continue;
-                }
-            } else {
-                // Check if multi-char token is all alphabetic/underscore
-                // (which means it could be a keyword that's part of identifier)
-                if next_lexeme.chars().all(|c| c.is_alphabetic() || c == '_') {
-                    name.push_str(next_lexeme);
-                    self.advance();
-                    continue;
-                }
-            }
-            break;
-        }
-
-        Ok(name)
-    }
-
-    /// Consume a number (handling multi-char numbers and base-N literals)
-    /// For base-N literals: <base>@<digits>[.<fraction>][^<exponent>]
-    fn consume_number(&mut self) -> Result<String, String> {
-        let mut num_str = self.peek().lexeme.clone();
-        self.advance();
-
-        loop {
-            let token = self.peek();
-            let ch = token.lexeme.as_str();
-            if ch.len() == 1 {
-                let b = ch.as_bytes()[0] as char;
-                // Consume digits, '.', '@', and '^' for base-N literals
-                if b.is_ascii_digit() || b == '.' || b == '@' || b == '^' {
-                    num_str.push_str(ch);
-                    self.advance();
-                    continue;
-                }
-                // For base-N literals, also consume letters (a-z, A-Z) after '@'
-                if num_str.contains('@') && (b.is_ascii_lowercase() || b.is_ascii_uppercase()) {
-                    num_str.push_str(ch);
-                    self.advance();
-                    continue;
-                }
-            }
-            break;
-        }
-
-        Ok(num_str)
-    }
-
-    /// Calculate precision (significant figures) from a float literal string
-    /// E.g., "1.5" -> 15, "3.14" -> 15, "0.05" -> 15 (minimum 15 significant figures)
-    fn calculate_precision(s: &str) -> usize {
-        // Remove decimal point and minus sign
-        let without_dot: String = s.chars().filter(|c| *c != '.' && *c != '-').collect();
-
-        // Count leading zeros to skip them
-        let leading_zeros = without_dot.chars().take_while(|c| *c == '0').count();
-
-        // Significant figures = total digits minus leading zeros
-        let significant_count = without_dot.len().saturating_sub(leading_zeros);
-
-        // Use at least 15 significant figures as default minimum
-        std::cmp::max(significant_count.max(1), 15)
-    }
-
-    /// Parse a float string to (numerator, denominator) rational representation
-    /// E.g., "1.5" -> (3, 2), "3.14" -> (314, 100)
-    fn parse_float(num_str: &str) -> Result<(num_bigint::BigInt, num_bigint::BigInt), String> {
-        use num_bigint::BigInt;
-
-        if let Some(dot_pos) = num_str.find('.') {
-            let before_dot = &num_str[..dot_pos];
-            let after_dot = &num_str[dot_pos + 1..];
-
-            // Count decimal places to determine denominator
-            let decimal_places = after_dot.len();
-            let denominator = BigInt::from(10).pow(decimal_places as u32);
-
-            // Parse integer and fractional parts
-            let integer_part: BigInt = if before_dot.is_empty() || before_dot == "-" {
-                BigInt::from(0)
-            } else {
-                before_dot.parse::<BigInt>()
-                    .map_err(|_| format!("Failed to parse number: {}", num_str))?
-            };
-
-            let fractional_part: BigInt = after_dot.parse::<BigInt>()
-                .map_err(|_| format!("Failed to parse number: {}", num_str))?;
-
-            // Combine integer and fractional parts: (integer * 10^decimal_places) + fractional
-            let is_negative = before_dot.starts_with('-');
-            let numerator = if is_negative {
-                integer_part * &denominator - fractional_part
-            } else {
-                integer_part * &denominator + fractional_part
-            };
-
-            Ok((numerator, denominator))
-        } else {
-            Err(format!("parse_float called on non-float: {}", num_str))
-        }
-    }
-
-    /// Parse a base-N numeric literal: <base>@<digits>[.<fraction>][^<exponent>]
-    /// Examples: 16@FF, 2@1011, 36@1234.wxyz, 10@123.45^6
-    /// Returns (numerator, denominator) where denominator is 1 for integers
-    fn parse_base_n_literal(num_str: &str) -> Result<(num_bigint::BigInt, num_bigint::BigInt), String> {
-        use num_bigint::BigInt;
-        use num_traits::cast::ToPrimitive;
-
-        // Find the '@' separator
-        let at_pos = num_str.find('@')
-            .ok_or_else(|| format!("Invalid base-N literal: missing '@' in '{}'", num_str))?;
-
-        // Parse base (always in decimal)
-        let base_str = &num_str[..at_pos];
-        let base: u32 = base_str.parse()
-            .map_err(|_| format!("Invalid base in literal '{}': base must be decimal integer", num_str))?;
-
-        // Validate base range [2, 36]
-        if base < 2 || base > 36 {
-            return Err(format!("Invalid base {}: must be between 2 and 36", base));
-        }
-
-        // Parse the rest: <digits>[.<fraction>][^<exponent>]
-        let rest = &num_str[at_pos + 1..];
-
-        if rest.is_empty() {
-            return Err(format!("Invalid base-N literal '{}': missing digits after '@'", num_str));
-        }
-
-        // Split by '^' for exponent
-        let (mantissa_str, exp_str) = if let Some(exp_pos) = rest.find('^') {
-            let mantissa = &rest[..exp_pos];
-            let exp = &rest[exp_pos + 1..];
-            if exp.is_empty() {
-                return Err(format!("Invalid base-N literal '{}': missing digits after '^'", num_str));
-            }
-            (mantissa, Some(exp))
-        } else {
-            (rest, None)
-        };
-
-        // Split mantissa by '.' for fractional part
-        let (int_str, frac_str) = if let Some(dot_pos) = mantissa_str.find('.') {
-            let int_part = &mantissa_str[..dot_pos];
-            let frac_part = &mantissa_str[dot_pos + 1..];
-            if frac_part.is_empty() {
-                return Err(format!("Invalid base-N literal '{}': missing digits after '.'", num_str));
-            }
-            (int_part, Some(frac_part))
-        } else {
-            (mantissa_str, None)
-        };
-
-        if int_str.is_empty() {
-            return Err(format!("Invalid base-N literal '{}': missing digits before '.' or '^'", num_str));
-        }
-
-        // Parse integer part
-        let int_value = Self::parse_digits_in_base(int_str, base)
-            .map_err(|e| format!("Invalid base-N literal '{}': {}", num_str, e))?;
-
-        // Parse fractional part if present
-        let (numerator, denominator) = if let Some(frac) = frac_str {
-            let frac_value = Self::parse_digits_in_base(frac, base)
-                .map_err(|e| format!("Invalid base-N literal '{}': {}", num_str, e))?;
-
-            // fractional value = frac_value / base^frac_digits
-            let frac_digits = frac.len() as u32;
-            let frac_denominator = BigInt::from(base).pow(frac_digits);
-
-            // Combined: int_value + frac_value/frac_denominator
-            // = (int_value * frac_denominator + frac_value) / frac_denominator
-            let combined_numerator = int_value * &frac_denominator + frac_value;
-            (combined_numerator, frac_denominator)
-        } else {
-            // Integer literal (no fraction)
-            (int_value, BigInt::from(1))
-        };
-
-        // Apply exponent if present
-        let (final_numerator, final_denominator) = if let Some(exp) = exp_str {
-            let exp_value = Self::parse_digits_in_base(exp, base)
-                .map_err(|e| format!("Invalid base-N literal '{}': exponent {}", num_str, e))?;
-
-            // Convert exponent to u32
-            let exp_u32 = exp_value.to_u32()
-                .ok_or_else(|| format!("Invalid base-N literal '{}': exponent too large", num_str))?;
-
-            // Multiply by base^exponent
-            let multiplier = BigInt::from(base).pow(exp_u32);
-            (numerator * multiplier, denominator)
-        } else {
-            (numerator, denominator)
-        };
-
-        Ok((final_numerator, final_denominator))
-    }
-
-    /// Parse a string of digits in the given base
-    /// Digits: 0-9 for values 0-9, a-z/A-Z for values 10-35
-    fn parse_digits_in_base(digits: &str, base: u32) -> Result<num_bigint::BigInt, String> {
-        use num_bigint::BigInt;
-        let mut result = BigInt::from(0);
-        let base_bigint = BigInt::from(base);
-
-        for ch in digits.chars() {
-            let digit_value = match ch {
-                '0'..='9' => (ch as u32) - ('0' as u32),
-                'a'..='z' => (ch as u32) - ('a' as u32) + 10,
-                'A'..='Z' => (ch as u32) - ('A' as u32) + 10,
-                _ => return Err(format!("invalid digit '{}' for base {}", ch, base)),
-            };
-
-            if digit_value >= base {
-                return Err(format!("digit '{}' (value {}) is not valid in base {}", ch, digit_value, base));
-            }
-
-            result = result * &base_bigint + BigInt::from(digit_value);
-        }
-
-        Ok(result)
-    }
-
-    /// Consume a string (handling escape sequences)
-    /// quote_char: '"' for double-quoted strings, '\'' for single-quoted strings
-    fn consume_string(&mut self, quote_char: char) -> Result<String, String> {
-        let quote_str = quote_char.to_string();
-        self.advance(); // consume opening quote
-        let mut string_val = String::new();
-
-        while self.peek().lexeme != quote_str && !self.is_at_end() {
-            if self.peek().lexeme == "\\" {
-                self.advance();
-                let token = self.peek();
-                let next = token.lexeme.as_str();
-
-                if quote_char == '\'' {
-                    // Single-quoted strings: only \' and \\ escapes
-                    match next {
-                        "'" => {
-                            string_val.push('\'');
-                            self.advance();
-                        }
-                        "\\" => {
-                            string_val.push('\\');
-                            self.advance();
-                        }
-                        _ => {
-                            string_val.push('\\');
-                            string_val.push_str(next);
-                            self.advance();
-                        }
-                    }
-                } else {
-                    // Double-quoted strings: \", \\, \n, \t escapes
-                    match next {
-                        "\"" => {
-                            string_val.push('"');
-                            self.advance();
-                        }
-                        "\\" => {
-                            string_val.push('\\');
-                            self.advance();
-                        }
-                        "n" => {
-                            string_val.push('\n');
-                            self.advance();
-                        }
-                        "t" => {
-                            string_val.push('\t');
-                            self.advance();
-                        }
-                        _ => {
-                            string_val.push('\\');
-                            string_val.push_str(next);
-                            self.advance();
-                        }
-                    }
-                }
-            } else {
-                let token = self.peek();
-                string_val.push_str(&token.lexeme);
-                self.advance();
+        if let Some(point) = syntax.decimal_point {
+            if let Some(dot) = text.find(point) {
+                let before = &text[..dot];
+                let after = &text[dot + point.len_utf8()..];
+                let denominator = BigInt::from(10).pow(after.len() as u32);
+                let integer: BigInt = if before.is_empty() { BigInt::from(0) } else { parse_int(before, text)? };
+                let fraction = parse_int(after, text)?;
+                let numerator = integer * &denominator + fraction;
+                return Ok(Value::Real { numerator, denominator, precision: significant_figures(text) });
             }
         }
-
-        if self.peek().lexeme != quote_str {
-            return Err(format!("Unterminated {} string", quote_char));
-        }
-        self.advance();
-
-        Ok(string_val)
+        Ok(Value::Number(parse_int(text, text)?))
     }
 }
 
-/// Parse tokens to instruction tree
-pub fn parse(tokens: Vec<Token>, schema: &LanguageSchema) -> Result<Instruction, String> {
-    let mut parser = Parser::new(&tokens, schema);
-    parser.parse_program()
+fn parse_int(digits: &str, whole: &str) -> Result<BigInt, String> {
+    digits.parse::<BigInt>().map_err(|_| format!("Invalid number: {}", whole))
+}
+
+/// Significant figures of a decimal literal, with a floor of 15.
+fn significant_figures(text: &str) -> usize {
+    let digits: String = text.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    let leading_zeros = digits.chars().take_while(|c| *c == '0').count();
+    digits.len().saturating_sub(leading_zeros).max(1).max(15)
+}
+
+/// `<base>@<digits>[.<fraction>][^<exponent>]`, e.g. `16@FF`, `2@1011`, `10@1.5^3`.
+fn parse_base_n(text: &str, marker: char, point: Option<char>, exponent: Option<char>) -> Result<(BigInt, BigInt), String> {
+    let at = text.find(marker).ok_or_else(|| format!("Invalid base-N literal: missing '{}' in '{}'", marker, text))?;
+    let base: u32 = text[..at]
+        .parse()
+        .map_err(|_| format!("Invalid base in literal '{}': base must be decimal integer", text))?;
+    if !(2..=36).contains(&base) {
+        return Err(format!("Invalid base {}: must be between 2 and 36", base));
+    }
+    let rest = &text[at + marker.len_utf8()..];
+    if rest.is_empty() {
+        return Err(format!("Invalid base-N literal '{}': missing digits after '{}'", text, marker));
+    }
+    let (mantissa, exp) = match exponent.and_then(|e| rest.find(e).map(|p| (p, e))) {
+        Some((p, e)) => (&rest[..p], Some(&rest[p + e.len_utf8()..])),
+        None => (rest, None),
+    };
+    let (int_part, frac_part) = match point.and_then(|d| mantissa.find(d).map(|p| (p, d))) {
+        Some((p, d)) => (&mantissa[..p], Some(&mantissa[p + d.len_utf8()..])),
+        None => (mantissa, None),
+    };
+    if int_part.is_empty() {
+        return Err(format!("Invalid base-N literal '{}': missing digits", text));
+    }
+    let int_value = digits_in_base(int_part, base).map_err(|e| format!("Invalid base-N literal '{}': {}", text, e))?;
+    let (mut numerator, denominator) = match frac_part {
+        Some(frac) if !frac.is_empty() => {
+            let frac_value = digits_in_base(frac, base).map_err(|e| format!("Invalid base-N literal '{}': {}", text, e))?;
+            let scale = BigInt::from(base).pow(frac.len() as u32);
+            (int_value * &scale + frac_value, scale)
+        }
+        Some(_) => return Err(format!("Invalid base-N literal '{}': missing digits after '.'", text)),
+        None => (int_value, BigInt::from(1)),
+    };
+    if let Some(exp) = exp {
+        if exp.is_empty() {
+            return Err(format!("Invalid base-N literal '{}': missing digits after exponent marker", text));
+        }
+        let e = digits_in_base(exp, base)
+            .map_err(|e| format!("Invalid base-N literal '{}': exponent {}", text, e))?
+            .to_u32()
+            .ok_or_else(|| format!("Invalid base-N literal '{}': exponent too large", text))?;
+        numerator *= BigInt::from(base).pow(e);
+    }
+    Ok((numerator, denominator))
+}
+
+fn digits_in_base(digits: &str, base: u32) -> Result<BigInt, String> {
+    let mut result = BigInt::from(0);
+    for ch in digits.chars() {
+        let value = match ch {
+            '0'..='9' => ch as u32 - '0' as u32,
+            'a'..='z' => ch as u32 - 'a' as u32 + 10,
+            'A'..='Z' => ch as u32 - 'A' as u32 + 10,
+            _ => return Err(format!("invalid digit '{}' for base {}", ch, base)),
+        };
+        if value >= base {
+            return Err(format!("digit '{}' (value {}) is not valid in base {}", ch, value, base));
+        }
+        result = result * base + value;
+    }
+    Ok(result)
 }

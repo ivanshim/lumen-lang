@@ -11,3 +11,5 @@ path = "src/lib.rs"
 num-bigint = "0.4"
 num-traits = "0.2"
 num-integer = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"

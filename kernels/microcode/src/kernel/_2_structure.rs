@@ -1,143 +1,86 @@
-// Stage 2: Structure - Indentation and block processing
+// Stage 2: Structure — tokens → tokens with explicit block delimiters.
 //
-// For indentation-based languages (Lumen, Python):
-//   Convert indentation levels → { } block markers
-// For brace-based languages (Rust):
-//   Just pass through (braces already in token stream)
-//
-// Algorithm:
-// 1. Process line-by-line to track indentation
-// 2. When indentation increases, insert {
-// 3. When indentation decreases, insert }
-// 4. Handle colons as block openers (for languages that use them, like PythonCore)
+// Indentation-based languages get the schema's block delimiters synthesised
+// from indentation changes; brace-based languages already carry them. Line
+// ends and indentation inside brackets are dropped so grouping, calls and
+// array literals may span lines. A block-introducing token that ends a
+// header line (Python's `:`) is removed.
 
-use super::_1_ingest::Token;
-use crate::schema::LanguageSchema;
+use super::_1_ingest::{Kind, Token};
+use crate::schema::{BlockStyle, LanguageSchema};
 
-/// Process indentation and insert block markers
-pub fn process_structure(
-    tokens: Vec<Token>,
-    schema: &LanguageSchema,
-) -> Result<Vec<Token>, String> {
-    // For brace-based languages, skip processing
-    if schema.block_open_marker == "{" {
-        return Ok(tokens);
-    }
+pub fn process(tokens: Vec<Token>, schema: &LanguageSchema) -> Result<Vec<Token>, String> {
+    let structure = &schema.structure;
+    let opens: Vec<&str> = [&structure.group, &structure.call, &structure.array]
+        .iter()
+        .filter_map(|p| p.as_ref().map(|p| p.open.as_str()))
+        .collect();
+    let closes: Vec<&str> = [&structure.group, &structure.call, &structure.array]
+        .iter()
+        .filter_map(|p| p.as_ref().map(|p| p.close.as_str()))
+        .collect();
 
-    // First pass: track bracket depth globally to identify bracket ranges
-    let mut bracket_depth_by_index = vec![0; tokens.len()];
-    let mut bracket_depth = 0;
-    for (i, token) in tokens.iter().enumerate() {
-        bracket_depth_by_index[i] = bracket_depth;
-        if token.lexeme == "[" {
-            bracket_depth += 1;
-        } else if token.lexeme == "]" {
-            bracket_depth -= 1;
-        }
-    }
+    let mut out: Vec<Token> = Vec::with_capacity(tokens.len());
+    let mut depth: usize = 0;
+    let mut levels: Vec<usize> = vec![0];
 
-    let mut result = Vec::new();
-    let mut indent_stack = vec![0];
     let mut i = 0;
-
     while i < tokens.len() {
-        // Skip to next line start if not at beginning
-        if i > 0 && tokens[i - 1].lexeme != "\n" && result.last().map(|t: &Token| t.lexeme.as_str()) != Some("\n") {
-            // Not at line start, just add token
-            result.push(tokens[i].clone());
-            i += 1;
-            continue;
-        }
-
-        // We're at line start. Measure indentation
-        let mut indent_level = 0;
-
-        // Count indentation (spaces or tabs)
-        while i < tokens.len() && (tokens[i].lexeme == " " || tokens[i].lexeme == "\t") {
-            if tokens[i].lexeme == " " {
-                indent_level += 1;
-            } else {
-                indent_level += schema.indentation_size;
-            }
-            result.push(tokens[i].clone());
-            i += 1;
-        }
-
-        // Skip empty/blank lines
-        if i < tokens.len() && tokens[i].lexeme == "\n" {
-            result.push(tokens[i].clone());
-            i += 1;
-            continue;
-        }
-
-        // Check if we're inside brackets - if so, don't process indentation
-        let inside_brackets = i < bracket_depth_by_index.len() && bracket_depth_by_index[i] > 0;
-
-        // Convert indent level to indentation units
-        let indent_units = indent_level / schema.indentation_size;
-        let current_indent = *indent_stack.last().unwrap();
-
-        // Handle indentation changes (but only if not inside brackets)
-        if !inside_brackets {
-            if indent_units > current_indent {
-                // Indentation increased: insert {
-                indent_stack.push(indent_units);
-                result.push(Token {
-                    lexeme: "{".to_string(),
-                    span: (tokens[i].span.0, tokens[i].span.0),
-                    line: tokens[i].line,
-                    col: 0,
-                });
-            } else if indent_units < current_indent {
-                // Indentation decreased: insert } for each level
-                while indent_stack.len() > 1 && *indent_stack.last().unwrap() > indent_units {
-                    indent_stack.pop();
-                    result.push(Token {
-                        lexeme: "}".to_string(),
-                        span: (tokens[i].span.0, tokens[i].span.0),
-                        line: tokens[i].line,
-                        col: 0,
-                    });
+        let tok = &tokens[i];
+        match tok.kind {
+            Kind::Indent => {
+                if depth == 0 && structure.blocks == BlockStyle::Indentation {
+                    if structure.indent_size == 0 || tok.width % structure.indent_size != 0 {
+                        return Err(format!("Invalid indentation at line {}", tok.line));
+                    }
+                    let level = tok.width / structure.indent_size;
+                    let current = *levels.last().unwrap();
+                    if level > current {
+                        levels.push(level);
+                        out.push(synthetic(&structure.block_open, tok.line));
+                    } else if level < current {
+                        while *levels.last().unwrap() > level {
+                            levels.pop();
+                            out.push(synthetic(&structure.block_close, tok.line));
+                        }
+                        if *levels.last().unwrap() != level {
+                            return Err(format!("Indentation mismatch at line {}", tok.line));
+                        }
+                    }
                 }
             }
-        }
-
-        // Process tokens on this line until newline
-        while i < tokens.len() && tokens[i].lexeme != "\n" {
-            // If we see a colon, mark end of line for block (for languages like PythonCore)
-            if tokens[i].lexeme == ":" && schema.block_open_marker == ":" {
-                result.push(tokens[i].clone());
-                i += 1;
-                // Skip whitespace after colon
-                while i < tokens.len() && tokens[i].lexeme == " " {
-                    result.push(tokens[i].clone());
-                    i += 1;
+            Kind::Newline => {
+                if depth == 0 {
+                    out.push(tok.clone());
                 }
-                // Next line will handle indentation increase
-                break;
             }
-
-            result.push(tokens[i].clone());
-            i += 1;
+            Kind::Op => {
+                let text = tok.text.as_str();
+                if opens.contains(&text) {
+                    depth += 1;
+                } else if closes.contains(&text) {
+                    depth = depth.saturating_sub(1);
+                }
+                let ends_header = structure.block_intro.as_deref() == Some(text)
+                    && tokens.get(i + 1).map_or(false, |next| next.kind == Kind::Newline || next.kind == Kind::Eof);
+                if !ends_header {
+                    out.push(tok.clone());
+                }
+            }
+            Kind::Eof => {
+                while levels.len() > 1 {
+                    levels.pop();
+                    out.push(synthetic(&structure.block_close, tok.line));
+                }
+                out.push(tok.clone());
+            }
+            _ => out.push(tok.clone()),
         }
-
-        // Add newline if present
-        if i < tokens.len() && tokens[i].lexeme == "\n" {
-            result.push(tokens[i].clone());
-            i += 1;
-        }
+        i += 1;
     }
+    Ok(out)
+}
 
-    // Close all remaining open indentation blocks
-    while indent_stack.len() > 1 {
-        indent_stack.pop();
-        result.push(Token {
-            lexeme: "}".to_string(),
-            span: (0, 0),
-            line: 0,
-            col: 0,
-        });
-    }
-
-    Ok(result)
+fn synthetic(text: &str, line: usize) -> Token {
+    Token { kind: Kind::Op, text: text.to_string(), width: 0, line, col: 0 }
 }

@@ -1,91 +1,54 @@
-// Microcode Kernel: Semantic normalization layer
-//
-// 4-stage pipeline:
-// 1. Ingest: source → tokens
-// 2. Structure: tokens → tokens (with block structure)
-// 3. Reduce: tokens → instructions (7 primitives)
-// 4. Execute: instructions → values
+// Microcode kernel: the four stages and the runtime they share.
 
-pub mod primitives;
-pub mod eval;
+pub mod instruction;
+pub mod value;
+pub mod numeric;
 pub mod env;
 
-// 4-stage pipeline modules (in execution order)
 pub mod _1_ingest;
 pub mod _2_structure;
 pub mod _3_reduce;
 pub mod _4_execute;
 
-use crate::schema::LanguageSchema;
-use env::Environment;
-use _4_execute::execute;
-use _1_ingest as ingest;
-use _2_structure as structure;
-use _3_reduce as reduce;
 use num_bigint::BigInt;
 
-pub use primitives::Instruction;
-pub use eval::Value;
+use crate::schema::{KindName, LanguageSchema};
+use env::Environment;
+use value::{KindValue, Value};
 
-/// Run a program through the microcode kernel
-/// program_args: command-line arguments passed to the program
+/// Run a program: ingest → structure → reduce → execute.
 pub fn run(source: &str, schema: &LanguageSchema, program_args: &[String]) -> Result<Value, String> {
-    let start = std::time::Instant::now();
+    let tokens = _1_ingest::lex(source, schema)?;
+    let tokens = _2_structure::process(tokens, schema)?;
+    let program = _3_reduce::parse(&tokens, schema)?;
 
-    // Stage 1: Ingest - source → tokens
-    let t1 = std::time::Instant::now();
-    let tokens = ingest::lex(source, schema)?;
-    let ingest_time = t1.elapsed();
-
-    // Stage 2: Structure - tokens → structured tokens
-    let t2 = std::time::Instant::now();
-    let tokens = structure::process_structure(tokens, schema)?;
-    let structure_time = t2.elapsed();
-
-    // Stage 3: Reduce - tokens → instructions
-    let t3 = std::time::Instant::now();
-    let instr = reduce::parse(tokens, schema)?;
-    let reduce_time = t3.elapsed();
-
-    // Stage 4: Execute - instructions → values
-    let t4 = std::time::Instant::now();
     let mut env = Environment::new();
+    seed_system_bindings(&mut env, schema, program_args);
 
-    // Bind ARGS: system-provided semantic value containing all program arguments as a single string
-    // ARGS is immutable and read-only (cannot be reassigned by user code)
-    let args_str = if program_args.is_empty() {
-        String::new()
-    } else {
-        program_args.join(" ")
-    };
-    env.set("ARGS".to_string(), Value::String(args_str));
+    let (value, _flow) = _4_execute::execute(&program, &mut env, schema)?;
+    Ok(value)
+}
 
-    // Bind kind meta-value constants: INTEGER, RATIONAL, REAL, STRING, BOOLEAN, ARRAY, NULL
-    // These are predefined kernel-level type descriptors that match kind() return values
-    env.set("INTEGER".to_string(), Value::Kind(eval::KindValue::INTEGER));
-    env.set("RATIONAL".to_string(), Value::Kind(eval::KindValue::RATIONAL));
-    env.set("REAL".to_string(), Value::Kind(eval::KindValue::REAL));
-    env.set("STRING".to_string(), Value::Kind(eval::KindValue::STRING));
-    env.set("BOOLEAN".to_string(), Value::Kind(eval::KindValue::BOOLEAN));
-    env.set("ARRAY".to_string(), Value::Kind(eval::KindValue::ARRAY));
-    env.set("NULL".to_string(), Value::Kind(eval::KindValue::NULL));
-
-    // Bind kernel constant: REAL_DEFAULT_PRECISION
-    env.set("REAL_DEFAULT_PRECISION".to_string(), Value::Number(BigInt::from(15)));
-
-    let (result, _flow) = execute(&instr, &mut env, schema)?;
-    let execute_time = t4.elapsed();
-
-    let total_time = start.elapsed();
-
-    // Only print timing if environment variable is set (for debugging)
-    if std::env::var("LUMEN_TIMING").is_ok() {
-        eprintln!("[TIMING] Ingest:    {:?}", ingest_time);
-        eprintln!("[TIMING] Structure: {:?}", structure_time);
-        eprintln!("[TIMING] Reduce:    {:?}", reduce_time);
-        eprintln!("[TIMING] Execute:   {:?}", execute_time);
-        eprintln!("[TIMING] Total:     {:?}", total_time);
+/// Bind the system values the schema names: program arguments, kind
+/// meta-values and integer constants. The kernel supplies the values; the
+/// schema supplies the names.
+fn seed_system_bindings(env: &mut Environment, schema: &LanguageSchema, program_args: &[String]) {
+    if let Some(name) = &schema.system.args {
+        env.define(name.clone(), Value::String(program_args.join(" ")));
     }
-
-    Ok(result)
+    for (name, kind) in &schema.system.kinds {
+        let kind = match kind {
+            KindName::Integer => KindValue::Integer,
+            KindName::Rational => KindValue::Rational,
+            KindName::Real => KindValue::Real,
+            KindName::String => KindValue::String,
+            KindName::Boolean => KindValue::Boolean,
+            KindName::Array => KindValue::Array,
+            KindName::Null => KindValue::Null,
+        };
+        env.define(name.clone(), Value::Kind(kind));
+    }
+    for (name, n) in &schema.system.integer_constants {
+        env.define(name.clone(), Value::Number(BigInt::from(*n)));
+    }
 }

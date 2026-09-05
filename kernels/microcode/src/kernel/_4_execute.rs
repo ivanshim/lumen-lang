@@ -1,1475 +1,586 @@
-// Stage 4: Execute - Faithful execution of instructions
+// Stage 4: Execute — instruction tree → values.
 //
-// Apply the 7 primitives with clear, deterministic semantics.
-// No language-specific behavior here - just mechanics.
+// The seven primitives are interpreted here with fixed mechanics. Which
+// surface names reach the built-ins, and which bindings are system values,
+// is read from the schema; the operations themselves are the kernel's.
 
-use super::primitives::{Instruction, TransferKind, OperateKind};
-use super::eval::{Value, KindValue};
-use super::env::Environment;
-use crate::schema::LanguageSchema;
+use std::cmp::Ordering;
+
 use num_bigint::BigInt;
-use num_traits::cast::ToPrimitive;
-use num_traits::Signed;
-use num_integer::gcd;
+use num_traits::ToPrimitive;
 
-/// Execution state
+use super::env::Environment;
+use super::instruction::{Instruction, Target, TransferKind};
+use super::numeric;
+use super::value::Value;
+use crate::schema::{Builtin, LanguageSchema, Op};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ControlFlow {
+pub enum Flow {
     Normal,
     Return,
     Break,
     Continue,
 }
 
-/// Execute instruction tree
-pub fn execute(
-    instr: &Instruction,
-    env: &mut Environment,
-    _schema: &LanguageSchema,
-) -> Result<(Value, ControlFlow), String> {
+type Outcome = Result<(Value, Flow), String>;
+
+/// Evaluate an instruction for its value, propagating any control transfer
+/// raised while evaluating it.
+macro_rules! eval {
+    ($instr:expr, $env:expr, $schema:expr) => {{
+        let (value, flow) = execute($instr, $env, $schema)?;
+        if flow != Flow::Normal {
+            return Ok((value, flow));
+        }
+        value
+    }};
+}
+
+pub fn execute(instr: &Instruction, env: &mut Environment, schema: &LanguageSchema) -> Outcome {
     match instr {
-        // 1. Sequence: execute in order, return last value
-        Instruction::Sequence(instrs) => {
-            let mut result = Value::Null;
-            for inst in instrs {
-                let (val, flow) = execute(inst, env, _schema)?;
-                result = val;
-                if flow != ControlFlow::Normal {
-                    return Ok((result, flow));
+        Instruction::Sequence(items) => {
+            let mut last = Value::Null;
+            for item in items {
+                let (value, flow) = execute(item, env, schema)?;
+                last = value;
+                if flow != Flow::Normal {
+                    return Ok((last, flow));
                 }
             }
-            Ok((result, ControlFlow::Normal))
+            Ok((last, Flow::Normal))
         }
 
-        // 2. Scope: push scope, execute, pop scope
-        Instruction::Scope(inst) => {
-            env.push_scope();
-            let result = execute(inst, env, _schema);
-            env.pop_scope();
-            result
-        }
+        Instruction::Scope(inner) => env.with_scope(|env| execute(inner, env, schema)),
 
-        // 3. Branch: if condition then else
-        Instruction::Branch {
-            condition,
-            then_instr,
-            else_instr,
-        } => {
-            let (cond_val, flow) = execute(condition, env, _schema)?;
-            if flow != ControlFlow::Normal {
-                return Ok((cond_val, flow));
-            }
-
-            if cond_val.to_bool() {
-                execute(then_instr, env, _schema)
-            } else if let Some(else_inst) = else_instr {
-                execute(else_inst, env, _schema)
+        Instruction::Branch { condition, then_branch, else_branch } => {
+            let cond = eval!(condition, env, schema);
+            if cond.to_bool() {
+                execute(then_branch, env, schema)
+            } else if let Some(other) = else_branch {
+                execute(other, env, schema)
             } else {
-                Ok((Value::Null, ControlFlow::Normal))
+                Ok((Value::Null, Flow::Normal))
             }
         }
 
-        // 4. Assign: bind name in current scope
-        Instruction::Assign { name, value } => {
-            // ARGS is a system-provided immutable semantic value
-            if name == "ARGS" {
-                return Err("Cannot reassign ARGS (system-provided immutable value)".to_string());
+        Instruction::Assign { target, value } => {
+            let name = match target {
+                Target::Name(name) | Target::Index { name, .. } => name,
+            };
+            if schema.system.args.as_deref() == Some(name.as_str()) {
+                return Err(format!("Cannot reassign {} (system-provided immutable value)", name));
             }
-            let (val, flow) = execute(value, env, _schema)?;
-            if flow != ControlFlow::Normal {
-                return Ok((val.clone(), flow));
-            }
-            env.set(name.clone(), val.clone());
-            Ok((val, ControlFlow::Normal))
-        }
-
-        // 5. Invoke: call external function
-        Instruction::Invoke { function, args } => {
-            // Special handling for push: push(arr, value)
-            // First argument should be a Variable (not evaluated), second is the value
-            if function == "push" {
-                if args.len() != 2 {
-                    return Err(format!("push() expects 2 arguments, got {}", args.len()));
+            match target {
+                Target::Name(name) => {
+                    let v = eval!(value, env, schema);
+                    env.define(name.clone(), v.clone());
+                    Ok((v, Flow::Normal))
                 }
-
-                // Extract array variable name from first argument
-                let arr_name = match &args[0] {
-                    Instruction::Variable(name) => name.clone(),
-                    _ => return Err("First argument to push() must be an array variable name".to_string()),
-                };
-
-                // Evaluate the value to push
-                let (val, flow) = execute(&args[1], env, _schema)?;
-                if flow != ControlFlow::Normal {
-                    return Ok((val, flow));
-                }
-
-                // Push to array
-                env.push_to_array(&arr_name, val.clone())?;
-                return Ok((Value::Null, ControlFlow::Normal));
-            }
-
-            let mut arg_vals = Vec::new();
-            for arg in args {
-                let (val, flow) = execute(arg, env, _schema)?;
-                if flow != ControlFlow::Normal {
-                    return Ok((val, flow));
-                }
-                arg_vals.push(val);
-            }
-
-            // External function dispatch
-            match function.as_str() {
-                "emit" => {
-                    // emit(string) - kernel primitive for output
-                    // Accepts a string only, no implicit conversion
-                    if arg_vals.len() != 1 {
-                        return Err(format!("emit() expects 1 argument, got {}", arg_vals.len()));
-                    }
-                    match &arg_vals[0] {
-                        Value::String(s) => {
-                            print!("{}", s);
-                            Ok((Value::Null, ControlFlow::Normal))
-                        }
-                        _ => Err("emit() requires a string argument".to_string()),
-                    }
-                }
-                "real" => {
-                    // real(x, precision): convert to real with specified precision
-                    if arg_vals.len() != 2 {
-                        return Err(format!("real() expects 2 arguments, got {}", arg_vals.len()));
-                    }
-
-                    let precision = match &arg_vals[1] {
-                        Value::Number(n) => {
-                            n.to_u64()
-                                .ok_or_else(|| "Precision must be a positive integer".to_string())? as usize
-                        }
-                        _ => return Err("Precision argument must be an integer".to_string()),
-                    };
-
-                    match &arg_vals[0] {
-                        Value::Number(n) => {
-                            // Integer → Real
-                            Ok((Value::Real {
-                                numerator: n.clone(),
-                                denominator: BigInt::from(1),
-                                precision,
-                            }, ControlFlow::Normal))
-                        }
-                        Value::Rational { numerator, denominator } => {
-                            // Rational → Real
-                            Ok((Value::Real {
-                                numerator: numerator.clone(),
-                                denominator: denominator.clone(),
-                                precision,
-                            }, ControlFlow::Normal))
-                        }
-                        Value::Real { numerator, denominator, .. } => {
-                            // Real → Real (with new precision)
-                            Ok((Value::Real {
-                                numerator: numerator.clone(),
-                                denominator: denominator.clone(),
-                                precision,
-                            }, ControlFlow::Normal))
-                        }
-                        _ => Err("real() requires a number, rational, or real argument".to_string()),
-                    }
-                }
-                "int_to_string" => {
-                    // int_to_string(x): convert integer to string (mechanical primitive)
-                    // Assumes input is INTEGER. No type branching.
-                    if arg_vals.len() != 1 {
-                        return Err(format!("int_to_string() expects 1 argument, got {}", arg_vals.len()));
-                    }
-                    match &arg_vals[0] {
-                        Value::Number(n) => Ok((Value::String(n.to_string()), ControlFlow::Normal)),
-                        _ => Err("int_to_string() requires an integer argument".to_string()),
-                    }
-                }
-                "real_to_string" => {
-                    // real_to_string(x): convert real to string (mechanical primitive)
-                    // Assumes input is REAL. No type branching.
-                    if arg_vals.len() != 1 {
-                        return Err(format!("real_to_string() expects 1 argument, got {}", arg_vals.len()));
-                    }
-                    match &arg_vals[0] {
-                        Value::Real { numerator, denominator, precision } => {
-                            // Format real as decimal with precision
-                            let int_part = numerator / denominator;
-                            let remainder = numerator.clone() - (&int_part * denominator);
-                            if remainder == BigInt::from(0) {
-                                Ok((Value::String(int_part.to_string()), ControlFlow::Normal))
-                            } else {
-                                let mut decimal_str = String::new();
-                                let digit_count = int_part.to_string().len();
-                                let target_digits = *precision;
-                                let mut rem = remainder.abs();
-                                let mut frac_digits = if digit_count >= target_digits {
-                                    0
-                                } else {
-                                    target_digits - digit_count
-                                };
-                                let denom = denominator.clone();
-                                while frac_digits > 0 && rem > BigInt::from(0) {
-                                    rem = rem * BigInt::from(10);
-                                    let digit = &rem / &denom;
-                                    decimal_str.push_str(&digit.to_string());
-                                    rem = &rem - (&digit * &denom);
-                                    frac_digits -= 1;
-                                }
-                                Ok((Value::String(format!("{}.{}", int_part, decimal_str)), ControlFlow::Normal))
+                Target::Index { name, index } => {
+                    let idx = eval!(index, env, schema);
+                    let v = eval!(value, env, schema);
+                    let idx = array_index(&idx)?;
+                    let slot = env.get_mut(name).ok_or_else(|| format!("Undefined variable '{}'", name))?;
+                    match slot {
+                        Value::Array(items) => {
+                            if idx >= items.len() {
+                                return Err(format!("Array index {} out of bounds (length: {})", idx, items.len()));
                             }
+                            items[idx] = v.clone();
+                            Ok((v, Flow::Normal))
                         }
-                        _ => Err("real_to_string() requires a real argument".to_string()),
-                    }
-                }
-                "rational_to_string" => {
-                    // rational_to_string(x): convert rational to string (mechanical primitive)
-                    // Assumes input is RATIONAL. No type branching.
-                    if arg_vals.len() != 1 {
-                        return Err(format!("rational_to_string() expects 1 argument, got {}", arg_vals.len()));
-                    }
-                    match &arg_vals[0] {
-                        Value::Rational { numerator, denominator } => {
-                            let string = if denominator == &BigInt::from(1) {
-                                numerator.to_string()
-                            } else {
-                                format!("{}/{}", numerator, denominator)
-                            };
-                            Ok((Value::String(string), ControlFlow::Normal))
-                        }
-                        _ => Err("rational_to_string() requires a rational argument".to_string()),
-                    }
-                }
-                "bool_to_string" => {
-                    // bool_to_string(x): convert boolean to string (mechanical primitive)
-                    // Assumes input is BOOLEAN. No type branching.
-                    if arg_vals.len() != 1 {
-                        return Err(format!("bool_to_string() expects 1 argument, got {}", arg_vals.len()));
-                    }
-                    match &arg_vals[0] {
-                        Value::Bool(b) => {
-                            let string = if *b { "true" } else { "false" };
-                            Ok((Value::String(string.to_string()), ControlFlow::Normal))
-                        }
-                        _ => Err("bool_to_string() requires a boolean argument".to_string()),
-                    }
-                }
-                "array_to_string" => {
-                    // array_to_string(x): convert array to string (mechanical primitive)
-                    // Assumes input is ARRAY. No type branching.
-                    if arg_vals.len() != 1 {
-                        return Err(format!("array_to_string() expects 1 argument, got {}", arg_vals.len()));
-                    }
-                    match &arg_vals[0] {
-                        Value::Array(elements) => {
-                            let elements_str = elements
-                                .iter()
-                                .map(|e| format!("{}", e))
-                                .collect::<Vec<_>>()
-                                .join(", ");
-                            Ok((Value::String(format!("[{}]", elements_str)), ControlFlow::Normal))
-                        }
-                        _ => Err("array_to_string() requires an array argument".to_string()),
-                    }
-                }
-                "null_to_string" => {
-                    // null_to_string(x): convert null to string (mechanical primitive)
-                    // Assumes input is NULL. No type branching.
-                    if arg_vals.len() != 1 {
-                        return Err(format!("null_to_string() expects 1 argument, got {}", arg_vals.len()));
-                    }
-                    match &arg_vals[0] {
-                        Value::Null => Ok((Value::String("null".to_string()), ControlFlow::Normal)),
-                        _ => Err("null_to_string() requires a null argument".to_string()),
-                    }
-                }
-                "kind_to_string" => {
-                    // kind_to_string(x): convert kind meta-value to string (mechanical primitive)
-                    // Assumes input is KIND. No type branching.
-                    if arg_vals.len() != 1 {
-                        return Err(format!("kind_to_string() expects 1 argument, got {}", arg_vals.len()));
-                    }
-                    match &arg_vals[0] {
-                        Value::Kind(k) => {
-                            let string = match k {
-                                KindValue::INTEGER => "INTEGER",
-                                KindValue::RATIONAL => "RATIONAL",
-                                KindValue::REAL => "REAL",
-                                KindValue::STRING => "STRING",
-                                KindValue::BOOLEAN => "BOOLEAN",
-                                KindValue::ARRAY => "ARRAY",
-                                KindValue::NULL => "NULL",
-                            };
-                            Ok((Value::String(string.to_string()), ControlFlow::Normal))
-                        }
-                        _ => Err("kind_to_string() requires a kind argument".to_string()),
-                    }
-                }
-                "len" => {
-                    // len(x): return length of string or array
-                    // For strings, counts UTF-8 characters (not bytes)
-                    if arg_vals.len() != 1 {
-                        return Err(format!("len() expects 1 argument, got {}", arg_vals.len()));
-                    }
-                    match &arg_vals[0] {
-                        Value::String(s) => {
-                            let len = s.chars().count();
-                            Ok((Value::Number(BigInt::from(len)), ControlFlow::Normal))
-                        }
-                        Value::Array(arr) => {
-                            let len = arr.len();
-                            Ok((Value::Number(BigInt::from(len)), ControlFlow::Normal))
-                        }
-                        _ => Err("len() requires a string or array argument".to_string()),
-                    }
-                }
-                "char_at" => {
-                    // char_at(string, index): return character at index
-                    // Characters are UTF-8 characters (not bytes)
-                    // Errors if index is out of bounds or negative (strict, truth-preserving semantics)
-                    if arg_vals.len() != 2 {
-                        return Err(format!("char_at() expects 2 arguments, got {}", arg_vals.len()));
-                    }
-                    match (&arg_vals[0], &arg_vals[1]) {
-                        (Value::String(s), Value::Number(idx)) => {
-                            // Convert index to usize
-                            match idx.to_usize() {
-                                Some(i) => {
-                                    // Get character at index
-                                    match s.chars().nth(i) {
-                                        Some(ch) => Ok((Value::String(ch.to_string()), ControlFlow::Normal)),
-                                        None => Err("char_at index out of bounds".to_string()), // Out of bounds
-                                    }
-                                }
-                                None => Err("char_at index out of bounds".to_string()), // Negative or too large
-                            }
-                        }
-                        (Value::String(_), _) => Err("char_at() second argument must be an integer".to_string()),
-                        _ => Err("char_at() first argument must be a string".to_string()),
-                    }
-                }
-                "ord" => {
-                    // ord(s): return decimal integer value of first character
-                    // Returns the UTF-8 code point of the first character
-                    if arg_vals.len() != 1 {
-                        return Err(format!("ord() expects 1 argument, got {}", arg_vals.len()));
-                    }
-                    match &arg_vals[0] {
-                        Value::String(s) => {
-                            // Check if string is empty
-                            if s.is_empty() {
-                                return Err("ord() requires a non-empty string".to_string());
-                            }
-                            // Get first character and convert to Unicode code point
-                            let first_char = s.chars().next().unwrap();
-                            let code_point = first_char as u32;
-                            Ok((Value::Number(BigInt::from(code_point)), ControlFlow::Normal))
-                        }
-                        _ => Err("ord() requires a string argument".to_string()),
-                    }
-                }
-                "chr" => {
-                    // chr(n): return single-character string for decimal integer
-                    // Returns a string containing the character for the given Unicode code point
-                    if arg_vals.len() != 1 {
-                        return Err(format!("chr() expects 1 argument, got {}", arg_vals.len()));
-                    }
-                    match &arg_vals[0] {
-                        Value::Number(n) => {
-                            // Convert to u32 for char conversion
-                            let code_point = n.to_u32()
-                                .ok_or_else(|| "chr() argument must be a non-negative integer within valid Unicode range".to_string())?;
-                            // Convert to char (validates Unicode code point)
-                            let character = char::from_u32(code_point)
-                                .ok_or_else(|| format!("chr() argument {} is not a valid Unicode code point", code_point))?;
-                            Ok((Value::String(character.to_string()), ControlFlow::Normal))
-                        }
-                        _ => Err("chr() requires an integer argument".to_string()),
-                    }
-                }
-                "error" => {
-                    // error(message): abort execution with error message
-                    // Kernel primitive for unified error handling
-                    // No I/O is performed - the error is propagated via Result
-                    if arg_vals.len() != 1 {
-                        return Err(format!("error() expects 1 argument, got {}", arg_vals.len()));
-                    }
-                    match &arg_vals[0] {
-                        Value::String(s) => {
-                            // Return error to abort execution (no I/O)
-                            Err(s.clone())
-                        }
-                        _ => Err("error() argument must be a string".to_string()),
-                    }
-                }
-                "kind" => {
-                    // kind(x): return kind meta-value representing value category
-                    // Returns one of the predefined kind constants: INTEGER, RATIONAL, REAL, ARRAY, STRING, BOOLEAN, NULL
-                    if arg_vals.len() != 1 {
-                        return Err(format!("kind() expects 1 argument, got {}", arg_vals.len()));
-                    }
-                    let kind_val = match &arg_vals[0] {
-                        Value::Number(_) => KindValue::INTEGER,
-                        Value::Rational { .. } => KindValue::RATIONAL,
-                        Value::Real { .. } => KindValue::REAL,
-                        Value::Array(_) => KindValue::ARRAY,
-                        Value::String(_) => KindValue::STRING,
-                        Value::Bool(_) => KindValue::BOOLEAN,
-                        Value::Null => KindValue::NULL,
-                        Value::Kind(_) => KindValue::NULL, // KIND-of-KIND returns NULL as placeholder
-                        _ => return Err("kind(): unknown value type".to_string()),
-                    };
-                    Ok((Value::Kind(kind_val), ControlFlow::Normal))
-                }
-                "num" => {
-                    // num(x): extract numerator from rational
-                    // Valid only for RATIONAL values, returns numerator as INTEGER
-                    if arg_vals.len() != 1 {
-                        return Err(format!("num() expects 1 argument, got {}", arg_vals.len()));
-                    }
-                    match &arg_vals[0] {
-                        Value::Rational { numerator, .. } => {
-                            Ok((Value::Number(numerator.clone()), ControlFlow::Normal))
-                        }
-                        _ => Err("num() requires a rational argument".to_string()),
-                    }
-                }
-                "den" => {
-                    // den(x): extract denominator from rational
-                    // Valid only for RATIONAL values, returns denominator as INTEGER
-                    if arg_vals.len() != 1 {
-                        return Err(format!("den() expects 1 argument, got {}", arg_vals.len()));
-                    }
-                    match &arg_vals[0] {
-                        Value::Rational { denominator, .. } => {
-                            Ok((Value::Number(denominator.clone()), ControlFlow::Normal))
-                        }
-                        _ => Err("den() requires a rational argument".to_string()),
-                    }
-                }
-                "int" => {
-                    // int(x): extract integer part from real
-                    // Valid only for REAL values, returns integer part as INTEGER
-                    if arg_vals.len() != 1 {
-                        return Err(format!("int() expects 1 argument, got {}", arg_vals.len()));
-                    }
-                    match &arg_vals[0] {
-                        Value::Real { numerator, denominator, .. } => {
-                            // Integer part: truncate toward zero (integer division)
-                            let int_part = numerator / denominator;
-                            Ok((Value::Number(int_part), ControlFlow::Normal))
-                        }
-                        _ => Err("int() requires a real argument".to_string()),
-                    }
-                }
-                "frac" => {
-                    // frac(x): extract fractional part from real
-                    // Valid only for REAL values, returns fractional part as REAL
-                    if arg_vals.len() != 1 {
-                        return Err(format!("frac() expects 1 argument, got {}", arg_vals.len()));
-                    }
-                    match &arg_vals[0] {
-                        Value::Real { numerator, denominator, precision } => {
-                            // Fractional part: x - int(x)
-                            // frac(x) = (numerator - (numerator / denominator) * denominator) / denominator
-                            let int_part = numerator / denominator;
-                            let frac_numerator = numerator - (&int_part * denominator);
-                            Ok((Value::Real {
-                                numerator: frac_numerator,
-                                denominator: denominator.clone(),
-                                precision: *precision,
-                            }, ControlFlow::Normal))
-                        }
-                        _ => Err("frac() requires a real argument".to_string()),
-                    }
-                }
-                "extern" => {
-                    // extern(function_name, arg1, arg2, ...)
-                    if arg_vals.is_empty() {
-                        return Err("extern requires at least one argument (function name)".to_string());
-                    }
-                    let func_name = match &arg_vals[0] {
-                        Value::String(s) => s.clone(),
-                        _ => return Err("First argument to extern must be a string (function name)".to_string()),
-                    };
-                    let extern_args = arg_vals[1..].to_vec();
-
-                    // Dispatch to the requested function
-                    match func_name.as_str() {
-                        "print_native" => {
-                            for val in &extern_args {
-                                println!("{}", val);
-                            }
-                            Ok((Value::Null, ControlFlow::Normal))
-                        }
-                        "value_type" => {
-                            // Return the type of the first argument
-                            if extern_args.is_empty() {
-                                return Err("value_type requires an argument".to_string());
-                            }
-                            let type_str = match &extern_args[0] {
-                                Value::Number(_) => "number",
-                                Value::Rational { .. } => "rational",
-                                Value::Real { .. } => "real",
-                                Value::String(_) => "string",
-                                Value::Bool(_) => "bool",
-                                Value::Null => "null",
-                                Value::Range { .. } => "range",
-                                Value::Array(_) => "array",
-                                Value::Function { .. } => "function",
-                                Value::Symbol(_) => "symbol",
-                                Value::Kind(_) => "kind",
-                            };
-                            Ok((Value::String(type_str.to_string()), ControlFlow::Normal))
-                        }
-                        "debug_info" => {
-                            // Print debug info about the value
-                            if extern_args.is_empty() {
-                                return Err("debug_info requires an argument".to_string());
-                            }
-                            println!("[DEBUG] {}", extern_args[0]);
-                            Ok((Value::Null, ControlFlow::Normal))
-                        }
-                        _ => Err(format!("Unknown external function: {}", func_name)),
-                    }
-                }
-                "__construct_array" => {
-                    // Construct an array from the evaluated arguments
-                    Ok((Value::Array(arg_vals), ControlFlow::Normal))
-                }
-                _ => {
-                    // Check if it's a user-defined function
-                    if let Ok(_func_val) = env.get(function) {
-                        // Look up the function metadata
-                        if let Some(metadata) = env.functions.get(function).cloned() {
-                            let params = metadata.params.clone();
-                            let body_instr = metadata.body.clone();
-
-                            // Check parameter count
-                            if params.len() != arg_vals.len() {
-                                return Err(format!(
-                                    "Function {} expects {} arguments, got {}",
-                                    function,
-                                    params.len(),
-                                    arg_vals.len()
-                                ));
-                            }
-
-                            // Check cache if MEMOIZATION is enabled
-                            // (get_cached returns None if MEMOIZATION = false)
-                            if let Some(cached_result) = env.get_cached(function, &arg_vals) {
-                                // Cache hit: return cached result without executing
-                                return Ok((cached_result, ControlFlow::Normal));
-                            }
-
-                            // Execute function (cache miss or MEMOIZATION disabled)
-                            env.push_scope();
-
-                            // Bind parameters
-                            for (param, arg) in params.iter().zip(arg_vals.iter()) {
-                                env.set(param.clone(), arg.clone());
-                            }
-
-                            // Execute function body
-                            let (result, flow) = execute(&body_instr, env, _schema)?;
-
-                            // Pop scope
-                            env.pop_scope();
-
-                            // Cache result if MEMOIZATION is enabled
-                            // (cache_result does nothing if MEMOIZATION = false)
-                            env.cache_result(function, &arg_vals, result.clone());
-
-                            // Handle return value
-                            match flow {
-                                ControlFlow::Return => Ok((result, ControlFlow::Normal)),
-                                ControlFlow::Normal => Ok((result, ControlFlow::Normal)),
-                                _ => Ok((result, flow)),
-                            }
-                        } else {
-                            Err(format!("Function body not found for: {}", function))
-                        }
-                    } else {
-                        Err(format!("Unknown function: {}", function))
+                        _ => Err(format!("Variable '{}' is not an array", name)),
                     }
                 }
             }
         }
 
-        // 6. Operate: apply operator
-        Instruction::Operate { kind, operands } => {
-            execute_operator(kind, operands, env, _schema)
-        }
+        Instruction::Invoke { function, args } => invoke(function, args, env, schema),
 
-        // 7. Transfer: control flow (return/break/continue)
+        Instruction::Operate { op, operands } => operate(*op, operands, env, schema),
+
         Instruction::Transfer { kind, value } => {
-            let val = if let Some(v) = value {
-                let (v_val, flow) = execute(v, env, _schema)?;
-                if flow != ControlFlow::Normal {
-                    return Ok((v_val, flow));
-                }
-                v_val
-            } else {
-                Value::Null
+            let v = match value {
+                Some(v) => eval!(v, env, schema),
+                None => Value::Null,
             };
-
             let flow = match kind {
-                TransferKind::Return => ControlFlow::Return,
-                TransferKind::Break => ControlFlow::Break,
-                TransferKind::Continue => ControlFlow::Continue,
+                TransferKind::Return => Flow::Return,
+                TransferKind::Break => Flow::Break,
+                TransferKind::Continue => Flow::Continue,
             };
-
-            Ok((val, flow))
+            Ok((v, flow))
         }
 
-        // Loop: while condition { body }
-        Instruction::Loop { condition, body } => {
+        Instruction::Loop { condition, body, step } => {
             loop {
-                let (cond_val, flow) = execute(condition, env, _schema)?;
-                if flow != ControlFlow::Normal {
-                    return Ok((cond_val, flow));
-                }
-
-                if !cond_val.to_bool() {
+                let cond = eval!(condition, env, schema);
+                if !cond.to_bool() {
                     break;
                 }
-
-                let (result, flow) = execute(body, env, _schema)?;
+                let (value, flow) = execute(body, env, schema)?;
                 match flow {
-                    ControlFlow::Normal => continue,
-                    ControlFlow::Break => return Ok((result, ControlFlow::Normal)),
-                    ControlFlow::Continue => continue,
-                    ControlFlow::Return => return Ok((result, ControlFlow::Return)),
+                    Flow::Break => return Ok((value, Flow::Normal)),
+                    Flow::Return => return Ok((value, Flow::Return)),
+                    Flow::Normal | Flow::Continue => {}
                 }
-            }
-
-            Ok((Value::Null, ControlFlow::Normal))
-        }
-
-        // ForLoop: for var in iterable { body }
-        Instruction::ForLoop { var, iterable, body } => {
-            let (range_val, flow) = execute(iterable, env, _schema)?;
-            if flow != ControlFlow::Normal {
-                return Ok((range_val, flow));
-            }
-
-            // Expect a range value
-            match range_val {
-                Value::Range { start, end } => {
-                    let mut current = start;
-                    while current < end {
-                        env.set(var.clone(), Value::Number(current.clone()));
-                        let (result, flow) = execute(body, env, _schema)?;
-                        match flow {
-                            ControlFlow::Normal => {},
-                            ControlFlow::Break => return Ok((result, ControlFlow::Normal)),
-                            ControlFlow::Continue => {},
-                            ControlFlow::Return => return Ok((result, ControlFlow::Return)),
-                        }
-                        current += BigInt::from(1);
+                if let Some(step) = step {
+                    let (value, flow) = execute(step, env, schema)?;
+                    match flow {
+                        Flow::Break => return Ok((value, Flow::Normal)),
+                        Flow::Return => return Ok((value, Flow::Return)),
+                        Flow::Normal | Flow::Continue => {}
                     }
-                    Ok((Value::Null, ControlFlow::Normal))
-                }
-                _ => Err(format!("For loop requires a range, got {}", range_val)),
-            }
-        }
-
-        // UntilLoop: until condition { body } (do-until: execute body first, then check condition)
-        Instruction::UntilLoop { condition, body } => {
-            loop {
-                let (result, flow) = execute(body, env, _schema)?;
-                match flow {
-                    ControlFlow::Normal => {},
-                    ControlFlow::Break => return Ok((result, ControlFlow::Normal)),
-                    ControlFlow::Continue => {},
-                    ControlFlow::Return => return Ok((result, ControlFlow::Return)),
-                }
-
-                let (cond_val, flow) = execute(condition, env, _schema)?;
-                if flow != ControlFlow::Normal {
-                    return Ok((cond_val, flow));
-                }
-
-                if cond_val.to_bool() {
-                    break;
                 }
             }
-
-            Ok((Value::Null, ControlFlow::Normal))
+            Ok((Value::Null, Flow::Normal))
         }
 
-        // Function definition: store in environment
-        Instruction::FunctionDef {
-            name,
-            params,
-            body,
-        } => {
-            env.set(
-                name.clone(),
-                Value::Function {
-                    params: params.clone(),
-                    body_ref: name.clone(),
-                },
-            );
+        Instruction::Literal(value) => Ok((value.clone(), Flow::Normal)),
 
-            use super::env::FunctionMetadata;
-            let metadata = FunctionMetadata {
-                params: params.clone(),
-                body: body.as_ref().clone(),
-            };
-            env.functions.insert(name.clone(), metadata);
-
-            Ok((Value::Null, ControlFlow::Normal))
-        }
-
-        // Indexed assignment: arr[index] = value
-        Instruction::IndexedAssign { name, index, value } => {
-            // Evaluate index
-            let (index_val, flow) = execute(index, env, _schema)?;
-            if flow != ControlFlow::Normal {
-                return Ok((index_val, flow));
-            }
-
-            // Evaluate value
-            let (val, flow) = execute(value, env, _schema)?;
-            if flow != ControlFlow::Normal {
-                return Ok((val, flow));
-            }
-
-            // Convert index to usize
-            let idx = match &index_val {
-                Value::Number(n) => {
-                    n.to_usize()
-                        .ok_or_else(|| "Array index out of bounds".to_string())?
-                }
-                _ => return Err("Array index must be a number".to_string()),
-            };
-
-            // Mutate the array
-            env.mutate_array(name, idx, val.clone())?;
-            Ok((val, ControlFlow::Normal))
-        }
-
-        // Set MEMOIZATION flag (system control)
-        Instruction::SetMemoization { enabled } => {
-            env.set_memoization(*enabled);
-            Ok((Value::Null, ControlFlow::Normal))
-        }
-
-        // Literal: just return the value
-        Instruction::Literal(val) => Ok((val.clone(), ControlFlow::Normal)),
-
-        // Variable: look up in environment
-        Instruction::Variable(name) => {
-            let val = env.get(name)?;
-            Ok((val, ControlFlow::Normal))
-        }
+        Instruction::Variable(name) => Ok((env.get(name)?, Flow::Normal)),
     }
 }
 
-/// Execute operator
-fn execute_operator(
-    kind: &OperateKind,
-    operands: &[Instruction],
+// ---------------- Invoke ----------------
+
+fn invoke(function: &str, args: &[Instruction], env: &mut Environment, schema: &LanguageSchema) -> Outcome {
+    if let Some(builtin) = schema.functions.get(function).copied() {
+        return builtin_call(builtin, function, args, env, schema);
+    }
+
+    let mut values = Vec::with_capacity(args.len());
+    for arg in args {
+        values.push(eval!(arg, env, schema));
+    }
+
+    let def = match env.lookup(function) {
+        Some(Value::Function(def)) => def.clone(),
+        Some(_) => return Err(format!("'{}' is not a function", function)),
+        None => return Err(format!("Unknown function: {}", function)),
+    };
+    if def.params.len() != values.len() {
+        return Err(format!("Function {} expects {} arguments, got {}", function, def.params.len(), values.len()));
+    }
+
+    let memoize = schema
+        .system
+        .memoization
+        .as_deref()
+        .and_then(|name| env.lookup(name))
+        .map_or(false, |v| matches!(v, Value::Bool(true)));
+    let key = if memoize { Some(memo_key(function, &values)) } else { None };
+    if let Some(key) = &key {
+        if let Some(cached) = env.cached_result(key) {
+            return Ok((cached, Flow::Normal));
+        }
+    }
+
+    let (result, flow) = env.with_scope(|env| {
+        for (param, value) in def.params.iter().zip(values.iter()) {
+            env.define(param.clone(), value.clone());
+        }
+        execute(&def.body, env, schema)
+    })?;
+
+    if let Some(key) = key {
+        env.cache_result(key, result.clone());
+    }
+    match flow {
+        Flow::Return | Flow::Normal => Ok((result, Flow::Normal)),
+        other => Ok((result, other)),
+    }
+}
+
+fn memo_key(function: &str, args: &[Value]) -> (String, String) {
+    let fingerprint = args.iter().map(|v| format!("{:?}", v)).collect::<Vec<_>>().join("|");
+    (function.to_string(), fingerprint)
+}
+
+fn builtin_call(
+    builtin: Builtin,
+    name: &str,
+    args: &[Instruction],
     env: &mut Environment,
     schema: &LanguageSchema,
-) -> Result<(Value, ControlFlow), String> {
-    match kind {
-        OperateKind::Unary(op) => {
-            if operands.len() != 1 {
-                return Err("Unary operator requires 1 operand".to_string());
-            }
-            let (val, flow) = execute(&operands[0], env, schema)?;
-            if flow != ControlFlow::Normal {
-                return Ok((val, flow));
-            }
-
-            let result = match op.as_str() {
-                "-" => {
-                    match val {
-                        Value::Number(n) => Value::Number(-n),
-                        Value::Rational { numerator, denominator } => {
-                            Value::Rational { numerator: -numerator, denominator }
-                        }
-                        Value::Real { numerator, denominator, precision } => {
-                            Value::Real { numerator: -numerator, denominator, precision }
-                        }
-                        _ => return Err("Cannot negate non-numeric value".to_string()),
-                    }
-                }
-                "not" | "!" => Value::Bool(!val.to_bool()),
-                _ => return Err(format!("Unknown unary operator: {}", op)),
-            };
-
-            Ok((result, ControlFlow::Normal))
+) -> Outcome {
+    // push(array, value) mutates the named array in place, so its first
+    // argument is a binding name rather than a value.
+    if builtin == Builtin::Push {
+        if args.len() != 2 {
+            return Err(format!("{}() expects 2 arguments, got {}", name, args.len()));
         }
-
-        OperateKind::Binary(op) => {
-            if operands.len() != 2 {
-                return Err("Binary operator requires 2 operands".to_string());
+        let target = match &args[0] {
+            Instruction::Variable(n) => n.clone(),
+            _ => return Err(format!("First argument to {}() must be an array variable name", name)),
+        };
+        let value = eval!(&args[1], env, schema);
+        return match env.get_mut(&target) {
+            Some(Value::Array(items)) => {
+                items.push(value);
+                Ok((Value::Null, Flow::Normal))
             }
-
-            // Special handling for pipe operator
-            if op == "|>" {
-                let (left_val, left_flow) = execute(&operands[0], env, schema)?;
-                if left_flow != ControlFlow::Normal {
-                    return Ok((left_val, left_flow));
-                }
-
-                // Right operand should be a function call with the left value prepended as first arg
-                match &operands[1] {
-                    Instruction::Invoke { function, args } => {
-                        let mut new_args = vec![Instruction::Literal(left_val.clone())];
-                        new_args.extend(args.clone());
-                        let piped_invoke = Instruction::Invoke {
-                            function: function.clone(),
-                            args: new_args,
-                        };
-                        return execute(&piped_invoke, env, schema);
-                    }
-                    _ => {
-                        return Err("Pipe operator requires a function call on the right side".to_string());
-                    }
-                }
-            }
-
-            let (left, left_flow) = execute(&operands[0], env, schema)?;
-            if left_flow != ControlFlow::Normal {
-                return Ok((left, left_flow));
-            }
-
-            // Short-circuit evaluation for logical operators
-            match op.as_str() {
-                "and" | "&&" => {
-                    if !left.to_bool() {
-                        return Ok((Value::Bool(false), ControlFlow::Normal));
-                    }
-                }
-                "or" | "||" => {
-                    if left.to_bool() {
-                        return Ok((Value::Bool(true), ControlFlow::Normal));
-                    }
-                }
-                _ => {}
-            }
-
-            let (right, right_flow) = execute(&operands[1], env, schema)?;
-            if right_flow != ControlFlow::Normal {
-                return Ok((right, right_flow));
-            }
-
-            let result = match op.as_str() {
-                "." => {
-                    // Period operator: string concatenation with automatic coercion
-                    // Coerce both operands to strings using str()
-                    let left_str = format!("{}", left);
-                    let right_str = format!("{}", right);
-                    Value::String(format!("{}{}", left_str, right_str))
-                }
-                "+" => {
-                    if let (Value::String(_), _) | (_, Value::String(_)) = (&left, &right) {
-                        Value::String(format!("{}{}", left, right))
-                    } else {
-                        // Check if either operand is real or rational
-                        match (&left, &right) {
-                            // Real + Real = Real
-                            (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
-                             Value::Real { numerator: r_num, denominator: r_denom, .. }) => {
-                                // (a/b) + (c/d) = (ad + bc) / bd, preserve left precision
-                                let num = l_num * r_denom + r_num * l_denom;
-                                let denom = l_denom * r_denom;
-                                reduce_real(num, denom, *l_prec)
-                            }
-                            // Real + Rational = Real
-                            (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
-                             Value::Rational { numerator: r_num, denominator: r_denom }) => {
-                                let num = l_num * r_denom + r_num * l_denom;
-                                let denom = l_denom * r_denom;
-                                reduce_real(num, denom, *l_prec)
-                            }
-                            // Real + Number = Real
-                            (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
-                             Value::Number(r_num)) => {
-                                let num = l_num + r_num * l_denom;
-                                reduce_real(num, l_denom.clone(), *l_prec)
-                            }
-                            // Rational + Real = Real
-                            (Value::Rational { numerator: l_num, denominator: l_denom },
-                             Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
-                                let num = l_num * r_denom + r_num * l_denom;
-                                let denom = l_denom * r_denom;
-                                reduce_real(num, denom, *r_prec)
-                            }
-                            // Number + Real = Real
-                            (Value::Number(l_num),
-                             Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
-                                let num = l_num * r_denom + r_num;
-                                reduce_real(num, r_denom.clone(), *r_prec)
-                            }
-                            (Value::Rational { numerator: l_num, denominator: l_denom },
-                             Value::Rational { numerator: r_num, denominator: r_denom }) => {
-                                // a/b + c/d = (ad + bc) / bd
-                                let num = l_num * r_denom + r_num * l_denom;
-                                let denom = l_denom * r_denom;
-                                reduce_rational(num, denom)
-                            }
-                            (Value::Rational { numerator: l_num, denominator: l_denom },
-                             Value::Number(r_num)) => {
-                                // a/b + c = (a + bc) / b
-                                let num = l_num + r_num * l_denom;
-                                reduce_rational(num, l_denom.clone())
-                            }
-                            (Value::Number(l_num),
-                             Value::Rational { numerator: r_num, denominator: r_denom }) => {
-                                // a + c/d = (ad + c) / d
-                                let num = l_num * r_denom + r_num;
-                                reduce_rational(num, r_denom.clone())
-                            }
-                            _ => Value::Number(left.to_number()? + right.to_number()?)
-                        }
-                    }
-                }
-                "-" => {
-                    match (&left, &right) {
-                        // Real - Real = Real
-                        (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
-                         Value::Real { numerator: r_num, denominator: r_denom, .. }) => {
-                            // (a/b) - (c/d) = (ad - bc) / bd, preserve left precision
-                            let num = l_num * r_denom - r_num * l_denom;
-                            let denom = l_denom * r_denom;
-                            reduce_real(num, denom, *l_prec)
-                        }
-                        // Real - Rational = Real
-                        (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
-                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
-                            // (a/b) - (c/d) = (ad - bc) / bd
-                            let num = l_num * r_denom - r_num * l_denom;
-                            let denom = l_denom * r_denom;
-                            reduce_real(num, denom, *l_prec)
-                        }
-                        // Real - Number = Real
-                        (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
-                         Value::Number(r_num)) => {
-                            // (a/b) - c = (a - bc) / b
-                            let num = l_num - r_num * l_denom;
-                            reduce_real(num, l_denom.clone(), *l_prec)
-                        }
-                        // Rational - Real = Real
-                        (Value::Rational { numerator: l_num, denominator: l_denom },
-                         Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
-                            // (a/b) - (c/d) = (ad - bc) / bd, preserve right precision
-                            let num = l_num * r_denom - r_num * l_denom;
-                            let denom = l_denom * r_denom;
-                            reduce_real(num, denom, *r_prec)
-                        }
-                        // Number - Real = Real
-                        (Value::Number(l_num),
-                         Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
-                            // a - (c/d) = (ad - c) / d, preserve right precision
-                            let num = l_num * r_denom - r_num;
-                            reduce_real(num, r_denom.clone(), *r_prec)
-                        }
-                        (Value::Rational { numerator: l_num, denominator: l_denom },
-                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
-                            // a/b - c/d = (ad - bc) / bd
-                            let num = l_num * r_denom - r_num * l_denom;
-                            let denom = l_denom * r_denom;
-                            reduce_rational(num, denom)
-                        }
-                        (Value::Rational { numerator: l_num, denominator: l_denom },
-                         Value::Number(r_num)) => {
-                            // a/b - c = (a - bc) / b
-                            let num = l_num - r_num * l_denom;
-                            reduce_rational(num, l_denom.clone())
-                        }
-                        (Value::Number(l_num),
-                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
-                            // a - c/d = (ad - c) / d
-                            let num = l_num * r_denom - r_num;
-                            reduce_rational(num, r_denom.clone())
-                        }
-                        _ => Value::Number(left.to_number()? - right.to_number()?)
-                    }
-                }
-                "*" => {
-                    match (&left, &right) {
-                        // Real * Real = Real
-                        (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
-                         Value::Real { numerator: r_num, denominator: r_denom, .. }) => {
-                            // (a/b) * (c/d) = (ac) / (bd), preserve left precision
-                            let num = l_num * r_num;
-                            let denom = l_denom * r_denom;
-                            reduce_real(num, denom, *l_prec)
-                        }
-                        // Real * Rational = Real
-                        (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
-                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
-                            let num = l_num * r_num;
-                            let denom = l_denom * r_denom;
-                            reduce_real(num, denom, *l_prec)
-                        }
-                        // Real * Number = Real
-                        (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
-                         Value::Number(r_num)) => {
-                            let num = l_num * r_num;
-                            reduce_real(num, l_denom.clone(), *l_prec)
-                        }
-                        // Rational * Real = Real
-                        (Value::Rational { numerator: l_num, denominator: l_denom },
-                         Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
-                            let num = l_num * r_num;
-                            let denom = l_denom * r_denom;
-                            reduce_real(num, denom, *r_prec)
-                        }
-                        // Number * Real = Real
-                        (Value::Number(l_num),
-                         Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
-                            let num = l_num * r_num;
-                            reduce_real(num, r_denom.clone(), *r_prec)
-                        }
-                        (Value::Rational { numerator: l_num, denominator: l_denom },
-                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
-                            // a/b * c/d = (ac) / (bd)
-                            let num = l_num * r_num;
-                            let denom = l_denom * r_denom;
-                            reduce_rational(num, denom)
-                        }
-                        (Value::Rational { numerator: l_num, denominator: l_denom },
-                         Value::Number(r_num)) => {
-                            // a/b * c = (ac) / b
-                            let num = l_num * r_num;
-                            reduce_rational(num, l_denom.clone())
-                        }
-                        (Value::Number(l_num),
-                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
-                            // a * c/d = (ac) / d
-                            let num = l_num * r_num;
-                            reduce_rational(num, r_denom.clone())
-                        }
-                        _ => Value::Number(left.to_number()? * right.to_number()?)
-                    }
-                }
-                "/" => {
-                    match (&left, &right) {
-                        // Real / Real = Real
-                        (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
-                         Value::Real { numerator: r_num, denominator: r_denom, .. }) => {
-                            // (a/b) / (c/d) = (ad) / (bc), preserve left precision
-                            if r_num == &BigInt::from(0) {
-                                return Err("Division by zero".to_string());
-                            }
-                            let num = l_num * r_denom;
-                            let denom = l_denom * r_num;
-                            reduce_real(num, denom, *l_prec)
-                        }
-                        // Real / Rational = Real
-                        (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
-                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
-                            if r_num == &BigInt::from(0) {
-                                return Err("Division by zero".to_string());
-                            }
-                            let num = l_num * r_denom;
-                            let denom = l_denom * r_num;
-                            reduce_real(num, denom, *l_prec)
-                        }
-                        // Real / Number = Real
-                        (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
-                         Value::Number(r_num)) => {
-                            if r_num == &BigInt::from(0) {
-                                return Err("Division by zero".to_string());
-                            }
-                            let denom = l_denom * r_num;
-                            reduce_real(l_num.clone(), denom, *l_prec)
-                        }
-                        // Rational / Real = Real
-                        (Value::Rational { numerator: l_num, denominator: l_denom },
-                         Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
-                            if r_num == &BigInt::from(0) {
-                                return Err("Division by zero".to_string());
-                            }
-                            let num = l_num * r_denom;
-                            let denom = l_denom * r_num;
-                            reduce_real(num, denom, *r_prec)
-                        }
-                        // Number / Real = Real
-                        (Value::Number(l_num),
-                         Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
-                            if r_num == &BigInt::from(0) {
-                                return Err("Division by zero".to_string());
-                            }
-                            let num = l_num * r_denom;
-                            reduce_real(num, r_num.clone(), *r_prec)
-                        }
-                        (Value::Rational { numerator: l_num, denominator: l_denom },
-                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
-                            // a/b ÷ c/d = (ad) / (bc)
-                            if r_num == &BigInt::from(0) {
-                                return Err("Division by zero".to_string());
-                            }
-                            let num = l_num * r_denom;
-                            let denom = l_denom * r_num;
-                            reduce_rational(num, denom)
-                        }
-                        (Value::Rational { numerator: l_num, denominator: l_denom },
-                         Value::Number(r_num)) => {
-                            // a/b ÷ c = a / (bc)
-                            if r_num == &BigInt::from(0) {
-                                return Err("Division by zero".to_string());
-                            }
-                            let denom = l_denom * r_num;
-                            reduce_rational(l_num.clone(), denom)
-                        }
-                        (Value::Number(l_num),
-                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
-                            // a ÷ c/d = (ad) / c
-                            if r_num == &BigInt::from(0) {
-                                return Err("Division by zero".to_string());
-                            }
-                            let num = l_num * r_denom;
-                            reduce_rational(num, r_num.clone())
-                        }
-                        (Value::Number(l_num), Value::Number(r_num)) => {
-                            // a ÷ b = a/b (produces rational)
-                            if r_num == &BigInt::from(0) {
-                                return Err("Division by zero".to_string());
-                            }
-                            reduce_rational(l_num.clone(), r_num.clone())
-                        }
-                        _ => return Err("Division requires numeric operands".to_string())
-                    }
-                }
-                "%" => {
-                    // For modulo, extract integer parts from rationals
-                    let l_int = match &left {
-                        Value::Number(n) => n.clone(),
-                        Value::Rational { numerator, denominator } => numerator / denominator,
-                        _ => return Err("Modulo requires numeric operands".to_string()),
-                    };
-                    let r_int = match &right {
-                        Value::Number(n) => n.clone(),
-                        Value::Rational { numerator, denominator } => numerator / denominator,
-                        _ => return Err("Modulo requires numeric operands".to_string()),
-                    };
-                    if r_int == BigInt::from(0) {
-                        return Err("Modulo by zero".to_string());
-                    }
-                    Value::Number(l_int % r_int)
-                }
-                "//" => {
-                    // Integer quotient: a // b returns quotient truncating toward zero
-                    // Identity: a == b * (a // b) + (a % b)
-                    match (&left, &right) {
-                        // Integer // Integer = Integer
-                        (Value::Number(l), Value::Number(r)) => {
-                            if *r == BigInt::from(0) {
-                                return Err("Division by zero".to_string());
-                            }
-                            Value::Number(l / r)  // Truncates toward zero in Rust
-                        }
-                        // Integer // Rational = Rational
-                        (Value::Number(l), Value::Rational { numerator: r_num, denominator: r_denom }) => {
-                            if r_num == &BigInt::from(0) {
-                                return Err("Division by zero".to_string());
-                            }
-                            // l // (r_num/r_denom) = (l * r_denom) // r_num
-                            let quot = (l * r_denom) / r_num;
-                            reduce_rational(quot, BigInt::from(1))
-                        }
-                        // Rational // Integer = Rational
-                        (Value::Rational { numerator: l_num, denominator: l_denom }, Value::Number(r)) => {
-                            if *r == BigInt::from(0) {
-                                return Err("Division by zero".to_string());
-                            }
-                            // (l_num/l_denom) // r = l_num // (r * l_denom)
-                            let quot = l_num / (r * l_denom);
-                            reduce_rational(quot, BigInt::from(1))
-                        }
-                        // Rational // Rational = Rational
-                        (Value::Rational { numerator: l_num, denominator: l_denom },
-                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
-                            if r_num == &BigInt::from(0) {
-                                return Err("Division by zero".to_string());
-                            }
-                            // (l_num/l_denom) // (r_num/r_denom) = (l_num * r_denom) // (r_num * l_denom)
-                            let quot = (l_num * r_denom) / (r_num * l_denom);
-                            reduce_rational(quot, BigInt::from(1))
-                        }
-                        // Real // ... = Real
-                        (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec }, _) => {
-                            let (r_num, r_denom) = match &right {
-                                Value::Number(n) => (n.clone(), BigInt::from(1)),
-                                Value::Rational { numerator: n, denominator: d } => (n.clone(), d.clone()),
-                                Value::Real { numerator: n, denominator: d, .. } => (n.clone(), d.clone()),
-                                _ => return Err("Integer quotient requires numeric operands".to_string()),
-                            };
-                            if r_num == BigInt::from(0) {
-                                return Err("Division by zero".to_string());
-                            }
-                            let quot = (l_num * &r_denom) / (&r_num * l_denom);
-                            reduce_real(quot, BigInt::from(1), *l_prec)
-                        }
-                        // ... // Real = Real (symmetric)
-                        (_, Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
-                            if r_num == &BigInt::from(0) {
-                                return Err("Division by zero".to_string());
-                            }
-                            let (l_num, l_denom) = match &left {
-                                Value::Number(n) => (n.clone(), BigInt::from(1)),
-                                Value::Rational { numerator: n, denominator: d } => (n.clone(), d.clone()),
-                                _ => return Err("Integer quotient requires numeric operands".to_string()),
-                            };
-                            let quot = (&l_num * r_denom) / (&l_denom * r_num);
-                            reduce_real(quot, BigInt::from(1), *r_prec)
-                        }
-                        _ => return Err("Integer quotient requires numeric operands".to_string()),
-                    }
-                }
-                "==" => Value::Bool(left == right),
-                "!=" => Value::Bool(left != right),
-                "<" => {
-                    match (&left, &right) {
-                        (Value::Rational { numerator: l_num, denominator: l_denom },
-                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
-                            // a/b < c/d ⟺ ad < bc
-                            let left_cross = l_num * r_denom;
-                            let right_cross = r_num * l_denom;
-                            Value::Bool(left_cross < right_cross)
-                        }
-                        (Value::Rational { numerator: l_num, denominator: l_denom },
-                         Value::Number(r_num)) => {
-                            // a/b < c ⟺ a < bc
-                            let left_cross = l_num;
-                            let right_cross = r_num * l_denom;
-                            Value::Bool(left_cross < &right_cross)
-                        }
-                        (Value::Number(l_num),
-                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
-                            // a < c/d ⟺ ad < c
-                            let left_cross = l_num * r_denom;
-                            let right_cross = r_num;
-                            Value::Bool(&left_cross < right_cross)
-                        }
-                        _ => Value::Bool(left.to_number()? < right.to_number()?)
-                    }
-                }
-                ">" => {
-                    match (&left, &right) {
-                        (Value::Rational { numerator: l_num, denominator: l_denom },
-                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
-                            // a/b > c/d ⟺ ad > bc
-                            let left_cross = l_num * r_denom;
-                            let right_cross = r_num * l_denom;
-                            Value::Bool(left_cross > right_cross)
-                        }
-                        (Value::Rational { numerator: l_num, denominator: l_denom },
-                         Value::Number(r_num)) => {
-                            // a/b > c ⟺ a > bc
-                            let left_cross = l_num;
-                            let right_cross = r_num * l_denom;
-                            Value::Bool(left_cross > &right_cross)
-                        }
-                        (Value::Number(l_num),
-                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
-                            // a > c/d ⟺ ad > c
-                            let left_cross = l_num * r_denom;
-                            let right_cross = r_num;
-                            Value::Bool(&left_cross > right_cross)
-                        }
-                        _ => Value::Bool(left.to_number()? > right.to_number()?)
-                    }
-                }
-                "<=" => {
-                    match (&left, &right) {
-                        (Value::Rational { numerator: l_num, denominator: l_denom },
-                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
-                            // a/b <= c/d ⟺ ad <= bc
-                            let left_cross = l_num * r_denom;
-                            let right_cross = r_num * l_denom;
-                            Value::Bool(left_cross <= right_cross)
-                        }
-                        (Value::Rational { numerator: l_num, denominator: l_denom },
-                         Value::Number(r_num)) => {
-                            // a/b <= c ⟺ a <= bc
-                            let left_cross = l_num;
-                            let right_cross = r_num * l_denom;
-                            Value::Bool(left_cross <= &right_cross)
-                        }
-                        (Value::Number(l_num),
-                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
-                            // a <= c/d ⟺ ad <= c
-                            let left_cross = l_num * r_denom;
-                            let right_cross = r_num;
-                            Value::Bool(&left_cross <= right_cross)
-                        }
-                        _ => Value::Bool(left.to_number()? <= right.to_number()?)
-                    }
-                }
-                ">=" => {
-                    match (&left, &right) {
-                        (Value::Rational { numerator: l_num, denominator: l_denom },
-                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
-                            // a/b >= c/d ⟺ ad >= bc
-                            let left_cross = l_num * r_denom;
-                            let right_cross = r_num * l_denom;
-                            Value::Bool(left_cross >= right_cross)
-                        }
-                        (Value::Rational { numerator: l_num, denominator: l_denom },
-                         Value::Number(r_num)) => {
-                            // a/b >= c ⟺ a >= bc
-                            let left_cross = l_num;
-                            let right_cross = r_num * l_denom;
-                            Value::Bool(left_cross >= &right_cross)
-                        }
-                        (Value::Number(l_num),
-                         Value::Rational { numerator: r_num, denominator: r_denom }) => {
-                            // a >= c/d ⟺ ad >= c
-                            let left_cross = l_num * r_denom;
-                            let right_cross = r_num;
-                            Value::Bool(&left_cross >= right_cross)
-                        }
-                        _ => Value::Bool(left.to_number()? >= right.to_number()?)
-                    }
-                }
-                "**" => {
-                    // Extract base as rational (supports Number, Rational, and Real)
-                    let (base_num, base_denom, is_real, precision) = match left {
-                        Value::Number(n) => (n.clone(), BigInt::from(1), false, 0),
-                        Value::Rational { numerator, denominator } => {
-                            (numerator.clone(), denominator.clone(), false, 0)
-                        }
-                        Value::Real { numerator, denominator, precision } => {
-                            (numerator.clone(), denominator.clone(), true, precision)
-                        }
-                        _ => return Err("Left operand must be a number".to_string()),
-                    };
-
-                    // Extract exponent as integer (truncate Rational/Real to integer)
-                    let exp_int = match &right {
-                        Value::Number(n) => n.clone(),
-                        Value::Rational { numerator, denominator } => numerator / denominator,
-                        Value::Real { numerator, denominator, .. } => numerator / denominator,
-                        _ => return Err("Right operand must be a number".to_string()),
-                    };
-
-                    // Convert exponent to u32 for pow operation
-                    let exp_u32 = exp_int.to_u32()
-                        .ok_or_else(|| "Exponent too large".to_string())?;
-
-                    // Compute base^exp for rational: (a/b)^n = a^n / b^n
-                    let result_num = base_num.pow(exp_u32);
-                    let result_denom = base_denom.pow(exp_u32);
-
-                    // Return appropriate type based on input
-                    if is_real {
-                        Value::Real {
-                            numerator: result_num,
-                            denominator: result_denom,
-                            precision,
-                        }
-                    } else if result_denom == BigInt::from(1) {
-                        Value::Number(result_num)
-                    } else {
-                        Value::Rational {
-                            numerator: result_num,
-                            denominator: result_denom,
-                        }
-                    }
-                }
-                ".." => Value::Range {
-                    start: left.to_number()?,
-                    end: right.to_number()?,
-                },
-                "and" | "&&" => Value::Bool(left.to_bool() && right.to_bool()),
-                "or" | "||" => Value::Bool(left.to_bool() || right.to_bool()),
-                "[]" => {
-                    // Array indexing: left is array, right is index
-                    let arr = match left {
-                        Value::Array(ref elements) => elements,
-                        _ => return Err("Cannot index non-array value".to_string()),
-                    };
-
-                    // Convert index to usize
-                    let idx = match &right {
-                        Value::Number(n) => {
-                            n.to_usize()
-                                .ok_or_else(|| "Array index out of bounds".to_string())?
-                        }
-                        _ => return Err("Array index must be a number".to_string()),
-                    };
-
-                    // Bounds check
-                    if idx >= arr.len() {
-                        return Err(format!("Array index {} out of bounds (length: {})", idx, arr.len()));
-                    }
-
-                    arr[idx].clone()
-                }
-                _ => return Err(format!("Unknown binary operator: {}", op)),
-            };
-
-            Ok((result, ControlFlow::Normal))
-        }
-    }
-}
-
-/// Reduce a rational to canonical form (GCD reduction) and return as integer if denominator = 1
-fn reduce_rational(numerator: BigInt, denominator: BigInt) -> Value {
-    // Handle zero numerator
-    if numerator == BigInt::from(0) {
-        return Value::Number(BigInt::from(0));
-    }
-
-    // Ensure denominator is always positive (move sign to numerator)
-    let (num, denom) = if denominator < BigInt::from(0) {
-        (-numerator, -denominator)
-    } else {
-        (numerator, denominator)
-    };
-
-    // Reduce by GCD
-    let g = gcd(num.clone(), denom.clone());
-    let reduced_num = &num / &g;
-    let reduced_denom = &denom / &g;
-
-    // If denominator = 1, return as integer
-    if reduced_denom == BigInt::from(1) {
-        Value::Number(reduced_num)
-    } else {
-        Value::Rational {
-            numerator: reduced_num,
-            denominator: reduced_denom,
-        }
-    }
-}
-
-/// Reduce a real to canonical form (like reduce_rational) but preserve precision
-fn reduce_real(numerator: BigInt, denominator: BigInt, precision: usize) -> Value {
-    // Handle zero numerator
-    if numerator == BigInt::from(0) {
-        return Value::Real {
-            numerator: BigInt::from(0),
-            denominator: BigInt::from(1),
-            precision,
+            Some(_) => Err(format!("Variable '{}' is not an array", target)),
+            None => Err(format!("Undefined variable '{}'", target)),
         };
     }
 
-    // Ensure denominator is always positive (move sign to numerator)
-    let (num, denom) = if denominator < BigInt::from(0) {
-        (-numerator, -denominator)
+    let mut values = Vec::with_capacity(args.len());
+    for arg in args {
+        values.push(eval!(arg, env, schema));
+    }
+    let result = builtin_apply(builtin, name, &values)?;
+    Ok((result, Flow::Normal))
+}
+
+fn arity(name: &str, values: &[Value], n: usize) -> Result<(), String> {
+    if values.len() != n {
+        Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, values.len()))
     } else {
-        (numerator, denominator)
-    };
+        Ok(())
+    }
+}
 
-    // Reduce by GCD
-    let g = gcd(num.clone(), denom.clone());
-    let reduced_num = &num / &g;
-    let reduced_denom = &denom / &g;
+fn builtin_apply(builtin: Builtin, name: &str, values: &[Value]) -> Result<Value, String> {
+    use Builtin::*;
+    match builtin {
+        Emit => {
+            arity(name, values, 1)?;
+            match &values[0] {
+                Value::String(s) => {
+                    print!("{}", s);
+                    Ok(Value::Null)
+                }
+                _ => Err(format!("{}() requires a string argument", name)),
+            }
+        }
+        PrintLine => {
+            for v in values {
+                println!("{}", v);
+            }
+            Ok(Value::Null)
+        }
+        Write => {
+            for v in values {
+                print!("{}", v);
+            }
+            Ok(Value::Null)
+        }
+        Real => {
+            if values.is_empty() || values.len() > 2 {
+                return Err(format!("{}() expects 1 or 2 arguments, got {}", name, values.len()));
+            }
+            let precision = match values.get(1) {
+                None => 15,
+                Some(Value::Number(n)) => n.to_u64().ok_or_else(|| "Precision must be a positive integer".to_string())? as usize,
+                Some(_) => return Err("Precision argument must be an integer".to_string()),
+            };
+            match &values[0] {
+                Value::Number(n) => Ok(Value::Real { numerator: n.clone(), denominator: BigInt::from(1), precision }),
+                Value::Rational { numerator, denominator } | Value::Real { numerator, denominator, .. } => {
+                    Ok(Value::Real { numerator: numerator.clone(), denominator: denominator.clone(), precision })
+                }
+                _ => Err(format!("{}() requires a number, rational, or real argument", name)),
+            }
+        }
+        IntToString => {
+            arity(name, values, 1)?;
+            match &values[0] {
+                Value::Number(n) => Ok(Value::String(n.to_string())),
+                _ => Err(format!("{}() requires an integer argument", name)),
+            }
+        }
+        RealToString => {
+            arity(name, values, 1)?;
+            match &values[0] {
+                Value::Real { numerator, denominator, precision } => {
+                    Ok(Value::String(Value::real_to_decimal(numerator, denominator, *precision)))
+                }
+                _ => Err(format!("{}() requires a real argument", name)),
+            }
+        }
+        RationalToString => {
+            arity(name, values, 1)?;
+            match &values[0] {
+                v @ Value::Rational { .. } => Ok(Value::String(v.to_string())),
+                _ => Err(format!("{}() requires a rational argument", name)),
+            }
+        }
+        BoolToString => {
+            arity(name, values, 1)?;
+            match &values[0] {
+                v @ Value::Bool(_) => Ok(Value::String(v.to_string())),
+                _ => Err(format!("{}() requires a boolean argument", name)),
+            }
+        }
+        ArrayToString => {
+            arity(name, values, 1)?;
+            match &values[0] {
+                v @ Value::Array(_) => Ok(Value::String(v.to_string())),
+                _ => Err(format!("{}() requires an array argument", name)),
+            }
+        }
+        NullToString => {
+            arity(name, values, 1)?;
+            match &values[0] {
+                Value::Null => Ok(Value::String("null".to_string())),
+                _ => Err(format!("{}() requires a null argument", name)),
+            }
+        }
+        KindToString => {
+            arity(name, values, 1)?;
+            match &values[0] {
+                Value::Kind(k) => Ok(Value::String(k.name().to_string())),
+                _ => Err(format!("{}() requires a kind argument", name)),
+            }
+        }
+        Len => {
+            arity(name, values, 1)?;
+            match &values[0] {
+                Value::String(s) => Ok(Value::Number(BigInt::from(s.chars().count()))),
+                Value::Array(items) => Ok(Value::Number(BigInt::from(items.len()))),
+                _ => Err(format!("{}() requires a string or array argument", name)),
+            }
+        }
+        CharAt => {
+            arity(name, values, 2)?;
+            match (&values[0], &values[1]) {
+                (Value::String(s), Value::Number(i)) => match i.to_usize().and_then(|i| s.chars().nth(i)) {
+                    Some(ch) => Ok(Value::String(ch.to_string())),
+                    None => Err(format!("{} index out of bounds", name)),
+                },
+                (Value::String(_), _) => Err(format!("{}() second argument must be an integer", name)),
+                _ => Err(format!("{}() first argument must be a string", name)),
+            }
+        }
+        Ord => {
+            arity(name, values, 1)?;
+            match &values[0] {
+                Value::String(s) => match s.chars().next() {
+                    Some(ch) => Ok(Value::Number(BigInt::from(ch as u32))),
+                    None => Err(format!("{}() requires a non-empty string", name)),
+                },
+                _ => Err(format!("{}() requires a string argument", name)),
+            }
+        }
+        Chr => {
+            arity(name, values, 1)?;
+            match &values[0] {
+                Value::Number(n) => {
+                    let code = n.to_u32().ok_or_else(|| {
+                        format!("{}() argument must be a non-negative integer within valid Unicode range", name)
+                    })?;
+                    let ch = char::from_u32(code)
+                        .ok_or_else(|| format!("{}() argument {} is not a valid Unicode code point", name, code))?;
+                    Ok(Value::String(ch.to_string()))
+                }
+                _ => Err(format!("{}() requires an integer argument", name)),
+            }
+        }
+        Error => {
+            arity(name, values, 1)?;
+            match &values[0] {
+                Value::String(s) => Err(s.clone()),
+                _ => Err(format!("{}() argument must be a string", name)),
+            }
+        }
+        Kind => {
+            arity(name, values, 1)?;
+            values[0].kind().map(Value::Kind).ok_or_else(|| format!("{}(): unknown value type", name))
+        }
+        Num => {
+            arity(name, values, 1)?;
+            match &values[0] {
+                Value::Rational { numerator, .. } => Ok(Value::Number(numerator.clone())),
+                _ => Err(format!("{}() requires a rational argument", name)),
+            }
+        }
+        Den => {
+            arity(name, values, 1)?;
+            match &values[0] {
+                Value::Rational { denominator, .. } => Ok(Value::Number(denominator.clone())),
+                _ => Err(format!("{}() requires a rational argument", name)),
+            }
+        }
+        Int => {
+            arity(name, values, 1)?;
+            match &values[0] {
+                Value::Real { numerator, denominator, .. } => Ok(Value::Number(numerator / denominator)),
+                _ => Err(format!("{}() requires a real argument", name)),
+            }
+        }
+        Frac => {
+            arity(name, values, 1)?;
+            match &values[0] {
+                Value::Real { numerator, denominator, precision } => {
+                    let int_part = numerator / denominator;
+                    Ok(Value::Real {
+                        numerator: numerator - &int_part * denominator,
+                        denominator: denominator.clone(),
+                        precision: *precision,
+                    })
+                }
+                _ => Err(format!("{}() requires a real argument", name)),
+            }
+        }
+        Extern => {
+            let target = match values.first() {
+                Some(Value::String(s)) => s.as_str(),
+                Some(_) => return Err(format!("First argument to {} must be a string (function name)", name)),
+                None => return Err(format!("{} requires at least one argument (function name)", name)),
+            };
+            let rest = &values[1..];
+            match target {
+                "print_native" => {
+                    for v in rest {
+                        println!("{}", v);
+                    }
+                    Ok(Value::Null)
+                }
+                "value_type" => {
+                    let v = rest.first().ok_or_else(|| "value_type requires an argument".to_string())?;
+                    let kind = match v {
+                        Value::Number(_) => "number",
+                        Value::Rational { .. } => "rational",
+                        Value::Real { .. } => "real",
+                        Value::String(_) => "string",
+                        Value::Bool(_) => "bool",
+                        Value::Null => "null",
+                        Value::Range { .. } => "range",
+                        Value::Array(_) => "array",
+                        Value::Function(_) => "function",
+                        Value::Kind(_) => "kind",
+                    };
+                    Ok(Value::String(kind.to_string()))
+                }
+                "debug_info" => {
+                    let v = rest.first().ok_or_else(|| "debug_info requires an argument".to_string())?;
+                    println!("[DEBUG] {}", v);
+                    Ok(Value::Null)
+                }
+                other => Err(format!("Unknown external function: {}", other)),
+            }
+        }
+        Push => unreachable!("push is handled before its arguments are evaluated"),
+    }
+}
 
-    Value::Real {
-        numerator: reduced_num,
-        denominator: reduced_denom,
-        precision,
+// ---------------- Operate ----------------
+
+fn operate(op: Op, operands: &[Instruction], env: &mut Environment, schema: &LanguageSchema) -> Outcome {
+    match op {
+        Op::ArrayLiteral => {
+            let mut items = Vec::with_capacity(operands.len());
+            for operand in operands {
+                items.push(eval!(operand, env, schema));
+            }
+            return Ok((Value::Array(items), Flow::Normal));
+        }
+        Op::Not | Op::Negate | Op::RangeStart | Op::RangeEnd => {
+            if operands.len() != 1 {
+                return Err("Unary operator requires 1 operand".to_string());
+            }
+            let v = eval!(&operands[0], env, schema);
+            let result = match op {
+                Op::Not => Value::Bool(!v.to_bool()),
+                Op::Negate => numeric::negate(&v)?,
+                Op::RangeStart | Op::RangeEnd => match v {
+                    Value::Range { start, end } => Value::Number(if op == Op::RangeStart { start } else { end }),
+                    other => return Err(format!("For loop requires a range, got {}", other)),
+                },
+                _ => unreachable!(),
+            };
+            return Ok((result, Flow::Normal));
+        }
+        _ => {}
+    }
+
+    if operands.len() != 2 {
+        return Err("Binary operator requires 2 operands".to_string());
+    }
+    let left = eval!(&operands[0], env, schema);
+
+    // Short-circuit logic.
+    match op {
+        Op::And if !left.to_bool() => return Ok((Value::Bool(false), Flow::Normal)),
+        Op::Or if left.to_bool() => return Ok((Value::Bool(true), Flow::Normal)),
+        _ => {}
+    }
+
+    let right = eval!(&operands[1], env, schema);
+    let result = binary(op, &left, &right)?;
+    Ok((result, Flow::Normal))
+}
+
+fn binary(op: Op, left: &Value, right: &Value) -> Result<Value, String> {
+    match op {
+        Op::And => Ok(Value::Bool(left.to_bool() && right.to_bool())),
+        Op::Or => Ok(Value::Bool(left.to_bool() || right.to_bool())),
+        Op::Eq => Ok(Value::Bool(left == right)),
+        Op::Ne => Ok(Value::Bool(left != right)),
+        Op::Concat => Ok(Value::String(format!("{}{}", left, right))),
+        Op::Range => Ok(Value::Range { start: left.to_number()?, end: right.to_number()? }),
+        Op::Index => {
+            let items = match left {
+                Value::Array(items) => items,
+                _ => return Err("Cannot index non-array value".to_string()),
+            };
+            let idx = array_index(right)?;
+            items.get(idx).cloned().ok_or_else(|| format!("Array index {} out of bounds (length: {})", idx, items.len()))
+        }
+        Op::Add if matches!(left, Value::String(_)) || matches!(right, Value::String(_)) => {
+            Ok(Value::String(format!("{}{}", left, right)))
+        }
+        Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Quot | Op::Rem | Op::Pow => {
+            match (numeric::to_num(left), numeric::to_num(right)) {
+                (Some(a), Some(b)) => numeric::arith(op, &a, &b),
+                _ if matches!(op, Op::Div | Op::Quot | Op::Rem | Op::Pow) => {
+                    Err(format!("{} requires numeric operands", op_name(op)))
+                }
+                // Legacy coercion for the closed operations on booleans and null.
+                _ => {
+                    let a = left.to_number()?;
+                    let b = right.to_number()?;
+                    Ok(Value::Number(match op {
+                        Op::Add => a + b,
+                        Op::Sub => a - b,
+                        _ => a * b,
+                    }))
+                }
+            }
+        }
+        Op::Lt | Op::Le | Op::Gt | Op::Ge => {
+            let ordering = match (numeric::to_num(left), numeric::to_num(right)) {
+                (Some(a), Some(b)) => numeric::compare(&a, &b),
+                _ => left.to_number()?.cmp(&right.to_number()?),
+            };
+            Ok(Value::Bool(match op {
+                Op::Lt => ordering == Ordering::Less,
+                Op::Le => ordering != Ordering::Greater,
+                Op::Gt => ordering == Ordering::Greater,
+                _ => ordering != Ordering::Less,
+            }))
+        }
+        Op::Pipe | Op::Not | Op::Negate | Op::ArrayLiteral | Op::RangeStart | Op::RangeEnd => {
+            Err(format!("{:?} is not a binary operation", op))
+        }
+    }
+}
+
+fn op_name(op: Op) -> &'static str {
+    match op {
+        Op::Div => "Division",
+        Op::Quot => "Integer quotient",
+        Op::Rem => "Modulo",
+        Op::Pow => "Exponentiation",
+        _ => "Operation",
+    }
+}
+
+fn array_index(value: &Value) -> Result<usize, String> {
+    match value {
+        Value::Number(n) => n.to_usize().ok_or_else(|| "Array index out of bounds".to_string()),
+        _ => Err("Array index must be a number".to_string()),
     }
 }

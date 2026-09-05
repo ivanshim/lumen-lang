@@ -1,121 +1,317 @@
-// Language schema: declarative syntax and semantics
+// Language schema: the data that turns the kernel into a language.
 //
-// LanguageSchema contains ONLY data loaded from YAML specifications.
-// All interpretation is done by the kernel stages.
+// A schema is deserialised from YAML and contains only tables: lexemes,
+// block rules, operator precedence with the kernel operation each maps to,
+// statement keywords with the form each introduces, the surface names of
+// built-in functions, and the names of system bindings. It contains no code.
 
 use std::collections::HashMap;
 
-#[derive(Debug, Clone)]
-pub struct OperatorInfo {
-    pub precedence: f32,
-    pub associativity: Associativity,
-    pub short_circuit: bool,
+use serde::Deserialize;
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LanguageSchema {
+    pub name: String,
+    /// Prefix used when reporting errors, e.g. `LumenError`.
+    #[serde(default = "default_error_prefix")]
+    pub error_prefix: String,
+    pub lexical: Lexical,
+    pub structure: Structure,
+    #[serde(default)]
+    pub literals: Literals,
+    pub operators: Operators,
+    #[serde(default)]
+    pub statements: Statements,
+    /// Surface function name → kernel built-in.
+    #[serde(default)]
+    pub functions: HashMap<String, Builtin>,
+    #[serde(default)]
+    pub system: System,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Associativity {
+fn default_error_prefix() -> String {
+    "Error".to_string()
+}
+
+// ---------------- Stage 1: lexical tables ----------------
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Lexical {
+    /// Line-comment marker; comments are removed before lexing.
+    #[serde(default)]
+    pub comment: Option<String>,
+    /// String delimiters.
+    #[serde(default)]
+    pub quotes: Vec<char>,
+    /// Escape tables per delimiter: escape letter → replacement text.
+    /// A backslash followed by an unlisted letter is kept verbatim.
+    #[serde(default)]
+    pub escapes: HashMap<char, HashMap<char, String>>,
+    /// Operator and punctuation lexemes; longest match wins.
+    pub operators: Vec<String>,
+    #[serde(default)]
+    pub number: NumberSyntax,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct NumberSyntax {
+    #[serde(default)]
+    pub decimal_point: Option<char>,
+    /// `<base>@<digits>` literals, e.g. `16@FF`.
+    #[serde(default)]
+    pub base_marker: Option<char>,
+    /// Exponent marker inside base-N literals, e.g. `10@1.5^3`.
+    #[serde(default)]
+    pub exponent_marker: Option<char>,
+}
+
+// ---------------- Stage 2: structure tables ----------------
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Structure {
+    pub blocks: BlockStyle,
+    #[serde(default = "four")]
+    pub indent_size: usize,
+    /// Block delimiters: present in the source for `braces`, synthesised
+    /// from indentation changes for `indentation`.
+    pub block_open: String,
+    pub block_close: String,
+    /// Token that ends a block header (Python's `:`); dropped when present.
+    #[serde(default)]
+    pub block_intro: Option<String>,
+    /// Statement terminators besides line ends, e.g. `;`.
+    #[serde(default)]
+    pub terminators: Vec<String>,
+    #[serde(default)]
+    pub group: Option<Pair>,
+    #[serde(default)]
+    pub call: Option<Pair>,
+    #[serde(default)]
+    pub array: Option<Pair>,
+}
+
+fn four() -> usize {
+    4
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BlockStyle {
+    Indentation,
+    Braces,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Pair {
+    pub open: String,
+    pub close: String,
+    #[serde(default)]
+    pub separator: Option<String>,
+}
+
+// ---------------- Stage 3: reduce tables ----------------
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct Literals {
+    #[serde(rename = "true", default)]
+    pub true_words: Vec<String>,
+    #[serde(rename = "false", default)]
+    pub false_words: Vec<String>,
+    #[serde(rename = "null", default)]
+    pub null_words: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Operators {
+    #[serde(default)]
+    pub binary: HashMap<String, BinaryOp>,
+    #[serde(default)]
+    pub unary: HashMap<String, UnaryOp>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BinaryOp {
+    pub precedence: f32,
+    #[serde(default)]
+    pub associativity: Assoc,
+    pub op: Op,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UnaryOp {
+    pub precedence: f32,
+    pub op: Op,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Assoc {
+    #[default]
     Left,
     Right,
 }
 
-#[derive(Debug, Clone)]
-pub struct UnaryOperatorInfo {
-    pub precedence: f32,
-    pub position: UnaryPosition,
+/// Kernel operations. Schemas map surface operators onto these; the last
+/// group is used internally when statements are desugared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Op {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Quot,
+    Rem,
+    Pow,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    And,
+    Or,
+    Not,
+    Negate,
+    Concat,
+    Range,
+    Index,
+    Pipe,
+    ArrayLiteral,
+    RangeStart,
+    RangeEnd,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnaryPosition {
-    Prefix,
-    Postfix,
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct Statements {
+    /// Assignment operator, e.g. `=`.
+    #[serde(default)]
+    pub assignment: Option<String>,
+    #[serde(default)]
+    pub binding: Option<Binding>,
+    #[serde(default)]
+    pub branch: Option<Branch>,
+    #[serde(default)]
+    pub loop_while: Option<Keyword>,
+    #[serde(default)]
+    pub loop_until: Option<Keyword>,
+    #[serde(default)]
+    pub loop_for: Option<ForLoop>,
+    #[serde(rename = "return", default)]
+    pub return_: Option<Keyword>,
+    #[serde(rename = "break", default)]
+    pub break_: Option<Keyword>,
+    #[serde(rename = "continue", default)]
+    pub continue_: Option<Keyword>,
+    #[serde(default)]
+    pub function: Option<Keyword>,
+    /// A no-op statement keyword, e.g. Python's `pass`.
+    #[serde(default)]
+    pub pass: Option<Keyword>,
 }
 
-/// Comprehensive language schema loaded from YAML
-#[derive(Debug, Clone)]
-pub struct LanguageSchema {
-    /// Multi-character lexemes (keywords, operators) that should be recognized as units
-    pub multichar_lexemes: Vec<&'static str>,
+#[derive(Debug, Clone, Deserialize)]
+pub struct Keyword {
+    pub keyword: String,
+}
 
-    /// Keywords that require word boundaries
-    pub word_boundary_keywords: Vec<&'static str>,
+#[derive(Debug, Clone, Deserialize)]
+pub struct Binding {
+    pub keyword: String,
+    #[serde(default)]
+    pub mutable_modifier: Option<String>,
+    /// Token introducing an (ignored) type annotation, e.g. `:`.
+    #[serde(default)]
+    pub type_annotation: Option<String>,
+}
 
-    /// Statement terminators (e.g., ";", "\n")
-    pub terminators: Vec<&'static str>,
+#[derive(Debug, Clone, Deserialize)]
+pub struct Branch {
+    pub keyword: String,
+    pub else_keyword: String,
+    #[serde(default)]
+    pub elif_keyword: Option<String>,
+}
 
-    /// Binary operators with precedence and associativity
-    pub binary_operators: HashMap<String, OperatorInfo>,
+#[derive(Debug, Clone, Deserialize)]
+pub struct ForLoop {
+    pub keyword: String,
+    pub in_keyword: String,
+}
 
-    /// Unary operators with precedence and position
-    pub unary_operators: HashMap<String, UnaryOperatorInfo>,
+// ---------------- Stage 4: execute tables ----------------
 
-    /// All keywords in the language
-    pub keywords: Vec<String>,
+/// Built-in functions the kernel can provide. Which surface names reach
+/// them, if any, is the schema's choice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Builtin {
+    Emit,
+    PrintLine,
+    Write,
+    Real,
+    IntToString,
+    RealToString,
+    RationalToString,
+    BoolToString,
+    ArrayToString,
+    NullToString,
+    KindToString,
+    Len,
+    CharAt,
+    Ord,
+    Chr,
+    Error,
+    Kind,
+    Num,
+    Den,
+    Int,
+    Frac,
+    Extern,
+    Push,
+}
 
-    /// Indentation settings
-    pub indentation_size: usize,
-    pub indentation_char: char,
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct System {
+    /// Read-only binding holding the program arguments as one string.
+    #[serde(default)]
+    pub args: Option<String>,
+    /// Binding that switches function-result caching on and off.
+    #[serde(default)]
+    pub memoization: Option<String>,
+    /// Bindings for kind meta-values.
+    #[serde(default)]
+    pub kinds: HashMap<String, KindName>,
+    /// Integer constants bound at start-up.
+    #[serde(default)]
+    pub integer_constants: HashMap<String, i64>,
+}
 
-    /// Block structure markers (e.g., ":" for Lumen)
-    pub block_open_marker: String,
-    pub block_close_marker: String,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum KindName {
+    Integer,
+    Rational,
+    Real,
+    String,
+    Boolean,
+    Array,
+    Null,
 }
 
 impl LanguageSchema {
-    /// Create a new, empty schema
-    pub fn new() -> Self {
-        LanguageSchema {
-            multichar_lexemes: Vec::new(),
-            word_boundary_keywords: Vec::new(),
-            terminators: Vec::new(),
-            binary_operators: HashMap::new(),
-            unary_operators: HashMap::new(),
-            keywords: Vec::new(),
-            indentation_size: 4,
-            indentation_char: ' ',
-            block_open_marker: ":".to_string(),
-            block_close_marker: "DEDENT".to_string(),
-        }
+    pub fn from_yaml(text: &str) -> Result<Self, String> {
+        serde_yaml::from_str(text).map_err(|e| format!("schema error: {e}"))
     }
 
-    /// Check if a word is a keyword that requires word boundaries
-    pub fn is_word_boundary_keyword(&self, word: &str) -> bool {
-        self.word_boundary_keywords.contains(&word)
+    /// Operator lexemes sorted longest first, for maximal munch.
+    pub fn operators_longest_first(&self) -> Vec<&str> {
+        let mut ops: Vec<&str> = self.lexical.operators.iter().map(String::as_str).collect();
+        ops.sort_by(|a, b| b.len().cmp(&a.len()));
+        ops
     }
 
-    /// Check if a token is a terminator
     pub fn is_terminator(&self, lexeme: &str) -> bool {
-        self.terminators.contains(&lexeme)
-    }
-
-    /// Get binary operator info
-    pub fn get_binary_operator(&self, op: &str) -> Option<&OperatorInfo> {
-        self.binary_operators.get(op)
-    }
-
-    /// Get unary operator info
-    pub fn get_unary_operator(&self, op: &str) -> Option<&UnaryOperatorInfo> {
-        self.unary_operators.get(op)
-    }
-
-    /// Check if operator is left-associative
-    pub fn is_left_associative(&self, op: &str) -> bool {
-        self.binary_operators
-            .get(op)
-            .map(|info| info.associativity == Associativity::Left)
-            .unwrap_or(false)
-    }
-
-    /// Check if operator has short-circuit evaluation
-    pub fn is_short_circuit(&self, op: &str) -> bool {
-        self.binary_operators
-            .get(op)
-            .map(|info| info.short_circuit)
-            .unwrap_or(false)
-    }
-}
-
-impl Default for LanguageSchema {
-    fn default() -> Self {
-        Self::new()
+        self.structure.terminators.iter().any(|t| t == lexeme)
     }
 }
