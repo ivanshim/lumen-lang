@@ -146,8 +146,8 @@ if ! cargo build --quiet 2>/dev/null; then
 fi
 echo -e "${BLUE}Built successfully${NC}\n"
 
-STREAM_BINARY="./target/debug/stream"
-MICROCODE_BINARY="./target/debug/microcode"
+STREAM_BINARY="./target/debug/lumen-lang --kernel stream"
+MICROCODE_BINARY="./target/debug/lumen-lang --kernel microcode"
 TOTAL_TESTS=0
 PASSED_TESTS=0
 FAILED_TESTS=0
