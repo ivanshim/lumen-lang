@@ -157,37 +157,20 @@ impl ExprNode for FunctionCallExpr {
             arg_values.push(arg.eval(env)?);
         }
 
-        // ================================================================
-        // MEMOIZATION: Gated by execution context (MEMOIZATION = true/false)
-        // ================================================================
-        // Cache operations are gated by env.memoization_enabled().
-        // If MEMOIZATION = false (default): no cache lookup/storage
-        // If MEMOIZATION = true: check cache before execution, store after
-        //
-        // The memoization state is dynamically scoped:
-        // - Set by MEMOIZATION = true/false statements
-        // - Inherited by function calls
-        // - Automatically restored on scope exit
-        //
-        // Performance: fingerprint only computed when memoization enabled
-        if let Some(cached_result) = env.get_cached(&self.func_name, &arg_values) {
-            // Cache hit: return cached result without executing function
-            return Ok(cached_result);
+        // Memoization is a Lumen feature layered on the environment; see memo.rs.
+        if let Some(cached) = crate::languages::lumen::memo::lookup(env, &self.func_name, &arg_values) {
+            return Ok(cached);
         }
 
-        // Execute function (cache lookup may have returned early)
         let result = self.execute_function(&params, &body, &arg_values, env)?;
-
-        // Cache result if memoization is enabled
-        env.cache_result(&self.func_name, &arg_values, result.clone());
+        crate::languages::lumen::memo::store(env, &self.func_name, &arg_values, &result);
 
         Ok(result)
     }
 }
 
 impl FunctionCallExpr {
-    /// Execute function body and return result.
-    /// This is factored out to be shared between cached and non-cached paths.
+    /// Execute the function body in a fresh scope that is popped on every exit path.
     fn execute_function(
         &self,
         params: &[String],
@@ -195,43 +178,28 @@ impl FunctionCallExpr {
         arg_values: &[Value],
         env: &mut Env,
     ) -> LumenResult<Value> {
-        // Create new scope for function with RAII guard
-        // The guard automatically pops the scope on ANY exit (return, break, error)
-        let _scope_guard = env.push_scope_guarded();
+        env.with_scope(|env| {
+            for (param, arg_val) in params.iter().zip(arg_values) {
+                env.define(param.clone(), arg_val.clone());
+            }
 
-        // Bind parameters to arguments
-        for (param, arg_val) in params.iter().zip(arg_values) {
-            env.define(param.clone(), arg_val.clone());
-        }
-
-        // Execute function body
-        let mut result = Box::new(crate::languages::lumen::values::LumenNull) as Value;
-        {
+            let mut result = Box::new(crate::languages::lumen::values::LumenNull) as Value;
             let body_ref = body.borrow();
             for stmt in body_ref.iter() {
-                let ctl = stmt.exec(env)?;
-                match ctl {
-                    crate::kernel::ast::Control::ExprValue(val) => {
-                        // Expression statement value - keep as result but continue
-                        result = val;
-                    }
+                match stmt.exec(env)? {
+                    crate::kernel::ast::Control::ExprValue(val) => result = val,
                     crate::kernel::ast::Control::Return(val) => {
-                        // Explicit return - set result and break
                         result = val;
                         break;
-                        // _scope_guard drops here, automatically calling env.pop_scope()
                     }
                     crate::kernel::ast::Control::Break | crate::kernel::ast::Control::Continue => {
                         return Err("break/continue outside of loop".into());
-                        // _scope_guard drops here, automatically calling env.pop_scope()
                     }
                     crate::kernel::ast::Control::None => {}
                 }
             }
-        }
-
-        // _scope_guard drops here on normal exit, automatically calling env.pop_scope()
-        Ok(result)
+            Ok(result)
+        })
     }
 }
 

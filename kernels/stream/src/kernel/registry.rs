@@ -1,85 +1,64 @@
-// src/framework/registry.rs
+// Kernel registry: the token registry and the shared error type.
 //
-// Kernel registry utilities.
-// Provides basic error handling and token registry for stream processing.
+// The kernel owns no parsing algorithms and no handler traits. Languages
+// register the token definitions the lexer should segment on, and supply
+// the byte class used for keyword word-boundary checks. Everything else
+// (precedence, handlers, dispatch) lives in the language modules.
 //
-// AUTHORITY:
-// - Span { start, end } (byte offsets) is the AUTHORITATIVE source-location mechanism
-// - All parsing and AST construction must use Span
-// - line/col are DIAGNOSTIC-ONLY (derived metadata, only for error messages)
-//
-// ARCHITECTURE:
-// - Kernel provides TokenRegistry only (pure token management)
-// - Kernel contains ALL parsing algorithms (expression, statement, precedence-climbing)
-// - Languages define their own handler trait types (ExprPrefix, ExprInfix, StmtHandler)
-// - Languages define their own Precedence types
-// - Languages manage all dispatch and handler logic
+// Span { start, end } (byte offsets) is the authoritative source location.
+// line/col are diagnostic-only metadata for error messages.
 
 use crate::kernel::parser::Parser;
 
-pub type LumenResult<T> = Result<T, String>;
+pub type KernelResult<T> = Result<T, String>;
 
 /// Format a parse error with diagnostic position information.
-/// DIAGNOSTIC FUNCTION: Uses line/col (derived from source) only for human-readable error messages.
-/// line/col are NOT used by parsing logic - all core logic uses Span.
 pub fn err_at(parser: &Parser, msg: &str) -> String {
     let (line, col) = parser.position();
     format!("ParseError at {line}:{col}: {msg}")
 }
 
 // --------------------
-// Token Definition (Unified Token Metadata)
+// Token Definition
 // --------------------
 
-/// Complete definition of a token with all its properties.
-/// Unifies multichar lexemes and skip behavior under one structure.
+/// One lexeme the lexer should recognise as a unit.
 #[derive(Debug, Clone)]
 pub struct TokenDefinition {
-    /// The lexeme string to recognize
+    /// The lexeme string to recognise.
     pub lexeme: &'static str,
-    /// Whether this token should be skipped during parsing
-    pub skip_during_parsing: bool,
-    /// Whether this token requires word boundaries (identifier-safe keywords)
-    /// Whether this token requires word boundaries (e.g., keywords shouldn't match inside identifiers)
+    /// Whether this token must be surrounded by non-identifier bytes.
+    /// Which bytes count as identifier bytes is supplied by the language
+    /// through `TokenRegistry::set_identifier_bytes`.
     pub requires_word_boundary: bool,
 }
 
 impl TokenDefinition {
-    /// Create a token that should be recognized but not skipped
+    /// A token recognised wherever it appears.
     pub fn recognize(lexeme: &'static str) -> Self {
-        Self {
-            lexeme,
-            skip_during_parsing: false,
-            requires_word_boundary: false,
-        }
+        Self { lexeme, requires_word_boundary: false }
     }
 
-    /// Create a keyword token that requires word boundaries
+    /// A keyword-like token that must not match inside a longer word.
     pub fn keyword(lexeme: &'static str) -> Self {
-        Self {
-            lexeme,
-            skip_during_parsing: false,
-            requires_word_boundary: true,
-        }
+        Self { lexeme, requires_word_boundary: true }
     }
 }
 
 // --------------------
-// Token Registry (Pure Transport Layer)
+// Token Registry
 // --------------------
 
-/// Registry of token definitions for lexical analysis and parsing.
-/// Single source of truth for token behavior.
+/// Registry of token definitions used by the lexer.
 pub struct TokenRegistry {
-    // All token definitions with their properties
     token_defs: Vec<TokenDefinition>,
-    // Cached: Multi-character lexeme sequences for maximal-munch segmentation
-    // Stored in descending length order for proper maximal-munch
+    /// Multi-character lexemes in descending length order (maximal munch).
     multichar_lexemes: Vec<&'static str>,
-    // Cached: Tokens that should be skipped during parsing
-    skip_tokens: Vec<&'static str>,
-    // Cached: Tokens that require word boundaries (keywords that shouldn't match inside identifiers)
+    /// Lexemes that require word boundaries.
     word_boundary_lexemes: Vec<&'static str>,
+    /// Language-supplied predicate: which bytes belong to a word.
+    /// Absent means no byte does, so boundary checks never suppress a match.
+    identifier_bytes: Option<fn(u8) -> bool>,
 }
 
 impl TokenRegistry {
@@ -87,60 +66,50 @@ impl TokenRegistry {
         Self {
             token_defs: Vec::new(),
             multichar_lexemes: Vec::new(),
-            skip_tokens: Vec::new(),
             word_boundary_lexemes: Vec::new(),
+            identifier_bytes: None,
         }
     }
 
-    /// Set tokens using unified TokenDefinition approach.
-    /// Languages call this during initialization to register all their tokens.
-    /// Internally extracts and caches multichar lexemes and skip tokens for efficiency.
+    /// Replace all token definitions and rebuild the lexer caches.
     pub fn set_token_definitions(&mut self, defs: Vec<TokenDefinition>) {
         self.token_defs = defs;
         self.rebuild_caches();
     }
 
-    /// Get the multi-character lexemes in descending length order.
-    /// Used by the lexer for maximal-munch segmentation.
+    /// Tell the lexer which bytes form words, for keyword boundary checks.
+    pub fn set_identifier_bytes(&mut self, pred: fn(u8) -> bool) {
+        self.identifier_bytes = Some(pred);
+    }
+
+    /// Multi-character lexemes in descending length order.
     pub fn multichar_lexemes(&self) -> &[&'static str] {
         &self.multichar_lexemes
     }
 
-
-    /// Check if the lexeme requires surrounding word boundaries.
-    /// Used by the lexer to avoid splitting identifiers that contain keywords.
+    /// Whether the lexeme must be surrounded by non-word bytes.
     pub fn requires_word_boundary(&self, lexeme: &str) -> bool {
         self.word_boundary_lexemes.iter().any(|&wb| wb == lexeme)
     }
 
-    /// Rebuild internal caches from token definitions
+    /// Whether a byte belongs to a word, per the language's definition.
+    pub fn is_identifier_byte(&self, b: u8) -> bool {
+        self.identifier_bytes.map_or(false, |pred| pred(b))
+    }
+
     fn rebuild_caches(&mut self) {
         let mut multichar = Vec::new();
-        let mut skip = Vec::new();
         let mut word_boundary = Vec::new();
-
         for def in &self.token_defs {
-            // Extract multichar lexemes (lexer concern)
             if def.lexeme.len() > 1 {
                 multichar.push(def.lexeme);
             }
-
-            // Extract skip tokens (parser concern)
-            if def.skip_during_parsing {
-                skip.push(def.lexeme);
-            }
-
-            // Extract word boundary tokens (lexer concern)
             if def.requires_word_boundary {
                 word_boundary.push(def.lexeme);
             }
         }
-
-        // Sort by descending length for proper maximal-munch
         multichar.sort_by(|a, b| b.len().cmp(&a.len()));
-
         self.multichar_lexemes = multichar;
-        self.skip_tokens = skip;
         self.word_boundary_lexemes = word_boundary;
     }
 }
@@ -150,8 +119,3 @@ impl Default for TokenRegistry {
         Self::new()
     }
 }
-
-// Handler traits are now COMPLETELY language-specific and defined in language modules.
-// The kernel provides NO trait definitions for handlers - each language defines its own
-// handler types (ExprPrefix, ExprInfix, StmtHandler) and precedence types.
-

@@ -37,21 +37,6 @@ impl LumenParserExt for Parser<'_> {
                     continue;
                 }
 
-                // Handle comments: # ... until newline
-                if ch == b'#' {
-                    // Skip the # and all following characters until newline
-                    self.i += 1;
-                    while self.i < self.toks.len() {
-                        let comment_lexeme = &self.toks[self.i].tok.lexeme;
-                        if comment_lexeme == "\n" {
-                            self.i += 1; // skip the newline too
-                            break;
-                        }
-                        self.i += 1;
-                    }
-                    continue;
-                }
-            }
             break;
         }
     }

@@ -1,139 +1,75 @@
-// src/framework/runtime/env.rs
+// Runtime environment: lexical scopes holding opaque values.
 //
-// Runtime environment: variable bindings and lexical scopes.
-// This file is core infrastructure and must remain stable.
+// The kernel stores and retrieves values; it attaches no meaning to them.
+// Languages that need runtime state beyond bindings (caches, registries,
+// counters) keep it in a typed extension slot, so no language policy has to
+// live in this file.
 
+use std::any::{Any, TypeId};
 use std::collections::HashMap;
 
 use crate::kernel::runtime::Value;
 
-// ============================================================================
-// MEMOIZATION CACHE & EXECUTION STATE
-// ============================================================================
-//
-// MEMOIZATION is a system capability that enables/disables function result caching.
-// It is:
-// - Dynamically scoped (affects all calls made while enabled)
-// - Inherited by callees
-// - Automatically restored on scope exit
-// - NOT a normal variable (reserved system identifier)
-// - NOT readable, passable, or storable as data
-//
-// Cache key: (function_name, argument_fingerprint)
-
-type MemoKey = (String, String);
-
-#[derive(Debug, Clone)]
 pub struct Env {
     scopes: Vec<HashMap<String, Value>>,
-
-    // --- MEMOIZATION STATE ---
-    // Stack of memoization enabled/disabled states
-    // Allows dynamic scoping with proper nesting
-    memoization_stack: Vec<bool>,
-
-    // --- MEMOIZATION CACHE ---
-    // Function call result cache
-    // Only populated when memoization_enabled() is true
-    memoization_cache: HashMap<MemoKey, Value>,
+    extensions: HashMap<TypeId, Box<dyn Any>>,
 }
 
 impl Env {
-    /// Create a new environment with a single (global) scope.
-    /// Memoization is disabled by default (MEMOIZATION = false).
+    /// A new environment with a single (global) scope.
     pub fn new() -> Self {
         Self {
             scopes: vec![HashMap::new()],
-            memoization_stack: vec![false],  // Default: MEMOIZATION = false
-            memoization_cache: HashMap::new(),
-        }
-    }
-
-    /// Check if memoization is currently enabled.
-    pub fn memoization_enabled(&self) -> bool {
-        self.memoization_stack.last().copied().unwrap_or(false)
-    }
-
-    /// Set memoization state (MEMOIZATION = true/false).
-    /// This is dynamically scoped.
-    pub fn set_memoization(&mut self, enabled: bool) {
-        if let Some(last) = self.memoization_stack.last_mut() {
-            *last = enabled;
-        }
-    }
-
-    /// Push a new memoization state (for nested scopes).
-    /// Called when entering a new scope.
-    fn push_memoization_state(&mut self) {
-        let current = self.memoization_enabled();
-        self.memoization_stack.push(current);
-    }
-
-    /// Pop memoization state (for nested scopes).
-    /// Called when exiting a scope.
-    fn pop_memoization_state(&mut self) {
-        if self.memoization_stack.len() > 1 {
-            self.memoization_stack.pop();
+            extensions: HashMap::new(),
         }
     }
 
     /// Enter a new lexical scope.
-    /// Also preserves and manages memoization state for dynamic scoping.
-    #[allow(dead_code)]
     pub fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
-        self.push_memoization_state();
     }
 
-    /// Exit the current lexical scope.
-    /// Also restores memoization state when exiting.
-    #[allow(dead_code)]
+    /// Leave the current scope. The global scope is never removed.
     pub fn pop_scope(&mut self) {
-        if self.scopes.len() == 1 {
-            // Global scope must always exist.
-            return;
+        if self.scopes.len() > 1 {
+            self.scopes.pop();
         }
-        self.scopes.pop();
-        self.pop_memoization_state();
     }
 
-    /// Push a scope with RAII guard that guarantees cleanup.
-    /// The guard automatically pops the scope when dropped.
-    pub fn push_scope_guarded(&mut self) -> ScopeGuard {
+    /// Run `f` inside a fresh scope that is popped on every exit path.
+    pub fn with_scope<T>(&mut self, f: impl FnOnce(&mut Env) -> Result<T, String>) -> Result<T, String> {
         self.push_scope();
-        ScopeGuard { env: self as *mut Env }
+        let result = f(self);
+        self.pop_scope();
+        result
     }
 
-    /// Define a new variable in the current scope.
-    /// This shadows any outer binding with the same name.
+    /// Bind `name` in the current scope, shadowing any outer binding.
     pub fn define(&mut self, name: String, value: Value) {
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name, value);
         }
     }
 
-    /// Assign to a variable in the current scope only.
-    /// Always creates or updates the variable in the current scope,
-    /// never searches or modifies parent scopes.
-    /// This matches the Microcode kernel's scoping behavior.
+    /// Bind `name` in the current scope only (never touches outer scopes).
     pub fn assign(&mut self, name: &str, value: Value) -> Result<(), String> {
-        // Always set in current scope, don't search parent scopes
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(name.to_string(), value);
-        }
+        self.define(name.to_string(), value);
         Ok(())
     }
 
-    /// Internal: set a variable in the current scope only.
-    /// Prefer assign() or define() in client code.
-    #[allow(dead_code)]
-    pub fn set(&mut self, name: String, value: Value) {
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(name, value);
+    /// Replace the innermost existing binding of `name`; if there is none,
+    /// bind it in the current scope.
+    pub fn update(&mut self, name: &str, value: Value) {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(slot) = scope.get_mut(name) {
+                *slot = value;
+                return;
+            }
         }
+        self.define(name.to_string(), value);
     }
 
-    /// Retrieve a variable value.
+    /// Look up `name` from the innermost scope outward.
     pub fn get(&self, name: &str) -> Result<Value, String> {
         for scope in self.scopes.iter().rev() {
             if let Some(v) = scope.get(name) {
@@ -143,110 +79,29 @@ impl Env {
         Err(format!("Undefined variable '{}'", name))
     }
 
-    // --- MEMOIZATION CACHE METHODS ---
-    // Cache operations are gated by memoization_enabled() state.
-
-    /// Check if a result is cached for this function call.
-    /// Returns Some(value) only if memoization is enabled AND result is cached.
-    /// Only computes fingerprint if memoization is enabled (performance optimization).
-    pub fn get_cached(&self, func_name: &str, args: &[Value]) -> Option<Value> {
-        if !self.memoization_enabled() {
-            return None;
-        }
-        let arg_fingerprint = Self::fingerprint_args(args);
-        let key = (func_name.to_string(), arg_fingerprint);
-        self.memoization_cache.get(&key).cloned()
-    }
-
-    /// Cache the result of a function call.
-    /// Only caches if memoization is enabled.
-    /// Only computes fingerprint if memoization is enabled (performance optimization).
-    pub fn cache_result(&mut self, func_name: &str, args: &[Value], result: Value) {
-        if !self.memoization_enabled() {
-            return;
-        }
-        let arg_fingerprint = Self::fingerprint_args(args);
-        let key = (func_name.to_string(), arg_fingerprint);
-        self.memoization_cache.insert(key, result);
-    }
-
-    /// Generate a stable fingerprint from argument values.
-    /// Used as part of the memoization cache key.
-    pub fn fingerprint_args(args: &[Value]) -> String {
-        args.iter()
-            .map(|v| v.as_debug_string())
-            .collect::<Vec<_>>()
-            .join("|")
-    }
-
-    /// Mutate an array element at a given index.
-    /// Searches for the array in any scope and mutates it in place.
-    pub fn mutate_array(&mut self, name: &str, index: usize, value: Value) -> Result<(), String> {
-        // Find and mutate in reverse scope order (innermost first)
+    /// Mutable access to the innermost binding of `name`, for in-place mutation.
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut Value> {
         for scope in self.scopes.iter_mut().rev() {
-            if let Some(arr_val) = scope.get_mut(name) {
-                // Downcast to LumenArray and mutate
-                // We need to access the raw pointer to mutate
-                // Since Value is Box<dyn RuntimeValue>, we can't directly downcast and mutate
-                // We'll use as_any() to get the concrete type
-
-                use std::any::Any;
-                if let Some(arr) = arr_val.as_any_mut().downcast_mut::<crate::languages::lumen::values::LumenArray>() {
-                    if index >= arr.elements.len() {
-                        return Err(format!("Array index out of bounds"));
-                    }
-                    arr.elements[index] = value;
-                    return Ok(());
-                }
-                return Err(format!("Variable '{}' is not an array", name));
+            if let Some(v) = scope.get_mut(name) {
+                return Some(v);
             }
         }
-        Err(format!("Undefined variable '{}'", name))
+        None
     }
 
-    /// Append a value to an array.
-    /// Searches for the array in any scope and appends to it in place.
-    pub fn push_array(&mut self, name: &str, value: Value) -> Result<(), String> {
-        // Find and mutate in reverse scope order (innermost first)
-        for scope in self.scopes.iter_mut().rev() {
-            if let Some(arr_val) = scope.get_mut(name) {
-                // Downcast to LumenArray and push
-                use std::any::Any;
-                if let Some(arr) = arr_val.as_any_mut().downcast_mut::<crate::languages::lumen::values::LumenArray>() {
-                    arr.elements.push(value);
-                    return Ok(());
-                }
-                return Err(format!("Variable '{}' is not an array", name));
-            }
-        }
-        Err(format!("Undefined variable '{}'", name))
+    /// Typed side storage for language-defined runtime state.
+    /// Created on first use from `T::default()`.
+    pub fn extension<T: Default + 'static>(&mut self) -> &mut T {
+        self.extensions
+            .entry(TypeId::of::<T>())
+            .or_insert_with(|| Box::new(T::default()))
+            .downcast_mut::<T>()
+            .expect("extension slot holds the type it was created with")
     }
 }
 
 impl Default for Env {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-// ============================================================================
-// RAII SCOPE GUARD
-// ============================================================================
-
-/// RAII guard that guarantees scope cleanup even on early returns.
-/// Automatically pops the scope when dropped (goes out of scope).
-pub struct ScopeGuard {
-    env: *mut Env,
-}
-
-impl Drop for ScopeGuard {
-    fn drop(&mut self) {
-        // SAFETY: This pointer is valid because:
-        // 1. It comes from &mut Env which is guaranteed valid
-        // 2. The guard's lifetime is tied to the function that created it
-        // 3. Rust's borrow checker ensures env outlives the guard
-        unsafe {
-            (*self.env).pop_scope();
-        }
     }
 }

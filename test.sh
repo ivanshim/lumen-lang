@@ -223,8 +223,8 @@ run_test() {
         time_display=$(printf "%d.%03d" "$sec" "$remaining_ms")s
     fi
 
-    # Print output with indentation
-    if [ -n "$output" ]; then
+    # Print program output (only for failures when TEST_QUIET is set)
+    if [ -n "$output" ] && { [ -z "$TEST_QUIET" ] || [ $exit_code -ne 0 ]; }; then
         echo "$output" | sed 's/^/    /'
     fi
 

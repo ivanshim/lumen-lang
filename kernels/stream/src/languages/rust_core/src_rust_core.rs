@@ -25,19 +25,20 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::recognize(":="),
 
         // Keywords (not skipped)
-        TokenDefinition::recognize("let"),
-        TokenDefinition::recognize("if"),
-        TokenDefinition::recognize("else"),
-        TokenDefinition::recognize("while"),
-        TokenDefinition::recognize("break"),
-        TokenDefinition::recognize("continue"),
-        TokenDefinition::recognize("print"),
-        TokenDefinition::recognize("write"),
-        TokenDefinition::recognize("true"),
-        TokenDefinition::recognize("false"),
+        TokenDefinition::keyword("let"),
+        TokenDefinition::keyword("if"),
+        TokenDefinition::keyword("else"),
+        TokenDefinition::keyword("while"),
+        TokenDefinition::keyword("break"),
+        TokenDefinition::keyword("continue"),
+        TokenDefinition::keyword("print"),
+        TokenDefinition::keyword("write"),
+        TokenDefinition::keyword("true"),
+        TokenDefinition::keyword("false"),
     ];
 
     registry.tokens.set_token_definitions(tokens);
+    registry.tokens.set_identifier_bytes(crate::languages::ascii_word_byte);
 
     // Core syntax (structural tokens - braces, parens, semicolons)
     structure::structural::register(registry);

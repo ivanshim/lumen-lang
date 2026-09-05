@@ -52,6 +52,11 @@ impl StructuralTokens {
     }
 }
 
+/// Remove `#` line comments (outside strings) before lexing.
+pub fn strip_comments(source: &str) -> String {
+    crate::languages::text::strip_line_comments(source, "#", &['"', '\''])
+}
+
 // --------------------
 // Mini-PythonCore-specific Parsing Helpers
 // --------------------

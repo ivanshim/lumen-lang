@@ -1,4 +1,4 @@
-// src/framework/ast.rs
+// kernel/ast.rs
 //
 // Minimal AST spine.
 // No feature enums. No syntax knowledge.

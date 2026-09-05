@@ -1,4 +1,4 @@
-// src/framework/parser.rs
+// kernel/parser.rs
 //
 // Pure generic syntax parsing.
 // Zero language-specific assumptions.
@@ -12,7 +12,7 @@
 // Token skipping (whitespace, comments) is handled by language-specific extension traits.
 
 use crate::kernel::lexer::{SpannedToken, Token};
-use crate::kernel::registry::{LumenResult, TokenRegistry};
+use crate::kernel::registry::{KernelResult, TokenRegistry};
 
 pub struct Parser<'a> {
     pub toks: Vec<SpannedToken>,
@@ -23,7 +23,7 @@ pub struct Parser<'a> {
 impl<'a> Parser<'a> {
     /// Create parser with pre-tokenized token stream.
     /// Used when language-specific token processing is needed.
-    pub fn new_with_tokens(toks: Vec<SpannedToken>, _token_registry: &'a TokenRegistry) -> LumenResult<Self> {
+    pub fn new_with_tokens(toks: Vec<SpannedToken>, _token_registry: &'a TokenRegistry) -> KernelResult<Self> {
         Ok(Self {
             toks,
             i: 0,

@@ -23,6 +23,11 @@ pub const SEMICOLON: &str = ";";
 // End of file
 pub const EOF: &str = "EOF";
 
+/// Remove `//` line comments (outside strings) before lexing.
+pub fn strip_comments(source: &str) -> String {
+    crate::languages::text::strip_line_comments(source, "//", &['"'])
+}
+
 // --------------------
 // Mini-RustCore-specific Parsing Helpers
 // --------------------

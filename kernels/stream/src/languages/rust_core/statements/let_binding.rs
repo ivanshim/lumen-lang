@@ -23,7 +23,7 @@ struct LetStmt {
 impl StmtNode for LetStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
         let val: Value = self.expr.eval(env)?;
-        env.set(self.name.clone(), val);
+        env.define(self.name.clone(), val);
         Ok(Control::None)
     }
 }

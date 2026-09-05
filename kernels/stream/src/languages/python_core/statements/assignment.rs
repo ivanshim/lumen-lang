@@ -18,7 +18,9 @@ struct AssignStmt {
 impl StmtNode for AssignStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
         let val: Value = self.expr.eval(env)?;
-        env.assign(&self.name, val)?;
+        // Assignment targets the binding that already exists (loop bodies and
+        // branches run in nested scopes), creating it only when there is none.
+        env.update(&self.name, val);
         Ok(Control::None)
     }
 }

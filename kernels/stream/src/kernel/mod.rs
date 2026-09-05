@@ -1,8 +1,8 @@
-// src/kernel/mod.rs
-// Language-agnostic kernel for language implementation
+// kernel/mod.rs
+// Language-agnostic kernel.
 //
-// Pure kernel with ZERO language-specific code.
-// All language features (patterns, handler traits, whitespace handling) are in language modules.
+// Nothing in this directory knows any language: no keywords, no comment or
+// string syntax, no precedence, no value types, no runtime policy.
 
 pub mod ast;
 pub mod eval;

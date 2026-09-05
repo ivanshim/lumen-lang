@@ -21,8 +21,13 @@ impl StmtNode for PushStmt {
         // Evaluate the value to push
         let value = self.value_expr.eval(env)?;
 
-        // Push to the array by name
-        env.push_array(&self.arr_name, value)?;
+        // Append in place; the array type is Lumen's, so the downcast lives here.
+        let slot = env.get_mut(&self.arr_name).ok_or_else(|| format!("Undefined variable '{}'", self.arr_name))?;
+        let arr = slot
+            .as_any_mut()
+            .downcast_mut::<crate::languages::lumen::values::LumenArray>()
+            .ok_or_else(|| format!("Variable '{}' is not an array", self.arr_name))?;
+        arr.elements.push(value);
 
         Ok(Control::None)
     }

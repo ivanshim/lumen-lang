@@ -30,7 +30,7 @@ struct MemoizationStmt {
 
 impl StmtNode for MemoizationStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
-        env.set_memoization(self.enabled);
+        crate::languages::lumen::memo::set_enabled(env, self.enabled);
         Ok(Control::None)
     }
 }

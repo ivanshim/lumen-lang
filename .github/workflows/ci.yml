@@ -22,7 +22,7 @@ jobs:
           echo "warnings=$(grep -c '^warning' build.log || true)"
       - name: Test all languages on both kernels
         run: |
-          ./test.sh --lang all 2>&1 | tee test.log
+          TEST_QUIET=1 ./test.sh --lang all 2>&1 | tee test.log
           test "${PIPESTATUS[0]}" -eq 0
       - name: Upload logs
         if: always()

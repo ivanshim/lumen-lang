@@ -39,8 +39,16 @@ impl StmtNode for ArrayAssignStmt {
         // Evaluate the value to assign
         let value = self.value_expr.eval(env)?;
 
-        // Get mutable reference to the array and mutate it
-        env.mutate_array(&self.name, idx, value)?;
+        // Mutate the array in place; the array type is Lumen's, so the downcast lives here.
+        let slot = env.get_mut(&self.name).ok_or_else(|| format!("Undefined variable '{}'", self.name))?;
+        let arr = slot
+            .as_any_mut()
+            .downcast_mut::<crate::languages::lumen::values::LumenArray>()
+            .ok_or_else(|| format!("Variable '{}' is not an array", self.name))?;
+        if idx >= arr.elements.len() {
+            return Err("Array index out of bounds".to_string());
+        }
+        arr.elements[idx] = value;
 
         Ok(Control::None)
     }

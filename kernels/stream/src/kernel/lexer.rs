@@ -1,44 +1,24 @@
-// src/kernel/lexer.rs
+// Kernel lexer: lossless, maximal-munch segmentation with no semantics.
 //
-// ONTOLOGICALLY NEUTRAL LEXER
+// Guarantees:
+//   1. Lossless: every input byte becomes part of exactly one token.
+//   2. Maximal munch: the longest registered multi-character lexeme wins.
+//   3. Fallback: with no multi-character match, one byte becomes one token.
+//   4. Position: every token carries its byte span and diagnostic line/col.
 //
-// Pure lossless ASCII segmentation - kernel level.
-// Zero semantic assumptions. Converts source bytes -> tokens (raw lexeme strings with span).
-// All interpretation of lexemes (keywords, operators, numbers, strings, etc.) happens
-// entirely in language modules.
-//
-// PRINCIPLE: The kernel lexer does not know what anything means.
-// It only guarantees:
-//   1. Lossless segmentation: every input byte → part of exactly one token
-//   2. Maximal-munch: longest registered multi-char sequence is always preferred
-//   3. Fallback to single-char: if no multi-char matches, emit one byte as token
-//   4. Position tracking: line/col/span preserved for all tokens (including whitespace)
-//
-// AUTHORITY:
-// - Span { start, end } (byte offsets) is AUTHORITATIVE source-location coordinate
-// - All parsing, AST construction, evaluation use Span
-// - line/col are DIAGNOSTIC-ONLY (derived metadata for error messages only)
-//
-// ARCHITECTURE:
-// - Token: { lexeme: String, span: Span } - opaque, no semantic categories
-// - SpannedToken: adds line/col for diagnostic formatting
-// - Lexer: pure maximal-munch with language-provided sequences + single-char fallback
-// - No character-class checks (no is_digit, is_alpha, is_whitespace)
-// - No special-case handling (no string literals, numbers, identifiers, keywords)
-// - No assumptions about human language conventions
-//
-// EXAMPLE:
-// Input: "@@@if@@@then@@else"
-// The lexer tokenizes this WITHOUT KNOWING what it means.
-// All meaning is defined by the language module via registry and parser.
+// The lexer has no notion of whitespace, comments, strings, numbers or
+// identifiers. Languages strip comments before lexing, register the lexemes
+// they care about, and interpret every token afterwards. The only language
+// input beyond the lexeme list is the word-byte predicate used for keyword
+// boundary checks, also supplied through the registry.
 
-use crate::kernel::registry::{LumenResult, TokenRegistry};
+use crate::kernel::registry::{KernelResult, TokenRegistry};
 
-/// Explicit byte span: (start, end) offsets in source code
+/// Byte span in the source: `start` inclusive, `end` exclusive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
-    pub start: usize, // inclusive byte offset
-    pub end: usize,   // exclusive byte offset
+    pub start: usize,
+    pub end: usize,
 }
 
 impl Span {
@@ -59,6 +39,7 @@ impl Token {
     }
 }
 
+/// A token with diagnostic line/col (derived metadata, never used for parsing).
 #[derive(Debug, Clone)]
 pub struct SpannedToken {
     pub tok: Token,
@@ -72,75 +53,8 @@ impl SpannedToken {
     }
 }
 
-/// Strip single-line comments from source.
-/// Comments start with # and continue until end of line.
-/// Preserves newlines for correct line counting.
-/// Respects string boundaries: # inside strings is not a comment.
-fn strip_comments(source: &str) -> String {
-    let mut result = String::with_capacity(source.len());
-    let mut chars = source.chars().peekable();
-    let mut in_string = false;
-    let mut string_char = ' ';
-    let mut escape_next = false;
-
-    while let Some(ch) = chars.next() {
-        // Handle escape sequences in strings
-        if escape_next {
-            result.push(ch);
-            escape_next = false;
-            continue;
-        }
-
-        if ch == '\\' && in_string {
-            result.push(ch);
-            escape_next = true;
-            continue;
-        }
-
-        // Track string state (both single and double quotes)
-        if !in_string && (ch == '"' || ch == '\'') {
-            in_string = true;
-            string_char = ch;
-            result.push(ch);
-        } else if in_string && ch == string_char {
-            in_string = false;
-            result.push(ch);
-        } else if !in_string && ch == '#' {
-            // Skip comment until newline (but preserve the newline)
-            while let Some(c) = chars.next() {
-                if c == '\n' {
-                    result.push('\n');
-                    break;
-                }
-            }
-        } else {
-            result.push(ch);
-        }
-    }
-
-    result
-}
-
-/// Tokenize source code using pure maximal-munch segmentation.
-/// Language modules provide multi-char sequences via token_reg.
-/// Kernel has ZERO semantic knowledge.
-///
-/// Algorithm:
-///   1. Strip comments from source (# to end of line, respecting strings)
-///   2. At each byte position, try to match the longest language-supplied multi-char sequence
-///   3. If no multi-char match, emit a single byte as a token (including all whitespace)
-///   4. Track line/col for every byte (required for error reporting)
-///   5. Never reject any input - all bytes are valid
-///
-/// This lexer makes NO assumptions about:
-///   - What constitutes whitespace or if it's meaningful
-///   - What constitutes identifiers, numbers, strings, keywords
-///   - What characters are "allowed" or "unexpected"
-///   - Human language conventions
-///
-/// All such interpretation is delegated entirely to language modules.
-pub fn lex(source: &str, token_reg: &TokenRegistry) -> LumenResult<Vec<SpannedToken>> {
-    let source = strip_comments(source);
+/// Segment `source` into tokens using the registry's lexemes.
+pub fn lex(source: &str, token_reg: &TokenRegistry) -> KernelResult<Vec<SpannedToken>> {
     let mut out = Vec::new();
     let bytes = source.as_bytes();
     let mut byte_pos = 0usize;
@@ -149,43 +63,28 @@ pub fn lex(source: &str, token_reg: &TokenRegistry) -> LumenResult<Vec<SpannedTo
 
     while byte_pos < bytes.len() {
         let start_col = col_in_line;
-
-        // Try maximal-munch: match longest language-provided sequence first
         let remaining = &source[byte_pos..];
         let mut matched = false;
 
-        // Try multi-char sequences in descending length order (pre-sorted by registry)
         for &multichar in token_reg.multichar_lexemes() {
             if !remaining.starts_with(multichar) {
                 continue;
             }
 
-            // Respect word boundaries for keyword-like tokens to avoid breaking identifiers.
             if token_reg.requires_word_boundary(multichar) {
                 let end = byte_pos + multichar.len();
-                let left_ok = byte_pos == 0 || !is_identifier_byte(bytes[byte_pos - 1]);
-                let right_ok = end >= bytes.len() || !is_identifier_byte(bytes[end]);
-
+                let left_ok = byte_pos == 0 || !token_reg.is_identifier_byte(bytes[byte_pos - 1]);
+                let right_ok = end >= bytes.len() || !token_reg.is_identifier_byte(bytes[end]);
                 if !(left_ok && right_ok) {
                     continue;
                 }
             }
 
-            // Found a multi-char match. Emit it and update position tracking.
-            let lexeme = multichar.to_string();
             let span = Span::new(byte_pos, byte_pos + multichar.len());
-            out.push(SpannedToken::new(Token::new(lexeme, span), line_no, start_col));
-
-            // Update line/col for the matched sequence
+            out.push(SpannedToken::new(Token::new(multichar.to_string(), span), line_no, start_col));
             for byte in multichar.as_bytes() {
-                if *byte == b'\n' {
-                    line_no += 1;
-                    col_in_line = 1;
-                } else {
-                    col_in_line += 1;
-                }
+                advance_position(*byte, &mut line_no, &mut col_in_line);
             }
-
             byte_pos += multichar.len();
             matched = true;
             break;
@@ -195,28 +94,21 @@ pub fn lex(source: &str, token_reg: &TokenRegistry) -> LumenResult<Vec<SpannedTo
             continue;
         }
 
-        // No multi-char match: emit single byte as token
-        // Kernel does not reject any byte - even whitespace, control chars, etc.
-        // Languages interpret all bytes according to their conventions.
         let byte = bytes[byte_pos];
-        let lexeme = (byte as char).to_string();
         let span = Span::new(byte_pos, byte_pos + 1);
-        out.push(SpannedToken::new(Token::new(lexeme, span), line_no, start_col));
-
-        // Update line/col for the single byte
-        if byte == b'\n' {
-            line_no += 1;
-            col_in_line = 1;
-        } else {
-            col_in_line += 1;
-        }
-
+        out.push(SpannedToken::new(Token::new((byte as char).to_string(), span), line_no, start_col));
+        advance_position(byte, &mut line_no, &mut col_in_line);
         byte_pos += 1;
     }
 
     Ok(out)
 }
 
-fn is_identifier_byte(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_' 
+fn advance_position(byte: u8, line_no: &mut usize, col_in_line: &mut usize) {
+    if byte == b'\n' {
+        *line_no += 1;
+        *col_in_line = 1;
+    } else {
+        *col_in_line += 1;
+    }
 }

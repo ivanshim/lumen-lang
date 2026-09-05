@@ -1,4 +1,4 @@
-// src/framework/runtime/mod.rs
+// kernel/runtime/mod.rs
 
 pub mod env;
 pub mod value;

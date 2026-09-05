@@ -56,6 +56,11 @@ impl StructuralTokens {
     }
 }
 
+/// Remove `#` line comments (outside strings) before lexing.
+pub fn strip_comments(source: &str) -> String {
+    crate::languages::text::strip_line_comments(source, "#", &['"', '\''])
+}
+
 // --------------------
 // Lumen-specific Parsing Helpers
 // --------------------
@@ -148,12 +153,6 @@ pub fn process_indentation(source: &str, raw_tokens: Vec<SpannedToken>) -> Lumen
 
         // Skip blank / whitespace-only lines (do not emit NEWLINE)
         if rest.trim().is_empty() {
-            line_no += 1;
-            continue;
-        }
-
-        // Skip comment-only lines (lines starting with # after indentation)
-        if rest.starts_with('#') {
             line_no += 1;
             continue;
         }

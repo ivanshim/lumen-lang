@@ -1,4 +1,4 @@
-// src/framework/eval.rs
+// kernel/eval.rs
 //
 // Core execution loop.
 // No language semantics live here.
@@ -6,10 +6,8 @@
 use crate::kernel::ast::{Control, Program};
 use crate::kernel::runtime::env::Env;
 
-/// Execute a program.
-/// The environment includes a memoization cache that is always present.
-/// Only functions explicitly marked as memoizable use the cache (matching microcode kernel design).
-/// init_fn: callback to initialize the environment with language-specific system values (like ARGS)
+/// Execute a program statement by statement.
+/// `init_fn` lets the language seed the environment (system values such as ARGS).
 pub fn eval<F>(program: &Program, init_fn: F) -> Result<(), String>
 where
     F: FnOnce(&mut Env) -> Result<(), String>,
