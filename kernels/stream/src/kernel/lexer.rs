@@ -1,9 +1,9 @@
 // Kernel lexer: lossless, maximal-munch segmentation with no semantics.
 //
 // Guarantees:
-//   1. Lossless: every input byte becomes part of exactly one token.
+//   1. Lossless: every input character becomes part of exactly one token.
 //   2. Maximal munch: the longest registered multi-character lexeme wins.
-//   3. Fallback: with no multi-character match, one byte becomes one token.
+//   3. Fallback: with no multi-character match, one character becomes one token.
 //   4. Position: every token carries its byte span and diagnostic line/col.
 //
 // The lexer has no notion of whitespace, comments, strings, numbers or
@@ -94,11 +94,13 @@ pub fn lex(source: &str, token_reg: &TokenRegistry) -> KernelResult<Vec<SpannedT
             continue;
         }
 
-        let byte = bytes[byte_pos];
-        let span = Span::new(byte_pos, byte_pos + 1);
-        out.push(SpannedToken::new(Token::new((byte as char).to_string(), span), line_no, start_col));
-        advance_position(byte, &mut line_no, &mut col_in_line);
-        byte_pos += 1;
+        // Fallback: one whole character (which may be several bytes) becomes one token.
+        let ch = remaining.chars().next().expect("byte_pos is inside the source");
+        let width = ch.len_utf8();
+        let span = Span::new(byte_pos, byte_pos + width);
+        out.push(SpannedToken::new(Token::new(ch.to_string(), span), line_no, start_col));
+        advance_position(if ch == '\n' { b'\n' } else { b' ' }, &mut line_no, &mut col_in_line);
+        byte_pos += width;
     }
 
     Ok(out)
