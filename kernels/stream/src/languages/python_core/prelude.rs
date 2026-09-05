@@ -4,7 +4,7 @@
 
 pub use crate::kernel::ast::{ExprNode, StmtNode};
 pub use crate::kernel::parser::Parser;
-pub use crate::kernel::registry::{LumenResult, err_at};
+pub use crate::kernel::registry::{KernelResult as LumenResult, err_at};
 pub use crate::languages::python_core::registry::{
     ExprPrefix, ExprInfix, StmtHandler, Registry, Precedence, parse_expr_with_prec,
 };

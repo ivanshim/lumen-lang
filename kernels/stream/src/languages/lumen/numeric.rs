@@ -1,7 +1,7 @@
 // Lumen numeric utilities
 // Arbitrary-precision integer and rational operations using BigInt
 
-use crate::kernel::registry::LumenResult;
+use crate::kernel::registry::KernelResult as LumenResult;
 use num_bigint::BigInt;
 use num_traits::cast::ToPrimitive;
 

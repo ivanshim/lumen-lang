@@ -3,7 +3,7 @@
 // Built-in capability implementations.
 // These are the boundary between Lumen and the host system.
 
-use crate::kernel::registry::LumenResult;
+use crate::kernel::registry::KernelResult as LumenResult;
 use crate::kernel::runtime::Value;
 use super::registry::ExternCapability;
 use crate::languages::lumen::values::{LumenNumber, as_number, as_string, as_bool};

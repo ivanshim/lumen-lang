@@ -6,7 +6,7 @@ use crate::languages::python_core::prelude::*;
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::kernel::registry::LumenResult;
+use crate::kernel::registry::KernelResult as LumenResult;
 use crate::languages::python_core::registry::{Registry, StmtHandler};
 use crate::kernel::runtime::Env;
 use crate::languages::python_core::structure::structural;

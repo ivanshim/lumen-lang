@@ -8,7 +8,7 @@ use crate::kernel::ast::{Program, StmtNode};
 use crate::kernel::lexer::{Token, SpannedToken, Span};
 use crate::kernel::parser::Parser;
 use crate::languages::lumen::patterns::PatternSet;
-use crate::kernel::registry::{err_at, LumenResult};
+use crate::kernel::registry::{err_at, KernelResult as LumenResult};
 use crate::languages::lumen::registry::Registry;
 
 // --------------------

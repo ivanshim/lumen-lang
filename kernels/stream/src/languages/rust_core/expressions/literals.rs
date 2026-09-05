@@ -3,7 +3,7 @@ use crate::languages::rust_core::prelude::*;
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
-use crate::kernel::registry::LumenResult;
+use crate::kernel::registry::KernelResult as LumenResult;
 use crate::languages::rust_core::registry::{ExprPrefix, Registry};
 use crate::kernel::runtime::{Env, Value};
 use crate::languages::rust_core::values::{RustCoreNumber, RustCoreBool};

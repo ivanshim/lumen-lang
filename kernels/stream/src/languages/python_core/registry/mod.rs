@@ -5,7 +5,7 @@ pub mod precedence;
 pub mod traits;
 
 use crate::kernel::parser::Parser;
-use crate::kernel::registry::{TokenRegistry, LumenResult, err_at};
+use crate::kernel::registry::{TokenRegistry, KernelResult as LumenResult, err_at};
 use crate::languages::python_core::prelude::PythonCoreParserExt;
 
 pub use precedence::Precedence;

@@ -44,26 +44,19 @@ impl ExprNode for PipeExpr {
             ));
         }
 
-        // ================================================================
-        // MEMOIZATION: Gated by execution context (MEMOIZATION = true/false)
-        // ================================================================
-        // Cache operations are gated by env.memoization_enabled().
-        // If MEMOIZATION = false (default): no cache lookup/storage
-        // If MEMOIZATION = true: check cache before execution, store after
-        //
-        // Performance: fingerprint only computed when memoization enabled
-        if let Some(cached_result) = env.get_cached(&self.func_name, &arg_values) {
-            return Ok(cached_result);
+        // Memoization is a Lumen feature layered on the environment; see memo.rs.
+        if let Some(cached) = crate::languages::lumen::memo::lookup(env, &self.func_name, &arg_values) {
+            return Ok(cached);
         }
 
         let result = self.execute_function(&params, &body, &arg_values, env)?;
-        env.cache_result(&self.func_name, &arg_values, result.clone());
+        crate::languages::lumen::memo::store(env, &self.func_name, &arg_values, &result);
         Ok(result)
     }
 }
 
 impl PipeExpr {
-    /// Execute function body and return result.
+    /// Execute the function body in a fresh scope that is popped on every exit path.
     fn execute_function(
         &self,
         params: &[String],
@@ -71,27 +64,17 @@ impl PipeExpr {
         arg_values: &[Value],
         env: &mut Env,
     ) -> LumenResult<Value> {
-        // Create new scope for function
-        env.push_scope();
+        env.with_scope(|env| {
+            for (param, arg_val) in params.iter().zip(arg_values) {
+                env.define(param.clone(), arg_val.clone());
+            }
 
-        // Bind parameters to arguments
-        for (param, arg_val) in params.iter().zip(arg_values) {
-            env.define(param.clone(), arg_val.clone());
-        }
-
-        // Execute function body
-        let mut result = Box::new(crate::languages::lumen::values::LumenNull) as Value;
-        {
+            let mut result = Box::new(crate::languages::lumen::values::LumenNull) as Value;
             let body_ref = body.borrow();
             for stmt in body_ref.iter() {
-                let ctl = stmt.exec(env)?;
-                match ctl {
-                    crate::kernel::ast::Control::ExprValue(val) => {
-                        // Expression statement value - keep as result but continue
-                        result = val;
-                    }
+                match stmt.exec(env)? {
+                    crate::kernel::ast::Control::ExprValue(val) => result = val,
                     crate::kernel::ast::Control::Return(val) => {
-                        // Explicit return - set result and break
                         result = val;
                         break;
                     }
@@ -101,12 +84,8 @@ impl PipeExpr {
                     crate::kernel::ast::Control::None => {}
                 }
             }
-        }
-
-        // Exit function scope
-        env.pop_scope();
-
-        Ok(result)
+            Ok(result)
+        })
     }
 }
 

@@ -2,7 +2,7 @@
 // Mini-RustCore language dispatcher
 // RustCore-like: let bindings, curly braces, print! macro
 
-use crate::kernel::registry::{LumenResult, TokenDefinition};
+use crate::kernel::registry::{KernelResult as LumenResult, TokenDefinition};
 use crate::languages::rust_core::registry::Registry;
 
 // Import all feature modules

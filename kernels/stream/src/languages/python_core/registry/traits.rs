@@ -5,7 +5,7 @@
 
 use crate::kernel::ast::{ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::kernel::registry::LumenResult;
+use crate::kernel::registry::KernelResult as LumenResult;
 use super::precedence::Precedence;
 
 /// Prefix expression handler
