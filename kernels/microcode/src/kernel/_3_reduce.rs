@@ -13,7 +13,7 @@ use num_traits::ToPrimitive;
 
 use super::_1_ingest::{Kind, Token};
 use super::instruction::{Instruction, Target, TransferKind};
-use super::value::{FunctionDef, Value};
+use super::value::{Function, Value};
 use crate::schema::{Assoc, LanguageSchema, Op};
 
 pub fn parse(tokens: &[Token], schema: &LanguageSchema) -> Result<Instruction, String> {
@@ -318,7 +318,7 @@ impl<'a> Parser<'a> {
         }
         self.expect_op(&call.close, "after parameters")?;
         let body = self.block()?;
-        let def = FunctionDef { name: name.clone(), params, body };
+        let def = Function { name: name.clone(), params, body };
         Ok(Instruction::assign(name, Instruction::Literal(Value::Function(Rc::new(def)))))
     }
 

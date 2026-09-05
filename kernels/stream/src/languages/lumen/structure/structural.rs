@@ -56,11 +56,6 @@ impl StructuralTokens {
     }
 }
 
-/// Remove `#` line comments (outside strings) before lexing.
-pub fn strip_comments(source: &str) -> String {
-    crate::languages::text::strip_line_comments(source, "#", &['"', '\''])
-}
-
 // --------------------
 // Lumen-specific Parsing Helpers
 // --------------------
@@ -151,8 +146,8 @@ pub fn process_indentation(source: &str, raw_tokens: Vec<SpannedToken>) -> Lumen
 
         let rest = &raw[spaces..];
 
-        // Skip blank / whitespace-only lines (do not emit NEWLINE)
-        if rest.trim().is_empty() {
+        // Blank lines and comment-only lines contribute nothing.
+        if rest.trim().is_empty() || rest.starts_with('#') {
             line_no += 1;
             continue;
         }
@@ -195,11 +190,22 @@ pub fn process_indentation(source: &str, raw_tokens: Vec<SpannedToken>) -> Lumen
         // which spaces are part of strings vs which are separators
         let mut in_string_single = false;
         let mut in_string_double = false;
+        let mut in_comment = false;
         let mut bracket_depth_line = bracket_depth_global;  // Start with global bracket depth
 
         for raw_tok in &raw_tokens {
             if raw_tok.line == line_no {
                 let lexeme = &raw_tok.tok.lexeme;
+
+                // A `#` outside a string starts a comment: the rest of the
+                // line's tokens are dropped from the stream.
+                if in_comment {
+                    continue;
+                }
+                if lexeme == "#" && !in_string_single && !in_string_double {
+                    in_comment = true;
+                    continue;
+                }
 
                 // Track bracket depth
                 if lexeme == "[" && !in_string_single && !in_string_double {

@@ -51,11 +51,6 @@ impl StructuralTokens {
     }
 }
 
-/// Remove `#` line comments (outside strings) before lexing.
-pub fn strip_comments(source: &str) -> String {
-    crate::languages::text::strip_line_comments(source, "#", &['"', '\''])
-}
-
 // --------------------
 // Mini-PythonCore-specific Parsing Helpers
 // --------------------
@@ -142,8 +137,8 @@ pub fn process_indentation(source: &str, raw_tokens: Vec<SpannedToken>) -> Lumen
 
         let rest = &raw[spaces..];
 
-        // Skip blank / whitespace-only lines (do not emit NEWLINE)
-        if rest.trim().is_empty() {
+        // Blank lines and comment-only lines contribute nothing.
+        if rest.trim().is_empty() || rest.starts_with('#') {
             line_no += 1;
             continue;
         }
@@ -178,8 +173,17 @@ pub fn process_indentation(source: &str, raw_tokens: Vec<SpannedToken>) -> Lumen
         // IMPORTANT: Filter out single-character whitespace tokens
         // The kernel lexer is now fully agnostic and emits all characters (including spaces, tabs, newlines)
         // Mini-PythonCore's indentation processing needs only the meaningful tokens
+        let mut in_comment = false;
         for raw_tok in &raw_tokens {
             if raw_tok.line == line_no {
+                // A `#` starts a comment: the rest of the line's tokens are dropped.
+                if in_comment {
+                    continue;
+                }
+                if raw_tok.tok.lexeme == "#" {
+                    in_comment = true;
+                    continue;
+                }
                 // Skip whitespace tokens (single-char spaces, tabs, newlines, carriage returns)
                 if raw_tok.tok.lexeme.len() == 1 {
                     let ch = raw_tok.tok.lexeme.as_bytes()[0];

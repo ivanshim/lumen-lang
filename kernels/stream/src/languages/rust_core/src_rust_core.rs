@@ -23,6 +23,7 @@ pub fn register_all(registry: &mut Registry) {
         TokenDefinition::recognize("&&"),
         TokenDefinition::recognize("||"),
         TokenDefinition::recognize(":="),
+        TokenDefinition::recognize("//"),   // comment marker, removed by the structure pass
 
         // Keywords (not skipped)
         TokenDefinition::keyword("let"),

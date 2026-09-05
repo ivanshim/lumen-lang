@@ -34,7 +34,7 @@ pub fn run(source: &str, schema: &LanguageSchema, program_args: &[String]) -> Re
 /// schema supplies the names.
 fn seed_system_bindings(env: &mut Environment, schema: &LanguageSchema, program_args: &[String]) {
     if let Some(name) = &schema.system.args {
-        env.define(name.clone(), Value::String(program_args.join(" ")));
+        env.bind(name.clone(), Value::String(program_args.join(" ")));
     }
     for (name, kind) in &schema.system.kinds {
         let kind = match kind {
@@ -46,9 +46,9 @@ fn seed_system_bindings(env: &mut Environment, schema: &LanguageSchema, program_
             KindName::Array => KindValue::Array,
             KindName::Null => KindValue::Null,
         };
-        env.define(name.clone(), Value::Kind(kind));
+        env.bind(name.clone(), Value::Kind(kind));
     }
     for (name, n) in &schema.system.integer_constants {
-        env.define(name.clone(), Value::Number(BigInt::from(*n)));
+        env.bind(name.clone(), Value::Number(BigInt::from(*n)));
     }
 }

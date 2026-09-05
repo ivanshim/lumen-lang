@@ -55,8 +55,11 @@ registry.tokens.set_identifier_bytes(|b| b.is_ascii_alphanumeric() || b == b'_')
 The kernel caches the multi-character lexemes in descending length order for
 maximal-munch segmentation. Which bytes form a "word", for the keyword
 boundary check, is supplied by the language; the kernel has no opinion.
-Comments are a language concept too: each language strips its own comment
-syntax before handing text to the lexer.
+Comments are a language concept too. The lexer emits the comment marker like
+any other byte, and each language's structure pass drops the tokens from the
+marker to the end of the line, the same pass that handles indentation or
+braces. Comment removal is a token-stream transformation, never a text
+pre-pass.
 
 The kernel guarantees **stability and order**, not interpretation.
 
@@ -158,7 +161,7 @@ All of the following are defined and managed by language modules, not the kernel
 * **Precedence types**: `Precedence` enums with language-specific levels
 * **Pattern definitions**: `PatternSet` structures for language syntax patterns
 * **Skip behavior**: Extension traits like `LumenParserExt::skip_tokens()` for whitespace handling
-* **Comment stripping**: `structural::strip_comments()` in each language
+* **Comment removal**: a token-stream transformation inside each language's structure pass
 * **Runtime policy**: Lumen's memoization lives in `languages/lumen/memo.rs`, using the environment's typed extension slot
 
 ### Kernel-Only Responsibilities

@@ -29,9 +29,8 @@ fn run_lumen(source: &str, program_args: &[String]) -> Result<(), String> {
     let mut registry = Registry::new();
     languages::lumen::dispatcher::register_all(&mut registry);
 
-    let source = structural::strip_comments(source);
-    let raw_tokens = lex(&source, &registry.tokens).map_err(|e| format!("LexError: {e}"))?;
-    let processed_tokens = structural::process_indentation(&source, raw_tokens)
+    let raw_tokens = lex(source, &registry.tokens).map_err(|e| format!("LexError: {e}"))?;
+    let processed_tokens = structural::process_indentation(source, raw_tokens)
         .map_err(|e| format!("IndentationError: {e}"))?;
     let mut parser = Parser::new_with_tokens(processed_tokens, &registry.tokens)?;
     let program = structural::parse_program(&mut parser, &registry)?;
@@ -70,8 +69,7 @@ fn run_rust_core(source: &str) -> Result<(), String> {
     let mut registry = Registry::new();
     languages::rust_core::register_all(&mut registry);
 
-    let source = structural::strip_comments(source);
-    let raw_tokens = lex(&source, &registry.tokens).map_err(|e| format!("LexError: {e}"))?;
+    let raw_tokens = lex(source, &registry.tokens).map_err(|e| format!("LexError: {e}"))?;
     let processed_tokens = structural::process_tokens(raw_tokens).map_err(|e| format!("TokenError: {e}"))?;
     let mut parser = Parser::new_with_tokens(processed_tokens, &registry.tokens)?;
     let program = structural::parse_program(&mut parser, &registry)?;
@@ -89,9 +87,8 @@ fn run_python_core(source: &str) -> Result<(), String> {
     let mut registry = Registry::new();
     languages::python_core::register_all(&mut registry);
 
-    let source = structural::strip_comments(source);
-    let raw_tokens = lex(&source, &registry.tokens).map_err(|e| format!("LexError: {e}"))?;
-    let processed_tokens = structural::process_indentation(&source, raw_tokens)
+    let raw_tokens = lex(source, &registry.tokens).map_err(|e| format!("LexError: {e}"))?;
+    let processed_tokens = structural::process_indentation(source, raw_tokens)
         .map_err(|e| format!("IndentationError: {e}"))?;
     let mut parser = Parser::new_with_tokens(processed_tokens, &registry.tokens)?;
     let program = structural::parse_program(&mut parser, &registry)?;
