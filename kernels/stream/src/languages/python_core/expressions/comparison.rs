@@ -7,7 +7,7 @@ use crate::kernel::registry::KernelResult as LumenResult;
 use crate::languages::python_core::registry::{ExprInfix, Precedence, Registry};
 use crate::kernel::runtime::{Env, Value};
 use crate::languages::python_core::numeric;
-use crate::languages::python_core::values::{PythonCoreNumber, PythonCoreBool, as_number, as_bool};
+use crate::languages::python_core::values::{PythonCoreBool, as_number};
 
 #[derive(Debug)]
 struct ComparisonExpr {

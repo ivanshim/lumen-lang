@@ -5,7 +5,7 @@ use crate::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
 use crate::languages::lumen::patterns::PatternSet;
 use crate::languages::lumen::structure::structural::LBRACKET;
-use crate::kernel::runtime::{Env, Value};
+use crate::kernel::runtime::Env;
 
 #[derive(Debug)]
 pub struct ArrayAssignStmt {

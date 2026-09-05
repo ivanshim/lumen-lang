@@ -34,7 +34,7 @@ impl StmtHandler for LetStmtHandler {
         parser.skip_tokens();
 
         // Parse variable name
-        let mut name = String::new();
+        let mut name;
         if parser.peek().lexeme.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_') {
             name = parser.advance().lexeme;
             parser.skip_tokens();

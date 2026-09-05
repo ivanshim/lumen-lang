@@ -2,7 +2,7 @@
 // Mini-PythonCore language dispatcher
 // PythonCore-like: indentation-based blocks, no braces
 
-use crate::kernel::registry::{KernelResult as LumenResult, TokenDefinition};
+use crate::kernel::registry::TokenDefinition;
 use crate::languages::python_core::registry::Registry;
 
 // Import all feature modules

@@ -1,4 +1,3 @@
-use crate::languages::python_core::prelude::*;
 // src/stmt/continue_stmt.rs
 //
 // continue statement
@@ -25,7 +24,7 @@ impl StmtHandler for ContinueStmtHandler {
         parser.peek().lexeme == "continue"
     }
 
-    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
+    fn parse(&self, parser: &mut Parser, _registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'continue'
         Ok(Box::new(ContinueStmt))
     }

@@ -68,7 +68,7 @@ operators:
     "+": { precedence: 5, associativity: left, op: add }
     "-": { precedence: 5, associativity: left, op: sub }
     "*": { precedence: 6, associativity: left, op: mul }
-    "/": { precedence: 6, associativity: left, op: div }
+    "/": { precedence: 6, associativity: left, op: quot }   # integer division, as in the stream dialect
     "%": { precedence: 6, associativity: left, op: rem }
     "**": { precedence: 7, associativity: right, op: pow }
   unary:

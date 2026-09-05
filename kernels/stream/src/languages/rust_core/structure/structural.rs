@@ -1,7 +1,7 @@
 // Mini-RustCore structural tokens and parsing helpers
 
 use crate::kernel::ast::{Program, StmtNode};
-use crate::kernel::lexer::{Token, SpannedToken, Span};
+use crate::kernel::lexer::{Span, Token};
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{err_at, KernelResult as LumenResult};
 use crate::languages::rust_core::registry::Registry;

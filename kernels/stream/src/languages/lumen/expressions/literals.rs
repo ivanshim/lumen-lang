@@ -5,7 +5,7 @@ use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
 use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::{Env, Value};
-use crate::languages::lumen::values::{LumenNumber, LumenBool, LumenString, LumenNull, LumenRational, LumenReal};
+use crate::languages::lumen::values::{LumenNumber, LumenBool, LumenString, LumenNull, LumenReal};
 use crate::languages::lumen::numeric;
 use num_bigint::BigInt;
 
@@ -54,7 +54,7 @@ impl ExprPrefix for NumberLiteralPrefix {
         parser.peek().lexeme.chars().next().map_or(false, |c| c.is_ascii_digit())
     }
 
-    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
+    fn parse(&self, parser: &mut Parser, _registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
         // Consume the first digit
         let mut value = parser.advance().lexeme;
 
@@ -136,7 +136,7 @@ impl ExprPrefix for BoolLiteralPrefix {
         false
     }
 
-    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
+    fn parse(&self, parser: &mut Parser, _registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
         // Determine which keyword we're parsing
         let keywords = ["true", "false"];
         let mut collected = String::new();
@@ -296,7 +296,7 @@ impl ExprPrefix for StringLiteralPrefix {
         parser.peek().lexeme == "\""
     }
 
-    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
+    fn parse(&self, parser: &mut Parser, _registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
         // Consume opening quote
         let mut value = parser.advance().lexeme;
 
@@ -344,7 +344,7 @@ impl ExprPrefix for SingleQuotedStringPrefix {
         parser.peek().lexeme == "'"
     }
 
-    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
+    fn parse(&self, parser: &mut Parser, _registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
         // Consume opening quote
         let mut value = parser.advance().lexeme;
 
@@ -400,7 +400,7 @@ impl ExprPrefix for NoneLiteralPrefix {
         parser.peek().lexeme == "null"
     }
 
-    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
+    fn parse(&self, parser: &mut Parser, _registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
         parser.advance(); // consume 'null'
         Ok(Box::new(NoneLiteral))
     }

@@ -56,11 +56,9 @@ pub fn get_function(name: &str) -> Option<(Vec<String>, Rc<RefCell<Vec<Box<dyn S
 // Function definition statement handler
 // fn name(param1, param2, ...) { statements }
 
+/// The definition is registered at parse time; executing it is a no-op.
 #[derive(Debug)]
-struct FnDefStmt {
-    name: String,
-    // Stores the function definition in the registry during parse time
-}
+struct FnDefStmt;
 
 impl StmtNode for FnDefStmt {
     fn exec(&self, _env: &mut Env) -> LumenResult<Control> {
@@ -81,7 +79,7 @@ impl StmtHandler for FnDefStmtHandler {
         parser.skip_tokens();
 
         // Parse function name
-        let mut name = String::new();
+        let mut name;
         if parser.peek().lexeme.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_') {
             name = parser.advance().lexeme;
             parser.skip_tokens();
@@ -114,7 +112,7 @@ impl StmtHandler for FnDefStmtHandler {
 
         while parser.peek().lexeme != RPAREN {
             // Parse parameter name
-            let mut param_name = String::new();
+            let mut param_name;
             if parser.peek().lexeme.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_') {
                 param_name = parser.advance().lexeme;
                 parser.skip_tokens();
@@ -158,9 +156,9 @@ impl StmtHandler for FnDefStmtHandler {
         let body = crate::languages::lumen::structure::structural::parse_block(parser, registry)?;
 
         // Register the function
-        define_function(name.clone(), params, body);
+        define_function(name, params, body);
 
-        Ok(Box::new(FnDefStmt { name }))
+        Ok(Box::new(FnDefStmt))
     }
 }
 

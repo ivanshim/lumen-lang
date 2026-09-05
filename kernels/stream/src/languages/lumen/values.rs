@@ -327,7 +327,7 @@ impl LumenReal {
 
         // Compute decimal places needed for precision
         let mut decimal_str = String::new();
-        let mut digit_count = int_part.to_string().len();
+        let digit_count = int_part.to_string().len();
         let target_digits = self.precision;
         let mut remainder = remainder.abs();
 

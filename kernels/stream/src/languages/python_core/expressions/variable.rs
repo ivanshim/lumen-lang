@@ -1,4 +1,3 @@
-use crate::languages::python_core::prelude::*;
 // src/expr/variable.rs
 //
 // Variable reference expression: `x`
@@ -32,7 +31,7 @@ impl ExprPrefix for VariablePrefix {
         is_identifier && !is_reserved
     }
 
-    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
+    fn parse(&self, parser: &mut Parser, _registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
         // Consume the first character of the identifier
         let mut name = parser.advance().lexeme;
 

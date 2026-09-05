@@ -21,7 +21,6 @@ use crate::kernel::parser::Parser;
 use crate::languages::lumen::prelude::*;
 use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::Env;
-use crate::languages::lumen::structure::structural::LPAREN;
 
 #[derive(Debug)]
 struct MemoizationStmt {

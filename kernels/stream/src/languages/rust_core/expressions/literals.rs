@@ -1,4 +1,3 @@
-use crate::languages::rust_core::prelude::*;
 // Number and boolean literals for mini-rust
 
 use crate::kernel::ast::ExprNode;
@@ -33,7 +32,7 @@ impl ExprPrefix for NumberLiteralPrefix {
         parser.peek().lexeme.chars().next().map_or(false, |c| c.is_ascii_digit())
     }
 
-    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
+    fn parse(&self, parser: &mut Parser, _registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
         // Consume the first digit
         let mut value = parser.advance().lexeme;
 
@@ -72,11 +71,12 @@ pub struct BoolLiteralPrefix;
 
 impl ExprPrefix for BoolLiteralPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        (parser.peek().lexeme == "true" || parser.peek().lexeme == "false")
+        parser.peek().lexeme == "true" || parser.peek().lexeme == "false"
     }
 
-    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
-        { let value = parser.advance().lexeme == "true"; Ok(Box::new(BoolLiteral { value })) }
+    fn parse(&self, parser: &mut Parser, _registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
+        let value = parser.advance().lexeme == "true";
+        Ok(Box::new(BoolLiteral { value }))
     }
 }
 

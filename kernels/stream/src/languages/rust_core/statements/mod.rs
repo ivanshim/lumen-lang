@@ -1,4 +1,3 @@
-use crate::languages::rust_core::prelude::*;
 pub mod assignment;
 pub mod print;
 pub mod write;

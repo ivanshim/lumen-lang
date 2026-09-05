@@ -9,7 +9,6 @@ use crate::kernel::lexer::{Token, SpannedToken, Span};
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{err_at, KernelResult as LumenResult};
 use crate::languages::python_core::registry::Registry;
-use crate::languages::python_core::prelude::PythonCoreParserExt;
 
 // --------------------
 // Mini-PythonCore Token Definitions (lexeme strings)

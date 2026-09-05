@@ -5,7 +5,6 @@ use crate::languages::lumen::prelude::*;
 
 use std::rc::Rc;
 use std::cell::RefCell;
-use num_bigint::BigInt;
 use crate::kernel::ast::{ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
 use crate::languages::lumen::patterns::PatternSet;

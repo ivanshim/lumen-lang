@@ -2,7 +2,6 @@ use crate::languages::rust_core::prelude::*;
 // Assignment statement: x = expr
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
-use crate::kernel::lexer::Token;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{KernelResult as LumenResult, err_at};
 use crate::languages::rust_core::registry::{Registry, StmtHandler};

@@ -2,7 +2,6 @@ use crate::languages::rust_core::prelude::*;
 // Identifier handling for mini-rust
 // Identifiers are handled as variables in variable.rs
 
-use crate::kernel::registry::KernelResult as LumenResult;
 use crate::languages::rust_core::registry::Registry;
 
 pub fn register(_reg: &mut Registry) {

@@ -170,49 +170,12 @@ fn parse_digits_in_base(digits: &str, base: u32) -> LumenResult<BigInt> {
     Ok(result)
 }
 
-/// Parse a numeric string to BigInt (for backward compatibility)
-pub fn parse_number(s: &str) -> LumenResult<BigInt> {
-    s.parse::<BigInt>()
-        .map_err(|_| format!("Failed to parse number: {}", s).into())
-}
-
-/// Add two BigInts
-pub fn add(a: &BigInt, b: &BigInt) -> LumenResult<BigInt> {
-    Ok(a + b)
-}
-
-/// Subtract two BigInts
-pub fn subtract(a: &BigInt, b: &BigInt) -> LumenResult<BigInt> {
-    Ok(a - b)
-}
-
-/// Multiply two BigInts
-pub fn multiply(a: &BigInt, b: &BigInt) -> LumenResult<BigInt> {
-    Ok(a * b)
-}
-
-/// Divide two BigInts (integer division, truncated towards zero)
-pub fn divide(a: &BigInt, b: &BigInt) -> LumenResult<BigInt> {
-    if b == &BigInt::from(0) {
-        return Err("Division by zero".into());
-    }
-    Ok(a / b)
-}
-
 /// Modulo operation on two BigInts
 pub fn modulo(a: &BigInt, b: &BigInt) -> LumenResult<BigInt> {
     if b == &BigInt::from(0) {
         return Err("Modulo by zero".into());
     }
     Ok(a % b)
-}
-
-/// Exponentiation (power) operation on two BigInts
-/// Note: exponent must fit in u32 for practical purposes
-pub fn power(a: &BigInt, b: &BigInt) -> LumenResult<BigInt> {
-    let exp = b.to_u32()
-        .ok_or_else(|| "Exponent too large".to_string())?;
-    Ok(a.pow(exp))
 }
 
 /// Negate a BigInt

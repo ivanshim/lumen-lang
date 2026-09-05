@@ -7,7 +7,7 @@ use crate::kernel::registry::KernelResult as LumenResult;
 use crate::languages::rust_core::registry::{ExprInfix, Precedence, Registry};
 use crate::kernel::runtime::{Env, Value};
 use crate::languages::rust_core::numeric;
-use crate::languages::rust_core::values::{RustCoreNumber, RustCoreBool, as_number, as_bool};
+use crate::languages::rust_core::values::{RustCoreBool, as_number};
 
 #[derive(Debug)]
 struct ComparisonExpr {

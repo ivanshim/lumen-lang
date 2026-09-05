@@ -256,7 +256,7 @@ impl ExprNode for ArithmeticExpr {
         }
 
         // Try to extract left and right as numbers (integer, rational, or real)
-        let (left_num, left_is_rat) = if let Ok(real) = as_real(l.as_ref()) {
+        let (left_num, _left_is_rat) = if let Ok(real) = as_real(l.as_ref()) {
             (LumenRational::new(real.numerator.clone(), real.denominator.clone()), false)
         } else if let Ok(rat) = as_rational(l.as_ref()) {
             (rat.clone(), true)
@@ -267,7 +267,7 @@ impl ExprNode for ArithmeticExpr {
             return Err("Left operand must be a number".into());
         };
 
-        let (right_num, right_is_rat) = if let Ok(real) = as_real(r.as_ref()) {
+        let (right_num, _right_is_rat) = if let Ok(real) = as_real(r.as_ref()) {
             (LumenRational::new(real.numerator.clone(), real.denominator.clone()), false)
         } else if let Ok(rat) = as_rational(r.as_ref()) {
             (rat.clone(), true)
@@ -280,8 +280,6 @@ impl ExprNode for ArithmeticExpr {
 
         // Determine result precision for real operations
         let result_precision = left_real_prec.or(right_real_prec).unwrap_or(15);
-        // Check if either operand is rational (when not real)
-        let result_is_rational = !result_is_real && (left_is_rat || right_is_rat);
 
         let result = match self.op.as_str() {
             "+" => {

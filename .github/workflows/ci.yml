@@ -13,13 +13,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Build
+      - name: Build (warnings are errors)
         run: |
           cargo build 2>&1 | tee build.log
           test "${PIPESTATUS[0]}" -eq 0
-      - name: Warning count
-        run: |
-          echo "warnings=$(grep -c '^warning' build.log || true)"
+        env:
+          RUSTFLAGS: -D warnings
       - name: Test all languages on both kernels
         run: |
           TEST_QUIET=1 ./test.sh --lang all 2>&1 | tee test.log

@@ -105,7 +105,7 @@ impl ExprInfix for PipeInfix {
         parser.skip_tokens();
 
         // Parse function name
-        let mut func_name = String::new();
+        let mut func_name;
         if parser.peek().lexeme.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_') {
             func_name = parser.advance().lexeme;
             parser.skip_tokens();

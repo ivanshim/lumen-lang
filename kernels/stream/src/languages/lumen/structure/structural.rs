@@ -157,36 +157,6 @@ pub fn process_indentation(source: &str, raw_tokens: Vec<SpannedToken>) -> Lumen
             continue;
         }
 
-        // Calculate bracket depth on this line to determine if we should handle indentation
-        let mut bracket_depth = 0i32;
-        let mut in_string_single = false;
-        let mut in_string_double = false;
-        let mut escape_next = false;
-
-        for ch in rest.chars() {
-            if escape_next {
-                escape_next = false;
-                continue;
-            }
-
-            if ch == '\\' && (in_string_single || in_string_double) {
-                escape_next = true;
-                continue;
-            }
-
-            if ch == '\'' && !in_string_double {
-                in_string_single = !in_string_single;
-            } else if ch == '"' && !in_string_single {
-                in_string_double = !in_string_double;
-            } else if !in_string_single && !in_string_double {
-                if ch == '[' {
-                    bracket_depth += 1;
-                } else if ch == ']' {
-                    bracket_depth -= 1;
-                }
-            }
-        }
-
         // Check if we're inside an array at the start of this line
         let inside_array = bracket_depth_global > 0;
 

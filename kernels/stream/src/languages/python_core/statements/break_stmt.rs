@@ -1,4 +1,3 @@
-use crate::languages::python_core::prelude::*;
 // src/stmt/break_stmt.rs
 //
 // break statement
@@ -25,7 +24,7 @@ impl StmtHandler for BreakStmtHandler {
         parser.peek().lexeme == "break"
     }
 
-    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
+    fn parse(&self, parser: &mut Parser, _registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'break'
         Ok(Box::new(BreakStmt))
     }

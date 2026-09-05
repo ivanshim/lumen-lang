@@ -52,7 +52,7 @@ impl CapabilityRegistry {
         &self,
         backend: &Option<String>,
         capability: &str,
-    ) -> Option<&(dyn ExternCapability)> {
+    ) -> Option<&dyn ExternCapability> {
         self.capabilities
             .get(&(backend.clone(), capability.to_string()))
             .map(|b| b.as_ref())

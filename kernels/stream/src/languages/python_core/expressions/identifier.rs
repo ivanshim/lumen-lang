@@ -1,4 +1,3 @@
-use crate::languages::python_core::prelude::*;
 // Variable reference expression
 
 use crate::kernel::ast::ExprNode;
@@ -25,7 +24,7 @@ impl ExprPrefix for IdentPrefix {
         parser.peek().lexeme.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_')
     }
 
-    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
+    fn parse(&self, parser: &mut Parser, _registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
         let name = parser.advance().lexeme;
         Ok(Box::new(IdentExpr { name }))
     }
