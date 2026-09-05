@@ -41,20 +41,22 @@ The kernel converts a stream of characters into a stream of tokens.
 * The kernel does not assign meaning to tokens.
 * Token definitions (keywords, operators, symbols) are registered by the language via `TokenRegistry`.
 
-Token registration uses the **unified `TokenDefinition` API**:
+Token registration uses the `TokenDefinition` API:
 
 ```rust
 let tokens = vec![
-    TokenDefinition::recognize("=="),      // Token to be lexed
-    TokenDefinition::recognize("if"),      // Token to be lexed
-    TokenDefinition::skip(" "),            // Token to skip during parsing
+    TokenDefinition::recognize("=="),   // lexeme to segment on
+    TokenDefinition::keyword("if"),     // lexeme that must stand alone as a word
 ];
 registry.tokens.set_token_definitions(tokens);
+registry.tokens.set_identifier_bytes(|b| b.is_ascii_alphanumeric() || b == b'_');
 ```
 
-The kernel internally extracts and caches:
-* Multichar lexemes for the lexer (for maximal-munch segmentation)
-* Skip tokens for the parser (for whitespace/comment handling)
+The kernel caches the multi-character lexemes in descending length order for
+maximal-munch segmentation. Which bytes form a "word", for the keyword
+boundary check, is supplied by the language; the kernel has no opinion.
+Comments are a language concept too: each language strips its own comment
+syntax before handing text to the lexer.
 
 The kernel guarantees **stability and order**, not interpretation.
 
@@ -136,8 +138,9 @@ The kernel intentionally does **not**:
 * impose a type system
 * define operator precedence
 * define token patterns or pattern matching
-* handle whitespace or skip behavior
+* handle whitespace, comments or skip behavior
 * provide generic handler trait types
+* cache, memoize or otherwise apply runtime policy
 
 Any such behavior belongs exclusively to the language implementation.
 
@@ -155,6 +158,8 @@ All of the following are defined and managed by language modules, not the kernel
 * **Precedence types**: `Precedence` enums with language-specific levels
 * **Pattern definitions**: `PatternSet` structures for language syntax patterns
 * **Skip behavior**: Extension traits like `LumenParserExt::skip_tokens()` for whitespace handling
+* **Comment stripping**: `structural::strip_comments()` in each language
+* **Runtime policy**: Lumen's memoization lives in `languages/lumen/memo.rs`, using the environment's typed extension slot
 
 ### Kernel-Only Responsibilities
 
@@ -165,7 +170,7 @@ The kernel provides only:
 * **Parser**: Generic token stream navigation and dispatch
 * **AST**: Abstract syntax tree node traits (language-neutral)
 * **Evaluator**: Generic evaluation engine
-* **Runtime**: Value storage and execution environment
+* **Runtime**: Value storage and a scoped environment with `define`, `assign`, `update`, `get`, `get_mut`, `with_scope`, and a typed extension slot for language-owned state
 
 ### Result: Zero Language Knowledge in Kernel
 

@@ -2,156 +2,177 @@
 DIRECTORY STRUCTURE
 ================================================================================
 
+Generated 2026-09-06 from the tree; regenerate with:
+  git ls-files | grep -v -E '^(examples|lib_lumen)/' | sort
+
 lumen-lang/
-│
-├── src/                                 # Main binary dispatcher
-│   ├── main.rs                          # CLI entry point and kernel routing
-│   └── mod.rs                           # Module exports
-│
-├── src_stream/                          # Stream kernel (procedural, AST-based)
-│   ├── main.rs                          # Stream kernel binary entry point
-│   ├── mod.rs                           # Module exports
-│   ├── kernel/                          # Language-agnostic kernel core
-│   │   ├── mod.rs                       # Kernel module exports
-│   │   ├── lexer.rs                     # Tokenization with symbol registry
-│   │   ├── parser.rs                    # AST construction
-│   │   ├── ast.rs                       # AST node definitions
-│   │   ├── registry.rs                  # Token and pattern definitions
-│   │   ├── eval.rs                      # Tree-walking AST evaluator
-│   │   └── runtime/                     # Runtime environment and values
-│   │       ├── env.rs                   # Scope and environment management
-│   │       └── value.rs                 # Value representation
-│   └── languages/                       # Language-specific implementations
-│       ├── lumen/                       # Lumen language (Python-style)
-│       │   ├── mod.rs                   # Lumen module exports
-│       │   ├── src_lumen.rs             # Main lumen entry point
-│       │   ├── prelude.rs               # Default environment setup
-│       │   ├── patterns.rs              # Token pattern definitions
-│       │   ├── numeric.rs               # Numeric parsing and operations
-│       │   ├── registry/                # Token and operator definitions
-│       │   │   └── mod.rs               # Registry module
-│       │   ├── structure/               # Indentation and structure handling
-│       │   │   └── mod.rs               # Structure module
-│       │   ├── expressions/             # Expression parsing and evaluation
-│       │   │   └── mod.rs               # Expressions module
-│       │   ├── statements/              # Statement parsing and execution
-│       │   │   └── mod.rs               # Statements module
-│       │   └── extern_system/           # External function dispatch
-│       │       └── mod.rs               # Extern system module
-│       ├── rust/                   # RustCore language (Rust-style)
-│       │   ├── mod.rs                   # RustCore module exports
-│       │   ├── src_rust.rs         # Main mini-rust entry point
-│       │   ├── registry/                # Token and operator definitions
-│       │   │   └── mod.rs               # Registry module
-│       │   ├── structure/               # Brace and structure handling
-│       │   │   └── mod.rs               # Structure module
-│       │   ├── expressions/             # Expression parsing and evaluation
-│       │   │   └── mod.rs               # Expressions module
-│       │   └── statements/              # Statement parsing and execution
-│       │       └── mod.rs               # Statements module
-│       └── python/                 # PythonCore language (Python-style)
-│           ├── mod.rs                   # PythonCore module exports
-│           ├── src_python.rs       # Main mini-python entry point
-│           ├── registry/                # Token and operator definitions
-│           │   └── mod.rs               # Registry module
-│           ├── structure/               # Indentation and structure handling
-│           │   └── mod.rs               # Structure module
-│           ├── expressions/             # Expression parsing and evaluation
-│           │   └── mod.rs               # Expressions module
-│           └── statements/              # Statement parsing and execution
-│               └── mod.rs               # Statements module
-│
-├── src_microcode/                       # Microcode kernel (data-driven, 4-stage)
-│   ├── main.rs                          # Microcode kernel binary entry point
-│   ├── mod.rs                           # Module exports
-│   ├── kernel/                          # Data-driven execution pipeline
-│   │   ├── mod.rs                       # Kernel pipeline orchestration
-│   │   ├── ingest.rs                    # Stage 1: Lexing with schema tables
-│   │   ├── structure.rs                 # Stage 2: Structural token processing
-│   │   ├── reduce.rs                    # Stage 3: Token stream to instructions
-│   │   ├── execute.rs                   # Stage 4: Instruction execution
-│   │   ├── eval.rs                      # Evaluation logic
-│   │   ├── env.rs                       # Scope and environment management
-│   │   └── primitives.rs                # Primitive operation dispatch
-│   ├── schema/                          # Declarative schema system
-│   │   ├── mod.rs                       # Schema module exports
-│   │   ├── language.rs                  # Language schema definitions
-│   │   ├── operator.rs                  # Operator declarations
-│   │   ├── structure.rs                 # Structural token definitions
-│   │   └── validation.rs                # Schema validation logic
-│   ├── languages/                       # Language-specific schema implementations
-│   │   ├── mod.rs                       # Languages module exports
-│   │   ├── lumen/                       # Lumen language schemas
-│   │   │   ├── mod.rs                   # Lumen schemas module exports
-│   │   │   ├── schema.rs                # Declarative language schema
-│   │   │   └── values.rs                # Value handling
-│   │   ├── rust/                   # RustCore language schemas
-│   │   │   ├── mod.rs                   # RustCore schemas module exports
-│   │   │   ├── schema.rs                # Declarative language schema
-│   │   │   └── values.rs                # Value handling
-│   │   ├── python/                 # PythonCore language schemas
-│   │   │   ├── mod.rs                   # PythonCore schemas module exports
-│   │   │   └── values.rs                # Value handling
-│   │   └── alien_lang/                  # Experimental language placeholder
-│   │       └── mod.rs                   # Alien language module
-│   └── runtime/                         # Runtime support system
-│       ├── mod.rs                       # Runtime module exports
-│       └── extern/                      # External function dispatch
-│           └── mod.rs                   # Extern dispatch module
-│
-├── examples/                            # Example programs for all languages
-│   ├── lumen/                           # Lumen language examples (24 files)
-│   │   ├── fibonacci.lm                 # Fibonacci sequence computation
-│   │   ├── pi.lm                        # Pi calculation via Machin's formula
-│   │   ├── e.lm                         # Euler's number via factorial series
-│   │   ├── loop.lm                      # Loop and control flow demonstration
-│   │   ├── demo.lm                      # Feature showcase program
-│   │   ├── scope_if.lm                  # Scope tests with if statements
-│   │   ├── scope_leak.lm                # Scope boundary testing
-│   │   ├── scope_loop.lm                # Scope tests with loops
-│   │   ├── scope_simple.lm              # Basic scope isolation test
-│   │   ├── extern_01.lm                 # Extern system test 1
-│   │   ├── extern_02.lm                 # Extern system test 2
-│   │   ├── extern_03.lm                 # Extern system test 3
-│   │   ├── extern_04.lm                 # Extern system test 4
-│   │   ├── extern_05.lm                 # Extern system test 5
-│   │   ├── extern_06.lm                 # Extern system test 6
-│   │   ├── extern_07.lm                 # Extern system test 7
-│   │   ├── extern_08.lm                 # Extern system test 8
-│   │   ├── extern_09.lm                 # Extern system test 9
-│   │   ├── extern_10.lm                 # Extern system test 10
-│   │   └── extern_11.lm                 # Extern system test 11
-│   ├── python/                     # PythonCore language examples (5 files)
-│   │   ├── fibonacci.py                 # Fibonacci sequence computation
-│   │   ├── pi.py                        # Pi calculation
-│   │   ├── e.py                         # Euler's number calculation
-│   │   ├── loop.py                      # Loop demonstration
-│   │   └── demo.py                      # Feature showcase
-│   └── rust/                       # RustCore language examples (5 files)
-│       ├── fibonacci.rs                 # Fibonacci sequence computation
-│       ├── pi.rs                        # Pi calculation
-│       ├── e.rs                         # Euler's number calculation
-│       ├── loop.rs                      # Loop demonstration
-│       └── demo.rs                      # Feature showcase
-│
-├── docs/                                # Project documentation
-│   ├── LUMEN_KERNEL_STREAM.md           # Stream kernel design and philosophy
-│   ├── LUMEN_KERNEL_MICROCODE.md        # Microcode kernel 4-stage pipeline
-│   ├── LUMEN_LANGUAGE_BNF.md            # Language grammar in BNF notation
-│   ├── LUMEN_LANGUAGE_DESIGN.md         # Language semantics and design
-│   ├── LUMEN_LANGUAGE_EXTERN_SYSTEM.md  # External function system
-│   ├── LUMEN_LANGUAGE_ROADMAP.md        # Planned features and enhancements
-│   ├── VERSION_HISTORY.md               # Release notes and changelog
-│   └── DIRECTORY_STRUCTURE.txt          # This file
-│
-├── src_stream/languages/lumen/docs/     # Legacy documentation archive
-│   ├── BNF.md                           # Legacy grammar specification
-│   ├── DESIGN.md                        # Legacy design notes
-│   ├── EXTERN_DESIGN.md                 # Legacy extern system design
-│   └── ROADMAP.md                       # Legacy roadmap
-│
-├── test_all.sh                          # Test suite runner script
-├── Cargo.toml                           # RustCore project manifest
-├── Cargo.lock                           # Dependency lock file
-├── README.md                            # Project overview
-└── .gitignore                           # Git configuration
+  Cargo.toml                       workspace + host package
+  src/main.rs                      command-line host (the only place both kernels meet)
+  test.sh, test_e.sh, test_pi.sh   test drivers (test.sh runs every example on both kernels)
+  .github/workflows/ci.yml         GitHub Actions: build with -D warnings, run test.sh
+
+  kernels/stream/                  crate lumen-stream
+    kernels/stream/Cargo.toml
+    kernels/stream/src/kernel/ast.rs
+    kernels/stream/src/kernel/eval.rs
+    kernels/stream/src/kernel/lexer.rs
+    kernels/stream/src/kernel/mod.rs
+    kernels/stream/src/kernel/parser.rs
+    kernels/stream/src/kernel/registry.rs
+    kernels/stream/src/kernel/runtime/env.rs
+    kernels/stream/src/kernel/runtime/mod.rs
+    kernels/stream/src/kernel/runtime/value.rs
+    kernels/stream/src/languages/lumen/expressions/arithmetic.rs
+    kernels/stream/src/languages/lumen/expressions/array_index.rs
+    kernels/stream/src/languages/lumen/expressions/array_literal.rs
+    kernels/stream/src/languages/lumen/expressions/comparison.rs
+    kernels/stream/src/languages/lumen/expressions/extern_expr.rs
+    kernels/stream/src/languages/lumen/expressions/grouping.rs
+    kernels/stream/src/languages/lumen/expressions/identifier.rs
+    kernels/stream/src/languages/lumen/expressions/literals.rs
+    kernels/stream/src/languages/lumen/expressions/logic.rs
+    kernels/stream/src/languages/lumen/expressions/mod.rs
+    kernels/stream/src/languages/lumen/expressions/pipe.rs
+    kernels/stream/src/languages/lumen/expressions/range_expr.rs
+    kernels/stream/src/languages/lumen/expressions/variable.rs
+    kernels/stream/src/languages/lumen/extern_system/capabilities.rs
+    kernels/stream/src/languages/lumen/extern_system/mod.rs
+    kernels/stream/src/languages/lumen/extern_system/registry.rs
+    kernels/stream/src/languages/lumen/extern_system/selector.rs
+    kernels/stream/src/languages/lumen/memo.rs
+    kernels/stream/src/languages/lumen/mod.rs
+    kernels/stream/src/languages/lumen/numeric.rs
+    kernels/stream/src/languages/lumen/patterns.rs
+    kernels/stream/src/languages/lumen/prelude.rs
+    kernels/stream/src/languages/lumen/registry/mod.rs
+    kernels/stream/src/languages/lumen/registry/precedence.rs
+    kernels/stream/src/languages/lumen/registry/traits.rs
+    kernels/stream/src/languages/lumen/src_lumen.rs
+    kernels/stream/src/languages/lumen/statements/array_assign.rs
+    kernels/stream/src/languages/lumen/statements/assignment.rs
+    kernels/stream/src/languages/lumen/statements/control_for.rs
+    kernels/stream/src/languages/lumen/statements/control_if_else.rs
+    kernels/stream/src/languages/lumen/statements/control_until.rs
+    kernels/stream/src/languages/lumen/statements/control_while.rs
+    kernels/stream/src/languages/lumen/statements/expr_stmt.rs
+    kernels/stream/src/languages/lumen/statements/flow_break.rs
+    kernels/stream/src/languages/lumen/statements/flow_continue.rs
+    kernels/stream/src/languages/lumen/statements/function_emit.rs
+    kernels/stream/src/languages/lumen/statements/functions.rs
+    kernels/stream/src/languages/lumen/statements/let_binding.rs
+    kernels/stream/src/languages/lumen/statements/let_mut_binding.rs
+    kernels/stream/src/languages/lumen/statements/mod.rs
+    kernels/stream/src/languages/lumen/statements/push_stmt.rs
+    kernels/stream/src/languages/lumen/statements/return_stmt.rs
+    kernels/stream/src/languages/lumen/statements/system_memoization.rs
+    kernels/stream/src/languages/lumen/structure/mod.rs
+    kernels/stream/src/languages/lumen/structure/structural.rs
+    kernels/stream/src/languages/lumen/values.rs
+    kernels/stream/src/languages/mod.rs
+    kernels/stream/src/languages/python_core/expressions/arithmetic.rs
+    kernels/stream/src/languages/python_core/expressions/comparison.rs
+    kernels/stream/src/languages/python_core/expressions/grouping.rs
+    kernels/stream/src/languages/python_core/expressions/identifier.rs
+    kernels/stream/src/languages/python_core/expressions/literals.rs
+    kernels/stream/src/languages/python_core/expressions/logic.rs
+    kernels/stream/src/languages/python_core/expressions/mod.rs
+    kernels/stream/src/languages/python_core/expressions/variable.rs
+    kernels/stream/src/languages/python_core/mod.rs
+    kernels/stream/src/languages/python_core/numeric.rs
+    kernels/stream/src/languages/python_core/prelude.rs
+    kernels/stream/src/languages/python_core/registry/mod.rs
+    kernels/stream/src/languages/python_core/registry/precedence.rs
+    kernels/stream/src/languages/python_core/registry/traits.rs
+    kernels/stream/src/languages/python_core/src_python_core.rs
+    kernels/stream/src/languages/python_core/statements/assignment.rs
+    kernels/stream/src/languages/python_core/statements/break_stmt.rs
+    kernels/stream/src/languages/python_core/statements/continue_stmt.rs
+    kernels/stream/src/languages/python_core/statements/if_else.rs
+    kernels/stream/src/languages/python_core/statements/mod.rs
+    kernels/stream/src/languages/python_core/statements/print.rs
+    kernels/stream/src/languages/python_core/statements/while_loop.rs
+    kernels/stream/src/languages/python_core/statements/write.rs
+    kernels/stream/src/languages/python_core/structure/mod.rs
+    kernels/stream/src/languages/python_core/structure/structural.rs
+    kernels/stream/src/languages/python_core/values.rs
+    kernels/stream/src/languages/rust_core/expressions/arithmetic.rs
+    kernels/stream/src/languages/rust_core/expressions/comparison.rs
+    kernels/stream/src/languages/rust_core/expressions/grouping.rs
+    kernels/stream/src/languages/rust_core/expressions/identifier.rs
+    kernels/stream/src/languages/rust_core/expressions/literals.rs
+    kernels/stream/src/languages/rust_core/expressions/logic.rs
+    kernels/stream/src/languages/rust_core/expressions/mod.rs
+    kernels/stream/src/languages/rust_core/expressions/variable.rs
+    kernels/stream/src/languages/rust_core/mod.rs
+    kernels/stream/src/languages/rust_core/numeric.rs
+    kernels/stream/src/languages/rust_core/prelude.rs
+    kernels/stream/src/languages/rust_core/registry/mod.rs
+    kernels/stream/src/languages/rust_core/registry/precedence.rs
+    kernels/stream/src/languages/rust_core/registry/traits.rs
+    kernels/stream/src/languages/rust_core/src_rust_core.rs
+    kernels/stream/src/languages/rust_core/statements/assignment.rs
+    kernels/stream/src/languages/rust_core/statements/break_stmt.rs
+    kernels/stream/src/languages/rust_core/statements/continue_stmt.rs
+    kernels/stream/src/languages/rust_core/statements/if_else.rs
+    kernels/stream/src/languages/rust_core/statements/let_binding.rs
+    kernels/stream/src/languages/rust_core/statements/mod.rs
+    kernels/stream/src/languages/rust_core/statements/print.rs
+    kernels/stream/src/languages/rust_core/statements/while_loop.rs
+    kernels/stream/src/languages/rust_core/statements/write.rs
+    kernels/stream/src/languages/rust_core/structure/mod.rs
+    kernels/stream/src/languages/rust_core/structure/structural.rs
+    kernels/stream/src/languages/rust_core/values.rs
+    kernels/stream/src/languages/text.rs
+    kernels/stream/src/lib.rs
+
+  kernels/microcode/               crate lumen-microcode
+    kernels/microcode/Cargo.toml
+    kernels/microcode/schemas/lumen.yaml
+    kernels/microcode/schemas/python_core.yaml
+    kernels/microcode/schemas/rust_core.yaml
+    kernels/microcode/src/kernel/_1_ingest.rs
+    kernels/microcode/src/kernel/_2_structure.rs
+    kernels/microcode/src/kernel/_3_reduce.rs
+    kernels/microcode/src/kernel/_4_execute.rs
+    kernels/microcode/src/kernel/env.rs
+    kernels/microcode/src/kernel/instruction.rs
+    kernels/microcode/src/kernel/mod.rs
+    kernels/microcode/src/kernel/numeric.rs
+    kernels/microcode/src/kernel/value.rs
+    kernels/microcode/src/lib.rs
+    kernels/microcode/src/schema.rs
+
+  lib_lumen/                       Lumen standard library (.lm) + prelude.rs (embedding list)
+    lib_lumen/constants.lm
+    lib_lumen/constants_1024.lm
+    lib_lumen/constants_default.lm
+    lib_lumen/e_integer.lm
+    lib_lumen/factorial.lm
+    lib_lumen/modular_arithmetic.lm
+    lib_lumen/number_theory.lm
+    lib_lumen/numeric.lm
+    lib_lumen/output.lm
+    lib_lumen/pi_machin.lm
+    lib_lumen/prelude.lm
+    lib_lumen/prelude.rs
+    lib_lumen/primes.lm
+    lib_lumen/round.lm
+    lib_lumen/string.lm
+    lib_lumen/string_ord_chr.lm
+    lib_lumen/string_to_value.lm
+    lib_lumen/value_to_string.lm
+
+  examples/                        94 programs: lumen/ (+constructs/, libraries/), python/, rust/
+  docs/                            design documents, references, history
+    docs/DIRECTORY_STRUCTURE.txt
+    docs/LANGUAGE_COMPARISON.md
+    docs/LUMEN_COMPACT_REFERENCE.md
+    docs/LUMEN_KERNEL_MICROCODE.md
+    docs/LUMEN_KERNEL_STREAM.md
+    docs/LUMEN_LANGUAGE_BNF.md
+    docs/LUMEN_LANGUAGE_DESIGN.md
+    docs/LUMEN_LANGUAGE_EXTERN_SYSTEM.md
+    docs/LUMEN_LANGUAGE_ROADMAP.md
+    docs/VERSION_HISTORY.md
+  grammar/                         EBNF grammars derived from the yaml/ specifications
+  yaml/                            long-form language specifications (design documents)

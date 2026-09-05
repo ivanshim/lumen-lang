@@ -1,193 +1,109 @@
-# Microcode Kernel Architecture
+# Microcode Kernel
 
 ## Overview
 
-The microcode kernel is a pure algorithmic execution engine that makes NO semantic assumptions about what it's executing. All language-specific behavior is table-driven via **declarative schemas**.
+The microcode kernel is an execution engine that owns every algorithm and
+knows no language. A language is a YAML document of tables; the kernel reads
+it and behaves accordingly. Nothing in `kernels/microcode/src/` names a
+keyword, an operator, a comment marker or a function.
 
-## Core Principle
+**Invariant:** the kernel owns all algorithms; all language-specific behaviour
+is table-driven. Schemas contain no executable logic, only data.
 
-**INVARIANT: The kernel owns ALL algorithms. All language-specific behavior is table-driven via declarative schemas.**
+## The four stages
 
-## Four-Stage Pipeline
+| Stage | File | Input → output | What the schema supplies |
+|---|---|---|---|
+| 1. Ingest | `kernel/_1_ingest.rs` | source text → tokens (words, numbers, decoded strings, operators, line ends, indentation) | comment marker, string delimiters and escape tables, operator lexemes, number punctuation |
+| 2. Structure | `kernel/_2_structure.rs` | tokens → tokens with explicit block delimiters | block style (indentation or braces), indent size, delimiters, optional block-intro token, bracket pairs that suspend line structure |
+| 3. Reduce | `kernel/_3_reduce.rs` | tokens → instruction tree | literal words, operator precedence and associativity with the kernel operation each maps to, statement keywords with the form each introduces, call/group/array syntax |
+| 4. Execute | `kernel/_4_execute.rs` | instruction tree → values | the surface names that reach built-ins, the names of system bindings |
 
-### Stage 1: Ingest
-- **File**: `kernel/ingest.rs`
-- **Input**: Source code string
-- **Process**: Lex using schema tables (multi-character lexemes, no interpretation)
-- **Output**: Token stream
-- **Key Principle**: No whitespace rules, just maximal-munch lexing
+Supporting modules: `kernel/instruction.rs` (the instruction set),
+`kernel/value.rs` (the value model), `kernel/numeric.rs` (the exact numeric
+tower), `kernel/env.rs` (scopes and the call cache), `schema.rs` (the schema
+types, deserialised with serde).
 
-### Stage 2: Structure
-- **File**: `kernel/structure.rs`
-- **Input**: Token stream
-- **Process**: Process structural tokens per schema (indentation, newlines, EOF)
-- **Output**: Structured token stream
-- **Key Principle**: Schema defines indentation rules (fixed/none), newline behavior
+## The instruction set
 
-### Stage 3: Reduce
-- **File**: `kernel/reduce.rs`
-- **Input**: Structured token stream
-- **Process**: Convert to instruction tree using schema patterns and operator precedence
-- **Output**: Instruction tree (Instructions with Primitives)
-- **Key Principle**: Pratt parsing driven by schema operator tables
+Seven primitives carry all control and data flow:
 
-### Stage 4: Execute
-- **File**: `kernel/execute.rs`
-- **Input**: Instruction tree, Environment
-- **Process**: Execute via primitive dispatch (7-primitive canonical set)
-- **Output**: Value (result) and ControlFlow
-- **Key Principle**: All semantics come from primitive definitions, never from code
+1. **Sequence** — execute in order; the value is the last one
+2. **Scope** — execute inside a fresh binding scope
+3. **Branch** — conditional execution
+4. **Assign** — bind a name, or write an array element
+5. **Invoke** — call a built-in or a function value
+6. **Operate** — apply a kernel operation to operands
+7. **Transfer** — return, break or continue
 
-## Canonical Primitive Set
+`Literal` and `Variable` are the leaves they operate on, and one internal
+`Loop` (condition, body, optional step run after each pass, including after
+`continue`) carries iteration. Everything else is desugared in Reduce:
 
-The kernel executes only these 7 canonical primitives (single-word verbs):
+| Source construct | Reduces to |
+|---|---|
+| `while c { b }` | `Loop { c, b }` |
+| `until c { b }` | `Loop { true, b, step: Branch { c, Transfer(Break) } }` |
+| `for v in r { b }` | bind the range once, bind `v` to its start, `Loop { v < end, b, step: v = v + 1 }` |
+| `fn f(p) { b }` | `Assign f = Literal(function value)` |
+| `a[i] = x` | `Assign` to an index target |
+| `x \|> f(y)` | `Invoke f(x, y)` |
+| `[a, b]` | `Operate(ArrayLiteral, [a, b])` |
 
-1. **Sequence** - Execute multiple instructions in order, return last value
-2. **Scope** - Push/pop variable binding scope, execute sequence in new scope
-3. **Branch** - Conditional execution (if condition then-block else else-block)
-4. **Assign** - Variable assignment (update or create in current scope)
-5. **Invoke** - Call external/foreign function via schema registry
-6. **Operate** - Unary or binary operator dispatch (precedence and associativity from schema)
-7. **Transfer** - Control flow signals with tagged variants:
-   - `Transfer(Return, value)` - Return from function with optional value
-   - `Transfer(Break, None)` - Break from loop
-   - `Transfer(Continue, None)` - Continue to next iteration
+Functions are values whose bodies are shared, not copied, between the binding
+and each call.
 
-## Desugaring
+## Kernel operations
 
-Source-level constructs are desugared to primitives during parsing:
+Schemas map operator lexemes onto this fixed set: `add sub mul div quot rem
+pow eq ne lt le gt ge and or not negate concat range index pipe`. Arithmetic
+runs on one exact numeric tower: integers stay integers for closed
+operations, other results are reduced rationals, and a real on either side
+makes the result real with the left real's precision. Comparisons are exact
+for every numeric kind.
 
-- `print(expr)` → `Invoke("print_native", [expr])`
-- `return expr` → `Transfer(Return, Some(expr))`
-- `break` → `Transfer(Break, None)`
-- `continue` → `Transfer(Continue, None)`
-- `{ statements }` → `Scope([statements])`
+## Built-ins
 
-## Internal Non-Canonical Primitive
+The kernel can provide `emit print_line write real int_to_string
+real_to_string rational_to_string bool_to_string array_to_string
+null_to_string kind_to_string len char_at ord chr error kind num den int frac
+extern push`. A schema decides which surface names reach them. Lumen maps
+`emit` and the conversion primitives and writes `print` in Lumen itself; the
+Rust-like and Python-like dialects map `print` and `write` directly.
 
-- **Loop** - While looping construct (internal implementation detail, not part of canonical set)
-  - Used by `while` and `loop` statements during parsing
-  - Handles repeated condition evaluation with break/continue support
-  - Planned for future refactoring to Branch + Transfer patterns
+## System bindings
 
-## Schema Responsibilities
+A schema may name a read-only arguments binding (`ARGS`), a memoization switch
+(`MEMOIZATION`; when the binding holds `true`, function results are cached
+for the calls made while it is in effect), kind meta-values (`INTEGER`,
+`RATIONAL`, …) and integer constants (`REAL_DEFAULT_PRECISION`). The kernel
+supplies the values; the schema supplies the names.
 
-Each language schema MUST define (and can ONLY define):
+## Schema format
 
-### Lexical Rules
-- Multi-character lexemes (sorted by length descending)
-- Split characters (whitespace, punctuation)
-- NO implicit whitespace rules
+`kernels/microcode/schemas/lumen.yaml` is the reference. Sections:
 
-### Structural Rules
-- EOF handling
-- Indentation mode (fixed indent / none)
-- Newline behavior (terminator / ignored)
-
-### Token Roles
-- Map lexemes → symbolic roles (keyword, identifier, operator, literal, etc.)
-
-### Operators
-- Precedence levels
-- Associativity (left/right/none)
-- Primitive mapping
-
-### Statements
-- Expected substructures (patterns)
-- Mapped execution primitive
-
-### Extern Calls
-- Selector string syntax
-- Arity (if checked)
-- Primitive dispatch
-
-**INVARIANT: Schemas contain NO executable logic. Only data.**
-
-## Language Definitions
-
-Languages can be defined in two ways:
-
-### Option 1: RustCore Data (Compiled)
-```rust
-// languages/lumen/language.rs
-pub fn get_schema() -> LanguageSchema {
-    let mut statements = HashMap::new();
-    statements.insert("print".to_string(), PatternBuilder::new("print")...);
-    // ... all data
-    LanguageSchema { statements, binary_ops, ... }
-}
-```
-
-### Option 2: YAML Data (Runtime Loadable)
 ```yaml
-# languages/python_core/language.yaml
-name: python
-keywords: [if, while, for, def, class]
-statements:
-  print:
-    pattern: [keyword, "(", expression, ")"]
-operators:
-  binary:
-    "+": {precedence: 5, associativity: left}
+name: lumen
+error_prefix: LumenError
+lexical:      # stage 1: comment, quotes, escapes, operators, number syntax
+structure:    # stage 2: blocks, indent_size, block_open/close, block_intro,
+              #          terminators, group/call/array bracket pairs
+literals:     # stage 3: words for true, false and null
+operators:    # stage 3: binary {precedence, associativity, op}, unary {precedence, op}
+statements:   # stage 3: assignment, binding, branch, loop_while, loop_until,
+              #          loop_for, return, break, continue, function, pass
+functions:    # stage 4: surface name → built-in
+system:       # stage 4: args, memoization, kinds, integer_constants
 ```
 
-## Separation of Concerns
+Adding a language means adding a YAML file and one line in
+`kernels/microcode/src/lib.rs` that embeds it. Changing an operator's
+precedence, or which word means `null`, is a data edit with no code change.
 
-### Kernel Does NOT Know:
-- What any language looks like
-- What operators mean
-- What statements do
-- How values behave
-- What extern calls are
+## Relationship to the stream kernel
 
-### Kernel DOES Know:
-- How to tokenize using tables
-- How to handle indentation per schema
-- How to parse using operator precedence
-- How to execute primitives
-- How to dispatch to extern via schema
-
-### Language Does NOT Have:
-- Any parsing logic
-- Any execution logic
-- Any control flow
-- Any value operations
-
-### Language DOES Have:
-- Lexical tables
-- Structural rules
-- Pattern definitions
-- Operator definitions
-- Statement mappings
-
-## No Cross-Dependencies
-
-**CRITICAL**: There are NO imports between `src_stream` and `src_microcode`.
-
-- `src_stream` is the original procedural kernel (unmodified)
-- `src_microcode` is the data-driven kernel (completely independent)
-- Both use `src/schema/` for shared type definitions only
-- The top-level `src/main.rs` routes between them
-
-This separation ensures:
-- Each kernel can evolve independently
-- No accidental coupling
-- Clear architectural boundaries
-- Easy to add new kernels
-
-## Testing
-
-The `test_all` script tests both kernels with all examples:
-- Stream kernel: Fully tested with Lumen, Python, Rust
-- Microcode kernel: Lumen support (basic)
-
-**Current Results**: 21 passed, 5 failed (rust parsing issues), 33 skipped
-
-## Future Work
-
-1. **Complete Microcode Lumen**: Add all language features
-2. **Python/RustCore in Microcode**: Implement schemas and parsing
-3. **YAML Schema Loading**: Runtime language loading from files
-4. **Extern System**: Full dispatch implementation with capability registry
-5. **Performance**: Optimize tokenization and instruction execution
-6. **Error Messages**: Better diagnostics with source locations
+The two kernels never import each other; they are separate crates that meet
+only in the host binary. The stream kernel delegates meaning to language code
+through handler traits; the microcode kernel takes meaning from tables. Both
+run every example in `examples/` and both are exercised by `test.sh` and CI.
