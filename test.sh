@@ -17,14 +17,6 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# Log output to test.log file in addition to console
-# Re-execute script with tee if not already logging
-if [ -z "$TEST_LOGGING" ]; then
-    export TEST_LOGGING=1
-    exec "$0" "$@" 2>&1 | tee test.log
-    exit 1  # Safety net - should never reach here since exec replaces the process
-fi
-
 # Function to display help
 show_help() {
     echo -e "${BLUE}Lumen-Lang Test Script${NC}\n"
@@ -154,8 +146,8 @@ if ! cargo build --quiet 2>/dev/null; then
 fi
 echo -e "${BLUE}Built successfully${NC}\n"
 
-STREAM_BINARY="./target/debug/stream"
-MICROCODE_BINARY="./target/debug/lumen-lang"
+STREAM_BINARY="./target/debug/lumen-lang --kernel stream"
+MICROCODE_BINARY="./target/debug/lumen-lang --kernel microcode"
 TOTAL_TESTS=0
 PASSED_TESTS=0
 FAILED_TESTS=0
@@ -231,8 +223,8 @@ run_test() {
         time_display=$(printf "%d.%03d" "$sec" "$remaining_ms")s
     fi
 
-    # Print output with indentation
-    if [ -n "$output" ]; then
+    # Print program output (only for failures when TEST_QUIET is set)
+    if [ -n "$output" ] && { [ -z "$TEST_QUIET" ] || [ $exit_code -ne 0 ]; }; then
         echo "$output" | sed 's/^/    /'
     fi
 

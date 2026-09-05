@@ -1,0 +1,15 @@
+[package]
+name = "lumen-microcode"
+version = "0.2.0"
+edition = "2021"
+description = "Microcode kernel: a table-driven four-stage execution engine"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+num-bigint = "0.4"
+num-traits = "0.2"
+num-integer = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"

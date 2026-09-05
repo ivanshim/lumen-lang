@@ -5,9 +5,35 @@ Each entry is intentionally self-contained so that it remains meaningful even if
 
 ---
 
+## v0.2.0 - 2026-09-06
+**Contributors:** Ivan Shim orchestrating, Claude Fable 5.1 coding
+**Release:** Cleanup and kernel-fidelity pass; both kernels now match their charters
+
+### What was done:
+- **Workspace**: one host binary (`src/main.rs`) and two kernel library crates
+  (`kernels/stream`, `kernels/microcode`) that cannot import each other. No
+  more spawning sibling binaries; `lumen-lang --kernel stream|microcode`.
+- **Stream kernel purity**: the lexer no longer strips comments or assumes
+  which bytes form identifiers (languages supply both); the environment lost
+  its memoization policy, its Lumen-typed array mutation and its unsafe scope
+  guard, gaining `update`, `get_mut`, `with_scope` and a typed extension slot.
+  Lumen's memoization moved into the language layer.
+- **Microcode kernel as data**: languages are YAML schemas
+  (`kernels/microcode/schemas/`); the four stages read tables and contain no
+  language names. Seven primitives plus one internal loop; `for`, `until`,
+  functions, indexed assignment and the pipe operator are desugared. One exact
+  numeric tower replaces per-type arithmetic and fixes real-number comparison.
+- **Dialect fixes**: the Rust-like and Python-like examples had been failing
+  on both kernels (infinite loops on the stream kernel from assignment
+  shadowing inside loop scopes; unknown `print` on the microcode kernel).
+  All 186 example runs pass.
+- **Hygiene**: zero compiler warnings and CI that denies them; GitHub Actions
+  runs every example on both kernels; stale files, dead helpers and stale
+  docs removed; README and kernel documents rewritten to match the code.
+
+---
+
 ## v0.0.7 - 2026-01-07
-**Contributors:** Ivan Shim orchestrating, GPT-5.2 consulting, Claude Code Haiku 4.5 coding (Happy Birthday!)
-**Release:** Microcode kernel rewritten and optimized (7 primitives retained), codebase cleanup and standardization
 **Contributors:** Ivan Shim orchestrating, GPT-5.2 consulting, Claude Code Haiku 4.5 coding (Happy Birthday Ivan!)
 **Release:** Microcode kernel rewritten and optimized (7 primitives retained), codebase cleanup and standardization
 

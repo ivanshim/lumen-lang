@@ -1,27 +1,16 @@
+[workspace]
+members = ["kernels/stream", "kernels/microcode"]
+
 [package]
 name = "lumen-lang"
-version = "0.0.1"
+version = "0.2.0"
 edition = "2021"
+description = "Lumen: one command-line host, two independent interpreter kernels"
 
 [[bin]]
 name = "lumen-lang"
 path = "src/main.rs"
 
-[[bin]]
-name = "stream"
-path = "src_stream/main.rs"
-
-[[bin]]
-name = "microcode"
-path = "src_microcode/main.rs"
-
-[lib]
-name = "microcode_2"
-path = "src_microcode/lib.rs"
-
 [dependencies]
-serde_yaml = "0.9"
-num-bigint = "0.4"
-num-traits = "0.2"
-num-integer = "0.1"
-rust_decimal = "1.33"
+lumen-stream = { path = "kernels/stream" }
+lumen-microcode = { path = "kernels/microcode" }

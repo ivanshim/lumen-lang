@@ -1,0 +1,91 @@
+# A Rust-flavoured surface syntax on the microcode kernel: braces,
+# semicolons, `let` bindings, `&&`/`||` alongside the word forms.
+name: rust_core
+error_prefix: RustCoreError
+
+lexical:
+  comment: "//"
+  quotes: ['"']
+  escapes:
+    '"': { n: "\n", t: "\t", "\\": "\\", '"': '"' }
+  number:
+    decimal_point: "."
+  operators:
+    - "=="
+    - "!="
+    - "<="
+    - ">="
+    - "**"
+    - "&&"
+    - "||"
+    - "->"
+    - ":"
+    - "="
+    - "+"
+    - "-"
+    - "*"
+    - "/"
+    - "%"
+    - "<"
+    - ">"
+    - "!"
+    - "("
+    - ")"
+    - "["
+    - "]"
+    - "{"
+    - "}"
+    - ","
+    - "."
+    - ";"
+
+structure:
+  blocks: braces
+  block_open: "{"
+  block_close: "}"
+  terminators: [";"]
+  group: { open: "(", close: ")" }
+  call: { open: "(", close: ")", separator: "," }
+  array: { open: "[", close: "]", separator: "," }
+
+literals:
+  true: [true]
+  false: [false]
+  null: [none]
+
+operators:
+  binary:
+    "||": { precedence: 2, associativity: left, op: or }
+    "or": { precedence: 2, associativity: left, op: or }
+    "&&": { precedence: 3, associativity: left, op: and }
+    "and": { precedence: 3, associativity: left, op: and }
+    "==": { precedence: 4, associativity: left, op: eq }
+    "!=": { precedence: 4, associativity: left, op: ne }
+    "<": { precedence: 4, associativity: left, op: lt }
+    ">": { precedence: 4, associativity: left, op: gt }
+    "<=": { precedence: 4, associativity: left, op: le }
+    ">=": { precedence: 4, associativity: left, op: ge }
+    "+": { precedence: 5, associativity: left, op: add }
+    "-": { precedence: 5, associativity: left, op: sub }
+    "*": { precedence: 6, associativity: left, op: mul }
+    "/": { precedence: 6, associativity: left, op: quot }   # integer division, as in the stream dialect
+    "%": { precedence: 6, associativity: left, op: rem }
+    "**": { precedence: 7, associativity: right, op: pow }
+  unary:
+    "-": { precedence: 8, op: negate }
+    "!": { precedence: 8, op: not }
+    "not": { precedence: 8, op: not }
+
+statements:
+  assignment: "="
+  binding: { keyword: let, mutable_modifier: mut, type_annotation: ":" }
+  branch: { keyword: if, else_keyword: else }
+  loop_while: { keyword: while }
+  return: { keyword: return }
+  break: { keyword: break }
+  continue: { keyword: continue }
+  function: { keyword: fn }
+
+functions:
+  print: print_line
+  write: write

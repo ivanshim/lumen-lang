@@ -1,0 +1,13 @@
+[package]
+name = "lumen-stream"
+version = "0.2.0"
+edition = "2021"
+description = "Stream kernel: a language-agnostic tree-walking interpreter substrate"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+num-bigint = "0.4"
+num-traits = "0.2"
+num-integer = "0.1"

@@ -376,8 +376,8 @@ RustCore                 47         30+        14          10          15
 
 **In Parent Directory**:
 - `yaml/` - Source YAML specifications
-- `src_stream/` - Stream kernel implementation
-- `src_microcode/` - Microcode kernel implementation
+- `kernels/stream/` - Stream kernel implementation
+- `kernels/microcode/` - Microcode kernel implementation
 
 ---
 
