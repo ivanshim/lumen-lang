@@ -14,11 +14,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build
-        run: cargo build 2>&1 | tee build.log; test "${PIPESTATUS[0]}" -eq 0
+        run: |
+          cargo build 2>&1 | tee build.log
+          test "${PIPESTATUS[0]}" -eq 0
       - name: Warning count
-        run: echo "warnings: $(grep -c '^warning' build.log || true)"
+        run: |
+          echo "warnings=$(grep -c '^warning' build.log || true)"
       - name: Test all languages on both kernels
-        run: ./test.sh --lang all 2>&1 | tee test.log; test "${PIPESTATUS[0]}" -eq 0
+        run: |
+          ./test.sh --lang all 2>&1 | tee test.log
+          test "${PIPESTATUS[0]}" -eq 0
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
