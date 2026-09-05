@@ -8,7 +8,7 @@ A minimal, experimental programming language interpreter framework exploring lan
 
 ### Requirements
 - Git
-- RustCore ([https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install))
+- Rust ([https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install))
 
 ### Installation & Running
 
@@ -25,7 +25,7 @@ cargo run examples/lumen/loop.lm
 # Lumen (Python-style indentation)
 cargo run examples/lumen/fibonacci.lm
 
-# RustCore (Rust-style curly braces)
+# Rust-like (Rust-style curly braces)
 cargo run examples/rust/demo.rs
 
 # PythonCore (Python-like syntax)
@@ -88,13 +88,13 @@ Lumen has **4 independent development tracks**, each with its own architecture a
 
 ## Testing
 
-Run the full test suite (68 tests across all kernels and languages):
+Run every example on both kernels:
 
 ```bash
-./test_all.sh
+./test.sh --lang all
 ```
 
-**Current Status**: ✅ **All 68 tests passing** (48 Lumen, 10 Python, 10 Rust)
+The same command runs in GitHub Actions on every push.
 
 ---
 
@@ -110,7 +110,7 @@ Comprehensive documentation is organized in the `docs/` directory:
 - [**LUMEN_KERNEL_MICROCODE.md**](docs/LUMEN_KERNEL_MICROCODE.md) - Microcode kernel design and 4-stage pipeline
 
 ### Lumen Language Documentation
-- [**LUMEN_LANGUAGE_BNF.md**](docs/LUMEN_LANGUAGE_BNF.md) - Lumen grammar specification
+- [**lumen.ebnf**](grammar/lumen.ebnf) - Lumen grammar (EBNF)
 - [**LUMEN_LANGUAGE_DESIGN.md**](docs/LUMEN_LANGUAGE_DESIGN.md) - Language design and semantics
 - [**LUMEN_LANGUAGE_EXTERN_SYSTEM.md**](docs/LUMEN_LANGUAGE_EXTERN_SYSTEM.md) - External function system design
 - [**LUMEN_LANGUAGE_ROADMAP.md**](docs/LUMEN_LANGUAGE_ROADMAP.md) - Planned features and improvements
@@ -175,10 +175,10 @@ cargo run examples/python/fibonacci.py
 ### Run with Explicit Kernel Selection
 
 ```bash
-# Stream kernel (default for most)
+# Stream kernel
 cargo run -- --kernel stream examples/lumen/pi.lm
 
-# Microcode kernel
+# Microcode kernel (the default)
 cargo run -- --kernel microcode examples/lumen/pi.lm
 ```
 
@@ -221,7 +221,6 @@ This project is provided as-is for educational and experimental purposes.
 
 ---
 
-**Status**: ✅ All 68 tests passing (48 Lumen, 10 Python, 10 Rust)
 
 For release notes and version history, see **docs/VERSION_HISTORY.md**
 

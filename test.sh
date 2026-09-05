@@ -17,14 +17,6 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# Log output to test.log file in addition to console
-# Re-execute script with tee if not already logging
-if [ -z "$TEST_LOGGING" ]; then
-    export TEST_LOGGING=1
-    exec "$0" "$@" 2>&1 | tee test.log
-    exit 1  # Safety net - should never reach here since exec replaces the process
-fi
-
 # Function to display help
 show_help() {
     echo -e "${BLUE}Lumen-Lang Test Script${NC}\n"
@@ -155,7 +147,7 @@ fi
 echo -e "${BLUE}Built successfully${NC}\n"
 
 STREAM_BINARY="./target/debug/stream"
-MICROCODE_BINARY="./target/debug/lumen-lang"
+MICROCODE_BINARY="./target/debug/microcode"
 TOTAL_TESTS=0
 PASSED_TESTS=0
 FAILED_TESTS=0

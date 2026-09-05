@@ -876,7 +876,7 @@ fn execute_operator(
                         match (&left, &right) {
                             // Real + Real = Real
                             (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
-                             Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
+                             Value::Real { numerator: r_num, denominator: r_denom, .. }) => {
                                 // (a/b) + (c/d) = (ad + bc) / bd, preserve left precision
                                 let num = l_num * r_denom + r_num * l_denom;
                                 let denom = l_denom * r_denom;
@@ -935,7 +935,7 @@ fn execute_operator(
                     match (&left, &right) {
                         // Real - Real = Real
                         (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
-                         Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
+                         Value::Real { numerator: r_num, denominator: r_denom, .. }) => {
                             // (a/b) - (c/d) = (ad - bc) / bd, preserve left precision
                             let num = l_num * r_denom - r_num * l_denom;
                             let denom = l_denom * r_denom;
@@ -997,7 +997,7 @@ fn execute_operator(
                     match (&left, &right) {
                         // Real * Real = Real
                         (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
-                         Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
+                         Value::Real { numerator: r_num, denominator: r_denom, .. }) => {
                             // (a/b) * (c/d) = (ac) / (bd), preserve left precision
                             let num = l_num * r_num;
                             let denom = l_denom * r_denom;
@@ -1055,7 +1055,7 @@ fn execute_operator(
                     match (&left, &right) {
                         // Real / Real = Real
                         (Value::Real { numerator: l_num, denominator: l_denom, precision: l_prec },
-                         Value::Real { numerator: r_num, denominator: r_denom, precision: r_prec }) => {
+                         Value::Real { numerator: r_num, denominator: r_denom, .. }) => {
                             // (a/b) / (c/d) = (ad) / (bc), preserve left precision
                             if r_num == &BigInt::from(0) {
                                 return Err("Division by zero".to_string());

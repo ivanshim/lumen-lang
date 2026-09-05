@@ -3,7 +3,7 @@
 // LanguageSchema contains ONLY data loaded from YAML specifications.
 // All interpretation is done by the kernel stages.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct OperatorInfo {
