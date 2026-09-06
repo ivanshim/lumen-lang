@@ -12,8 +12,11 @@ use num_traits::ToPrimitive;
 use super::env::Environment;
 use super::instruction::{Instruction, Target, TransferKind};
 use super::numeric;
-use super::value::Value;
+use super::value::{LiteralWords, Value};
 use crate::schema::{Builtin, LanguageSchema, Op};
+
+/// Significant digits of a real when the program gives no precision.
+pub const DEFAULT_REAL_PRECISION: usize = 15;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Flow {
@@ -145,7 +148,7 @@ pub fn execute(instr: &Instruction, env: &mut Environment, schema: &LanguageSche
 
 // ---------------- Invoke ----------------
 
-fn invoke(function: &str, args: &[Instruction], env: &mut Environment, schema: &LanguageSchema) -> Outcome {
+pub(crate) fn invoke(function: &str, args: &[Instruction], env: &mut Environment, schema: &LanguageSchema) -> Outcome {
     if let Some(builtin) = schema.functions.get(function).copied() {
         return builtin_call(builtin, function, args, env, schema);
     }
@@ -230,8 +233,48 @@ fn builtin_call(
     for arg in args {
         values.push(eval!(arg, env, schema));
     }
-    let result = builtin_apply(builtin, name, &values)?;
+    let result = builtin_apply(builtin, name, &values, schema)?;
     Ok((result, Flow::Normal))
+}
+
+/// The literal spellings a language renders values with: the first entry
+/// of each literal label, or the kernel's own word when there is none.
+fn words(schema: &LanguageSchema) -> LiteralWords<'_> {
+    fn first<'a>(list: &'a [String], fallback: &'static str) -> &'a str {
+        list.first().map_or(fallback, String::as_str)
+    }
+    LiteralWords {
+        true_word: first(&schema.literals.true_words, "true"),
+        false_word: first(&schema.literals.false_words, "false"),
+        null_word: first(&schema.literals.null_words, "null"),
+    }
+}
+
+/// Text for print and write: the values joined by spaces, or, when the
+/// first value is a string holding `{}` placeholders and more values
+/// follow, that string with each placeholder filled in order.
+fn render(values: &[Value], schema: &LanguageSchema) -> String {
+    let words = words(schema);
+    if values.len() > 1 {
+        if let Value::String(template) = &values[0] {
+            if template.contains("{}") {
+                let mut out = String::new();
+                let mut rest = values[1..].iter();
+                let mut s = template.as_str();
+                while let Some(pos) = s.find("{}") {
+                    out.push_str(&s[..pos]);
+                    match rest.next() {
+                        Some(v) => out.push_str(&v.render(&words)),
+                        None => out.push_str("{}"),
+                    }
+                    s = &s[pos + 2..];
+                }
+                out.push_str(s);
+                return out;
+            }
+        }
+    }
+    values.iter().map(|v| v.render(&words)).collect::<Vec<_>>().join(" ")
 }
 
 fn arity(name: &str, values: &[Value], n: usize) -> Result<(), String> {
@@ -242,8 +285,9 @@ fn arity(name: &str, values: &[Value], n: usize) -> Result<(), String> {
     }
 }
 
-fn builtin_apply(builtin: Builtin, name: &str, values: &[Value]) -> Result<Value, String> {
+fn builtin_apply(builtin: Builtin, name: &str, values: &[Value], schema: &LanguageSchema) -> Result<Value, String> {
     use Builtin::*;
+    let words = words(schema);
     match builtin {
         Emit => {
             arity(name, values, 1)?;
@@ -256,23 +300,26 @@ fn builtin_apply(builtin: Builtin, name: &str, values: &[Value]) -> Result<Value
             }
         }
         PrintLine => {
-            for v in values {
-                println!("{}", v);
-            }
+            println!("{}", render(values, schema));
             Ok(Value::Null)
         }
         Write => {
-            for v in values {
-                print!("{}", v);
-            }
+            print!("{}", render(values, schema));
             Ok(Value::Null)
+        }
+        Range => {
+            arity(name, values, 2)?;
+            match (&values[0], &values[1]) {
+                (Value::Number(start), Value::Number(end)) => Ok(Value::Range { start: start.clone(), end: end.clone() }),
+                _ => Err(format!("{}() requires two integer arguments", name)),
+            }
         }
         Real => {
             if values.is_empty() || values.len() > 2 {
                 return Err(format!("{}() expects 1 or 2 arguments, got {}", name, values.len()));
             }
             let precision = match values.get(1) {
-                None => 15,
+                None => DEFAULT_REAL_PRECISION,
                 Some(Value::Number(n)) => n.to_u64().ok_or_else(|| "Precision must be a positive integer".to_string())? as usize,
                 Some(_) => return Err("Precision argument must be an integer".to_string()),
             };
@@ -310,21 +357,21 @@ fn builtin_apply(builtin: Builtin, name: &str, values: &[Value]) -> Result<Value
         BoolToString => {
             arity(name, values, 1)?;
             match &values[0] {
-                v @ Value::Bool(_) => Ok(Value::String(v.to_string())),
+                v @ Value::Bool(_) => Ok(Value::String(v.render(&words))),
                 _ => Err(format!("{}() requires a boolean argument", name)),
             }
         }
         ArrayToString => {
             arity(name, values, 1)?;
             match &values[0] {
-                v @ Value::Array(_) => Ok(Value::String(v.to_string())),
+                v @ Value::Array(_) => Ok(Value::String(v.render(&words))),
                 _ => Err(format!("{}() requires an array argument", name)),
             }
         }
         NullToString => {
             arity(name, values, 1)?;
             match &values[0] {
-                Value::Null => Ok(Value::String("null".to_string())),
+                v @ Value::Null => Ok(Value::String(v.render(&words))),
                 _ => Err(format!("{}() requires a null argument", name)),
             }
         }
@@ -434,7 +481,7 @@ fn builtin_apply(builtin: Builtin, name: &str, values: &[Value]) -> Result<Value
             match target {
                 "print_native" => {
                     for v in rest {
-                        println!("{}", v);
+                        println!("{}", v.render(&words));
                     }
                     Ok(Value::Null)
                 }
@@ -456,7 +503,7 @@ fn builtin_apply(builtin: Builtin, name: &str, values: &[Value]) -> Result<Value
                 }
                 "debug_info" => {
                     let v = rest.first().ok_or_else(|| "debug_info requires an argument".to_string())?;
-                    println!("[DEBUG] {}", v);
+                    println!("[DEBUG] {}", v.render(&words));
                     Ok(Value::Null)
                 }
                 other => Err(format!("Unknown external function: {}", other)),
@@ -509,17 +556,18 @@ fn operate(op: Op, operands: &[Instruction], env: &mut Environment, schema: &Lan
     }
 
     let right = eval!(&operands[1], env, schema);
-    let result = binary(op, &left, &right)?;
+    let result = binary(op, &left, &right, schema)?;
     Ok((result, Flow::Normal))
 }
 
-fn binary(op: Op, left: &Value, right: &Value) -> Result<Value, String> {
+fn binary(op: Op, left: &Value, right: &Value, schema: &LanguageSchema) -> Result<Value, String> {
+    let words = words(schema);
     match op {
         Op::And => Ok(Value::Bool(left.to_bool() && right.to_bool())),
         Op::Or => Ok(Value::Bool(left.to_bool() || right.to_bool())),
         Op::Eq => Ok(Value::Bool(left == right)),
         Op::Ne => Ok(Value::Bool(left != right)),
-        Op::Concat => Ok(Value::String(format!("{}{}", left, right))),
+        Op::Concat => Ok(Value::String(format!("{}{}", left.render(&words), right.render(&words)))),
         Op::Range => Ok(Value::Range { start: left.to_number()?, end: right.to_number()? }),
         Op::Index => {
             let items = match left {
@@ -530,7 +578,7 @@ fn binary(op: Op, left: &Value, right: &Value) -> Result<Value, String> {
             items.get(idx).cloned().ok_or_else(|| format!("Array index {} out of bounds (length: {})", idx, items.len()))
         }
         Op::Add if matches!(left, Value::String(_)) || matches!(right, Value::String(_)) => {
-            Ok(Value::String(format!("{}{}", left, right)))
+            Ok(Value::String(format!("{}{}", left.render(&words), right.render(&words))))
         }
         Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Quot | Op::Rem | Op::Pow => {
             match (numeric::to_num(left), numeric::to_num(right)) {

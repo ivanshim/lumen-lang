@@ -9,7 +9,6 @@
 use crate::languages::lumen::prelude::*;
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::Env;
 use crate::languages::lumen::structure::structural;
 use crate::languages::lumen::expressions::range_expr::as_range;
@@ -69,7 +68,7 @@ pub struct ForStmtHandler;
 
 impl StmtHandler for ForStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme == "for"
+        def().is("stmt.for", &parser.peek().lexeme)
     }
 
     fn parse(
@@ -81,13 +80,14 @@ impl StmtHandler for ForStmtHandler {
         parser.skip_tokens();
 
         // Parse loop variable name
-        let var_name = parser.peek().lexeme.clone();
-        parser.advance();
+        let var_name = parser
+            .take_identifier()
+            .ok_or_else(|| err_at(parser, "Expected a loop variable"))?;
         parser.skip_tokens();
 
-        // Expect 'in' keyword
-        if parser.peek().lexeme != "in" {
-            return Err("Expected 'in' after for loop variable".to_string());
+        // Expect the in-keyword
+        if !def().is("stmt.for.in", &parser.peek().lexeme) {
+            return Err(format!("Expected '{}' after for loop variable", def().first("stmt.for.in")));
         }
         parser.advance();
         parser.skip_tokens();
@@ -105,15 +105,6 @@ impl StmtHandler for ForStmtHandler {
             body,
         }))
     }
-}
-
-// --------------------
-// Pattern Declaration
-// --------------------
-
-/// Declare what patterns this module recognizes
-pub fn patterns() -> PatternSet {
-    PatternSet::new().with_literals(vec!["for"])
 }
 
 // --------------------

@@ -1,16 +1,23 @@
 use crate::languages::lumen::prelude::*;
-// Logical operators: and / or / not
+// Logical operators: conjunction, disjunction and negation, with
+// short-circuit evaluation. The words that spell them come from the
+// definition and are lexed whole, as reserved words.
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
-use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::{Env, Value};
 use crate::languages::lumen::values::{LumenBool, as_bool};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Logic {
+    And,
+    Or,
+}
 
 #[derive(Debug)]
 struct LogicExpr {
     left: Box<dyn ExprNode>,
-    op: String,
+    op: Logic,
     right: Box<dyn ExprNode>,
 }
 
@@ -20,87 +27,40 @@ impl ExprNode for LogicExpr {
         let l = self.left.eval(env)?;
         let left_bool = as_bool(l.as_ref())?;
 
-        match self.op.as_str() {
-            "and" => {
+        match self.op {
+            Logic::And => {
                 // Short-circuit: if left is false, don't evaluate right
                 if !left_bool.value {
                     return Ok(Box::new(LumenBool::new(false)));
                 }
-                let r = self.right.eval(env)?;
-                let right_bool = as_bool(r.as_ref())?;
-                Ok(Box::new(LumenBool::new(right_bool.value)))
             }
-            "or" => {
+            Logic::Or => {
                 // Short-circuit: if left is true, don't evaluate right
                 if left_bool.value {
                     return Ok(Box::new(LumenBool::new(true)));
                 }
-                let r = self.right.eval(env)?;
-                let right_bool = as_bool(r.as_ref())?;
-                Ok(Box::new(LumenBool::new(right_bool.value)))
             }
-            _ => Err(format!("Invalid logical operator: {}", self.op)),
         }
+        let r = self.right.eval(env)?;
+        let right_bool = as_bool(r.as_ref())?;
+        Ok(Box::new(LumenBool::new(right_bool.value)))
     }
 }
 
+/// One spelling of one logical operator, at the tier the definition gives it.
 pub struct LogicInfix {
-    op: String,
-}
-
-impl LogicInfix {
-    pub fn new(op: &str) -> Self {
-        Self { op: op.to_string() }
-    }
+    lexeme: String,
+    op: Logic,
+    prec: Precedence,
 }
 
 impl ExprInfix for LogicInfix {
     fn matches(&self, parser: &Parser) -> bool {
-        let lex = &parser.peek().lexeme;
-
-        // Case 1: "and"/"or" are registered as keyword tokens (single token)
-        if lex == &self.op {
-            return true;
-        }
-
-        // Case 2: "and"/"or" are split into characters (for backward compatibility with non-registered keywords)
-        // Quick check: first character must match
-        if self.op.chars().next() != lex.chars().next() {
-            return false;
-        }
-
-        let mut i = parser.i;
-        let mut collected = String::new();
-
-        for expected_ch in self.op.chars() {
-            if i >= parser.toks.len() {
-                return false;
-            }
-            let actual = &parser.toks[i].tok.lexeme;
-            if actual.len() == 1 && actual.chars().next() == Some(expected_ch) {
-                collected.push(expected_ch);
-                i += 1;
-            } else {
-                return false;
-            }
-        }
-
-        // Make sure next character doesn't extend the operator
-        if i < parser.toks.len() {
-            let next = &parser.toks[i].tok.lexeme;
-            if next.chars().count() == 1 {
-                let next_ch = next.chars().next().unwrap();
-                if word_char(next_ch) {
-                    return false;
-                }
-            }
-        }
-
-        collected == self.op
+        parser.peek().lexeme == self.lexeme
     }
 
     fn precedence(&self) -> Precedence {
-        Precedence::Logic
+        self.prec
     }
 
     fn parse(
@@ -109,19 +69,10 @@ impl ExprInfix for LogicInfix {
         left: Box<dyn ExprNode>,
         registry: &super::super::registry::Registry,
     ) -> LumenResult<Box<dyn ExprNode>> {
-        // Consume the operator - either as a single token or as multiple characters
-        if parser.peek().lexeme == self.op {
-            // Single token operator (registered as keyword)
-            parser.advance();
-        } else {
-            // Multi-character operator (individual character tokens)
-            for _ in self.op.chars() {
-                parser.advance();
-            }
-        }
+        parser.advance(); // consume the operator
         parser.skip_tokens();
-        let right = parser.parse_expr_prec(registry, self.precedence() + 1)?;
-        Ok(Box::new(LogicExpr { left, op: self.op.clone(), right }))
+        let right = parser.parse_expr_prec(registry, self.prec.right_operand(&self.lexeme))?;
+        Ok(Box::new(LogicExpr { left, op: self.op, right }))
     }
 }
 
@@ -144,75 +95,15 @@ pub struct NotPrefix;
 
 impl ExprPrefix for NotPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        let lex = &parser.peek().lexeme;
-
-        // Case 1: "not" is registered as a keyword token (single token)
-        if lex == "not" {
-            return true;
-        }
-
-        // Case 2: "not" is split into characters (for backward compatibility with non-registered keywords)
-        // Quick check: first character must be 'n'
-        if lex != "n" {
-            return false;
-        }
-
-        // Collect "n", "o", "t" from character tokens
-        let mut i = parser.i;
-        let mut collected = String::new();
-
-        for expected_ch in "not".chars() {
-            if i >= parser.toks.len() {
-                return false;
-            }
-            let actual = &parser.toks[i].tok.lexeme;
-            if actual.len() == 1 && actual.chars().next() == Some(expected_ch) {
-                collected.push(expected_ch);
-                i += 1;
-            } else {
-                return false;
-            }
-        }
-
-        // Make sure the next character doesn't extend it (like "notion")
-        if i < parser.toks.len() {
-            let next = &parser.toks[i].tok.lexeme;
-            if next.chars().count() == 1 {
-                let next_ch = next.chars().next().unwrap();
-                if word_char(next_ch) {
-                    return false;
-                }
-            }
-        }
-
-        collected == "not"
+        def().is("op.not", &parser.peek().lexeme)
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
-        // Consume "not" - either as a single token or as multiple characters
-        if parser.peek().lexeme == "not" {
-            // Single token operator (registered as keyword)
-            parser.advance();
-        } else {
-            // Multi-character operator (individual character tokens)
-            for _ in "not".chars() {
-                parser.advance();
-            }
-        }
+        let lexeme = parser.advance().lexeme; // consume the negation word
         parser.skip_tokens();
-        let expr = parser.parse_expr_prec(registry, Precedence::Unary)?;
+        let expr = parser.parse_expr_prec(registry, Precedence::unary(&lexeme))?;
         Ok(Box::new(NotExpr { expr }))
     }
-}
-
-// --------------------
-// Pattern Declaration
-// --------------------
-
-/// Declare what patterns this module recognizes
-pub fn patterns() -> PatternSet {
-    PatternSet::new()
-        .with_literals(vec!["and", "or", "not"])
 }
 
 // --------------------
@@ -220,9 +111,11 @@ pub fn patterns() -> PatternSet {
 // --------------------
 
 pub fn register(reg: &mut Registry) {
-    // No token registration needed - kernel handles all segmentation
-    // Register handlers
-    reg.register_infix(Box::new(LogicInfix::new("and")));
-    reg.register_infix(Box::new(LogicInfix::new("or")));
+    for (label, op) in [("op.and", Logic::And), ("op.or", Logic::Or)] {
+        for lexeme in def().list(label) {
+            let prec = Precedence::binary(lexeme);
+            reg.register_infix(Box::new(LogicInfix { lexeme: lexeme.clone(), op, prec }));
+        }
+    }
     reg.register_prefix(Box::new(NotPrefix));
 }

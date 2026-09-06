@@ -26,7 +26,7 @@ pub fn err_at(parser: &Parser, msg: &str) -> String {
 #[derive(Debug, Clone)]
 pub struct TokenDefinition {
     /// The lexeme string to recognise.
-    pub lexeme: &'static str,
+    pub lexeme: String,
     /// Whether this token must be surrounded by non-word characters.
     /// Which characters count as word characters is supplied by the
     /// language through `TokenRegistry::set_word_chars`.
@@ -35,13 +35,13 @@ pub struct TokenDefinition {
 
 impl TokenDefinition {
     /// A token recognised wherever it appears.
-    pub fn recognize(lexeme: &'static str) -> Self {
-        Self { lexeme, requires_word_boundary: false }
+    pub fn recognize(lexeme: impl Into<String>) -> Self {
+        Self { lexeme: lexeme.into(), requires_word_boundary: false }
     }
 
     /// A keyword-like token that must not match inside a longer word.
-    pub fn keyword(lexeme: &'static str) -> Self {
-        Self { lexeme, requires_word_boundary: true }
+    pub fn keyword(lexeme: impl Into<String>) -> Self {
+        Self { lexeme: lexeme.into(), requires_word_boundary: true }
     }
 }
 
@@ -53,9 +53,9 @@ impl TokenDefinition {
 pub struct TokenRegistry {
     token_defs: Vec<TokenDefinition>,
     /// Multi-character lexemes in descending length order (maximal munch).
-    multichar_lexemes: Vec<&'static str>,
+    multichar_lexemes: Vec<String>,
     /// Lexemes that require word boundaries.
-    word_boundary_lexemes: Vec<&'static str>,
+    word_boundary_lexemes: Vec<String>,
     /// Language-supplied predicate: which characters belong to a word.
     /// Absent means none does, so boundary checks never suppress a match.
     word_chars: Option<fn(char) -> bool>,
@@ -83,13 +83,13 @@ impl TokenRegistry {
     }
 
     /// Multi-character lexemes in descending length order.
-    pub fn multichar_lexemes(&self) -> &[&'static str] {
+    pub fn multichar_lexemes(&self) -> &[String] {
         &self.multichar_lexemes
     }
 
     /// Whether the lexeme must be surrounded by non-word characters.
     pub fn requires_word_boundary(&self, lexeme: &str) -> bool {
-        self.word_boundary_lexemes.iter().any(|&wb| wb == lexeme)
+        self.word_boundary_lexemes.iter().any(|wb| wb == lexeme)
     }
 
     /// Whether a character belongs to a word, per the language's definition.
@@ -102,10 +102,10 @@ impl TokenRegistry {
         let mut word_boundary = Vec::new();
         for def in &self.token_defs {
             if def.lexeme.len() > 1 {
-                multichar.push(def.lexeme);
+                multichar.push(def.lexeme.clone());
             }
             if def.requires_word_boundary {
-                word_boundary.push(def.lexeme);
+                word_boundary.push(def.lexeme.clone());
             }
         }
         multichar.sort_by(|a, b| b.len().cmp(&a.len()));

@@ -4,7 +4,6 @@
 use crate::languages::lumen::prelude::*;
 use crate::kernel::ast::{Control, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::Env;
 
 #[derive(Debug)]
@@ -29,33 +28,30 @@ impl StmtHandler for ExprStmtHandler {
         // This is a fallback handler - it matches any token that could start an expression
         let lexeme = &parser.peek().lexeme;
 
-        // Don't match keywords that are handled by other statements
-        let reserved = [
-            "if", "else", "while", "break", "continue", "return",
-            "fn", "let", "print", "extern"
-        ];
+        let d = def();
 
-        if reserved.contains(&lexeme.as_str()) {
+        // Don't match keywords that are handled by other statements
+        let statement_words = [
+            "stmt.if", "stmt.else", "stmt.while", "stmt.until", "stmt.for", "stmt.break",
+            "stmt.continue", "stmt.return", "stmt.function", "stmt.let", "builtin.extern",
+        ];
+        if statement_words.iter().any(|label| d.is(label, lexeme)) {
             return false;
         }
 
         // Match if it could be the start of an expression:
-        // - identifier
-        // - literal (number, string, true, false, none)
-        // - unary operator (-, not)
-        // - grouping (
-        // - array literal [
-        if lexeme == "(" || lexeme == "[" || lexeme == "-" || lexeme == "not" {
+        // - unary operator, grouping, array literal, literal word
+        let expression_words = [
+            "syntax.group.open", "syntax.array.open", "op.negate", "op.not",
+            "literal.true", "literal.false", "literal.null",
+        ];
+        if expression_words.iter().any(|label| d.is(label, lexeme)) {
             return true;
         }
 
-        if lexeme == "true" || lexeme == "false" || lexeme == "none" {
-            return true;
-        }
-
-        // Check if it's an identifier or number literal
+        // Check if it's an identifier, number literal or string literal
         if let Some(ch) = lexeme.chars().next() {
-            if word_start(ch) || ch.is_numeric() || ch == '"' || ch == '\'' {
+            if word_start(ch) || ch.is_numeric() || d.chars("lexical.string_quotes").contains(&ch) {
                 return true;
             }
         }
@@ -67,10 +63,6 @@ impl StmtHandler for ExprStmtHandler {
         let expr = parser.parse_expr(registry)?;
         Ok(Box::new(ExprStmt { expr }))
     }
-}
-
-pub fn patterns() -> PatternSet {
-    PatternSet::new()
 }
 
 pub fn register(reg: &mut Registry) {

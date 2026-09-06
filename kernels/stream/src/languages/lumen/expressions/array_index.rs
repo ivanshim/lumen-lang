@@ -1,10 +1,8 @@
 use crate::languages::lumen::prelude::*;
-// Array indexing expression: arr[i]
+// Array indexing expression: arr[i], with the brackets the definition spells.
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
-use crate::languages::lumen::patterns::PatternSet;
-use crate::languages::lumen::structure::structural::LBRACKET;
 use crate::kernel::runtime::{Env, Value};
 use crate::languages::lumen::values::as_array;
 
@@ -53,7 +51,7 @@ pub struct ArrayIndexInfix;
 
 impl ExprInfix for ArrayIndexInfix {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme == LBRACKET
+        def().is("op.index.open", &parser.peek().lexeme)
     }
 
     fn parse(
@@ -68,8 +66,8 @@ impl ExprInfix for ArrayIndexInfix {
         let index_expr = parser.parse_expr(registry)?;
         parser.skip_tokens();
 
-        if parser.advance().lexeme != "]" {
-            return Err("Expected ']' after array index".into());
+        if !def().is("op.index.close", &parser.advance().lexeme) {
+            return Err(format!("Expected '{}' after array index", def().first("op.index.close")));
         }
 
         Ok(Box::new(ArrayIndex {
@@ -79,17 +77,8 @@ impl ExprInfix for ArrayIndexInfix {
     }
 
     fn precedence(&self) -> Precedence {
-        Precedence::Call
+        Precedence::postfix()
     }
-}
-
-// --------------------
-// Pattern Declaration
-// --------------------
-
-pub fn patterns() -> PatternSet {
-    PatternSet::new()
-        .with_literals(vec!["[", "]"])
 }
 
 // --------------------

@@ -6,7 +6,6 @@ use crate::languages::lumen::prelude::*;
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::Env;
 use crate::languages::lumen::structure::structural;
 use crate::languages::lumen::values::as_bool;
@@ -58,7 +57,7 @@ pub struct WhileStmtHandler;
 
 impl StmtHandler for WhileStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme == "while"
+        def().is("stmt.while", &parser.peek().lexeme)
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
@@ -73,16 +72,6 @@ impl StmtHandler for WhileStmtHandler {
 
         Ok(Box::new(WhileStmt { condition, body }))
     }
-}
-
-// --------------------
-// Pattern Declaration
-// --------------------
-
-/// Declare what patterns this module recognizes
-pub fn patterns() -> PatternSet {
-    PatternSet::new()
-        .with_literals(vec!["while"])
 }
 
 // --------------------

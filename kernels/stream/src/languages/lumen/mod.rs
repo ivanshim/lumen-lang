@@ -1,10 +1,10 @@
-// src/src_lumen/mod.rs
-// Lumen language module
-// Complete language definition for Lumen
+// Lumen on the stream kernel: handlers give each construct its meaning;
+// the spelling of every construct comes from configs/lumen.json through
+// `definition`.
 
+pub mod definition;
 pub mod registry;
 pub mod prelude;
-pub mod patterns;
 pub mod values;
 mod numeric;
 pub mod expressions;
@@ -18,15 +18,12 @@ pub mod dispatcher {
     include!("src_lumen.rs");
 }
 
-/// Whether identifiers may use letters and digits beyond ASCII.
-pub const IDENTIFIER_UNICODE: bool = true;
-
-/// Whether `c` may begin an identifier in this language.
+/// Whether `c` may begin an identifier in Lumen.
 pub fn word_start(c: char) -> bool {
-    crate::languages::word_start(IDENTIFIER_UNICODE, c)
+    crate::languages::word_start(definition::def().identifier_unicode, c)
 }
 
-/// Whether `c` may continue an identifier in this language.
+/// Whether `c` may continue an identifier in Lumen.
 pub fn word_char(c: char) -> bool {
-    crate::languages::word_char(IDENTIFIER_UNICODE, c)
+    crate::languages::word_char(definition::def().identifier_unicode, c)
 }

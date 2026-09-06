@@ -6,11 +6,10 @@ use std::cell::RefCell;
 use crate::languages::lumen::prelude::*;
 use crate::kernel::ast::{ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::languages::lumen::patterns::PatternSet;
+use crate::languages::lumen::expressions::calls;
 use crate::languages::lumen::registry::{ExprInfix, Precedence, Registry};
 use crate::kernel::runtime::{Env, Value};
 use crate::languages::lumen::statements::functions;
-use crate::languages::lumen::structure::structural::{LPAREN, RPAREN};
 
 #[derive(Debug)]
 struct PipeExpr {
@@ -89,69 +88,34 @@ impl PipeExpr {
     }
 }
 
-pub struct PipeInfix;
+/// One spelling of the pipe operator, at the tier the definition gives it.
+pub struct PipeInfix {
+    lexeme: String,
+    prec: Precedence,
+}
 
 impl ExprInfix for PipeInfix {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme == "|>"
+        parser.peek().lexeme == self.lexeme
     }
 
     fn precedence(&self) -> Precedence {
-        Precedence::Pipe
+        self.prec
     }
 
     fn parse(&self, parser: &mut Parser, left: Box<dyn ExprNode>, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
-        parser.advance(); // consume '|>'
+        parser.advance(); // consume the pipe
         parser.skip_tokens();
 
-        // Parse function name
-        let mut func_name;
-        if parser.peek().lexeme.chars().next().map_or(false, word_start) {
-            func_name = parser.advance().lexeme;
-            parser.skip_tokens();
-
-            // Handle multi-character identifiers
-            loop {
-                if parser.peek().lexeme.chars().count() == 1 {
-                    let ch = parser.peek().lexeme.chars().next().unwrap();
-                    if word_char(ch) {
-                        func_name.push_str(&parser.advance().lexeme);
-                        parser.skip_tokens();
-                        continue;
-                    }
-                }
-                break;
-            }
-        } else {
-            return Err("Expected function name after pipe operator".into());
-        }
-
-        // Expect '('
-        if parser.peek().lexeme != LPAREN {
-            return Err("Expected '(' after function name in pipe expression".into());
-        }
-        parser.advance(); // consume '('
+        let func_name = parser
+            .take_identifier()
+            .ok_or_else(|| "Expected function name after pipe operator".to_string())?;
         parser.skip_tokens();
 
-        let mut args = Vec::new();
-
-        // Parse arguments
-        while parser.peek().lexeme != RPAREN {
-            let arg = parser.parse_expr(registry)?;
-            args.push(arg);
-
-            parser.skip_tokens();
-            if parser.peek().lexeme == "," {
-                parser.advance();
-                parser.skip_tokens();
-            } else if parser.peek().lexeme != RPAREN {
-                return Err("Expected ',' or ')' after argument in pipe expression".into());
-            }
+        if !calls::at_call_open(parser) {
+            return Err("Expected a call after the function name in a pipe expression".into());
         }
-
-        if parser.advance().lexeme != RPAREN {
-            return Err("Expected ')' after arguments in pipe expression".into());
-        }
+        let args = calls::parse_arguments(parser, registry, "in pipe expression")?;
 
         Ok(Box::new(PipeExpr {
             left,
@@ -161,11 +125,9 @@ impl ExprInfix for PipeInfix {
     }
 }
 
-pub fn patterns() -> PatternSet {
-    PatternSet::new()
-        .with_literals(vec!["|>"])
-}
-
 pub fn register(reg: &mut Registry) {
-    reg.register_infix(Box::new(PipeInfix));
+    for lexeme in def().list("op.pipe") {
+        let prec = Precedence::binary(lexeme);
+        reg.register_infix(Box::new(PipeInfix { lexeme: lexeme.clone(), prec }));
+    }
 }

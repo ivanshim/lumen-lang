@@ -1,10 +1,8 @@
 use crate::languages::lumen::prelude::*;
-// Array literals: [ ... ]
+// Array literals, with the brackets and separator the definition spells.
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
-use crate::languages::lumen::patterns::PatternSet;
-use crate::languages::lumen::structure::structural::{LBRACKET, RBRACKET};
 use crate::kernel::runtime::{Env, Value};
 use crate::languages::lumen::values::LumenArray;
 
@@ -27,63 +25,49 @@ pub struct ArrayLiteralPrefix;
 
 impl ExprPrefix for ArrayLiteralPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme == LBRACKET
+        def().is("syntax.array.open", &parser.peek().lexeme)
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
-        parser.advance(); // consume '['
+        let d = def();
+        parser.advance(); // opening bracket
         parser.skip_tokens();
 
         let mut elements = Vec::new();
 
-        // Parse array elements until we hit ']'
-        while parser.peek().lexeme != RBRACKET {
-            // Parse one element
+        // Parse array elements until the closing bracket
+        while !d.is("syntax.array.close", &parser.peek().lexeme) {
             let elem = parser.parse_expr(registry)?;
             elements.push(elem);
             parser.skip_tokens();
 
-            // Check for comma separator or closing bracket
-            if parser.peek().lexeme == "," {
-                parser.advance(); // consume ','
+            // Check for separator or closing bracket
+            if d.is("syntax.array.separator", &parser.peek().lexeme) {
+                parser.advance();
                 parser.skip_tokens();
 
-                // Allow trailing comma before closing bracket
-                if parser.peek().lexeme == RBRACKET {
+                // Allow a trailing separator before the closing bracket
+                if d.is("syntax.array.close", &parser.peek().lexeme) {
                     break;
                 }
-            } else if parser.peek().lexeme != RBRACKET {
+            } else if !d.is("syntax.array.close", &parser.peek().lexeme) {
                 return Err(format!(
-                    "Expected ',' or ']' in array literal, got '{}'",
+                    "Expected '{}' or '{}' in array literal, got '{}'",
+                    d.first("syntax.array.separator"),
+                    d.first("syntax.array.close"),
                     parser.peek().lexeme
                 ));
             }
         }
 
-        if parser.advance().lexeme != RBRACKET {
-            return Err("Expected ']' to close array literal".into());
+        if !d.is("syntax.array.close", &parser.advance().lexeme) {
+            return Err(format!("Expected '{}' to close array literal", d.first("syntax.array.close")));
         }
 
         Ok(Box::new(ArrayLiteral { elements }))
     }
 }
 
-// --------------------
-// Pattern Declaration
-// --------------------
-
-/// Declare what patterns this module recognizes
-pub fn patterns() -> PatternSet {
-    PatternSet::new()
-        .with_literals(vec!["[", "]", ","])
-}
-
-// --------------------
-// Registration
-// --------------------
-
 pub fn register(reg: &mut Registry) {
-    // No token registration needed (brackets are single-char lexemes emitted automatically)
-    // Register handler
     reg.register_prefix(Box::new(ArrayLiteralPrefix));
 }

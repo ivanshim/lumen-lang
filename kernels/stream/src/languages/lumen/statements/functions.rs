@@ -8,9 +8,7 @@ use std::rc::Rc;
 use crate::kernel::ast::{StmtNode, Control};
 use crate::kernel::parser::Parser;
 use crate::languages::lumen::prelude::*;
-use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::Env;
-use crate::languages::lumen::structure::structural::{LPAREN, RPAREN};
 
 // ============================================================================
 // FUNCTION REGISTRY
@@ -71,85 +69,43 @@ pub struct FnDefStmtHandler;
 
 impl StmtHandler for FnDefStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme == "fn"
+        def().is("stmt.function", &parser.peek().lexeme)
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
-        parser.advance(); // consume 'fn'
+        let d = def();
+        let keyword = parser.advance().lexeme; // consume the function keyword
         parser.skip_tokens();
 
-        // Parse function name
-        let mut name;
-        if parser.peek().lexeme.chars().next().map_or(false, word_start) {
-            name = parser.advance().lexeme;
-            parser.skip_tokens();
-
-            // Handle multi-character identifiers split by lexer
-            loop {
-                if parser.peek().lexeme.chars().count() == 1 {
-                    let ch = parser.peek().lexeme.chars().next().unwrap();
-                    if word_char(ch) {
-                        name.push_str(&parser.advance().lexeme);
-                        parser.skip_tokens();
-                        continue;
-                    }
-                }
-                break;
-            }
-        } else {
-            return Err(err_at(parser, "Expected function name after 'fn'"));
-        }
-
-        // Expect '('
-        if parser.peek().lexeme != LPAREN {
-            return Err(err_at(parser, "Expected '(' after function name"));
-        }
-        parser.advance(); // consume '('
+        let name = parser
+            .take_identifier()
+            .ok_or_else(|| err_at(parser, &format!("Expected function name after '{}'", keyword)))?;
         parser.skip_tokens();
 
-        // Parse parameters (comma-separated identifiers)
+        // Expect the parameter list
+        if !d.is("syntax.call.open", &parser.advance().lexeme) {
+            return Err(err_at(parser, &format!("Expected '{}' after function name", d.first("syntax.call.open"))));
+        }
+        parser.skip_tokens();
+
+        // Parse parameters (separated identifiers)
         let mut params = Vec::new();
-
-        while parser.peek().lexeme != RPAREN {
-            // Parse parameter name
-            let mut param_name;
-            if parser.peek().lexeme.chars().next().map_or(false, word_start) {
-                param_name = parser.advance().lexeme;
-                parser.skip_tokens();
-
-                // Handle multi-character identifiers
-                loop {
-                    if parser.peek().lexeme.chars().count() == 1 {
-                        let ch = parser.peek().lexeme.chars().next().unwrap();
-                        if word_char(ch) {
-                            param_name.push_str(&parser.advance().lexeme);
-                            parser.skip_tokens();
-                            continue;
-                        }
-                    }
-                    break;
-                }
-            } else {
-                return Err(err_at(parser, "Expected parameter name"));
-            }
-
+        while !d.is("syntax.call.close", &parser.peek().lexeme) {
+            let param_name = parser.take_identifier().ok_or_else(|| err_at(parser, "Expected parameter name"))?;
             params.push(param_name);
 
-            // Check for comma (more parameters) or closing paren
             parser.skip_tokens();
-            if parser.peek().lexeme == "," {
+            if d.is("syntax.call.separator", &parser.peek().lexeme) {
                 parser.advance();
                 parser.skip_tokens();
-            } else if parser.peek().lexeme != RPAREN {
-                return Err(err_at(parser, "Expected ',' or ')' after parameter"));
+            } else if !d.is("syntax.call.close", &parser.peek().lexeme) {
+                return Err(err_at(
+                    parser,
+                    &format!("Expected '{}' or '{}' after parameter", d.first("syntax.call.separator"), d.first("syntax.call.close")),
+                ));
             }
         }
-
-        // Expect ')'
-        if parser.peek().lexeme != RPAREN {
-            return Err(err_at(parser, "Expected ')' after parameters"));
-        }
-        parser.advance(); // consume ')'
+        parser.advance(); // consume the closing bracket
         parser.skip_tokens();
 
         // Parse function body (indented block)
@@ -160,11 +116,6 @@ impl StmtHandler for FnDefStmtHandler {
 
         Ok(Box::new(FnDefStmt))
     }
-}
-
-pub fn patterns() -> PatternSet {
-    PatternSet::new()
-        .with_literals(vec!["fn"])
 }
 
 pub fn register(reg: &mut super::super::registry::Registry) {

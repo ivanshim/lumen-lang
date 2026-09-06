@@ -58,7 +58,7 @@ boundary check, is supplied by the language; the kernel has no opinion. Each
 stream language declares one flag, `IDENTIFIER_UNICODE`, and derives its
 `word_start` and `word_char` predicates from it; every identifier check in
 that language goes through those two functions, and the same flag exists as
-`identifier_unicode` in the microcode schemas so both kernels read a name
+`identifier.unicode` in the JSON definitions so both kernels read a name
 the same way.
 Comments are a language concept too. The lexer emits the comment marker like
 any other byte, and each language's structure pass drops the tokens from the
@@ -163,8 +163,8 @@ The kernel achieves complete separation of concerns through strategic delegation
 All of the following are defined and managed by language modules, not the kernel:
 
 * **Handler traits**: `ExprPrefix`, `ExprInfix`, `StmtHandler` — each language defines its own
-* **Precedence types**: `Precedence` enums with language-specific levels
-* **Pattern definitions**: `PatternSet` structures for language syntax patterns
+* **Spelling**: every keyword, operator, bracket, literal word and builtin name comes from `configs/lumen.json`, read once by `languages/lumen/definition.rs`; handlers ask the definition whether a token spells the construct they parse
+* **Precedence**: a numeric tier per operator lexeme, read from the definition's `op.precedence` table, with associativity from `op.right_associative`
 * **Skip behavior**: Extension traits like `LumenParserExt::skip_tokens()` for whitespace handling
 * **Comment removal**: a token-stream transformation inside each language's structure pass
 * **Runtime policy**: Lumen's memoization lives in `languages/lumen/memo.rs`, using the environment's typed extension slot
@@ -184,7 +184,7 @@ The kernel provides only:
 
 A hypothetical audit of kernel source code would find:
 
-* Zero references to "lumen", "rust", "python", or "languages"
+* Zero references to "lumen" or "languages"
 * Zero hardcoded keywords, operators, or syntax rules
 * Zero trait definitions for handlers or precedence
 * Zero pattern matching or structural assumptions

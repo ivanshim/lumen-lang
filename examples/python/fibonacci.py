@@ -1,10 +1,11 @@
-a = 0
-b = 1
-i = 0
+def fib(n):
+    a = 0
+    b = 1
+    for i in range(0, n):
+        c = a + b
+        a = b
+        b = c
+    return a
 
-while i < 10
-    print(a)
-    c = a + b
-    a = b
-    b = c
-    i = i + 1
+for i in range(0, 10):
+    print(fib(i))

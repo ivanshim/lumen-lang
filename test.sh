@@ -2,10 +2,11 @@
 
 # lumen-lang test script
 # Tests examples with both stream and microcode kernels
-# Usage: ./test.sh [--lang lumen|rust|python] [--kernel stream|microcode] [--omit file1.lm file2.lm ...]
+# Usage: ./test.sh [--lang lumen|python|rust|php] [--kernel stream|microcode] [--omit file1.lm file2.lm ...]
 #        ./test.sh <file>
 # If --lang is not specified, tests all languages
-# If --kernel is not specified, tests both kernels
+# If --kernel is not specified, tests both kernels. Only Lumen runs on the
+# stream kernel; the other languages run on the microcode kernel alone.
 # If --omit is provided, those files are excluded from testing
 # If a file path is provided, runs just that file with selected kernel(s)
 
@@ -32,12 +33,13 @@ show_help() {
     echo -e "${BLUE}ARGUMENTS:${NC}"
     echo "  <filename>              Just the filename (searches examples/ dirs)"
     echo "                          or full path (e.g., examples/lumen/fibonacci.lm)"
-    echo "  <language>              all, lumen, python, or rust"
+    echo "  <language>              all, lumen, python, rust, or php"
     echo "  <kernel>                stream or microcode"
     echo ""
     echo -e "${BLUE}OPTIONS:${NC}"
     echo "  --lang <language>       Test only files of specified language"
-    echo "  --kernel <kernel>       Test with stream or microcode kernel only (default: both)"
+    echo "  --kernel <kernel>       Test with stream or microcode kernel only (default: both;"
+    echo "                          python, rust and php run on microcode only)"
     echo "  --omit <file> ...       Exclude specific files from testing"
     echo "  --help                  Display this help message"
     echo ""
@@ -59,6 +61,7 @@ show_help() {
     echo "  - examples/lumen/libraries"
     echo "  - examples/python"
     echo "  - examples/rust"
+    echo "  - examples/php"
 }
 
 # Parse command-line arguments
@@ -76,12 +79,12 @@ while [[ $# -gt 0 ]]; do
         --lang)
             LANG_FILTER="$2"
             case "$LANG_FILTER" in
-                all|lumen|rust|python)
+                all|lumen|rust|python|php)
                     shift 2
                     ;;
                 *)
                     echo -e "${RED}Invalid language: $LANG_FILTER${NC}"
-                    echo "Usage: $0 [--lang all|lumen|rust|python] [--kernel stream|microcode] [--omit file1.lm file2.lm ...]"
+                    echo "Usage: $0 [--lang all|lumen|python|rust|php] [--kernel stream|microcode] [--omit file1.lm file2.lm ...]"
                     echo "       $0 <file>"
                     exit 1
                     ;;
@@ -95,7 +98,7 @@ while [[ $# -gt 0 ]]; do
                     ;;
                 *)
                     echo -e "${RED}Invalid kernel: $KERNEL_FILTER${NC}"
-                    echo "Usage: $0 [--lang all|lumen|rust|python] [--kernel stream|microcode] [--omit file1.lm file2.lm ...]"
+                    echo "Usage: $0 [--lang all|lumen|python|rust|php] [--kernel stream|microcode] [--omit file1.lm file2.lm ...]"
                     echo "       $0 <file>"
                     exit 1
                     ;;
@@ -115,7 +118,7 @@ while [[ $# -gt 0 ]]; do
             else
                 # Search for file in examples directories
                 found_file=""
-                for search_dir in examples/lumen examples/lumen/constructs examples/lumen/libraries examples/python examples/rust; do
+                for search_dir in examples/lumen examples/lumen/constructs examples/lumen/libraries examples/python examples/rust examples/php; do
                     if [[ -f "$search_dir/$1" ]]; then
                         found_file="$search_dir/$1"
                         break
@@ -126,8 +129,8 @@ while [[ $# -gt 0 ]]; do
                     SINGLE_FILE="$found_file"
                 else
                     echo -e "${RED}File not found: $1${NC}"
-                    echo "Searched in: examples/lumen, examples/lumen/constructs, examples/lumen/libraries, examples/python, examples/rust"
-                    echo "Usage: $0 [--lang lumen|rust|python] [--kernel stream|microcode] [--omit file1.lm file2.lm ...]"
+                    echo "Searched in: examples/lumen, examples/lumen/constructs, examples/lumen/libraries, examples/python, examples/rust, examples/php"
+                    echo "Usage: $0 [--lang lumen|python|rust|php] [--kernel stream|microcode] [--omit file1.lm file2.lm ...]"
                     echo "       $0 <filename>           (searches examples/ directories)"
                     echo "       $0 <full/path/to/file>"
                     exit 1
@@ -160,7 +163,7 @@ declare -a FAILED_LIST  # list of failed tests: "language | kernel | file"
 declare -a TESTED_LANGUAGES  # track which languages were tested
 
 # Initialize all combinations
-for lang in lumen python_core rust_core; do
+for lang in lumen python rust php; do
     for kernel in stream microcode; do
         RESULTS["${lang}:${kernel}:passed"]=0
         RESULTS["${lang}:${kernel}:failed"]=0
@@ -258,8 +261,9 @@ if [ -n "$SINGLE_FILE" ]; then
     # Detect language from file extension
     case "$SINGLE_FILE" in
         *.lm) language="lumen" ;;
-        *.py) language="python_core" ;;
-        *.rs) language="rust_core" ;;
+        *.py) language="python" ;;
+        *.rs) language="rust" ;;
+        *.php) language="php" ;;
         *) echo -e "${RED}Unknown file type: $SINGLE_FILE${NC}"; exit 1 ;;
     esac
 else
@@ -270,10 +274,11 @@ else
         test_languages=("lumen")
     else
         case "$LANG_FILTER" in
-            all) title="All Tests"; test_languages=("lumen" "python_core" "rust_core") ;;
+            all) title="All Tests"; test_languages=("lumen" "python" "rust" "php") ;;
             lumen) title="Lumen Tests"; test_languages=("lumen") ;;
-            python) title="Python Tests"; test_languages=("python_core") ;;
-            rust) title="Rust Tests"; test_languages=("rust_core") ;;
+            python) title="Python Tests"; test_languages=("python") ;;
+            rust) title="Rust Tests"; test_languages=("rust") ;;
+            php) title="PHP Tests"; test_languages=("php") ;;
         esac
     fi
 fi
@@ -290,10 +295,19 @@ echo "  Lumen-Lang Test Suite ($title)"
 echo "=========================================="
 echo ""
 
+# The kernels a language runs on: Lumen on both, the others on microcode only.
+kernels_for() {
+    for kernel in "${test_kernels[@]}"; do
+        if [ "$1" = "lumen" ] || [ "$kernel" = "microcode" ]; then
+            echo "$kernel"
+        fi
+    done
+}
+
 # Run single file if specified
 if [ -n "$SINGLE_FILE" ]; then
     echo -e "${YELLOW}Testing: $(basename "$SINGLE_FILE")${NC}"
-    for kernel in "${test_kernels[@]}"; do
+    for kernel in $(kernels_for "$language"); do
         run_test "$SINGLE_FILE" "$kernel" "$language"
     done
     echo ""
@@ -314,35 +328,26 @@ else
         TESTED_LANGUAGES+=("lumen")
     fi
 
-    # Test python examples if included
-    if [[ " ${test_languages[@]} " =~ " python_core " ]]; then
-        echo -e "${YELLOW}Python Examples:${NC}"
-        for file in examples/python/*.py; do
-            if should_omit "$file"; then
-                continue
-            fi
-            for kernel in "${test_kernels[@]}"; do
-                run_test "$file" "$kernel" "python_core"
+    # The other languages run on the microcode kernel only.
+    for lang in python rust php; do
+        if [[ " ${test_languages[@]} " =~ " $lang " ]]; then
+            case "$lang" in
+                python) echo -e "${YELLOW}Python Examples:${NC}"; files=(examples/python/*.py) ;;
+                rust) echo -e "${YELLOW}Rust Examples:${NC}"; files=(examples/rust/*.rs) ;;
+                php) echo -e "${YELLOW}PHP Examples:${NC}"; files=(examples/php/*.php) ;;
+            esac
+            for file in "${files[@]}"; do
+                if should_omit "$file"; then
+                    continue
+                fi
+                for kernel in $(kernels_for "$lang"); do
+                    run_test "$file" "$kernel" "$lang"
+                done
             done
-        done
-        echo ""
-        TESTED_LANGUAGES+=("python_core")
-    fi
-
-    # Test rust examples if included
-    if [[ " ${test_languages[@]} " =~ " rust_core " ]]; then
-        echo -e "${YELLOW}Rust Examples:${NC}"
-        for file in examples/rust/*.rs; do
-            if should_omit "$file"; then
-                continue
-            fi
-            for kernel in "${test_kernels[@]}"; do
-                run_test "$file" "$kernel" "rust_core"
-            done
-        done
-        echo ""
-        TESTED_LANGUAGES+=("rust_core")
-    fi
+            echo ""
+            TESTED_LANGUAGES+=("$lang")
+        fi
+    done
 fi
 
 # Detailed Summary by Language and Kernel
@@ -354,8 +359,9 @@ echo ""
 for lang in "${TESTED_LANGUAGES[@]}"; do
     case "$lang" in
         lumen) lang_display="Lumen" ;;
-        python_core) lang_display="Python Core" ;;
-        rust_core) lang_display="Rust Core" ;;
+        python) lang_display="Python" ;;
+        rust) lang_display="Rust" ;;
+        php) lang_display="PHP" ;;
     esac
 
     echo -e "${BLUE}${lang_display}:${NC}"

@@ -2,16 +2,23 @@
 DIRECTORY STRUCTURE
 ================================================================================
 
-Generated 2026-09-06 from the tree; regenerate with:
+Generated from the tree; regenerate with:
   git ls-files | grep -v -E '^(examples|lib_lumen)/' | sort
 
 lumen-lang/
   Cargo.toml                       workspace + host package
   src/main.rs                      command-line host (the only place both kernels meet)
-  test.sh, test_e.sh, test_pi.sh   test drivers (test.sh runs every example on both kernels)
-  .github/workflows/ci.yml         GitHub Actions: build with -D warnings, run test.sh
+  test.sh, test_e.sh, test_pi.sh   test drivers (test.sh runs every Lumen example on both kernels, the other languages on microcode)
+  .github/workflows/ci.yml         GitHub Actions: kernel independence, build with -D warnings, run test.sh
 
-  kernels/stream/                  crate lumen-stream
+  configs/                         language definitions as JSON, one per language, plus a comparison table
+    configs/README.md
+    configs/lumen.json
+    configs/php.json
+    configs/python.json
+    configs/rust.json
+
+  kernels/stream/                  crate lumen-stream (hosts Lumen; spelling from configs/lumen.json)
     kernels/stream/Cargo.toml
     kernels/stream/src/kernel/ast.rs
     kernels/stream/src/kernel/eval.rs
@@ -22,13 +29,14 @@ lumen-lang/
     kernels/stream/src/kernel/runtime/env.rs
     kernels/stream/src/kernel/runtime/mod.rs
     kernels/stream/src/kernel/runtime/value.rs
+    kernels/stream/src/languages/lumen/definition.rs
     kernels/stream/src/languages/lumen/expressions/arithmetic.rs
     kernels/stream/src/languages/lumen/expressions/array_index.rs
     kernels/stream/src/languages/lumen/expressions/array_literal.rs
+    kernels/stream/src/languages/lumen/expressions/calls.rs
     kernels/stream/src/languages/lumen/expressions/comparison.rs
     kernels/stream/src/languages/lumen/expressions/extern_expr.rs
     kernels/stream/src/languages/lumen/expressions/grouping.rs
-    kernels/stream/src/languages/lumen/expressions/identifier.rs
     kernels/stream/src/languages/lumen/expressions/literals.rs
     kernels/stream/src/languages/lumen/expressions/logic.rs
     kernels/stream/src/languages/lumen/expressions/mod.rs
@@ -42,7 +50,6 @@ lumen-lang/
     kernels/stream/src/languages/lumen/memo.rs
     kernels/stream/src/languages/lumen/mod.rs
     kernels/stream/src/languages/lumen/numeric.rs
-    kernels/stream/src/languages/lumen/patterns.rs
     kernels/stream/src/languages/lumen/prelude.rs
     kernels/stream/src/languages/lumen/registry/mod.rs
     kernels/stream/src/languages/lumen/registry/precedence.rs
@@ -69,66 +76,10 @@ lumen-lang/
     kernels/stream/src/languages/lumen/structure/structural.rs
     kernels/stream/src/languages/lumen/values.rs
     kernels/stream/src/languages/mod.rs
-    kernels/stream/src/languages/python_core/expressions/arithmetic.rs
-    kernels/stream/src/languages/python_core/expressions/comparison.rs
-    kernels/stream/src/languages/python_core/expressions/grouping.rs
-    kernels/stream/src/languages/python_core/expressions/identifier.rs
-    kernels/stream/src/languages/python_core/expressions/literals.rs
-    kernels/stream/src/languages/python_core/expressions/logic.rs
-    kernels/stream/src/languages/python_core/expressions/mod.rs
-    kernels/stream/src/languages/python_core/expressions/variable.rs
-    kernels/stream/src/languages/python_core/mod.rs
-    kernels/stream/src/languages/python_core/numeric.rs
-    kernels/stream/src/languages/python_core/prelude.rs
-    kernels/stream/src/languages/python_core/registry/mod.rs
-    kernels/stream/src/languages/python_core/registry/precedence.rs
-    kernels/stream/src/languages/python_core/registry/traits.rs
-    kernels/stream/src/languages/python_core/src_python_core.rs
-    kernels/stream/src/languages/python_core/statements/assignment.rs
-    kernels/stream/src/languages/python_core/statements/break_stmt.rs
-    kernels/stream/src/languages/python_core/statements/continue_stmt.rs
-    kernels/stream/src/languages/python_core/statements/if_else.rs
-    kernels/stream/src/languages/python_core/statements/mod.rs
-    kernels/stream/src/languages/python_core/statements/print.rs
-    kernels/stream/src/languages/python_core/statements/while_loop.rs
-    kernels/stream/src/languages/python_core/statements/write.rs
-    kernels/stream/src/languages/python_core/structure/mod.rs
-    kernels/stream/src/languages/python_core/structure/structural.rs
-    kernels/stream/src/languages/python_core/values.rs
-    kernels/stream/src/languages/rust_core/expressions/arithmetic.rs
-    kernels/stream/src/languages/rust_core/expressions/comparison.rs
-    kernels/stream/src/languages/rust_core/expressions/grouping.rs
-    kernels/stream/src/languages/rust_core/expressions/identifier.rs
-    kernels/stream/src/languages/rust_core/expressions/literals.rs
-    kernels/stream/src/languages/rust_core/expressions/logic.rs
-    kernels/stream/src/languages/rust_core/expressions/mod.rs
-    kernels/stream/src/languages/rust_core/expressions/variable.rs
-    kernels/stream/src/languages/rust_core/mod.rs
-    kernels/stream/src/languages/rust_core/numeric.rs
-    kernels/stream/src/languages/rust_core/prelude.rs
-    kernels/stream/src/languages/rust_core/registry/mod.rs
-    kernels/stream/src/languages/rust_core/registry/precedence.rs
-    kernels/stream/src/languages/rust_core/registry/traits.rs
-    kernels/stream/src/languages/rust_core/src_rust_core.rs
-    kernels/stream/src/languages/rust_core/statements/assignment.rs
-    kernels/stream/src/languages/rust_core/statements/break_stmt.rs
-    kernels/stream/src/languages/rust_core/statements/continue_stmt.rs
-    kernels/stream/src/languages/rust_core/statements/if_else.rs
-    kernels/stream/src/languages/rust_core/statements/let_binding.rs
-    kernels/stream/src/languages/rust_core/statements/mod.rs
-    kernels/stream/src/languages/rust_core/statements/print.rs
-    kernels/stream/src/languages/rust_core/statements/while_loop.rs
-    kernels/stream/src/languages/rust_core/statements/write.rs
-    kernels/stream/src/languages/rust_core/structure/mod.rs
-    kernels/stream/src/languages/rust_core/structure/structural.rs
-    kernels/stream/src/languages/rust_core/values.rs
     kernels/stream/src/lib.rs
 
-  kernels/microcode/               crate lumen-microcode
+  kernels/microcode/               crate lumen-microcode (reads every definition)
     kernels/microcode/Cargo.toml
-    kernels/microcode/schemas/lumen.yaml
-    kernels/microcode/schemas/python_core.yaml
-    kernels/microcode/schemas/rust_core.yaml
     kernels/microcode/src/kernel/_1_ingest.rs
     kernels/microcode/src/kernel/_2_structure.rs
     kernels/microcode/src/kernel/_3_reduce.rs
@@ -161,27 +112,17 @@ lumen-lang/
     lib_lumen/string_to_value.lm
     lib_lumen/value_to_string.lm
 
-  configs/                         language definitions as JSON, one per language, plus a comparison table
-    configs/README.md
-    configs/lumen.json
-    configs/php.json
-    configs/python.json
-    configs/rust.json
   scripts/                         CI checks and generators
     scripts/config_table.py
     scripts/kernel_independence.py
 
-  examples/                        97 programs: lumen/ (+constructs/, libraries/), python/, rust/
+  examples/                        100 programs: lumen/ (+constructs/, libraries/), python/, rust/, php/
   docs/                            design documents, references, history
     docs/DIRECTORY_STRUCTURE.txt
-    docs/LANGUAGE_COMPARISON.md
     docs/LUMEN_COMPACT_REFERENCE.md
     docs/LUMEN_KERNEL_MICROCODE.md
     docs/LUMEN_KERNEL_STREAM.md
-    docs/LUMEN_LANGUAGE_BNF.md
     docs/LUMEN_LANGUAGE_DESIGN.md
     docs/LUMEN_LANGUAGE_EXTERN_SYSTEM.md
     docs/LUMEN_LANGUAGE_ROADMAP.md
     docs/VERSION_HISTORY.md
-  grammar/                         EBNF grammars derived from the yaml/ specifications
-  yaml/                            long-form language specifications (design documents)

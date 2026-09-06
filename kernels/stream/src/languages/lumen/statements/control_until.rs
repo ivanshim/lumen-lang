@@ -11,7 +11,6 @@
 use crate::languages::lumen::prelude::*;
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::Env;
 use crate::languages::lumen::structure::structural;
 use crate::languages::lumen::values::as_bool;
@@ -66,7 +65,7 @@ pub struct UntilStmtHandler;
 
 impl StmtHandler for UntilStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme == "until"
+        def().is("stmt.until", &parser.peek().lexeme)
     }
 
     fn parse(
@@ -85,15 +84,6 @@ impl StmtHandler for UntilStmtHandler {
 
         Ok(Box::new(UntilStmt { condition, body }))
     }
-}
-
-// --------------------
-// Pattern Declaration
-// --------------------
-
-/// Declare what patterns this module recognizes
-pub fn patterns() -> PatternSet {
-    PatternSet::new().with_literals(vec!["until"])
 }
 
 // --------------------
