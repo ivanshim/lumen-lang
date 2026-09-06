@@ -22,7 +22,10 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   C's `int x = 0;` and `long fib(int n)`), argument labels at call sites
   (`syntax.call.label`, Swift's `fib(n: 10)`), print placeholders as data
   (`builtin.print.placeholder`, Rust's `{}` and C's `%d`), and builtin
-  names with operator characters inside (`console.log`).
+  names with operator characters inside (`console.log`). A `$library`
+  key names, for a label a language leaves empty, the library function
+  that provides it, and the comparison table shows it as
+  `(library: print)`; the kernels ignore every `$` key.
 - **Extra languages**: `langs/extras/` holds definitions that are not
   compiled in and are read from disk with `--lang <path>`, as proof that a
   definition is loaded at run time. PHP moved there, and Ruby, Pascal, C,

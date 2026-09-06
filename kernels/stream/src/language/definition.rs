@@ -169,13 +169,13 @@ impl Definition {
             }
         }
         for key in map.keys() {
-            if !key.starts_with("$comment") && !LABELS.contains(&key.as_str()) {
+            if !key.starts_with('$') && !LABELS.contains(&key.as_str()) {
                 return Err(format!("unknown label '{key}'"));
             }
         }
         for (key, value) in map {
             match (key.as_str(), value) {
-                (k, _) if k.starts_with("$comment") => {}
+                (k, _) if k.starts_with('$') => {} // $comment, $library: for readers, not kernels
                 ("language", Json::String(name)) => definition.name = name.clone(),
                 ("extensions", value) => definition.extensions = strings(value)?,
                 ("op.precedence", Json::Array(tiers)) => {
