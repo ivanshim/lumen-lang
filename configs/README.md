@@ -5,10 +5,15 @@ of things the kernel can do, to the strings a language spells them with. The
 semantics behind every label belong to the kernel and are the same for every
 language: a definition changes how a program is spelled, never what it means.
 
-The microcode kernel reads these files. The four here are embedded at build
-time and picked by file extension or `--lang`; `lumen-lang --config
-file.json` reads a definition from disk instead. The stream kernel hosts
-Lumen only.
+Both kernels read these files. The microcode kernel reads every label of
+all four, embedded at build time and picked by file extension or `--lang`;
+`lumen-lang --config file.json` reads a definition from disk instead. The
+stream kernel hosts Lumen only and takes every spelling its handlers match
+from `lumen.json`, so an alias added there reaches both kernels at once.
+
+These files replace the earlier YAML specifications, EBNF grammars and
+grammar documents: a language's surface syntax is its definition, its
+semantics are the kernel's, and the table below is the comparison.
 
 ## Format rules
 
