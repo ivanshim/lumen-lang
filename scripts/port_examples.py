@@ -440,19 +440,21 @@ def parse(source):
 
 # ---------------------------------------------------------------- library
 
-LIB_FILES = ["value_to_string.lm", "string_to_value.lm", "numeric.lm", "string.lm", "string_ord_chr.lm",
+LIB_FILES = ["render.lm", "value_to_string.lm", "string_to_value.lm", "numeric.lm", "string.lm", "string_ord_chr.lm",
              "factorial.lm", "round.lm", "e_integer.lm", "pi_machin.lm", "modular_arithmetic.lm",
              "primes.lm", "number_theory.lm", "constants_1024.lm", "constants.lm", "constants_default.lm"]
 
 KERNEL_BUILTINS = {
     "len": "builtin.len", "char_at": "builtin.char_at", "ord": "builtin.ord", "chr": "builtin.chr",
-    "kind": "builtin.typeof", "error": "builtin.error", "real": "builtin.real",
-    "int_to_string": "builtin.int_to_string", "real_to_string": "builtin.real_to_string",
-    "rational_to_string": "builtin.rational_to_string", "bool_to_string": "builtin.bool_to_string",
-    "array_to_string": "builtin.array_to_string", "null_to_string": "builtin.null_to_string",
-    "kind_to_string": "builtin.kind_to_string", "num": "builtin.num", "den": "builtin.den",
-    "int": "builtin.int", "frac": "builtin.frac", "push": "builtin.push", "emit": "builtin.emit",
+    "kind": "builtin.typeof", "error": "builtin.error", "real": "builtin.real", "precision": "builtin.precision",
+    "num": "builtin.num", "den": "builtin.den", "int": "builtin.int", "frac": "builtin.frac",
+    "push": "builtin.push", "emit": "builtin.emit",
 }
+# Library renderers a language spells with one polymorphic conversion instead.
+POLYMORPHIC = {"int_to_string": "builtin.to_string", "real_to_string": "builtin.to_string",
+               "rational_to_string": "builtin.to_string", "bool_to_string": "builtin.to_string",
+               "null_to_string": "builtin.to_string", "array_to_string": "builtin.to_string",
+               "value_to_string": "builtin.to_string", "real_default": "builtin.to_real"}
 SYSTEM_NAMES = {"ARGS", "MEMOIZATION", "REAL_DEFAULT_PRECISION", "INTEGER", "RATIONAL", "REAL",
                 "STRING", "BOOLEAN", "ARRAY", "NULL"}
 
@@ -626,8 +628,9 @@ class Kinds:
                         params[i] = k
                 return self.fn_returns.get(e.name, UNKNOWN)
             return {"len": INT, "ord": INT, "chr": STR, "char_at": STR, "int_to_string": STR,
-                    "real_to_string": STR, "kind_to_string": STR, "int": INT, "frac": REAL,
-                    "real": REAL, "num": INT, "den": INT, "range": ARRAY}.get(e.name, UNKNOWN)
+                    "real_to_string": STR, "kind_to_string": STR, "value_to_string": STR, "int": INT,
+                    "frac": REAL, "real": REAL, "real_default": REAL, "num": INT, "den": INT,
+                    "range": ARRAY}.get(e.name, UNKNOWN)
         return UNKNOWN
 
 
@@ -860,6 +863,9 @@ class Emitter:
         name = e.name
         if name in ("print", "write"):
             raise Skip("`print` as a value")
+        if name in POLYMORPHIC and self.has(POLYMORPHIC[name]):
+            # str(x) where Lumen's library spells each kind's renderer
+            return self.d[POLYMORPHIC[name]][0] + self.arguments(e.args, scope)
         if name in scope.functions:
             labels = [p for p, _ in scope.functions[name].params]
             return self.ident(name, True) + self.arguments(e.args, scope, labels)
@@ -1226,9 +1232,8 @@ class Emitter:
             return f"{write}({text} {concat} {self.string(chr(10))})"
         write = self.w("builtin.write", "write")
         if self.name in ("python", "javascript") and arg.kind != "Str" and kind != STR:
-            if kind not in (INT, UNKNOWN):
-                raise Skip(f"`write` of a {kind} needs a conversion the definition lacks")
-            return f"{write}({self.w('builtin.int_to_string')}({text}))"
+            # sys.stdout.write and process.stdout.write take a string
+            return f"{write}({self.w('builtin.to_string')}({text}))"
         return f"{write}({text})"
 
     # ---- Pascal: declarations first, then the main block

@@ -45,13 +45,10 @@ const UNARY_BUILTINS: &[(&str, Unary)] = &[
     ("builtin.den", builtin_den),
     ("builtin.int", builtin_int_part),
     ("builtin.frac", builtin_frac),
-    ("builtin.int_to_string", builtin_int_to_string),
-    ("builtin.real_to_string", builtin_real_to_string),
-    ("builtin.rational_to_string", builtin_rational_to_string),
-    ("builtin.bool_to_string", builtin_bool_to_string),
-    ("builtin.array_to_string", builtin_array_to_string),
-    ("builtin.null_to_string", builtin_null_to_string),
-    ("builtin.kind_to_string", builtin_kind_to_string),
+    ("builtin.precision", builtin_precision),
+    ("builtin.to_string", builtin_to_string),
+    ("builtin.to_int", builtin_to_int),
+    ("builtin.to_real", builtin_to_real),
 ];
 
 impl ExprNode for FunctionCallExpr {
@@ -277,111 +274,46 @@ fn builtin_real(value: &Value, precision: usize) -> LumenResult<Value> {
     Err("real() requires a number, rational, or real argument".to_string())
 }
 
-/// Built-in function: int_to_string(x) - Convert integer to string (mechanical primitive)
-/// Assumes input is an INTEGER. No type branching. No semantic decisions.
-fn builtin_int_to_string(value: &Value) -> LumenResult<Value> {
-    use crate::language::values::{LumenString, LumenNumber};
-
-    let number = value.as_any()
-        .downcast_ref::<LumenNumber>()
-        .ok_or_else(|| "int_to_string() requires an integer argument".to_string())?;
-
-    Ok(Box::new(LumenString::new(number.value.to_string())))
-}
-
-/// Built-in function: real_to_string(x) - Convert real to string (mechanical primitive)
-/// Assumes input is a REAL. No type branching. No semantic decisions.
-fn builtin_real_to_string(value: &Value) -> LumenResult<Value> {
-    use crate::language::values::{LumenString, LumenReal};
-
-    let real = value.as_any()
+/// precision(x): the significant digits a real carries
+fn builtin_precision(value: &Value) -> LumenResult<Value> {
+    use crate::language::values::{LumenNumber, LumenReal};
+    let real = value
+        .as_any()
         .downcast_ref::<LumenReal>()
-        .ok_or_else(|| "real_to_string() requires a real argument".to_string())?;
-
-    Ok(Box::new(LumenString::new(real.as_decimal_string())))
+        .ok_or_else(|| "precision() requires a real argument".to_string())?;
+    Ok(Box::new(LumenNumber::new(num_bigint::BigInt::from(real.precision))))
 }
 
-/// Built-in function: rational_to_string(x) - Convert rational to string (mechanical primitive)
-/// Assumes input is a RATIONAL. No type branching. No semantic decisions.
-fn builtin_rational_to_string(value: &Value) -> LumenResult<Value> {
-    use crate::language::values::{LumenString, LumenRational};
-
-    let rational = value.as_any()
-        .downcast_ref::<LumenRational>()
-        .ok_or_else(|| "rational_to_string() requires a rational argument".to_string())?;
-
-    let string = if rational.is_integer() {
-        rational.numerator.to_string()
-    } else {
-        format!("{}/{}", rational.numerator, rational.denominator)
-    };
-
-    Ok(Box::new(LumenString::new(string)))
+/// to_string(x): any value as the text print would show. The polymorphic
+/// conversion of languages that have one (`str`, `String`); Lumen renders
+/// in its library instead.
+fn builtin_to_string(value: &Value) -> LumenResult<Value> {
+    use crate::language::values::LumenString;
+    Ok(Box::new(LumenString::new(value.as_display_string())))
 }
 
-/// Built-in function: bool_to_string(x) - Convert boolean to string (mechanical primitive)
-/// Assumes input is a BOOLEAN. No type branching. No semantic decisions.
-fn builtin_bool_to_string(value: &Value) -> LumenResult<Value> {
-    use crate::language::values::{LumenString, LumenBool};
-
-    let bool_val = value.as_any()
-        .downcast_ref::<LumenBool>()
-        .ok_or_else(|| "bool_to_string() requires a boolean argument".to_string())?;
-
-    let string = if bool_val.value { "true" } else { "false" };
-    Ok(Box::new(LumenString::new(string.to_string())))
+/// to_int(x): the integer part of any number
+fn builtin_to_int(value: &Value) -> LumenResult<Value> {
+    use crate::language::values::{LumenNumber, LumenRational, LumenReal};
+    if let Some(number) = value.as_any().downcast_ref::<LumenNumber>() {
+        return Ok(Box::new(LumenNumber::new(number.value.clone())));
+    }
+    if let Some(rational) = value.as_any().downcast_ref::<LumenRational>() {
+        return Ok(Box::new(LumenNumber::new(&rational.numerator / &rational.denominator)));
+    }
+    if let Some(real) = value.as_any().downcast_ref::<LumenReal>() {
+        return Ok(Box::new(LumenNumber::new(&real.numerator / &real.denominator)));
+    }
+    Err("to_int() requires a number argument".to_string())
 }
 
-/// Built-in function: array_to_string(x) - Convert array to string (mechanical primitive)
-/// Assumes input is an ARRAY. No type branching. No semantic decisions.
-fn builtin_array_to_string(value: &Value) -> LumenResult<Value> {
-    use crate::language::values::{LumenString, LumenArray};
-
-    let array_val = value.as_any()
-        .downcast_ref::<LumenArray>()
-        .ok_or_else(|| "array_to_string() requires an array argument".to_string())?;
-
-    let elements_str = array_val.elements
-        .iter()
-        .map(|e| e.as_display_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    Ok(Box::new(LumenString::new(format!("[{}]", elements_str))))
-}
-
-/// Built-in function: null_to_string(x) - Convert null to string (mechanical primitive)
-/// Assumes input is NULL. No type branching. No semantic decisions.
-fn builtin_null_to_string(value: &Value) -> LumenResult<Value> {
-    use crate::language::values::{LumenString, LumenNull};
-
-    let _null_val = value.as_any()
-        .downcast_ref::<LumenNull>()
-        .ok_or_else(|| "null_to_string() requires a null argument".to_string())?;
-
-    Ok(Box::new(LumenString::new("null".to_string())))
-}
-
-/// Built-in function: kind_to_string(x) - Convert kind meta-value to string (mechanical primitive)
-/// Assumes input is a KIND. No type branching. No semantic decisions.
-fn builtin_kind_to_string(value: &Value) -> LumenResult<Value> {
-    use crate::language::values::{LumenString, LumenKind, KindValue};
-
-    let kind_val = value.as_any()
-        .downcast_ref::<LumenKind>()
-        .ok_or_else(|| "kind_to_string() requires a kind argument".to_string())?;
-
-    let string = match kind_val.kind {
-        KindValue::INTEGER => "INTEGER",
-        KindValue::RATIONAL => "RATIONAL",
-        KindValue::REAL => "REAL",
-        KindValue::STRING => "STRING",
-        KindValue::BOOLEAN => "BOOLEAN",
-        KindValue::ARRAY => "ARRAY",
-        KindValue::NULL => "NULL",
-    };
-
-    Ok(Box::new(LumenString::new(string.to_string())))
+/// to_real(x): any number as a real, at its own precision if it is one
+fn builtin_to_real(value: &Value) -> LumenResult<Value> {
+    use crate::language::values::LumenReal;
+    if let Some(real) = value.as_any().downcast_ref::<LumenReal>() {
+        return Ok(Box::new(real.clone()));
+    }
+    builtin_real(value, 15)
 }
 
 /// Built-in function: len(x) - Return length of string or array

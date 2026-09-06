@@ -31,26 +31,32 @@ fn is_array(x)
 fn is_null(x)
     return kind(x) == NULL
 
+# Whether x is a KIND meta-value
+fn is_kind(x)
+    return x == INTEGER or x == RATIONAL or x == REAL or x == BOOLEAN or x == STRING or x == ARRAY or x == NULL
+
 # Convert a KIND meta-value to its canonical uppercase string representation
 fn kind_to_string(k)
-    if is_int(k)
+    if k == INTEGER
         return "INTEGER"
-    if is_rational(k)
+    if k == RATIONAL
         return "RATIONAL"
-    if is_real(k)
+    if k == REAL
         return "REAL"
-    if is_bool(k)
+    if k == BOOLEAN
         return "BOOLEAN"
-    if is_string(k)
+    if k == STRING
         return "STRING"
-    if is_array(k)
+    if k == ARRAY
         return "ARRAY"
-    if is_null(k)
+    if k == NULL
         return "NULL"
     error("kind_to_string: expected KIND meta-value")
 
 # Convert any value to its canonical string representation
 fn value_to_string(x)
+    if is_kind(x)
+        return kind_to_string(x)
     if is_int(x)
         return int_to_string(x)
     if is_rational(x)

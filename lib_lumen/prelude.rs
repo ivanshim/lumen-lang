@@ -2,6 +2,7 @@
 // This is not library code; it simply packages source files for embedding in the binary.
 
 pub static EMBEDDED_FILES: &[(&str, &str)] = &[
+    ("lib_lumen/render.lm", include_str!("render.lm")),
     ("lib_lumen/value_to_string.lm", include_str!("value_to_string.lm")),
     ("lib_lumen/string_to_value.lm", include_str!("string_to_value.lm")),
     ("lib_lumen/numeric.lm", include_str!("numeric.lm")),

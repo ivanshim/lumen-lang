@@ -1,0 +1,73 @@
+# render.lm
+# The mechanical renderers: each kind of value as text. Written against the
+# kernel primitives (num, den, int, frac, precision, len, char_at) so that
+# the kernel itself renders nothing for Lumen; print and write in output.lm
+# go through value_to_string and emit.
+
+decimal_digits = "0123456789"
+
+# INTEGER -> decimal text
+fn int_to_string(n)
+    if n == 0
+        return "0"
+    negative = n < 0
+    if negative
+        n = -n
+    text = ""
+    while n > 0
+        text = char_at(decimal_digits, n % 10) . text
+        n = n // 10
+    if negative
+        return "-" . text
+    text
+
+# RATIONAL -> "numerator/denominator". The kernel keeps a rational in lowest
+# terms and turns a denominator of 1 into an INTEGER, so both parts show.
+fn rational_to_string(r)
+    int_to_string(num(r)) . "/" . int_to_string(den(r))
+
+# REAL -> decimal text to the value's own significant digits: the integer
+# part uses some of them, the fraction gets the rest and stops early when
+# nothing remains. A fraction that runs out of digits still shows its point.
+fn real_to_string(x)
+    sig = precision(x)
+    negative = x < 0
+    if negative
+        x = -x
+    head = int_to_string(int(x))
+    room = sig - len(head)
+    f = frac(x)
+    has_fraction = f != 0
+    tail = ""
+    while room > 0 and f != 0
+        f = f * 10
+        tail = tail . char_at(decimal_digits, int(f))
+        f = frac(f)
+        room = room - 1
+    text = head
+    if has_fraction
+        text = text . "." . tail
+    if negative
+        return "-" . text
+    text
+
+# BOOLEAN -> Lumen's literal words
+fn bool_to_string(b)
+    if b
+        return "true"
+    "false"
+
+# NULL -> Lumen's literal word
+fn null_to_string(x)
+    "null"
+
+# ARRAY -> "[a, b, c]", each element rendered by value_to_string
+fn array_to_string(a)
+    text = "["
+    i = 0
+    while i < len(a)
+        if i > 0
+            text = text . ", "
+        text = text . value_to_string(a[i])
+        i = i + 1
+    text . "]"

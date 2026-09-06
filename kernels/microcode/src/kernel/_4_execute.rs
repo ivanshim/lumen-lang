@@ -335,55 +335,40 @@ fn builtin_apply(builtin: Builtin, name: &str, values: &[Value], schema: &Langua
                 _ => Err(format!("{}() requires a number, rational, or real argument", name)),
             }
         }
-        IntToString => {
+        Precision => {
             arity(name, values, 1)?;
             match &values[0] {
-                Value::Number(n) => Ok(Value::String(n.to_string())),
-                _ => Err(format!("{}() requires an integer argument", name)),
-            }
-        }
-        RealToString => {
-            arity(name, values, 1)?;
-            match &values[0] {
-                Value::Real { numerator, denominator, precision } => {
-                    Ok(Value::String(Value::real_to_decimal(numerator, denominator, *precision)))
-                }
+                Value::Real { precision, .. } => Ok(Value::Number(BigInt::from(*precision))),
                 _ => Err(format!("{}() requires a real argument", name)),
             }
         }
-        RationalToString => {
+        ToString => {
+            arity(name, values, 1)?;
+            Ok(Value::String(values[0].render(&words)))
+        }
+        ToInt => {
             arity(name, values, 1)?;
             match &values[0] {
-                v @ Value::Rational { .. } => Ok(Value::String(v.to_string())),
-                _ => Err(format!("{}() requires a rational argument", name)),
+                Value::Number(n) => Ok(Value::Number(n.clone())),
+                Value::Rational { numerator, denominator } | Value::Real { numerator, denominator, .. } => {
+                    Ok(Value::Number(numerator / denominator))
+                }
+                _ => Err(format!("{}() requires a number argument", name)),
             }
         }
-        BoolToString => {
+        ToReal => {
             arity(name, values, 1)?;
             match &values[0] {
-                v @ Value::Bool(_) => Ok(Value::String(v.render(&words))),
-                _ => Err(format!("{}() requires a boolean argument", name)),
-            }
-        }
-        ArrayToString => {
-            arity(name, values, 1)?;
-            match &values[0] {
-                v @ Value::Array(_) => Ok(Value::String(v.render(&words))),
-                _ => Err(format!("{}() requires an array argument", name)),
-            }
-        }
-        NullToString => {
-            arity(name, values, 1)?;
-            match &values[0] {
-                v @ Value::Null => Ok(Value::String(v.render(&words))),
-                _ => Err(format!("{}() requires a null argument", name)),
-            }
-        }
-        KindToString => {
-            arity(name, values, 1)?;
-            match &values[0] {
-                Value::Kind(k) => Ok(Value::String(k.name().to_string())),
-                _ => Err(format!("{}() requires a kind argument", name)),
+                Value::Number(n) => {
+                    Ok(Value::Real { numerator: n.clone(), denominator: BigInt::from(1), precision: DEFAULT_REAL_PRECISION })
+                }
+                Value::Rational { numerator, denominator } => Ok(Value::Real {
+                    numerator: numerator.clone(),
+                    denominator: denominator.clone(),
+                    precision: DEFAULT_REAL_PRECISION,
+                }),
+                v @ Value::Real { .. } => Ok(v.clone()),
+                _ => Err(format!("{}() requires a number argument", name)),
             }
         }
         Len => {

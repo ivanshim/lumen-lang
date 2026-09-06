@@ -135,7 +135,8 @@ impl Value {
         if remainder == BigInt::from(0) {
             return int_part.to_string();
         }
-        let digit_count = int_part.to_string().len();
+        // Significant digits: the sign is not one of them.
+        let digit_count = int_part.to_string().trim_start_matches('-').len();
         let mut frac_digits = precision.saturating_sub(digit_count);
         let mut rem = remainder.abs();
         let mut decimal = String::new();
