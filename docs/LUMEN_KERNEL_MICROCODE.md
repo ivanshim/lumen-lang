@@ -123,12 +123,14 @@ Adding a language means adding a JSON file and one line in
 `kernels/microcode/src/lib.rs` that embeds it. Changing an operator's
 precedence, or which word means `null`, is a data edit with no code change.
 
-## Relationship to the stream kernel
+## Relationship to the other kernels
 
-The two kernels never import each other; they are separate crates that meet
+The kernels never import each other; they are separate crates that meet
 only in the host binary, and `scripts/kernel_independence.py` (run in CI)
-fails the build if either names the other or if any run of five or more
-identical source lines appears in both trees. They also solve the shared
+fails the build if any names another or if a long run of identical
+source lines appears in two trees. The stack kernel solves the same
+problem by compiling to a flat word list instead of reducing to a tree
+(`docs/LUMEN_KERNEL_STACK.md`). They also solve the shared
 problems differently on purpose: comments are a text-level pass driven by
 the definition here and a token-stream transformation in the stream
 language; bindings live in a linear frame stack here and in a stack of

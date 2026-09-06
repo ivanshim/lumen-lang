@@ -7,8 +7,8 @@ Generated from the tree; regenerate with:
 
 lumen-lang/
   Cargo.toml                       workspace + host package
-  src/main.rs                      command-line host (the only place both kernels meet)
-  test.sh, test_e.sh, test_pi.sh   test drivers (test.sh runs every example on both kernels)
+  src/main.rs                      command-line host (the only place the kernels meet)
+  test.sh, test_e.sh, test_pi.sh   test drivers (test.sh runs every example on every kernel)
   .github/workflows/ci.yml         GitHub Actions: kernel independence, build with -D warnings, run test.sh
 
   langs/                           language definitions as JSON, one per language, plus a comparison table
@@ -99,6 +99,31 @@ lumen-lang/
     kernels/microcode/src/lib.rs
     kernels/microcode/src/schema.rs
 
+  kernels/stack/                   crate lumen-stack (every language compiled to one stack machine)
+    kernels/stack/Cargo.toml
+    kernels/stack/src/code.rs          the word set and compiled programs
+    kernels/stack/src/compiler.rs      tokens to words in one pass; names to slots
+    kernels/stack/src/definition.rs    the definition reader
+    kernels/stack/src/layout.rs        block structure
+    kernels/stack/src/lexer.rs         scanning
+    kernels/stack/src/lib.rs
+    kernels/stack/src/machine.rs       the inner loop, builtins, the call cache
+    kernels/stack/src/number.rs        the numeric tower with a machine-word fast path
+    kernels/stack/src/value.rs         values and rendering
+
+  kernels/microcode2/              crate lumen-microcode2 (the tree kept: run it, or write it out in any language)
+    kernels/microcode2/Cargo.toml
+    kernels/microcode2/src/emit.rs        the tree written in a target language
+    kernels/microcode2/src/execute.rs     the tree run
+    kernels/microcode2/src/ingest.rs      scanning
+    kernels/microcode2/src/lib.rs
+    kernels/microcode2/src/numeric.rs
+    kernels/microcode2/src/reduce.rs      tokens to the tree; postfix read with a symbolic stack
+    kernels/microcode2/src/spec.rs        the definition as a table of labels
+    kernels/microcode2/src/structure.rs   block structure
+    kernels/microcode2/src/tree.rs        the forms
+    kernels/microcode2/src/value.rs
+
   lib_lumen/                       Lumen standard library (.lm) + prelude.rs (embedding list)
     lib_lumen/constants.lm
     lib_lumen/constants_1024.lm
@@ -126,6 +151,7 @@ lumen-lang/
     scripts/kernel_independence.py
     scripts/lang_table.py
     scripts/port_examples.py         writes every Lumen example in every other language, and examples/PORTS.md
+    scripts/translate_all.sh         round-trip benchmark of the microcode2 emitter over every example and language
 
   examples/                        488 programs: lumen/ (+constructs/, libraries/) and, mirroring it, rplumen/, python/, rust/, php/, ruby/, pascal/, c/, javascript/, swift/; PORTS.md says which Lumen example is in which language
   docs/                            design documents, references, history
