@@ -19,7 +19,7 @@ pub fn register_all(registry: &mut Registry) {
         tokens.push(TokenDefinition::recognize(symbol));
     }
     for word in def().reserved_words() {
-        tokens.push(TokenDefinition::keyword(word));
+        tokens.push(TokenDefinition::keyword(word.clone()));
     }
     registry.tokens.set_token_definitions(tokens);
     registry.tokens.set_word_chars(crate::language::word_char);
@@ -59,6 +59,7 @@ pub fn register_all(registry: &mut Registry) {
     statements::flow_continue::register(registry);
     statements::return_stmt::register(registry);
     statements::pass_stmt::register(registry);
+    statements::block_stmt::register(registry);
     statements::functions::register(registry);
     statements::expr_stmt::register(registry);
 }

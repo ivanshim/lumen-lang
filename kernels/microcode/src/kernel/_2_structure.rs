@@ -1,10 +1,9 @@
 // Stage 2: Structure — tokens → tokens with explicit block delimiters.
 //
-// Indentation-based languages get the schema's block delimiters synthesised
-// from indentation changes; brace-based languages already carry them. Line
-// ends and indentation inside brackets are dropped so grouping, calls and
-// array literals may span lines. A block-introducing token that ends a
-// header line (Python's `:`) is removed.
+// Indentation-based languages get block delimiters synthesised from
+// indentation changes; brace and keyword languages already carry theirs.
+// Line ends and indentation inside brackets are dropped so grouping, calls
+// and array literals may span lines.
 
 use super::_1_ingest::{Kind, Token};
 use crate::schema::{BlockStyle, LanguageSchema};
@@ -37,11 +36,11 @@ pub fn process(tokens: Vec<Token>, schema: &LanguageSchema) -> Result<Vec<Token>
                     let current = *levels.last().unwrap();
                     if level > current {
                         levels.push(level);
-                        out.push(synthetic(&structure.block_open, tok.line));
+                        out.push(synthetic(&structure.block_open[0], tok.line));
                     } else if level < current {
                         while *levels.last().unwrap() > level {
                             levels.pop();
-                            out.push(synthetic(&structure.block_close, tok.line));
+                            out.push(synthetic(&structure.block_close[0], tok.line));
                         }
                         if *levels.last().unwrap() != level {
                             return Err(format!("Indentation mismatch at line {}", tok.line));
@@ -61,16 +60,12 @@ pub fn process(tokens: Vec<Token>, schema: &LanguageSchema) -> Result<Vec<Token>
                 } else if closes.contains(&text) {
                     depth = depth.saturating_sub(1);
                 }
-                let ends_header = structure.block_intro.as_deref() == Some(text)
-                    && tokens.get(i + 1).map_or(false, |next| next.kind == Kind::Newline || next.kind == Kind::Eof);
-                if !ends_header {
-                    out.push(tok.clone());
-                }
+                out.push(tok.clone());
             }
             Kind::Eof => {
                 while levels.len() > 1 {
                     levels.pop();
-                    out.push(synthetic(&structure.block_close, tok.line));
+                    out.push(synthetic(&structure.block_close[0], tok.line));
                 }
                 out.push(tok.clone());
             }

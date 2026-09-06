@@ -19,6 +19,7 @@ pub trait LumenParserExt {
     fn skip_tokens(&mut self);
     fn at_identifier(&self) -> bool;
     fn take_identifier(&mut self) -> Option<String>;
+    fn take_word(&mut self) -> Option<String>;
 }
 
 impl LumenParserExt for Parser<'_> {
@@ -42,12 +43,13 @@ impl LumenParserExt for Parser<'_> {
         }
     }
 
-    /// Whether the current token can begin an identifier: a word start, or
-    /// the definition's variable prefix followed by one.
+    /// Whether the current token can begin an identifier: a word start that
+    /// is not a reserved word, or the definition's variable prefix followed
+    /// by a word start.
     fn at_identifier(&self) -> bool {
         let lexeme = &self.peek().lexeme;
         if lexeme.chars().next().map_or(false, word_start) {
-            return true;
+            return !def().is_reserved(lexeme);
         }
         match (def().first_char("identifier.variable_prefix"), lexeme.chars().next()) {
             (Some(prefix), Some(c)) if prefix == c && lexeme.chars().count() == 1 => {
@@ -69,6 +71,24 @@ impl LumenParserExt for Parser<'_> {
             // The prefix; the word itself follows
             name.push_str(&self.advance().lexeme);
         }
+        loop {
+            let lexeme = &self.peek().lexeme;
+            let mut chars = lexeme.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) if word_char(c) => name.push_str(&self.advance().lexeme),
+                _ => break,
+            }
+        }
+        Some(name)
+    }
+
+    /// Consume a word whether or not it is reserved: type names such as
+    /// `null` or `integer` may coincide with keywords.
+    fn take_word(&mut self) -> Option<String> {
+        if !self.peek().lexeme.chars().next().map_or(false, word_start) {
+            return None;
+        }
+        let mut name = self.advance().lexeme;
         loop {
             let lexeme = &self.peek().lexeme;
             let mut chars = lexeme.chars();

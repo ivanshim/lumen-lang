@@ -13,10 +13,13 @@ lumen-lang/
 
   langs/                           language definitions as JSON, one per language, plus a comparison table
     langs/README.md
-    langs/lumen.json
-    langs/php.json
-    langs/python.json
-    langs/rust.json
+    langs/lumen.json                 built in (embedded at build time)
+    langs/python.json                built in
+    langs/rust.json                  built in
+    langs/extra/lua.json             read from disk at run time with --lang <path>
+    langs/extra/pascal.json
+    langs/extra/php.json
+    langs/extra/ruby.json
 
   kernels/stream/                  crate lumen-stream (handlers in code, shaped by a definition)
     kernels/stream/Cargo.toml
@@ -57,6 +60,7 @@ lumen-lang/
     kernels/stream/src/language/registry/traits.rs
     kernels/stream/src/language/statements/array_assign.rs
     kernels/stream/src/language/statements/assignment.rs
+    kernels/stream/src/language/statements/block_stmt.rs
     kernels/stream/src/language/statements/control_for.rs
     kernels/stream/src/language/statements/control_if_else.rs
     kernels/stream/src/language/statements/control_until.rs
@@ -117,7 +121,7 @@ lumen-lang/
     scripts/kernel_independence.py
     scripts/lang_table.py
 
-  examples/                        100 programs: lumen/ (+constructs/, libraries/), python/, rust/, php/
+  examples/                        109 programs: lumen/ (+constructs/, libraries/), python/, rust/, php/, ruby/, lua/, pascal/
   docs/                            design documents, references, history
     docs/DIRECTORY_STRUCTURE.txt
     docs/LUMEN_COMPACT_REFERENCE.md

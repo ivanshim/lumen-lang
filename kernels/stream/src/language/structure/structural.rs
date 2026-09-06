@@ -34,7 +34,44 @@ pub fn at_statement_end(parser: &Parser) -> bool {
     let lexeme = &parser.peek().lexeme;
     matches!(lexeme.as_str(), NEWLINE | DEDENT | EOF)
         || def().is("stmt.terminator", lexeme)
-        || (def().block_style == BlockStyle::Braces && def().is("block.close", lexeme))
+        || (def().block_style != BlockStyle::Indentation && def().is("block.close", lexeme))
+}
+
+/// Whether the current token is one of `stops`.
+fn at_one_of(parser: &Parser, stops: &[String]) -> bool {
+    stops.iter().any(|s| *s == parser.peek().lexeme)
+}
+
+/// Parse statements up to a token in `stops` (not consumed) or the end.
+pub fn parse_body(parser: &mut Parser, registry: &Registry, stops: &[String]) -> LumenResult<Vec<Box<dyn StmtNode>>> {
+    let mut stmts = Vec::new();
+    consume_separators(parser);
+    while !at_one_of(parser, stops) && parser.peek().lexeme != EOF {
+        let s = registry
+            .find_stmt(parser)
+            .ok_or_else(|| err_at(parser, "Unknown statement in block"))?
+            .parse(parser, registry)?;
+        stmts.push(s);
+        consume_separators(parser);
+    }
+    Ok(stmts)
+}
+
+/// Drop a block-intro token (Python's `:`, Lua's `then`) if present.
+pub fn skip_block_intro(parser: &mut Parser) {
+    if def().is("block.intro", &parser.peek().lexeme) {
+        parser.advance();
+    }
+}
+
+/// Consume any of the definition's block closers.
+pub fn expect_close(parser: &mut Parser) -> LumenResult<()> {
+    if def().is("block.close", &parser.peek().lexeme) {
+        parser.advance();
+        Ok(())
+    } else {
+        Err(err_at(parser, &format!("Expected '{}' to close a block", def().first("block.close"))))
+    }
 }
 
 /// Consume line ends and statement terminators between statements.
@@ -50,35 +87,36 @@ pub fn consume_separators(parser: &mut Parser) {
 }
 
 /// Parse a block after a statement header. An optional block-intro token
-/// (Python's `:`) is dropped first; then either an indented run of
-/// statements or a bracketed one, as the definition says.
+/// (Python's `:`, Lua's `then`) is dropped first. Then, as the definition
+/// says: an indented run of statements; a bracketed one, where the opener
+/// at position i pairs with the closer at position i; or, for the keyword
+/// style, a run of statements up to any closer.
 pub fn parse_block(parser: &mut Parser, registry: &Registry) -> LumenResult<Vec<Box<dyn StmtNode>>> {
     let d = def();
-    if d.is("block.intro", &parser.peek().lexeme) {
-        parser.advance();
-    }
+    skip_block_intro(parser);
     consume_separators(parser);
 
     let (open, close): (String, String) = match d.block_style {
         BlockStyle::Indentation => (INDENT.to_string(), DEDENT.to_string()),
-        BlockStyle::Braces => (d.first("block.open").to_string(), d.first("block.close").to_string()),
+        BlockStyle::Braces => {
+            let opens = d.list("block.open");
+            let i = opens
+                .iter()
+                .position(|o| *o == parser.peek().lexeme)
+                .ok_or_else(|| err_at(parser, &format!("Expected '{}' to open a block", opens[0])))?;
+            (opens[i].clone(), d.list("block.close")[i].clone())
+        }
+        BlockStyle::Keyword => {
+            let stmts = parse_body(parser, registry, d.list("block.close"))?;
+            expect_close(parser)?;
+            return Ok(stmts);
+        }
     };
 
     if parser.advance().lexeme != open {
         return Err(err_at(parser, &format!("Expected '{}' to open a block", open)));
     }
-    consume_separators(parser);
-
-    let mut stmts = Vec::new();
-    while parser.peek().lexeme != close && parser.peek().lexeme != EOF {
-        let s = registry
-            .find_stmt(parser)
-            .ok_or_else(|| err_at(parser, "Unknown statement in block"))?
-            .parse(parser, registry)?;
-        stmts.push(s);
-        consume_separators(parser);
-    }
-
+    let stmts = parse_body(parser, registry, std::slice::from_ref(&close))?;
     if parser.advance().lexeme != close {
         return Err(err_at(parser, &format!("Expected '{}' to close a block", close)));
     }
@@ -128,11 +166,31 @@ fn fold_case(tokens: Vec<SpannedToken>) -> Vec<SpannedToken> {
         return tokens;
     }
     let reserved = d.reserved_words();
+    let quotes = d.chars("lexical.string_quotes");
     let wordy = |t: &SpannedToken| !t.tok.lexeme.is_empty() && t.tok.lexeme.chars().all(word_char);
 
     let mut out = Vec::with_capacity(tokens.len());
     let mut i = 0;
     while i < tokens.len() {
+        // A string is copied through untouched, up to its closing quote.
+        if let Some(quote) = single(&tokens[i].tok.lexeme).filter(|c| quotes.contains(c)) {
+            out.push(tokens[i].clone());
+            i += 1;
+            let mut escaped = false;
+            while i < tokens.len() {
+                let lexeme = &tokens[i].tok.lexeme;
+                out.push(tokens[i].clone());
+                i += 1;
+                if escaped {
+                    escaped = false;
+                } else if lexeme == "\\" {
+                    escaped = true;
+                } else if single(lexeme) == Some(quote) {
+                    break;
+                }
+            }
+            continue;
+        }
         if !wordy(&tokens[i]) {
             out.push(tokens[i].clone());
             i += 1;
@@ -182,8 +240,8 @@ pub fn process(source: &str, raw_tokens: Vec<SpannedToken>) -> LumenResult<Vec<S
     let indentation = d.block_style == BlockStyle::Indentation;
     let indent_size = d.indent_size;
     let comment_markers = d.list("lexical.comment_line");
-    let block_open = d.list("lexical.comment_block.open").first();
-    let block_close = d.list("lexical.comment_block.close").first();
+    let block_opens = d.list("lexical.comment_block.open");
+    let block_closes = d.list("lexical.comment_block.close");
     let prologue = d.list("lexical.prologue").first();
     let quotes = d.chars("lexical.string_quotes");
 
@@ -191,7 +249,8 @@ pub fn process(source: &str, raw_tokens: Vec<SpannedToken>) -> LumenResult<Vec<S
     let mut indents = vec![0usize];
     let mut line_no = 1usize;
     let mut bracket_depth_global = 0i32; // array brackets suspend line structure
-    let mut in_block_comment = false;
+    // Which comment pair is open, if any; its closer ends it.
+    let mut in_block_comment: Option<usize> = None;
     let mut seen_code = false;
 
     for raw in source.lines() {
@@ -200,18 +259,15 @@ pub fn process(source: &str, raw_tokens: Vec<SpannedToken>) -> LumenResult<Vec<S
         let rest = &raw[spaces..];
 
         // Blank lines and comment-only lines contribute nothing.
-        let comment_only = comment_markers.iter().any(|m| rest.starts_with(m.as_str()));
-        if in_block_comment || rest.trim().is_empty() || comment_only {
-            if in_block_comment {
-                // The block may close on this line; the token loop below handles it.
-            } else {
-                line_no += 1;
-                continue;
-            }
+        let opens_block = block_opens.iter().any(|o| rest.starts_with(o.as_str()));
+        let comment_only = !opens_block && comment_markers.iter().any(|m| rest.starts_with(m.as_str()));
+        if in_block_comment.is_none() && (rest.trim().is_empty() || comment_only) {
+            line_no += 1;
+            continue;
         }
 
         // Indentation handling, at bracket depth zero, for indentation languages
-        if indentation && bracket_depth_global == 0 && !in_block_comment {
+        if indentation && bracket_depth_global == 0 && in_block_comment.is_none() {
             let current = *indents.last().unwrap();
             if spaces > current {
                 if (spaces - current) % indent_size != 0 {
@@ -242,9 +298,9 @@ pub fn process(source: &str, raw_tokens: Vec<SpannedToken>) -> LumenResult<Vec<S
             if in_line_comment {
                 continue;
             }
-            if in_block_comment {
-                if Some(lexeme) == block_close {
-                    in_block_comment = false;
+            if let Some(pair) = in_block_comment {
+                if *lexeme == block_closes[pair] {
+                    in_block_comment = None;
                 }
                 continue;
             }
@@ -276,8 +332,8 @@ pub fn process(source: &str, raw_tokens: Vec<SpannedToken>) -> LumenResult<Vec<S
                 in_line_comment = true;
                 continue;
             }
-            if Some(lexeme) == block_open {
-                in_block_comment = true;
+            if let Some(pair) = block_opens.iter().position(|o| o == lexeme) {
+                in_block_comment = Some(pair);
                 continue;
             }
 
@@ -307,8 +363,10 @@ pub fn process(source: &str, raw_tokens: Vec<SpannedToken>) -> LumenResult<Vec<S
             }
         }
 
-        // An indentation language ends each line with NEWLINE, outside arrays
-        if indentation && bracket_depth_global == 0 && !in_block_comment {
+        // Indentation and keyword languages end each line with NEWLINE,
+        // outside arrays; a brace language treats line ends as whitespace.
+        let line_ends_matter = d.block_style != BlockStyle::Braces;
+        if line_ends_matter && bracket_depth_global == 0 && in_block_comment.is_none() {
             out.push(synthetic(NEWLINE, line_no, spaces + rest.len() + 1));
         }
 

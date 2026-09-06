@@ -162,7 +162,7 @@ All of the following are defined and managed by language modules, not the kernel
 
 * **Handler traits**: `ExprPrefix`, `ExprInfix`, `StmtHandler` — each language defines its own
 * **The definition**: which language is hosted, and every keyword, operator, bracket, literal word, builtin name, block style and comment marker, comes from a `langs/*.json` file read once by `language/definition.rs`; handlers ask the definition whether a token spells the construct they parse, and a handler for a construct the language does not spell never matches
-* **Structure**: `language/structure/structural.rs` folds case, drops the prologue and comments, and synthesises INDENT and DEDENT tokens for an indentation language or leaves the block delimiters in place for a brace language, all as token-stream transformations
+* **Structure**: `language/structure/structural.rs` folds case, drops the prologue and comments (several block-comment pairs allowed), and synthesises INDENT and DEDENT tokens for an indentation language, leaves the paired delimiters in place for a brace language, or leaves the closing word in place for a keyword-block language (`then` ... `end`), all as token-stream transformations
 * **Precedence**: a numeric tier per operator lexeme, read from the definition's `op.precedence` table, with associativity from `op.right_associative`
 * **Skip behavior**: Extension traits like `LumenParserExt::skip_tokens()` for whitespace handling
 * **Comment removal**: a token-stream transformation inside each language's structure pass

@@ -14,7 +14,7 @@ use num_traits::ToPrimitive;
 use super::_1_ingest::{Kind, Token};
 use super::instruction::{Instruction, Target, TransferKind};
 use super::value::{Function, Value};
-use crate::schema::{spelled, Assoc, LanguageSchema, Op};
+use crate::schema::{spelled, Assoc, BlockStyle, LanguageSchema, Op};
 
 pub fn parse(tokens: &[Token], schema: &LanguageSchema) -> Result<Instruction, String> {
     let mut parser = Parser { tokens, pos: 0, schema, hidden: 0 };
@@ -63,6 +63,18 @@ impl<'a> Parser<'a> {
         tok.kind == Kind::Newline || (tok.kind == Kind::Op && self.schema.is_terminator(&tok.text))
     }
 
+    /// Whether the current token is `text`, as an operator or a word: block
+    /// delimiters may be either (`{` or `begin`).
+    fn at_lexeme(&self, text: &str) -> bool {
+        let tok = self.peek();
+        (tok.kind == Kind::Op || tok.kind == Kind::Word) && tok.text == text
+    }
+
+    /// The position in `list` of the current token, if it is one of them.
+    fn at_one_of(&self, list: &[String]) -> Option<usize> {
+        list.iter().position(|lex| self.at_lexeme(lex))
+    }
+
     fn skip_terminators(&mut self) {
         while !self.at_end() && self.is_terminator() {
             self.advance();
@@ -103,19 +115,68 @@ impl<'a> Parser<'a> {
         Ok(Instruction::Sequence(stmts))
     }
 
-    fn block(&mut self) -> Result<Instruction, String> {
-        let open = self.schema.structure.block_open.clone();
-        let close = self.schema.structure.block_close.clone();
-        self.skip_terminators();
-        self.expect_op(&open, "to open a block")?;
+    /// Statements up to a token in `stops` (not consumed) or the end.
+    fn body_until(&mut self, stops: &[String]) -> Result<Instruction, String> {
         let mut stmts = Vec::new();
         self.skip_terminators();
-        while !self.is_op(&close) && !self.at_end() {
+        while self.at_one_of(stops).is_none() && !self.at_end() {
             stmts.push(self.statement()?);
             self.skip_terminators();
         }
-        self.expect_op(&close, "to close a block")?;
         Ok(Instruction::Sequence(stmts))
+    }
+
+    /// Drop a block-intro token (Python's `:`, Lua's `then`) if present.
+    fn skip_block_intro(&mut self) {
+        let structure: &'a crate::schema::Structure = &self.schema.structure;
+        if self.at_one_of(&structure.block_intro).is_some() {
+            self.advance();
+        }
+    }
+
+    /// A block after a statement header. For indentation and brace styles
+    /// the opener at position i pairs with the closer at position i; for the
+    /// keyword style there is no opener and any closer ends the body.
+    fn block(&mut self) -> Result<Instruction, String> {
+        let structure: &'a crate::schema::Structure = &self.schema.structure;
+        self.skip_block_intro();
+        self.skip_terminators();
+        match structure.blocks {
+            BlockStyle::Indentation | BlockStyle::Braces => {
+                let i = self
+                    .at_one_of(&structure.block_open)
+                    .ok_or_else(|| format!("Expected '{}' to open a block, got '{}'", structure.block_open[0], self.peek().text))?;
+                self.advance();
+                let close = std::slice::from_ref(&structure.block_close[i]);
+                let body = self.body_until(close)?;
+                self.expect_close(&close[0])?;
+                Ok(body)
+            }
+            BlockStyle::Keyword => {
+                let body = self.body_until(&structure.block_close)?;
+                self.expect_any_close()?;
+                Ok(body)
+            }
+        }
+    }
+
+    fn expect_close(&mut self, close: &str) -> Result<(), String> {
+        if self.at_lexeme(close) {
+            self.advance();
+            Ok(())
+        } else {
+            Err(format!("Expected '{}' to close a block, got '{}'", close, self.peek().text))
+        }
+    }
+
+    fn expect_any_close(&mut self) -> Result<(), String> {
+        let structure: &'a crate::schema::Structure = &self.schema.structure;
+        if self.at_one_of(&structure.block_close).is_some() {
+            self.advance();
+            Ok(())
+        } else {
+            Err(format!("Expected '{}' to close a block, got '{}'", structure.block_close[0], self.peek().text))
+        }
     }
 
     fn statement(&mut self) -> Result<Instruction, String> {
@@ -157,6 +218,9 @@ impl<'a> Parser<'a> {
                 return Ok(Instruction::Sequence(Vec::new()));
             }
         }
+        if schema.structure.blocks == BlockStyle::Braces && self.at_one_of(&schema.structure.block_open).is_some() {
+            return Ok(Instruction::Scope(Box::new(self.block()?)));
+        }
         self.assignment_or_expression()
     }
 
@@ -168,9 +232,15 @@ impl<'a> Parser<'a> {
             self.advance();
         }
         let name = self.expect_word("after the binding keyword")?;
+        let mut annotated = false;
         if self.peek().kind == Kind::Op && spelled(&binding.type_annotation, &self.peek().text) {
             self.advance();
             self.expect_word("as a type name")?;
+            annotated = true;
+        }
+        if annotated && (self.is_terminator() || self.at_end()) {
+            // A declaration without a value binds null.
+            return Ok(Instruction::assign(name, Instruction::Literal(Value::Null)));
         }
         self.expect_assignment("in a binding")?;
         let value = self.expression(0.0)?;
@@ -196,9 +266,22 @@ impl<'a> Parser<'a> {
     fn branch(&mut self) -> Result<Instruction, String> {
         let schema: &'a LanguageSchema = self.schema;
         let branch = schema.statements.branch.as_ref().expect("branch form present");
+        let keyword_blocks = schema.structure.blocks == BlockStyle::Keyword;
         self.advance(); // if / elif
         let condition = self.expression(0.0)?;
-        let then_branch = self.block()?;
+
+        // In the keyword style the whole chain shares one closer, so each
+        // body runs to an elif, an else or the closer, and only the end of
+        // the chain consumes the closer.
+        let then_branch = if keyword_blocks {
+            self.skip_block_intro();
+            let mut stops = schema.structure.block_close.clone();
+            stops.extend(branch.elif_keyword.iter().cloned());
+            stops.extend(branch.else_keyword.iter().cloned());
+            self.body_until(&stops)?
+        } else {
+            self.block()?
+        };
 
         // An else or elif may follow on the same line or after line ends.
         let mut look = 0;
@@ -219,10 +302,17 @@ impl<'a> Parser<'a> {
             self.advance(); // else
             if self.peek().kind == Kind::Word && spelled(&branch.keyword, &self.peek().text) {
                 Some(self.branch()?) // else if
+            } else if keyword_blocks {
+                let body = self.body_until(&schema.structure.block_close)?;
+                self.expect_any_close()?;
+                Some(body)
             } else {
                 Some(self.block()?)
             }
         } else {
+            if keyword_blocks {
+                self.expect_any_close()?;
+            }
             None
         };
 
@@ -293,9 +383,9 @@ impl<'a> Parser<'a> {
     }
 
     fn return_stmt(&mut self) -> Result<Instruction, String> {
+        let structure: &'a crate::schema::Structure = &self.schema.structure;
         self.advance();
-        let close = self.schema.structure.block_close.clone();
-        if self.is_terminator() || self.at_end() || self.is_op(&close) {
+        if self.is_terminator() || self.at_end() || self.at_one_of(&structure.block_close).is_some() {
             Ok(Instruction::transfer(TransferKind::Return, None))
         } else {
             let value = self.expression(0.0)?;

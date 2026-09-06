@@ -6,8 +6,9 @@
 // The host reads the file, picks the language from `--lang` (also spelled
 // `--language`), else from the file extension, else Lumen; prepends the
 // embedded Lumen standard library for Lumen programs; and hands the source
-// to the selected kernel. A `--lang` value naming a file on disk is read as
-// a language definition; any other value is the name of an embedded one.
+// to the selected kernel. A `--lang` value takes a language name (`python`),
+// one of its extensions (`py`), or the path of a definition file
+// (`langs/extra/php.json`), which is read at run time.
 // Nothing here knows how either kernel works, and the kernels never see
 // each other.
 
@@ -89,28 +90,66 @@ fn main() {
 
 fn usage(program: &str) -> ! {
     eprintln!(
-        "Usage: {} [--kernel stream|microcode] [--lang <name|definition.json>] <file> [program args...]",
+        "Usage: {} [--kernel stream|microcode] [--lang <name|extension|definition.json>] <file> [program args...]",
         program
     );
     process::exit(1);
 }
 
-/// Resolve a `--lang` value: a file on disk is a definition, anything else
-/// names an embedded one.
+/// The embedded languages, each name with its extensions.
+fn embedded_languages() -> Vec<(String, Vec<String>)> {
+    lumen_microcode::languages().unwrap_or_else(|e| {
+        eprintln!("Error: embedded language definitions: {}", e);
+        process::exit(1);
+    })
+}
+
+/// Read a definition file and take the language name it declares.
+fn definition_from_file(path: &str) -> Language {
+    let text = fs::read_to_string(path).unwrap_or_else(|e| {
+        eprintln!("Error: Failed to read {}: {}", path, e);
+        process::exit(1);
+    });
+    let name = lumen_microcode::language_of(&text).unwrap_or_else(|e| {
+        eprintln!("Error: language definition {}: {}", path, e);
+        process::exit(1);
+    });
+    Language::File { name, text }
+}
+
+/// Resolve a `--lang` value.
+///
+/// A value that ends in `.json` or contains a path separator is a definition
+/// file. Anything else names an embedded language, by its name or by one of
+/// the extensions it declares; a leading dot on an extension is tolerated.
 fn language_from_flag(value: &str) -> Language {
-    if Path::new(value).is_file() {
-        let text = fs::read_to_string(value).unwrap_or_else(|e| {
-            eprintln!("Error: Failed to read {}: {}", value, e);
-            process::exit(1);
-        });
-        let name = lumen_microcode::language_of(&text).unwrap_or_else(|e| {
-            eprintln!("Error: language definition {}: {}", value, e);
-            process::exit(1);
-        });
-        Language::File { name, text }
-    } else {
-        Language::Named(value.to_lowercase())
+    if value.ends_with(".json") || value.contains('/') || value.contains('\\') {
+        return definition_from_file(value);
     }
+    let wanted = value.trim_start_matches('.').to_lowercase();
+    let languages = embedded_languages();
+    if let Some((name, _)) = languages.iter().find(|(name, _)| *name == wanted) {
+        return Language::Named(name.clone());
+    }
+    if let Some((name, _)) = languages.iter().find(|(_, exts)| exts.iter().any(|e| *e == wanted)) {
+        return Language::Named(name.clone());
+    }
+    eprintln!(
+        "Error: Unknown language '{}'. Use one of: {}, or the path of a definition file.",
+        value,
+        accepted_language_words(&languages).join(", ")
+    );
+    process::exit(1);
+}
+
+/// Every word `--lang` accepts: each language's name, then its extensions.
+fn accepted_language_words(languages: &[(String, Vec<String>)]) -> Vec<String> {
+    let mut words = Vec::new();
+    for (name, exts) in languages {
+        words.push(name.clone());
+        words.extend(exts.iter().filter(|e| *e != name).cloned());
+    }
+    words
 }
 
 fn parse_args(args: &[String]) -> Invocation {
@@ -162,11 +201,7 @@ fn parse_args(args: &[String]) -> Invocation {
 /// The language whose embedded definition claims the file's extension.
 fn language_from_extension(file: &str) -> Option<String> {
     let ext = Path::new(file).extension()?.to_str()?;
-    let languages = lumen_microcode::languages().unwrap_or_else(|e| {
-        eprintln!("Error: embedded language definitions: {}", e);
-        process::exit(1);
-    });
-    languages.into_iter().find(|(_, exts)| exts.iter().any(|x| x == ext)).map(|(name, _)| name)
+    embedded_languages().into_iter().find(|(_, exts)| exts.iter().any(|x| x == ext)).map(|(name, _)| name)
 }
 
 fn embedded_file(path: &str) -> Option<&'static str> {

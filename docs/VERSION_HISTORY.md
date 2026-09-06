@@ -15,7 +15,14 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   language spells it with. Lexeme labels take alias lists, settings take
   scalars, precedence is a list of tiers. `langs/README.md` states the
   format rules and carries a generated table comparing every label across
-  Lumen, Python, PHP and Rust.
+  every language. Three block styles: indentation, paired braces (`{ }`,
+  `begin`/`end`) and keyword blocks closed by one word (`then` ... `end`);
+  several block-comment pairs per language; a binding with an annotation
+  and no value binds null.
+- **Extra languages**: `langs/extra/` holds definitions that are not
+  compiled in and are read from disk with `--lang <path>`, as proof that a
+  definition is loaded at run time. PHP moved there, and Ruby, Lua and
+  Pascal are added with examples; all seven languages run on both kernels.
 - **Microcode kernel**: reads the definitions instead of YAML schemas, with a
   strict reader (every label present, right type, no unknown keys, keywords
   shaped like identifiers, unimplemented labels empty). Gains block comments,
@@ -29,12 +36,14 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   block style, comment markers, prologue, variable prefix and case rules;
   the Python-like and Rust-like modules are removed. Both kernels read one
   identifier character class.
-- **Host**: `--lang` (or `--language`) takes an embedded name or a
-  definition file; the file extension decides otherwise, and Lumen is the
-  default. Definitions live in `langs/`.
+- **Host**: `--lang` (or `--language`) takes an embedded language name
+  (`python`), its extension (`py`), or the path of a definition file; the
+  file extension decides otherwise, and Lumen is the default. Definitions
+  live in `langs/`.
 - **Languages**: the Python and Rust examples are written as Python and
-  Rust, and PHP examples are added; every example runs on both kernels, and
-  `scripts/kernel_diff.sh` compares their output program by program.
+  Rust, and PHP, Ruby, Lua and Pascal examples are added; every example
+  runs on both kernels, and `scripts/kernel_diff.sh` compares their output
+  program by program.
 - **Removed**: `yaml/`, `grammar/`, the BNF document and the language
   comparison document, all superseded by the definitions and their table.
 
