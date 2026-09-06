@@ -1,6 +1,6 @@
 # Lumen-Lang
 
-An experimental interpreter framework: one command-line host, four independent
+An experimental interpreter framework: one command-line host, five independent
 kernels, and languages defined as data. Lumen exists to explore language
 semantics and the separation between an execution substrate and the languages
 it hosts. It is not a production language.
@@ -34,6 +34,7 @@ cargo run -- --kernel stream examples/lumen/pi_machin.lm
 cargo run -- --kernel microcode examples/lumen/pi_machin.lm
 cargo run -- --kernel stack examples/lumen/pi_machin.lm
 cargo run -- --kernel microcode2 examples/lumen/pi_machin.lm
+cargo run -- --kernel microcode3 examples/lumen/pi_machin.lm
 
 # Write a program in another language (microcode2 only)
 cargo run -- --kernel microcode2 --emit python examples/lumen/fibonacci_iterative.lm
@@ -61,7 +62,7 @@ the file extension, which each definition in `langs/` declares for itself,
 and Lumen is the default. Arguments after the file are passed to the
 program.
 
-## Four kernels, one host
+## Five kernels, one host
 
 ```
 src/main.rs            the host: arguments, language detection, the embedded
@@ -70,6 +71,7 @@ kernels/stream/        crate lumen-stream: a tree-walking interpreter substrate
 kernels/microcode/     crate lumen-microcode: a table-driven execution engine
 kernels/stack/         crate lumen-stack: a compiler to one stack machine
 kernels/microcode2/    crate lumen-microcode2: the tree kept, and written back out
+kernels/microcode3/    crate lumen-microcode3: four primitive forms and nothing else
 langs/                 language definitions as JSON, one file per language,
                        with a generated side-by-side comparison; every kernel
                        reads them. Lumen, RPLumen, Python and Rust are embedded at
@@ -136,6 +138,18 @@ driven by the target's definition read the other way round.
 checks that each runs the same. See
 [docs/LUMEN_KERNEL_MICROCODE2.md](docs/LUMEN_KERNEL_MICROCODE2.md).
 
+### Microcode kernel, third design
+
+The floor. The tree has four forms, `Literal`, `Load`, `Assign` and
+`Call`, and every construct of every language is a call: `a; b` is
+`last(a, b)`, `if` is a call whose arms are program values, a loop is a
+program that calls itself, a bare block is a program run at once,
+`return`, `break` and `continue` are calls that unwind. Program values
+are closures, calls in tail position replace the running program, and
+each program says which exit it catches. All 488 programs print the
+same as on the other kernels. See
+[docs/LUMEN_KERNEL_MICROCODE3.md](docs/LUMEN_KERNEL_MICROCODE3.md).
+
 ## Languages
 
 | Language | Extension | Definition | Style | Stream | Microcode |
@@ -168,7 +182,7 @@ writes [examples/PORTS.md](examples/PORTS.md), which says for each example
 and language either that the port exists or which construct the language
 has no spelling for. Those ports, the hand-written examples and the Lumen
 suite all run on every kernel, and `scripts/kernel_diff.sh` checks that
-the four kernels print the same for every one of them.
+the five kernels print the same for every one of them.
 
 Lumen is the reference language: integers, exact rationals and reals of
 configurable precision, strings, arrays, functions, `for`/`while`/`until`
@@ -191,7 +205,7 @@ Every example runs on every kernel:
 ./test.sh --help
 ```
 
-`scripts/kernel_diff.sh` goes further and requires the four kernels to
+`scripts/kernel_diff.sh` goes further and requires the five kernels to
 print the same thing for every program; today every program does. The
 differential test exists to find semantic gaps between the
 implementations, and each one it has found has been closed in whichever
@@ -208,6 +222,7 @@ errors, a check that the ported examples match what
 - [docs/LUMEN_KERNEL_MICROCODE.md](docs/LUMEN_KERNEL_MICROCODE.md) — microcode kernel and how it reads a definition
 - [docs/LUMEN_KERNEL_STACK.md](docs/LUMEN_KERNEL_STACK.md) — stack kernel: the word set and the compiler
 - [docs/LUMEN_KERNEL_MICROCODE2.md](docs/LUMEN_KERNEL_MICROCODE2.md) — microcode kernel, second design: the tree kept and written back out
+- [docs/LUMEN_KERNEL_MICROCODE3.md](docs/LUMEN_KERNEL_MICROCODE3.md) — microcode kernel, third design: four primitive forms
 - [langs/README.md](langs/README.md) — the definition format, every label, and the languages side by side
 - [docs/LUMEN_LANGUAGE_DESIGN.md](docs/LUMEN_LANGUAGE_DESIGN.md) — design principles
 - [docs/LUMEN_COMPACT_REFERENCE.md](docs/LUMEN_COMPACT_REFERENCE.md) — Lumen quick reference

@@ -31,6 +31,18 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   definition is loaded at run time. PHP moved there, and Ruby, Pascal, C,
   JavaScript and Swift are added with examples; all nine languages run on
   both kernels.
+- **The microcode kernel, third design**: a fifth kernel,
+  `kernels/microcode3` (`--kernel microcode3`), reduces every language to
+  four forms: `Literal`, `Load`, `Assign`, `Call`. Sequencing is a call
+  of `last`, a branch a call of `if` with program values for arms, a
+  loop a program bound to a hidden slot that calls itself, a bare block
+  a program run at once, and `return`, `break` and `continue` calls that
+  unwind to the program that catches them. Program values are closures
+  over the frame they were made in, the executor replaces a program
+  called in tail position rather than nesting, and each program declares
+  the exit it catches. All 488 programs print the same as on the other
+  kernels; a three-million-iteration loop runs in constant stack; the
+  arithmetic loop takes about 1.6 times the second design's time.
 - **The microcode kernel, second design**: a fourth kernel,
   `kernels/microcode2` (`--kernel microcode2`), keeps the four stages and
   makes the tree the product: nodes keep their source lines, names are

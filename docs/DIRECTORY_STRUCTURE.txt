@@ -124,6 +124,18 @@ lumen-lang/
     kernels/microcode2/src/tree.rs        the forms
     kernels/microcode2/src/value.rs
 
+  kernels/microcode3/              crate lumen-microcode3 (four primitive forms: Literal, Load, Assign, Call)
+    kernels/microcode3/Cargo.toml
+    kernels/microcode3/src/arith.rs
+    kernels/microcode3/src/blocks.rs      block structure
+    kernels/microcode3/src/lexer.rs       scanning
+    kernels/microcode3/src/lib.rs
+    kernels/microcode3/src/reduce.rs      tokens to the four forms; loops as programs that call themselves
+    kernels/microcode3/src/run.rs         the four forms run, with closures, tail calls and signals
+    kernels/microcode3/src/spec.rs        the definition as data
+    kernels/microcode3/src/tree.rs        the four forms
+    kernels/microcode3/src/value.rs
+
   lib_lumen/                       Lumen standard library (.lm) + prelude.rs (embedding list)
     lib_lumen/constants.lm
     lib_lumen/constants_1024.lm
