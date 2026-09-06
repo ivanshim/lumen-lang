@@ -57,7 +57,7 @@ maximal-munch segmentation. Which characters form a "word", for the keyword
 boundary check, is supplied by the language; the kernel has no opinion. The
 language module derives its `word_start` and `word_char` predicates from the
 definition's `identifier.unicode` flag, and every identifier check goes
-through those two functions, so both kernels read a name the same way.
+through those two functions, so every kernel reads a name the same way.
 Comments are a language concept too. The lexer emits the comment marker like
 any other byte, and each language's structure pass drops the tokens from the
 marker to the end of the line, the same pass that handles indentation or

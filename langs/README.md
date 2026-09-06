@@ -5,15 +5,16 @@ of things the kernel can do, to the strings a language spells them with. The
 semantics behind every label belong to the kernel and are the same for every
 language: a definition changes how a program is spelled, never what it means.
 
-Both kernels read these files, each in its own way. The microcode kernel
-reduces a definition to tables and an instruction tree; the stream kernel
-registers handlers for the constructs a definition spells and transforms
-the token stream by its block style and markers. The definitions in this
+All three kernels read these files, each in its own way. The microcode
+kernel reduces a definition to tables and an instruction tree; the stream
+kernel registers handlers for the constructs a definition spells and
+transforms the token stream by its block style and markers; the stack
+kernel compiles every construct to words over one stack. The definitions in this
 directory (Lumen, RPLumen, Python, Rust) are embedded at build time and picked by
 file extension, `--lang <name>` or `--lang <extension>`; the ones in
 `extras/` (PHP, Ruby, Pascal, C, JavaScript, Swift) are never compiled
 in and are read from disk with `--lang extras/<name>.json`, the same path
-any definition of your own takes. Every example runs on both kernels, and
+any definition of your own takes. Every example runs on every kernel, and
 `scripts/kernel_diff.sh` requires them to print the same thing.
 
 These files replace the earlier YAML specifications, EBNF grammars and
@@ -26,7 +27,7 @@ Every kernel has a floor: the operations that a program cannot express in
 terms of the others, because they reach into a value's representation,
 have an effect, or are syntax. Everything above the floor is derived, in
 the kernel by the derivation stated here or in `lib_lumen/` as Lumen
-code, and both kernels derive the same things the same way. A definition
+code, and every kernel derives the same things the same way. A definition
 only names what its language spells; the floor is the same for all.
 
 | Domain | Floor | Derived from it |

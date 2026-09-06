@@ -1,6 +1,6 @@
-// lumen-lang: command-line host for the two kernels.
+// lumen-lang: command-line host for the three kernels.
 //
-// Usage: lumen-lang [--kernel stream|microcode] [--lang <name|definition.json>]
+// Usage: lumen-lang [--kernel stream|microcode|stack] [--lang <name|definition.json>]
 //                   <file> [--lang <name|definition.json>] [program args...]
 //
 // The host reads the file, picks the language from `--lang` (also spelled
@@ -9,7 +9,7 @@
 // to the selected kernel. A `--lang` value takes a language name (`python`),
 // one of its extensions (`py`), or the path of a definition file
 // (`langs/extras/php.json`), which is read at run time.
-// Nothing here knows how either kernel works, and the kernels never see
+// Nothing here knows how any kernel works, and the kernels never see
 // each other.
 
 use std::collections::HashSet;
@@ -18,7 +18,7 @@ use std::fs;
 use std::path::Path;
 use std::process;
 
-const KERNELS: [&str; 2] = ["stream", "microcode"];
+const KERNELS: [&str; 3] = ["stream", "microcode", "stack"];
 const DEFAULT_KERNEL: &str = "microcode";
 const DEFAULT_LANGUAGE: &str = "lumen";
 
@@ -79,6 +79,8 @@ fn main() {
         ("stream", Language::File { text, .. }) => lumen_stream::run_definition(text, &source, &inv.program_args),
         ("microcode", Language::Named(name)) => lumen_microcode::run(name, &source, &inv.program_args),
         ("microcode", Language::File { text, .. }) => lumen_microcode::run_definition(text, &source, &inv.program_args),
+        ("stack", Language::Named(name)) => lumen_stack::run(name, &source, &inv.program_args),
+        ("stack", Language::File { text, .. }) => lumen_stack::run_definition(text, &source, &inv.program_args),
         _ => unreachable!("kernel names are validated in parse_args"),
     };
 
@@ -90,7 +92,7 @@ fn main() {
 
 fn usage(program: &str) -> ! {
     eprintln!(
-        "Usage: {} [--kernel stream|microcode] [--lang <name|extension|definition.json>] <file> [program args...]",
+        "Usage: {} [--kernel stream|microcode|stack] [--lang <name|extension|definition.json>] <file> [program args...]",
         program
     );
     process::exit(1);

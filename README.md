@@ -1,6 +1,6 @@
 # Lumen-Lang
 
-An experimental interpreter framework: one command-line host, two independent
+An experimental interpreter framework: one command-line host, three independent
 kernels, and languages defined as data. Lumen exists to explore language
 semantics and the separation between an execution substrate and the languages
 it hosts. It is not a production language.
@@ -32,6 +32,7 @@ cargo run -- examples/rust/demo.rs
 # Choose the kernel explicitly (microcode is the default)
 cargo run -- --kernel stream examples/lumen/pi_machin.lm
 cargo run -- --kernel microcode examples/lumen/pi_machin.lm
+cargo run -- --kernel stack examples/lumen/pi_machin.lm
 
 # Name the language by name or by extension
 cargo run -- --lang python examples/python/demo.py
@@ -54,16 +55,17 @@ the file extension, which each definition in `langs/` declares for itself,
 and Lumen is the default. Arguments after the file are passed to the
 program.
 
-## Two kernels, one host
+## Three kernels, one host
 
 ```
 src/main.rs            the host: arguments, language detection, the embedded
-                       Lumen standard library; the only place both kernels exist
+                       Lumen standard library; the only place the kernels exist
 kernels/stream/        crate lumen-stream: a tree-walking interpreter substrate
 kernels/microcode/     crate lumen-microcode: a table-driven execution engine
+kernels/stack/         crate lumen-stack: a compiler to one stack machine
 langs/                 language definitions as JSON, one file per language,
-                       with a generated side-by-side comparison; both kernels
-                       read them. Lumen, Python and Rust are embedded at
+                       with a generated side-by-side comparison; every kernel
+                       reads them. Lumen, RPLumen, Python and Rust are embedded at
                        build time; langs/extras/ holds definitions read from
                        disk at run time with --lang <path>
 lib_lumen/             the Lumen standard library, written in Lumen
@@ -71,12 +73,13 @@ examples/              programs for every language
 ```
 
 The kernels are separate crates that do not depend on each other, and
-`scripts/kernel_independence.py` fails CI if either names the other or if any
-run of five or more identical source lines appears in both trees. Where both
-need the same facility they take different routes by design: comment removal
+`scripts/kernel_independence.py` fails CI if any names another or if a
+long run of identical source lines appears in two trees. Where they need
+the same facility they take different routes by design: comment removal
 is a token-stream transformation in the stream language and a
-definition-driven text pass in the microcode ingest; bindings are hash-map scopes in one and a
-linear frame stack in the other.
+definition-driven text pass in the microcode ingest; bindings are hash-map
+scopes in the stream kernel, a linear frame stack in the microcode kernel,
+and slots resolved at compile time in the stack kernel.
 
 ### Stream kernel
 
@@ -100,6 +103,19 @@ onto statement forms, the surface names of built-ins, and the names of
 system bindings. The kernel reduces every construct to seven primitives and
 executes them. See [docs/LUMEN_KERNEL_MICROCODE.md](docs/LUMEN_KERNEL_MICROCODE.md)
 and [langs/README.md](langs/README.md).
+
+### Stack kernel
+
+A compiler to one stack machine. Every language, read from the same
+definitions, compiles in a single syntax-directed pass to a flat list of
+words over a data stack: a literal pushes, an operator pops its operands
+and pushes the result, a control word is a jump, a call runs another
+word list, and names are slots resolved when compiling. RPLumen is the
+machine's own notation, so its programs compile almost word for word and
+the infix languages become RPLumen underneath. Machine-word integers stay
+unboxed and arrays are shared until written, which makes this the fast
+kernel: several times the microcode kernel on loops, more on array code.
+See [docs/LUMEN_KERNEL_STACK.md](docs/LUMEN_KERNEL_STACK.md).
 
 ## Languages
 
@@ -132,8 +148,8 @@ calls) into `examples/<language>/` under the same relative path, and
 writes [examples/PORTS.md](examples/PORTS.md), which says for each example
 and language either that the port exists or which construct the language
 has no spelling for. Those ports, the hand-written examples and the Lumen
-suite all run on both kernels, and `scripts/kernel_diff.sh` checks that
-the two kernels print the same for every one of them.
+suite all run on every kernel, and `scripts/kernel_diff.sh` checks that
+the three kernels print the same for every one of them.
 
 Lumen is the reference language: integers, exact rationals and reals of
 configurable precision, strings, arrays, functions, `for`/`while`/`until`
@@ -145,20 +161,20 @@ label of its definition is compared with the other languages in
 
 ## Testing
 
-Every example runs on both kernels:
+Every example runs on every kernel:
 
 ```bash
 ./test.sh --lang all          # everything
 ./test.sh                     # Lumen only
 ./test.sh --lang php          # one language
-./test.sh --kernel stream     # one kernel
+./test.sh --kernel stack      # one kernel
 ./test.sh fibonacci_iterative.lm
 ./test.sh --help
 ```
 
-`scripts/kernel_diff.sh` goes further and requires the two kernels to print
-the same thing for every program; today every program does. The
-differential test exists to find semantic gaps between the two
+`scripts/kernel_diff.sh` goes further and requires the three kernels to
+print the same thing for every program; today every program does. The
+differential test exists to find semantic gaps between the
 implementations, and each one it has found has been closed in whichever
 kernel was wrong.
 
@@ -171,6 +187,7 @@ errors, a check that the ported examples match what
 
 - [docs/LUMEN_KERNEL_STREAM.md](docs/LUMEN_KERNEL_STREAM.md) — stream kernel charter
 - [docs/LUMEN_KERNEL_MICROCODE.md](docs/LUMEN_KERNEL_MICROCODE.md) — microcode kernel and how it reads a definition
+- [docs/LUMEN_KERNEL_STACK.md](docs/LUMEN_KERNEL_STACK.md) — stack kernel: the word set and the compiler
 - [langs/README.md](langs/README.md) — the definition format, every label, and the languages side by side
 - [docs/LUMEN_LANGUAGE_DESIGN.md](docs/LUMEN_LANGUAGE_DESIGN.md) — design principles
 - [docs/LUMEN_COMPACT_REFERENCE.md](docs/LUMEN_COMPACT_REFERENCE.md) — Lumen quick reference

@@ -31,6 +31,19 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   definition is loaded at run time. PHP moved there, and Ruby, Pascal, C,
   JavaScript and Swift are added with examples; all nine languages run on
   both kernels.
+- **The stack kernel**: a third kernel, `kernels/stack` (`--kernel
+  stack`), compiles every language to one stack machine. The compiler is
+  a single syntax-directed pass from tokens to a flat list of words over
+  a data stack (push, load, store, operate, jump, call, return, and the
+  RPL stack words); no tree is built, names are resolved to slots when
+  compiling, a load whose slot holds nothing yet falls through to the
+  global of the same name, and a bare block forgets what it bound. The
+  machine keeps machine-word integers unboxed and shares arrays until
+  they are written, so it runs the loop benchmark five times faster than
+  the microcode kernel and the sieve forty times faster. RPLumen is its
+  native notation. All 488 programs print the same on all three kernels,
+  `scripts/kernel_independence.py` checks every pair of kernels, and
+  `scripts/kernel_diff.sh` compares each kernel with the microcode one.
 - **RPLumen**: a reverse Polish Lumen (`langs/rplumen.json`, `.rpl`,
   built in), the fourth block style, `postfix`. `5 3 +` is `5 + 3`; a
   quoted name is data for the word after it (`8 'x' =`, `4 'arr' push`,

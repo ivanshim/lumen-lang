@@ -7,8 +7,8 @@ Generated from the tree; regenerate with:
 
 lumen-lang/
   Cargo.toml                       workspace + host package
-  src/main.rs                      command-line host (the only place both kernels meet)
-  test.sh, test_e.sh, test_pi.sh   test drivers (test.sh runs every example on both kernels)
+  src/main.rs                      command-line host (the only place the kernels meet)
+  test.sh, test_e.sh, test_pi.sh   test drivers (test.sh runs every example on every kernel)
   .github/workflows/ci.yml         GitHub Actions: kernel independence, build with -D warnings, run test.sh
 
   langs/                           language definitions as JSON, one per language, plus a comparison table
@@ -98,6 +98,18 @@ lumen-lang/
     kernels/microcode/src/kernel/value.rs
     kernels/microcode/src/lib.rs
     kernels/microcode/src/schema.rs
+
+  kernels/stack/                   crate lumen-stack (every language compiled to one stack machine)
+    kernels/stack/Cargo.toml
+    kernels/stack/src/code.rs          the word set and compiled programs
+    kernels/stack/src/compiler.rs      tokens to words in one pass; names to slots
+    kernels/stack/src/definition.rs    the definition reader
+    kernels/stack/src/layout.rs        block structure
+    kernels/stack/src/lexer.rs         scanning
+    kernels/stack/src/lib.rs
+    kernels/stack/src/machine.rs       the inner loop, builtins, the call cache
+    kernels/stack/src/number.rs        the numeric tower with a machine-word fast path
+    kernels/stack/src/value.rs         values and rendering
 
   lib_lumen/                       Lumen standard library (.lm) + prelude.rs (embedding list)
     lib_lumen/constants.lm
