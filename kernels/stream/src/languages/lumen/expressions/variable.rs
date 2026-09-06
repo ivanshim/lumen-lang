@@ -211,7 +211,7 @@ impl ExprPrefix for VariablePrefix {
         // Allow "and", "or", "not", "true", "false", "extern" to pass through - they'll be handled
         // by their own expression handlers (logic, literals, extern_expr)
         let lex = &parser.peek().lexeme;
-        let is_identifier = lex.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_');
+        let is_identifier = lex.chars().next().map_or(false, word_start);
         // Exclude statement keywords but allow builtin functions like emit, int, str
         let is_statement_keyword = matches!(lex.as_str(),
             "if" | "else" | "while" | "break" | "continue" | "fn" | "let" | "mut" | "return");
@@ -225,9 +225,9 @@ impl ExprPrefix for VariablePrefix {
         // Since the kernel lexer is agnostic, multi-character identifiers are split into single chars
         // Continue consuming identifier characters
         loop {
-            if parser.peek().lexeme.len() == 1 {
-                let ch = parser.peek().lexeme.as_bytes()[0];
-                if ch.is_ascii_alphanumeric() || ch == b'_' {
+            if parser.peek().lexeme.chars().count() == 1 {
+                let ch = parser.peek().lexeme.chars().next().unwrap();
+                if word_char(ch) {
                     name.push_str(&parser.advance().lexeme);
                     continue;
                 }

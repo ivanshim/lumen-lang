@@ -37,3 +37,6 @@ impl LumenParserExt for Parser<'_> {
         }
     }
 }
+
+/// Identifier character classes for this language.
+pub use crate::languages::lumen::{word_char, word_start};

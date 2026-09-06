@@ -14,6 +14,7 @@ lexical:
     decimal_point: "."
     base_marker: "@"
     exponent_marker: "^"
+  identifier_unicode: true
   operators:
     - "=="
     - "!="

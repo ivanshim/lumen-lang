@@ -44,9 +44,9 @@ impl StmtHandler for LetStmtHandler {
 
         // Since kernel lexer is agnostic, consume remaining identifier characters
         loop {
-            if parser.peek().lexeme.len() == 1 {
-                let ch = parser.peek().lexeme.as_bytes()[0];
-                if ch.is_ascii_alphanumeric() || ch == b'_' {
+            if parser.peek().lexeme.chars().count() == 1 {
+                let ch = parser.peek().lexeme.chars().next().unwrap();
+                if word_char(ch) {
                     name.push_str(&parser.advance().lexeme);
                     continue;
                 }

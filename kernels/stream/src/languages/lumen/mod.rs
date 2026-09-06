@@ -17,3 +17,16 @@ pub mod memo;
 pub mod dispatcher {
     include!("src_lumen.rs");
 }
+
+/// Whether identifiers may use letters and digits beyond ASCII.
+pub const IDENTIFIER_UNICODE: bool = true;
+
+/// Whether `c` may begin an identifier in this language.
+pub fn word_start(c: char) -> bool {
+    crate::languages::word_start(IDENTIFIER_UNICODE, c)
+}
+
+/// Whether `c` may continue an identifier in this language.
+pub fn word_char(c: char) -> bool {
+    crate::languages::word_char(IDENTIFIER_UNICODE, c)
+}

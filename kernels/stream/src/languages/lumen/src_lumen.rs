@@ -98,7 +98,7 @@ pub fn register_all(registry: &mut Registry) {
     ];
 
     registry.tokens.set_token_definitions(tokens);
-    registry.tokens.set_identifier_bytes(crate::languages::ascii_word_byte);
+    registry.tokens.set_word_chars(crate::languages::lumen::word_char);
 
     // Core syntax (structural tokens - parentheses, indentation, etc.)
     structure::structural::register(registry);

@@ -60,7 +60,7 @@ impl StmtHandler for ArrayAssignHandler {
     fn matches(&self, parser: &Parser) -> bool {
         // Check if current token is identifier
         let curr = &parser.peek().lexeme;
-        let is_ident_start = curr.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_');
+        let is_ident_start = curr.chars().next().map_or(false, word_start);
 
         if !is_ident_start {
             return false;
@@ -73,13 +73,13 @@ impl StmtHandler for ArrayAssignHandler {
         // Skip identifier characters
         while let Some(t) = parser.peek_n(i) {
             let lexeme = &t.lexeme;
-            if lexeme.len() == 1 {
-                let ch = lexeme.as_bytes()[0];
-                if ch.is_ascii_alphanumeric() || ch == b'_' {
+            if lexeme.chars().count() == 1 {
+                let ch = lexeme.chars().next().unwrap();
+                if word_char(ch) {
                     i += 1;
                     continue;
                 }
-                if ch == b' ' || ch == b'\t' {
+                if ch == ' ' || ch == '\t' {
                     i += 1;
                     continue;
                 }
@@ -109,9 +109,9 @@ impl StmtHandler for ArrayAssignHandler {
                     i += 1;
                     while let Some(t2) = parser.peek_n(i) {
                         let lex = &t2.lexeme;
-                        if lex.len() == 1 {
-                            let ch = lex.as_bytes()[0];
-                            if ch == b' ' || ch == b'\t' {
+                        if lex.chars().count() == 1 {
+                            let ch = lex.chars().next().unwrap();
+                            if ch == ' ' || ch == '\t' {
                                 i += 1;
                                 continue;
                             }
@@ -134,9 +134,9 @@ impl StmtHandler for ArrayAssignHandler {
 
         // Continue consuming identifier characters if split across tokens
         loop {
-            if parser.peek().lexeme.len() == 1 {
-                let ch = parser.peek().lexeme.as_bytes()[0];
-                if ch.is_ascii_alphanumeric() || ch == b'_' {
+            if parser.peek().lexeme.chars().count() == 1 {
+                let ch = parser.peek().lexeme.chars().next().unwrap();
+                if word_char(ch) {
                     name.push_str(&parser.advance().lexeme);
                     parser.skip_tokens();
                     continue;

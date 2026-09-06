@@ -185,9 +185,9 @@ pub fn process_indentation(source: &str, raw_tokens: Vec<SpannedToken>) -> Lumen
                     continue;
                 }
                 // Skip whitespace tokens (single-char spaces, tabs, newlines, carriage returns)
-                if raw_tok.tok.lexeme.len() == 1 {
-                    let ch = raw_tok.tok.lexeme.as_bytes()[0];
-                    if ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' {
+                if raw_tok.tok.lexeme.chars().count() == 1 {
+                    let ch = raw_tok.tok.lexeme.chars().next().unwrap();
+                    if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
                         continue;
                     }
                 }

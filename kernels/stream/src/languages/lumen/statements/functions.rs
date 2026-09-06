@@ -80,15 +80,15 @@ impl StmtHandler for FnDefStmtHandler {
 
         // Parse function name
         let mut name;
-        if parser.peek().lexeme.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_') {
+        if parser.peek().lexeme.chars().next().map_or(false, word_start) {
             name = parser.advance().lexeme;
             parser.skip_tokens();
 
             // Handle multi-character identifiers split by lexer
             loop {
-                if parser.peek().lexeme.len() == 1 {
-                    let ch = parser.peek().lexeme.as_bytes()[0];
-                    if ch.is_ascii_alphanumeric() || ch == b'_' {
+                if parser.peek().lexeme.chars().count() == 1 {
+                    let ch = parser.peek().lexeme.chars().next().unwrap();
+                    if word_char(ch) {
                         name.push_str(&parser.advance().lexeme);
                         parser.skip_tokens();
                         continue;
@@ -113,15 +113,15 @@ impl StmtHandler for FnDefStmtHandler {
         while parser.peek().lexeme != RPAREN {
             // Parse parameter name
             let mut param_name;
-            if parser.peek().lexeme.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_') {
+            if parser.peek().lexeme.chars().next().map_or(false, word_start) {
                 param_name = parser.advance().lexeme;
                 parser.skip_tokens();
 
                 // Handle multi-character identifiers
                 loop {
-                    if parser.peek().lexeme.len() == 1 {
-                        let ch = parser.peek().lexeme.as_bytes()[0];
-                        if ch.is_ascii_alphanumeric() || ch == b'_' {
+                    if parser.peek().lexeme.chars().count() == 1 {
+                        let ch = parser.peek().lexeme.chars().next().unwrap();
+                        if word_char(ch) {
                             param_name.push_str(&parser.advance().lexeme);
                             parser.skip_tokens();
                             continue;

@@ -31,7 +31,7 @@ impl StmtHandler for AssignStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
         // Check if current token is the start of an identifier
         let curr = &parser.peek().lexeme;
-        let is_ident_start = curr.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_');
+        let is_ident_start = curr.chars().next().map_or(false, word_start);
 
         if !is_ident_start {
             return false;
@@ -44,14 +44,14 @@ impl StmtHandler for AssignStmtHandler {
             let lexeme = &t.lexeme;
 
             // Skip whitespace tokens
-            if lexeme.len() == 1 {
-                let ch = lexeme.as_bytes()[0];
-                if ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' {
+            if lexeme.chars().count() == 1 {
+                let ch = lexeme.chars().next().unwrap();
+                if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
                     i += 1;
                     continue;
                 }
                 // Skip identifier continuation characters (letters, digits, underscores)
-                if ch.is_ascii_alphanumeric() || ch == b'_' {
+                if word_char(ch) {
                     i += 1;
                     continue;
                 }
@@ -76,9 +76,9 @@ impl StmtHandler for AssignStmtHandler {
 
         // Continue consuming identifier characters if split across tokens
         loop {
-            if parser.peek().lexeme.len() == 1 {
-                let ch = parser.peek().lexeme.as_bytes()[0];
-                if ch.is_ascii_alphanumeric() || ch == b'_' {
+            if parser.peek().lexeme.chars().count() == 1 {
+                let ch = parser.peek().lexeme.chars().next().unwrap();
+                if word_char(ch) {
                     name.push_str(&parser.advance().lexeme);
                     parser.skip_tokens();
                     continue;

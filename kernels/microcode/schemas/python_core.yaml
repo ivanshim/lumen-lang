@@ -11,6 +11,7 @@ lexical:
     "'": { n: "\n", t: "\t", "\\": "\\", "'": "'" }
   number:
     decimal_point: "."
+  identifier_unicode: true
   operators:
     - "=="
     - "!="

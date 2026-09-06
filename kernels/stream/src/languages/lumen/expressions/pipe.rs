@@ -106,15 +106,15 @@ impl ExprInfix for PipeInfix {
 
         // Parse function name
         let mut func_name;
-        if parser.peek().lexeme.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_') {
+        if parser.peek().lexeme.chars().next().map_or(false, word_start) {
             func_name = parser.advance().lexeme;
             parser.skip_tokens();
 
             // Handle multi-character identifiers
             loop {
-                if parser.peek().lexeme.len() == 1 {
-                    let ch = parser.peek().lexeme.as_bytes()[0];
-                    if ch.is_ascii_alphanumeric() || ch == b'_' {
+                if parser.peek().lexeme.chars().count() == 1 {
+                    let ch = parser.peek().lexeme.chars().next().unwrap();
+                    if word_char(ch) {
                         func_name.push_str(&parser.advance().lexeme);
                         parser.skip_tokens();
                         continue;
