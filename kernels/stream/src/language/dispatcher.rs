@@ -5,10 +5,11 @@
 // words only as whole words. Handlers are registered in priority order.
 
 use crate::kernel::registry::TokenDefinition;
-use super::definition::def;
+use super::definition::{def, BlockStyle};
 use super::registry::Registry;
 
 use super::expressions;
+use super::postfix;
 use super::statements;
 use super::structure;
 
@@ -29,6 +30,14 @@ pub fn register_all(registry: &mut Registry) {
 
     // Core syntax (structural tokens - parentheses, indentation, etc.)
     structure::structural::register(registry);
+
+    // A postfix language has no expressions or statement forms: every
+    // word acts on the stack, and only the literals are shared.
+    if def().block_style == BlockStyle::Postfix {
+        expressions::literals::register(registry);
+        postfix::register(registry);
+        return;
+    }
 
     // Expression features. Registration order matters: earlier registrations
     // have higher priority, so literals, operators and extern come before

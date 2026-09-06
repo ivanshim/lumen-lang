@@ -11,6 +11,8 @@ use crate::schema::LanguageSchema;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Word,
+    /// A quoted name (`'x'`): a name given as data rather than looked up.
+    Name,
     Number,
     Str,
     Op,
@@ -282,6 +284,33 @@ pub fn lex(source: &str, schema: &LanguageSchema) -> Result<Vec<Token>, String> 
             }
             col += text.len();
             tokens.push(Token::new(Kind::Number, text, line, start_col));
+            continue;
+        }
+
+        // A quoted name: the word between the name quotes, kept as data.
+        if lexical.name_quote == Some(c) {
+            let mut text = String::new();
+            i += 1;
+            col += 1;
+            let mut closed = false;
+            while i < chars.len() {
+                let ch = chars[i];
+                i += 1;
+                col += 1;
+                if ch == c {
+                    closed = true;
+                    break;
+                }
+                if ch == '\n' {
+                    break;
+                }
+                text.push(ch);
+            }
+            let shaped = text.starts_with(|ch| is_word_start(ch, unicode)) && text.chars().all(|ch| is_word_char(ch, unicode));
+            if !closed || !shaped {
+                return Err(format!("Expected a name between {} quotes at {}:{}", c, line, start_col));
+            }
+            tokens.push(Token::new(Kind::Name, text, line, start_col));
             continue;
         }
 

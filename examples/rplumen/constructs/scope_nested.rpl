@@ -1,0 +1,11 @@
+# Ported from examples/lumen/constructs/scope_nested.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+1 'x' =
+true if
+    2 'x' =
+    true if
+        3 'x' =
+        x print
+    end
+    x print
+end
+x print

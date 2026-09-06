@@ -31,6 +31,21 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   definition is loaded at run time. PHP moved there, and Ruby, Pascal, C,
   JavaScript and Swift are added with examples; all nine languages run on
   both kernels.
+- **RPLumen**: a reverse Polish Lumen (`langs/rplumen.json`, `.rpl`,
+  built in), the fourth block style, `postfix`. `5 3 +` is `5 + 3`; a
+  quoted name is data for the word after it (`8 'x' =`, `4 'arr' push`,
+  `0 99 'arr' put`, `0 10 'i' for ... next`); `« ... »` is a program
+  value that a bare word or `eval` runs (`« 'b' = 'a' = a b + » 'add'
+  =`); control words take their condition from the stack (`cond if ...
+  else ... end`, `while cond repeat ... end`, `do ... until cond end`);
+  `[ 1 2 3 ]` gathers what its body pushes; `dup drop swap over rot` are
+  the HP-48's. New labels: `lexical.name_quote`, `stack.*`,
+  `builtin.get` and `builtin.put`. Each kernel hosts it its own way: the
+  microcode kernel reduces the words onto its instruction set over a
+  hidden stack array with six internal invocations; the stream kernel
+  runs one statement handler over a thread-local stack. The porter writes
+  the Lumen examples in postfix too (59 of them), and every one prints
+  the same on both kernels.
 - **Division as the languages specify it**: `op.div.result` says whether a
   language's `/` yields an exact rational (Lumen) or a real (Python,
   JavaScript, PHP, Pascal), so `7 / 2` prints `3.5` where the language
@@ -38,15 +53,15 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   declares (`let x;`).
 - **The Lumen suite in every language**: `scripts/port_examples.py` ports
   each of the 84 Lumen examples, with the library functions it calls, to
-  every other language whose definition spells what it needs, 306
+  every other language whose definition spells what it needs, 369
   programs in all, and writes `examples/PORTS.md` saying which and, where
   not, which construct the language has no spelling for. Builtins are
   written the way each language writes them (`arr.push(x)`, `s.length`,
   `x.to_s`, `strlen`), a constant a function reads is inlined where
   functions cannot see top-level names, and Pascal gets typed functions
   with `var` sections. The test driver runs every example under
-  `examples/` on both kernels (842 runs), and `scripts/kernel_diff.sh`
-  finds all 421 programs printing the same on both.
+  `examples/` on both kernels (976 runs), and `scripts/kernel_diff.sh`
+  finds all 488 programs printing the same on both.
 - **The kernel renders nothing for Lumen**: the seven renderer builtins
   (`int_to_string` and the rest) are gone from both kernels and live in
   `lib_lumen/render.lm` as Lumen code, written against the primitives; a

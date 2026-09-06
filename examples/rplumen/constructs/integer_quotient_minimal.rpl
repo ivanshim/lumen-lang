@@ -1,0 +1,43 @@
+# Ported from examples/lumen/constructs/integer_quotient_minimal.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+"=== MINIMAL // OPERATOR VALIDATION ===\n\n" write
+"1. Integer // Integer (positive): 17 // 5 = " write
+17 5 // 'q' =
+q print
+"   Identity check: 17 == 5 * 3 + (17 % 5) ? " write
+5 q * 17 5 % + 'identity' =
+identity 17 == print
+"\n" write
+"2. Truncate toward zero: -17 // 5 = " write
+17 neg 5 // 'q' =
+q print
+"   Identity check: -17 == 5 * (-3) + (-17 % 5) ? " write
+5 q * 17 neg 5 % + 'identity' =
+identity 17 neg == print
+"\n" write
+"3. 17 // -5 = " write
+17 5 neg // 'q' =
+q print
+"   Identity check: 17 == -5 * (-3) + (17 % -5) ? " write
+5 neg q * 17 5 neg % + 'identity' =
+identity 17 == print
+"\n" write
+"4. Rational // Integer: (17/3) // 2 = " write
+17 3 / 2 // 'q' =
+q print
+"\n" write
+"5. Rational // Rational: (20/3) // (3/2) = " write
+20 3 / 3 2 / // print
+"\n" write
+"6. Real // Integer: 3.5 // 2 = " write
+3.5 2 // print
+"\n" write
+"7. Precedence: 20 // 3 * 2 = " write
+20 3 // 2 * 'result' =
+result print
+"   (should be 12, not 2 or other value)\n" write
+"\n" write
+"8. Division by zero: " write
+"attempting 10 // 0... " write
+"(should raise error below)\n" write
+"If you see 'Division by zero' error next, test passed.\n" write
+"\n" write

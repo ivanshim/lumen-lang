@@ -14,6 +14,7 @@ lumen-lang/
   langs/                           language definitions as JSON, one per language, plus a comparison table
     langs/README.md
     langs/lumen.json                 built in (embedded at build time)
+    langs/rplumen.json               built in; reverse Polish Lumen, the postfix block style
     langs/python.json                built in
     langs/rust.json                  built in
     langs/extras/c.json              read from disk at run time with --lang <path>
@@ -55,6 +56,7 @@ lumen-lang/
     kernels/stream/src/language/memo.rs
     kernels/stream/src/language/mod.rs
     kernels/stream/src/language/numeric.rs
+    kernels/stream/src/language/postfix.rs
     kernels/stream/src/language/prelude.rs
     kernels/stream/src/language/registry/mod.rs
     kernels/stream/src/language/registry/precedence.rs
@@ -125,7 +127,7 @@ lumen-lang/
     scripts/lang_table.py
     scripts/port_examples.py         writes every Lumen example in every other language, and examples/PORTS.md
 
-  examples/                        426 programs: lumen/ (+constructs/, libraries/) and, mirroring it, python/, rust/, php/, ruby/, pascal/, c/, javascript/, swift/; PORTS.md says which Lumen example is in which language
+  examples/                        488 programs: lumen/ (+constructs/, libraries/) and, mirroring it, rplumen/, python/, rust/, php/, ruby/, pascal/, c/, javascript/, swift/; PORTS.md says which Lumen example is in which language
   docs/                            design documents, references, history
     docs/DIRECTORY_STRUCTURE.txt
     docs/LUMEN_COMPACT_REFERENCE.md

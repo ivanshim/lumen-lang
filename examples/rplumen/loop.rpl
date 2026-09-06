@@ -1,0 +1,18 @@
+# Counting with while, do...until and for; break and continue as in Lumen.
+0 'i' =
+while i 10 < repeat
+    i 1 + 'i' =
+    i 2 % 0 == if continue end
+    i 7 > if break end
+    i print
+end
+
+3 'n' =
+do
+    n print
+    n 1 - 'n' =
+until n 0 == end
+
+0 5 'k' for
+    k k * print
+next

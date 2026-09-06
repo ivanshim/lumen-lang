@@ -1,0 +1,25 @@
+# Ported from examples/lumen/constructs/functions_recursion.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+« 'n' =
+    n 1 <= if
+        1 return
+    else
+        n n 1 - factorial * return
+    end
+    null return
+» 'factorial' =
+
+« 'n' =
+    n 0 <= if
+        "Done" print
+    else
+        n print
+        n 1 - countdown return
+    end
+    null return
+» 'countdown' =
+
+"Test: Recursion" print
+"Factorial of 5:" print
+5 factorial print
+"Countdown from 3:" print
+3 countdown drop

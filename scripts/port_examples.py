@@ -727,7 +727,7 @@ class Emitter:
                 continue
             if label == "system.entry":
                 continue  # the entry function keeps its name
-            if label.startswith(("stmt.", "literal.", "op.", "block.", "builtin.", "system.")):
+            if label.startswith(("stmt.", "literal.", "op.", "block.", "stack.", "builtin.", "system.")):
                 for s in value:
                     if isinstance(s, str) and re.fullmatch(r"[^\W\d]\w*", s):
                         words.add(s)
@@ -1372,6 +1372,176 @@ class Emitter:
         return lines
 
 
+class PostfixEmitter(Emitter):
+    """A postfix target (RPLumen): expressions in post-order, one value per
+    call, control words around bodies, quoted names for the words that
+    take one. Precedence, declarations and call brackets do not arise."""
+
+    # Builtins that consume their arguments and yield nothing.
+    CONSUMERS = ("print", "write", "emit", "error", "push")
+
+    def check_globals(self, prog, lib_globals, lib_fns):
+        # Bindings are looked up through every open frame, as in Lumen.
+        self.inline = {}
+
+    def program(self, prog, lib_globals, lib_fns, source_path):
+        scope = Scope(prog.body, lib_fns)
+        self.check_globals(prog, lib_globals, lib_fns)
+        lines = [f"{self.w('lexical.comment_line')} {HEADER.format(source=source_path)}"]
+        for s in lib_globals + lib_fns + prog.body:
+            lines.extend(self.statement(s, scope, 0))
+            if s.kind == "Fn":
+                lines.append("")
+        return "\n".join(lines).rstrip("\n") + "\n"
+
+    def quoted(self, name):
+        q = self.w("lexical.name_quote")
+        return f"{q}{self.ident(name)}{q}"
+
+    # ---- expressions: the text leaves one value on the stack
+    def expr(self, e, scope):
+        if e.kind == "Num":
+            return self.number(e), None
+        if e.kind == "Str":
+            return self.string(e.value), None
+        if e.kind == "Bool":
+            return self.w("literal.true" if e.value else "literal.false"), None
+        if e.kind == "Null":
+            return self.w("literal.null"), None
+        if e.kind == "Var":
+            if e.name in SYSTEM_NAMES:
+                raise Skip(f"no `{e.name}`")
+            return self.ident(e.name), None
+        if e.kind == "Group":
+            return self.expr(e.expr, scope)
+        if e.kind == "Array":
+            items = " ".join(self.expr(i, scope)[0] for i in e.items)
+            return f"{self.w('syntax.array.open', 'array literal')} {items} {self.w('syntax.array.close')}".replace("  ", " "), None
+        if e.kind == "Index":
+            target, _ = self.expr(e.target, scope)
+            index, _ = self.expr(e.index, scope)
+            return f"{target} {index} {self.w('builtin.get', 'indexing')}", None
+        if e.kind == "Extern":
+            raise Skip("no `extern`")
+        if e.kind == "Unary":
+            text, _ = self.expr(e.operand, scope)
+            return f"{text} {self.w('op.negate' if e.op == '-' else 'op.not')}", None
+        if e.kind == "Bin":
+            left, _ = self.expr(e.left, scope)
+            right, _ = self.expr(e.right, scope)
+            if e.op in ("and", "or"):
+                # Short-circuit as a branch: the right side runs only when
+                # the left side leaves the answer open.
+                if_, else_, end = self.w("stmt.if"), self.w("stmt.else"), self.w("block.close")
+                if e.op == "and":
+                    return f"{left} {if_} {right} {else_} {self.w('literal.false')} {end}", None
+                return f"{left} {if_} {self.w('literal.true')} {else_} {right} {end}", None
+            op = e.op
+            if op == "." and not self.has("op.concat"):
+                op = "+"
+            return f"{left} {right} {self.w(self.OP_LABELS[op], e.op)}", None
+        if e.kind == "Call":
+            return self.call(e, scope), None
+        raise Skip(f"unexpected {e.kind}")
+
+    def call(self, e, scope):
+        name = e.name
+        args = e.args
+        if name in POLYMORPHIC and self.has(POLYMORPHIC[name]):
+            return self.postfix_call(self.d[POLYMORPHIC[name]][0], args, scope)
+        if name in scope.functions:
+            if len(args) != len(scope.functions[name].params):
+                raise Skip(f"`{name}` called with the wrong number of arguments")
+            return self.postfix_call(self.ident(name, True), args, scope)
+        if name in ("print", "write"):
+            if len(args) != 1:
+                raise Skip("print with several arguments")
+            return self.postfix_call(self.w(f"builtin.{name}"), args, scope)
+        if name == "push":
+            # push(arr, value): the array is named, not evaluated.
+            if len(args) != 2 or args[0].kind != "Var":
+                raise Skip("push to an expression")
+            value, _ = self.expr(args[1], scope)
+            return f"{value} {self.quoted(args[0].name)} {self.w('builtin.push')}"
+        if name == "real" and len(args) == 1:
+            # A real takes its precision from the stack: the default is 15.
+            args = args + [Node("Num", value=Fraction(15), real=False, base=10, text="15")]
+        if name in KERNEL_BUILTINS:
+            return self.postfix_call(self.w(KERNEL_BUILTINS[name], name), args, scope)
+        raise Skip(f"unknown function `{name}`")
+
+    def postfix_call(self, word, args, scope):
+        parts = [self.expr(a, scope)[0] for a in args]
+        return " ".join(parts + [word])
+
+    # ---- statements
+    def statement(self, s, scope, depth, is_entry=False):
+        ind = self.indent(depth)
+        k = s.kind
+        if k == "Expr":
+            e = s.expr
+            text, _ = self.expr(e, scope)
+            consumed = e.kind == "Call" and e.name in self.CONSUMERS
+            return [ind + text + ("" if consumed else f" {self.w('stack.drop')}")]
+        if k in ("Assign", "Let"):
+            value = self.w("literal.null") if s.expr is None else self.expr(s.expr, scope)[0]
+            return [ind + f"{value} {self.quoted(s.name)} {self.w('stmt.assign')}"]
+        if k == "IndexAssign":
+            if s.target.kind != "Var":
+                raise Skip("indexed assignment to an expression")
+            index, _ = self.expr(s.index, scope)
+            value, _ = self.expr(s.expr, scope)
+            return [ind + f"{index} {value} {self.quoted(s.target.name)} {self.w('builtin.put', 'indexed assignment')}"]
+        if k == "Memo":
+            raise Skip("no memoization switch")
+        if k == "Return":
+            # Every function leaves exactly one value; a bare return leaves null.
+            value = self.w("literal.null") if s.expr is None else self.expr(s.expr, scope)[0]
+            return [ind + f"{value} {self.w('stmt.return')}"]
+        if k == "Break":
+            return [ind + self.w("stmt.break")]
+        if k == "Continue":
+            return [ind + self.w("stmt.continue")]
+        if k == "If":
+            cond, _ = self.expr(s.cond, scope)
+            lines = [ind + f"{cond} {self.w('stmt.if')}"] + self.statements(s.body, scope, depth + 1)
+            if s.orelse:
+                lines.append(ind + self.w("stmt.else"))
+                lines.extend(self.statements(s.orelse, scope, depth + 1))
+            return lines + [ind + self.w("block.close")]
+        if k == "While":
+            cond, _ = self.expr(s.cond, scope)
+            head = f"{self.w('stmt.while')} {cond} {self.d['block.intro'][0]}"
+            return [ind + head] + self.statements(s.body, scope, depth + 1) + [ind + self.w("block.close")]
+        if k == "Until":
+            cond, _ = self.expr(s.cond, scope)
+            body = self.statements(s.body, scope, depth + 1)
+            return [ind + self.w("stmt.until")] + body + [ind + f"{self.d['block.intro'][1]} {cond} {self.w('block.close')}"]
+        if k == "For":
+            start, _ = self.expr(s.start, scope)
+            end, _ = self.expr(s.end, scope)
+            head = f"{start} {end} {self.quoted(s.var)} {self.w('stmt.for')}"
+            return [ind + head] + self.statements(s.body, scope, depth + 1) + [ind + self.d["block.close"][1]]
+        if k == "Fn":
+            return self.function(s, scope, depth)
+        raise Skip(f"unexpected statement {k}")
+
+    def function(self, s, scope, depth, is_entry=False):
+        """`« 'b' = 'a' = body » 'name' =`: the parameters come off the
+        stack last first, and the body leaves one value."""
+        ind = self.indent(depth)
+        inner = FunctionScope(scope, s)
+        body = explicit_returns(s.body)
+        if not body or body[-1].kind != "Return":
+            body = body + [Node("Return", expr=None, line=s.line)]
+        params = " ".join(f"{self.quoted(p)} {self.w('stmt.assign')}" for p, _ in reversed(s.params))
+        open_, close = self.w("stack.program.open", "programs"), self.w("stack.program.close")
+        lines = [ind + (f"{open_} {params}" if params else open_)]
+        lines.extend(self.statements(body, inner, depth + 1))
+        lines.append(ind + f"{close} {self.quoted(s.name)} {self.w('stmt.assign')}")
+        return lines
+
+
 def decimal_of(v):
     """A fraction whose denominator is 2^a 5^b as a decimal string."""
     sign = "-" if v < 0 else ""
@@ -1536,7 +1706,8 @@ def main():
         for ex in examples:
             rel = ex.relative_to(LUMEN_EXAMPLES).with_suffix(f".{ext}")
             try:
-                text = port_one(Emitter(d), ex, lib, constants)
+                emitter = PostfixEmitter(d) if d["block.style"] == "postfix" else Emitter(d)
+                text = port_one(emitter, ex, lib, constants)
             except Skip as why:
                 results[(ex, lang)] = str(why)
                 continue

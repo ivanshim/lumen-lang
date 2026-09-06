@@ -32,19 +32,23 @@ impl ExprNode for ComparisonExpr {
     fn eval(&self, env: &mut Env) -> LumenResult<Value> {
         let l = self.left.eval(env)?;
         let r = self.right.eval(env)?;
-        // Every comparison is derived from two floor operations, equality
-        // and less-than: a > b is b < a, a <= b is not b < a, a >= b is
-        // not a < b.
-        let result = match self.op {
-            Cmp::Eq => equal(&l, &r),
-            Cmp::Ne => !equal(&l, &r),
-            Cmp::Lt => less(&l, &r)?,
-            Cmp::Gt => less(&r, &l)?,
-            Cmp::Le => !less(&r, &l)?,
-            Cmp::Ge => !less(&l, &r)?,
-        };
-        Ok(Box::new(LumenBool::new(result)))
+        apply(self.op, &l, &r)
     }
+}
+
+/// The comparison on two evaluated operands. Every comparison is derived
+/// from two floor operations, equality and less-than: a > b is b < a,
+/// a <= b is not b < a, a >= b is not a < b.
+pub fn apply(op: Cmp, l: &Value, r: &Value) -> LumenResult<Value> {
+    let result = match op {
+        Cmp::Eq => equal(l, r),
+        Cmp::Ne => !equal(l, r),
+        Cmp::Lt => less(l, r)?,
+        Cmp::Gt => less(r, l)?,
+        Cmp::Le => !less(r, l)?,
+        Cmp::Ge => !less(l, r)?,
+    };
+    Ok(Box::new(LumenBool::new(result)))
 }
 
 /// A number of any kind as an exact fraction, or None for a non-number.

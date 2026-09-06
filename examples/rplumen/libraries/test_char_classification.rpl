@@ -1,0 +1,58 @@
+# Ported from examples/lumen/libraries/test_char_classification.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+« 'c' =
+    c ord 128 < return
+» 'is_ascii' =
+
+« 'c' =
+    c ord 'o' =
+    o "0" ord >= if o "9" ord <= else false end return
+» 'is_digit' =
+
+« 'c' =
+    c ord 'o' =
+    o "A" ord >= if o "Z" ord <= else false end if true else o "a" ord >= if o "z" ord <= else false end end return
+» 'is_alpha' =
+
+« 'c' =
+    c is_alpha if true else c is_digit end return
+» 'is_alnum' =
+
+"=== Character Classification ===" print
+"" print
+"ASCII characters:" print
+"  is_ascii('A'): " "A" is_ascii to_string . print
+"  is_ascii('5'): " "5" is_ascii to_string . print
+"  is_ascii(' '): " " " is_ascii to_string . print
+"" print
+"Digit detection:" print
+"  is_digit('0'): " "0" is_digit to_string . print
+"  is_digit('9'): " "9" is_digit to_string . print
+"  is_digit('a'): " "a" is_digit to_string . print
+"  is_digit('A'): " "A" is_digit to_string . print
+"" print
+"Alphabetic detection:" print
+"  is_alpha('a'): " "a" is_alpha to_string . print
+"  is_alpha('Z'): " "Z" is_alpha to_string . print
+"  is_alpha('5'): " "5" is_alpha to_string . print
+"  is_alpha('!'): " "!" is_alpha to_string . print
+"" print
+"Alphanumeric detection:" print
+"  is_alnum('a'): " "a" is_alnum to_string . print
+"  is_alnum('Z'): " "Z" is_alnum to_string . print
+"  is_alnum('5'): " "5" is_alnum to_string . print
+"  is_alnum('!'): " "!" is_alnum to_string . print
+"  is_alnum(' '): " " " is_alnum to_string . print
+"" print
+"=== Practical Example: Username Validation ===" print
+« 'c' =
+    c is_alnum if true else c "_" == end if true else c "-" == end return
+» 'is_valid_username_char' =
+
+[ "a" "Z" "5" "_" "-" "!" "@" ] 'test_chars' =
+0 'i' =
+while i test_chars len < repeat
+    test_chars i get 'c' =
+    c is_valid_username_char 'valid' =
+    "  '" c . "' is valid username char: " . valid to_string . print
+    i 1 + 'i' =
+end

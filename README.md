@@ -37,6 +37,9 @@ cargo run -- --kernel microcode examples/lumen/pi_machin.lm
 cargo run -- --lang python examples/python/demo.py
 cargo run -- --lang py examples/python/demo.py
 
+# Reverse Polish Lumen: 5 3 + is 5 + 3, 8 'x' = assigns, « ... » is a program
+cargo run -- examples/rplumen/fibonacci.rpl
+
 # Run under a language definition read from disk at run time
 cargo run -- --lang langs/extras/php.json examples/php/loop.php
 cargo run -- --lang langs/extras/ruby.json examples/ruby/demo.rb
@@ -103,6 +106,7 @@ and [langs/README.md](langs/README.md).
 | Language | Extension | Definition | Style | Stream | Microcode |
 |----------|-----------|------------|-------|--------|-----------|
 | Lumen | `.lm` | built in | Python-style indentation, exact numbers, pipe operator | yes | yes |
+| RPLumen | `.rpl` | built in | reverse Polish Lumen: `5 3 +`, `8 'x' =`, `« 'n' = ... » 'f' =`, `cond if ... else ... end`, `dup drop swap over rot` | yes | yes |
 | Python | `.py` | built in | indentation with `:`, `elif`, `def`, `range()`, `str`, `arr.append(x)`, `s[i]` | yes | yes |
 | Rust | `.rs` | built in | braces, `let mut`, `fn main()`, `println!("{}", x)`, `v.len()`, `x.to_string()` | yes | yes |
 | PHP | `.php` | `langs/extras/php.json` | braces, `$variables`, `<?php`, case-insensitive keywords, `strval`, `array_push` | yes | yes |
@@ -112,7 +116,7 @@ and [langs/README.md](langs/README.md).
 | JavaScript | `.js` | `langs/extras/javascript.json` | braces, `let`/`const`, `function`, `===`, `**`, `console.log`, `arr.push(x)`, `s.length` | yes | yes |
 | Swift | `.swift` | `langs/extras/swift.json` | braces without `;`, `let`/`var x: Int`, `func f(n: Int) -> Int`, `f(n: 1)`, `0..<n`, `arr.append(x)` | yes | yes |
 
-The eight other languages are subsets of those languages spelled exactly as
+The nine other languages are subsets of those languages spelled exactly as
 the languages spell them, running on Lumen's semantics: one value model,
 one scoping rule, and `/` yielding an exact rational in Lumen or a real
 where the language says so (`op.div.result`). Constructs the kernel lacks

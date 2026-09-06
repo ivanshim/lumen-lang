@@ -9,14 +9,14 @@
 # If --lang is not specified, tests Lumen. If --kernel is not specified,
 # tests both kernels. TEST_QUIET=1 prints program output only for failures.
 
-LANGUAGES=(lumen python rust php ruby pascal c javascript swift)
+LANGUAGES=(lumen rplumen python rust php ruby pascal c javascript swift)
 declare -A DIRS=(
-    [lumen]="examples/lumen" [python]="examples/python" [rust]="examples/rust" [php]="examples/php"
+    [lumen]="examples/lumen" [rplumen]="examples/rplumen" [python]="examples/python" [rust]="examples/rust" [php]="examples/php"
     [ruby]="examples/ruby" [pascal]="examples/pascal"
     [c]="examples/c" [javascript]="examples/javascript" [swift]="examples/swift"
 )
-declare -A EXT=([lumen]=lm [python]=py [rust]=rs [php]=php [ruby]=rb [pascal]=pas [c]=c [javascript]=js [swift]=swift)
-declare -A DISPLAY=([lumen]=Lumen [python]=Python [rust]=Rust [php]=PHP [ruby]=Ruby [pascal]=Pascal [c]=C [javascript]=JavaScript [swift]=Swift)
+declare -A EXT=([lumen]=lm [rplumen]=rpl [python]=py [rust]=rs [php]=php [ruby]=rb [pascal]=pas [c]=c [javascript]=js [swift]=swift)
+declare -A DISPLAY=([lumen]=Lumen [rplumen]=RPLumen [python]=Python [rust]=Rust [php]=PHP [ruby]=Ruby [pascal]=Pascal [c]=C [javascript]=JavaScript [swift]=Swift)
 declare -A FLAG=(
     [php]="--lang langs/extras/php.json" [ruby]="--lang langs/extras/ruby.json"
     [pascal]="--lang langs/extras/pascal.json"

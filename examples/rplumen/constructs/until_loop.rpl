@@ -1,0 +1,21 @@
+# Ported from examples/lumen/constructs/until_loop.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+"Until loop ascending (0-9): " write
+0 'i' =
+do
+    i write
+    i 9 < if
+        ", " write
+    end
+    i 1 + 'i' =
+until i 10 >= end
+"" print
+"Until loop descending (15-6): " write
+15 'x' =
+do
+    x write
+    x 6 > if
+        ", " write
+    end
+    x 1 - 'x' =
+until x 5 <= end
+"" print

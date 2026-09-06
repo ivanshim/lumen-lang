@@ -18,7 +18,7 @@ flag_for() {
         swift) echo "--lang langs/extras/swift.json" ;;
     esac
 }
-for f in $(find examples -type f \( -name "*.lm" -o -name "*.py" -o -name "*.rs" -o -name "*.php" -o -name "*.rb" -o -name "*.pas" -o -name "*.c" -o -name "*.js" -o -name "*.swift" \) | sort); do
+for f in $(find examples -type f \( -name "*.lm" -o -name "*.rpl" -o -name "*.py" -o -name "*.rs" -o -name "*.php" -o -name "*.rb" -o -name "*.pas" -o -name "*.c" -o -name "*.js" -o -name "*.swift" \) | sort); do
     flag=$(flag_for "$f")
     # shellcheck disable=SC2086
     a=$($B --kernel stream $flag "$f" 2>&1)

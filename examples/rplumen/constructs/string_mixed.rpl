@@ -1,0 +1,8 @@
+# Ported from examples/lumen/constructs/string_mixed.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+"value: " 'message' =
+42 'n' =
+message print
+n print
+n 42 == if
+    "correct" print
+end

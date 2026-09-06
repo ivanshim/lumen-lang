@@ -1,0 +1,10 @@
+# Ported from examples/lumen/constructs/loop.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+0 'x' =
+while x 10 < repeat
+    x write
+    x 9 < if
+        ", " write
+    end
+    x 1 + 'x' =
+end
+"" print

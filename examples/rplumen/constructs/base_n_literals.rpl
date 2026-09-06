@@ -1,0 +1,65 @@
+# Ported from examples/lumen/constructs/base_n_literals.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+"=== Base-N Literal Tests ===" print
+"" print
+"2@1011 = " write
+11 print
+"2@1111 = " write
+15 print
+"" print
+"16@FF = " write
+255 print
+"16@DEAD = " write
+57005 print
+"16@cafe = " write
+51966 print
+"" print
+"8@777 = " write
+511 print
+"8@100 = " write
+64 print
+"" print
+"36@ZZ = " write
+1295 print
+"36@abc = " write
+13368 print
+"" print
+"16@FF.8 = " write
+255.5 print
+"2@1010.11 = " write
+10.75 print
+"10@123.456 = " write
+123.456 print
+"" print
+"(10@2) ** 3 = " write
+2 3 ** print
+"(16@10) ** 2 = " write
+16 2 ** print
+"(2@10) ** 11 = " write
+2 11 ** print
+"" print
+"(16@F.F) ** 1 = " write
+15.9375 1 ** print
+"(10@1.5) ** 2 = " write
+1.5 2 ** print
+"" print
+"16@10 + 16@20 = " write
+16 32 + print
+"2@1000 * 2@10 = " write
+8 2 * print
+"" print
+"16@10 / 2@11 = " write
+16 3 / 'result' =
+result print
+"" print
+"16@FF > 16@FE: " write
+255 254 > print
+"2@1010 == 10@10: " write
+10 10 == print
+"" print
+"16@A + 8@12 + 2@1010 = " write
+10 10 + 10 + print
+"" print
+"16@aF == 16@AF: " write
+175 175 == print
+"" print
+"Done!" print

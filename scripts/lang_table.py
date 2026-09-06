@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 LANGS = ROOT / "langs"
 README = LANGS / "README.md"
 START, END = "<!-- table:start -->", "<!-- table:end -->"
-FIRST = ["lumen", "python", "rust"]
+FIRST = ["lumen", "rplumen", "python", "rust"]
 
 
 def code(s: str) -> str:

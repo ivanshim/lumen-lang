@@ -1,0 +1,50 @@
+# Ported from examples/lumen/libraries/test_string_validation.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+« 'c' =
+    c ord 'o' =
+    o "A" ord >= if o "Z" ord <= else false end if true else o "a" ord >= if o "z" ord <= else false end end return
+» 'is_alpha' =
+
+« 's' =
+    s len 0 == if
+        false return
+    end
+    0 'i' =
+    while i s len < repeat
+        s i char_at is_alpha not if
+            false return
+        end
+        i 1 + 'i' =
+    end
+    true return
+» 'is_alpha_string' =
+
+"=== String Content Validation ===" print
+"" print
+"Alphabetic string validation:" print
+"  is_alpha_string('hello'): " "hello" is_alpha_string to_string . print
+"  is_alpha_string('WORLD'): " "WORLD" is_alpha_string to_string . print
+"  is_alpha_string('LuMeN'): " "LuMeN" is_alpha_string to_string . print
+"  is_alpha_string('hello123'): " "hello123" is_alpha_string to_string . print
+"  is_alpha_string('hello world'): " "hello world" is_alpha_string to_string . print
+"  is_alpha_string(''): " "" is_alpha_string to_string . print
+"" print
+"=== Practical Example: Name Validation ===" print
+« 's' =
+    s len 0 == if
+        "  '" s . "' - INVALID: name cannot be empty" . print
+        false return
+    end
+    s is_alpha_string not if
+        "  '" s . "' - INVALID: name must contain only letters" . print
+        false return
+    end
+    "  '" s . "' - VALID name" . print
+    true return
+» 'validate_name_input' =
+
+[ "Alice" "Bob123" "Charlie" "" "Dave_Smith" ] 'name_inputs' =
+0 'i' =
+while i name_inputs len < repeat
+    name_inputs i get validate_name_input drop
+    i 1 + 'i' =
+end

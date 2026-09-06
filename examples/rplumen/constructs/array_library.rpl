@@ -1,0 +1,62 @@
+# Ported from examples/lumen/constructs/array_library.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+« 'b' = 'a' =
+    [ ] 'out' =
+    0 'i' =
+    while i a len < repeat
+        a i get 'out' push
+        i 1 + 'i' =
+    end
+    0 'i' =
+    while i b len < repeat
+        b i get 'out' push
+        i 1 + 'i' =
+    end
+    out return
+» 'array_concat' =
+
+« 'stop' = 'start' = 'a' =
+    [ ] 'out' =
+    start 'i' =
+    while i stop < repeat
+        a i get 'out' push
+        i 1 + 'i' =
+    end
+    out return
+» 'array_slice' =
+
+« 'x' = 'a' =
+    0 'i' =
+    while i a len < repeat
+        a i get x == if
+            i return
+        end
+        i 1 + 'i' =
+    end
+    1 neg return
+» 'array_index_of' =
+
+« 'x' = 'a' =
+    a x array_index_of 0 >= return
+» 'array_contains' =
+
+« 'a' =
+    [ ] 'out' =
+    a len 'i' =
+    while i 0 > repeat
+        i 1 - 'i' =
+        a i get 'out' push
+    end
+    out return
+» 'array_reverse' =
+
+[ 1 2 3 ] 'a' =
+[ 4 5 ] 'b' =
+a b array_concat 'both' =
+both print
+both 1 4 array_slice print
+b 5 array_index_of print
+b 9 array_index_of print
+a 2 array_contains print
+a 7 array_contains print
+both array_reverse print
+[ ] array_reverse len print

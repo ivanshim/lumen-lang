@@ -1,0 +1,26 @@
+# Ported from examples/lumen/constructs/let_keyword.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+"Test: let and let mut Keywords" print
+10 'x' =
+"let x = 10" print
+x print
+5 'y' =
+"let mut y = 5" print
+y print
+20 'y' =
+"After y = 20:" print
+y print
+100 'x' =
+"After let x = 100 (shadowing):" print
+x print
+x y + 'result' =
+"let result = x + y" print
+result print
+«
+    42 'a' =
+    10 'b' =
+    50 'b' =
+    a b + return
+» 'test_let' =
+
+"test_let():" print
+test_let print

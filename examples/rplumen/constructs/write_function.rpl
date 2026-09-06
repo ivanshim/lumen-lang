@@ -1,0 +1,16 @@
+# Ported from examples/lumen/constructs/write_function.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+"Hello" write
+" " write
+"World" write
+"!" write
+"" print
+"Numbers: " write
+1 'i' =
+while i 5 <= repeat
+    i write
+    i 5 < if
+        ", " write
+    end
+    i 1 + 'i' =
+end
+"" print

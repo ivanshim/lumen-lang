@@ -1,0 +1,218 @@
+# Ported from examples/lumen/constructs/type_hierarchy.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+« 'decimals' = 'x' =
+    1 'scale' =
+    0 'i' =
+    while i decimals < repeat
+        scale 10 * 'scale' =
+        i 1 + 'i' =
+    end
+    x scale * 'y' =
+    y 0 >= if
+        y 2 * 1 + 2 // 'r' =
+    else
+        y 2 * 1 - 2 // 'r' =
+    end
+    r scale / return
+» 'round' =
+
+"=== TYPE HIERARCHY TESTS: Integer subset of Rational subset of Real ===" print
+"\n" write
+"=== SECTION 1: ADDITION ===" print
+"\n" write
+"Test 1a: Integer + Integer -> Integer" print
+5 'a' =
+3 'b' =
+a b + 'result' =
+a to_string " + " + b to_string + " = " + result to_string + print
+"\n" write
+"Test 1b: Integer + Rational -> Rational" print
+5 'a' =
+3 2 / 'b' =
+a b + 'result' =
+a to_string " + " + b to_string + " = " + result to_string + print
+"\n" write
+"Test 1c: Integer + Real -> Real" print
+5 'a' =
+3 2 / to_real 'b' =
+a b + 'result' =
+a to_string " + " + b to_string + " = " + result to_string + print
+"\n" write
+"Test 1d: Rational + Rational -> Rational" print
+3 2 / 'a' =
+5 4 / 'b' =
+a b + 'result' =
+a to_string " + " + b to_string + " = " + result to_string + print
+"\n" write
+"Test 1e: Rational + Real -> Real" print
+3 2 / 'a' =
+5 4 / to_real 'b' =
+a b + 'result' =
+a to_string " + " + b to_string + " = " + result to_string + print
+"\n" write
+"Test 1f: Real + Real -> Real" print
+3 2 / to_real 'a' =
+5 4 / to_real 'b' =
+a b + 'result' =
+a to_string " + " + b to_string + " = " + result to_string + print
+"\n" write
+"=== SECTION 2: SUBTRACTION ===" print
+"\n" write
+"Test 2a: Integer - Integer -> Integer" print
+10 'a' =
+3 'b' =
+a b - 'result' =
+a to_string " - " + b to_string + " = " + result to_string + print
+"\n" write
+"Test 2b: Integer - Rational -> Rational" print
+10 'a' =
+3 2 / 'b' =
+a b - 'result' =
+a to_string " - " + b to_string + " = " + result to_string + print
+"\n" write
+"Test 2c: Integer - Real -> Real" print
+10 'a' =
+3 2 / to_real 'b' =
+a b - 'result' =
+a to_string " - " + b to_string + " = " + result to_string + print
+"\n" write
+"Test 2d: Rational - Rational -> Rational" print
+10 3 / 'a' =
+5 4 / 'b' =
+a b - 'result' =
+a to_string " - " + b to_string + " = " + result to_string + print
+"\n" write
+"Test 2e: Rational - Real -> Real" print
+10 3 / 'a' =
+5 4 / to_real 'b' =
+a b - 'result' =
+a to_string " - " + b to_string + " = " + result to_string + print
+"\n" write
+"Test 2f: Real - Real -> Real" print
+10 3 / to_real 'a' =
+5 4 / to_real 'b' =
+a b - 'result' =
+a to_string " - " + b to_string + " = " + result to_string + print
+"\n" write
+"=== SECTION 3: MULTIPLICATION ===" print
+"\n" write
+"Test 3a: Integer * Integer -> Integer" print
+4 'a' =
+3 'b' =
+a b * 'result' =
+a to_string " * " + b to_string + " = " + result to_string + print
+"\n" write
+"Test 3b: Integer * Rational -> Rational" print
+4 'a' =
+3 2 / 'b' =
+a b * 'result' =
+a to_string " * " + b to_string + " = " + result to_string + print
+"\n" write
+"Test 3c: Integer * Real -> Real" print
+4 'a' =
+3 2 / to_real 'b' =
+a b * 'result' =
+a to_string " * " + b to_string + " = " + result to_string + print
+"\n" write
+"Test 3d: Rational * Rational -> Rational" print
+2 3 / 'a' =
+3 4 / 'b' =
+a b * 'result' =
+a to_string " * " + b to_string + " = " + result to_string + print
+"\n" write
+"Test 3e: Rational * Real -> Real" print
+2 3 / 'a' =
+3 4 / to_real 'b' =
+a b * 'result' =
+a to_string " * " + b to_string + " = " + result to_string + print
+"\n" write
+"Test 3f: Real * Real -> Real" print
+2 3 / to_real 'a' =
+3 4 / to_real 'b' =
+a b * 'result' =
+a to_string " * " + b to_string + " = " + result to_string + print
+"\n" write
+"=== SECTION 4: DIVISION ===" print
+"\n" write
+"Test 4a: Integer / Integer -> Rational" print
+5 'a' =
+2 'b' =
+a b / 'result' =
+a to_string " / " + b to_string + " = " + result to_string + print
+"\n" write
+"Test 4b: Integer / Rational -> Rational" print
+5 'a' =
+3 2 / 'b' =
+a b / 'result' =
+a to_string " / " + b to_string + " = " + result to_string + print
+"\n" write
+"Test 4c: Integer / Real -> Real" print
+5 'a' =
+3 2 / to_real 'b' =
+a b / 'result' =
+a to_string " / " + b to_string + " = " + result to_string + print
+"\n" write
+"Test 4d: Rational / Rational -> Rational" print
+3 2 / 'a' =
+5 4 / 'b' =
+a b / 'result' =
+a to_string " / " + b to_string + " = " + result to_string + print
+"\n" write
+"Test 4e: Rational / Real -> Real" print
+3 2 / 'a' =
+5 4 / to_real 'b' =
+a b / 'result' =
+a to_string " / " + b to_string + " = " + result to_string + print
+"\n" write
+"Test 4f: Real / Real -> Real" print
+3 2 / to_real 'a' =
+5 4 / to_real 'b' =
+a b / 'result' =
+a to_string " / " + b to_string + " = " + result to_string + print
+"\n" write
+"=== SECTION 5: FLOAT LITERALS ===" print
+"\n" write
+"Test 5a: Float literal 1.5 is Real" print
+1.5 'x' =
+"1.5 = " x to_string + print
+"\n" write
+"Test 5b: Float literal + Integer -> Real" print
+1.5 'x' =
+2 'y' =
+x y + 'result' =
+x to_string " + " + y to_string + " = " + result to_string + print
+"\n" write
+"Test 5c: Float literal * Integer -> Real" print
+1.5 'x' =
+3 'y' =
+x y * 'result' =
+x to_string " * " + y to_string + " = " + result to_string + print
+"\n" write
+"Test 5d: Float literal / Integer -> Real" print
+3.0 'x' =
+2 'y' =
+x y / 'result' =
+x to_string " / " + y to_string + " = " + result to_string + print
+"\n" write
+"=== SECTION 6: ROUND() FUNCTION RETURNS REAL ===" print
+"\n" write
+"Test 6a: round(1.235, 2) returns Real" print
+1.235 2 round 'x' =
+"round(1.235, 2) = " x to_string + print
+"\n" write
+"Test 6b: round(-2.456, 2) returns Real" print
+2.456 neg 2 round 'x' =
+"round(-2.456, 2) = " x to_string + print
+"\n" write
+"Test 6c: round(5, 2) with integer input" print
+5 2 round 'x' =
+"round(5, 2) = " x to_string + print
+"\n" write
+"=== SUMMARY ===" print
+"[OK] Integer OP Integer -> Integer (when no division)" print
+"[OK] Integer OP Rational -> Rational (when no real)" print
+"[OK] Integer OP Real -> Real" print
+"[OK] Rational OP Rational -> Rational (when no real)" print
+"[OK] Rational OP Real -> Real" print
+"[OK] Real OP Real -> Real" print
+"[OK] Float literals (1.5, 2.3) are Real values" print
+"[OK] round(float) returns Real, not Rational" print

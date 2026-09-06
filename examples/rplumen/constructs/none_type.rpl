@@ -1,0 +1,46 @@
+# Ported from examples/lumen/constructs/none_type.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+«
+    "This function returns null implicitly" print
+    null return
+» 'no_return' =
+
+«
+    "Returning null explicitly" print
+    null return
+» 'explicit_null' =
+
+« 'x' =
+    x 0 < if
+        null return
+    else
+        x 2 * return
+    end
+    null return
+» 'conditional_null' =
+
+"Test: null Type" print
+"Calling no_return():" print
+no_return 'result1' =
+result1 print
+"Calling explicit_null():" print
+explicit_null 'result2' =
+result2 print
+"conditional_null(5):" print
+5 conditional_null print
+"conditional_null(-3):" print
+3 neg conditional_null print
+null 'x' =
+"let x = null:" print
+x print
+« 'val' =
+    val null == if
+        "Value is null" print
+    else
+        "Value is not null" print
+    end
+    null return
+» 'check_value' =
+
+null check_value drop
+42 check_value drop
+"hello" check_value drop

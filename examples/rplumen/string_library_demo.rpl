@@ -1,0 +1,128 @@
+# Ported from examples/lumen/string_library_demo.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+« 'to_end' = 'from_start' = 's' =
+    from_start 'index' =
+    "" 'out' =
+    while index to_end < repeat
+        out s index char_at . 'out' =
+        index 1 + 'index' =
+    end
+    out return
+» 'substring' =
+
+« 'from_here' = 's' =
+    s from_here s len substring return
+» 'substring_end' =
+
+« 'to_here' = 's' =
+    s 0 to_here substring return
+» 'substring_start' =
+
+« 'prefix' = 's' =
+    prefix len s len <= if s 0 prefix len substring prefix == else false end return
+» 'starts_with' =
+
+« 'suffix' = 's' =
+    suffix len s len <= if s s len suffix len - s len substring suffix == else false end return
+» 'ends_with' =
+
+« 'repetitions' = 's' =
+    "" 'out' =
+    0 'i' =
+    while i repetitions < repeat
+        out s . 'out' =
+        i 1 + 'i' =
+    end
+    out return
+» 'repeat_string' =
+
+« 'separator' = 'arr' =
+    "" 'out' =
+    arr len 'n' =
+    0 'i' =
+    while i n < repeat
+        i 0 > if
+            out separator . 'out' =
+        end
+        out arr i get . 'out' =
+        i 1 + 'i' =
+    end
+    out return
+» 'join_strings' =
+
+« 'needle' = 's' =
+    needle len 'n' =
+    0 'i' =
+    while i n + s len <= repeat
+        s i i n + substring needle == if
+            i return
+        end
+        i 1 + 'i' =
+    end
+    1 neg return
+» 'index_of' =
+
+« 'needle' = 's' =
+    s needle index_of 0 >= return
+» 'has_substring' =
+
+"=== String Library Examples ===" print
+"" print
+"Hello World" 'text' =
+"Original: " write
+text print
+"substring(text, 0, 5): " write
+text 0 5 substring print
+"substring(text, 6, 11): " write
+text 6 11 substring print
+"" print
+"substring_end(text, 6): " write
+text 6 substring_end print
+"" print
+"substring_start(text, 5): " write
+text 5 substring_start print
+"" print
+"starts_with('Hello World', 'Hello'): " write
+text "Hello" starts_with print
+"starts_with('Hello World', 'World'): " write
+text "World" starts_with print
+"" print
+"ends_with('Hello World', 'World'): " write
+text "World" ends_with print
+"ends_with('Hello World', 'Hello'): " write
+text "Hello" ends_with print
+"" print
+"repeat_string('Ha', 5): " write
+"Ha" 5 repeat_string print
+"repeat_string('-=', 10): " write
+"-=" 10 repeat_string print
+"" print
+[ "apple" "banana" "cherry" ] 'fruits' =
+"join_strings(['apple', 'banana', 'cherry'], ', '): " write
+fruits ", " join_strings print
+"join_strings(['apple', 'banana', 'cherry'], ' | '): " write
+fruits " | " join_strings print
+"" print
+"The quick brown fox jumps over the lazy dog" 'sentence' =
+"index_of('The quick brown fox...', 'fox'): " write
+sentence "fox" index_of print
+"index_of('The quick brown fox...', 'cat'): " write
+sentence "cat" index_of print
+"" print
+"has_substring('The quick brown fox...', 'quick'): " write
+sentence "quick" has_substring print
+"has_substring('The quick brown fox...', 'slow'): " write
+sentence "slow" has_substring print
+"" print
+"=== Practical Example ===" print
+"Lumen" 'name' =
+"1.0" 'version' =
+"A minimal language" 'description' =
+"-" 40 repeat_string 'separator' =
+separator print
+"Project: " name . 'info' =
+info print
+"Version: " version . 'info2' =
+info2 print
+"Description: " description . 'info3' =
+info3 print
+separator print

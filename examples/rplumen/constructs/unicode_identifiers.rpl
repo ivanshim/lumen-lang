@@ -1,0 +1,12 @@
+# Ported from examples/lumen/constructs/unicode_identifiers.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+3 'café' =
+22 7 / 'π' =
+café 2 * '数' =
+« 'x' =
+    x 1 + return
+» 'größe' =
+
+café print
+π print
+数 print
+数 größe print

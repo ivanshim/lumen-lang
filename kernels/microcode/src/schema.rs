@@ -21,6 +21,8 @@ pub struct LanguageSchema {
     pub literals: Literals,
     pub operators: Operators,
     pub statements: Statements,
+    /// Stack words of a postfix language.
+    pub stack: Stack,
     /// Surface function name → kernel built-in.
     pub functions: HashMap<String, Builtin>,
     /// Placeholders that print and write fill from their remaining
@@ -55,6 +57,8 @@ pub struct Lexical {
     pub identifier_unicode: bool,
     /// Character that begins a variable name, e.g. `$`.
     pub variable_prefix: Option<char>,
+    /// Quote around a name given as data (RPL's `'x'`).
+    pub name_quote: Option<char>,
     /// Keywords match regardless of letter case.
     pub keywords_case_insensitive: bool,
     /// Identifiers are folded to lower case.
@@ -106,6 +110,8 @@ pub enum BlockStyle {
     Braces,
     /// No opener; the body runs to a closing word, and an `if` chain shares one.
     Keyword,
+    /// Words act on one stack; control words delimit bodies (RPL).
+    Postfix,
 }
 
 #[derive(Clone)]
@@ -222,6 +228,20 @@ pub struct ForLoop {
     pub in_keyword: Vec<String>,
 }
 
+/// The words of a postfix language that act on the stack itself, and the
+/// delimiters of a program value. Empty lists in every other language.
+#[derive(Default)]
+pub struct Stack {
+    pub dup: Vec<String>,
+    pub drop: Vec<String>,
+    pub swap: Vec<String>,
+    pub over: Vec<String>,
+    pub rot: Vec<String>,
+    pub eval: Vec<String>,
+    pub program_open: Vec<String>,
+    pub program_close: Vec<String>,
+}
+
 // ---------------- Stage 4: execute tables ----------------
 
 /// Built-in functions the kernel can provide. Which surface names reach
@@ -250,7 +270,18 @@ pub enum Builtin {
     Den,
     Extern,
     Push,
+    /// `get(array, index)` and `put(array, index, value)`: indexing as
+    /// functions, for a language without index brackets.
+    Get,
+    Put,
     Range,
+    // The stack mechanics of a postfix language, reached by internal names
+    // the reducer emits; no definition can spell them.
+    Pop,
+    Word,
+    Eval,
+    Depth,
+    Gather,
 }
 
 #[derive(Default)]
@@ -469,6 +500,7 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
     // Identifier policy comes first: the word tests below depend on it.
     let identifier_unicode = l.flag("identifier.unicode")?;
     let variable_prefix = l.first_char("identifier.variable_prefix")?;
+    let name_quote = l.first_char("lexical.name_quote")?;
     let identifiers_case_insensitive = l.flag("identifier.case_insensitive")?;
     let keywords_case_insensitive = l.flag("lexical.keywords_case_insensitive")?;
     let word_start = |c: char| c == '_' || if identifier_unicode { c.is_alphabetic() } else { c.is_ascii_alphabetic() };
@@ -539,8 +571,10 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
         "indentation" => BlockStyle::Indentation,
         "braces" => BlockStyle::Braces,
         "keyword" => BlockStyle::Keyword,
-        other => return Err(format!("block.style must be 'indentation', 'braces' or 'keyword', got '{other}'")),
+        "postfix" => BlockStyle::Postfix,
+        other => return Err(format!("block.style must be 'indentation', 'braces', 'keyword' or 'postfix', got '{other}'")),
     };
+    let postfix = style == BlockStyle::Postfix;
     let block_open = l.lexemes("block.open")?;
     let block_close = l.lexemes("block.close")?;
     let block_intro = l.lexemes("block.intro")?;
@@ -552,9 +586,9 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
             }
             (block_open, block_close, indent_size.unwrap_or(4))
         }
-        BlockStyle::Keyword => {
+        BlockStyle::Keyword | BlockStyle::Postfix => {
             if !block_open.is_empty() || block_close.is_empty() {
-                return Err("keyword blocks take no block.open and need block.close".to_string());
+                return Err("keyword and postfix blocks take no block.open and need block.close".to_string());
             }
             (block_open, block_close, indent_size.unwrap_or(4))
         }
@@ -622,8 +656,13 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
         ("op.pipe", Op::Pipe),
     ];
     let unary_labels = [("op.not", Op::Not), ("op.negate", Op::Negate)];
-    let tier_first = |lex: &str| tiers.iter().position(|t| t.iter().any(|x| x == lex));
-    let tier_last = |lex: &str| tiers.iter().rposition(|t| t.iter().any(|x| x == lex));
+    // A postfix language has no precedence: every operator takes its
+    // operands from the stack.
+    let tier_first = |lex: &str| if postfix { Some(0) } else { tiers.iter().position(|t| t.iter().any(|x| x == lex)) };
+    let tier_last = |lex: &str| if postfix { Some(0) } else { tiers.iter().rposition(|t| t.iter().any(|x| x == lex)) };
+    if postfix && !tiers.is_empty() {
+        return Err("a postfix language takes no op.precedence".to_string());
+    }
     let mut binary: HashMap<String, BinaryOp> = HashMap::new();
     let mut unary: HashMap<String, UnaryOp> = HashMap::new();
     for (label, op) in binary_labels {
@@ -687,6 +726,9 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
     let loop_for = match (for_keyword.is_empty(), in_keyword.is_empty()) {
         (true, true) => None,
         (false, false) => Some(ForLoop { keyword: for_keyword, in_keyword }),
+        // A postfix for takes its bounds from the stack and its variable as
+        // a quoted name; there is nothing for an `in` to introduce.
+        (false, true) if postfix => Some(ForLoop { keyword: for_keyword, in_keyword }),
         _ => return Err("stmt.for and stmt.for.in must be given together".to_string()),
     };
     for key in ["stmt.foreach", "stmt.foreach.as", "stmt.foreach.pair"] {
@@ -723,6 +765,36 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
         }
     }
 
+    // ---- stack ----
+    let stack = Stack {
+        dup: l.lexemes("stack.dup")?,
+        drop: l.lexemes("stack.drop")?,
+        swap: l.lexemes("stack.swap")?,
+        over: l.lexemes("stack.over")?,
+        rot: l.lexemes("stack.rot")?,
+        eval: l.lexemes("stack.eval")?,
+        program_open: l.lexemes("stack.program.open")?,
+        program_close: l.lexemes("stack.program.close")?,
+    };
+    let stack_lexemes = || {
+        stack
+            .dup
+            .iter()
+            .chain(stack.drop.iter())
+            .chain(stack.swap.iter())
+            .chain(stack.over.iter())
+            .chain(stack.rot.iter())
+            .chain(stack.eval.iter())
+            .chain(stack.program_open.iter())
+            .chain(stack.program_close.iter())
+    };
+    if !postfix && stack_lexemes().next().is_some() {
+        return Err("the stack.* labels need block.style 'postfix'".to_string());
+    }
+    if stack.program_open.len() != stack.program_close.len() {
+        return Err("stack.program.open and .close must pair up position by position".to_string());
+    }
+
     // ---- functions ----
     let builtin_labels = [
         ("builtin.emit", Builtin::Emit),
@@ -744,6 +816,8 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
         ("builtin.num", Builtin::Num),
         ("builtin.den", Builtin::Den),
         ("builtin.push", Builtin::Push),
+        ("builtin.get", Builtin::Get),
+        ("builtin.put", Builtin::Put),
     ];
     let placeholders = l.lexemes("builtin.print.placeholder")?;
     let mut functions = HashMap::new();
@@ -806,6 +880,9 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
     }
     for intro in &block_intro {
         classify(intro);
+    }
+    for lex in stack_lexemes() {
+        classify(lex);
     }
     for lex in statements.assignment.iter().chain(terminators.iter()).chain(call_labels.iter()) {
         classify(lex);
@@ -891,6 +968,7 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
             number,
             identifier_unicode,
             variable_prefix,
+            name_quote,
             keywords_case_insensitive,
             identifiers_case_insensitive,
             reserved_words: reserved,
@@ -912,6 +990,7 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
         literals,
         operators: Operators { binary, unary },
         statements,
+        stack,
         functions,
         placeholders,
         system,

@@ -1,0 +1,55 @@
+# Ported from examples/lumen/constructs/ord_chr.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+"=== ord() and chr() Tests ===" print
+"" print
+"ord('A'): " write
+"A" ord print
+"ord('Z'): " write
+"Z" ord print
+"ord('a'): " write
+"a" ord print
+"ord('z'): " write
+"z" ord print
+"ord('0'): " write
+"0" ord print
+"ord('9'): " write
+"9" ord print
+"" print
+"ord(' '): " write
+" " ord print
+"ord('!'): " write
+"!" ord print
+"ord('?'): " write
+"?" ord print
+"" print
+"chr(65): " write
+65 chr print
+"chr(90): " write
+90 chr print
+"chr(97): " write
+97 chr print
+"chr(122): " write
+122 chr print
+"chr(48): " write
+48 chr print
+"chr(57): " write
+57 chr print
+"" print
+"chr(ord('H')): " write
+"H" ord chr print
+"ord(chr(72)): " write
+72 chr ord print
+"" print
+"ord('Hello'): " write
+"Hello" ord print
+"" print
+72 chr 101 chr . 108 chr . 108 chr . 111 chr . 'result' =
+"chr(72).chr(101).chr(108).chr(108).chr(111): " write
+result print
+"" print
+"ord(newline): " write
+"\n" ord print
+"chr(10) [newline test]: " write
+"Line1" 10 chr . "Line2" . 'result_nl' =
+result_nl print
+"" print
+"Done!" print

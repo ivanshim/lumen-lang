@@ -1,0 +1,29 @@
+# Ported from examples/lumen/constructs/functions_basic.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+« 'x' =
+    x x * return
+» 'square' =
+
+« 'b' = 'a' =
+    a b + return
+» 'add' =
+
+« 'name' =
+    "Hello, " name + return
+» 'greet' =
+
+"Test: Basic Functions" print
+5 square print
+10 20 add print
+"Lumen" greet print
+«
+    42 return
+» 'get_constant' =
+
+get_constant print
+« 'y' = 'x' =
+    x y + 'sum' =
+    x y * 'product' =
+    sum product + return
+» 'compute' =
+
+3 4 compute print

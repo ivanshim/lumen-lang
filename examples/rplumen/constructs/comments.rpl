@@ -1,0 +1,23 @@
+# Ported from examples/lumen/constructs/comments.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+"Test: Comments Support" print
+42 'x' =
+x print
+x 2 * 'result' =
+result print
+« 'b' = 'a' =
+    a b + return
+» 'add_numbers' =
+
+10 20 add_numbers 'value' =
+value print
+value 20 > if
+    "Value is greater than 20" print
+else
+    "Value is 20 or less" print
+end
+0 'counter' =
+while counter 3 < repeat
+    counter print
+    counter 1 + 'counter' =
+end
+"Done testing comments" print

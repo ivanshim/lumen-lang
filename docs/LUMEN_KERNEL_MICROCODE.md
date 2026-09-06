@@ -15,10 +15,21 @@ is table-driven. Definitions contain no executable logic, only data.
 
 | Stage | File | Input → output | What the definition supplies |
 |---|---|---|---|
-| 1. Ingest | `kernel/_1_ingest.rs` | source text → tokens (words, numbers, decoded strings, operators, line ends, indentation) | line and block comment markers, a prologue to drop, string delimiters with their escape letters and which quotes are raw, operator lexemes, number punctuation and hexadecimal prefix, the identifier character class, a variable prefix, case folding of keywords or identifiers, builtin names read whole (`println!`, `console.log`) |
-| 2. Structure | `kernel/_2_structure.rs` | tokens → tokens with explicit block delimiters | block style (indentation, braces or keyword), indent size, paired open/close delimiters, optional block-intro tokens, bracket pairs that suspend line structure |
-| 3. Reduce | `kernel/_3_reduce.rs` | tokens → instruction tree | literal words, operator precedence and associativity with the kernel operation each maps to, statement keywords with the form each introduces, block-intro words to skip and the closer that ends a keyword-style chain, call/group/array syntax, argument labels to drop, type-first declarations, declarations before a function body and the terminator between parameter groups, the pipe's lexeme (a bare name after it is a call) |
-| 4. Execute | `kernel/_4_execute.rs` | instruction tree → values | the surface names that reach built-ins, the placeholders print fills, whether a function's result is what it assigned to its own name, whether strings may be indexed, the names of system bindings |
+| 1. Ingest | `kernel/_1_ingest.rs` | source text → tokens (words, numbers, decoded strings, operators, line ends, indentation) | line and block comment markers, a prologue to drop, string delimiters with their escape letters and which quotes are raw, operator lexemes, number punctuation and hexadecimal prefix, the identifier character class, a variable prefix, case folding of keywords or identifiers, builtin names read whole (`println!`, `console.log`), the quote around a name given as data (RPLumen's `'x'`) |
+| 2. Structure | `kernel/_2_structure.rs` | tokens → tokens with explicit block delimiters | block style (indentation, braces, keyword or postfix), indent size, paired open/close delimiters, optional block-intro tokens, bracket pairs that suspend line structure |
+| 3. Reduce | `kernel/_3_reduce.rs` | tokens → instruction tree | literal words, operator precedence and associativity with the kernel operation each maps to, statement keywords with the form each introduces, block-intro words to skip and the closer that ends a keyword-style chain, call/group/array syntax, argument labels to drop, type-first declarations, declarations before a function body and the terminator between parameter groups, the pipe's lexeme (a bare name after it is a call); for a postfix language, the stack words and the program delimiters |
+| 4. Execute | `kernel/_4_execute.rs` | instruction tree → values | the surface names that reach built-ins, the placeholders print fills, whether a function's result is what it assigned to its own name, whether strings may be indexed, the names of system bindings, `get` and `put` as indexing by function |
+
+A postfix language (RPLumen) reaches the same instruction set through
+the reducer's second entry point: the stack is an array bound to a hidden
+name at the start of the program, a literal becomes an invocation that
+pushes it, an operator pops its operands into hidden temporaries and
+pushes the result, a control word takes its condition from a pop, a
+program value (`« ... »`) is a function value of no parameters, and a
+bare word is an invocation that runs the program bound to it or pushes
+its value. Six internal invocations (`<push>`, `<pop>`, `<word>`,
+`<eval>`, `<depth>`, `<gather>`) carry the stack mechanics; no definition
+can spell them. The executor gains nothing else.
 
 Supporting modules: `kernel/instruction.rs` (the instruction set),
 `kernel/value.rs` (the value model), `kernel/numeric.rs` (the exact numeric
