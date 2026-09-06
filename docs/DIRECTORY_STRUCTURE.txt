@@ -111,6 +111,19 @@ lumen-lang/
     kernels/stack/src/number.rs        the numeric tower with a machine-word fast path
     kernels/stack/src/value.rs         values and rendering
 
+  kernels/microcode2/              crate lumen-microcode2 (the tree kept: run it, or write it out in any language)
+    kernels/microcode2/Cargo.toml
+    kernels/microcode2/src/emit.rs        the tree written in a target language
+    kernels/microcode2/src/execute.rs     the tree run
+    kernels/microcode2/src/ingest.rs      scanning
+    kernels/microcode2/src/lib.rs
+    kernels/microcode2/src/numeric.rs
+    kernels/microcode2/src/reduce.rs      tokens to the tree; postfix read with a symbolic stack
+    kernels/microcode2/src/spec.rs        the definition as a table of labels
+    kernels/microcode2/src/structure.rs   block structure
+    kernels/microcode2/src/tree.rs        the forms
+    kernels/microcode2/src/value.rs
+
   lib_lumen/                       Lumen standard library (.lm) + prelude.rs (embedding list)
     lib_lumen/constants.lm
     lib_lumen/constants_1024.lm
@@ -138,6 +151,7 @@ lumen-lang/
     scripts/kernel_independence.py
     scripts/lang_table.py
     scripts/port_examples.py         writes every Lumen example in every other language, and examples/PORTS.md
+    scripts/translate_all.sh         round-trip benchmark of the microcode2 emitter over every example and language
 
   examples/                        488 programs: lumen/ (+constructs/, libraries/) and, mirroring it, rplumen/, python/, rust/, php/, ruby/, pascal/, c/, javascript/, swift/; PORTS.md says which Lumen example is in which language
   docs/                            design documents, references, history

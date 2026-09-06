@@ -2,7 +2,7 @@
 # Differential test: every example must print the same thing on every kernel.
 # test.sh checks that programs run; this checks that the three independent
 # implementations agree on what they print. The microcode kernel is the
-# reference; the stream and stack kernels are each compared with it. Exit
+# reference; the other kernels are each compared with it. Exit
 # status is the number of programs whose output differs on any kernel.
 cd "$(dirname "$0")/.." || exit 1
 cargo build --quiet || exit 1
@@ -24,7 +24,7 @@ for f in $(find examples -type f \( -name "*.lm" -o -name "*.rpl" -o -name "*.py
     # shellcheck disable=SC2086
     reference=$($B --kernel microcode $flag "$f" 2>&1)
     agree=1
-    for kernel in stream stack; do
+    for kernel in stream stack microcode2; do
         # shellcheck disable=SC2086
         other=$($B --kernel $kernel $flag "$f" 2>&1)
         if [ "$other" != "$reference" ]; then

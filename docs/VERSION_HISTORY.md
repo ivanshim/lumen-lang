@@ -31,6 +31,19 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   definition is loaded at run time. PHP moved there, and Ruby, Pascal, C,
   JavaScript and Swift are added with examples; all nine languages run on
   both kernels.
+- **The microcode kernel, second design**: a fourth kernel,
+  `kernels/microcode2` (`--kernel microcode2`), keeps the four stages and
+  makes the tree the product: nodes keep their source lines, names are
+  resolved to slots as the tree is built, a loop bound lives in a slot
+  with no name, and RPLumen is read with a symbolic stack, so `5 3 +`
+  becomes the node `5 + 3` and a postfix program runs as a tree with no
+  stack at all, at Lumen's speed. The tree can be written back out:
+  `--emit <language>` prints any program in any language a definition
+  describes, with builtins mapped by label, `$library` functions turned
+  into the target's builtins and back, `for` and `until` recognised from
+  their shapes, and a construct the target cannot spell reported by
+  name. `scripts/translate_all.sh` writes every example in every
+  language and runs the result on the stack kernel against the original.
 - **The stack kernel**: a third kernel, `kernels/stack` (`--kernel
   stack`), compiles every language to one stack machine. The compiler is
   a single syntax-directed pass from tokens to a flat list of words over

@@ -5,11 +5,13 @@ of things the kernel can do, to the strings a language spells them with. The
 semantics behind every label belong to the kernel and are the same for every
 language: a definition changes how a program is spelled, never what it means.
 
-All three kernels read these files, each in its own way. The microcode
+All four kernels read these files, each in its own way. The microcode
 kernel reduces a definition to tables and an instruction tree; the stream
 kernel registers handlers for the constructs a definition spells and
 transforms the token stream by its block style and markers; the stack
-kernel compiles every construct to words over one stack. The definitions in this
+kernel compiles every construct to words over one stack; the microcode2
+kernel builds a tree it can also write back out, so a definition is read
+in both directions. The definitions in this
 directory (Lumen, RPLumen, Python, Rust) are embedded at build time and picked by
 file extension, `--lang <name>` or `--lang <extension>`; the ones in
 `extras/` (PHP, Ruby, Pascal, C, JavaScript, Swift) are never compiled
@@ -61,10 +63,12 @@ only names what its language spells; the floor is the same for all.
    `op.div.result` says what `op.div` yields: `rational`, Lumen's exact
    `/`, or `real`, the `/` of Python, JavaScript, PHP and Pascal, a real at
    the default precision; `null` when the language has no `op.div`.
-5. Keys beginning with `$` are for readers, not the kernels: `$comment`
-   explains, and `$library` maps a label the language leaves empty to the
-   library function that provides it (Lumen's `print`), which the table
-   shows as `(library: print)`.
+5. Keys beginning with `$` are for readers, not for running a program:
+   `$comment` explains, and `$library` maps a label the language leaves
+   empty to the library function that provides it (Lumen's `print`),
+   which the table shows as `(library: print)`. The microcode2 emitter
+   reads `$library` when it writes a program in another language, to
+   turn a library function into the target's builtin and back.
 6. A lexeme may appear under at most one label per parsing position. `-`
    under both `op.sub` (infix) and `op.negate` (prefix) is allowed; the same
    string under two infix labels is an error.
