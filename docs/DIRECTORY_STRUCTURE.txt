@@ -126,9 +126,6 @@ lumen-lang/
 
   kernels/microcode/               crate lumen-microcode
     kernels/microcode/Cargo.toml
-    kernels/microcode/schemas/lumen.yaml
-    kernels/microcode/schemas/python_core.yaml
-    kernels/microcode/schemas/rust_core.yaml
     kernels/microcode/src/kernel/_1_ingest.rs
     kernels/microcode/src/kernel/_2_structure.rs
     kernels/microcode/src/kernel/_3_reduce.rs
@@ -171,7 +168,7 @@ lumen-lang/
     scripts/config_table.py
     scripts/kernel_independence.py
 
-  examples/                        97 programs: lumen/ (+constructs/, libraries/), python/, rust/
+  examples/                        100 programs: lumen/ (+constructs/, libraries/), python/, rust/, php/
   docs/                            design documents, references, history
     docs/DIRECTORY_STRUCTURE.txt
     docs/LANGUAGE_COMPARISON.md

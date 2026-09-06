@@ -1,11 +1,16 @@
-let a = 0;
-let b = 1;
-let count = 0;
+fn fib(n: i64) -> i64 {
+    let mut a = 0;
+    let mut b = 1;
+    for i in 0..n {
+        let next = a + b;
+        a = b;
+        b = next;
+    }
+    return a;
+}
 
-while count < 10 {
-    print(a);
-    let next = a + b;
-    a = b;
-    b = next;
-    count = count + 1;
+fn main() {
+    for i in 0..10 {
+        println!("{}", fib(i));
+    }
 }

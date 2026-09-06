@@ -3,26 +3,27 @@
 ## Overview
 
 The microcode kernel is an execution engine that owns every algorithm and
-knows no language. A language is a YAML document of tables; the kernel reads
-it and behaves accordingly. Nothing in `kernels/microcode/src/` names a
-keyword, an operator, a comment marker or a function.
+knows no language. A language is a JSON definition of tables
+(`configs/<language>.json`); the kernel reads it and behaves accordingly.
+Nothing in `kernels/microcode/src/` names a keyword, an operator, a comment
+marker or a function.
 
 **Invariant:** the kernel owns all algorithms; all language-specific behaviour
-is table-driven. Schemas contain no executable logic, only data.
+is table-driven. Definitions contain no executable logic, only data.
 
 ## The four stages
 
-| Stage | File | Input → output | What the schema supplies |
+| Stage | File | Input → output | What the definition supplies |
 |---|---|---|---|
-| 1. Ingest | `kernel/_1_ingest.rs` | source text → tokens (words, numbers, decoded strings, operators, line ends, indentation) | comment marker, string delimiters and escape tables, operator lexemes, number punctuation, whether identifiers extend beyond ASCII |
+| 1. Ingest | `kernel/_1_ingest.rs` | source text → tokens (words, numbers, decoded strings, operators, line ends, indentation) | line and block comment markers, a prologue to drop, string delimiters with their escape letters and which quotes are raw, operator lexemes, number punctuation and hexadecimal prefix, the identifier character class, a variable prefix, case folding of keywords or identifiers |
 | 2. Structure | `kernel/_2_structure.rs` | tokens → tokens with explicit block delimiters | block style (indentation or braces), indent size, delimiters, optional block-intro token, bracket pairs that suspend line structure |
 | 3. Reduce | `kernel/_3_reduce.rs` | tokens → instruction tree | literal words, operator precedence and associativity with the kernel operation each maps to, statement keywords with the form each introduces, call/group/array syntax |
 | 4. Execute | `kernel/_4_execute.rs` | instruction tree → values | the surface names that reach built-ins, the names of system bindings |
 
 Supporting modules: `kernel/instruction.rs` (the instruction set),
 `kernel/value.rs` (the value model), `kernel/numeric.rs` (the exact numeric
-tower), `kernel/env.rs` (a linear binding stack with frame markers, plus the call cache), `schema.rs` (the schema
-types, deserialised with serde).
+tower), `kernel/env.rs` (a linear binding stack with frame markers, plus the call cache), `schema.rs` (the
+table types and the strict reader that builds them from a definition).
 
 ## The instruction set
 
@@ -67,38 +68,37 @@ for every numeric kind.
 The kernel can provide `emit print_line write real int_to_string
 real_to_string rational_to_string bool_to_string array_to_string
 null_to_string kind_to_string len char_at ord chr error kind num den int frac
-extern push`. A schema decides which surface names reach them. Lumen maps
-`emit` and the conversion primitives and writes `print` in Lumen itself; the
-Rust-like and Python-like dialects map `print` and `write` directly.
+extern push range`. A definition decides which surface names reach them.
+Lumen maps `emit` and the conversion primitives and writes `print` in Lumen
+itself; Python, PHP and Rust map `print` and friends directly. A builtin name
+may end in one operator character, which is how Rust's `println!` is a
+name. `print` and `write` join their arguments with spaces; when the first
+argument is a string holding `{}` placeholders and more arguments follow,
+they fill the placeholders in order. Booleans and null render with the
+first spelling the definition gives for them, so Python prints `True`.
 
 ## System bindings
 
-A schema may name a read-only arguments binding (`ARGS`), a memoization switch
-(`MEMOIZATION`; when the binding holds `true`, function results are cached
-for the calls made while it is in effect), kind meta-values (`INTEGER`,
-`RATIONAL`, …) and integer constants (`REAL_DEFAULT_PRECISION`). The kernel
-supplies the values; the schema supplies the names.
+A definition may name a read-only arguments binding (`ARGS`), a memoization
+switch (`MEMOIZATION`; when the binding holds `true`, function results are
+cached for the calls made while it is in effect), kind meta-values
+(`INTEGER`, `RATIONAL`, …), the binding holding the default real precision
+(`REAL_DEFAULT_PRECISION`) and an entry function (Rust's `main`) that runs
+once the program body has defined it. The kernel supplies the values; the
+definition supplies the names.
 
-## Schema format
+## Language definitions
 
-`kernels/microcode/schemas/lumen.yaml` is the reference. Sections:
+The format, every label and a side-by-side comparison of the languages are
+in [configs/README.md](../configs/README.md). The reader in `schema.rs` is
+strict: every label must be present, every value must have the label's
+type, unknown keys are rejected, keywords must be shaped like identifiers,
+and a label the kernel does not implement must be empty. The four
+definitions are embedded at build time; `lumen-lang --config file.json`
+reads one from disk instead, and the language name and file extensions the
+host uses come from the definitions themselves.
 
-```yaml
-name: lumen
-error_prefix: LumenError
-lexical:      # stage 1: comment, quotes, escapes, operators, identifier_unicode,
-              #          number syntax
-structure:    # stage 2: blocks, indent_size, block_open/close, block_intro,
-              #          terminators, group/call/array bracket pairs
-literals:     # stage 3: words for true, false and null
-operators:    # stage 3: binary {precedence, associativity, op}, unary {precedence, op}
-statements:   # stage 3: assignment, binding, branch, loop_while, loop_until,
-              #          loop_for, return, break, continue, function, pass
-functions:    # stage 4: surface name → built-in
-system:       # stage 4: args, memoization, kinds, integer_constants
-```
-
-Adding a language means adding a YAML file and one line in
+Adding a language means adding a JSON file and one line in
 `kernels/microcode/src/lib.rs` that embeds it. Changing an operator's
 precedence, or which word means `null`, is a data edit with no code change.
 
@@ -109,8 +109,9 @@ only in the host binary, and `scripts/kernel_independence.py` (run in CI)
 fails the build if either names the other or if any run of five or more
 identical source lines appears in both trees. They also solve the shared
 problems differently on purpose: comments are a text-level pass driven by
-the schema here and a token-stream transformation in the stream languages;
-bindings live in a linear frame stack here and in a stack of hash-map scopes
-there. The stream kernel delegates meaning to language code
-through handler traits; the microcode kernel takes meaning from tables. Both
-run every example in `examples/` and both are exercised by `test.sh` and CI.
+the definition here and a token-stream transformation in the stream
+language; bindings live in a linear frame stack here and in a stack of
+hash-map scopes there. The stream kernel delegates meaning to language code
+through handler traits; the microcode kernel takes meaning from tables. The
+microcode kernel runs every language; the stream kernel hosts Lumen, and
+every Lumen example runs on both under `test.sh` and CI.
