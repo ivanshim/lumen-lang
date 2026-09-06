@@ -5,6 +5,36 @@ Each entry is intentionally self-contained so that it remains meaningful even if
 
 ---
 
+## Unreleased
+**Contributors:** Ivan Shim orchestrating, Claude Fable 5.1 coding
+**Change:** Languages defined as data; both kernels read the definitions
+
+### What was done:
+- **Definitions**: `configs/<language>.json` is the definition of a
+  language's surface: a fixed set of labels, each mapped to the strings the
+  language spells it with. Lexeme labels take alias lists, settings take
+  scalars, precedence is a list of tiers. `configs/README.md` states the
+  format rules and carries a generated table comparing every label across
+  Lumen, Python, PHP and Rust.
+- **Microcode kernel**: reads the definitions instead of YAML schemas, with a
+  strict reader (every label present, right type, no unknown keys, keywords
+  shaped like identifiers, unimplemented labels empty). Gains block comments,
+  a prologue, a variable prefix, hexadecimal literals, per-quote escape
+  rules, case-folded keywords, builtin names ending in an operator character
+  (`println!`), parameter and return-type annotations, a `range` builtin, an
+  entry function, and value rendering with each language's literal words.
+- **Stream kernel**: hosts Lumen only and takes every keyword, operator,
+  bracket, literal word and builtin name from `lumen.json`; the Python-like
+  and Rust-like modules are removed. Both kernels read one identifier
+  character class.
+- **Languages**: the Python and Rust examples are written as Python and
+  Rust, and PHP examples are added; all three run on the microcode kernel
+  and every Lumen example runs on both.
+- **Removed**: `yaml/`, `grammar/`, the BNF document and the language
+  comparison document, all superseded by the definitions and their table.
+
+---
+
 ## v0.2.0 - 2026-09-06
 **Contributors:** Ivan Shim orchestrating, Claude Fable 5.1 coding
 **Release:** Cleanup and kernel-fidelity pass; both kernels now match their charters

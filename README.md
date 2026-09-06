@@ -1,9 +1,9 @@
 # Lumen-Lang
 
 An experimental interpreter framework: one command-line host, two independent
-kernels, three surface syntaxes. Lumen exists to explore language semantics
-and the separation between an execution substrate and the languages it hosts.
-It is not a production language.
+kernels, and languages defined as data. Lumen exists to explore language
+semantics and the separation between an execution substrate and the languages
+it hosts. It is not a production language.
 
 ## Quick start
 
@@ -48,10 +48,11 @@ src/main.rs            the host: arguments, language detection, the embedded
                        Lumen standard library; the only place both kernels exist
 kernels/stream/        crate lumen-stream: a tree-walking interpreter substrate
 kernels/microcode/     crate lumen-microcode: a table-driven execution engine
-lib_lumen/             the Lumen standard library, written in Lumen
 configs/               language definitions as JSON, one file per language,
-                       with a generated side-by-side comparison
-examples/              programs for all three languages
+                       with a generated side-by-side comparison; both kernels
+                       read them
+lib_lumen/             the Lumen standard library, written in Lumen
+examples/              programs for every language
 ```
 
 The kernels are separate crates that do not depend on each other, and
@@ -67,9 +68,10 @@ linear frame stack in the other.
 A meta-language runtime. The kernel provides a lossless maximal-munch lexer,
 a token registry, parser navigation, AST node traits, an execution loop and a
 scoped environment. It knows no keyword, comment syntax, precedence, value
-type or runtime policy. Each language module registers its lexemes, supplies
-its own handler traits and precedence scale, strips its own comments, and
-defines its own values. See [docs/LUMEN_KERNEL_STREAM.md](docs/LUMEN_KERNEL_STREAM.md).
+type or runtime policy. The Lumen module gives each construct its meaning in
+code, and takes every keyword, operator, bracket and builtin name from
+`configs/lumen.json`, so a change to Lumen's spelling reaches both kernels
+from one file. See [docs/LUMEN_KERNEL_STREAM.md](docs/LUMEN_KERNEL_STREAM.md).
 
 ### Microcode kernel
 
@@ -100,7 +102,9 @@ Lumen is the reference language: integers, exact rationals and reals of
 configurable precision, strings, arrays, functions, `for`/`while`/`until`
 loops, a pipe operator, base-N literals, and a standard library in
 `lib_lumen/` built on a handful of kernel built-ins. Its design principles are
-in [docs/LUMEN_LANGUAGE_DESIGN.md](docs/LUMEN_LANGUAGE_DESIGN.md).
+in [docs/LUMEN_LANGUAGE_DESIGN.md](docs/LUMEN_LANGUAGE_DESIGN.md), and every
+label of its definition is compared with the other languages in
+[configs/README.md](configs/README.md).
 
 ## Testing
 
@@ -123,16 +127,13 @@ as errors. `TEST_QUIET=1` prints program output only for failures.
 
 - [docs/LUMEN_KERNEL_STREAM.md](docs/LUMEN_KERNEL_STREAM.md) — stream kernel charter
 - [docs/LUMEN_KERNEL_MICROCODE.md](docs/LUMEN_KERNEL_MICROCODE.md) — microcode kernel and how it reads a definition
+- [configs/README.md](configs/README.md) — the definition format, every label, and the languages side by side
 - [docs/LUMEN_LANGUAGE_DESIGN.md](docs/LUMEN_LANGUAGE_DESIGN.md) — design principles
-- [docs/LUMEN_LANGUAGE_BNF.md](docs/LUMEN_LANGUAGE_BNF.md) — Lumen grammar, with EBNF for all three languages in `grammar/`
 - [docs/LUMEN_COMPACT_REFERENCE.md](docs/LUMEN_COMPACT_REFERENCE.md) — Lumen quick reference
 - [docs/LUMEN_LANGUAGE_EXTERN_SYSTEM.md](docs/LUMEN_LANGUAGE_EXTERN_SYSTEM.md) — external function design
-- [docs/LANGUAGE_COMPARISON.md](docs/LANGUAGE_COMPARISON.md) — the three syntaxes side by side
-- [configs/README.md](configs/README.md) — language definitions as data, with every label compared across languages
 - [docs/LUMEN_LANGUAGE_ROADMAP.md](docs/LUMEN_LANGUAGE_ROADMAP.md) — planned evolution
 - [docs/DIRECTORY_STRUCTURE.txt](docs/DIRECTORY_STRUCTURE.txt) — file map
 - [docs/VERSION_HISTORY.md](docs/VERSION_HISTORY.md) — release notes
-- `yaml/` — the long-form language specifications the schemas were derived from
 
 ## Philosophy
 
