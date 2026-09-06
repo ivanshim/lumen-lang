@@ -4,22 +4,25 @@
 # Usage: ./test.sh [--lang all|<language>] [--kernel stream|microcode] [--omit file1 file2 ...]
 #        ./test.sh <file>
 # Languages built into the binary are picked by file extension; languages in
-# langs/extra/ are passed to the binary as `--lang <definition file>`, so
+# langs/extras/ are passed to the binary as `--lang <definition file>`, so
 # every run of the suite exercises reading a definition at run time.
 # If --lang is not specified, tests Lumen. If --kernel is not specified,
 # tests both kernels. TEST_QUIET=1 prints program output only for failures.
 
-LANGUAGES=(lumen python rust php ruby pascal lua)
+LANGUAGES=(lumen python rust php ruby pascal lua c javascript swift)
 declare -A DIRS=(
     [lumen]="examples/lumen examples/lumen/constructs examples/lumen/libraries"
     [python]="examples/python" [rust]="examples/rust" [php]="examples/php"
     [ruby]="examples/ruby" [pascal]="examples/pascal" [lua]="examples/lua"
+    [c]="examples/c" [javascript]="examples/javascript" [swift]="examples/swift"
 )
-declare -A EXT=([lumen]=lm [python]=py [rust]=rs [php]=php [ruby]=rb [pascal]=pas [lua]=lua)
-declare -A DISPLAY=([lumen]=Lumen [python]=Python [rust]=Rust [php]=PHP [ruby]=Ruby [pascal]=Pascal [lua]=Lua)
+declare -A EXT=([lumen]=lm [python]=py [rust]=rs [php]=php [ruby]=rb [pascal]=pas [lua]=lua [c]=c [javascript]=js [swift]=swift)
+declare -A DISPLAY=([lumen]=Lumen [python]=Python [rust]=Rust [php]=PHP [ruby]=Ruby [pascal]=Pascal [lua]=Lua [c]=C [javascript]=JavaScript [swift]=Swift)
 declare -A FLAG=(
-    [php]="--lang langs/extra/php.json" [ruby]="--lang langs/extra/ruby.json"
-    [pascal]="--lang langs/extra/pascal.json" [lua]="--lang langs/extra/lua.json"
+    [php]="--lang langs/extras/php.json" [ruby]="--lang langs/extras/ruby.json"
+    [pascal]="--lang langs/extras/pascal.json" [lua]="--lang langs/extras/lua.json"
+    [c]="--lang langs/extras/c.json" [javascript]="--lang langs/extras/javascript.json"
+    [swift]="--lang langs/extras/swift.json"
 )
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'

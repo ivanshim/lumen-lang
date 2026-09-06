@@ -23,6 +23,9 @@ pub struct LanguageSchema {
     pub statements: Statements,
     /// Surface function name → kernel built-in.
     pub functions: HashMap<String, Builtin>,
+    /// Placeholders that print and write fill from their remaining
+    /// arguments when the first is a string (Rust's `{}`, C's `%d`).
+    pub placeholders: Vec<String>,
     pub system: System,
 }
 
@@ -89,6 +92,8 @@ pub struct Structure {
     pub terminators: Vec<String>,
     pub group: Option<Pair>,
     pub call: Option<Pair>,
+    /// The token that follows an argument label in a call (Swift's `f(n: 1)`).
+    pub call_labels: Vec<String>,
     pub array: Option<Pair>,
     pub index: Option<Pair>,
 }
@@ -196,6 +201,9 @@ pub struct Binding {
     pub mutable_modifier: Vec<String>,
     /// Token introducing an (ignored) type annotation, e.g. `:`.
     pub type_annotation: Vec<String>,
+    /// The keywords are type names placed first (C's `int x = 1;`), and a
+    /// name followed by the call bracket defines a function.
+    pub type_first: bool,
 }
 
 pub struct Branch {
@@ -551,6 +559,10 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
     let terminators = l.lexemes("stmt.terminator")?;
     let group = pair(l, "syntax.group.open", "syntax.group.close", None)?;
     let call = pair(l, "syntax.call.open", "syntax.call.close", Some("syntax.call.separator"))?;
+    let call_labels = l.lexemes("syntax.call.label")?;
+    if !call_labels.is_empty() && call.is_none() {
+        return Err("syntax.call.label needs syntax.call.open".to_string());
+    }
     let array = pair(l, "syntax.array.open", "syntax.array.close", Some("syntax.array.separator"))?;
     for key in ["syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close"] {
         l.unsupported(key)?;
@@ -625,13 +637,15 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
     let let_keyword = l.lexemes("stmt.let")?;
     let let_mutable = l.lexemes("stmt.let.mutable")?;
     let let_annotation = l.lexemes("stmt.let.annotation")?;
+    let type_first = l.flag("stmt.let.type_first")?;
+    let (let_mutable_empty, let_annotation_empty) = (let_mutable.is_empty(), let_annotation.is_empty());
     let binding = if let_keyword.is_empty() {
-        if !let_mutable.is_empty() || !let_annotation.is_empty() {
-            return Err("stmt.let.mutable and stmt.let.annotation need stmt.let".to_string());
+        if !let_mutable.is_empty() || !let_annotation.is_empty() || type_first {
+            return Err("stmt.let.mutable, stmt.let.annotation and stmt.let.type_first need stmt.let".to_string());
         }
         None
     } else {
-        Some(Binding { keyword: let_keyword, mutable_modifier: let_mutable, type_annotation: let_annotation })
+        Some(Binding { keyword: let_keyword, mutable_modifier: let_mutable, type_annotation: let_annotation, type_first })
     };
     let if_keyword = l.lexemes("stmt.if")?;
     let elif_keyword = l.lexemes("stmt.elif")?;
@@ -671,6 +685,17 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
         pass: l.lexemes("stmt.pass")?,
     };
     l.unsupported("stmt.emit")?;
+    if type_first {
+        let taken = [
+            ("stmt.let.mutable", !let_mutable_empty),
+            ("stmt.let.annotation", !let_annotation_empty),
+            ("stmt.function", !statements.function.is_empty()),
+            ("stmt.function.returns", !statements.function_returns.is_empty()),
+        ];
+        if let Some((label, _)) = taken.iter().find(|(_, used)| *used) {
+            return Err(format!("stmt.let.type_first leaves no place for {label}; leave it empty"));
+        }
+    }
 
     // ---- functions ----
     let builtin_labels = [
@@ -699,6 +724,7 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
         ("builtin.frac", Builtin::Frac),
         ("builtin.push", Builtin::Push),
     ];
+    let placeholders = l.lexemes("builtin.print.placeholder")?;
     let mut functions = HashMap::new();
     for (label, builtin) in builtin_labels {
         for lex in l.lexemes(label)? {
@@ -760,7 +786,7 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
     for intro in &block_intro {
         classify(intro);
     }
-    for lex in statements.assignment.iter().chain(terminators.iter()) {
+    for lex in statements.assignment.iter().chain(terminators.iter()).chain(call_labels.iter()) {
         classify(lex);
     }
     if let Some(b) = &statements.binding {
@@ -802,13 +828,13 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
         reserved.insert(word.clone());
     }
     for name in functions.keys() {
-        let base = name.trim_end_matches(|c: char| !word_char(c));
-        let suffix = &name[base.len()..];
-        let suffix_ok = suffix.is_empty() || (suffix.chars().count() == 1 && symbols.iter().any(|s| s == suffix));
-        if !is_word(base) || !suffix_ok {
-            return Err(format!(
-                "builtin name '{name}' must be an identifier, optionally ending in one operator character"
-            ));
+        // A builtin name begins like an identifier and may go on with
+        // operator characters and further words (println!, console.log).
+        let mut chars = name.chars();
+        let begins = chars.next().map_or(false, word_start);
+        let goes_on = chars.all(|c| !c.is_whitespace() && !quotes.contains(&c));
+        if !begins || !goes_on {
+            return Err(format!("builtin name '{name}' must begin like an identifier and hold no spaces or quotes"));
         }
     }
     for name in [&system.args, &system.memoization, &system.real_default_precision, &system.entry]
@@ -857,6 +883,7 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
             terminators,
             group,
             call,
+            call_labels,
             array,
             index,
         },
@@ -864,6 +891,7 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
         operators: Operators { binary, unary },
         statements,
         functions,
+        placeholders,
         system,
     })
 }

@@ -18,11 +18,24 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   every language. Three block styles: indentation, paired braces (`{ }`,
   `begin`/`end`) and keyword blocks closed by one word (`then` ... `end`);
   several block-comment pairs per language; a binding with an annotation
-  and no value binds null.
-- **Extra languages**: `langs/extra/` holds definitions that are not
+  and no value binds null. Type-first declarations (`stmt.let.type_first`,
+  C's `int x = 0;` and `long fib(int n)`), argument labels at call sites
+  (`syntax.call.label`, Swift's `fib(n: 10)`), print placeholders as data
+  (`builtin.print.placeholder`, Rust's `{}` and C's `%d`), and builtin
+  names with operator characters inside (`console.log`).
+- **Extra languages**: `langs/extras/` holds definitions that are not
   compiled in and are read from disk with `--lang <path>`, as proof that a
-  definition is loaded at run time. PHP moved there, and Ruby, Lua and
-  Pascal are added with examples; all seven languages run on both kernels.
+  definition is loaded at run time. PHP moved there, and Ruby, Lua, Pascal,
+  C, JavaScript and Swift are added with examples; all ten languages run on
+  both kernels.
+- **Kernels agree**: `scripts/kernel_diff.sh` reports every example
+  printing the same on both kernels. The stream kernel's integer quotient
+  now divides the exact values before truncating, its reals keep zero
+  digits after the point (`2.05`, `0.01`), a real between -1 and 0 keeps
+  its sign on both kernels, `+` with a string on one side concatenates as
+  the microcode does, and the microcode's `extern` capabilities follow
+  `docs/LUMEN_LANGUAGE_EXTERN_SYSTEM.md` (`print_native` returns the value,
+  `value_type` a number code) with equality exact across numeric kinds.
 - **Microcode kernel**: reads the definitions instead of YAML schemas, with a
   strict reader (every label present, right type, no unknown keys, keywords
   shaped like identifiers, unimplemented labels empty). Gains block comments,
@@ -41,8 +54,9 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   file extension decides otherwise, and Lumen is the default. Definitions
   live in `langs/`.
 - **Languages**: the Python and Rust examples are written as Python and
-  Rust, and PHP, Ruby, Lua and Pascal examples are added; every example
-  runs on both kernels, and `scripts/kernel_diff.sh` compares their output
+  Rust, and PHP, Ruby, Lua, Pascal, C, JavaScript and Swift examples are
+  added; every example runs on both kernels, and `scripts/kernel_diff.sh`
+  compares their output
   program by program.
 - **Removed**: `yaml/`, `grammar/`, the BNF document and the language
   comparison document, all superseded by the definitions and their table.

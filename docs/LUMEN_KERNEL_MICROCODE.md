@@ -15,10 +15,10 @@ is table-driven. Definitions contain no executable logic, only data.
 
 | Stage | File | Input → output | What the definition supplies |
 |---|---|---|---|
-| 1. Ingest | `kernel/_1_ingest.rs` | source text → tokens (words, numbers, decoded strings, operators, line ends, indentation) | line and block comment markers, a prologue to drop, string delimiters with their escape letters and which quotes are raw, operator lexemes, number punctuation and hexadecimal prefix, the identifier character class, a variable prefix, case folding of keywords or identifiers |
+| 1. Ingest | `kernel/_1_ingest.rs` | source text → tokens (words, numbers, decoded strings, operators, line ends, indentation) | line and block comment markers, a prologue to drop, string delimiters with their escape letters and which quotes are raw, operator lexemes, number punctuation and hexadecimal prefix, the identifier character class, a variable prefix, case folding of keywords or identifiers, builtin names read whole (`println!`, `console.log`) |
 | 2. Structure | `kernel/_2_structure.rs` | tokens → tokens with explicit block delimiters | block style (indentation, braces or keyword), indent size, paired open/close delimiters, optional block-intro tokens, bracket pairs that suspend line structure |
-| 3. Reduce | `kernel/_3_reduce.rs` | tokens → instruction tree | literal words, operator precedence and associativity with the kernel operation each maps to, statement keywords with the form each introduces, block-intro words to skip and the closer that ends a keyword-style chain, call/group/array syntax |
-| 4. Execute | `kernel/_4_execute.rs` | instruction tree → values | the surface names that reach built-ins, the names of system bindings |
+| 3. Reduce | `kernel/_3_reduce.rs` | tokens → instruction tree | literal words, operator precedence and associativity with the kernel operation each maps to, statement keywords with the form each introduces, block-intro words to skip and the closer that ends a keyword-style chain, call/group/array syntax, argument labels to drop, type-first declarations |
+| 4. Execute | `kernel/_4_execute.rs` | instruction tree → values | the surface names that reach built-ins, the placeholders print fills, the names of system bindings |
 
 Supporting modules: `kernel/instruction.rs` (the instruction set),
 `kernel/value.rs` (the value model), `kernel/numeric.rs` (the exact numeric

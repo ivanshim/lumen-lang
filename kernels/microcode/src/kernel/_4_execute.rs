@@ -251,23 +251,27 @@ fn words(schema: &LanguageSchema) -> LiteralWords<'_> {
 }
 
 /// Text for print and write: the values joined by spaces, or, when the
-/// first value is a string holding `{}` placeholders and more values
-/// follow, that string with each placeholder filled in order.
+/// first value is a string holding placeholders from the definition (Rust's
+/// `{}`, C's `%d`) and more values follow, that string with each
+/// placeholder filled in order.
 fn render(values: &[Value], schema: &LanguageSchema) -> String {
     let words = words(schema);
+    let holes = &schema.placeholders;
+    // Position and width of the first placeholder in a template piece.
+    let first_hole = |s: &str| holes.iter().filter_map(|h| s.find(h.as_str()).map(|at| (at, h.len()))).min();
     if values.len() > 1 {
         if let Value::String(template) = &values[0] {
-            if template.contains("{}") {
+            if first_hole(template).is_some() {
                 let mut out = String::new();
                 let mut rest = values[1..].iter();
                 let mut s = template.as_str();
-                while let Some(pos) = s.find("{}") {
-                    out.push_str(&s[..pos]);
+                while let Some((at, width)) = first_hole(s) {
+                    out.push_str(&s[..at]);
                     match rest.next() {
                         Some(v) => out.push_str(&v.render(&words)),
-                        None => out.push_str("{}"),
+                        None => out.push_str(&s[at..at + width]),
                     }
-                    s = &s[pos + 2..];
+                    s = &s[at + width..];
                 }
                 out.push_str(s);
                 return out;
@@ -479,32 +483,28 @@ fn builtin_apply(builtin: Builtin, name: &str, values: &[Value], schema: &Langua
             };
             let rest = &values[1..];
             match target {
-                "print_native" => {
-                    for v in rest {
-                        println!("{}", v.render(&words));
+                // The built-in capabilities of docs/LUMEN_LANGUAGE_EXTERN_SYSTEM.md:
+                // each takes one value; the printing ones hand it back, and
+                // value_type answers with a number code.
+                "print_native" | "debug_info" | "value_type" => {
+                    if rest.len() != 1 {
+                        return Err(format!("{} expects 1 argument, got {}", target, rest.len()));
                     }
-                    Ok(Value::Null)
-                }
-                "value_type" => {
-                    let v = rest.first().ok_or_else(|| "value_type requires an argument".to_string())?;
-                    let kind = match v {
-                        Value::Number(_) => "number",
-                        Value::Rational { .. } => "rational",
-                        Value::Real { .. } => "real",
-                        Value::String(_) => "string",
-                        Value::Bool(_) => "bool",
-                        Value::Null => "null",
-                        Value::Range { .. } => "range",
-                        Value::Array(_) => "array",
-                        Value::Function(_) => "function",
-                        Value::Kind(_) => "kind",
-                    };
-                    Ok(Value::String(kind.to_string()))
-                }
-                "debug_info" => {
-                    let v = rest.first().ok_or_else(|| "debug_info requires an argument".to_string())?;
-                    println!("[DEBUG] {}", v.render(&words));
-                    Ok(Value::Null)
+                    let v = &rest[0];
+                    match target {
+                        "print_native" => println!("{}", v.render(&words)),
+                        "debug_info" => eprintln!("[DEBUG] {}", v.render(&words)),
+                        _ => {
+                            let code = match v {
+                                Value::Number(_) | Value::Rational { .. } | Value::Real { .. } => 0,
+                                Value::Bool(_) => 1,
+                                Value::String(_) => 2,
+                                _ => return Err("Unknown value type".to_string()),
+                            };
+                            return Ok(Value::Number(BigInt::from(code)));
+                        }
+                    }
+                    Ok(v.clone())
                 }
                 other => Err(format!("Unknown external function: {}", other)),
             }
@@ -560,13 +560,22 @@ fn operate(op: Op, operands: &[Instruction], env: &mut Environment, schema: &Lan
     Ok((result, Flow::Normal))
 }
 
+/// Numbers of any kind are equal when their exact values are; everything
+/// else compares by kind and content.
+fn equal(left: &Value, right: &Value) -> bool {
+    match (numeric::to_num(left), numeric::to_num(right)) {
+        (Some(a), Some(b)) => numeric::compare(&a, &b) == Ordering::Equal,
+        _ => left == right,
+    }
+}
+
 fn binary(op: Op, left: &Value, right: &Value, schema: &LanguageSchema) -> Result<Value, String> {
     let words = words(schema);
     match op {
         Op::And => Ok(Value::Bool(left.to_bool() && right.to_bool())),
         Op::Or => Ok(Value::Bool(left.to_bool() || right.to_bool())),
-        Op::Eq => Ok(Value::Bool(left == right)),
-        Op::Ne => Ok(Value::Bool(left != right)),
+        Op::Eq => Ok(Value::Bool(equal(left, right))),
+        Op::Ne => Ok(Value::Bool(!equal(left, right))),
         Op::Concat => Ok(Value::String(format!("{}{}", left.render(&words), right.render(&words)))),
         Op::Range => Ok(Value::Range { start: left.to_number()?, end: right.to_number()? }),
         Op::Index => {

@@ -8,7 +8,7 @@
 // embedded Lumen standard library for Lumen programs; and hands the source
 // to the selected kernel. A `--lang` value takes a language name (`python`),
 // one of its extensions (`py`), or the path of a definition file
-// (`langs/extra/php.json`), which is read at run time.
+// (`langs/extras/php.json`), which is read at run time.
 // Nothing here knows how either kernel works, and the kernels never see
 // each other.
 

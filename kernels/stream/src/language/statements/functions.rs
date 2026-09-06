@@ -73,7 +73,6 @@ impl StmtHandler for FnDefStmtHandler {
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
-        let d = def();
         let keyword = parser.advance().lexeme; // consume the function keyword
         parser.skip_tokens();
 
@@ -81,16 +80,35 @@ impl StmtHandler for FnDefStmtHandler {
             .take_identifier()
             .ok_or_else(|| err_at(parser, &format!("Expected function name after '{}'", keyword)))?;
         parser.skip_tokens();
+        parse_function_tail(parser, registry, name)
+    }
+}
 
-        // Expect the parameter list
-        if !d.is("syntax.call.open", &parser.advance().lexeme) {
-            return Err(err_at(parser, &format!("Expected '{}' after function name", d.first("syntax.call.open"))));
-        }
-        parser.skip_tokens();
+/// From the parameter list on: `( params ) [returns type] block`. A
+/// parameter is a name with an optional annotation, or, with
+/// `stmt.let.type_first`, a type word and a name, where a type word alone
+/// (C's `void`) declares nothing. The definition is registered here.
+pub fn parse_function_tail(parser: &mut Parser, registry: &Registry, name: String) -> LumenResult<Box<dyn StmtNode>> {
+    let d = def();
+    // Expect the parameter list
+    if !d.is("syntax.call.open", &parser.advance().lexeme) {
+        return Err(err_at(parser, &format!("Expected '{}' after function name", d.first("syntax.call.open"))));
+    }
+    parser.skip_tokens();
 
-        // Parse parameters: identifiers, each with an optional type annotation
-        let mut params = Vec::new();
-        while !d.is("syntax.call.close", &parser.peek().lexeme) {
+    let mut params = Vec::new();
+    while !d.is("syntax.call.close", &parser.peek().lexeme) {
+        if d.type_first {
+            let type_word = parser.take_word().ok_or_else(|| err_at(parser, "Expected a parameter type"))?;
+            if !d.is("stmt.let", &type_word) {
+                return Err(err_at(parser, &format!("'{}' is not a type word", type_word)));
+            }
+            parser.skip_tokens();
+            if let Some(param_name) = parser.take_identifier() {
+                params.push(param_name);
+                parser.skip_tokens();
+            }
+        } else {
             let param_name = parser.take_identifier().ok_or_else(|| err_at(parser, "Expected parameter name"))?;
             params.push(param_name);
             parser.skip_tokens();
@@ -100,36 +118,36 @@ impl StmtHandler for FnDefStmtHandler {
                 parser.take_word().ok_or_else(|| err_at(parser, "Expected a type name"))?;
                 parser.skip_tokens();
             }
-
-            if d.is("syntax.call.separator", &parser.peek().lexeme) {
-                parser.advance();
-                parser.skip_tokens();
-            } else if !d.is("syntax.call.close", &parser.peek().lexeme) {
-                return Err(err_at(
-                    parser,
-                    &format!("Expected '{}' or '{}' after parameter", d.first("syntax.call.separator"), d.first("syntax.call.close")),
-                ));
-            }
         }
-        parser.advance(); // consume the closing bracket
-        parser.skip_tokens();
 
-        // An optional return type: the marker and one type name
-        if d.is("stmt.function.returns", &parser.peek().lexeme) {
+        if d.is("syntax.call.separator", &parser.peek().lexeme) {
             parser.advance();
             parser.skip_tokens();
-            parser.take_word().ok_or_else(|| err_at(parser, "Expected a return type"))?;
-            parser.skip_tokens();
+        } else if !d.is("syntax.call.close", &parser.peek().lexeme) {
+            return Err(err_at(
+                parser,
+                &format!("Expected '{}' or '{}' after parameter", d.first("syntax.call.separator"), d.first("syntax.call.close")),
+            ));
         }
-
-        // Parse function body (a block)
-        let body = crate::language::structure::structural::parse_block(parser, registry)?;
-
-        // Register the function
-        define_function(name, params, body);
-
-        Ok(Box::new(FnDefStmt))
     }
+    parser.advance(); // consume the closing bracket
+    parser.skip_tokens();
+
+    // An optional return type: the marker and one type name
+    if d.is("stmt.function.returns", &parser.peek().lexeme) {
+        parser.advance();
+        parser.skip_tokens();
+        parser.take_word().ok_or_else(|| err_at(parser, "Expected a return type"))?;
+        parser.skip_tokens();
+    }
+
+    // Parse function body (a block)
+    let body = crate::language::structure::structural::parse_block(parser, registry)?;
+
+    // Register the function
+    define_function(name, params, body);
+
+    Ok(Box::new(FnDefStmt))
 }
 
 pub fn register(reg: &mut super::super::registry::Registry) {

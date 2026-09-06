@@ -300,6 +300,24 @@ pub fn lex(source: &str, schema: &LanguageSchema) -> Result<Vec<Token>, String> 
                 text.push(chars[i]);
                 i += 1;
             }
+            // A builtin name may go on past the word with operator characters
+            // and further words (println!, console.log); the longest such
+            // name the source spells out here is the token.
+            let mut extension = 0;
+            for name in schema.functions.keys() {
+                if name.len() <= text.len() || !name.starts_with(text.as_str()) {
+                    continue;
+                }
+                let tail: Vec<char> = name[text.len()..].chars().collect();
+                let ends_cleanly = chars.get(i + tail.len()).map_or(true, |c| !is_word_char(*c, unicode));
+                if chars[i..].starts_with(&tail) && ends_cleanly && tail.len() > extension {
+                    extension = tail.len();
+                }
+            }
+            for _ in 0..extension {
+                text.push(chars[i]);
+                i += 1;
+            }
             col += text.chars().count();
             let lowered = text.to_lowercase();
             if lexical.keywords_case_insensitive && lexical.reserved_words.contains(&lowered) {

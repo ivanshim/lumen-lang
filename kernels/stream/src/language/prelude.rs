@@ -67,9 +67,16 @@ impl LumenParserExt for Parser<'_> {
             return None;
         }
         let mut name = self.advance().lexeme;
+        let mut whole = name.chars().count() > 1;
         if !name.chars().next().map_or(false, word_start) {
             // The prefix; the word itself follows
-            name.push_str(&self.advance().lexeme);
+            let word = self.advance().lexeme;
+            whole = word.chars().count() > 1;
+            name.push_str(&word);
+        }
+        if whole {
+            // A whole lexeme (a compound builtin name) is the name by itself
+            return Some(name);
         }
         loop {
             let lexeme = &self.peek().lexeme;
@@ -89,6 +96,10 @@ impl LumenParserExt for Parser<'_> {
             return None;
         }
         let mut name = self.advance().lexeme;
+        if name.chars().count() > 1 {
+            // A reserved word arrives whole; nothing continues it
+            return Some(name);
+        }
         loop {
             let lexeme = &self.peek().lexeme;
             let mut chars = lexeme.chars();

@@ -326,36 +326,28 @@ impl LumenReal {
             return int_part.to_string();
         }
 
-        // Compute decimal places needed for precision
-        let mut decimal_str = String::new();
-        let digit_count = int_part.to_string().len();
-        let target_digits = self.precision;
+        // Significant digits: what the integer part does not use goes to
+        // the fraction. Every digit is written, zeros included, until the
+        // remainder runs out or the digits do.
         let mut remainder = remainder.abs();
-
-        // If int part has fewer digits than target, include fractional digits
-        let mut frac_digits = if digit_count >= target_digits {
-            0
-        } else {
-            target_digits - digit_count
-        };
-
-        // Compute fractional part
-        let mut has_nonzero = false;
-        while frac_digits > 0 && remainder > BigInt::from(0) {
-            remainder = remainder * BigInt::from(10);
-            let digit = &remainder / &self.denominator;
-            if digit > BigInt::from(0) || has_nonzero {
-                if !has_nonzero {
-                    decimal_str.push('.');
-                    has_nonzero = true;
-                }
-                decimal_str.push_str(&digit.to_string());
+        let used = int_part.to_string().len();
+        let mut room = self.precision.saturating_sub(used);
+        let ten = BigInt::from(10);
+        let mut digits = String::new();
+        loop {
+            if room == 0 || remainder == BigInt::from(0) {
+                break;
             }
-            remainder = remainder - (&digit * &self.denominator);
-            frac_digits -= 1;
+            remainder *= &ten;
+            let digit = &remainder / &self.denominator;
+            remainder -= &digit * &self.denominator;
+            digits.push_str(&digit.to_string());
+            room -= 1;
         }
 
-        format!("{}{}", int_part, decimal_str)
+        // A value between -1 and 0 has a zero integer part that carries no sign.
+        let negative = self.numerator < BigInt::from(0) && int_part == BigInt::from(0);
+        format!("{}{}.{}", if negative { "-" } else { "" }, int_part, digits)
     }
 }
 
