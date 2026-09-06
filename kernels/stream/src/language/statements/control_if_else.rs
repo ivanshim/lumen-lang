@@ -4,6 +4,7 @@ use crate::language::prelude::*;
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
 use crate::kernel::runtime::Env;
+use crate::language::definition::BlockStyle;
 use crate::language::structure::structural;
 use crate::language::values::as_bool;
 
@@ -73,9 +74,22 @@ impl IfStmtHandler {
     /// An elif branch is an if statement nested in the else block.
     fn parse_branch(parser: &mut Parser, registry: &Registry) -> LumenResult<Box<dyn StmtNode>> {
         let d = def();
+        let keyword_blocks = d.block_style == BlockStyle::Keyword;
         parser.skip_tokens();
         let cond = parser.parse_expr(registry)?;
-        let then_block = structural::parse_block(parser, registry)?;
+
+        // In the keyword style the whole chain shares one closer, so each
+        // body runs to an elif, an else or the closer, and only the end of
+        // the chain consumes the closer.
+        let then_block = if keyword_blocks {
+            structural::skip_block_intro(parser);
+            let mut stops: Vec<String> = d.list("block.close").to_vec();
+            stops.extend(d.list("stmt.elif").iter().cloned());
+            stops.extend(d.list("stmt.else").iter().cloned());
+            structural::parse_body(parser, registry, &stops)?
+        } else {
+            structural::parse_block(parser, registry)?
+        };
 
         structural::consume_separators(parser);
 
@@ -88,10 +102,17 @@ impl IfStmtHandler {
             if d.is("stmt.if", &parser.peek().lexeme) {
                 parser.advance(); // `else if`
                 Some(vec![Self::parse_branch(parser, registry)?])
+            } else if keyword_blocks {
+                let body = structural::parse_body(parser, registry, d.list("block.close"))?;
+                structural::expect_close(parser)?;
+                Some(body)
             } else {
                 Some(structural::parse_block(parser, registry)?)
             }
         } else {
+            if keyword_blocks {
+                structural::expect_close(parser)?;
+            }
             None
         };
 

@@ -15,7 +15,6 @@ use serde_json::Value as Json;
 pub const EMBEDDED: &[&str] = &[
     include_str!("../../../../langs/lumen.json"),
     include_str!("../../../../langs/python.json"),
-    include_str!("../../../../langs/php.json"),
     include_str!("../../../../langs/rust.json"),
 ];
 
@@ -23,7 +22,52 @@ pub const EMBEDDED: &[&str] = &[
 pub enum BlockStyle {
     Indentation,
     Braces,
+    /// No opener; the body runs to a closing word, and an `if` chain shares one.
+    Keyword,
 }
+
+/// Every label a definition must carry. The reader rejects a file that
+/// lacks one or carries a key outside this set, so a mistake in a
+/// user-written definition is reported at load, not mid-parse.
+const LABELS: &[&str] = &[
+    "format_version", "language", "extensions",
+    "lexical.comment_line", "lexical.comment_block.open", "lexical.comment_block.close",
+    "lexical.string_quotes", "lexical.raw_quotes", "lexical.string_escapes", "lexical.prologue",
+    "lexical.number.decimal_point", "lexical.number.base_marker", "lexical.number.exponent_marker",
+    "lexical.number.hex_prefix", "lexical.keywords_case_insensitive",
+    "identifier.unicode", "identifier.variable_prefix", "identifier.case_insensitive",
+    "block.style", "block.open", "block.close", "block.intro", "block.indent_size", "stmt.terminator",
+    "syntax.group.open", "syntax.group.close",
+    "syntax.call.open", "syntax.call.separator", "syntax.call.close",
+    "syntax.array.open", "syntax.array.separator", "syntax.array.close",
+    "syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close",
+    "literal.true", "literal.false", "literal.null",
+    "op.precedence", "op.right_associative",
+    "op.add", "op.sub", "op.mul", "op.div", "op.quot", "op.rem", "op.pow",
+    "op.eq", "op.ne", "op.lt", "op.le", "op.gt", "op.ge",
+    "op.and", "op.or", "op.not", "op.negate",
+    "op.concat", "op.range", "op.index.open", "op.index.close", "op.pipe",
+    "stmt.assign", "stmt.let", "stmt.let.mutable", "stmt.let.annotation",
+    "stmt.if", "stmt.elif", "stmt.else", "stmt.while", "stmt.until", "stmt.for", "stmt.for.in",
+    "stmt.foreach", "stmt.foreach.as", "stmt.foreach.pair",
+    "stmt.return", "stmt.break", "stmt.continue", "stmt.function", "stmt.function.returns",
+    "stmt.pass", "stmt.emit",
+    "builtin.emit", "builtin.print", "builtin.write", "builtin.len", "builtin.char_at", "builtin.ord",
+    "builtin.chr", "builtin.typeof", "builtin.error", "builtin.extern", "builtin.range",
+    "builtin.real", "builtin.int_to_string", "builtin.real_to_string", "builtin.rational_to_string",
+    "builtin.bool_to_string", "builtin.array_to_string", "builtin.null_to_string", "builtin.kind_to_string",
+    "builtin.num", "builtin.den", "builtin.int", "builtin.frac", "builtin.push",
+    "system.args", "system.memoization", "system.real_default_precision", "system.entry",
+    "system.kind.integer", "system.kind.rational", "system.kind.real", "system.kind.string",
+    "system.kind.boolean", "system.kind.array", "system.kind.null",
+];
+
+/// Labels the stream kernel recognises but does not implement; a
+/// definition must leave them empty.
+const UNSUPPORTED: &[&str] = &[
+    "syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close",
+    "stmt.foreach", "stmt.foreach.as", "stmt.foreach.pair", "stmt.emit",
+];
 
 pub struct Definition {
     pub name: String,
@@ -36,6 +80,8 @@ pub struct Definition {
     pub keywords_case_insensitive: bool,
     pub block_style: BlockStyle,
     pub indent_size: usize,
+    /// Every reserved word, computed once: the parser asks on every token.
+    reserved: Vec<String>,
 }
 
 static CURRENT: OnceLock<Definition> = OnceLock::new();
@@ -100,8 +146,19 @@ impl Definition {
             keywords_case_insensitive: false,
             block_style: BlockStyle::Indentation,
             indent_size: 4,
+            reserved: Vec::new(),
         };
         let mut style_seen = false;
+        for key in LABELS {
+            if !map.contains_key(*key) {
+                return Err(format!("missing label '{key}'"));
+            }
+        }
+        for key in map.keys() {
+            if !key.starts_with("$comment") && !LABELS.contains(&key.as_str()) {
+                return Err(format!("unknown label '{key}'"));
+            }
+        }
         for (key, value) in map {
             match (key.as_str(), value) {
                 (k, _) if k.starts_with("$comment") => {}
@@ -119,7 +176,8 @@ impl Definition {
                     definition.block_style = match style.as_str() {
                         "indentation" => BlockStyle::Indentation,
                         "braces" => BlockStyle::Braces,
-                        other => return Err(format!("block.style must be 'indentation' or 'braces', got '{other}'")),
+                        "keyword" => BlockStyle::Keyword,
+                        other => return Err(format!("block.style must be 'indentation', 'braces' or 'keyword', got '{other}'")),
                     };
                 }
                 ("block.indent_size", Json::Number(n)) => {
@@ -137,6 +195,25 @@ impl Definition {
         if !style_seen {
             return Err("missing label 'block.style'".to_string());
         }
+        for key in UNSUPPORTED {
+            if !definition.list(key).is_empty() {
+                return Err(format!("label '{key}' is not implemented by the stream kernel; leave it empty"));
+            }
+        }
+        let opens = definition.list("block.open").len();
+        let closes = definition.list("block.close").len();
+        let paired = match definition.block_style {
+            BlockStyle::Indentation => opens == 0 && closes == 0,
+            BlockStyle::Braces => opens > 0 && opens == closes,
+            BlockStyle::Keyword => opens == 0 && closes > 0,
+        };
+        if !paired {
+            return Err("block.open and block.close do not fit block.style".to_string());
+        }
+        if definition.list("lexical.comment_block.open").len() != definition.list("lexical.comment_block.close").len() {
+            return Err("lexical.comment_block.open and .close must pair up position by position".to_string());
+        }
+        definition.reserved = definition.collect_reserved_words();
         Ok(definition)
     }
 
@@ -206,14 +283,19 @@ impl Definition {
     }
 
     /// Word-shaped lexemes the lexer must recognise whole: statement
-    /// keywords, literal words, word-form operators, the builtins this
-    /// kernel parses as statements, and the memoization switch.
-    pub fn reserved_words(&self) -> Vec<String> {
+    /// keywords, literal words, word-form operators, block words, the
+    /// builtins this kernel parses as statements, and the memoization switch.
+    pub fn reserved_words(&self) -> &[String] {
+        &self.reserved
+    }
+
+    fn collect_reserved_words(&self) -> Vec<String> {
         let mut words = Vec::new();
         for (label, list) in &self.lexemes {
             let reserved = label.starts_with("stmt.")
                 || label.starts_with("literal.")
                 || label.starts_with("op.")
+                || label.starts_with("block.")
                 || matches!(label.as_str(), "builtin.emit" | "builtin.push" | "builtin.extern" | "system.memoization");
             if reserved {
                 words.extend(list.iter().filter(|s| self.word_shaped(s)).cloned());
@@ -227,8 +309,12 @@ impl Definition {
     /// Whether `word` is reserved, compared case-insensitively when the
     /// language folds keywords.
     pub fn is_reserved(&self, word: &str) -> bool {
-        let folded = if self.keywords_case_insensitive { word.to_lowercase() } else { word.to_string() };
-        self.reserved_words().iter().any(|w| *w == folded)
+        if self.keywords_case_insensitive {
+            let folded = word.to_lowercase();
+            self.reserved.iter().any(|w| *w == folded)
+        } else {
+            self.reserved.iter().any(|w| w == word)
+        }
     }
 
     /// Symbol lexemes the lexer must recognise whole: operators, brackets,

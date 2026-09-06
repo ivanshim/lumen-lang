@@ -7,9 +7,21 @@ cd "$(dirname "$0")/.." || exit 1
 cargo build --quiet || exit 1
 B=./target/debug/lumen-lang
 same=0; differing=0
-for f in examples/lumen/*.lm examples/lumen/constructs/*.lm examples/lumen/libraries/*.lm examples/python/*.py examples/rust/*.rs examples/php/*.php; do
-    a=$($B --kernel stream "$f" 2>&1)
-    b=$($B --kernel microcode "$f" 2>&1)
+# Languages in langs/extra/ are passed as a definition file.
+flag_for() {
+    case "${1##*.}" in
+        php) echo "--lang langs/extra/php.json" ;;
+        rb) echo "--lang langs/extra/ruby.json" ;;
+        pas) echo "--lang langs/extra/pascal.json" ;;
+        lua) echo "--lang langs/extra/lua.json" ;;
+    esac
+}
+for f in examples/lumen/*.lm examples/lumen/constructs/*.lm examples/lumen/libraries/*.lm examples/python/*.py examples/rust/*.rs examples/php/*.php examples/ruby/*.rb examples/pascal/*.pas examples/lua/*.lua; do
+    flag=$(flag_for "$f")
+    # shellcheck disable=SC2086
+    a=$($B --kernel stream $flag "$f" 2>&1)
+    # shellcheck disable=SC2086
+    b=$($B --kernel microcode $flag "$f" 2>&1)
     if [ "$a" = "$b" ]; then
         same=$((same + 1))
     else

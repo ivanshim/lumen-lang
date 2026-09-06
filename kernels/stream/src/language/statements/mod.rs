@@ -18,6 +18,7 @@ pub mod functions;
 pub mod system_memoization;
 pub mod expr_stmt;
 pub mod pass_stmt;
+pub mod block_stmt;
 
 // Re-export function utilities for use by expressions
 pub use functions::get_function;

@@ -4,7 +4,17 @@
 use crate::language::prelude::*;
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::kernel::runtime::Env;
+use crate::kernel::runtime::{Env, Value};
+
+/// The value of a declaration that gives none.
+#[derive(Debug)]
+struct NullValue;
+
+impl ExprNode for NullValue {
+    fn eval(&self, _env: &mut Env) -> LumenResult<Value> {
+        Ok(Box::new(crate::language::values::LumenNull))
+    }
+}
 
 #[derive(Debug)]
 struct LetStmt {
@@ -38,12 +48,18 @@ pub fn parse_binding_tail(
     let type_annotation = if d.is("stmt.let.annotation", &parser.peek().lexeme) {
         parser.advance(); // consume the annotation mark
         parser.skip_tokens();
-        let type_name = parser.take_identifier().unwrap_or_default();
+        let type_name = parser.take_word().unwrap_or_default();
         parser.skip_tokens();
         Some(type_name)
     } else {
         None
     };
+
+    // A declaration with a type and no value binds null (Pascal's `var x: integer;`)
+    if type_annotation.is_some() && crate::language::structure::structural::at_statement_end(parser) {
+        let null: Box<dyn ExprNode> = Box::new(NullValue);
+        return Ok((name, type_annotation, null));
+    }
 
     // Expect the assignment sign
     if !d.is("stmt.assign", &parser.advance().lexeme) {

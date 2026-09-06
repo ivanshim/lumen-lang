@@ -36,8 +36,8 @@ pub fn spelled(list: &[String], word: &str) -> bool {
 pub struct Lexical {
     /// Line-comment markers; comments are removed before lexing.
     pub comment_lines: Vec<String>,
-    /// Block-comment delimiters.
-    pub comment_block: Option<(String, String)>,
+    /// Block-comment delimiter pairs.
+    pub comment_blocks: Vec<(String, String)>,
     /// String delimiters.
     pub quotes: Vec<char>,
     /// Escape tables per delimiter: escape letter → replacement text.
@@ -76,12 +76,15 @@ pub struct NumberSyntax {
 pub struct Structure {
     pub blocks: BlockStyle,
     pub indent_size: usize,
-    /// Block delimiters: present in the source for `braces`, synthesised
-    /// from indentation changes for `indentation`.
-    pub block_open: String,
-    pub block_close: String,
-    /// Token that ends a block header (Python's `:`); dropped when present.
-    pub block_intro: Option<String>,
+    /// Block delimiters, as parallel lists: the opener at one position pairs
+    /// with the closer at the same position. Synthesised from indentation
+    /// changes for `indentation`; present in the source otherwise. A
+    /// `keyword` block has no opener, only closers.
+    pub block_open: Vec<String>,
+    pub block_close: Vec<String>,
+    /// Tokens that end a block header (Python's `:`, Lua's `then`); dropped
+    /// when present.
+    pub block_intro: Vec<String>,
     /// Statement terminators besides line ends, e.g. `;`.
     pub terminators: Vec<String>,
     pub group: Option<Pair>,
@@ -94,6 +97,8 @@ pub struct Structure {
 pub enum BlockStyle {
     Indentation,
     Braces,
+    /// No opener; the body runs to a closing word, and an `if` chain shares one.
+    Keyword,
 }
 
 #[derive(Clone)]
@@ -460,11 +465,12 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
 
     // ---- lexical ----
     let comment_lines = l.lexemes("lexical.comment_line")?;
-    let comment_block = match (l.first("lexical.comment_block.open")?, l.first("lexical.comment_block.close")?) {
-        (Some(open), Some(close)) => Some((open, close)),
-        (None, None) => None,
-        _ => return Err("lexical.comment_block.open and .close must be given together".to_string()),
-    };
+    let comment_opens = l.lexemes("lexical.comment_block.open")?;
+    let comment_closes = l.lexemes("lexical.comment_block.close")?;
+    if comment_opens.len() != comment_closes.len() {
+        return Err("lexical.comment_block.open and .close must pair up position by position".to_string());
+    }
+    let comment_blocks: Vec<(String, String)> = comment_opens.into_iter().zip(comment_closes).collect();
     let quotes = l.chars("lexical.string_quotes")?;
     let raw_quotes = l.chars("lexical.raw_quotes")?;
     for q in &raw_quotes {
@@ -511,27 +517,35 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
     let style = match l.text("block.style")?.as_str() {
         "indentation" => BlockStyle::Indentation,
         "braces" => BlockStyle::Braces,
-        other => return Err(format!("block.style must be 'indentation' or 'braces', got '{other}'")),
+        "keyword" => BlockStyle::Keyword,
+        other => return Err(format!("block.style must be 'indentation', 'braces' or 'keyword', got '{other}'")),
     };
-    let block_open = l.first("block.open")?;
-    let block_close = l.first("block.close")?;
-    let block_intro = l.first("block.intro")?;
+    let block_open = l.lexemes("block.open")?;
+    let block_close = l.lexemes("block.close")?;
+    let block_intro = l.lexemes("block.intro")?;
     let indent_size = l.count("block.indent_size")?;
     let (block_open, block_close, indent_size) = match style {
-        BlockStyle::Braces => (
-            block_open.ok_or("braces need block.open")?,
-            block_close.ok_or("braces need block.close")?,
-            indent_size.unwrap_or(4),
-        ),
+        BlockStyle::Braces => {
+            if block_open.is_empty() || block_open.len() != block_close.len() {
+                return Err("braces need block.open and block.close, paired position by position".to_string());
+            }
+            (block_open, block_close, indent_size.unwrap_or(4))
+        }
+        BlockStyle::Keyword => {
+            if !block_open.is_empty() || block_close.is_empty() {
+                return Err("keyword blocks take no block.open and need block.close".to_string());
+            }
+            (block_open, block_close, indent_size.unwrap_or(4))
+        }
         BlockStyle::Indentation => {
-            if block_open.is_some() || block_close.is_some() {
+            if !block_open.is_empty() || !block_close.is_empty() {
                 return Err("indentation blocks take no block.open or block.close".to_string());
             }
             let size = indent_size.ok_or("indentation blocks need block.indent_size")?;
             if size == 0 {
                 return Err("block.indent_size must be at least 1".to_string());
             }
-            ("<block>".to_string(), "</block>".to_string(), size)
+            (vec!["<block>".to_string()], vec!["</block>".to_string()], size)
         }
     };
     let terminators = l.lexemes("stmt.terminator")?;
@@ -738,11 +752,12 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
             classify(sep);
         }
     }
-    if style == BlockStyle::Braces {
-        classify(&block_open);
-        classify(&block_close);
+    if style != BlockStyle::Indentation {
+        for lex in block_open.iter().chain(block_close.iter()) {
+            classify(lex);
+        }
     }
-    if let Some(intro) = &block_intro {
+    for intro in &block_intro {
         classify(intro);
     }
     for lex in statements.assignment.iter().chain(terminators.iter()) {
@@ -821,7 +836,7 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
         error_prefix,
         lexical: Lexical {
             comment_lines,
-            comment_block,
+            comment_blocks,
             quotes,
             escapes,
             prologue,

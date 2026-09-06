@@ -26,22 +26,29 @@ cargo run -- examples/rust/demo.rs
 # Python-like (indentation)
 cargo run -- examples/python/fibonacci.py
 
-# PHP-like (braces, dollar-prefixed variables)
-cargo run -- examples/php/demo.php
+# Rust-like (braces, fn main, println!)
+cargo run -- examples/rust/demo.rs
 
 # Choose the kernel explicitly (microcode is the default)
 cargo run -- --kernel stream examples/lumen/pi_machin.lm
 cargo run -- --kernel microcode examples/lumen/pi_machin.lm
 
-# Run under a language definition read from disk
-cargo run -- --lang langs/php.json examples/php/loop.php
+# Name the language by name or by extension
+cargo run -- --lang python examples/python/demo.py
+cargo run -- --lang py examples/python/demo.py
+
+# Run under a language definition read from disk at run time
+cargo run -- --lang langs/extra/php.json examples/php/loop.php
+cargo run -- --lang langs/extra/ruby.json examples/ruby/demo.rb
+cargo run -- --lang langs/extra/pascal.json examples/pascal/demo.pas
 ```
 
-The language is picked with `--lang` (or `--language`), which takes the name
-of an embedded definition or the path of a definition file; without the
-flag it comes from the file extension (`.lm`, `.py`, `.php`, `.rs`), which
-each definition in `langs/` declares for itself, and Lumen is the default.
-Arguments after the file are passed to the program.
+The language is picked with `--lang` (or `--language`), which takes a
+language name (`lumen`, `python`, `rust`), a file extension (`lm`, `py`,
+`rs`), or the path of a definition file; without the flag it comes from
+the file extension, which each definition in `langs/` declares for itself,
+and Lumen is the default. Arguments after the file are passed to the
+program.
 
 ## Two kernels, one host
 
@@ -50,9 +57,11 @@ src/main.rs            the host: arguments, language detection, the embedded
                        Lumen standard library; the only place both kernels exist
 kernels/stream/        crate lumen-stream: a tree-walking interpreter substrate
 kernels/microcode/     crate lumen-microcode: a table-driven execution engine
-langs/               language definitions as JSON, one file per language,
+langs/                 language definitions as JSON, one file per language,
                        with a generated side-by-side comparison; both kernels
-                       read them
+                       read them. Lumen, Python and Rust are embedded at
+                       build time; langs/extra/ holds definitions read from
+                       disk at run time with --lang <path>
 lib_lumen/             the Lumen standard library, written in Lumen
 examples/              programs for every language
 ```
@@ -90,17 +99,23 @@ and [langs/README.md](langs/README.md).
 
 ## Languages
 
-| Language | Extension | Style | Stream | Microcode |
-|----------|-----------|-------|--------|-----------|
-| Lumen | `.lm` | Python-style indentation, exact numbers, pipe operator | yes | yes |
-| Python | `.py` | indentation with `:`, `elif`, `def`, `range()` | yes | yes |
-| PHP | `.php` | braces, `$variables`, `<?php`, case-insensitive keywords | yes | yes |
-| Rust | `.rs` | braces, `let mut`, `fn main()`, `println!("{}", x)` | yes | yes |
+| Language | Extension | Definition | Style | Stream | Microcode |
+|----------|-----------|------------|-------|--------|-----------|
+| Lumen | `.lm` | built in | Python-style indentation, exact numbers, pipe operator | yes | yes |
+| Python | `.py` | built in | indentation with `:`, `elif`, `def`, `range()` | yes | yes |
+| Rust | `.rs` | built in | braces, `let mut`, `fn main()`, `println!("{}", x)` | yes | yes |
+| PHP | `.php` | `langs/extra/php.json` | braces, `$variables`, `<?php`, case-insensitive keywords | yes | yes |
+| Ruby | `.rb` | `langs/extra/ruby.json` | keyword blocks closed by `end`, `elsif`, `def`, `puts`, `nil` | yes | yes |
+| Lua | `.lua` | `langs/extra/lua.json` | `then`/`do` ... `end`, `elseif`, `local`, `function`, `..`, `~=` | yes | yes |
+| Pascal | `.pas` | `langs/extra/pascal.json` | `begin`/`end`, `:=`, `<>`, `div`/`mod`, `;` terminators, case-insensitive | yes | yes |
 
-Python, PHP and Rust are subsets of those languages spelled exactly as the
-languages spell them, running on Lumen's semantics: exact rationals, one
-value model, one scoping rule. Constructs the kernel lacks (maps, `foreach`,
-`echo`) are left out of their definitions rather than approximated.
+Python, Rust, PHP, Ruby, Lua and Pascal are subsets of those languages
+spelled exactly as the languages spell them, running on Lumen's semantics:
+exact rationals, one value model, one scoping rule. Constructs the kernel
+lacks (maps, `foreach`, `echo`) are left out of their definitions rather
+than approximated. The built-in definitions are compiled into the binary;
+the ones in `langs/extra/` are read from disk with `--lang <path>`, which
+is also how a definition of your own is run.
 
 Lumen is the reference language: integers, exact rationals and reals of
 configurable precision, strings, arrays, functions, `for`/`while`/`until`

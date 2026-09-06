@@ -97,7 +97,7 @@ impl StmtHandler for FnDefStmtHandler {
             if d.is("stmt.let.annotation", &parser.peek().lexeme) {
                 parser.advance();
                 parser.skip_tokens();
-                parser.take_identifier().ok_or_else(|| err_at(parser, "Expected a type name"))?;
+                parser.take_word().ok_or_else(|| err_at(parser, "Expected a type name"))?;
                 parser.skip_tokens();
             }
 
@@ -118,7 +118,7 @@ impl StmtHandler for FnDefStmtHandler {
         if d.is("stmt.function.returns", &parser.peek().lexeme) {
             parser.advance();
             parser.skip_tokens();
-            parser.take_identifier().ok_or_else(|| err_at(parser, "Expected a return type"))?;
+            parser.take_word().ok_or_else(|| err_at(parser, "Expected a return type"))?;
             parser.skip_tokens();
         }
 

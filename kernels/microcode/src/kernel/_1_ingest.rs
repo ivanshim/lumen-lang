@@ -65,7 +65,7 @@ fn strip_prologue<'a>(source: &'a str, schema: &LanguageSchema) -> &'a str {
 /// from the opening to the closing delimiter.
 fn strip_comments(source: &str, schema: &LanguageSchema) -> String {
     let lexical = &schema.lexical;
-    if lexical.comment_lines.is_empty() && lexical.comment_block.is_none() {
+    if lexical.comment_lines.is_empty() && lexical.comment_blocks.is_empty() {
         return source.to_string();
     }
     let mut out = String::with_capacity(source.len());
@@ -91,14 +91,12 @@ fn strip_comments(source: &str, schema: &LanguageSchema) -> String {
             rest = &rest[ch.len_utf8()..];
             continue;
         }
-        if let Some((open, close)) = &lexical.comment_block {
-            if rest.starts_with(open.as_str()) {
-                let body = &rest[open.len()..];
-                let end = body.find(close.as_str()).map(|p| p + close.len()).unwrap_or(body.len());
-                out.extend(body[..end].chars().filter(|&c| c == '\n'));
-                rest = &body[end..];
-                continue;
-            }
+        if let Some((open, close)) = lexical.comment_blocks.iter().find(|(open, _)| rest.starts_with(open.as_str())) {
+            let body = &rest[open.len()..];
+            let end = body.find(close.as_str()).map(|p| p + close.len()).unwrap_or(body.len());
+            out.extend(body[..end].chars().filter(|&c| c == '\n'));
+            rest = &body[end..];
+            continue;
         }
         if let Some(marker) = lexical.comment_lines.iter().find(|m| rest.starts_with(m.as_str())) {
             let _ = marker;

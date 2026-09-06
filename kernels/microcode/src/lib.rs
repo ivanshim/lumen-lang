@@ -21,7 +21,6 @@ pub use schema::LanguageSchema;
 const CONFIGS: &[&str] = &[
     include_str!("../../../langs/lumen.json"),
     include_str!("../../../langs/python.json"),
-    include_str!("../../../langs/php.json"),
     include_str!("../../../langs/rust.json"),
 ];
 

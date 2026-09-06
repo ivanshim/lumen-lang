@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 LANGS = ROOT / "langs"
 README = LANGS / "README.md"
 START, END = "<!-- table:start -->", "<!-- table:end -->"
-FIRST = ["lumen", "python", "php", "rust"]
+FIRST = ["lumen", "python", "rust"]
 
 
 def code(s: str) -> str:
@@ -42,8 +42,10 @@ def tiers(value) -> str:
 
 
 def main() -> int:
-    files = sorted(LANGS.glob("*.json"), key=lambda p: (FIRST.index(p.stem) if p.stem in FIRST else len(FIRST), p.stem))
-    langs = {p.stem: json.loads(p.read_text(encoding="utf-8")) for p in files}
+    built_in = sorted(LANGS.glob("*.json"), key=lambda p: (FIRST.index(p.stem) if p.stem in FIRST else len(FIRST), p.stem))
+    extras = sorted((LANGS / "extra").glob("*.json"))
+    langs = {p.stem: json.loads(p.read_text(encoding="utf-8")) for p in built_in}
+    langs.update({f"{p.stem} (extra)": json.loads(p.read_text(encoding="utf-8")) for p in extras})
     orders = {name: [k for k in data if not k.startswith("$comment")] for name, data in langs.items()}
     reference = next(iter(orders.values()))
     for name, order in orders.items():

@@ -1,5 +1,5 @@
 {
-  "$comment": "PHP: brace blocks, sigil-prefixed variables, case-insensitive keywords, dot concatenation. Array literals as maps, foreach and echo are omitted until the kernel supports them; everything listed is PHP.",
+  "$comment": "PHP: brace blocks, sigil-prefixed variables, case-insensitive keywords, dot concatenation. Loaded at run time from langs/extra/. Array literals as maps, foreach and echo are omitted until the kernel supports them; everything listed is PHP.",
   "format_version": 1,
   "language": "php",
   "extensions": ["php"],
