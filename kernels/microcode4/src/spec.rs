@@ -253,7 +253,7 @@ impl Spec {
         }
         for key in EMPTY_ONLY {
             if self.any(key) {
-                return Err(format!("label '{key}' is not implemented by the microcode3 kernel; leave it empty"));
+                return Err(format!("label '{key}' is not implemented by the microcode4 kernel; leave it empty"));
             }
         }
         let singles = ["lexical.string_quotes", "lexical.raw_quotes", "lexical.string_escapes", "lexical.name_quote",

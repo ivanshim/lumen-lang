@@ -330,7 +330,7 @@ impl Spec {
         }
         for label in MUST_BE_EMPTY {
             if self.has(label) {
-                return Err(format!("label '{label}' is not implemented by the microcode2 kernel; leave it empty"));
+                return Err(format!("label '{label}' is not implemented by the microcode11 kernel; leave it empty"));
             }
         }
         for label in ["lexical.string_quotes", "lexical.raw_quotes", "lexical.string_escapes", "lexical.name_quote",

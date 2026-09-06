@@ -1,8 +1,8 @@
 [package]
-name = "lumen-stream"
+name = "lumen-stack26"
 version = "0.2.0"
 edition = "2021"
-description = "Stream kernel: a language-agnostic tree-walking interpreter substrate"
+description = "Stack kernel: every language compiles to one stack machine"
 
 [lib]
 path = "src/lib.rs"

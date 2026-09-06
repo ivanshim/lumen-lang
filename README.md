@@ -29,17 +29,17 @@ cargo run -- examples/python/fibonacci.py
 # Rust-like (braces, fn main, println!)
 cargo run -- examples/rust/demo.rs
 
-# Choose the kernel explicitly (microcode is the default)
-cargo run -- --kernel stream examples/lumen/pi_machin.lm
-cargo run -- --kernel microcode examples/lumen/pi_machin.lm
-cargo run -- --kernel stack examples/lumen/pi_machin.lm
-cargo run -- --kernel microcode2 examples/lumen/pi_machin.lm
-cargo run -- --kernel microcode3 examples/lumen/pi_machin.lm
+# Choose the kernel explicitly (microcode10 is the default)
+cargo run -- --kernel stream35 examples/lumen/pi_machin.lm
+cargo run -- --kernel microcode10 examples/lumen/pi_machin.lm
+cargo run -- --kernel stack26 examples/lumen/pi_machin.lm
+cargo run -- --kernel microcode11 examples/lumen/pi_machin.lm
+cargo run -- --kernel microcode4 examples/lumen/pi_machin.lm
 
-# Write a program in another language (microcode2 only)
-cargo run -- --kernel microcode2 --emit python examples/lumen/fibonacci_iterative.lm
-cargo run -- --kernel microcode2 --emit rpl examples/python/demo.py
-cargo run -- --kernel microcode2 --lang langs/extras/ruby.json --emit langs/extras/c.json examples/ruby/fibonacci.rb
+# Write a program in another language (microcode11 only)
+cargo run -- --kernel microcode11 --emit python examples/lumen/fibonacci_iterative.lm
+cargo run -- --kernel microcode11 --emit rpl examples/python/demo.py
+cargo run -- --kernel microcode11 --lang langs/extras/ruby.json --emit langs/extras/c.json examples/ruby/fibonacci.rb
 
 # Name the language by name or by extension
 cargo run -- --lang python examples/python/demo.py
@@ -67,11 +67,11 @@ program.
 ```
 src/main.rs            the host: arguments, language detection, the embedded
                        Lumen standard library; the only place the kernels exist
-kernels/stream/        crate lumen-stream: a tree-walking interpreter substrate
-kernels/microcode/     crate lumen-microcode: a table-driven execution engine
-kernels/stack/         crate lumen-stack: a compiler to one stack machine
-kernels/microcode2/    crate lumen-microcode2: the tree kept, and written back out
-kernels/microcode3/    crate lumen-microcode3: four primitive forms and nothing else
+kernels/stream35/        crate lumen-stream35: a tree-walking interpreter substrate
+kernels/microcode10/     crate lumen-microcode10: a table-driven execution engine
+kernels/stack26/         crate lumen-stack26: a compiler to one stack machine
+kernels/microcode11/    crate lumen-microcode11: the tree kept, and written back out
+kernels/microcode4/    crate lumen-microcode4: four primitive forms and nothing else
 langs/                 language definitions as JSON, one file per language,
                        with a generated side-by-side comparison; every kernel
                        reads them. Lumen, RPLumen, Python and Rust are embedded at
@@ -85,12 +85,25 @@ The kernels are separate crates that do not depend on each other, and
 `scripts/kernel_independence.py` fails CI if any names another or if a
 long run of identical source lines appears in two trees. Where they need
 the same facility they take different routes by design: comment removal
-is a token-stream transformation in the stream language and a
-definition-driven text pass in the microcode ingest; bindings are hash-map
-scopes in the stream kernel, a linear frame stack in the microcode kernel,
-and slots resolved at compile time in the stack and microcode2 kernels.
+is a token-stream transformation in the stream35 language and a
+definition-driven text pass in the microcode10 ingest; bindings are hash-map
+scopes in the stream35 kernel, a linear frame stack in the microcode10 kernel,
+and slots resolved at compile time in the stack26, microcode11 and microcode4
+kernels.
 
-### Stream kernel
+Each kernel is named for its shape and numbered by the size of its
+instruction set: the number of node types, forms or words that everything
+a definition spells is reduced to.
+
+| Kernel | Product | Primitives |
+|--------|---------|------------|
+| `stream35` | a tree of handler nodes, one per construct | 35 node types |
+| `microcode10` | an instruction tree | 10 forms |
+| `stack26` | a flat word list over a data stack | 26 words |
+| `microcode11` | a tree that keeps its source lines and is written back out by `--emit` | 11 forms |
+| `microcode4` | a tree of four forms, everything else a call | 4 forms |
+
+### stream35, the stream kernel
 
 A meta-language runtime. The kernel provides a lossless maximal-munch lexer,
 a token registry, parser navigation, AST node traits, an execution loop and a
@@ -99,21 +112,21 @@ type or runtime policy. The language module gives each construct its meaning
 in code, and reads the definition for everything else: which keyword,
 operator, bracket and builtin name spells each construct, whether blocks are
 indented or braced, what a comment or a variable looks like. The same four
-definitions run here as on the microcode kernel, by a different method. See
-[docs/LUMEN_KERNEL_STREAM.md](docs/LUMEN_KERNEL_STREAM.md).
+definitions run here as on the microcode10 kernel, by a different method. See
+[docs/LUMEN_KERNEL_STREAM35.md](docs/LUMEN_KERNEL_STREAM35.md).
 
-### Microcode kernel
+### microcode10, the microcode kernel
 
 A four-stage pipeline (ingest → structure → reduce → execute) that reads a
 language as data. Each language is a JSON definition in `langs/` mapping a
 fixed set of labels to spellings: lexemes, block rules, literal words,
 operator precedence mapped onto kernel operations, statement keywords mapped
 onto statement forms, the surface names of built-ins, and the names of
-system bindings. The kernel reduces every construct to seven primitives and
-executes them. See [docs/LUMEN_KERNEL_MICROCODE.md](docs/LUMEN_KERNEL_MICROCODE.md)
+system bindings. The kernel reduces every construct to ten instruction forms and
+executes them. See [docs/LUMEN_KERNEL_MICROCODE10.md](docs/LUMEN_KERNEL_MICROCODE10.md)
 and [langs/README.md](langs/README.md).
 
-### Stack kernel
+### stack26, the stack kernel
 
 A compiler to one stack machine. Every language, read from the same
 definitions, compiles in a single syntax-directed pass to a flat list of
@@ -123,10 +136,10 @@ word list, and names are slots resolved when compiling. RPLumen is the
 machine's own notation, so its programs compile almost word for word and
 the infix languages become RPLumen underneath. Machine-word integers stay
 unboxed and arrays are shared until written, which makes this the fast
-kernel: several times the microcode kernel on loops, more on array code.
-See [docs/LUMEN_KERNEL_STACK.md](docs/LUMEN_KERNEL_STACK.md).
+kernel: several times microcode10 on loops, more on array code.
+See [docs/LUMEN_KERNEL_STACK26.md](docs/LUMEN_KERNEL_STACK26.md).
 
-### Microcode kernel, second design
+### microcode11, the microcode kernel's second design
 
 The same four stages, but the tree is the product: it keeps its source
 lines, names are resolved to slots as it is built, and a postfix program
@@ -136,9 +149,9 @@ stack at all. What only a tree can do is be written back out: `--emit
 driven by the target's definition read the other way round.
 `scripts/translate_all.sh` writes every example in every language and
 checks that each runs the same. See
-[docs/LUMEN_KERNEL_MICROCODE2.md](docs/LUMEN_KERNEL_MICROCODE2.md).
+[docs/LUMEN_KERNEL_MICROCODE11.md](docs/LUMEN_KERNEL_MICROCODE11.md).
 
-### Microcode kernel, third design
+### microcode4, the microcode kernel's third design
 
 The floor. The tree has four forms, `Literal`, `Load`, `Assign` and
 `Call`, and every construct of every language is a call: `a; b` is
@@ -148,25 +161,25 @@ program that calls itself, a bare block is a program run at once,
 are closures, calls in tail position replace the running program, and
 each program says which exit it catches. All 488 programs print the
 same as on the other kernels. See
-[docs/LUMEN_KERNEL_MICROCODE3.md](docs/LUMEN_KERNEL_MICROCODE3.md).
+[docs/LUMEN_KERNEL_MICROCODE4.md](docs/LUMEN_KERNEL_MICROCODE4.md).
 
 ## Languages
 
-| Language | Extension | Definition | Style | Stream | Microcode |
-|----------|-----------|------------|-------|--------|-----------|
-| Lumen | `.lm` | built in | Python-style indentation, exact numbers, pipe operator | yes | yes |
-| RPLumen | `.rpl` | built in | reverse Polish Lumen: `5 3 +`, `8 'x' =`, `« 'n' = ... » 'f' =`, `cond if ... else ... end`, `dup drop swap over rot` | yes | yes |
-| Python | `.py` | built in | indentation with `:`, `elif`, `def`, `range()`, `str`, `arr.append(x)`, `s[i]` | yes | yes |
-| Rust | `.rs` | built in | braces, `let mut`, `fn main()`, `println!("{}", x)`, `v.len()`, `x.to_string()` | yes | yes |
-| PHP | `.php` | `langs/extras/php.json` | braces, `$variables`, `<?php`, case-insensitive keywords, `strval`, `array_push` | yes | yes |
-| Ruby | `.rb` | `langs/extras/ruby.json` | keyword blocks closed by `end`, `elsif`, `def`, `puts`, `nil`, `x.to_s`, `s.length` | yes | yes |
-| Pascal | `.pas` | `langs/extras/pascal.json` | `begin`/`end`, `:=`, `<>`, `div`/`mod`, `function f(n: integer): integer;` with a `var` section, `f := ...` | yes | yes |
-| C | `.c` | `langs/extras/c.json` | braces, `int x = 0;`, `long fib(int n)`, `printf("%d\n", x)`, `puts`, `main` | yes | yes |
-| JavaScript | `.js` | `langs/extras/javascript.json` | braces, `let`/`const`, `function`, `===`, `**`, `console.log`, `arr.push(x)`, `s.length` | yes | yes |
-| Swift | `.swift` | `langs/extras/swift.json` | braces without `;`, `let`/`var x: Int`, `func f(n: Int) -> Int`, `f(n: 1)`, `0..<n`, `arr.append(x)` | yes | yes |
+| Language | Extension | Definition | Style |
+|----------|-----------|------------|-------|
+| Lumen | `.lm` | built in | Python-style indentation, exact numbers, pipe operator |
+| RPLumen | `.rpl` | built in | reverse Polish Lumen: `5 3 +`, `8 'x' =`, `« 'n' = ... » 'f' =`, `cond if ... else ... end`, `dup drop swap over rot` |
+| Python | `.py` | built in | indentation with `:`, `elif`, `def`, `range()`, `str`, `arr.append(x)`, `s[i]` |
+| Rust | `.rs` | built in | braces, `let mut`, `fn main()`, `println!("{}", x)`, `v.len()`, `x.to_string()` |
+| PHP | `.php` | `langs/extras/php.json` | braces, `$variables`, `<?php`, case-insensitive keywords, `strval`, `array_push` |
+| Ruby | `.rb` | `langs/extras/ruby.json` | keyword blocks closed by `end`, `elsif`, `def`, `puts`, `nil`, `x.to_s`, `s.length` |
+| Pascal | `.pas` | `langs/extras/pascal.json` | `begin`/`end`, `:=`, `<>`, `div`/`mod`, `function f(n: integer): integer;` with a `var` section, `f := ...` |
+| C | `.c` | `langs/extras/c.json` | braces, `int x = 0;`, `long fib(int n)`, `printf("%d\n", x)`, `puts`, `main` |
+| JavaScript | `.js` | `langs/extras/javascript.json` | braces, `let`/`const`, `function`, `===`, `**`, `console.log`, `arr.push(x)`, `s.length` |
+| Swift | `.swift` | `langs/extras/swift.json` | braces without `;`, `let`/`var x: Int`, `func f(n: Int) -> Int`, `f(n: 1)`, `0..<n`, `arr.append(x)` |
 
 The nine other languages are subsets of those languages spelled exactly as
-the languages spell them, running on Lumen's semantics: one value model,
+the languages spell them, running on every kernel with Lumen's semantics: one value model,
 one scoping rule, and `/` yielding an exact rational in Lumen or a real
 where the language says so (`op.div.result`). Constructs the kernel lacks
 (maps, `foreach`, `echo`, C's pointers, Swift's optionals) are left out of
@@ -200,7 +213,7 @@ Every example runs on every kernel:
 ./test.sh --lang all          # everything
 ./test.sh                     # Lumen only
 ./test.sh --lang php          # one language
-./test.sh --kernel stack      # one kernel
+./test.sh --kernel stack26      # one kernel
 ./test.sh fibonacci_iterative.lm
 ./test.sh --help
 ```
@@ -218,11 +231,11 @@ errors, a check that the ported examples match what
 
 ## Documentation
 
-- [docs/LUMEN_KERNEL_STREAM.md](docs/LUMEN_KERNEL_STREAM.md) — stream kernel charter
-- [docs/LUMEN_KERNEL_MICROCODE.md](docs/LUMEN_KERNEL_MICROCODE.md) — microcode kernel and how it reads a definition
-- [docs/LUMEN_KERNEL_STACK.md](docs/LUMEN_KERNEL_STACK.md) — stack kernel: the word set and the compiler
-- [docs/LUMEN_KERNEL_MICROCODE2.md](docs/LUMEN_KERNEL_MICROCODE2.md) — microcode kernel, second design: the tree kept and written back out
-- [docs/LUMEN_KERNEL_MICROCODE3.md](docs/LUMEN_KERNEL_MICROCODE3.md) — microcode kernel, third design: four primitive forms
+- [docs/LUMEN_KERNEL_STREAM35.md](docs/LUMEN_KERNEL_STREAM35.md) — the stream35 kernel's charter
+- [docs/LUMEN_KERNEL_MICROCODE10.md](docs/LUMEN_KERNEL_MICROCODE10.md) — the microcode10 kernel and how it reads a definition
+- [docs/LUMEN_KERNEL_STACK26.md](docs/LUMEN_KERNEL_STACK26.md) — the stack26 kernel: its 26 words and the compiler
+- [docs/LUMEN_KERNEL_MICROCODE11.md](docs/LUMEN_KERNEL_MICROCODE11.md) — the microcode11 kernel: the tree kept and written back out
+- [docs/LUMEN_KERNEL_MICROCODE4.md](docs/LUMEN_KERNEL_MICROCODE4.md) — the microcode4 kernel: four primitive forms
 - [langs/README.md](langs/README.md) — the definition format, every label, and the languages side by side
 - [docs/LUMEN_LANGUAGE_DESIGN.md](docs/LUMEN_LANGUAGE_DESIGN.md) — design principles
 - [docs/LUMEN_COMPACT_REFERENCE.md](docs/LUMEN_COMPACT_REFERENCE.md) — Lumen quick reference

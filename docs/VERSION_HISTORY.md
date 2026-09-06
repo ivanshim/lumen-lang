@@ -31,8 +31,15 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   definition is loaded at run time. PHP moved there, and Ruby, Pascal, C,
   JavaScript and Swift are added with examples; all nine languages run on
   both kernels.
+- **Kernels numbered by their primitives**: each kernel's name now ends
+  in the size of its instruction set, the number of node types, forms or
+  words that everything a definition spells is reduced to: `stream35`
+  (35 handler node types, one per construct), `microcode10` (10
+  instruction forms), `stack26` (26 words), `microcode11` (11 forms),
+  `microcode4` (4 forms). Directories, crates, `--kernel` names, scripts
+  and documents are renamed to match.
 - **The microcode kernel, third design**: a fifth kernel,
-  `kernels/microcode3` (`--kernel microcode3`), reduces every language to
+  `kernels/microcode4` (`--kernel microcode4`), reduces every language to
   four forms: `Literal`, `Load`, `Assign`, `Call`. Sequencing is a call
   of `last`, a branch a call of `if` with program values for arms, a
   loop a program bound to a hidden slot that calls itself, a bare block
@@ -44,7 +51,7 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   kernels; a three-million-iteration loop runs in constant stack; the
   arithmetic loop takes about 1.6 times the second design's time.
 - **The microcode kernel, second design**: a fourth kernel,
-  `kernels/microcode2` (`--kernel microcode2`), keeps the four stages and
+  `kernels/microcode11` (`--kernel microcode11`), keeps the four stages and
   makes the tree the product: nodes keep their source lines, names are
   resolved to slots as the tree is built, a loop bound lives in a slot
   with no name, and RPLumen is read with a symbolic stack, so `5 3 +`
@@ -56,7 +63,7 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   their shapes, and a construct the target cannot spell reported by
   name. `scripts/translate_all.sh` writes every example in every
   language and runs the result on the stack kernel against the original.
-- **The stack kernel**: a third kernel, `kernels/stack` (`--kernel
+- **The stack kernel**: a third kernel, `kernels/stack26` (`--kernel
   stack`), compiles every language to one stack machine. The compiler is
   a single syntax-directed pass from tokens to a flat list of words over
   a data stack (push, load, store, operate, jump, call, return, and the
@@ -146,7 +153,7 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   (`println!`), parameter and return-type annotations, a `range` builtin, an
   entry function, and value rendering with each language's literal words.
 - **Stream kernel**: reads the same definitions by its own method. One
-  language module, `kernels/stream/src/language/`, registers handlers for
+  language module, `kernels/stream35/src/language/`, registers handlers for
   the constructs a definition spells and transforms the token stream by its
   block style, comment markers, prologue, variable prefix and case rules;
   the Python-like and Rust-like modules are removed. Both kernels read one
@@ -171,15 +178,15 @@ Each entry is intentionally self-contained so that it remains meaningful even if
 
 ### What was done:
 - **Workspace**: one host binary (`src/main.rs`) and two kernel library crates
-  (`kernels/stream`, `kernels/microcode`) that cannot import each other. No
-  more spawning sibling binaries; `lumen-lang --kernel stream|microcode`.
+  (`kernels/stream35`, `kernels/microcode10`) that cannot import each other. No
+  more spawning sibling binaries; `lumen-lang --kernel stream35|microcode`.
 - **Stream kernel purity**: the lexer no longer strips comments or assumes
   which bytes form identifiers (languages supply both); the environment lost
   its memoization policy, its Lumen-typed array mutation and its unsafe scope
   guard, gaining `update`, `get_mut`, `with_scope` and a typed extension slot.
   Lumen's memoization moved into the language layer.
 - **Microcode kernel as data**: languages are YAML schemas
-  (`kernels/microcode/schemas/`); the four stages read tables and contain no
+  (`kernels/microcode10/schemas/`); the four stages read tables and contain no
   language names. Seven primitives plus one internal loop; `for`, `until`,
   functions, indexed assignment and the pipe operator are desugared. One exact
   numeric tower replaces per-type arithmetic and fixes real-number comparison.

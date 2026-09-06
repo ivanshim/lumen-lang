@@ -1,8 +1,8 @@
 [package]
-name = "lumen-microcode2"
+name = "lumen-microcode4"
 version = "0.2.0"
 edition = "2021"
-description = "Microcode kernel, second design: a tree of primitives that runs, and writes itself back out in any language"
+description = "Microcode kernel, third design: four primitive forms and nothing else"
 
 [lib]
 path = "src/lib.rs"

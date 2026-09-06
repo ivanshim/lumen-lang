@@ -365,7 +365,7 @@ impl<'a> Writer<'a> {
     fn program(&mut self, body: &Node) -> Result<(), String> {
         let to = self.to;
         if let Some(mark) = to.first("lexical.comment_line") {
-            self.lines.push(format!("{} Written by the microcode2 kernel from a {} program; edit the original.", mark, self.from.name));
+            self.lines.push(format!("{} Written by the microcode11 kernel from a {} program; edit the original.", mark, self.from.name));
         }
         let items: Vec<&Node> = match &body.form {
             Form::Sequence(items) => items.iter().collect(),

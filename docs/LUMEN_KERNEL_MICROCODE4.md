@@ -1,6 +1,6 @@
-# Microcode Kernel, Third Design
+# Microcode Kernel, Third Design (microcode4)
 
-`kernels/microcode3/` is the microcode idea taken to its floor. The tree
+`kernels/microcode4/` is the microcode idea taken to its floor. The tree
 has four forms and nothing else:
 
 ```
@@ -26,7 +26,7 @@ of the second design that are missing here are all calls:
 | `x[i] = v`, `push(x, v)` | `put(x, i, v)`, `push(x, v)` |
 | `f(a, b)`, `-x`, `a + b`, `[a, b]` | calls of the program `f`, of `neg`, of `add`, of `array` |
 
-Nothing in `kernels/microcode3/src/` names a keyword, an operator, a
+Nothing in `kernels/microcode4/src/` names a keyword, an operator, a
 comment marker or a function; every spelling comes from a definition.
 
 ## The stages
@@ -71,11 +71,11 @@ form; each is how a form behaves.
 Every `if` makes two closures and calls one; every loop iteration makes
 three frames. Against the second design, which walks its nine forms
 directly, that is about 1.6 times the time on an arithmetic loop and
-about the same everywhere else, and still twice as fast as the first
-microcode kernel, because the value model is the fast one: unboxed
+about the same everywhere else, and still twice as fast as
+microcode10, because the value model is the fast one: unboxed
 machine integers, reference-counted arrays copied on write.
 
-| Program | microcode | stack | microcode2 | microcode3 |
+| Program | microcode10 | stack26 | microcode11 | microcode4 |
 |---|---|---|---|---|
 | 300k loop, Lumen | 0.37s | 0.09s | 0.19s | 0.30s |
 | same loop, RPLumen | 1.01s | 0.08s | 0.19s | 0.29s |
