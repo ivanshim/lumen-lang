@@ -17,6 +17,22 @@ flag_for() {
         js) echo "--lang langs/extras/javascript.json" ;; swift) echo "--lang langs/extras/swift.json" ;;
     esac
 }
+
+# The words a language prints for true, false and null are its own, so an
+# output is compared with the source's words mapped onto the target's.
+words_for() {
+    case "$1" in
+        py) echo "True False None" ;; rs) echo "true false None" ;; c) echo "true false NULL" ;;
+        pas|rb|swift) echo "true false nil" ;; *) echo "true false null" ;;
+    esac
+}
+mapped() {
+    local text="$1" from="$2" to="$3"
+    read -r ft ff fn <<< "$(words_for "$from")"
+    read -r tt tf tn <<< "$(words_for "$to")"
+    printf '%s' "$text" | sed -E "s/\b${ft}\b/\x01/g; s/\b${ff}\b/\x02/g; s/\b${fn}\b/\x03/g; s/\x01/${tt}/g; s/\x02/${tf}/g; s/\x03/${tn}/g"
+}
+
 TARGETS="lm rpl py rs c js pas php rb swift"
 declare -A OK SKIP BAD
 for t in $TARGETS; do OK[$t]=0; SKIP[$t]=0; BAD[$t]=0; done
@@ -36,10 +52,11 @@ for f in $(find examples -type f ! -name "*.md" | sort); do
         fi
         # shellcheck disable=SC2086
         got=$(timeout 30 $B --kernel stack $tflag "$out" 2>&1)
-        if [ "$got" = "$expected" ]; then
+        want=$(mapped "$expected" "$ext" "$t")
+        if [ "$got" = "$want" ]; then
             OK[$t]=$((OK[$t] + 1))
         else
-            BAD[$t]=$((BAD[$t] + 1)); echo "== $f -> $t" >> "$T/wrong.txt"; diff <(echo "$expected") <(echo "$got") | head -4 >> "$T/wrong.txt"
+            BAD[$t]=$((BAD[$t] + 1)); echo "== $f -> $t" >> "$T/wrong.txt"; diff <(echo "$want") <(echo "$got") | head -4 >> "$T/wrong.txt"
         fi
     done
 done

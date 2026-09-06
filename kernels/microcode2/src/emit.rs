@@ -48,6 +48,9 @@ struct Writer<'a> {
     temps: usize,
     /// Functions provided by the target's own library, whose definitions are not written.
     provided: HashSet<String>,
+    /// Names that hold text wherever they are assigned, in a source that
+    /// indexes strings: their `s[i]` is `char_at` in a target that does not.
+    text_names: HashSet<String>,
 }
 
 pub fn emit(program: &Program, _globals: &Globals, from: &Spec, to: &Spec) -> Text {
@@ -60,7 +63,11 @@ pub fn emit(program: &Program, _globals: &Globals, from: &Spec, to: &Spec) -> Te
         renamed: HashMap::new(),
         temps: 0,
         provided: HashSet::new(),
+        text_names: HashSet::new(),
     };
+    if from.flag("op.index.strings") && !to.flag("op.index.strings") {
+        w.text_names = text_names(&program.body);
+    }
     w.program(&program.body)?;
     let mut text = w.lines.join("\n");
     text.push('\n');
@@ -943,6 +950,25 @@ impl<'a> Writer<'a> {
             }
             Form::Operate { op, args } => self.operation(*op, args),
             Form::Call { callee, args } => self.call(callee, args),
+            Form::Branch { test, then, otherwise: Some(otherwise) } => {
+                // A postfix source's `a if b else false end` is `a and b`.
+                fn single(n: &Node) -> Option<&Node> {
+                    match &n.form {
+                        Form::Sequence(items) if items.len() == 1 => Some(&items[0]),
+                        Form::Sequence(_) => None,
+                        _ => Some(n),
+                    }
+                }
+                match (single(then), single(otherwise)) {
+                    (Some(b), Some(Node { form: Form::Literal(Value::Truth(false)), .. })) => {
+                        self.operation(Op::And, &[test.clone_shallow(), b.clone_shallow()])
+                    }
+                    (Some(Node { form: Form::Literal(Value::Truth(true)), .. }), Some(b)) => {
+                        self.operation(Op::Or, &[test.clone_shallow(), b.clone_shallow()])
+                    }
+                    _ => Err("a statement used as a value".to_string()),
+                }
+            }
             Form::Branch { .. } | Form::Loop { .. } | Form::Sequence(_) | Form::Scope { .. } => {
                 Err("a statement used as a value".to_string())
             }
@@ -966,6 +992,12 @@ impl<'a> Writer<'a> {
             Op::Index => {
                 let target = self.expr(&args[0])?;
                 let index = self.expr(&args[1])?;
+                let on_text = matches!(&args[0].form, Form::Load(slot) if self.text_names.contains(&*slot.name))
+                    || matches!(&args[0].form, Form::Literal(Value::Text(_)));
+                if on_text {
+                    let name = self.native_name(Native::CharAt).map_err(|_| "indexing a string".to_string())?;
+                    return Ok(Piece::atom(self.call_text(&name, vec![target, index])));
+                }
                 if let (Some(open), Some(close)) = (to.first("op.index.open"), to.first("op.index.close")) {
                     let target = self.brackets(target, u32::MAX, false)?;
                     return Ok(Piece::atom(format!("{}{}{}{}", target, open, index.text, close)));
@@ -1454,6 +1486,30 @@ fn with_step_before_continue(body: &Node, step: &Node) -> Node {
         }),
         _ => body.clone_shallow(),
     }
+}
+
+/// Names assigned text and nothing else, judged from what is assigned to
+/// them: string literals, concatenations, and calls that make text.
+fn text_names(body: &Node) -> HashSet<String> {
+    let mut text: HashSet<String> = HashSet::new();
+    let mut other: HashSet<String> = HashSet::new();
+    walk(body, &mut |n| {
+        if let Form::Assign { to, value } = &n.form {
+            let is_text = match &value.form {
+                Form::Literal(Value::Text(_)) => true,
+                Form::Operate { op: Op::Concat, .. } => true,
+                Form::Call { callee: Callee::Native(Native::CharAt | Native::ToString | Native::Chr, _), .. } => true,
+                Form::Literal(Value::Routine(_)) => return,
+                _ => false,
+            };
+            if is_text {
+                text.insert(to.name.to_string());
+            } else {
+                other.insert(to.name.to_string());
+            }
+        }
+    });
+    text.difference(&other).cloned().collect()
 }
 
 fn count_assignments(items: &[&Node]) -> HashMap<String, usize> {
