@@ -1,0 +1,187 @@
+# Ported from examples/lumen/rsa_demo.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+« 'm' = 'exp' = 'base' =
+    1 'result' =
+    base m % 'base' =
+    while exp 0 > repeat
+        exp 2 % 1 == if
+            result base * m % 'result' =
+        end
+        exp 2 // 'exp' =
+        base base * m % 'base' =
+    end
+    result return
+» 'mod_pow' =
+
+« 'b' = 'a' =
+    while b 0 != repeat
+        b 't' =
+        a b % 'b' =
+        t 'a' =
+    end
+    a return
+» 'gcd' =
+
+« 'b' = 'a' =
+    b 0 == if
+        [ a 1 0 ] return
+    else
+        b a b % extended_gcd 'r' =
+        r 0 get 'g' =
+        r 2 get 'x' =
+        r 1 get a b // r 2 get * - 'y' =
+        [ g x y ] return
+    end
+    null return
+» 'extended_gcd' =
+
+« 'b' = 'a' =
+    a b gcd 1 == return
+» 'is_coprime' =
+
+« 'm' = 'a' =
+    a m extended_gcd 'r' =
+    r 0 get 1 != if
+        "mod_inverse: inverse does not exist (gcd(a, m) != 1)" error return
+    else
+        r 1 get m % m + m % return
+    end
+    null return
+» 'mod_inverse' =
+
+« 'n' =
+    n 2 < if
+        false return
+    end
+    n 2 == if
+        true return
+    end
+    n 2 % 0 == if
+        false return
+    end
+    3 'i' =
+    while i i * n <= repeat
+        n i % 0 == if
+            false return
+        end
+        i 2 + 'i' =
+    end
+    true return
+» 'is_prime' =
+
+"=== RSA Cryptography Demonstration ===" print
+"" print
+"Step 1: Key Generation" print
+"----------------------" print
+61 'p' =
+53 'q' =
+"Selected prime p = " write
+p print
+"Selected prime q = " write
+q print
+p is_prime not if
+    "p must be prime" error
+end
+q is_prime not if
+    "q must be prime" error
+end
+p q == if
+    "p and q must be distinct" error
+end
+"" print
+p q * 'n' =
+"Computed n = p * q = " write
+n print
+"" print
+p 1 - q 1 - * 'phi' =
+"Computed phi(n) = (p-1)(q-1) = " write
+phi print
+"" print
+17 'e' =
+"Selected public exponent e = " write
+e print
+e 1 <= if true else e phi >= end if
+    "e must satisfy 1 < e < phi(n)" error
+end
+e phi is_coprime not if
+    "e must be coprime to phi(n)" error
+end
+"Verified gcd(e, phi(n)) = " write
+e phi gcd print
+"" print
+e phi mod_inverse 'd' =
+"Computed private exponent d = " write
+d print
+d e * phi % 'verification' =
+"Verification: d * e mod phi(n) = " write
+verification print
+verification 1 != if
+    "Private key computation failed: d * e mod phi(n) must equal 1" error
+end
+"" print
+"=== Generated Keys ===" print
+"Public key:  (e, n) = (" write
+e write
+", " write
+n write
+")" print
+"Private key: (d, n) = (" write
+d write
+", " write
+n write
+")" print
+"" print
+"=== Encryption and Decryption ===" print
+"" print
+42 'm' =
+"Original message m = " write
+m print
+m 0 < if true else m n >= end if
+    "Message must be in range 0 to n-1" error
+end
+m e n mod_pow 'cipher' =
+"Encrypted cipher c = m^e mod n = " write
+cipher print
+cipher d n mod_pow 'decrypted' =
+"Decrypted message m' = c^d mod n = " write
+decrypted print
+decrypted m == if
+    "SUCCESS: Decryption successful: m' = m" print
+else
+    "Decryption failed" error
+end
+"" print
+"=== Digital Signature ===" print
+"" print
+100 'message_to_sign' =
+"Message to sign = " write
+message_to_sign print
+message_to_sign 0 < if true else message_to_sign n >= end if
+    "Message to sign must be in range 0 to n-1" error
+end
+message_to_sign d n mod_pow 'signature' =
+"Digital signature s = m^d mod n = " write
+signature print
+signature e n mod_pow 'verified_message' =
+"Verified message m' = s^e mod n = " write
+verified_message print
+verified_message message_to_sign == if
+    "SUCCESS: Signature verification successful" print
+else
+    "Signature verification failed" error
+end
+"" print
+"=== Summary ===" print
+"" print
+"RSA Properties Demonstrated:" print
+"1. Key Generation: Generated (e,n) and (d,n) from primes p and q" print
+"2. Encryption: c = m^e mod n" print
+"3. Decryption: m = c^d mod n" print
+"4. Digital Signature: s = m^d mod n" print
+"5. Signature Verification: m = s^e mod n" print
+"" print
+"Mathematical Correctness:" print
+"  (m^e)^d == m^(ed) == m^1 == m (mod n)" print
+"  because ed == 1 (mod phi(n)) by construction" print
+"" print
+"Security Note: This demo uses 6-bit primes. Real RSA requires" print
+"              at least 2048-bit primes for security." print

@@ -1,0 +1,46 @@
+# Ported from examples/lumen/constructs/short_circuit.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+« 'x' =
+    "Checking if " print
+    x print
+    " is even" print
+    x 2 % 0 == return
+» 'is_even' =
+
+« 'x' =
+    "Checking if " print
+    x print
+    " is positive" print
+    x 0 > return
+» 'is_positive' =
+
+"Test: Short-Circuit Evaluation" print
+"false and is_even(10):" print
+false if 10 is_even else false end 'result' =
+result print
+"true and is_even(10):" print
+true if 10 is_even else false end 'result' =
+result print
+"true or is_positive(5):" print
+true if true else 5 is_positive end 'result' =
+result print
+"false or is_positive(5):" print
+false if true else 5 is_positive end 'result' =
+result print
+"Testing division by zero avoidance:" print
+0 'x' =
+x 0 != if 10 x / 5 > else false end if
+    "Result is greater than 5" print
+else
+    "x is zero or result is not greater than 5" print
+end
+« 'value' =
+    value null != if value 10 > else false end if
+        "Value is not null and greater than 10" print
+    else
+        "Value is null or not greater than 10" print
+    end
+    null return
+» 'safe_check' =
+
+15 safe_check drop
+5 safe_check drop

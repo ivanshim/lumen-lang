@@ -1,0 +1,3 @@
+# Ported from examples/lumen/constructs/bracket_grouping.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+1 2 + 'x' =
+x print

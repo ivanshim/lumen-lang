@@ -1,0 +1,37 @@
+# Ported from examples/lumen/constructs/return_explicit.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+« 'x' =
+    x 0 < if
+        x neg return
+    end
+    x return
+» 'absolute' =
+
+« 'b' = 'a' =
+    b 0 == if
+        null return
+    end
+    a b / return
+» 'safe_divide' =
+
+« 'c' = 'b' = 'a' =
+    a 2 % 0 == if
+        a return
+    end
+    b 2 % 0 == if
+        b return
+    end
+    c return
+» 'find_first_even' =
+
+"Test: Explicit Returns" print
+"absolute(-5):" print
+5 neg absolute print
+5 absolute print
+"safe_divide(10, 2):" print
+10 2 safe_divide print
+"safe_divide(10, 0):" print
+10 0 safe_divide print
+"find_first_even(1, 2, 3):" print
+1 2 3 find_first_even print
+"find_first_even(2, 5, 7):" print
+2 5 7 find_first_even print

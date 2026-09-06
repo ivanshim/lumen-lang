@@ -1,0 +1,57 @@
+# Ported from examples/lumen/constructs/round_function.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+« 'decimals' = 'x' =
+    1 'scale' =
+    0 'i' =
+    while i decimals < repeat
+        scale 10 * 'scale' =
+        i 1 + 'i' =
+    end
+    x scale * 'y' =
+    y 0 >= if
+        y 2 * 1 + 2 // 'r' =
+    else
+        y 2 * 1 - 2 // 'r' =
+    end
+    r scale / return
+» 'round' =
+
+"Positive number tests:" write
+"round(1.235, 2) = " write
+1.235 2 round print
+"round(1.234, 2) = " write
+1.234 2 round print
+"round(1.245, 2) = " write
+1.245 2 round print
+"round(1.5, 0) = " write
+1.5 0 round print
+"round(2.5, 0) = " write
+2.5 0 round print
+"\nNegative number tests (round half away from zero):" write
+"round(-1.235, 2) = " write
+1.235 neg 2 round print
+"round(-1.234, 2) = " write
+1.234 neg 2 round print
+"round(-1.245, 2) = " write
+1.245 neg 2 round print
+"round(-1.5, 0) = " write
+1.5 neg 0 round print
+"round(-2.5, 0) = " write
+2.5 neg 0 round print
+"\nBoundary cases:" write
+"round(0, 2) = " write
+0 2 round print
+"round(0.005, 2) = " write
+0.005 2 round print
+"round(0.004, 2) = " write
+0.004 2 round print
+"round(10.999, 2) = " write
+10.999 2 round print
+"round(99.995, 2) = " write
+99.995 2 round print
+"\nMultiple decimal places with pi:" write
+"round(3.14159, 2) = " write
+3.14159 2 round print
+"round(3.14159, 3) = " write
+3.14159 3 round print
+"round(3.14159, 4) = " write
+3.14159 4 round print

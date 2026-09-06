@@ -106,6 +106,9 @@ impl<'a> Parser<'a> {
     // ---------- statements ----------
 
     fn program(&mut self) -> Result<Instruction, String> {
+        if self.schema.structure.blocks == BlockStyle::Postfix {
+            return self.postfix_program();
+        }
         let mut stmts = Vec::new();
         self.skip_terminators();
         while !self.at_end() {
@@ -152,7 +155,7 @@ impl<'a> Parser<'a> {
                 self.expect_close(&close[0])?;
                 Ok(body)
             }
-            BlockStyle::Keyword => {
+            BlockStyle::Keyword | BlockStyle::Postfix => {
                 let body = self.body_until(&structure.block_close)?;
                 self.expect_any_close()?;
                 Ok(body)
@@ -627,7 +630,7 @@ impl<'a> Parser<'a> {
                 }
                 return Err(format!("Unexpected token: {}", tok.text));
             }
-            Kind::Newline | Kind::Eof | Kind::Indent => {
+            Kind::Newline | Kind::Eof | Kind::Indent | Kind::Name => {
                 return Err("Expected an expression".to_string());
             }
         };
@@ -785,4 +788,300 @@ fn digits_in_base(digits: &str, base: u32) -> Result<BigInt, String> {
         result = result * base + value;
     }
     Ok(result)
+}
+
+// ---------------- Postfix reduction ----------------
+//
+// A postfix language (RPLumen) is reduced onto the same instruction set.
+// The stack is an ordinary array bound to a hidden name at the start of
+// the program; a literal pushes onto it, an operator pops its operands
+// into hidden temporaries and pushes the result, a control word takes its
+// condition from the top, and a bare word either runs the program stored
+// under it or pushes its value. Six internal invocations carry the stack
+// mechanics; no definition can spell them.
+
+/// The hidden binding holding the stack.
+pub const STACK: &str = "#stack";
+
+fn push(value: Instruction) -> Instruction {
+    Instruction::Invoke { function: "<push>".to_string(), args: vec![Instruction::Variable(STACK.to_string()), value] }
+}
+
+fn pop() -> Instruction {
+    Instruction::Invoke { function: "<pop>".to_string(), args: vec![Instruction::Variable(STACK.to_string())] }
+}
+
+impl<'a> Parser<'a> {
+    fn postfix_program(&mut self) -> Result<Instruction, String> {
+        let stack = Instruction::assign(STACK.to_string(), Instruction::Literal(Value::Array(Vec::new())));
+        let body = self.postfix_body(&[])?;
+        if !self.at_end() {
+            return Err(format!("Unexpected '{}'", self.peek().text));
+        }
+        Ok(Instruction::Sequence(vec![stack, body]))
+    }
+
+    /// Words up to one in `stops` (not consumed) or the end. A quoted
+    /// name is held for the word after it, which must take one.
+    fn postfix_body(&mut self, stops: &[String]) -> Result<Instruction, String> {
+        let mut items = Vec::new();
+        let mut name: Option<String> = None;
+        loop {
+            self.skip_terminators();
+            if self.at_end() || self.at_one_of(stops).is_some() {
+                break;
+            }
+            let tok = self.advance();
+            match tok.kind {
+                Kind::Name => {
+                    if name.is_some() {
+                        return Err(format!("A name is already waiting before '{}'", tok.text));
+                    }
+                    name = Some(tok.text);
+                }
+                Kind::Number | Kind::Str if name.is_some() => {
+                    return Err(format!("The name '{}' must be followed by a word that takes it", name.unwrap()));
+                }
+                Kind::Number => items.push(push(Instruction::Literal(self.number_literal(&tok.text)?))),
+                Kind::Str => items.push(push(Instruction::Literal(Value::String(tok.text)))),
+                Kind::Word => items.push(self.postfix_word(&tok.text, true, &mut name)?),
+                Kind::Op => items.push(self.postfix_word(&tok.text, false, &mut name)?),
+                Kind::Newline | Kind::Indent | Kind::Eof => unreachable!("terminators are skipped"),
+            }
+        }
+        if let Some(name) = name {
+            return Err(format!("The name '{}' has no word to take it", name));
+        }
+        Ok(Instruction::Sequence(items))
+    }
+
+    fn expect_intro(&mut self) -> Result<(), String> {
+        let structure: &'a crate::schema::Structure = &self.schema.structure;
+        if self.at_one_of(&structure.block_intro).is_some() {
+            self.advance();
+            Ok(())
+        } else {
+            Err(format!("Expected '{}', got '{}'", structure.block_intro[0], self.peek().text))
+        }
+    }
+
+    /// Bind the top of the stack to a hidden temporary.
+    fn take(&mut self, purpose: &str) -> (String, Instruction) {
+        let name = self.hidden_name(purpose);
+        let bind = Instruction::assign(name.clone(), pop());
+        (name, bind)
+    }
+
+    /// One word of a postfix program; `is_word` tells a word from a symbol,
+    /// and `name` is a quoted name waiting for a word that takes one,
+    /// cleared when this word does.
+    fn postfix_word(&mut self, word: &str, is_word: bool, name: &mut Option<String>) -> Result<Instruction, String> {
+        let schema: &'a LanguageSchema = self.schema;
+        let s = &schema.statements;
+        let structure = &schema.structure;
+        let stack = &schema.stack;
+        let lits = &schema.literals;
+        let closes = &structure.block_close;
+        let variable = |n: &str| Instruction::Variable(n.to_string());
+
+        // The word after a quoted name takes it.
+        if let Some(taken) = name.take() {
+            if spelled(&s.assignment, word) || s.binding.as_ref().map_or(false, |b| spelled(&b.keyword, word)) {
+                return Ok(Instruction::assign(taken, pop()));
+            }
+            if s.loop_for.as_ref().map_or(false, |f| spelled(&f.keyword, word)) {
+                let body = self.postfix_body(closes)?;
+                self.expect_any_close()?;
+                let limit = self.hidden_name("end");
+                let bind_limit = Instruction::assign(limit.clone(), pop());
+                let bind_var = Instruction::assign(taken.clone(), pop());
+                let condition = Instruction::binary(Op::Lt, variable(&taken), variable(&limit));
+                let step = Instruction::assign(
+                    taken.clone(),
+                    Instruction::binary(Op::Add, variable(&taken), Instruction::Literal(Value::Number(BigInt::from(1)))),
+                );
+                return Ok(Instruction::Sequence(vec![
+                    bind_limit,
+                    bind_var,
+                    Instruction::Loop { condition: Box::new(condition), body: Box::new(body), step: Some(Box::new(step)) },
+                ]));
+            }
+            match schema.functions.get(word).copied() {
+                Some(Builtin::Push) => {
+                    let (value, bind_value) = self.take("value");
+                    let call = Instruction::Invoke { function: word.to_string(), args: vec![variable(&taken), variable(&value)] };
+                    return Ok(Instruction::Sequence(vec![bind_value, call]));
+                }
+                Some(Builtin::Put) => {
+                    let (value, bind_value) = self.take("value");
+                    let (index, bind_index) = self.take("index");
+                    let call = Instruction::Invoke {
+                        function: word.to_string(),
+                        args: vec![variable(&taken), variable(&index), variable(&value)],
+                    };
+                    return Ok(Instruction::Sequence(vec![bind_value, bind_index, call]));
+                }
+                _ => return Err(format!("'{}' does not take a name, but '{}' was given", word, taken)),
+            }
+        }
+
+        // Literal words.
+        if lits.true_words.iter().any(|w| w == word) {
+            return Ok(push(Instruction::Literal(Value::Bool(true))));
+        }
+        if lits.false_words.iter().any(|w| w == word) {
+            return Ok(push(Instruction::Literal(Value::Bool(false))));
+        }
+        if lits.null_words.iter().any(|w| w == word) {
+            return Ok(push(Instruction::Literal(Value::Null)));
+        }
+
+        // Control words: the condition is the top of the stack.
+        if let Some(branch) = s.branch.as_ref().filter(|b| spelled(&b.keyword, word)) {
+            let mut stops = closes.clone();
+            stops.extend(branch.else_keyword.iter().cloned());
+            let then_branch = self.postfix_body(&stops)?;
+            let else_branch = if self.at_one_of(&branch.else_keyword).is_some() {
+                self.advance();
+                Some(self.postfix_body(closes)?)
+            } else {
+                None
+            };
+            self.expect_any_close()?;
+            return Ok(Instruction::Branch {
+                condition: Box::new(pop()),
+                then_branch: Box::new(then_branch),
+                else_branch: else_branch.map(Box::new),
+            });
+        }
+        if spelled(&s.loop_while, word) {
+            let condition = self.postfix_body(&structure.block_intro)?;
+            self.expect_intro()?;
+            let body = self.postfix_body(closes)?;
+            self.expect_any_close()?;
+            let condition = Instruction::Sequence(vec![condition, pop()]);
+            return Ok(Instruction::Loop { condition: Box::new(condition), body: Box::new(body), step: None });
+        }
+        if spelled(&s.loop_until, word) {
+            let body = self.postfix_body(&structure.block_intro)?;
+            self.expect_intro()?;
+            let condition = self.postfix_body(closes)?;
+            self.expect_any_close()?;
+            let stop = Instruction::Branch {
+                condition: Box::new(Instruction::Sequence(vec![condition, pop()])),
+                then_branch: Box::new(Instruction::transfer(TransferKind::Break, None)),
+                else_branch: None,
+            };
+            return Ok(Instruction::Loop {
+                condition: Box::new(Instruction::Literal(Value::Bool(true))),
+                body: Box::new(body),
+                step: Some(Box::new(stop)),
+            });
+        }
+        if spelled(&s.return_, word) {
+            return Ok(Instruction::transfer(TransferKind::Return, None));
+        }
+        if spelled(&s.break_, word) {
+            return Ok(Instruction::transfer(TransferKind::Break, None));
+        }
+        if spelled(&s.continue_, word) {
+            return Ok(Instruction::transfer(TransferKind::Continue, None));
+        }
+
+        // A program value: its body, reduced now, runs when a word names it.
+        if let Some(i) = stack.program_open.iter().position(|o| o == word) {
+            let close = std::slice::from_ref(&stack.program_close[i]);
+            let body = self.postfix_body(close)?;
+            self.expect_close(&close[0])?;
+            let def = Function { name: "<program>".to_string(), params: Vec::new(), body };
+            return Ok(push(Instruction::Literal(Value::Function(Rc::new(def)))));
+        }
+
+        // An array literal gathers what its body pushes.
+        if let Some(array) = structure.array.as_ref().filter(|a| a.open == word) {
+            let close = std::slice::from_ref(&array.close);
+            let body = self.postfix_body(close)?;
+            self.expect_close(&array.close)?;
+            let mark = self.hidden_name("mark");
+            let depth = Instruction::Invoke { function: "<depth>".to_string(), args: vec![variable(STACK)] };
+            let gather = Instruction::Invoke { function: "<gather>".to_string(), args: vec![variable(STACK), variable(&mark)] };
+            return Ok(Instruction::Sequence(vec![Instruction::assign(mark, depth), body, gather]));
+        }
+
+        // Stack words.
+        if spelled(&stack.dup, word) {
+            let (a, bind_a) = self.take("a");
+            return Ok(Instruction::Sequence(vec![bind_a, push(variable(&a)), push(variable(&a))]));
+        }
+        if spelled(&stack.drop, word) {
+            return Ok(pop());
+        }
+        if spelled(&stack.swap, word) {
+            let (b, bind_b) = self.take("b");
+            let (a, bind_a) = self.take("a");
+            return Ok(Instruction::Sequence(vec![bind_b, bind_a, push(variable(&b)), push(variable(&a))]));
+        }
+        if spelled(&stack.over, word) {
+            let (b, bind_b) = self.take("b");
+            let (a, bind_a) = self.take("a");
+            return Ok(Instruction::Sequence(vec![bind_b, bind_a, push(variable(&a)), push(variable(&b)), push(variable(&a))]));
+        }
+        if spelled(&stack.rot, word) {
+            let (c, bind_c) = self.take("c");
+            let (b, bind_b) = self.take("b");
+            let (a, bind_a) = self.take("a");
+            return Ok(Instruction::Sequence(vec![
+                bind_c,
+                bind_b,
+                bind_a,
+                push(variable(&b)),
+                push(variable(&c)),
+                push(variable(&a)),
+            ]));
+        }
+        if spelled(&stack.eval, word) {
+            return Ok(Instruction::Invoke { function: "<eval>".to_string(), args: vec![variable(STACK), pop()] });
+        }
+
+        // Operators: operands come off the stack, the result goes back.
+        if let Some(info) = schema.operators.binary.get(word) {
+            let (b, bind_b) = self.take("b");
+            let (a, bind_a) = self.take("a");
+            return Ok(Instruction::Sequence(vec![bind_b, bind_a, push(Instruction::binary(info.op, variable(&a), variable(&b)))]));
+        }
+        if let Some(info) = schema.operators.unary.get(word) {
+            return Ok(push(Instruction::unary(info.op, pop())));
+        }
+
+        // Builtins: arguments come off the stack; a result goes back.
+        if let Some(builtin) = schema.functions.get(word).copied() {
+            let (arity, yields) = match builtin {
+                Builtin::Emit | Builtin::PrintLine | Builtin::Write | Builtin::Error => (1, false),
+                Builtin::CharAt | Builtin::Get | Builtin::Real => (2, true),
+                Builtin::Push | Builtin::Put => return Err(format!("'{}' needs a quoted name before it", word)),
+                Builtin::Extern | Builtin::Range => return Err(format!("'{}' has no postfix form", word)),
+                Builtin::Pop | Builtin::Word | Builtin::Eval | Builtin::Depth | Builtin::Gather => {
+                    unreachable!("internal builtins have no surface name")
+                }
+                _ => (1, true),
+            };
+            let mut items = Vec::new();
+            let mut args = Vec::new();
+            for n in 0..arity {
+                let (arg, bind) = self.take(&format!("arg{}", arity - n));
+                items.push(bind);
+                args.push(variable(&arg));
+            }
+            args.reverse();
+            let call = Instruction::Invoke { function: word.to_string(), args };
+            items.push(if yields { push(call) } else { call });
+            return Ok(Instruction::Sequence(items));
+        }
+
+        // Any other word: run the program bound to it, or push its value.
+        if !is_word {
+            return Err(format!("Unexpected '{}'", word));
+        }
+        Ok(Instruction::Invoke { function: "<word>".to_string(), args: vec![variable(STACK), variable(word)] })
+    }
 }

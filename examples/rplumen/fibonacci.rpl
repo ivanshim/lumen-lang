@@ -1,0 +1,19 @@
+# Programs are values: « ... » pushes a program, and a bare word runs the
+# program stored under it. Parameters come off the stack last first.
+« 'n' =
+    0 'a' =
+    1 'b' =
+    0 n 'i' for
+        a b + 'c' =
+        b 'a' =
+        c 'b' =
+    next
+    a
+» 'fib' =
+
+0 15 'i' for
+    i fib print
+next
+
+# A program need not be named: eval runs the one on the stack.
+7 « 1 + » eval print

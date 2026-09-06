@@ -1,0 +1,39 @@
+# Ported from examples/lumen/constructs/operators_complete.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+"Test: Complete Operators" print
+"Logical OR:" print
+true if true else false end print
+false if true else true end print
+false if true else false end print
+true if true else true end print
+5 'x' =
+x 3 < if true else x 4 > end if
+    "x is either less than 3 or greater than 4" print
+else
+    "x is between 3 and 4" print
+end
+"Greater-than-or-equal:" print
+10 5 >= print
+5 5 >= print
+3 5 >= print
+x 5 >= if
+    "x is greater than or equal to 5" print
+else
+    "x is less than 5" print
+end
+"Exponentiation:" print
+2 3 ** print
+5 2 ** print
+10 0 ** print
+2 3 ** 1 + 'result' =
+"2 ** 3 + 1 = " print
+result print
+« 'exp' = 'base' =
+    base exp ** return
+» 'power' =
+
+"power(3, 4):" print
+3 4 power print
+"Precedence test: 2 + 3 ** 2" print
+2 3 2 ** + print
+"Precedence test: 10 / 2 ** 2" print
+10 2 2 ** / print

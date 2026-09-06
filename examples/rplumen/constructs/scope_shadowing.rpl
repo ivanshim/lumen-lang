@@ -1,0 +1,9 @@
+# Ported from examples/lumen/constructs/scope_shadowing.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+1 print
+10 'x' =
+x print
+true if
+    20 'x' =
+    x print
+end
+x print

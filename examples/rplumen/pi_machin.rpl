@@ -1,0 +1,93 @@
+# Ported from examples/lumen/pi_machin.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+« 'to_end' = 'from_start' = 's' =
+    from_start 'index' =
+    "" 'out' =
+    while index to_end < repeat
+        out s index char_at . 'out' =
+        index 1 + 'index' =
+    end
+    out return
+» 'substring' =
+
+« 'to_here' = 's' =
+    s 0 to_here substring return
+» 'substring_start' =
+
+« 'decimals' = 'x' =
+    1 'scale' =
+    0 'i' =
+    while i decimals < repeat
+        scale 10 * 'scale' =
+        i 1 + 'i' =
+    end
+    x scale * 'y' =
+    y 0 >= if
+        y 2 * 1 + 2 // 'r' =
+    else
+        y 2 * 1 - 2 // 'r' =
+    end
+    r scale / return
+» 'round' =
+
+« 'sigfigs' =
+    3 'guard' =
+    sigfigs guard + 'work' =
+    sigfigs 1 - 'decimals' =
+    1 'scale' =
+    0 'i' =
+    while i work < repeat
+        scale 10 * 'scale' =
+        i 1 + 'i' =
+    end
+    5 'base_small' =
+    base_small base_small * 'base_small_sq' =
+    scale base_small / 'term' =
+    scale base_small % 'remainder' =
+    term 'arctan_small' =
+    1 'k' =
+    while 1 1 == repeat
+        term 2 k * 1 - * remainder + 'numerator' =
+        2 k * 1 + base_small_sq * 'denominator' =
+        numerator denominator / 'term' =
+        numerator denominator % 'remainder' =
+        term 1 < if
+            break
+        end
+        k 2 % 1 == if
+            arctan_small term - 'arctan_small' =
+        else
+            arctan_small term + 'arctan_small' =
+        end
+        k 1 + 'k' =
+    end
+    239 'base_large' =
+    base_large base_large * 'base_large_sq' =
+    scale base_large / 'term' =
+    scale base_large % 'remainder' =
+    term 'arctan_large' =
+    1 'k' =
+    while 1 1 == repeat
+        term 2 k * 1 - * remainder + 'numerator' =
+        2 k * 1 + base_large_sq * 'denominator' =
+        numerator denominator / 'term' =
+        numerator denominator % 'remainder' =
+        term 1 < if
+            break
+        end
+        k 2 % 1 == if
+            arctan_large term - 'arctan_large' =
+        else
+            arctan_large term + 'arctan_large' =
+        end
+        k 1 + 'k' =
+    end
+    16 arctan_small * 4 arctan_large * - 'pi_scaled' =
+    pi_scaled scale / 'result' =
+    result decimals round 'rounded' =
+    rounded sigfigs real return
+» 'pi_machin' =
+
+1000 'significant_figures' =
+significant_figures pi_machin 'result' =
+result to_string 'result_string' =
+result_string 100 substring_start print

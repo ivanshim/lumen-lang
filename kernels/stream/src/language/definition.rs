@@ -14,6 +14,7 @@ use serde_json::Value as Json;
 /// The definitions embedded at build time.
 pub const EMBEDDED: &[&str] = &[
     include_str!("../../../../langs/lumen.json"),
+    include_str!("../../../../langs/rplumen.json"),
     include_str!("../../../../langs/python.json"),
     include_str!("../../../../langs/rust.json"),
 ];
@@ -24,6 +25,8 @@ pub enum BlockStyle {
     Braces,
     /// No opener; the body runs to a closing word, and an `if` chain shares one.
     Keyword,
+    /// Words act on one stack; control words delimit bodies (RPL).
+    Postfix,
 }
 
 /// Every label a definition must carry. The reader rejects a file that
@@ -32,7 +35,7 @@ pub enum BlockStyle {
 const LABELS: &[&str] = &[
     "format_version", "language", "extensions",
     "lexical.comment_line", "lexical.comment_block.open", "lexical.comment_block.close",
-    "lexical.string_quotes", "lexical.raw_quotes", "lexical.string_escapes", "lexical.prologue",
+    "lexical.string_quotes", "lexical.raw_quotes", "lexical.string_escapes", "lexical.prologue", "lexical.name_quote",
     "lexical.number.decimal_point", "lexical.number.base_marker", "lexical.number.exponent_marker",
     "lexical.number.hex_prefix", "lexical.keywords_case_insensitive",
     "identifier.unicode", "identifier.variable_prefix", "identifier.case_insensitive",
@@ -53,9 +56,11 @@ const LABELS: &[&str] = &[
     "stmt.return", "stmt.break", "stmt.continue", "stmt.function", "stmt.function.returns",
     "stmt.function.result_by_name",
     "stmt.pass", "stmt.emit",
+    "stack.dup", "stack.drop", "stack.swap", "stack.over", "stack.rot", "stack.eval",
+    "stack.program.open", "stack.program.close",
     "builtin.emit", "builtin.print", "builtin.write", "builtin.print.placeholder", "builtin.len", "builtin.char_at", "builtin.ord",
     "builtin.chr", "builtin.typeof", "builtin.error", "builtin.extern", "builtin.range",
-    "builtin.real", "builtin.num", "builtin.den", "builtin.push",
+    "builtin.real", "builtin.num", "builtin.den", "builtin.push", "builtin.get", "builtin.put",
     "builtin.precision", "builtin.to_string", "builtin.to_int", "builtin.to_real",
     "system.args", "system.memoization", "system.real_default_precision", "system.entry",
     "system.kind.integer", "system.kind.rational", "system.kind.real", "system.kind.string",
@@ -201,7 +206,8 @@ impl Definition {
                         "indentation" => BlockStyle::Indentation,
                         "braces" => BlockStyle::Braces,
                         "keyword" => BlockStyle::Keyword,
-                        other => return Err(format!("block.style must be 'indentation', 'braces' or 'keyword', got '{other}'")),
+                        "postfix" => BlockStyle::Postfix,
+                        other => return Err(format!("block.style must be 'indentation', 'braces', 'keyword' or 'postfix', got '{other}'")),
                     };
                 }
                 ("block.indent_size", Json::Number(n)) => {
@@ -229,7 +235,7 @@ impl Definition {
         let paired = match definition.block_style {
             BlockStyle::Indentation => opens == 0 && closes == 0,
             BlockStyle::Braces => opens > 0 && opens == closes,
-            BlockStyle::Keyword => opens == 0 && closes > 0,
+            BlockStyle::Keyword | BlockStyle::Postfix => opens == 0 && closes > 0,
         };
         if !paired {
             return Err("block.open and block.close do not fit block.style".to_string());
@@ -353,6 +359,7 @@ impl Definition {
                 || label.starts_with("literal.")
                 || label.starts_with("op.")
                 || label.starts_with("block.")
+                || label.starts_with("stack.")
                 || matches!(label.as_str(), "builtin.emit" | "builtin.push" | "builtin.extern" | "system.memoization");
             if reserved {
                 words.extend(list.iter().filter(|s| self.word_shaped(s)).cloned());
@@ -382,7 +389,9 @@ impl Definition {
             let symbolic = label.starts_with("op.")
                 || label.starts_with("syntax.")
                 || label.starts_with("block.")
+                || label.starts_with("stack.")
                 || label.starts_with("lexical.comment")
+                || label == "lexical.name_quote"
                 || matches!(
                     label.as_str(),
                     "stmt.assign" | "stmt.let.annotation" | "stmt.function.returns" | "stmt.terminator" | "lexical.prologue"

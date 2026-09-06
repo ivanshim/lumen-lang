@@ -20,6 +20,7 @@ pub use schema::LanguageSchema;
 /// definition given on the command line is read the same way.
 const CONFIGS: &[&str] = &[
     include_str!("../../../langs/lumen.json"),
+    include_str!("../../../langs/rplumen.json"),
     include_str!("../../../langs/python.json"),
     include_str!("../../../langs/rust.json"),
 ];

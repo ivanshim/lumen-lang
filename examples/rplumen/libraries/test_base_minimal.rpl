@@ -1,0 +1,30 @@
+# Ported from examples/lumen/libraries/test_base_minimal.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+"0123456789abcdefghijklmnopqrstuvwxyz" 'alphabet' =
+« 'radix' = 'n' =
+    n 0 == if
+        "0" return
+    end
+    false 'negative' =
+    n 0 < if
+        true 'negative' =
+        n neg 'n' =
+    end
+    "" 'result' =
+    while n 0 > repeat
+        n radix % 'digit' =
+        alphabet digit char_at result . 'result' =
+        n radix // 'n' =
+    end
+    negative if
+        "-" result . 'result' =
+    end
+    result return
+» 'integer_to_base_string' =
+
+"Test: Convert 255 to hex" print
+255 16 integer_to_base_string 'result' =
+result print
+"Test: Convert 42 to binary" print
+42 2 integer_to_base_string 'result2' =
+result2 print
+"Done!" print

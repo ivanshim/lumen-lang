@@ -12,6 +12,7 @@ use crate::kernel::lexer::{Span, SpannedToken, Token};
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::{err_at, KernelResult as LumenResult};
 use crate::language::definition::{def, BlockStyle};
+use crate::language::prelude::LumenParserExt;
 use crate::language::registry::Registry;
 use crate::language::{word_char, word_start};
 
@@ -74,9 +75,11 @@ pub fn expect_close(parser: &mut Parser) -> LumenResult<()> {
     }
 }
 
-/// Consume line ends and statement terminators between statements.
+/// Consume line ends and statement terminators between statements, and
+/// the spaces a postfix language keeps between its words.
 pub fn consume_separators(parser: &mut Parser) {
     loop {
+        parser.skip_tokens();
         let lexeme = &parser.peek().lexeme;
         if lexeme == NEWLINE || def().is("stmt.terminator", lexeme) {
             parser.advance();
@@ -106,7 +109,7 @@ pub fn parse_block(parser: &mut Parser, registry: &Registry) -> LumenResult<Vec<
                 .ok_or_else(|| err_at(parser, &format!("Expected '{}' to open a block", opens[0])))?;
             (opens[i].clone(), d.list("block.close")[i].clone())
         }
-        BlockStyle::Keyword => {
+        BlockStyle::Keyword | BlockStyle::Postfix => {
             let stmts = parse_body(parser, registry, d.list("block.close"))?;
             expect_close(parser)?;
             return Ok(stmts);
@@ -240,6 +243,7 @@ pub fn process(source: &str, raw_tokens: Vec<SpannedToken>) -> LumenResult<Vec<S
     let d = def();
     let raw_tokens = fold_case(raw_tokens);
     let indentation = d.block_style == BlockStyle::Indentation;
+    let postfix = d.block_style == BlockStyle::Postfix;
     let indent_size = d.indent_size;
     let comment_markers = d.list("lexical.comment_line");
     let block_opens = d.list("lexical.comment_block.open");
@@ -363,8 +367,10 @@ pub fn process(source: &str, raw_tokens: Vec<SpannedToken>) -> LumenResult<Vec<S
                 }
                 out.push(raw_tok.clone());
             } else {
-                // Outside strings and arrays: whitespace is dropped
-                if matches!(one, Some(' ') | Some('\t') | Some('\n') | Some('\r')) {
+                // Outside strings and arrays: whitespace is dropped, except
+                // in a postfix language, where a space separates two words
+                // (`5 3` is two numbers) and stays for the parser to skip.
+                if matches!(one, Some('\n') | Some('\r')) || (!postfix && matches!(one, Some(' ') | Some('\t'))) {
                     continue;
                 }
                 out.push(raw_tok.clone());

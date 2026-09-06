@@ -5,6 +5,7 @@
 // is read from the schema; the operations themselves are the kernel's.
 
 use std::cmp::Ordering;
+use std::rc::Rc;
 
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -12,7 +13,7 @@ use num_traits::ToPrimitive;
 use super::env::Environment;
 use super::instruction::{Instruction, Target, TransferKind};
 use super::numeric;
-use super::value::{LiteralWords, Value};
+use super::value::{Function, LiteralWords, Value};
 use crate::schema::{Builtin, LanguageSchema, Op};
 
 /// Significant digits of a real when the program gives no precision.
@@ -149,7 +150,7 @@ pub fn execute(instr: &Instruction, env: &mut Environment, schema: &LanguageSche
 // ---------------- Invoke ----------------
 
 pub(crate) fn invoke(function: &str, args: &[Instruction], env: &mut Environment, schema: &LanguageSchema) -> Outcome {
-    if let Some(builtin) = schema.functions.get(function).copied() {
+    if let Some(builtin) = schema.functions.get(function).copied().or_else(|| internal_builtin(function)) {
         return builtin_call(builtin, function, args, env, schema);
     }
 
@@ -165,6 +166,31 @@ pub(crate) fn invoke(function: &str, args: &[Instruction], env: &mut Environment
             None => return Err(format!("Unknown function: {}", function)),
         },
     };
+    call_function(&def, function, values, env, schema)
+}
+
+/// The stack mechanics of a postfix language, invoked under names the
+/// reducer emits and no definition can spell.
+fn internal_builtin(name: &str) -> Option<Builtin> {
+    Some(match name {
+        "<push>" => Builtin::Push,
+        "<pop>" => Builtin::Pop,
+        "<word>" => Builtin::Word,
+        "<eval>" => Builtin::Eval,
+        "<depth>" => Builtin::Depth,
+        "<gather>" => Builtin::Gather,
+        _ => return None,
+    })
+}
+
+/// Call a function value with evaluated arguments.
+fn call_function(
+    def: &Rc<Function>,
+    function: &str,
+    values: Vec<Value>,
+    env: &mut Environment,
+    schema: &LanguageSchema,
+) -> Outcome {
     if def.params.len() != values.len() {
         return Err(format!("Function {} expects {} arguments, got {}", function, def.params.len(), values.len()));
     }
@@ -220,25 +246,98 @@ fn builtin_call(
     env: &mut Environment,
     schema: &LanguageSchema,
 ) -> Outcome {
-    // push(array, value) mutates the named array in place, so its first
-    // argument is a binding name rather than a value.
-    if builtin == Builtin::Push {
-        if args.len() != 2 {
-            return Err(format!("{}() expects 2 arguments, got {}", name, args.len()));
+    use Builtin::*;
+    // push(array, value), put(array, index, value) and the stack mechanics
+    // mutate a named array in place, so their first argument is a binding
+    // name rather than a value.
+    let named = |args: &[Instruction], n: usize| -> Result<String, String> {
+        if args.len() != n {
+            return Err(format!("{}() expects {} arguments, got {}", name, n, args.len()));
         }
-        let target = match &args[0] {
-            Instruction::Variable(n) => n.clone(),
-            _ => return Err(format!("First argument to {}() must be an array variable name", name)),
-        };
-        let value = eval!(&args[1], env, schema);
-        return match env.lookup_mut(&target) {
-            Some(Value::Array(items)) => {
-                items.push(value);
-                Ok((Value::Null, Flow::Normal))
-            }
+        match &args[0] {
+            Instruction::Variable(n) => Ok(n.clone()),
+            _ => Err(format!("First argument to {}() must be an array variable name", name)),
+        }
+    };
+    fn array_of<'e>(env: &'e mut Environment, target: &str) -> Result<&'e mut Vec<Value>, String> {
+        match env.lookup_mut(target) {
+            Some(Value::Array(items)) => Ok(items),
             Some(_) => Err(format!("Variable '{}' is not an array", target)),
             None => Err(format!("Undefined variable '{}'", target)),
-        };
+        }
+    }
+    match builtin {
+        Push => {
+            let target = named(args, 2)?;
+            let value = eval!(&args[1], env, schema);
+            array_of(env, &target)?.push(value);
+            return Ok((Value::Null, Flow::Normal));
+        }
+        Put => {
+            let target = named(args, 3)?;
+            let idx = eval!(&args[1], env, schema);
+            let value = eval!(&args[2], env, schema);
+            let idx = array_index(&idx)?;
+            let items = array_of(env, &target)?;
+            if idx >= items.len() {
+                return Err(format!("Array index {} out of bounds (length: {})", idx, items.len()));
+            }
+            items[idx] = value;
+            return Ok((Value::Null, Flow::Normal));
+        }
+        Pop => {
+            let target = named(args, 1)?;
+            let value = array_of(env, &target)?.pop().ok_or_else(|| "Stack underflow".to_string())?;
+            return Ok((value, Flow::Normal));
+        }
+        Depth => {
+            let target = named(args, 1)?;
+            let depth = array_of(env, &target)?.len();
+            return Ok((Value::Number(BigInt::from(depth)), Flow::Normal));
+        }
+        // Gather what was pushed since the mark into one array.
+        Gather => {
+            let target = named(args, 2)?;
+            let mark = eval!(&args[1], env, schema);
+            let mark = array_index(&mark)?;
+            let items = array_of(env, &target)?;
+            if mark > items.len() {
+                return Err("Stack underflow".to_string());
+            }
+            let gathered = items.split_off(mark);
+            items.push(Value::Array(gathered));
+            return Ok((Value::Null, Flow::Normal));
+        }
+        // A bare word: run the program bound to it, or push its value.
+        Word => {
+            let target = named(args, 2)?;
+            let word = match &args[1] {
+                Instruction::Variable(w) => w.clone(),
+                _ => return Err("A word must be a name".to_string()),
+            };
+            return match env.value(&word)? {
+                Value::Function(def) => {
+                    let (_, flow) = call_function(&def, &word, Vec::new(), env, schema)?;
+                    Ok((Value::Null, flow))
+                }
+                value => {
+                    array_of(env, &target)?.push(value);
+                    Ok((Value::Null, Flow::Normal))
+                }
+            };
+        }
+        Eval => {
+            named(args, 2)?;
+            let program = eval!(&args[1], env, schema);
+            return match program {
+                Value::Function(def) => {
+                    let (_, flow) = call_function(&def, name, Vec::new(), env, schema)?;
+                    Ok((Value::Null, flow))
+                }
+                _ => Err(format!("{} needs a program", name)),
+            };
+        }
+        _ => {}
     }
 
     let mut values = Vec::with_capacity(args.len());
@@ -483,7 +582,13 @@ fn builtin_apply(builtin: Builtin, name: &str, values: &[Value], schema: &Langua
                 other => Err(format!("Unknown external function: {}", other)),
             }
         }
-        Push => unreachable!("push is handled before its arguments are evaluated"),
+        Get => {
+            arity(name, values, 2)?;
+            binary(Op::Index, &values[0], &values[1], schema)
+        }
+        Push | Put | Pop | Word | Eval | Depth | Gather => {
+            unreachable!("name-taking builtins are handled before their arguments are evaluated")
+        }
     }
 }
 

@@ -10,6 +10,7 @@ pub mod values;
 mod numeric;
 pub mod expressions;
 pub mod statements;
+pub mod postfix;
 pub mod structure;
 pub mod extern_system;
 pub mod memo;

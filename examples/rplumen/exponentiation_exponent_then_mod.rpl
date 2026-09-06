@@ -1,0 +1,38 @@
+# Ported from examples/lumen/exponentiation_exponent_then_mod.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+« 'm' = 'exp' = 'base' =
+    1 'result' =
+    base m % 'base' =
+    while exp 0 > repeat
+        exp 2 % 1 == if
+            result base * m % 'result' =
+        end
+        exp 2 // 'exp' =
+        base base * m % 'base' =
+    end
+    result return
+» 'mod_pow' =
+
+7 'base' =
+100 'exp' =
+1000000007 'mod' =
+100 'iterations' =
+"Fast modular exponentiation benchmark" print
+"base = " write
+base print
+"exp  = " write
+exp print
+"mod  = " write
+mod print
+"iterations = " write
+iterations print
+"" print
+"Running mod_pow..." print
+0 'result' =
+0 'i' =
+while i iterations < repeat
+    base exp mod mod_pow 'result' =
+    i 1 + 'i' =
+end
+"Result: " write
+result print
+"Done!" print

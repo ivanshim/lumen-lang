@@ -1,0 +1,11 @@
+# Ported from examples/lumen/constructs/for_loop_continue.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+0 11 'i' for
+    i 5 == if
+        continue
+    end
+    i write
+    i 10 < if
+        ", " write
+    end
+next
+"" print

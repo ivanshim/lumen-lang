@@ -1,0 +1,121 @@
+# Ported from examples/lumen/libraries/test_string_transform.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+« 'to_end' = 'from_start' = 's' =
+    from_start 'index' =
+    "" 'out' =
+    while index to_end < repeat
+        out s index char_at . 'out' =
+        index 1 + 'index' =
+    end
+    out return
+» 'substring' =
+
+« 'from_here' = 's' =
+    s from_here s len substring return
+» 'substring_end' =
+
+« 'c' =
+    c ord 'o' =
+    o "a" ord >= if o "z" ord <= else false end if
+        o 32 - chr return
+    else
+        c return
+    end
+    null return
+» 'char_to_upper' =
+
+« 'c' =
+    c ord 'o' =
+    o "A" ord >= if o "Z" ord <= else false end if
+        o 32 + chr return
+    else
+        c return
+    end
+    null return
+» 'char_to_lower' =
+
+« 's' =
+    "" 'result' =
+    0 'i' =
+    while i s len < repeat
+        result s i char_at char_to_upper . 'result' =
+        i 1 + 'i' =
+    end
+    result return
+» 'string_to_upper' =
+
+« 's' =
+    "" 'result' =
+    0 'i' =
+    while i s len < repeat
+        result s i char_at char_to_lower . 'result' =
+        i 1 + 'i' =
+    end
+    result return
+» 'string_to_lower' =
+
+« 's' =
+    "" 'result' =
+    s len 1 - 'index' =
+    while index 0 >= repeat
+        result s index char_at . 'result' =
+        index 1 - 'index' =
+    end
+    result return
+» 'reverse_characters' =
+
+"=== String Case Transformation ===" print
+"" print
+"Uppercase conversion:" print
+"  string_to_upper('hello'): " "hello" string_to_upper . print
+"  string_to_upper('world'): " "world" string_to_upper . print
+"  string_to_upper('Hello123'): " "Hello123" string_to_upper . print
+"" print
+"Lowercase conversion:" print
+"  string_to_lower('HELLO'): " "HELLO" string_to_lower . print
+"  string_to_lower('WORLD'): " "WORLD" string_to_lower . print
+"  string_to_lower('Hello123'): " "Hello123" string_to_lower . print
+"" print
+"Single character transformations:" print
+"  char_to_upper('a'): " "a" char_to_upper . print
+"  char_to_upper('z'): " "z" char_to_upper . print
+"  char_to_lower('A'): " "A" char_to_lower . print
+"  char_to_lower('Z'): " "Z" char_to_lower . print
+"  char_to_upper('5'): " "5" char_to_upper . print
+"  char_to_lower('5'): " "5" char_to_lower . print
+"" print
+"String reversal:" print
+"  reverse_characters('abc'): " "abc" reverse_characters . print
+"  reverse_characters('hello'): " "hello" reverse_characters . print
+"  reverse_characters('racecar'): " "racecar" reverse_characters . print
+"  reverse_characters('12345'): " "12345" reverse_characters . print
+"" print
+"=== Practical Example: Title Case ===" print
+« 's' =
+    s len 0 == if
+        s return
+    end
+    s 0 char_at char_to_upper s string_to_lower 1 substring_end . return
+» 'to_title_case' =
+
+[ "hello" "world" "lumen" "PROGRAMMING" ] 'words' =
+0 'i' =
+while i words len < repeat
+    words i get 'word' =
+    "  " word . " -> " . word to_title_case . print
+    i 1 + 'i' =
+end
+"" print
+"=== Practical Example: Palindrome Checker ===" print
+« 's' =
+    s string_to_lower 'normalized' =
+    normalized normalized reverse_characters == return
+» 'is_palindrome' =
+
+[ "racecar" "hello" "madam" "world" "level" ] 'test_words' =
+0 'i' =
+while i test_words len < repeat
+    test_words i get 'word' =
+    word is_palindrome 'is_pal' =
+    "  '" word . "' is palindrome: " . is_pal to_string . print
+    i 1 + 'i' =
+end

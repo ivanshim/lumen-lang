@@ -1,0 +1,33 @@
+# Ported from examples/lumen/constructs/type_annotations.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+"Test: Type Annotations on Variables" print
+42 'x' =
+"let x: number = 42" print
+x print
+"Hello, World" 'message' =
+"let message: string = " print
+message print
+true 'flag' =
+"let flag: boolean = true" print
+flag print
+null 'empty' =
+"let empty: null = null" print
+empty print
+« 'b' = 'a' =
+    a b + return
+» 'add' =
+
+"add(5, 3):" print
+5 3 add print
+« 'name' =
+    "Hello, " name + return
+» 'greet' =
+
+"greet(\"Alice\"):" print
+"Alice" greet print
+« 'y' = 'x' =
+    x 2 * y + 'result' =
+    result return
+» 'process' =
+
+"process(10, 5):" print
+10 5 process print

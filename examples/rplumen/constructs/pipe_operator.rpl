@@ -1,0 +1,28 @@
+# Ported from examples/lumen/constructs/pipe_operator.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+« 'x' =
+    x 2 * return
+» 'double' =
+
+« 'x' =
+    x 1 + return
+» 'add_one' =
+
+« 'x' =
+    x x * return
+» 'square' =
+
+"Test: Pipe Operator" print
+"Without pipe: square(add_one(double(5)))" print
+5 double add_one square print
+"With pipe: 5 |> double() |> add_one() |> square()" print
+5 double add_one square 'result' =
+result print
+"10 |> double():" print
+10 double print
+« 'b' = 'a' =
+    a b * return
+» 'multiply' =
+
+"3 |> double():" print
+3 double 'x' =
+x 2 multiply print

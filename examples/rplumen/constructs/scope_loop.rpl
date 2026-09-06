@@ -1,0 +1,10 @@
+# Ported from examples/lumen/constructs/scope_loop.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+0 'i' =
+0 'sum' =
+while i 5 < repeat
+    sum i + 'sum' =
+    sum print
+    i 1 + 'i' =
+end
+i print
+sum print

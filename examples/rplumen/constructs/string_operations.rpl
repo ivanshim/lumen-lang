@@ -1,0 +1,70 @@
+# Ported from examples/lumen/constructs/string_operations.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+« 'index' = 's' =
+    index 0 < if true else index s len >= end if
+        null return
+    end
+    s index char_at return
+» 'char_at_or_null' =
+
+"=== String Operations Test ===" print
+"Hello" 'str1' =
+" World" 'str2' =
+str1 str2 . 'result1' =
+"Period operator (string . string): " write
+result1 print
+42 'num_' =
+"Answer: " num_ . 'result2' =
+"Period operator with number coercion: " write
+result2 print
+10 'x' =
+20 'y' =
+"Sum: " x y + . 'result3' =
+"Period operator with expression: " write
+result3 print
+"Hello" 'test_str' =
+test_str len 'str_len' =
+"len('Hello'): " write
+str_len print
+"abc123" 'utf8_str' =
+utf8_str len 'utf8_len' =
+"len('abc123'): " write
+utf8_len print
+"" 'empty_str' =
+empty_str len 'empty_len' =
+"len(''): " write
+empty_len print
+[ 1 2 3 4 5 ] 'arr' =
+arr len 'arr_len' =
+"len([1,2,3,4,5]): " write
+arr_len print
+"Lumen" 'text' =
+text 0 char_at 'ch0' =
+"char_at('Lumen', 0): " write
+ch0 print
+text 2 char_at 'ch2' =
+"char_at('Lumen', 2): " write
+ch2 print
+text 4 char_at 'ch4' =
+"char_at('Lumen', 4): " write
+ch4 print
+"" print
+"=== Testing char_at_or_null (permissive wrapper) ===" print
+text 1 char_at_or_null 'ch_valid' =
+"char_at_or_null('Lumen', 1): " write
+ch_valid print
+text 10 char_at_or_null 'ch_oob' =
+"char_at_or_null('Lumen', 10) [out of bounds]: " write
+ch_oob print
+text 1 neg char_at_or_null 'ch_neg' =
+"char_at_or_null('Lumen', -1) [negative]: " write
+ch_neg print
+text 5 char_at_or_null 'ch_edge' =
+"char_at_or_null('Lumen', 5) [at length]: " write
+ch_edge print
+"Test" 'word' =
+word len 'length' =
+word 0 char_at 'first_char' =
+"Word: " word . ", Length: " . length . ", First: " . first_char . 'result10' =
+"Combined operations: " write
+result10 print
+"Done!" print

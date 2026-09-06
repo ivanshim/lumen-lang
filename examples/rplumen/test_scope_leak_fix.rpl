@@ -1,0 +1,13 @@
+# Ported from examples/lumen/test_scope_leak_fix.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+«
+    0 'i' =
+    while i 3 < repeat
+        i 1 + 'i' =
+    end
+    i return
+» 'count_to_three' =
+
+"First call: " count_to_three to_string . print
+"Second call: " count_to_three to_string . print
+"Third call: " count_to_three to_string . print
+"All calls completed successfully!" print

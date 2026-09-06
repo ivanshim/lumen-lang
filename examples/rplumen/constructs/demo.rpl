@@ -1,0 +1,28 @@
+# Ported from examples/lumen/constructs/demo.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+1 2 3 * + print
+0 'x' =
+5 'y' =
+x y < if y 5 == else false end if
+    100 print
+else
+    200 print
+end
+0 'i' =
+0 'sum' =
+while i 10 < repeat
+    i 5 == if
+        i 1 + 'i' =
+        continue
+    end
+    i 8 == if
+        break
+    end
+    sum i + 'sum' =
+    sum print
+    i 1 + 'i' =
+end
+sum print
+true print
+false print
+false not print
+10 neg 3 + print

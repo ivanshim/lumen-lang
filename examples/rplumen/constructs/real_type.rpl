@@ -1,0 +1,24 @@
+# Ported from examples/lumen/constructs/real_type.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+"Test 1: real_default(integer)" print
+5 to_real 'x' =
+x print
+"Test 2: real_default(rational)" print
+1 3 / to_real 'y' =
+y print
+"Test 3: real(1/3, 50)" print
+1 3 / 50 real 'z' =
+z print
+"Test 4: int(real_default(3.9)) should be 3" print
+10 3 / to_real to_int 'result' =
+result print
+"Test 5: Comparisons" print
+2 to_real 'a' =
+2 'b' =
+a b == if
+    "real_default(2) == 2: true" print
+else
+    "real_default(2) == 2: false" print
+end
+"Test 6: value_to_string(real_default)" print
+22 7 / to_real 'r' =
+r print
