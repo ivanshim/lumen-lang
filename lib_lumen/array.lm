@@ -1,0 +1,46 @@
+# array.lm
+# Array utilities, derived from the floor: len, indexing and push.
+
+# A new array holding the elements of a, then those of b
+fn array_concat(a, b)
+    out = []
+    i = 0
+    while i < len(a)
+        push(out, a[i])
+        i = i + 1
+    i = 0
+    while i < len(b)
+        push(out, b[i])
+        i = i + 1
+    out
+
+# The elements from index start (inclusive) to index stop (exclusive)
+fn array_slice(a, start, stop)
+    out = []
+    i = start
+    while i < stop
+        push(out, a[i])
+        i = i + 1
+    out
+
+# Index of the first element equal to x, or -1
+fn array_index_of(a, x)
+    i = 0
+    while i < len(a)
+        if a[i] == x
+            return i
+        i = i + 1
+    -1
+
+# Whether some element equals x
+fn array_contains(a, x)
+    array_index_of(a, x) >= 0
+
+# The elements in reverse order
+fn array_reverse(a)
+    out = []
+    i = len(a)
+    while i > 0
+        i = i - 1
+        push(out, a[i])
+    out

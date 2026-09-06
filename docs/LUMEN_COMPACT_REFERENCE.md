@@ -36,18 +36,15 @@ This card lists **user-accessible functions** across the kernel primitives and t
 - `-` Subtraction
 - `*` Multiplication
 - `/` Division (returns `RATIONAL` for integers, `REAL` for reals)
-- `**` Exponentiation (the only exponentiation operator; `^` is not valid)
-- `//` Integer division (quotient)
-- `%` Modulo (remainder)
-- `-` Unary negation
+- `**` Exponentiation (the only exponentiation operator; `^` is not valid). Derived: multiplication by squaring.
+- `//` Integer division (quotient, truncating toward zero)
+- `%` Remainder. Derived: `a - b * (a // b)`, so `a == b * (a // b) + a % b` for every kind of number.
+- `-` Unary negation. Derived: `0 - x`.
 
 **Comparison**
 - `==` Equal
-- `!=` Not equal
 - `<` Less than
-- `<=` Less than or equal
-- `>` Greater than
-- `>=` Greater than or equal
+- `!=`, `>`, `<=`, `>=` Derived: `not ==`, `b < a`, `not b < a`, `not a < b`
 
 **Logical**
 - `and` Logical AND
@@ -56,7 +53,7 @@ This card lists **user-accessible functions** across the kernel primitives and t
 
 **Pipes & Ranges**
 - `value |> fn(args...)` Pipe operator (passes `value` as the first argument).
-- `start..end` Half-open range literal (evaluates to a range value).
+- `start..end` Half-open range, loop syntax in `for v in start..end`; not a value.
 
 ---
 
@@ -151,16 +148,16 @@ Exponentiation is an expression-level operation and is never part of numeric lit
 ## Numeric Structure & Decomposition
 
 **Kernel**
-- `num(x)` — `[kernel]` Numerator of a rational (errors on non-rationals).
-- `den(x)` — `[kernel]` Denominator of a rational (errors on non-rationals).
-- `int(x)` — `[kernel]` Integer part of a real value.
-- `frac(x)` — `[kernel]` Fractional part of a real value (same precision as input).
+- `num(x)` — `[kernel]` Numerator of any number: an integer's own value, a real's fraction reduced.
+- `den(x)` — `[kernel]` Denominator of any number: 1 for an integer.
 - `precision(x)` — `[kernel]` The significant digits a real value carries.
 - `REAL_DEFAULT_PRECISION = 15` — `[kernel]` Default significant-digit precision for real conversions.
 - `real(x, precision)` — `[kernel]` Convert integer/rational/real to a real value with the requested significant-digit precision.
 
 **Library** (lib_lumen/numeric.lm)
 - `real_default(x)` — `[library]` Convert numeric value to real using `REAL_DEFAULT_PRECISION`.
+- `int(x)` — `[library]` Integer part of any number, truncated toward zero: `num(x) // den(x)`.
+- `frac(x)` — `[library]` Fractional part of any number, at its own precision: `x - int(x)`.
 
 ---
 
@@ -235,8 +232,12 @@ Exponentiation is an expression-level operation and is never part of numeric lit
 **Kernel**
 - `push(arr, value)` — `[kernel]` Append `value` to array `arr` (mutates in place).
 
-**Library**
-- (none)
+**Library** (lib_lumen/array.lm)
+- `array_concat(a, b)` — `[library]` A new array of a's elements then b's.
+- `array_slice(a, start, stop)` — `[library]` The elements from `start` (inclusive) to `stop` (exclusive).
+- `array_index_of(a, x)` — `[library]` Index of the first element equal to `x`, or -1.
+- `array_contains(a, x)` — `[library]` Whether some element equals `x`.
+- `array_reverse(a)` — `[library]` The elements in reverse order.
 
 ---
 

@@ -51,6 +51,20 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   carries. `to_string`, `to_int` and `to_real` are the one-name
   conversions of languages that have them (`str`, `String`, `intval`);
   Lumen gives them no name. Every Lumen example prints exactly what it did.
+- **The floor**: every operation the kernels can express in terms of the
+  others is now derived, in both kernels the same way, and the definitions
+  README states the floor per domain. `%` is `a - b * (a // b)`, `**` is
+  multiplication by squaring, `-x` is `0 - x`, and `!=`, `>`, `<=`, `>=`
+  come from `==` and `<`. `num` and `den` read the fraction any number is,
+  so `int` and `frac` are library code (`lib_lumen/numeric.lm`). A range
+  is loop syntax reduced to a counted loop, not a value: the `Range` kind
+  and the range operator outside a `for` are gone. `lib_lumen/array.lm`
+  derives concatenation, slicing, search and reversal from `len`, indexing
+  and `push`. Python's `sys.stdout.write` and JavaScript's
+  `process.stdout.write` are `emit`, the string-only writer, and their
+  `write` is derived as Lumen's is, `emit(to_string(x))`. Every Lumen
+  example prints exactly what it did; 310 ports, 852 runs, 426 programs
+  identical on both kernels.
 - **Method syntax and Pascal functions**: the pipe may be spelled `.` at
   the highest tier, and a bare name after it is a call, so `arr.push(x)`,
   `s.length`, `42.to_s` and `v.len()` are the same kernel calls as

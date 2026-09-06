@@ -38,7 +38,6 @@ pub fn register_all(registry: &mut Registry) {
     expressions::arithmetic::register(registry);
     expressions::comparison::register(registry);
     expressions::pipe::register(registry);
-    expressions::range_expr::register(registry);
     expressions::extern_expr::register(registry);
     expressions::grouping::register(registry);
     expressions::array_literal::register(registry);

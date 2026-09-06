@@ -119,8 +119,6 @@
   "builtin.real": [],
   "builtin.num": [],
   "builtin.den": [],
-  "builtin.int": [],
-  "builtin.frac": [],
   "builtin.push": ["push"],
   "builtin.precision": [],
   "builtin.to_string": ["to_s", "String"],

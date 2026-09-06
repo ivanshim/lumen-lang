@@ -443,21 +443,20 @@ def parse(source):
 
 # ---------------------------------------------------------------- library
 
-LIB_FILES = ["render.lm", "value_to_string.lm", "string_to_value.lm", "numeric.lm", "string.lm", "string_ord_chr.lm",
+LIB_FILES = ["render.lm", "value_to_string.lm", "string_to_value.lm", "numeric.lm", "array.lm", "string.lm", "string_ord_chr.lm",
              "factorial.lm", "round.lm", "e_integer.lm", "pi_machin.lm", "modular_arithmetic.lm",
              "primes.lm", "number_theory.lm", "constants_1024.lm", "constants.lm", "constants_default.lm"]
 
 KERNEL_BUILTINS = {
     "len": "builtin.len", "char_at": "builtin.char_at", "ord": "builtin.ord", "chr": "builtin.chr",
     "kind": "builtin.typeof", "error": "builtin.error", "real": "builtin.real", "precision": "builtin.precision",
-    "num": "builtin.num", "den": "builtin.den", "int": "builtin.int", "frac": "builtin.frac",
-    "push": "builtin.push", "emit": "builtin.emit",
+    "num": "builtin.num", "den": "builtin.den", "push": "builtin.push", "emit": "builtin.emit",
 }
 # Library renderers a language spells with one polymorphic conversion instead.
 POLYMORPHIC = {"int_to_string": "builtin.to_string", "real_to_string": "builtin.to_string",
                "rational_to_string": "builtin.to_string", "bool_to_string": "builtin.to_string",
                "null_to_string": "builtin.to_string", "array_to_string": "builtin.to_string",
-               "value_to_string": "builtin.to_string", "real_default": "builtin.to_real"}
+               "value_to_string": "builtin.to_string", "real_default": "builtin.to_real", "int": "builtin.to_int"}
 SYSTEM_NAMES = {"ARGS", "MEMOIZATION", "REAL_DEFAULT_PRECISION", "INTEGER", "RATIONAL", "REAL",
                 "STRING", "BOOLEAN", "ARRAY", "NULL"}
 
@@ -1297,11 +1296,14 @@ class Emitter:
             if tier is not None and tier <= self.binary_tier(concat):
                 text = self.paren(text)
             return f"{write}({text} {concat} {self.string(chr(10))})"
-        write = self.w("builtin.write", "write")
-        if self.name in ("python", "javascript") and arg.kind != "Str" and kind != STR:
-            # sys.stdout.write and process.stdout.write take a string
-            return f"{write}({self.w('builtin.to_string')}({text}))"
-        return f"{write}({text})"
+        if not self.has("builtin.write"):
+            # write derived as Lumen's library derives it: emit of the
+            # value's text, where the language has the string-only emit.
+            emit = self.w("builtin.emit", "write")
+            if arg.kind == "Str" or kind == STR:
+                return f"{emit}({text})"
+            return f"{emit}({self.w('builtin.to_string', 'write')}({text}))"
+        return f"{self.d['builtin.write'][0]}({text})"
 
     # ---- Pascal: declarations first, then the main block
     def pascal_program(self, body, scope):

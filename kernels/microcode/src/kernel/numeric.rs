@@ -96,7 +96,6 @@ fn result_precision(a: &Num, b: &Num) -> Option<usize> {
 /// Binary arithmetic on two numbers.
 pub fn arith(op: Op, a: &Num, b: &Num) -> Result<Value, String> {
     let precision = result_precision(a, b);
-    let zero = BigInt::zero();
     match op {
         Op::Add | Op::Sub | Op::Mul if a.is_integer && b.is_integer && precision.is_none() => {
             let r = match op {
@@ -140,20 +139,27 @@ pub fn arith(op: Op, a: &Num, b: &Num) -> Result<Value, String> {
             Ok(from_fraction(q, BigInt::from(1), precision))
         }
         Op::Rem => {
-            // Remainder of the integer parts.
-            let ai = &a.numerator / &a.denominator;
-            let bi = &b.numerator / &b.denominator;
-            if bi == zero {
-                return Err("Modulo by zero".to_string());
-            }
-            Ok(from_fraction(ai % bi, BigInt::from(1), precision))
+            // Derived: a - b * (a // b), so the identity a == b * (a // b) + a % b holds.
+            let quotient = to_num(&arith(Op::Quot, a, b)?).expect("a number");
+            let product = to_num(&arith(Op::Mul, b, &quotient)?).expect("a number");
+            arith(Op::Sub, a, &product)
         }
         Op::Pow => {
-            // Base may be any number; the exponent's integer part is used.
-            let exp = (&b.numerator / &b.denominator).to_u32().ok_or_else(|| "Exponent too large".to_string())?;
-            let n = a.numerator.pow(exp);
-            let d = a.denominator.pow(exp);
-            Ok(from_fraction(n, d, a.precision))
+            // Derived: multiplication by squaring on the exponent's integer
+            // part, so a real base keeps its precision through the products.
+            let mut exponent = (&b.numerator / &b.denominator).to_u64().ok_or_else(|| "Exponent too large".to_string())?;
+            let mut base = a.clone();
+            let mut acc = to_num(&from_fraction(BigInt::from(1), BigInt::from(1), a.precision)).expect("a number");
+            while exponent > 0 {
+                if exponent & 1 == 1 {
+                    acc = to_num(&arith(Op::Mul, &acc, &base)?).expect("a number");
+                }
+                exponent >>= 1;
+                if exponent > 0 {
+                    base = to_num(&arith(Op::Mul, &base, &base)?).expect("a number");
+                }
+            }
+            Ok(from_fraction(acc.numerator, acc.denominator, acc.precision))
         }
         _ => Err(format!("{:?} is not an arithmetic operation", op)),
     }
@@ -164,15 +170,3 @@ pub fn compare(a: &Num, b: &Num) -> std::cmp::Ordering {
     (&a.numerator * &b.denominator).cmp(&(&b.numerator * &a.denominator))
 }
 
-pub fn negate(value: &Value) -> Result<Value, String> {
-    match value {
-        Value::Number(n) => Ok(Value::Number(-n)),
-        Value::Rational { numerator, denominator } => {
-            Ok(Value::Rational { numerator: -numerator, denominator: denominator.clone() })
-        }
-        Value::Real { numerator, denominator, precision } => {
-            Ok(Value::Real { numerator: -numerator, denominator: denominator.clone(), precision: *precision })
-        }
-        _ => Err("Cannot negate non-numeric value".to_string()),
-    }
-}

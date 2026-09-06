@@ -55,7 +55,7 @@ const LABELS: &[&str] = &[
     "stmt.pass", "stmt.emit",
     "builtin.emit", "builtin.print", "builtin.write", "builtin.print.placeholder", "builtin.len", "builtin.char_at", "builtin.ord",
     "builtin.chr", "builtin.typeof", "builtin.error", "builtin.extern", "builtin.range",
-    "builtin.real", "builtin.num", "builtin.den", "builtin.int", "builtin.frac", "builtin.push",
+    "builtin.real", "builtin.num", "builtin.den", "builtin.push",
     "builtin.precision", "builtin.to_string", "builtin.to_int", "builtin.to_real",
     "system.args", "system.memoization", "system.real_default_precision", "system.entry",
     "system.kind.integer", "system.kind.rational", "system.kind.real", "system.kind.string",

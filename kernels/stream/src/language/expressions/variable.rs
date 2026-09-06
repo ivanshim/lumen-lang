@@ -43,8 +43,6 @@ const UNARY_BUILTINS: &[(&str, Unary)] = &[
     ("builtin.typeof", builtin_kind),
     ("builtin.num", builtin_num),
     ("builtin.den", builtin_den),
-    ("builtin.int", builtin_int_part),
-    ("builtin.frac", builtin_frac),
     ("builtin.precision", builtin_precision),
     ("builtin.to_string", builtin_to_string),
     ("builtin.to_int", builtin_to_int),
@@ -96,16 +94,7 @@ pub(crate) fn call_builtin(name: &str, values: Vec<Value>) -> LumenResult<Value>
         };
     }
     if d.is("builtin.range", name) {
-        use crate::language::expressions::range_expr::LumenRange;
-        use crate::language::values::as_number;
-        return match values.as_slice() {
-            [start, end] => {
-                let start = as_number(start.as_ref())?.value.clone();
-                let end = as_number(end.as_ref())?.value.clone();
-                Ok(Box::new(LumenRange::new(start, end)))
-            }
-            _ => Err(format!("{}() expects 2 arguments, got {}", name, values.len())),
-        };
+        return Err(format!("{}() spells a range, which belongs in a for loop", name));
     }
     if d.is("builtin.print", name) {
         println!("{}", render(&values));
@@ -518,74 +507,40 @@ fn builtin_kind(value: &Value) -> LumenResult<Value> {
 /// Valid only for RATIONAL values. Returns the numerator as an INTEGER.
 /// Errors on all other kinds.
 fn builtin_num(value: &Value) -> LumenResult<Value> {
-    use crate::language::values::{LumenNumber, LumenRational};
+    use crate::language::values::{LumenNumber, LumenRational, LumenReal};
 
-    // Check if it's a Rational
+    // Any number has a numerator: an integer is its own, a real carries one.
+    if let Some(number) = value.as_any().downcast_ref::<LumenNumber>() {
+        return Ok(Box::new(LumenNumber::new(number.value.clone())));
+    }
     if let Some(rational) = value.as_any().downcast_ref::<LumenRational>() {
         return Ok(Box::new(LumenNumber::new(rational.numerator.clone())));
     }
+    if let Some(real) = value.as_any().downcast_ref::<LumenReal>() {
+        return Ok(Box::new(LumenNumber::new(real.numerator.clone())));
+    }
 
-    Err("num() requires a rational argument".to_string())
+    Err("num() requires a number argument".to_string())
 }
 
 /// Built-in function: den(x) - Extract denominator from rational
 /// Valid only for RATIONAL values. Returns the denominator as an INTEGER.
 /// Errors on all other kinds.
 fn builtin_den(value: &Value) -> LumenResult<Value> {
-    use crate::language::values::{LumenNumber, LumenRational};
+    use crate::language::values::{LumenNumber, LumenRational, LumenReal};
 
-    // Check if it's a Rational
+    // Any number has a denominator: an integer's is 1.
+    if value.as_any().downcast_ref::<LumenNumber>().is_some() {
+        return Ok(Box::new(LumenNumber::new(num_bigint::BigInt::from(1))));
+    }
     if let Some(rational) = value.as_any().downcast_ref::<LumenRational>() {
         return Ok(Box::new(LumenNumber::new(rational.denominator.clone())));
     }
-
-    Err("den() requires a rational argument".to_string())
-}
-
-/// Built-in function: int(x) - Extract integer part from real
-/// Valid only for REAL values. Returns the integer part as an INTEGER.
-/// Must satisfy: int(x) + frac(x) == x
-/// Errors on all other kinds.
-fn builtin_int_part(value: &Value) -> LumenResult<Value> {
-    use crate::language::values::{LumenNumber, LumenReal};
-
-    // Check if it's a Real
     if let Some(real) = value.as_any().downcast_ref::<LumenReal>() {
-        // Integer part: truncate toward zero (integer division)
-        let int_part = &real.numerator / &real.denominator;
-        return Ok(Box::new(LumenNumber::new(int_part)));
+        return Ok(Box::new(LumenNumber::new(real.denominator.clone())));
     }
 
-    Err("int() requires a real argument".to_string())
-}
-
-/// Built-in function: frac(x) - Extract fractional part from real
-/// Valid only for REAL values. Returns the fractional part as a REAL.
-/// Must satisfy: int(x) + frac(x) == x
-/// Preserves precision exactly.
-/// Errors on all other kinds.
-fn builtin_frac(value: &Value) -> LumenResult<Value> {
-    use crate::language::values::{LumenReal};
-
-    // Check if it's a Real
-    if let Some(real) = value.as_any().downcast_ref::<LumenReal>() {
-        // Fractional part: x - int(x)
-        // If x = numerator/denominator, then:
-        // int(x) = numerator / denominator (integer division)
-        // frac(x) = x - int(x) = numerator/denominator - (numerator / denominator)
-        //         = (numerator - (numerator / denominator) * denominator) / denominator
-        let int_part = &real.numerator / &real.denominator;
-        let frac_numerator = &real.numerator - (&int_part * &real.denominator);
-
-        // Return as REAL with same precision, preserving exact structure
-        return Ok(Box::new(LumenReal::new(
-            frac_numerator,
-            real.denominator.clone(),
-            real.precision,
-        )));
-    }
-
-    Err("frac() requires a real argument".to_string())
+    Err("den() requires a number argument".to_string())
 }
 
 pub fn register(reg: &mut Registry) {
