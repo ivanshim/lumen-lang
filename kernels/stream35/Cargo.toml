@@ -1,8 +1,8 @@
 [package]
-name = "lumen-microcode"
+name = "lumen-stream35"
 version = "0.2.0"
 edition = "2021"
-description = "Microcode kernel: a table-driven four-stage execution engine"
+description = "Stream kernel: a language-agnostic tree-walking interpreter substrate"
 
 [lib]
 path = "src/lib.rs"

@@ -1,4 +1,4 @@
-# Lumen Kernel
+# Stream Kernel (stream35)
 
 ## Overview
 

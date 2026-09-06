@@ -1,11 +1,11 @@
-# Microcode Kernel
+# Microcode Kernel (microcode10)
 
 ## Overview
 
-The microcode kernel is an execution engine that owns every algorithm and
+The microcode10 kernel is an execution engine that owns every algorithm and
 knows no language. A language is a JSON definition of tables
 (`langs/<language>.json`); the kernel reads it and behaves accordingly.
-Nothing in `kernels/microcode/src/` names a keyword, an operator, a comment
+Nothing in `kernels/microcode10/src/` names a keyword, an operator, a comment
 marker or a function.
 
 **Invariant:** the kernel owns all algorithms; all language-specific behaviour
@@ -120,7 +120,7 @@ reads one from disk instead, and the language name and file extensions the
 host uses come from the definitions themselves.
 
 Adding a language means adding a JSON file and one line in
-`kernels/microcode/src/lib.rs` that embeds it. Changing an operator's
+`kernels/microcode10/src/lib.rs` that embeds it. Changing an operator's
 precedence, or which word means `null`, is a data edit with no code change.
 
 ## Relationship to the other kernels
@@ -128,13 +128,13 @@ precedence, or which word means `null`, is a data edit with no code change.
 The kernels never import each other; they are separate crates that meet
 only in the host binary, and `scripts/kernel_independence.py` (run in CI)
 fails the build if any names another or if a long run of identical
-source lines appears in two trees. The stack kernel solves the same
+source lines appears in two trees. The stack26 kernel solves the same
 problem by compiling to a flat word list instead of reducing to a tree
-(`docs/LUMEN_KERNEL_STACK.md`). They also solve the shared
+(`docs/LUMEN_KERNEL_STACK26.md`). They also solve the shared
 problems differently on purpose: comments are a text-level pass driven by
-the definition here and a token-stream transformation in the stream
+the definition here and a token-stream transformation in the stream35
 language; bindings live in a linear frame stack here and in a stack of
-hash-map scopes there. The stream kernel delegates meaning to language code
-through handler traits; the microcode kernel takes meaning from tables. Both
+hash-map scopes there. The stream35 kernel delegates meaning to language code
+through handler traits; the microcode10 kernel takes meaning from tables. Both
 read the same definitions, every example runs on both under `test.sh` and
 CI, and `scripts/kernel_diff.sh` requires their output to agree.

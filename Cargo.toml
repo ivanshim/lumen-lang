@@ -1,5 +1,5 @@
 [workspace]
-members = ["kernels/stream", "kernels/microcode", "kernels/stack", "kernels/microcode2", "kernels/microcode3"]
+members = ["kernels/stream35", "kernels/microcode10", "kernels/stack26", "kernels/microcode11", "kernels/microcode4"]
 
 [package]
 name = "lumen-lang"
@@ -12,8 +12,8 @@ name = "lumen-lang"
 path = "src/main.rs"
 
 [dependencies]
-lumen-stream = { path = "kernels/stream" }
-lumen-microcode = { path = "kernels/microcode" }
-lumen-stack = { path = "kernels/stack" }
-lumen-microcode2 = { path = "kernels/microcode2" }
-lumen-microcode3 = { path = "kernels/microcode3" }
+lumen-stream35 = { path = "kernels/stream35" }
+lumen-microcode10 = { path = "kernels/microcode10" }
+lumen-stack26 = { path = "kernels/stack26" }
+lumen-microcode11 = { path = "kernels/microcode11" }
+lumen-microcode4 = { path = "kernels/microcode4" }

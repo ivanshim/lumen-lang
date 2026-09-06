@@ -24,117 +24,117 @@ lumen-lang/
     langs/extras/ruby.json
     langs/extras/swift.json
 
-  kernels/stream/                  crate lumen-stream (handlers in code, shaped by a definition)
-    kernels/stream/Cargo.toml
-    kernels/stream/src/kernel/ast.rs
-    kernels/stream/src/kernel/eval.rs
-    kernels/stream/src/kernel/lexer.rs
-    kernels/stream/src/kernel/mod.rs
-    kernels/stream/src/kernel/parser.rs
-    kernels/stream/src/kernel/registry.rs
-    kernels/stream/src/kernel/runtime/env.rs
-    kernels/stream/src/kernel/runtime/mod.rs
-    kernels/stream/src/kernel/runtime/value.rs
-    kernels/stream/src/language/definition.rs
-    kernels/stream/src/language/dispatcher.rs
-    kernels/stream/src/language/expressions/arithmetic.rs
-    kernels/stream/src/language/expressions/array_index.rs
-    kernels/stream/src/language/expressions/array_literal.rs
-    kernels/stream/src/language/expressions/calls.rs
-    kernels/stream/src/language/expressions/comparison.rs
-    kernels/stream/src/language/expressions/extern_expr.rs
-    kernels/stream/src/language/expressions/grouping.rs
-    kernels/stream/src/language/expressions/literals.rs
-    kernels/stream/src/language/expressions/logic.rs
-    kernels/stream/src/language/expressions/mod.rs
-    kernels/stream/src/language/expressions/pipe.rs
-    kernels/stream/src/language/expressions/variable.rs
-    kernels/stream/src/language/extern_system/capabilities.rs
-    kernels/stream/src/language/extern_system/mod.rs
-    kernels/stream/src/language/extern_system/registry.rs
-    kernels/stream/src/language/extern_system/selector.rs
-    kernels/stream/src/language/memo.rs
-    kernels/stream/src/language/mod.rs
-    kernels/stream/src/language/numeric.rs
-    kernels/stream/src/language/postfix.rs
-    kernels/stream/src/language/prelude.rs
-    kernels/stream/src/language/registry/mod.rs
-    kernels/stream/src/language/registry/precedence.rs
-    kernels/stream/src/language/registry/traits.rs
-    kernels/stream/src/language/statements/array_assign.rs
-    kernels/stream/src/language/statements/assignment.rs
-    kernels/stream/src/language/statements/block_stmt.rs
-    kernels/stream/src/language/statements/control_for.rs
-    kernels/stream/src/language/statements/control_if_else.rs
-    kernels/stream/src/language/statements/control_until.rs
-    kernels/stream/src/language/statements/control_while.rs
-    kernels/stream/src/language/statements/expr_stmt.rs
-    kernels/stream/src/language/statements/flow_break.rs
-    kernels/stream/src/language/statements/flow_continue.rs
-    kernels/stream/src/language/statements/function_emit.rs
-    kernels/stream/src/language/statements/functions.rs
-    kernels/stream/src/language/statements/let_binding.rs
-    kernels/stream/src/language/statements/let_mut_binding.rs
-    kernels/stream/src/language/statements/mod.rs
-    kernels/stream/src/language/statements/pass_stmt.rs
-    kernels/stream/src/language/statements/push_stmt.rs
-    kernels/stream/src/language/statements/return_stmt.rs
-    kernels/stream/src/language/statements/system_memoization.rs
-    kernels/stream/src/language/structure/mod.rs
-    kernels/stream/src/language/structure/structural.rs
-    kernels/stream/src/language/values.rs
-    kernels/stream/src/lib.rs
+  kernels/stream35/                  crate lumen-stream35 (handlers in code, shaped by a definition)
+    kernels/stream35/Cargo.toml
+    kernels/stream35/src/kernel/ast.rs
+    kernels/stream35/src/kernel/eval.rs
+    kernels/stream35/src/kernel/lexer.rs
+    kernels/stream35/src/kernel/mod.rs
+    kernels/stream35/src/kernel/parser.rs
+    kernels/stream35/src/kernel/registry.rs
+    kernels/stream35/src/kernel/runtime/env.rs
+    kernels/stream35/src/kernel/runtime/mod.rs
+    kernels/stream35/src/kernel/runtime/value.rs
+    kernels/stream35/src/language/definition.rs
+    kernels/stream35/src/language/dispatcher.rs
+    kernels/stream35/src/language/expressions/arithmetic.rs
+    kernels/stream35/src/language/expressions/array_index.rs
+    kernels/stream35/src/language/expressions/array_literal.rs
+    kernels/stream35/src/language/expressions/calls.rs
+    kernels/stream35/src/language/expressions/comparison.rs
+    kernels/stream35/src/language/expressions/extern_expr.rs
+    kernels/stream35/src/language/expressions/grouping.rs
+    kernels/stream35/src/language/expressions/literals.rs
+    kernels/stream35/src/language/expressions/logic.rs
+    kernels/stream35/src/language/expressions/mod.rs
+    kernels/stream35/src/language/expressions/pipe.rs
+    kernels/stream35/src/language/expressions/variable.rs
+    kernels/stream35/src/language/extern_system/capabilities.rs
+    kernels/stream35/src/language/extern_system/mod.rs
+    kernels/stream35/src/language/extern_system/registry.rs
+    kernels/stream35/src/language/extern_system/selector.rs
+    kernels/stream35/src/language/memo.rs
+    kernels/stream35/src/language/mod.rs
+    kernels/stream35/src/language/numeric.rs
+    kernels/stream35/src/language/postfix.rs
+    kernels/stream35/src/language/prelude.rs
+    kernels/stream35/src/language/registry/mod.rs
+    kernels/stream35/src/language/registry/precedence.rs
+    kernels/stream35/src/language/registry/traits.rs
+    kernels/stream35/src/language/statements/array_assign.rs
+    kernels/stream35/src/language/statements/assignment.rs
+    kernels/stream35/src/language/statements/block_stmt.rs
+    kernels/stream35/src/language/statements/control_for.rs
+    kernels/stream35/src/language/statements/control_if_else.rs
+    kernels/stream35/src/language/statements/control_until.rs
+    kernels/stream35/src/language/statements/control_while.rs
+    kernels/stream35/src/language/statements/expr_stmt.rs
+    kernels/stream35/src/language/statements/flow_break.rs
+    kernels/stream35/src/language/statements/flow_continue.rs
+    kernels/stream35/src/language/statements/function_emit.rs
+    kernels/stream35/src/language/statements/functions.rs
+    kernels/stream35/src/language/statements/let_binding.rs
+    kernels/stream35/src/language/statements/let_mut_binding.rs
+    kernels/stream35/src/language/statements/mod.rs
+    kernels/stream35/src/language/statements/pass_stmt.rs
+    kernels/stream35/src/language/statements/push_stmt.rs
+    kernels/stream35/src/language/statements/return_stmt.rs
+    kernels/stream35/src/language/statements/system_memoization.rs
+    kernels/stream35/src/language/structure/mod.rs
+    kernels/stream35/src/language/structure/structural.rs
+    kernels/stream35/src/language/values.rs
+    kernels/stream35/src/lib.rs
 
-  kernels/microcode/               crate lumen-microcode (tables and an instruction tree, from a definition)
-    kernels/microcode/Cargo.toml
-    kernels/microcode/src/kernel/_1_ingest.rs
-    kernels/microcode/src/kernel/_2_structure.rs
-    kernels/microcode/src/kernel/_3_reduce.rs
-    kernels/microcode/src/kernel/_4_execute.rs
-    kernels/microcode/src/kernel/env.rs
-    kernels/microcode/src/kernel/instruction.rs
-    kernels/microcode/src/kernel/mod.rs
-    kernels/microcode/src/kernel/numeric.rs
-    kernels/microcode/src/kernel/value.rs
-    kernels/microcode/src/lib.rs
-    kernels/microcode/src/schema.rs
+  kernels/microcode10/               crate lumen-microcode10 (tables and an instruction tree, from a definition)
+    kernels/microcode10/Cargo.toml
+    kernels/microcode10/src/kernel/_1_ingest.rs
+    kernels/microcode10/src/kernel/_2_structure.rs
+    kernels/microcode10/src/kernel/_3_reduce.rs
+    kernels/microcode10/src/kernel/_4_execute.rs
+    kernels/microcode10/src/kernel/env.rs
+    kernels/microcode10/src/kernel/instruction.rs
+    kernels/microcode10/src/kernel/mod.rs
+    kernels/microcode10/src/kernel/numeric.rs
+    kernels/microcode10/src/kernel/value.rs
+    kernels/microcode10/src/lib.rs
+    kernels/microcode10/src/schema.rs
 
-  kernels/stack/                   crate lumen-stack (every language compiled to one stack machine)
-    kernels/stack/Cargo.toml
-    kernels/stack/src/code.rs          the word set and compiled programs
-    kernels/stack/src/compiler.rs      tokens to words in one pass; names to slots
-    kernels/stack/src/definition.rs    the definition reader
-    kernels/stack/src/layout.rs        block structure
-    kernels/stack/src/lexer.rs         scanning
-    kernels/stack/src/lib.rs
-    kernels/stack/src/machine.rs       the inner loop, builtins, the call cache
-    kernels/stack/src/number.rs        the numeric tower with a machine-word fast path
-    kernels/stack/src/value.rs         values and rendering
+  kernels/stack26/                   crate lumen-stack26 (every language compiled to one stack machine)
+    kernels/stack26/Cargo.toml
+    kernels/stack26/src/code.rs          the word set and compiled programs
+    kernels/stack26/src/compiler.rs      tokens to words in one pass; names to slots
+    kernels/stack26/src/definition.rs    the definition reader
+    kernels/stack26/src/layout.rs        block structure
+    kernels/stack26/src/lexer.rs         scanning
+    kernels/stack26/src/lib.rs
+    kernels/stack26/src/machine.rs       the inner loop, builtins, the call cache
+    kernels/stack26/src/number.rs        the numeric tower with a machine-word fast path
+    kernels/stack26/src/value.rs         values and rendering
 
-  kernels/microcode2/              crate lumen-microcode2 (the tree kept: run it, or write it out in any language)
-    kernels/microcode2/Cargo.toml
-    kernels/microcode2/src/emit.rs        the tree written in a target language
-    kernels/microcode2/src/execute.rs     the tree run
-    kernels/microcode2/src/ingest.rs      scanning
-    kernels/microcode2/src/lib.rs
-    kernels/microcode2/src/numeric.rs
-    kernels/microcode2/src/reduce.rs      tokens to the tree; postfix read with a symbolic stack
-    kernels/microcode2/src/spec.rs        the definition as a table of labels
-    kernels/microcode2/src/structure.rs   block structure
-    kernels/microcode2/src/tree.rs        the forms
-    kernels/microcode2/src/value.rs
+  kernels/microcode11/              crate lumen-microcode11 (the tree kept: run it, or write it out in any language)
+    kernels/microcode11/Cargo.toml
+    kernels/microcode11/src/emit.rs        the tree written in a target language
+    kernels/microcode11/src/execute.rs     the tree run
+    kernels/microcode11/src/ingest.rs      scanning
+    kernels/microcode11/src/lib.rs
+    kernels/microcode11/src/numeric.rs
+    kernels/microcode11/src/reduce.rs      tokens to the tree; postfix read with a symbolic stack
+    kernels/microcode11/src/spec.rs        the definition as a table of labels
+    kernels/microcode11/src/structure.rs   block structure
+    kernels/microcode11/src/tree.rs        the forms
+    kernels/microcode11/src/value.rs
 
-  kernels/microcode3/              crate lumen-microcode3 (four primitive forms: Literal, Load, Assign, Call)
-    kernels/microcode3/Cargo.toml
-    kernels/microcode3/src/arith.rs
-    kernels/microcode3/src/blocks.rs      block structure
-    kernels/microcode3/src/lexer.rs       scanning
-    kernels/microcode3/src/lib.rs
-    kernels/microcode3/src/reduce.rs      tokens to the four forms; loops as programs that call themselves
-    kernels/microcode3/src/run.rs         the four forms run, with closures, tail calls and signals
-    kernels/microcode3/src/spec.rs        the definition as data
-    kernels/microcode3/src/tree.rs        the four forms
-    kernels/microcode3/src/value.rs
+  kernels/microcode4/              crate lumen-microcode4 (four primitive forms: Literal, Load, Assign, Call)
+    kernels/microcode4/Cargo.toml
+    kernels/microcode4/src/arith.rs
+    kernels/microcode4/src/blocks.rs      block structure
+    kernels/microcode4/src/lexer.rs       scanning
+    kernels/microcode4/src/lib.rs
+    kernels/microcode4/src/reduce.rs      tokens to the four forms; loops as programs that call themselves
+    kernels/microcode4/src/run.rs         the four forms run, with closures, tail calls and signals
+    kernels/microcode4/src/spec.rs        the definition as data
+    kernels/microcode4/src/tree.rs        the four forms
+    kernels/microcode4/src/value.rs
 
   lib_lumen/                       Lumen standard library (.lm) + prelude.rs (embedding list)
     lib_lumen/constants.lm
@@ -163,14 +163,14 @@ lumen-lang/
     scripts/kernel_independence.py
     scripts/lang_table.py
     scripts/port_examples.py         writes every Lumen example in every other language, and examples/PORTS.md
-    scripts/translate_all.sh         round-trip benchmark of the microcode2 emitter over every example and language
+    scripts/translate_all.sh         round-trip benchmark of the microcode11 emitter over every example and language
 
   examples/                        488 programs: lumen/ (+constructs/, libraries/) and, mirroring it, rplumen/, python/, rust/, php/, ruby/, pascal/, c/, javascript/, swift/; PORTS.md says which Lumen example is in which language
   docs/                            design documents, references, history
     docs/DIRECTORY_STRUCTURE.txt
     docs/LUMEN_COMPACT_REFERENCE.md
-    docs/LUMEN_KERNEL_MICROCODE.md
-    docs/LUMEN_KERNEL_STREAM.md
+    docs/LUMEN_KERNEL_MICROCODE10.md
+    docs/LUMEN_KERNEL_STREAM35.md
     docs/LUMEN_LANGUAGE_DESIGN.md
     docs/LUMEN_LANGUAGE_EXTERN_SYSTEM.md
     docs/LUMEN_LANGUAGE_ROADMAP.md

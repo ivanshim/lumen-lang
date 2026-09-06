@@ -1,6 +1,6 @@
-# Microcode Kernel, Second Design
+# Microcode Kernel, Second Design (microcode11)
 
-`kernels/microcode2/` keeps the microcode idea, four stages that turn a
+`kernels/microcode11/` keeps the microcode idea, four stages that turn a
 language read as data into a small tree of primitives and then run it,
 and changes what the tree is for. In the first design the tree is a step
 on the way to running. Here it is the product: it keeps its source lines,
@@ -8,7 +8,7 @@ it is built with names already resolved, a postfix program is read into
 it with a symbolic stack, and it can be written back out in any language
 a definition describes. That last ability is the reason the kernel exists.
 
-Nothing in `kernels/microcode2/src/` names a keyword, an operator, a
+Nothing in `kernels/microcode11/src/` names a keyword, an operator, a
 comment marker or a function; every spelling comes from a definition in
 `langs/`, in both directions.
 
@@ -51,7 +51,7 @@ recognises those shapes and writes them back as `for` and `until`.
 
 ## Names
 
-Names are resolved when the tree is built, as in the stack kernel: inside
+Names are resolved when the tree is built, as in the stack26 kernel: inside
 a program every name it assigns is a local slot and every other name is
 a global; a `Load` names both, and an empty local slot falls through to
 the global of the same name. A `Slot` keeps the name, so the emitter can
@@ -84,7 +84,7 @@ in the order the stack machine would produce them.
 
 ## Writing a program out
 
-`lumen-lang --kernel microcode2 --emit <language> <file>` reads the file
+`lumen-lang --kernel microcode11 --emit <language> <file>` reads the file
 in its language and prints it in another, driven by the target's
 definition alone:
 
@@ -122,7 +122,7 @@ what the definitions do not carry, nothing is invented: a C function
 takes the first type word (`int`) for every parameter, a Pascal
 declaration carries no type, a Rust `let` is `mut` when the name is
 reassigned. `scripts/translate_all.sh` measures this: every example, in
-every language, written in every language, run on the stack kernel and
+every language, written in every language, run on the stack26 kernel and
 compared with the original.
 
 ## Relationship to the other kernels
@@ -130,7 +130,7 @@ compared with the original.
 The kernels never import each other; `scripts/kernel_independence.py`
 checks every pair. This kernel is the only one that can write a program,
 because it is the only one whose product is a tree with names and lines
-still in it: the stream kernel's product is a tree of closures and the
-stack kernel's a word list. It runs the Lumen loop benchmark at about
-twice the stack kernel's time and the same value model, and RPLumen at
+still in it: the stream35 kernel's product is a tree of closures and the
+stack26 kernel's a word list. It runs the Lumen loop benchmark at about
+twice the stack26 kernel's time and the same value model, and RPLumen at
 the same speed as Lumen, since the stack was read away.

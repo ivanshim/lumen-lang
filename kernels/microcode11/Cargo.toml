@@ -1,8 +1,8 @@
 [package]
-name = "lumen-stack"
+name = "lumen-microcode11"
 version = "0.2.0"
 edition = "2021"
-description = "Stack kernel: every language compiles to one stack machine"
+description = "Microcode kernel, second design: a tree of primitives that runs, and writes itself back out in any language"
 
 [lib]
 path = "src/lib.rs"

@@ -1,14 +1,14 @@
-# Stack Kernel
+# Stack Kernel (stack26)
 
-`kernels/stack/` compiles every language to one stack machine and runs
-it. Where the stream kernel walks a tree of handlers and the microcode
-kernel reduces to a tree of seven primitives, this kernel builds no tree:
+`kernels/stack26/` compiles every language to one stack machine and runs
+it. Where the stream35 kernel walks a tree of handlers and the microcode10
+kernel reduces to a tree of ten instruction forms, this kernel builds no tree:
 a single pass over the tokens emits a flat list of words, and the machine
 runs the words in a loop over one data stack. RPLumen is the machine's
 own notation, so an RPLumen program compiles almost word for word; the
 infix languages become RPLumen underneath.
 
-Nothing in `kernels/stack/src/` names a keyword, an operator, a comment
+Nothing in `kernels/stack26/src/` names a keyword, an operator, a comment
 marker or a function; all of that comes from a definition in `langs/`.
 
 ## The stages
@@ -94,18 +94,18 @@ arithmetic; anything else is a reference-counted big integer, fraction or
 real. Strings, arrays and programs are reference-counted, so a value moves
 on and off the stack as a pointer, and an array copies only when written
 through a shared reference. That, and the absence of a tree, is where the
-speed comes from: on a 300,000-iteration arithmetic loop the stack kernel
-runs about five times faster than the microcode kernel and thirty times
-faster than the stream kernel; on the sieve, which reads arrays in a loop,
-forty times faster than the microcode kernel. Programs bound by big-integer
+speed comes from: on a 300,000-iteration arithmetic loop the stack26 kernel
+runs about five times faster than the microcode10 kernel and thirty times
+faster than the stream35 kernel; on the sieve, which reads arrays in a loop,
+forty times faster than the microcode10 kernel. Programs bound by big-integer
 arithmetic (`pi_machin`) run at the same speed on every kernel.
 
 ## Relationship to the other kernels
 
 The kernels never import each other and meet only in the host.
 `scripts/kernel_independence.py` checks every pair for references and for
-copied runs of source. `scripts/kernel_diff.sh` compares the stream and
-stack kernels with the microcode kernel on every program under `examples/`;
+copied runs of source. `scripts/kernel_diff.sh` compares the other
+kernels with the microcode10 kernel on every program under `examples/`;
 today all 488 print the same. Because RPLumen is the machine's notation, a
 flag that prints any program as the words it compiles to would print
 RPLumen; that flag does not exist yet.
