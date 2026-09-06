@@ -1,48 +1,30 @@
 use crate::languages::lumen::prelude::*;
-// Parenthesized expressions: ( ... )
+// Parenthesized expressions, with the brackets the definition spells.
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
-use crate::languages::lumen::patterns::PatternSet;
-use crate::languages::lumen::structure::structural::{LPAREN, RPAREN};
 
 pub struct GroupingPrefix;
 
 impl ExprPrefix for GroupingPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme == LPAREN
+        def().is("syntax.group.open", &parser.peek().lexeme)
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
-        parser.advance(); // consume '('
+        parser.advance(); // opening bracket
         parser.skip_tokens();
         let expr = parser.parse_expr(registry)?;
         parser.skip_tokens();
 
-        if parser.advance().lexeme != RPAREN {
-            return Err("Expected ')'".into());
+        if !def().is("syntax.group.close", &parser.advance().lexeme) {
+            return Err(format!("Expected '{}'", def().first("syntax.group.close")));
         }
 
         Ok(expr)
     }
 }
 
-// --------------------
-// Pattern Declaration
-// --------------------
-
-/// Declare what patterns this module recognizes
-pub fn patterns() -> PatternSet {
-    PatternSet::new()
-        .with_literals(vec!["(", ")"])
-}
-
-// --------------------
-// Registration
-// --------------------
-
 pub fn register(reg: &mut Registry) {
-    // No tokens to register (parentheses are single-char lexemes emitted automatically)
-    // Register handlers
     reg.register_prefix(Box::new(GroupingPrefix));
 }

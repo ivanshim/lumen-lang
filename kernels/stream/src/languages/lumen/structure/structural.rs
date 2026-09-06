@@ -1,27 +1,21 @@
 // src_lumen/structure/structural.rs
 //
 // Lumen structural tokens and language-specific parsing.
-// Handles Python-style indentation: 4-space indents, INDENT/DEDENT tokens.
-// Completely language-specific - ALL structural concepts defined here.
+// Handles Python-style indentation: INDENT/DEDENT tokens synthesised from
+// indentation changes, comments dropped from the token stream. The indent
+// size, comment markers, string quotes and array brackets come from the
+// definition; the structural token names are this module's own.
 
 use crate::kernel::ast::{Program, StmtNode};
 use crate::kernel::lexer::{Token, SpannedToken, Span};
 use crate::kernel::parser::Parser;
-use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::registry::{err_at, KernelResult as LumenResult};
+use crate::languages::lumen::definition::def;
 use crate::languages::lumen::registry::Registry;
 
 // --------------------
 // Lumen Token Definitions (lexeme strings)
 // --------------------
-
-// Grouping
-pub const LPAREN: &str = "(";
-pub const RPAREN: &str = ")";
-
-// Array literals
-pub const LBRACKET: &str = "[";
-pub const RBRACKET: &str = "]";
 
 // Layout (Python-style indentation)
 pub const NEWLINE: &str = "NEWLINE";
@@ -30,31 +24,6 @@ pub const DEDENT: &str = "DEDENT";
 
 // End of file
 pub const EOF: &str = "EOF";
-
-// --------------------
-// Structural Tokens Configuration
-// --------------------
-
-/// Lumen's structural tokens - COMPLETELY language-specific.
-/// Framework has zero knowledge of these.
-#[derive(Clone, Copy)]
-pub struct StructuralTokens {
-    pub newline: &'static str,
-    pub indent: &'static str,
-    pub dedent: &'static str,
-    pub eof: &'static str,
-}
-
-impl StructuralTokens {
-    pub fn lumen() -> Self {
-        StructuralTokens {
-            newline: NEWLINE,
-            indent: INDENT,
-            dedent: DEDENT,
-            eof: EOF,
-        }
-    }
-}
 
 // --------------------
 // Lumen-specific Parsing Helpers
@@ -128,6 +97,10 @@ pub fn parse_program(parser: &mut Parser, registry: &Registry) -> LumenResult<Pr
 /// Special handling: Newlines inside array literals (bracket depth > 0) are ignored,
 /// allowing multiline array syntax. Newlines are treated as whitespace when inside brackets.
 pub fn process_indentation(source: &str, raw_tokens: Vec<SpannedToken>) -> LumenResult<Vec<SpannedToken>> {
+    let d = def();
+    let indent_size = d.indent_size;
+    let comment_markers = d.list("lexical.comment_line");
+    let quotes = d.chars("lexical.string_quotes");
     let mut out = Vec::new();
     let mut indents = vec![0usize];
     let mut line_no = 1usize;
@@ -147,7 +120,7 @@ pub fn process_indentation(source: &str, raw_tokens: Vec<SpannedToken>) -> Lumen
         let rest = &raw[spaces..];
 
         // Blank lines and comment-only lines contribute nothing.
-        if rest.trim().is_empty() || rest.starts_with('#') {
+        if rest.trim().is_empty() || comment_markers.iter().any(|m| rest.starts_with(m.as_str())) {
             line_no += 1;
             continue;
         }
@@ -155,12 +128,12 @@ pub fn process_indentation(source: &str, raw_tokens: Vec<SpannedToken>) -> Lumen
         // Check if we're inside an array at the start of this line
         let inside_array = bracket_depth_global > 0;
 
-        // Indentation handling (4-space indents for Lumen)
+        // Indentation handling (indent_size spaces per level)
         // But skip indentation processing if we're inside an array literal
         if !inside_array {
             let current = *indents.last().unwrap();
             if spaces > current {
-                if (spaces - current) % 4 != 0 {
+                if (spaces - current) % indent_size != 0 {
                     return Err(format!("Invalid indentation at line {line_no}"));
                 }
                 indents.push(spaces);
@@ -188,42 +161,57 @@ pub fn process_indentation(source: &str, raw_tokens: Vec<SpannedToken>) -> Lumen
         // Filter out whitespace EXCEPT when inside string literals or arrays
         // The kernel lexer emits all characters including spaces, so we need to reconstruct
         // which spaces are part of strings vs which are separators
-        let mut in_string_single = false;
-        let mut in_string_double = false;
+        let mut in_string: Option<char> = None;
+        let mut escaped = false;
         let mut in_comment = false;
         let mut bracket_depth_line = bracket_depth_global;  // Start with global bracket depth
 
         for raw_tok in &raw_tokens {
             if raw_tok.line == line_no {
                 let lexeme = &raw_tok.tok.lexeme;
+                let single: Option<char> = {
+                    let mut chars = lexeme.chars();
+                    match (chars.next(), chars.next()) {
+                        (Some(c), None) => Some(c),
+                        _ => None,
+                    }
+                };
 
-                // A `#` outside a string starts a comment: the rest of the
-                // line's tokens are dropped from the stream.
+                // A comment marker outside a string starts a comment: the
+                // rest of the line's tokens are dropped from the stream.
                 if in_comment {
                     continue;
                 }
-                if lexeme == "#" && !in_string_single && !in_string_double {
+
+                if let Some(quote) = in_string {
+                    // Inside a string - include everything, including whitespace
+                    out.push(raw_tok.clone());
+                    if escaped {
+                        escaped = false;
+                    } else if single == Some('\\') {
+                        escaped = true;
+                    } else if single == Some(quote) {
+                        in_string = None;
+                    }
+                    continue;
+                }
+
+                if comment_markers.iter().any(|m| m == lexeme) {
                     in_comment = true;
                     continue;
                 }
 
                 // Track bracket depth
-                if lexeme == "[" && !in_string_single && !in_string_double {
+                if d.is("syntax.array.open", lexeme) {
                     bracket_depth_line += 1;
                     bracket_depth_global += 1;
                     out.push(raw_tok.clone());
-                } else if lexeme == "]" && !in_string_single && !in_string_double {
+                } else if d.is("syntax.array.close", lexeme) {
                     bracket_depth_line -= 1;
                     bracket_depth_global -= 1;
                     out.push(raw_tok.clone());
-                } else if lexeme == "'" && !in_string_double {
-                    in_string_single = !in_string_single;
-                    out.push(raw_tok.clone());
-                } else if lexeme == "\"" && !in_string_single {
-                    in_string_double = !in_string_double;
-                    out.push(raw_tok.clone());
-                } else if in_string_single || in_string_double {
-                    // Inside a string - include everything, including whitespace
+                } else if single.map_or(false, |c| quotes.contains(&c)) {
+                    in_string = single;
                     out.push(raw_tok.clone());
                 } else if bracket_depth_line > 0 {
                     // Inside an array literal - include everything, including newlines and whitespace
@@ -275,17 +263,6 @@ pub fn process_indentation(source: &str, raw_tokens: Vec<SpannedToken>) -> Lumen
     });
 
     Ok(out)
-}
-
-// --------------------
-// Pattern Declaration
-// --------------------
-
-/// Declare what patterns this module recognizes
-pub fn patterns() -> PatternSet {
-    PatternSet::new()
-        .with_literals(vec!["(", ")", "[", "]"])
-        .with_structural(vec!["newline", "indent", "dedent", "eof"])
 }
 
 // --------------------

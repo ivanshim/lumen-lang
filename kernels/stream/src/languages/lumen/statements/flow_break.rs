@@ -5,7 +5,6 @@ use crate::languages::lumen::prelude::*;
 
 use crate::kernel::ast::{Control, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::Env;
 
 #[derive(Debug)]
@@ -21,23 +20,13 @@ pub struct BreakStmtHandler;
 
 impl StmtHandler for BreakStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme == "break"
+        def().is("stmt.break", &parser.peek().lexeme)
     }
 
     fn parse(&self, parser: &mut Parser, _registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'break'
         Ok(Box::new(BreakStmt))
     }
-}
-
-// --------------------
-// Pattern Declaration
-// --------------------
-
-/// Declare what patterns this module recognizes
-pub fn patterns() -> PatternSet {
-    PatternSet::new()
-        .with_literals(vec!["break"])
 }
 
 // --------------------

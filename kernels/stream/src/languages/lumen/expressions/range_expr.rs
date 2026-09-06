@@ -9,7 +9,6 @@ use crate::languages::lumen::prelude::*;
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
 use crate::kernel::runtime::{Env, Value, RuntimeValue};
-use crate::languages::lumen::patterns::PatternSet;
 use crate::languages::lumen::values::as_number;
 use num_bigint::BigInt;
 use std::any::Any;
@@ -75,15 +74,19 @@ impl ExprNode for RangeExpr {
     }
 }
 
-pub struct RangeExprHandler;
+/// One spelling of the range operator, at the tier the definition gives it.
+pub struct RangeExprHandler {
+    lexeme: String,
+    prec: Precedence,
+}
 
 impl ExprInfix for RangeExprHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme == ".."
+        parser.peek().lexeme == self.lexeme
     }
 
     fn precedence(&self) -> Precedence {
-        Precedence::Range
+        self.prec
     }
 
     fn parse(
@@ -92,9 +95,9 @@ impl ExprInfix for RangeExprHandler {
         left: Box<dyn ExprNode>,
         registry: &super::super::registry::Registry,
     ) -> LumenResult<Box<dyn ExprNode>> {
-        parser.advance(); // consume ".."
+        parser.advance(); // consume the range operator
         parser.skip_tokens();
-        let right = parser.parse_expr_prec(registry, self.precedence())?;
+        let right = parser.parse_expr_prec(registry, self.prec.right_operand(&self.lexeme))?;
         Ok(Box::new(RangeExpr {
             start: left,
             end: right,
@@ -110,17 +113,12 @@ pub fn as_range(val: &dyn RuntimeValue) -> LumenResult<&LumenRange> {
 }
 
 // --------------------
-// Pattern Declaration
-// --------------------
-
-pub fn patterns() -> PatternSet {
-    PatternSet::new().with_literals(vec![".."])
-}
-
-// --------------------
 // Registration
 // --------------------
 
 pub fn register(reg: &mut Registry) {
-    reg.register_infix(Box::new(RangeExprHandler));
+    for lexeme in def().list("op.range") {
+        let prec = Precedence::binary(lexeme);
+        reg.register_infix(Box::new(RangeExprHandler { lexeme: lexeme.clone(), prec }));
+    }
 }

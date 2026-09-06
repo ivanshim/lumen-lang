@@ -1,42 +1,43 @@
-// Lumen operator precedence levels
-// Each language defines its own precedence scale
+// Operator precedence: the tier an operator sits in, read from the
+// definition's op.precedence table. Higher binds tighter.
+
+use crate::languages::lumen::definition::def;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Precedence {
-    Lowest = 0,
-    Range = 2,
-    Pipe = 5,
-    Logic = 10,
-    Comparison = 20,
-    Term = 30,
-    Factor = 40,
-    Power = 45,
-    Unary = 50,
-    Call = 60,
-}
+pub struct Precedence(pub u32);
 
 impl Precedence {
     pub fn lowest() -> Self {
-        Precedence::Lowest
+        Precedence(0)
     }
-}
 
-impl std::ops::Add<i32> for Precedence {
-    type Output = Precedence;
+    /// The tier of a binary operator lexeme.
+    pub fn binary(lexeme: &str) -> Self {
+        Precedence(def().binary_precedence(lexeme))
+    }
 
-    fn add(self, rhs: i32) -> Precedence {
-        let v = self as i32 + rhs;
-        match v {
-            v if v <= 0 => Precedence::Lowest,
-            v if v <= 2 => Precedence::Range,
-            v if v <= 5 => Precedence::Pipe,
-            v if v <= 10 => Precedence::Logic,
-            v if v <= 20 => Precedence::Comparison,
-            v if v <= 30 => Precedence::Term,
-            v if v <= 40 => Precedence::Factor,
-            v if v <= 45 => Precedence::Power,
-            v if v <= 50 => Precedence::Unary,
-            _ => Precedence::Call,
+    /// The tier of a unary operator lexeme.
+    pub fn unary(lexeme: &str) -> Self {
+        Precedence(def().unary_precedence(lexeme))
+    }
+
+    /// Above every operator: postfix forms such as indexing.
+    pub fn postfix() -> Self {
+        Precedence(def().postfix_precedence())
+    }
+
+    /// The next tighter level.
+    pub fn next(self) -> Self {
+        Precedence(self.0 + 1)
+    }
+
+    /// The minimum precedence for the right operand of `lexeme`: the same
+    /// tier for a right-associative operator, one tighter otherwise.
+    pub fn right_operand(self, lexeme: &str) -> Self {
+        if def().is_right_associative(lexeme) {
+            self
+        } else {
+            self.next()
         }
     }
 }

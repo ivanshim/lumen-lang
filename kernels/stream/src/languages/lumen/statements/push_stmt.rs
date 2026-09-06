@@ -6,9 +6,7 @@ use crate::languages::lumen::prelude::*;
 
 use crate::kernel::ast::{Control, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::Env;
-use crate::languages::lumen::structure::structural::{LPAREN, RPAREN};
 
 #[derive(Debug)]
 struct PushStmt {
@@ -37,7 +35,7 @@ pub struct PushStmtHandler;
 
 impl StmtHandler for PushStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme == "push"
+        def().is("builtin.push", &parser.peek().lexeme)
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
@@ -45,54 +43,35 @@ impl StmtHandler for PushStmtHandler {
         parser.advance();
         parser.skip_tokens();
 
-        // expect '('
-        if parser.advance().lexeme != LPAREN {
-            return Err("Expected '(' after push".into());
+        let d = def();
+        // expect the call bracket
+        if !d.is("syntax.call.open", &parser.advance().lexeme) {
+            return Err(format!("Expected '{}' after {}", d.first("syntax.call.open"), d.first("builtin.push")));
         }
         parser.skip_tokens();
 
         // Parse array name (must be an identifier)
-        let mut arr_name = parser.advance().lexeme;
+        let arr_name = parser
+            .take_identifier()
+            .ok_or_else(|| err_at(parser, "Expected an array name as the first argument to push"))?;
         parser.skip_tokens();
 
-        // Continue consuming identifier characters if split across tokens
-        loop {
-            if parser.peek().lexeme.chars().count() == 1 {
-                let ch = parser.peek().lexeme.chars().next().unwrap();
-                if word_char(ch) {
-                    arr_name.push_str(&parser.advance().lexeme);
-                    parser.skip_tokens();
-                    continue;
-                }
-            }
-            break;
-        }
-
-        // expect ','
-        if parser.advance().lexeme != "," {
-            return Err("Expected ',' after first argument to push".into());
+        // expect the separator
+        if !d.is("syntax.call.separator", &parser.advance().lexeme) {
+            return Err(format!("Expected '{}' after first argument to push", d.first("syntax.call.separator")));
         }
         parser.skip_tokens();
 
         let value_expr = parser.parse_expr(registry)?;
         parser.skip_tokens();
 
-        // expect ')'
-        if parser.advance().lexeme != RPAREN {
-            return Err("Expected ')' after push arguments".into());
+        // expect the closing bracket
+        if !d.is("syntax.call.close", &parser.advance().lexeme) {
+            return Err(format!("Expected '{}' after push arguments", d.first("syntax.call.close")));
         }
 
         Ok(Box::new(PushStmt { arr_name, value_expr }))
     }
-}
-
-// --------------------
-// Pattern Declaration
-// --------------------
-
-pub fn patterns() -> PatternSet {
-    PatternSet::new()
-        .with_literals(vec!["push", "(", ")", ","])
 }
 
 // --------------------

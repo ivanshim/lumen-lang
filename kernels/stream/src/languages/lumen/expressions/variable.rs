@@ -1,16 +1,17 @@
 use crate::languages::lumen::prelude::*;
 // src/expr/variable.rs
 //
-// Variable reference expression: `x` or function call: `func(args)`
+// Variable reference expression: `x` or function call: `func(args)`.
+// Builtin function names come from the definition; a call that names none
+// of them reaches a user-defined function.
 
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::kernel::ast::{ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::{Env, Value};
+use crate::languages::lumen::expressions::calls;
 use crate::languages::lumen::statements::functions;
-use crate::languages::lumen::structure::structural::{LPAREN, RPAREN};
 
 #[derive(Debug)]
 struct VarExpr {
@@ -29,111 +30,61 @@ struct FunctionCallExpr {
     args: Vec<Box<dyn ExprNode>>,
 }
 
+/// A builtin taking one argument.
+type Unary = fn(&Value) -> LumenResult<Value>;
+
+/// The one-argument builtins, by the label that names each.
+const UNARY_BUILTINS: &[(&str, Unary)] = &[
+    ("builtin.emit", builtin_emit),
+    ("builtin.len", builtin_len),
+    ("builtin.ord", builtin_ord),
+    ("builtin.chr", builtin_chr),
+    ("builtin.error", builtin_error),
+    ("builtin.typeof", builtin_kind),
+    ("builtin.num", builtin_num),
+    ("builtin.den", builtin_den),
+    ("builtin.int", builtin_int_part),
+    ("builtin.frac", builtin_frac),
+    ("builtin.int_to_string", builtin_int_to_string),
+    ("builtin.real_to_string", builtin_real_to_string),
+    ("builtin.rational_to_string", builtin_rational_to_string),
+    ("builtin.bool_to_string", builtin_bool_to_string),
+    ("builtin.array_to_string", builtin_array_to_string),
+    ("builtin.null_to_string", builtin_null_to_string),
+    ("builtin.kind_to_string", builtin_kind_to_string),
+];
+
 impl ExprNode for FunctionCallExpr {
     fn eval(&self, env: &mut Env) -> LumenResult<Value> {
-        // First, check if this is a built-in primitive function
-        if self.args.len() == 1 {
-            match self.func_name.as_str() {
-                "emit" => {
-                    // emit(string) - kernel primitive for I/O
-                    return builtin_emit(&self.args[0].eval(env)?);
-                }
-                "real" => {
-                    // real(x): convert to real with default precision 15
-                    return builtin_real(&self.args[0].eval(env)?, 15);
-                }
-                "len" => {
-                    // len(x): return length of string or array
-                    return builtin_len(&self.args[0].eval(env)?);
-                }
-                "ord" => {
-                    // ord(s): return decimal integer value of first character
-                    return builtin_ord(&self.args[0].eval(env)?);
-                }
-                "chr" => {
-                    // chr(n): return single-character string for decimal integer
-                    return builtin_chr(&self.args[0].eval(env)?);
-                }
-                "error" => {
-                    // error(message): abort execution with error message
-                    return builtin_error(&self.args[0].eval(env)?);
-                }
-                "kind" => {
-                    // kind(x): return symbolic constant representing value category
-                    return builtin_kind(&self.args[0].eval(env)?);
-                }
-                "num" => {
-                    // num(x): return numerator of rational (errors on non-rational)
-                    return builtin_num(&self.args[0].eval(env)?);
-                }
-                "den" => {
-                    // den(x): return denominator of rational (errors on non-rational)
-                    return builtin_den(&self.args[0].eval(env)?);
-                }
-                "int" => {
-                    // int(x): return integer part of real (errors on non-real)
-                    return builtin_int_part(&self.args[0].eval(env)?);
-                }
-                "frac" => {
-                    // frac(x): return fractional part of real (errors on non-real)
-                    return builtin_frac(&self.args[0].eval(env)?);
-                }
-                "int_to_string" => {
-                    // int_to_string(x): convert integer to string (mechanical primitive)
-                    return builtin_int_to_string(&self.args[0].eval(env)?);
-                }
-                "real_to_string" => {
-                    // real_to_string(x): convert real to string (mechanical primitive)
-                    return builtin_real_to_string(&self.args[0].eval(env)?);
-                }
-                "rational_to_string" => {
-                    // rational_to_string(x): convert rational to string (mechanical primitive)
-                    return builtin_rational_to_string(&self.args[0].eval(env)?);
-                }
-                "bool_to_string" => {
-                    // bool_to_string(x): convert boolean to string (mechanical primitive)
-                    return builtin_bool_to_string(&self.args[0].eval(env)?);
-                }
-                "array_to_string" => {
-                    // array_to_string(x): convert array to string (mechanical primitive)
-                    return builtin_array_to_string(&self.args[0].eval(env)?);
-                }
-                "null_to_string" => {
-                    // null_to_string(x): convert null to string (mechanical primitive)
-                    return builtin_null_to_string(&self.args[0].eval(env)?);
-                }
-                "kind_to_string" => {
-                    // kind_to_string(x): convert kind meta-value to string (mechanical primitive)
-                    return builtin_kind_to_string(&self.args[0].eval(env)?);
-                }
-                _ => {}
+        let name = self.func_name.as_str();
+        let d = def();
+
+        // Builtins first: the one-argument table, then the two with other arities.
+        let unary = UNARY_BUILTINS.iter().find(|(label, _)| d.is(label, name)).map(|(_, f)| *f);
+        let is_real = d.is("builtin.real", name);
+        let is_char_at = d.is("builtin.char_at", name);
+        if unary.is_some() || is_real || is_char_at {
+            let mut values = Vec::with_capacity(self.args.len());
+            for arg in &self.args {
+                values.push(arg.eval(env)?);
             }
-        } else if self.args.len() == 2 {
-            match self.func_name.as_str() {
-                "real" => {
-                    // real(x, y): convert to real with precision y
+            return match (unary, values.as_slice()) {
+                (Some(f), [x]) => f(x),
+                (Some(_), _) => Err(format!("{}() expects 1 argument, got {}", name, values.len())),
+                (None, [x]) if is_real => builtin_real(x, 15),
+                (None, [x, precision]) if is_real => {
                     use crate::languages::lumen::values::LumenNumber;
                     use num_traits::ToPrimitive;
-                    let x_val = self.args[0].eval(env)?;
-                    let y_val = self.args[1].eval(env)?;
-                    // Extract precision from y_val
-                    let precision = match y_val.as_any().downcast_ref::<LumenNumber>() {
-                        Some(num) => {
-                            num.value.to_u64()
-                                .ok_or_else(|| "Precision must be a positive integer".to_string())? as usize
-                        }
+                    let precision = match precision.as_any().downcast_ref::<LumenNumber>() {
+                        Some(num) => num.value.to_u64().ok_or_else(|| "Precision must be a positive integer".to_string())? as usize,
                         None => return Err("Precision argument must be an integer".to_string()),
                     };
-                    return builtin_real(&x_val, precision);
+                    builtin_real(x, precision)
                 }
-                "char_at" => {
-                    // char_at(string, index): return character at index
-                    let str_val = self.args[0].eval(env)?;
-                    let idx_val = self.args[1].eval(env)?;
-                    return builtin_char_at(&str_val, &idx_val);
-                }
-                _ => {}
-            }
+                (None, _) if is_real => Err(format!("{}() expects 1 or 2 arguments, got {}", name, values.len())),
+                (None, [s, i]) => builtin_char_at(s, i),
+                (None, _) => Err(format!("{}() expects 2 arguments, got {}", name, values.len())),
+            };
         }
 
         // Get user-defined function definition
@@ -206,69 +157,21 @@ pub struct VariablePrefix;
 
 impl ExprPrefix for VariablePrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        // Check if lexeme is a valid identifier (starts with letter or underscore)
-        // Exclude only the registered statement keywords (if, else, while, break, continue, print, fn, let, mut, return)
-        // Allow "and", "or", "not", "true", "false", "extern" to pass through - they'll be handled
-        // by their own expression handlers (logic, literals, extern_expr)
+        // An identifier that is not a reserved word. Reserved words with
+        // expression meaning (literals, logic, extern) have their own
+        // handlers registered ahead of this one.
         let lex = &parser.peek().lexeme;
-        let is_identifier = lex.chars().next().map_or(false, word_start);
-        // Exclude statement keywords but allow builtin functions like emit, int, str
-        let is_statement_keyword = matches!(lex.as_str(),
-            "if" | "else" | "while" | "break" | "continue" | "fn" | "let" | "mut" | "return");
-        is_identifier && !is_statement_keyword
+        parser.at_identifier() && !def().reserved_words().iter().any(|w| w == lex)
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
-        // Consume the first character of the identifier
-        let mut name = parser.advance().lexeme;
+        let name = parser.take_identifier().ok_or_else(|| err_at(parser, "Expected identifier"))?;
 
-        // Since the kernel lexer is agnostic, multi-character identifiers are split into single chars
-        // Continue consuming identifier characters
-        loop {
-            if parser.peek().lexeme.chars().count() == 1 {
-                let ch = parser.peek().lexeme.chars().next().unwrap();
-                if word_char(ch) {
-                    name.push_str(&parser.advance().lexeme);
-                    continue;
-                }
-            }
-            break;
-        }
-
-        // Keywords like "and", "or", "not", "true", "false", "extern" will be collected as identifiers
-        // but their own expression handlers should match first (they're registered with higher priority)
-        // If we get here with one of those, it means it wasn't handled by a higher-priority handler,
-        // so we try to treat it as a variable name
-        // Check if this is a function call (name followed by '(')
+        // A call is a name followed by the call bracket
         parser.skip_tokens();
-        if parser.peek().lexeme == LPAREN {
-            parser.advance(); // consume '('
-            parser.skip_tokens();
-
-            let mut args = Vec::new();
-
-            // Parse arguments
-            while parser.peek().lexeme != RPAREN {
-                let arg = parser.parse_expr(registry)?;
-                args.push(arg);
-
-                parser.skip_tokens();
-                if parser.peek().lexeme == "," {
-                    parser.advance();
-                    parser.skip_tokens();
-                } else if parser.peek().lexeme != RPAREN {
-                    return Err("Expected ',' or ')' after argument".into());
-                }
-            }
-
-            if parser.advance().lexeme != RPAREN {
-                return Err("Expected ')' after arguments".into());
-            }
-
-            return Ok(Box::new(FunctionCallExpr {
-                func_name: name,
-                args,
-            }));
+        if calls::at_call_open(parser) {
+            let args = calls::parse_arguments(parser, registry, "in call")?;
+            return Ok(Box::new(FunctionCallExpr { func_name: name, args }));
         }
 
         Ok(Box::new(VarExpr { name }))
@@ -687,22 +590,6 @@ fn builtin_frac(value: &Value) -> LumenResult<Value> {
     Err("frac() requires a real argument".to_string())
 }
 
-// --------------------
-// Pattern Declaration
-// --------------------
-
-/// Declare what patterns this module recognizes
-pub fn patterns() -> PatternSet {
-    PatternSet::new()
-        .with_char_classes(vec!["ident_start", "ident_char"])
-}
-
-// --------------------
-// Registration
-// --------------------
-
 pub fn register(reg: &mut Registry) {
-    // No tokens to register (identifiers are recognized by lexer)
-    // Register handlers
     reg.register_prefix(Box::new(VariablePrefix));
 }

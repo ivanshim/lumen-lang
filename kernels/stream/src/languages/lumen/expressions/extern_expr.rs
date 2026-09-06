@@ -1,16 +1,16 @@
 use crate::languages::lumen::prelude::*;
 // src_lumen/expressions/extern_expr.rs
 //
-// extern "selector" (arg1, arg2, ...)
+// extern("selector", arg1, arg2, ...)
 //
 // Extern marks the boundary where Lumen's semantic guarantees stop.
-// It is deliberately uncomfortable, making the impurity explicit.
+// It is deliberately uncomfortable, making the impurity explicit. Its name
+// comes from the definition and is lexed whole, as a reserved word.
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
-use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::{Env, Value};
-use crate::languages::lumen::structure::structural::{LPAREN, RPAREN};
+use crate::languages::lumen::expressions::literals::take_string_body;
 use crate::languages::lumen::extern_system;
 
 #[derive(Debug)]
@@ -36,91 +36,40 @@ pub struct ExternPrefix;
 
 impl ExprPrefix for ExternPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        // Check if the next characters form "extern" (which is not registered as a token)
-        let keyword = "extern";
-        let mut i = parser.i;
-        let mut collected = String::new();
-
-        // Collect characters to check if they form our keyword
-        for expected_ch in keyword.chars() {
-            if i >= parser.toks.len() {
-                return false;
-            }
-            let actual = &parser.toks[i].tok.lexeme;
-            if actual.len() == 1 && actual.chars().next() == Some(expected_ch) {
-                collected.push(expected_ch);
-                i += 1;
-            } else {
-                return false;
-            }
-        }
-
-        // Make sure next character doesn't extend the keyword
-        if i < parser.toks.len() {
-            let next = &parser.toks[i].tok.lexeme;
-            if next.chars().count() == 1 {
-                let next_ch = next.chars().next().unwrap();
-                if word_char(next_ch) {
-                    return false;
-                }
-            }
-        }
-
-        collected == keyword
+        def().is("builtin.extern", &parser.peek().lexeme)
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
-        // Consume 'extern' (character by character)
-        for _ in "extern".chars() {
-            parser.advance();
-        }
+        let d = def();
+        parser.advance(); // the extern keyword
         parser.skip_tokens();
 
-        // Expect '('
-        if parser.advance().lexeme != LPAREN {
-            return Err("Expected '(' after extern".into());
+        if !d.is("syntax.call.open", &parser.advance().lexeme) {
+            return Err(format!("Expected '{}' after {}", d.first("syntax.call.open"), d.first("builtin.extern")));
         }
         parser.skip_tokens();
 
         // CRITICAL: The selector MUST be a string literal.
         // This enforces that selectors are data, not identifiers.
         // Lumen must not accept unquoted capability names.
-        if parser.peek().lexeme != "\"" {
-            return Err(
-                "extern selector must be a string literal (e.g., \"print_native\").\n\
-                 Selector is data, not an identifier.\n\
-                 Use: extern(\"capability\", args...)\n\
-                 Not: extern(capability, args...)".into()
-            );
-        }
-
-        // Consume opening quote
-        let mut selector_lexeme = parser.advance().lexeme;
-
-        // Since the kernel lexer is agnostic, assemble the full string from individual characters
-        loop {
-            let ch = parser.peek().lexeme.clone();
-
-            // Check for closing quote
-            if ch == "\"" {
-                selector_lexeme.push_str(&parser.advance().lexeme);
-                break;
+        let quotes = d.chars("lexical.string_quotes");
+        let quote = {
+            let lexeme = &parser.peek().lexeme;
+            let mut chars = lexeme.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) if quotes.contains(&c) => c,
+                _ => {
+                    return Err(
+                        "extern selector must be a string literal (e.g., \"print_native\").\n\
+                         Selector is data, not an identifier.\n\
+                         Use: extern(\"capability\", args...)\n\
+                         Not: extern(capability, args...)".into()
+                    );
+                }
             }
-
-            // Add character to selector (including whitespace, etc.)
-            selector_lexeme.push_str(&parser.advance().lexeme);
-
-            // Protect against unterminated strings
-            if parser.i >= parser.toks.len() {
-                return Err("Unterminated string literal in extern selector".into());
-            }
-        }
-
-        // Remove the surrounding quotes: "selector" -> selector
-        if selector_lexeme.len() < 2 || !selector_lexeme.ends_with('"') {
-            return Err("Invalid string literal in extern selector".into());
-        }
-        let selector = selector_lexeme[1..selector_lexeme.len() - 1].to_string();
+        };
+        parser.advance(); // opening quote
+        let selector = take_string_body(parser, quote)?;
 
         if selector.is_empty() {
             return Err("extern selector cannot be empty".into());
@@ -132,10 +81,10 @@ impl ExprPrefix for ExternPrefix {
         let mut args = Vec::new();
 
         // Check if there are arguments after the selector
-        if parser.peek().lexeme != RPAREN {
-            // Expect a comma after selector
-            if parser.advance().lexeme != "," {
-                return Err("Expected ',' after extern selector".into());
+        if !d.is("syntax.call.close", &parser.peek().lexeme) {
+            // Expect a separator after the selector
+            if !d.is("syntax.call.separator", &parser.advance().lexeme) {
+                return Err(format!("Expected '{}' after extern selector", d.first("syntax.call.separator")));
             }
             parser.skip_tokens();
 
@@ -144,42 +93,26 @@ impl ExprPrefix for ExternPrefix {
                 args.push(parser.parse_expr(registry)?);
                 parser.skip_tokens();
 
-                if parser.peek().lexeme == RPAREN {
+                if d.is("syntax.call.close", &parser.peek().lexeme) {
                     break;
                 }
 
-                if parser.advance().lexeme != "," {
-                    return Err("Expected ',' between extern arguments".into());
+                if !d.is("syntax.call.separator", &parser.advance().lexeme) {
+                    return Err(format!("Expected '{}' between extern arguments", d.first("syntax.call.separator")));
                 }
                 parser.skip_tokens();
             }
         }
 
-        // Expect ')'
-        if parser.advance().lexeme != RPAREN {
-            return Err("Expected ')' after extern arguments".into());
+        // Expect the closing bracket
+        if !d.is("syntax.call.close", &parser.advance().lexeme) {
+            return Err(format!("Expected '{}' after extern arguments", d.first("syntax.call.close")));
         }
 
         Ok(Box::new(ExternExpr { selector, args }))
     }
 }
 
-// --------------------
-// Pattern Declaration
-// --------------------
-
-/// Declare what patterns this module recognizes
-pub fn patterns() -> PatternSet {
-    PatternSet::new()
-        .with_literals(vec!["extern", "(", ")", ",", "\""])
-}
-
-// --------------------
-// Registration
-// --------------------
-
 pub fn register(reg: &mut Registry) {
-    // extern is a keyword - needs to be in multichar_lexemes
-    // (handled in dispatcher)
     reg.register_prefix(Box::new(ExternPrefix));
 }

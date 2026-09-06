@@ -19,7 +19,6 @@
 use crate::kernel::ast::{StmtNode, Control};
 use crate::kernel::parser::Parser;
 use crate::languages::lumen::prelude::*;
-use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::Env;
 
 #[derive(Debug)]
@@ -38,8 +37,8 @@ pub struct MemoizationHandler;
 
 impl crate::languages::lumen::registry::StmtHandler for MemoizationHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        // Check for MEMOIZATION keyword (reserved identifier)
-        parser.peek().lexeme == "MEMOIZATION"
+        // The memoization switch is a reserved identifier
+        def().is("system.memoization", &parser.peek().lexeme)
     }
 
     fn parse(&self, parser: &mut Parser, _registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
@@ -58,11 +57,11 @@ impl crate::languages::lumen::registry::StmtHandler for MemoizationHandler {
             break;
         }
 
-        // Expect '='
-        if parser.peek().lexeme != "=" {
-            return Err("Expected '=' after MEMOIZATION".into());
+        // Expect the assignment sign
+        if !def().is("stmt.assign", &parser.peek().lexeme) {
+            return Err(format!("Expected '{}' after {}", def().first("stmt.assign"), def().first("system.memoization")));
         }
-        parser.advance(); // consume '='
+        parser.advance(); // consume the assignment sign
 
         // Skip whitespace to find boolean value
         loop {
@@ -77,37 +76,24 @@ impl crate::languages::lumen::registry::StmtHandler for MemoizationHandler {
             break;
         }
 
-        // Expect 'true' or 'false' (kernel lexer may split multi-char identifiers)
-        let mut value = String::new();
-        // Consume identifier characters
-        loop {
-            let lexeme = parser.peek().lexeme.clone();
-            if lexeme.chars().count() == 1 {
-                let ch = lexeme.chars().next().unwrap();
-                if word_char(ch) {
-                    value.push_str(&lexeme);
-                    parser.advance();
-                    continue;
-                }
-            }
-            break;
-        }
-
-        let enabled = match value.as_str() {
-            "true" => true,
-            "false" => false,
-            _ => {
-                return Err(format!("MEMOIZATION must be set to 'true' or 'false', got: {}", value));
-            }
+        // Expect a boolean literal word, lexed whole as a reserved word
+        let value = parser.advance().lexeme;
+        let enabled = if def().is("literal.true", &value) {
+            true
+        } else if def().is("literal.false", &value) {
+            false
+        } else {
+            return Err(format!(
+                "{} must be set to '{}' or '{}', got: {}",
+                def().first("system.memoization"),
+                def().first("literal.true"),
+                def().first("literal.false"),
+                value
+            ));
         };
 
         Ok(Box::new(MemoizationStmt { enabled }))
     }
-}
-
-pub fn patterns() -> PatternSet {
-    PatternSet::new()
-        .with_literals(vec!["MEMOIZATION"])
 }
 
 pub fn register(reg: &mut super::super::registry::Registry) {
