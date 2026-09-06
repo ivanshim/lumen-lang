@@ -24,7 +24,7 @@ for f in $(find examples -type f \( -name "*.lm" -o -name "*.rpl" -o -name "*.py
     # shellcheck disable=SC2086
     reference=$($B --kernel microcode10 $flag "$f" 2>&1)
     agree=1
-    for kernel in stream35 stack26 microcode11 microcode4; do
+    for kernel in stream35 stack26 microcode11 microcode4 stack5; do
         # shellcheck disable=SC2086
         other=$($B --kernel $kernel $flag "$f" 2>&1)
         if [ "$other" != "$reference" ]; then

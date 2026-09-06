@@ -1,6 +1,6 @@
 # Lumen-Lang
 
-An experimental interpreter framework: one command-line host, five independent
+An experimental interpreter framework: one command-line host, six independent
 kernels, and languages defined as data. Lumen exists to explore language
 semantics and the separation between an execution substrate and the languages
 it hosts. It is not a production language.
@@ -35,6 +35,7 @@ cargo run -- --kernel microcode10 examples/lumen/pi_machin.lm
 cargo run -- --kernel stack26 examples/lumen/pi_machin.lm
 cargo run -- --kernel microcode11 examples/lumen/pi_machin.lm
 cargo run -- --kernel microcode4 examples/lumen/pi_machin.lm
+cargo run -- --kernel stack5 examples/lumen/pi_machin.lm
 
 # Write a program in another language (microcode11 only)
 cargo run -- --kernel microcode11 --emit python examples/lumen/fibonacci_iterative.lm
@@ -72,6 +73,7 @@ kernels/microcode10/     crate lumen-microcode10: a table-driven execution engin
 kernels/stack26/         crate lumen-stack26: a compiler to one stack machine
 kernels/microcode11/    crate lumen-microcode11: the tree kept, and written back out
 kernels/microcode4/    crate lumen-microcode4: four primitive forms and nothing else
+kernels/stack5/        crate lumen-stack5: five words and nothing else
 langs/                 language definitions as JSON, one file per language,
                        with a generated side-by-side comparison; every kernel
                        reads them. Lumen, RPLumen, Python and Rust are embedded at
@@ -88,8 +90,8 @@ the same facility they take different routes by design: comment removal
 is a token-stream transformation in the stream35 language and a
 definition-driven text pass in the microcode10 ingest; bindings are hash-map
 scopes in the stream35 kernel, a linear frame stack in the microcode10 kernel,
-and slots resolved at compile time in the stack26, microcode11 and microcode4
-kernels.
+and slots resolved at compile time in the stack26, microcode11, microcode4 and
+stack5 kernels.
 
 Each kernel is named for its shape and numbered by the size of its
 instruction set: the number of node types, forms or words that everything
@@ -102,6 +104,7 @@ a definition spells is reduced to.
 | `stack26` | a flat word list over a data stack | 26 words |
 | `microcode11` | a tree that keeps its source lines and is written back out by `--emit` | 11 forms |
 | `microcode4` | a tree of four forms, everything else a call | 4 forms |
+| `stack5` | a flat word list of five kinds of word, everything else a shape made of them | 5 words |
 
 ### stream35, the stream kernel
 
@@ -163,6 +166,19 @@ each program says which exit it catches. All 488 programs print the
 same as on the other kernels. See
 [docs/LUMEN_KERNEL_MICROCODE4.md](docs/LUMEN_KERNEL_MICROCODE4.md).
 
+### stack5, the stack kernel's second design
+
+The stack machine at its floor. Five words: `Lit`, `Load`, `Store`,
+`Apply` and `Unless`. A jump is `Lit false; Unless`, a loop is a jump
+back, a call is `Apply` of the program on top of its arguments, a
+function's result travels through a hidden slot and `return` jumps to the
+end, `and` and `or` keep the left side in a hidden slot while they
+decide, `dup` and `swap` are stores and loads of scratch slots, and an
+array write takes the array out of its slot, rewrites it unshared and
+stores it back. Same value model as stack26, and as fast: the other
+twenty-one words bought no speed. All 488 programs print the same as on the other kernels. See
+[docs/LUMEN_KERNEL_STACK5.md](docs/LUMEN_KERNEL_STACK5.md).
+
 ## Languages
 
 | Language | Extension | Definition | Style |
@@ -195,7 +211,7 @@ writes [examples/PORTS.md](examples/PORTS.md), which says for each example
 and language either that the port exists or which construct the language
 has no spelling for. Those ports, the hand-written examples and the Lumen
 suite all run on every kernel, and `scripts/kernel_diff.sh` checks that
-the five kernels print the same for every one of them.
+the six kernels print the same for every one of them.
 
 Lumen is the reference language: integers, exact rationals and reals of
 configurable precision, strings, arrays, functions, `for`/`while`/`until`
@@ -218,7 +234,7 @@ Every example runs on every kernel:
 ./test.sh --help
 ```
 
-`scripts/kernel_diff.sh` goes further and requires the five kernels to
+`scripts/kernel_diff.sh` goes further and requires the six kernels to
 print the same thing for every program; today every program does. The
 differential test exists to find semantic gaps between the
 implementations, and each one it has found has been closed in whichever
@@ -236,6 +252,7 @@ errors, a check that the ported examples match what
 - [docs/LUMEN_KERNEL_STACK26.md](docs/LUMEN_KERNEL_STACK26.md) — the stack26 kernel: its 26 words and the compiler
 - [docs/LUMEN_KERNEL_MICROCODE11.md](docs/LUMEN_KERNEL_MICROCODE11.md) — the microcode11 kernel: the tree kept and written back out
 - [docs/LUMEN_KERNEL_MICROCODE4.md](docs/LUMEN_KERNEL_MICROCODE4.md) — the microcode4 kernel: four primitive forms
+- [docs/LUMEN_KERNEL_STACK5.md](docs/LUMEN_KERNEL_STACK5.md) — the stack5 kernel: five words and the shapes made of them
 - [langs/README.md](langs/README.md) — the definition format, every label, and the languages side by side
 - [docs/LUMEN_LANGUAGE_DESIGN.md](docs/LUMEN_LANGUAGE_DESIGN.md) — design principles
 - [docs/LUMEN_COMPACT_REFERENCE.md](docs/LUMEN_COMPACT_REFERENCE.md) — Lumen quick reference

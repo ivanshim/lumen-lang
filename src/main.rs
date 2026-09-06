@@ -1,6 +1,6 @@
 // lumen-lang: command-line host for the three kernels.
 //
-// Usage: lumen-lang [--kernel stream35|microcode10|stack26|microcode11|microcode4] [--lang <name|definition.json>]
+// Usage: lumen-lang [--kernel stream35|microcode10|stack26|microcode11|microcode4|stack5] [--lang <name|definition.json>]
 //                   <file> [--lang <name|definition.json>] [program args...]
 //
 // The host reads the file, picks the language from `--lang` (also spelled
@@ -18,7 +18,7 @@ use std::fs;
 use std::path::Path;
 use std::process;
 
-const KERNELS: [&str; 5] = ["stream35", "microcode10", "stack26", "microcode11", "microcode4"];
+const KERNELS: [&str; 6] = ["stream35", "microcode10", "stack26", "microcode11", "microcode4", "stack5"];
 const DEFAULT_KERNEL: &str = "microcode10";
 const DEFAULT_LANGUAGE: &str = "lumen";
 
@@ -111,6 +111,8 @@ fn main() {
         ("microcode11", Language::File { text, .. }) => lumen_microcode11::run_definition(text, &source, &inv.program_args),
         ("microcode4", Language::Named(name)) => lumen_microcode4::run(name, &source, &inv.program_args),
         ("microcode4", Language::File { text, .. }) => lumen_microcode4::run_definition(text, &source, &inv.program_args),
+        ("stack5", Language::Named(name)) => lumen_stack5::run(name, &source, &inv.program_args),
+        ("stack5", Language::File { text, .. }) => lumen_stack5::run_definition(text, &source, &inv.program_args),
         _ => unreachable!("kernel names are validated in parse_args"),
     };
 
@@ -122,7 +124,7 @@ fn main() {
 
 fn usage(program: &str) -> ! {
     eprintln!(
-        "Usage: {} [--kernel stream35|microcode10|stack26|microcode11|microcode4] [--lang <name|extension|definition.json>] [--emit <name|extension|definition.json>] <file> [program args...]",
+        "Usage: {} [--kernel stream35|microcode10|stack26|microcode11|microcode4|stack5] [--lang <name|extension|definition.json>] [--emit <name|extension|definition.json>] <file> [program args...]",
         program
     );
     process::exit(1);

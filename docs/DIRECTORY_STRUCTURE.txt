@@ -135,6 +135,17 @@ lumen-lang/
     kernels/microcode4/src/spec.rs        the definition as data
     kernels/microcode4/src/tree.rs        the four forms
     kernels/microcode4/src/value.rs
+  kernels/stack5/                  crate lumen-stack5 (five words: Lit, Load, Store, Apply, Unless)
+    kernels/stack5/Cargo.toml
+    kernels/stack5/src/assemble.rs      tokens to the five words, in one pass; every construct a shape of them
+    kernels/stack5/src/language.rs      the definition as data
+    kernels/stack5/src/lib.rs
+    kernels/stack5/src/machine.rs       the five words run over one stack
+    kernels/stack5/src/numbers.rs
+    kernels/stack5/src/scan.rs          scanning
+    kernels/stack5/src/shape.rs         block structure
+    kernels/stack5/src/values.rs
+    kernels/stack5/src/words.rs         the five words
 
   lib_lumen/                       Lumen standard library (.lm) + prelude.rs (embedding list)
     lib_lumen/constants.lm

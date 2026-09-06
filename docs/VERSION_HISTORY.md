@@ -31,6 +31,16 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   definition is loaded at run time. PHP moved there, and Ruby, Pascal, C,
   JavaScript and Swift are added with examples; all nine languages run on
   both kernels.
+- **The stack kernel, second design**: a sixth kernel, `kernels/stack5`
+  (`--kernel stack5`), is the stack machine at its floor: five words,
+  `Lit`, `Load`, `Store`, `Apply` and `Unless`, and every construct a
+  shape made of them. A jump is `Lit false; Unless`; a function's result
+  goes through a hidden slot and `return` jumps to the end; `and`, `or`
+  and the RPL stack words are stores and loads of hidden slots; an array
+  literal in RPLumen gathers down to a mark pushed as a literal; an array
+  write takes the array out of its slot with a load that leaves a hole,
+  rewrites it unshared, and stores it back into the hole. All 488
+  programs print the same as on the other five kernels.
 - **Kernels numbered by their primitives**: each kernel's name now ends
   in the size of its instruction set, the number of node types, forms or
   words that everything a definition spells is reduced to: `stream35`
