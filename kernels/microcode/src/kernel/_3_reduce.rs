@@ -235,14 +235,12 @@ impl<'a> Parser<'a> {
             self.advance();
         }
         let name = self.expect_word("after the binding keyword")?;
-        let mut annotated = false;
         if self.peek().kind == Kind::Op && spelled(&binding.type_annotation, &self.peek().text) {
             self.advance();
             self.expect_word("as a type name")?;
-            annotated = true;
         }
-        if annotated && (self.is_terminator() || self.at_end()) {
-            // A declaration without a value binds null.
+        if self.is_terminator() || self.at_end() {
+            // A declaration without a value (`var x: integer;`, `let x;`) binds null.
             return Ok(Instruction::assign(name, Instruction::Literal(Value::Null)));
         }
         self.expect_assignment("in a binding")?;

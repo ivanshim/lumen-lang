@@ -115,7 +115,9 @@ impl ExprNode for ArithmeticExpr {
         } else {
             (None, false)
         };
-        let result_is_real = left_is_real || right_is_real;
+        // A real operand makes the result real, as does division in a
+        // language whose `/` yields a real (op.div.result).
+        let result_is_real = left_is_real || right_is_real || (self.op == Arith::Div && def().div_real);
 
         // Integer quotient and remainder. The quotient divides the exact
         // values and truncates toward zero; the remainder is taken between

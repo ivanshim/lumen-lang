@@ -1,16 +1,16 @@
 <?php
 // Statements end with semicolons; variables carry a dollar sign.
-print(1 + 2 * 3);
+print(1 + 2 * 3 . "\n");
 
 $x = 0;
 $y = 5;
 
 if ($x < $y && $y == 5) {
-    print(100);
+    print(100 . "\n");
 } elseif ($x == $y) {
-    print(150);
+    print(150 . "\n");
 } else {
-    print(200);
+    print(200 . "\n");
 }
 
 $i = 0;
@@ -27,18 +27,18 @@ while ($i < 10) {
     }
 
     $sum = $sum + $i;
-    print($sum);
+    print($sum . "\n");
     $i = $i + 1;
 }
 
-print($sum);
-print(TRUE);
-print(False);
-print(!false);
-print(-10 + 3);
-print("sum is " . $sum);
-print('single quotes keep \n literal');
+print($sum . "\n");
+print(TRUE . "\n");
+print(False . "\n");
+print(!false . "\n");
+print(-10 + 3 . "\n");
+print("sum is " . $sum . "\n");
+print('single quotes keep \n literal' . "\n");
 # Hash comments work too.
 /* And block
    comments. */
-print(0x1F);
+print(0x1F . "\n");

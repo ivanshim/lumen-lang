@@ -9,18 +9,17 @@
 # If --lang is not specified, tests Lumen. If --kernel is not specified,
 # tests both kernels. TEST_QUIET=1 prints program output only for failures.
 
-LANGUAGES=(lumen python rust php ruby pascal lua c javascript swift)
+LANGUAGES=(lumen python rust php ruby pascal c javascript swift)
 declare -A DIRS=(
-    [lumen]="examples/lumen examples/lumen/constructs examples/lumen/libraries"
-    [python]="examples/python" [rust]="examples/rust" [php]="examples/php"
-    [ruby]="examples/ruby" [pascal]="examples/pascal" [lua]="examples/lua"
+    [lumen]="examples/lumen" [python]="examples/python" [rust]="examples/rust" [php]="examples/php"
+    [ruby]="examples/ruby" [pascal]="examples/pascal"
     [c]="examples/c" [javascript]="examples/javascript" [swift]="examples/swift"
 )
-declare -A EXT=([lumen]=lm [python]=py [rust]=rs [php]=php [ruby]=rb [pascal]=pas [lua]=lua [c]=c [javascript]=js [swift]=swift)
-declare -A DISPLAY=([lumen]=Lumen [python]=Python [rust]=Rust [php]=PHP [ruby]=Ruby [pascal]=Pascal [lua]=Lua [c]=C [javascript]=JavaScript [swift]=Swift)
+declare -A EXT=([lumen]=lm [python]=py [rust]=rs [php]=php [ruby]=rb [pascal]=pas [c]=c [javascript]=js [swift]=swift)
+declare -A DISPLAY=([lumen]=Lumen [python]=Python [rust]=Rust [php]=PHP [ruby]=Ruby [pascal]=Pascal [c]=C [javascript]=JavaScript [swift]=Swift)
 declare -A FLAG=(
     [php]="--lang langs/extras/php.json" [ruby]="--lang langs/extras/ruby.json"
-    [pascal]="--lang langs/extras/pascal.json" [lua]="--lang langs/extras/lua.json"
+    [pascal]="--lang langs/extras/pascal.json"
     [c]="--lang langs/extras/c.json" [javascript]="--lang langs/extras/javascript.json"
     [swift]="--lang langs/extras/swift.json"
 )
@@ -81,12 +80,7 @@ while [[ $# -gt 0 ]]; do
             if [[ -f "$1" ]]; then
                 SINGLE_FILE="$1"
             else
-                found=""
-                for lang in "${LANGUAGES[@]}"; do
-                    for dir in ${DIRS[$lang]}; do
-                        if [[ -f "$dir/$1" ]]; then found="$dir/$1"; break 2; fi
-                    done
-                done
+                found=$(find examples -type f -name "$1" | head -1)
                 if [[ -n "$found" ]]; then
                     SINGLE_FILE="$found"
                 else
@@ -178,13 +172,11 @@ if [ -n "$SINGLE_FILE" ]; then
 else
     for lang in "${test_languages[@]}"; do
         echo -e "${YELLOW}${DISPLAY[$lang]} Examples:${NC}"
-        for dir in ${DIRS[$lang]}; do
-            for file in "$dir"/*."${EXT[$lang]}"; do
-                [ -f "$file" ] || continue
-                should_omit "$file" && continue
-                for kernel in "${test_kernels[@]}"; do run_test "$file" "$kernel" "$lang"; done
-            done
-        done
+        # Every file of the language's extension under its directory, subdirectories included.
+        while IFS= read -r file; do
+            should_omit "$file" && continue
+            for kernel in "${test_kernels[@]}"; do run_test "$file" "$kernel" "$lang"; done
+        done < <(find ${DIRS[$lang]} -type f -name "*.${EXT[$lang]}" | sort)
         echo ""
         TESTED_LANGUAGES+=("$lang")
     done

@@ -79,6 +79,9 @@ fn normalize(numerator: BigInt, denominator: BigInt) -> (BigInt, BigInt) {
 }
 
 /// Build a value from a fraction, honouring the promotion rules.
+/// Significant digits of a real made without a real operand.
+const DEFAULT_PRECISION: usize = 15;
+
 fn from_fraction(numerator: BigInt, denominator: BigInt, precision: Option<usize>) -> Value {
     match precision {
         Some(p) => real(numerator, denominator, p),
@@ -119,6 +122,14 @@ pub fn arith(op: Op, a: &Num, b: &Num) -> Result<Value, String> {
                 return Err("Division by zero".to_string());
             }
             Ok(from_fraction(&a.numerator * &b.denominator, &a.denominator * &b.numerator, precision))
+        }
+        Op::DivReal => {
+            // Division whose result is a real, at the operands' precision or the default.
+            if b.numerator.is_zero() {
+                return Err("Division by zero".to_string());
+            }
+            let p = precision.unwrap_or(DEFAULT_PRECISION);
+            Ok(from_fraction(&a.numerator * &b.denominator, &a.denominator * &b.numerator, Some(p)))
         }
         Op::Quot => {
             // Integer quotient of the exact values, truncating toward zero.

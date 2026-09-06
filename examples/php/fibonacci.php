@@ -14,6 +14,6 @@ function fib($n) {
 
 $i = 0;
 while ($i < 10) {
-    print(fib($i));
+    print(fib($i) . "\n");
     $i = $i + 1;
 }

@@ -1,5 +1,5 @@
 {
-  "$comment": "JavaScript: brace blocks, let, const and var bindings, function, console.log and process.stdout.write as builtin names with dots in them, strict and loose equality, ** for power. Loaded at run time from langs/extras/. Object literals, the three-clause for, for...of, template strings and arrow functions are omitted because the kernel has no counterpart; everything listed is JavaScript.",
+  "$comment": "JavaScript: brace blocks, let, const and var bindings, function, console.log and process.stdout.write as builtin names with dots in them, strict and loose equality, ** for power, division yielding a real, String as the integer-to-string conversion. Loaded at run time from langs/extras/. Object literals, the three-clause for, for...of, template strings and arrow functions are omitted because the kernel has no counterpart; everything listed is JavaScript.",
   "format_version": 1,
   "language": "javascript",
   "extensions": ["js"],
@@ -55,6 +55,7 @@
   "op.sub": ["-"],
   "op.mul": ["*"],
   "op.div": ["/"],
+  "op.div.result": "real",
   "op.quot": [],
   "op.rem": ["%"],
   "op.pow": ["**"],
@@ -108,7 +109,7 @@
   "builtin.extern": [],
   "builtin.range": [],
   "builtin.real": [],
-  "builtin.int_to_string": [],
+  "builtin.int_to_string": ["String"],
   "builtin.real_to_string": [],
   "builtin.rational_to_string": [],
   "builtin.bool_to_string": [],

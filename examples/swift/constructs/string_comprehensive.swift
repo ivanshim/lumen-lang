@@ -1,0 +1,15 @@
+// Ported from examples/lumen/constructs/string_comprehensive.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+let a = "alpha"
+let b = "beta"
+print(a)
+print(b)
+if a == "alpha" {
+    print("a is alpha")
+}
+if a != b {
+    print("a and b are different")
+}
+let x = 10
+let y = "number"
+print(x)
+print(y)

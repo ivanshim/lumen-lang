@@ -1,0 +1,35 @@
+<?php
+// Ported from examples/lumen/constructs/string_literals.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+$single1 = "hello";
+$single2 = "world";
+print($single1 . "\n");
+print($single2 . "\n");
+$double1 = "hello";
+$double2 = "world";
+print($double1 . "\n");
+print($double2 . "\n");
+print(($single1 == $double1) . "\n");
+print(($single2 == $double2) . "\n");
+$escaped_single = "can't";
+print($escaped_single . "\n");
+$literal_n = "text\\nmore";
+print($literal_n . "\n");
+$literal_t = "text\\tmore";
+print($literal_t . "\n");
+$escaped_double = "can't";
+print($escaped_double . "\n");
+$newline_test = "first\nsecond";
+print($newline_test . "\n");
+$tab_test = "col1\tcol2";
+print($tab_test . "\n");
+$escaped_quote = "He said \"hello\"";
+print($escaped_quote . "\n");
+$escaped_backslash = "path\\to\\file";
+print($escaped_backslash . "\n");
+$no_interp = "${name}";
+print($no_interp . "\n");
+$no_interp2 = "{count}";
+print($no_interp2 . "\n");
+$x = "10";
+$no_interp3 = "The answer is ${x}";
+print($no_interp3 . "\n");

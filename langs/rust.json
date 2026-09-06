@@ -54,6 +54,7 @@
   "op.sub": ["-"],
   "op.mul": ["*"],
   "op.div": [],
+  "op.div.result": null,
   "op.quot": ["/"],
   "op.rem": ["%"],
   "op.pow": [],

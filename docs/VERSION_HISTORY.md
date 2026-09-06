@@ -25,9 +25,22 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   names with operator characters inside (`console.log`).
 - **Extra languages**: `langs/extras/` holds definitions that are not
   compiled in and are read from disk with `--lang <path>`, as proof that a
-  definition is loaded at run time. PHP moved there, and Ruby, Lua, Pascal,
-  C, JavaScript and Swift are added with examples; all ten languages run on
+  definition is loaded at run time. PHP moved there, and Ruby, Pascal, C,
+  JavaScript and Swift are added with examples; all nine languages run on
   both kernels.
+- **Division as the languages specify it**: `op.div.result` says whether a
+  language's `/` yields an exact rational (Lumen) or a real (Python,
+  JavaScript, PHP, Pascal), so `7 / 2` prints `3.5` where the language
+  says so. A binding with no value binds null in every language that
+  declares (`let x;`).
+- **The Lumen suite in every language**: `scripts/port_examples.py` ports
+  each of the 84 Lumen examples, with the library functions it calls, to
+  every other language whose definition spells what it needs, 255
+  programs in all, and writes `examples/PORTS.md` saying which and, where
+  not, which construct the language has no spelling for. The test driver
+  runs every example under `examples/` on both kernels (740 runs), and
+  `scripts/kernel_diff.sh` finds all 370 programs printing the same on
+  both.
 - **Kernels agree**: `scripts/kernel_diff.sh` reports every example
   printing the same on both kernels. The stream kernel's integer quotient
   now divides the exact values before truncating, its reals keep zero
@@ -54,7 +67,7 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   file extension decides otherwise, and Lumen is the default. Definitions
   live in `langs/`.
 - **Languages**: the Python and Rust examples are written as Python and
-  Rust, and PHP, Ruby, Lua, Pascal, C, JavaScript and Swift examples are
+  Rust, and PHP, Ruby, Pascal, C, JavaScript and Swift examples are
   added; every example runs on both kernels, and `scripts/kernel_diff.sh`
   compares their output
   program by program.
