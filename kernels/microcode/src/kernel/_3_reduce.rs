@@ -14,7 +14,7 @@ use num_traits::ToPrimitive;
 use super::_1_ingest::{Kind, Token};
 use super::instruction::{Instruction, Target, TransferKind};
 use super::value::{Function, Value};
-use crate::schema::{Assoc, LanguageSchema, Op};
+use crate::schema::{spelled, Assoc, LanguageSchema, Op};
 
 pub fn parse(tokens: &[Token], schema: &LanguageSchema) -> Result<Instruction, String> {
     let mut parser = Parser { tokens, pos: 0, schema, hidden: 0 };
@@ -52,10 +52,6 @@ impl<'a> Parser<'a> {
 
     fn at_end(&self) -> bool {
         self.peek().kind == Kind::Eof
-    }
-
-    fn is_word(&self, word: &str) -> bool {
-        self.peek().is(Kind::Word, word)
     }
 
     fn is_op(&self, op: &str) -> bool {
@@ -127,36 +123,36 @@ impl<'a> Parser<'a> {
         let s = &schema.statements;
         if self.peek().kind == Kind::Word {
             let word = self.peek().text.clone();
-            if s.binding.as_ref().map_or(false, |b| b.keyword == word) {
+            if s.binding.as_ref().map_or(false, |b| spelled(&b.keyword, &word)) {
                 return self.binding();
             }
-            if s.branch.as_ref().map_or(false, |b| b.keyword == word) {
+            if s.branch.as_ref().map_or(false, |b| spelled(&b.keyword, &word)) {
                 return self.branch();
             }
-            if s.loop_while.as_ref().map_or(false, |k| k.keyword == word) {
+            if spelled(&s.loop_while, &word) {
                 return self.while_loop();
             }
-            if s.loop_until.as_ref().map_or(false, |k| k.keyword == word) {
+            if spelled(&s.loop_until, &word) {
                 return self.until_loop();
             }
-            if s.loop_for.as_ref().map_or(false, |f| f.keyword == word) {
+            if s.loop_for.as_ref().map_or(false, |f| spelled(&f.keyword, &word)) {
                 return self.for_loop();
             }
-            if s.return_.as_ref().map_or(false, |k| k.keyword == word) {
+            if spelled(&s.return_, &word) {
                 return self.return_stmt();
             }
-            if s.break_.as_ref().map_or(false, |k| k.keyword == word) {
+            if spelled(&s.break_, &word) {
                 self.advance();
                 return Ok(Instruction::transfer(TransferKind::Break, None));
             }
-            if s.continue_.as_ref().map_or(false, |k| k.keyword == word) {
+            if spelled(&s.continue_, &word) {
                 self.advance();
                 return Ok(Instruction::transfer(TransferKind::Continue, None));
             }
-            if s.function.as_ref().map_or(false, |k| k.keyword == word) {
+            if spelled(&s.function, &word) {
                 return self.function_def();
             }
-            if s.pass.as_ref().map_or(false, |k| k.keyword == word) {
+            if spelled(&s.pass, &word) {
                 self.advance();
                 return Ok(Instruction::Sequence(Vec::new()));
             }
@@ -165,36 +161,41 @@ impl<'a> Parser<'a> {
     }
 
     fn binding(&mut self) -> Result<Instruction, String> {
-        let binding = self.schema.statements.binding.clone().expect("binding form present");
+        let schema: &'a LanguageSchema = self.schema;
+        let binding = schema.statements.binding.as_ref().expect("binding form present");
         self.advance(); // keyword
-        if let Some(modifier) = &binding.mutable_modifier {
-            if self.is_word(modifier) {
-                self.advance();
-            }
+        if self.peek().kind == Kind::Word && spelled(&binding.mutable_modifier, &self.peek().text) {
+            self.advance();
         }
         let name = self.expect_word("after the binding keyword")?;
-        if let Some(annotation) = &binding.type_annotation {
-            if self.is_op(annotation) {
-                self.advance();
-                self.expect_word("as a type name")?;
-            }
+        if self.peek().kind == Kind::Op && spelled(&binding.type_annotation, &self.peek().text) {
+            self.advance();
+            self.expect_word("as a type name")?;
         }
-        let assign = self.assignment_op()?;
-        self.expect_op(&assign, "in a binding")?;
+        self.expect_assignment("in a binding")?;
         let value = self.expression(0.0)?;
         Ok(Instruction::assign(name, value))
     }
 
-    fn assignment_op(&self) -> Result<String, String> {
-        self.schema
-            .statements
-            .assignment
-            .clone()
-            .ok_or_else(|| "This language has no assignment operator".to_string())
+    fn at_assignment(&self) -> bool {
+        self.peek().kind == Kind::Op && spelled(&self.schema.statements.assignment, &self.peek().text)
+    }
+
+    fn expect_assignment(&mut self, context: &str) -> Result<(), String> {
+        if self.schema.statements.assignment.is_empty() {
+            return Err("This language has no assignment operator".to_string());
+        }
+        if self.at_assignment() {
+            self.advance();
+            Ok(())
+        } else {
+            Err(format!("Expected '{}' {}, got '{}'", self.schema.statements.assignment[0], context, self.peek().text))
+        }
     }
 
     fn branch(&mut self) -> Result<Instruction, String> {
-        let branch = self.schema.statements.branch.clone().expect("branch form present");
+        let schema: &'a LanguageSchema = self.schema;
+        let branch = schema.statements.branch.as_ref().expect("branch form present");
         self.advance(); // if / elif
         let condition = self.expression(0.0)?;
         let then_branch = self.block()?;
@@ -207,8 +208,8 @@ impl<'a> Parser<'a> {
             look += 1;
         }
         let next = self.peek_at(look);
-        let is_elif = branch.elif_keyword.as_deref().map_or(false, |k| next.is(Kind::Word, k));
-        let is_else = next.is(Kind::Word, &branch.else_keyword);
+        let is_elif = next.kind == Kind::Word && spelled(&branch.elif_keyword, &next.text);
+        let is_else = next.kind == Kind::Word && spelled(&branch.else_keyword, &next.text);
 
         let else_branch = if is_elif {
             self.pos += look;
@@ -216,7 +217,7 @@ impl<'a> Parser<'a> {
         } else if is_else {
             self.pos += look;
             self.advance(); // else
-            if self.is_word(&branch.keyword) {
+            if self.peek().kind == Kind::Word && spelled(&branch.keyword, &self.peek().text) {
                 Some(self.branch()?) // else if
             } else {
                 Some(self.block()?)
@@ -260,11 +261,12 @@ impl<'a> Parser<'a> {
     /// `for v in range { body }` binds v to the range start and loops while
     /// v is below the range end, stepping by one after each pass.
     fn for_loop(&mut self) -> Result<Instruction, String> {
-        let form = self.schema.statements.loop_for.clone().expect("for form present");
+        let schema: &'a LanguageSchema = self.schema;
+        let form = schema.statements.loop_for.as_ref().expect("for form present");
         self.advance();
         let var = self.expect_word("as the loop variable")?;
-        if !self.is_word(&form.in_keyword) {
-            return Err(format!("Expected '{}' after for loop variable, got: {}", form.in_keyword, self.peek().text));
+        if !(self.peek().kind == Kind::Word && spelled(&form.in_keyword, &self.peek().text)) {
+            return Err(format!("Expected '{}' after for loop variable, got: {}", form.in_keyword[0], self.peek().text));
         }
         self.advance();
         let iterable = self.expression(0.0)?;
@@ -303,13 +305,20 @@ impl<'a> Parser<'a> {
 
     /// A function definition becomes a binding of a function value.
     fn function_def(&mut self) -> Result<Instruction, String> {
+        let schema: &'a LanguageSchema = self.schema;
         self.advance();
         let name = self.expect_word("after the function keyword")?;
         let call = self.schema.structure.call.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
         self.expect_op(&call.open, "after function name")?;
+        let annotation: &[String] =
+            schema.statements.binding.as_ref().map_or(&[], |b| b.type_annotation.as_slice());
         let mut params = Vec::new();
         while !self.is_op(&call.close) && !self.at_end() {
             params.push(self.expect_word("as a parameter name")?);
+            if self.peek().kind == Kind::Op && spelled(annotation, &self.peek().text) {
+                self.advance();
+                self.expect_word("as a type name")?;
+            }
             if let Some(sep) = &call.separator {
                 if self.is_op(sep) {
                     self.advance();
@@ -317,6 +326,10 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect_op(&call.close, "after parameters")?;
+        if self.peek().kind == Kind::Op && spelled(&schema.statements.function_returns, &self.peek().text) {
+            self.advance();
+            self.expect_word("as a return type")?;
+        }
         let body = self.block()?;
         let def = Function { name: name.clone(), params, body };
         Ok(Instruction::assign(name, Instruction::Literal(Value::Function(Rc::new(def)))))
@@ -324,11 +337,10 @@ impl<'a> Parser<'a> {
 
     fn assignment_or_expression(&mut self) -> Result<Instruction, String> {
         let expr = self.expression(0.0)?;
-        let assign = match &self.schema.statements.assignment {
-            Some(op) if self.is_op(op) => op.clone(),
-            _ => return Ok(expr),
-        };
-        self.advance();
+        if !self.at_assignment() {
+            return Ok(expr);
+        }
+        let assign = self.advance().text;
         let value = self.expression(0.0)?;
         match expr {
             Instruction::Variable(name) => Ok(Instruction::assign(name, value)),
@@ -415,13 +427,21 @@ impl<'a> Parser<'a> {
                     Instruction::Literal(Value::Null)
                 } else {
                     self.advance();
+                    let mut name = tok.text;
+                    if self.peek().kind == Kind::Op {
+                        let joined = format!("{}{}", name, self.peek().text);
+                        if schema.functions.contains_key(&joined) {
+                            self.advance();
+                            name = joined;
+                        }
+                    }
                     match structure.call.clone() {
                         Some(call) if self.is_op(&call.open) => {
                             self.advance();
                             let args = self.list(&call.close, call.separator.as_deref())?;
-                            Instruction::Invoke { function: tok.text, args }
+                            Instruction::Invoke { function: name, args }
                         }
-                        _ => Instruction::Variable(tok.text),
+                        _ => Instruction::Variable(name),
                     }
                 }
             }
@@ -452,14 +472,14 @@ impl<'a> Parser<'a> {
 
     /// Postfix indexing: `expr[index]`, repeatable.
     fn postfix(&mut self, mut expr: Instruction) -> Result<Instruction, String> {
-        let array = match self.schema.structure.array.clone() {
-            Some(a) => a,
+        let index_pair = match self.schema.structure.index.clone() {
+            Some(p) => p,
             None => return Ok(expr),
         };
-        while self.is_op(&array.open) {
+        while self.is_op(&index_pair.open) {
             self.advance();
             let index = self.expression(0.0)?;
-            self.expect_op(&array.close, "after array index")?;
+            self.expect_op(&index_pair.close, "after array index")?;
             expr = Instruction::binary(Op::Index, expr, index);
         }
         Ok(expr)
@@ -488,6 +508,13 @@ impl<'a> Parser<'a> {
 
     fn number_literal(&self, text: &str) -> Result<Value, String> {
         let syntax = &self.schema.lexical.number;
+        if let Some(prefix) = &syntax.hex_prefix {
+            if let Some(digits) = text.strip_prefix(prefix.as_str()) {
+                return BigInt::parse_bytes(digits.as_bytes(), 16)
+                    .map(Value::Number)
+                    .ok_or_else(|| format!("Invalid number: {}", text));
+            }
+        }
         if let Some(marker) = syntax.base_marker {
             if text.contains(marker) {
                 let (numerator, denominator) = parse_base_n(text, marker, syntax.decimal_point, syntax.exponent_marker)?;

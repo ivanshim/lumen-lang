@@ -2,8 +2,9 @@
 //
 // Tokens are meaningful units: words, numbers, strings (already unescaped),
 // operators, line ends and leading indentation. What counts as a comment,
-// a string delimiter, an escape or an operator comes from the schema; the
-// scanning algorithms are the kernel's.
+// a string delimiter, an escape, a prologue, a variable prefix or an
+// operator comes from the definition; the scanning algorithms are the
+// kernel's.
 
 use crate::schema::LanguageSchema;
 
@@ -38,13 +39,35 @@ impl Token {
     }
 }
 
-/// Remove line comments introduced by the schema's marker, outside strings,
-/// keeping newlines so line numbers stay stable.
+/// Drop the prologue (e.g. `<?php`) if the file opens with it.
+fn strip_prologue<'a>(source: &'a str, schema: &LanguageSchema) -> &'a str {
+    match &schema.lexical.prologue {
+        Some(prologue) => {
+            let lead = source.len() - source.trim_start().len();
+            if source[lead..].starts_with(prologue.as_str()) {
+                // Keep the leading whitespace so line numbers stay stable.
+                let (head, _) = source.split_at(lead);
+                let rest = &source[lead + prologue.len()..];
+                // head is whitespace only; returning rest alone is exact if head has no newline.
+                if head.contains('\n') {
+                    return source;
+                }
+                return rest;
+            }
+            source
+        }
+        None => source,
+    }
+}
+
+/// Remove comments outside strings, keeping newlines so line numbers stay
+/// stable. Line comments run to the end of the line; block comments run
+/// from the opening to the closing delimiter.
 fn strip_comments(source: &str, schema: &LanguageSchema) -> String {
-    let marker = match &schema.lexical.comment {
-        Some(m) if !m.is_empty() => m.as_str(),
-        _ => return source.to_string(),
-    };
+    let lexical = &schema.lexical;
+    if lexical.comment_lines.is_empty() && lexical.comment_block.is_none() {
+        return source.to_string();
+    }
     let mut out = String::with_capacity(source.len());
     let mut rest = source;
     let mut in_string: Option<char> = None;
@@ -62,13 +85,23 @@ fn strip_comments(source: &str, schema: &LanguageSchema) -> String {
             rest = &rest[ch.len_utf8()..];
             continue;
         }
-        if schema.lexical.quotes.contains(&ch) {
+        if lexical.quotes.contains(&ch) {
             in_string = Some(ch);
             out.push(ch);
             rest = &rest[ch.len_utf8()..];
             continue;
         }
-        if rest.starts_with(marker) {
+        if let Some((open, close)) = &lexical.comment_block {
+            if rest.starts_with(open.as_str()) {
+                let body = &rest[open.len()..];
+                let end = body.find(close.as_str()).map(|p| p + close.len()).unwrap_or(body.len());
+                out.extend(body[..end].chars().filter(|&c| c == '\n'));
+                rest = &body[end..];
+                continue;
+            }
+        }
+        if let Some(marker) = lexical.comment_lines.iter().find(|m| rest.starts_with(m.as_str())) {
+            let _ = marker;
             rest = match rest.find('\n') {
                 Some(nl) => &rest[nl..],
                 None => "",
@@ -82,7 +115,7 @@ fn strip_comments(source: &str, schema: &LanguageSchema) -> String {
 }
 
 /// Identifier characters: underscore always; letters (and, for continuation,
-/// digits) from either ASCII or all of Unicode, as the schema chooses.
+/// digits) from either ASCII or all of Unicode, as the definition chooses.
 fn is_word_start(c: char, unicode: bool) -> bool {
     match (c, unicode) {
         ('_', _) => true,
@@ -100,10 +133,12 @@ fn is_word_char(c: char, unicode: bool) -> bool {
 }
 
 pub fn lex(source: &str, schema: &LanguageSchema) -> Result<Vec<Token>, String> {
+    let source = strip_prologue(source, schema);
     let source = strip_comments(source, schema);
+    let lexical = &schema.lexical;
     let operators = schema.operators_longest_first();
-    let number = &schema.lexical.number;
-    let unicode = schema.lexical.identifier_unicode;
+    let number = &lexical.number;
+    let unicode = lexical.identifier_unicode;
     let chars: Vec<char> = source.chars().collect();
     let mut tokens = Vec::new();
     let mut i = 0;
@@ -155,10 +190,10 @@ pub fn lex(source: &str, schema: &LanguageSchema) -> Result<Vec<Token>, String> 
 
         let start_col = col;
 
-        // Strings: delimiter from the schema, escapes from its table.
-        if schema.lexical.quotes.contains(&c) {
+        // Strings: delimiter from the definition, escapes from its table.
+        if lexical.quotes.contains(&c) {
             let quote = c;
-            let escapes = schema.lexical.escapes.get(&quote);
+            let escapes = lexical.escapes.get(&quote);
             let mut text = String::new();
             i += 1;
             col += 1;
@@ -199,15 +234,29 @@ pub fn lex(source: &str, schema: &LanguageSchema) -> Result<Vec<Token>, String> 
             continue;
         }
 
-        // Numbers: digits, then either a base-N tail or a decimal fraction.
+        // Numbers: digits, then a hexadecimal tail, a base-N tail or a
+        // decimal fraction.
         if c.is_ascii_digit() {
             let mut text = String::new();
             while i < chars.len() && chars[i].is_ascii_digit() {
                 text.push(chars[i]);
                 i += 1;
             }
+            let hex_tail = number.hex_prefix.as_ref().and_then(|prefix| {
+                let mut p = prefix.chars();
+                let (digit, letter) = (p.next()?, p.next()?);
+                let follows = i + 1 < chars.len() && chars[i + 1].is_ascii_hexdigit();
+                (text.len() == 1 && text.starts_with(digit) && chars[i] == letter && follows).then_some(letter)
+            });
             let at_base_marker = number.base_marker.map_or(false, |m| i < chars.len() && chars[i] == m);
-            if at_base_marker {
+            if let Some(letter) = hex_tail {
+                text.push(letter);
+                i += 1;
+                while i < chars.len() && chars[i].is_ascii_hexdigit() {
+                    text.push(chars[i]);
+                    i += 1;
+                }
+            } else if at_base_marker {
                 text.push(chars[i]);
                 i += 1;
                 while i < chars.len() {
@@ -239,18 +288,32 @@ pub fn lex(source: &str, schema: &LanguageSchema) -> Result<Vec<Token>, String> 
         }
 
         // Words: identifiers and keywords alike; meaning is decided later.
-        if is_word_start(c, unicode) {
+        // A variable prefix (`$`) followed by a word start belongs to the word.
+        let prefixed = lexical.variable_prefix == Some(c)
+            && i + 1 < chars.len()
+            && is_word_start(chars[i + 1], unicode);
+        if is_word_start(c, unicode) || prefixed {
             let mut text = String::new();
+            if prefixed {
+                text.push(c);
+                i += 1;
+            }
             while i < chars.len() && is_word_char(chars[i], unicode) {
                 text.push(chars[i]);
                 i += 1;
             }
             col += text.chars().count();
+            let lowered = text.to_lowercase();
+            if lexical.keywords_case_insensitive && lexical.reserved_words.contains(&lowered) {
+                text = lowered;
+            } else if lexical.identifiers_case_insensitive {
+                text = lowered;
+            }
             tokens.push(Token::new(Kind::Word, text, line, start_col));
             continue;
         }
 
-        // Operators and punctuation: longest match from the schema.
+        // Operators and punctuation: longest match from the definition.
         let rest: String = chars[i..].iter().take(8).collect();
         match operators.iter().find(|op| rest.starts_with(*op)) {
             Some(op) => {

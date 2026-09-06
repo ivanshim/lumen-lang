@@ -38,6 +38,13 @@ impl KindValue {
     }
 }
 
+/// The words a language prints for true, false and null.
+pub struct LiteralWords<'a> {
+    pub true_word: &'a str,
+    pub false_word: &'a str,
+    pub null_word: &'a str,
+}
+
 /// A user-defined function: parameters and body, shared between the binding
 /// that names it and every call frame.
 #[derive(Debug)]
@@ -102,6 +109,22 @@ impl Value {
             Value::Array(_) => Err("Cannot coerce array to number".to_string()),
             Value::Function(_) => Err("Cannot coerce function to number".to_string()),
             Value::Kind(_) => Err("Cannot coerce kind meta-value to number".to_string()),
+        }
+    }
+
+    /// Text for a value as the language spells it: booleans and null use
+    /// the given words, arrays render their elements the same way, and
+    /// everything else renders as `Display` does.
+    pub fn render(&self, words: &LiteralWords) -> String {
+        match self {
+            Value::Bool(true) => words.true_word.to_string(),
+            Value::Bool(false) => words.false_word.to_string(),
+            Value::Null => words.null_word.to_string(),
+            Value::Array(elements) => {
+                let inner: Vec<String> = elements.iter().map(|e| e.render(words)).collect();
+                format!("[{}]", inner.join(", "))
+            }
+            other => other.to_string(),
         }
     }
 

@@ -26,12 +26,21 @@ pub fn run(source: &str, schema: &LanguageSchema, program_args: &[String]) -> Re
     seed_system_bindings(&mut env, schema, program_args);
 
     let (value, _flow) = _4_execute::execute(&program, &mut env, schema)?;
+
+    // A language with an entry function (Rust's `main`) runs it once the
+    // program body has defined it.
+    if let Some(entry) = &schema.system.entry {
+        if matches!(env.lookup(entry), Some(Value::Function(_))) {
+            let (value, _flow) = _4_execute::invoke(entry, &[], &mut env, schema)?;
+            return Ok(value);
+        }
+    }
     Ok(value)
 }
 
-/// Bind the system values the schema names: program arguments, kind
-/// meta-values and integer constants. The kernel supplies the values; the
-/// schema supplies the names.
+/// Bind the system values the definition names: program arguments, kind
+/// meta-values and the default real precision. The kernel supplies the
+/// values; the definition supplies the names.
 fn seed_system_bindings(env: &mut Environment, schema: &LanguageSchema, program_args: &[String]) {
     if let Some(name) = &schema.system.args {
         env.bind(name.clone(), Value::String(program_args.join(" ")));
@@ -48,7 +57,7 @@ fn seed_system_bindings(env: &mut Environment, schema: &LanguageSchema, program_
         };
         env.bind(name.clone(), Value::Kind(kind));
     }
-    for (name, n) in &schema.system.integer_constants {
-        env.bind(name.clone(), Value::Number(BigInt::from(*n)));
+    if let Some(name) = &schema.system.real_default_precision {
+        env.bind(name.clone(), Value::Number(BigInt::from(_4_execute::DEFAULT_REAL_PRECISION)));
     }
 }
