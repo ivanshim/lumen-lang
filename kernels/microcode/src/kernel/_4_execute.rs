@@ -51,7 +51,7 @@ pub fn execute(instr: &Instruction, env: &mut Environment, schema: &LanguageSche
             Ok((last, Flow::Normal))
         }
 
-        Instruction::Scope(inner) => env.with_scope(|env| execute(inner, env, schema)),
+        Instruction::Scope(inner) => env.in_frame(|env| execute(inner, env, schema)),
 
         Instruction::Branch { condition, then_branch, else_branch } => {
             let cond = eval!(condition, env, schema);
@@ -74,14 +74,14 @@ pub fn execute(instr: &Instruction, env: &mut Environment, schema: &LanguageSche
             match target {
                 Target::Name(name) => {
                     let v = eval!(value, env, schema);
-                    env.define(name.clone(), v.clone());
+                    env.bind(name.clone(), v.clone());
                     Ok((v, Flow::Normal))
                 }
                 Target::Index { name, index } => {
                     let idx = eval!(index, env, schema);
                     let v = eval!(value, env, schema);
                     let idx = array_index(&idx)?;
-                    let slot = env.get_mut(name).ok_or_else(|| format!("Undefined variable '{}'", name))?;
+                    let slot = env.lookup_mut(name).ok_or_else(|| format!("Undefined variable '{}'", name))?;
                     match slot {
                         Value::Array(items) => {
                             if idx >= items.len() {
@@ -139,7 +139,7 @@ pub fn execute(instr: &Instruction, env: &mut Environment, schema: &LanguageSche
 
         Instruction::Literal(value) => Ok((value.clone(), Flow::Normal)),
 
-        Instruction::Variable(name) => Ok((env.get(name)?, Flow::Normal)),
+        Instruction::Variable(name) => Ok((env.value(name)?, Flow::Normal)),
     }
 }
 
@@ -177,9 +177,9 @@ fn invoke(function: &str, args: &[Instruction], env: &mut Environment, schema: &
         }
     }
 
-    let (result, flow) = env.with_scope(|env| {
+    let (result, flow) = env.in_frame(|env| {
         for (param, value) in def.params.iter().zip(values.iter()) {
-            env.define(param.clone(), value.clone());
+            env.bind(param.clone(), value.clone());
         }
         execute(&def.body, env, schema)
     })?;
@@ -216,7 +216,7 @@ fn builtin_call(
             _ => return Err(format!("First argument to {}() must be an array variable name", name)),
         };
         let value = eval!(&args[1], env, schema);
-        return match env.get_mut(&target) {
+        return match env.lookup_mut(&target) {
             Some(Value::Array(items)) => {
                 items.push(value);
                 Ok((Value::Null, Flow::Normal))

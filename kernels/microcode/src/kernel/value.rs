@@ -41,7 +41,7 @@ impl KindValue {
 /// A user-defined function: parameters and body, shared between the binding
 /// that names it and every call frame.
 #[derive(Debug)]
-pub struct FunctionDef {
+pub struct Function {
     pub name: String,
     pub params: Vec<String>,
     pub body: Instruction,
@@ -57,7 +57,7 @@ pub enum Value {
     Null,
     Range { start: BigInt, end: BigInt },
     Array(Vec<Value>),
-    Function(Rc<FunctionDef>),
+    Function(Rc<Function>),
     Kind(KindValue),
 }
 

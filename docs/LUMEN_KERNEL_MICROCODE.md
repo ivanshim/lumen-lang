@@ -21,7 +21,7 @@ is table-driven. Schemas contain no executable logic, only data.
 
 Supporting modules: `kernel/instruction.rs` (the instruction set),
 `kernel/value.rs` (the value model), `kernel/numeric.rs` (the exact numeric
-tower), `kernel/env.rs` (scopes and the call cache), `schema.rs` (the schema
+tower), `kernel/env.rs` (a linear binding stack with frame markers, plus the call cache), `schema.rs` (the schema
 types, deserialised with serde).
 
 ## The instruction set
@@ -104,6 +104,12 @@ precedence, or which word means `null`, is a data edit with no code change.
 ## Relationship to the stream kernel
 
 The two kernels never import each other; they are separate crates that meet
-only in the host binary. The stream kernel delegates meaning to language code
+only in the host binary, and `scripts/kernel_independence.py` (run in CI)
+fails the build if either names the other or if any run of five or more
+identical source lines appears in both trees. They also solve the shared
+problems differently on purpose: comments are a text-level pass driven by
+the schema here and a token-stream transformation in the stream languages;
+bindings live in a linear frame stack here and in a stack of hash-map scopes
+there. The stream kernel delegates meaning to language code
 through handler traits; the microcode kernel takes meaning from tables. Both
 run every example in `examples/` and both are exercised by `test.sh` and CI.

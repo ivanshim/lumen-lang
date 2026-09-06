@@ -23,11 +23,6 @@ pub const SEMICOLON: &str = ";";
 // End of file
 pub const EOF: &str = "EOF";
 
-/// Remove `//` line comments (outside strings) before lexing.
-pub fn strip_comments(source: &str) -> String {
-    crate::languages::text::strip_line_comments(source, "//", &['"'])
-}
-
 // --------------------
 // Mini-RustCore-specific Parsing Helpers
 // --------------------
@@ -109,10 +104,22 @@ pub fn parse_program(parser: &mut Parser, registry: &Registry) -> LumenResult<Pr
     Ok(Program::new(statements))
 }
 
-/// Add EOF token to raw tokens (no indentation processing for mini-rust)
+/// Drop `//` comments from the token stream and append the EOF token.
+/// (No indentation processing: blocks are delimited by braces.)
 pub fn process_tokens(raw_tokens: Vec<crate::kernel::lexer::SpannedToken>) -> LumenResult<Vec<crate::kernel::lexer::SpannedToken>> {
-    let mut tokens = raw_tokens;
-    let line = tokens.last().map(|t| t.line).unwrap_or(1);
+    let line = raw_tokens.last().map(|t| t.line).unwrap_or(1);
+    let mut tokens = Vec::with_capacity(raw_tokens.len());
+    let mut in_comment = false;
+    for tok in raw_tokens {
+        if tok.tok.lexeme == "\n" {
+            in_comment = false;
+        } else if tok.tok.lexeme == "//" {
+            in_comment = true;
+        }
+        if !in_comment {
+            tokens.push(tok);
+        }
+    }
     tokens.push(crate::kernel::lexer::SpannedToken {
         tok: Token::new(EOF.to_string(), Span::new(0, 0)),
         line,

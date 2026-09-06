@@ -27,6 +27,10 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   on both kernels (infinite loops on the stream kernel from assignment
   shadowing inside loop scopes; unknown `print` on the microcode kernel).
   All 186 example runs pass.
+- **Independence**: `scripts/kernel_independence.py` in CI rejects any
+  cross-crate reference and any run of five or more identical source lines
+  between the kernels; the two kernels take deliberately different routes to
+  comment removal and binding storage.
 - **Hygiene**: zero compiler warnings and CI that denies them; GitHub Actions
   runs every example on both kernels; stale files, dead helpers and stale
   docs removed; README and kernel documents rewritten to match the code.

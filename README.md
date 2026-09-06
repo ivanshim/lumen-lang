@@ -46,8 +46,13 @@ lib_lumen/             the Lumen standard library, written in Lumen
 examples/              programs for all three languages
 ```
 
-The kernels are separate crates that do not depend on each other; the build
-system, not a convention, keeps them apart.
+The kernels are separate crates that do not depend on each other, and
+`scripts/kernel_independence.py` fails CI if either names the other or if any
+run of five or more identical source lines appears in both trees. Where both
+need the same facility they take different routes by design: comment removal
+is a token-stream transformation in the stream languages and a schema-driven
+text pass in the microcode ingest; bindings are hash-map scopes in one and a
+linear frame stack in the other.
 
 ### Stream kernel
 
