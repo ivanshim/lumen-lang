@@ -1,7 +1,7 @@
 // Microcode kernel: a data-driven execution engine.
 //
 // The kernel owns every algorithm; each language is a JSON definition in
-// `configs/` that the kernel reads as data. The four stages are:
+// `langs/` that the kernel reads as data. The four stages are:
 //
 //   1. Ingest    source text  → tokens          (kernel/_1_ingest.rs)
 //   2. Structure tokens       → block structure (kernel/_2_structure.rs)
@@ -19,10 +19,10 @@ pub use schema::LanguageSchema;
 /// Language definitions embedded at build time. Each is pure data; a
 /// definition given on the command line is read the same way.
 const CONFIGS: &[&str] = &[
-    include_str!("../../../configs/lumen.json"),
-    include_str!("../../../configs/python.json"),
-    include_str!("../../../configs/php.json"),
-    include_str!("../../../configs/rust.json"),
+    include_str!("../../../langs/lumen.json"),
+    include_str!("../../../langs/python.json"),
+    include_str!("../../../langs/php.json"),
+    include_str!("../../../langs/rust.json"),
 ];
 
 /// The embedded languages: each name with its file extensions.

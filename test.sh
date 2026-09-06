@@ -5,8 +5,7 @@
 # Usage: ./test.sh [--lang lumen|python|rust|php] [--kernel stream|microcode] [--omit file1.lm file2.lm ...]
 #        ./test.sh <file>
 # If --lang is not specified, tests all languages
-# If --kernel is not specified, tests both kernels. Only Lumen runs on the
-# stream kernel; the other languages run on the microcode kernel alone.
+# If --kernel is not specified, tests both kernels
 # If --omit is provided, those files are excluded from testing
 # If a file path is provided, runs just that file with selected kernel(s)
 
@@ -38,8 +37,7 @@ show_help() {
     echo ""
     echo -e "${BLUE}OPTIONS:${NC}"
     echo "  --lang <language>       Test only files of specified language"
-    echo "  --kernel <kernel>       Test with stream or microcode kernel only (default: both;"
-    echo "                          python, rust and php run on microcode only)"
+    echo "  --kernel <kernel>       Test with stream or microcode kernel only (default: both)"
     echo "  --omit <file> ...       Exclude specific files from testing"
     echo "  --help                  Display this help message"
     echo ""
@@ -295,19 +293,10 @@ echo "  Lumen-Lang Test Suite ($title)"
 echo "=========================================="
 echo ""
 
-# The kernels a language runs on: Lumen on both, the others on microcode only.
-kernels_for() {
-    for kernel in "${test_kernels[@]}"; do
-        if [ "$1" = "lumen" ] || [ "$kernel" = "microcode" ]; then
-            echo "$kernel"
-        fi
-    done
-}
-
 # Run single file if specified
 if [ -n "$SINGLE_FILE" ]; then
     echo -e "${YELLOW}Testing: $(basename "$SINGLE_FILE")${NC}"
-    for kernel in $(kernels_for "$language"); do
+    for kernel in "${test_kernels[@]}"; do
         run_test "$SINGLE_FILE" "$kernel" "$language"
     done
     echo ""
@@ -328,7 +317,7 @@ else
         TESTED_LANGUAGES+=("lumen")
     fi
 
-    # The other languages run on the microcode kernel only.
+    # The other languages.
     for lang in python rust php; do
         if [[ " ${test_languages[@]} " =~ " $lang " ]]; then
             case "$lang" in
@@ -340,7 +329,7 @@ else
                 if should_omit "$file"; then
                     continue
                 fi
-                for kernel in $(kernels_for "$lang"); do
+                for kernel in "${test_kernels[@]}"; do
                     run_test "$file" "$kernel" "$lang"
                 done
             done

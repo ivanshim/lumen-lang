@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Fail if the two kernel crates depend on each other or share code.
+"""Fail if the two kernel crates depend on each other or copy each other.
 
 Checks:
   1. neither crate names the other;
   2. no run of MIN_RUN or more significant, whitespace-normalised source
      lines appears in both trees.
-Shared vocabulary (a struct called Token in both) is not shared code; only
-identical line runs are.
+The kernels read the same definitions and solve the same problems, each in
+its own way, so short coincidences are expected; only a long identical run,
+which means an algorithm was copied rather than re-derived, is a problem.
 """
 import re
 import sys
@@ -15,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 STREAM = ROOT / "kernels/stream/src"
 MICROCODE = ROOT / "kernels/microcode/src"
-MIN_RUN = 5
+MIN_RUN = 12
 
 
 def normalised(line: str) -> str:

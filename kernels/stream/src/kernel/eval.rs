@@ -6,9 +6,10 @@
 use crate::kernel::ast::{Control, Program};
 use crate::kernel::runtime::env::Env;
 
-/// Execute a program statement by statement.
+/// Execute a program statement by statement and hand back the environment,
+/// so the language may act on what the program defined.
 /// `init_fn` lets the language seed the environment (system values such as ARGS).
-pub fn eval<F>(program: &Program, init_fn: F) -> Result<(), String>
+pub fn eval<F>(program: &Program, init_fn: F) -> Result<Env, String>
 where
     F: FnOnce(&mut Env) -> Result<(), String>,
 {
@@ -32,5 +33,5 @@ where
         }
     }
 
-    Ok(())
+    Ok(env)
 }

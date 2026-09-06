@@ -4,7 +4,7 @@
 
 The microcode kernel is an execution engine that owns every algorithm and
 knows no language. A language is a JSON definition of tables
-(`configs/<language>.json`); the kernel reads it and behaves accordingly.
+(`langs/<language>.json`); the kernel reads it and behaves accordingly.
 Nothing in `kernels/microcode/src/` names a keyword, an operator, a comment
 marker or a function.
 
@@ -90,11 +90,11 @@ definition supplies the names.
 ## Language definitions
 
 The format, every label and a side-by-side comparison of the languages are
-in [configs/README.md](../configs/README.md). The reader in `schema.rs` is
+in [langs/README.md](../langs/README.md). The reader in `schema.rs` is
 strict: every label must be present, every value must have the label's
 type, unknown keys are rejected, keywords must be shaped like identifiers,
 and a label the kernel does not implement must be empty. The four
-definitions are embedded at build time; `lumen-lang --config file.json`
+definitions are embedded at build time; `lumen-lang --lang file.json`
 reads one from disk instead, and the language name and file extensions the
 host uses come from the definitions themselves.
 
@@ -112,6 +112,6 @@ problems differently on purpose: comments are a text-level pass driven by
 the definition here and a token-stream transformation in the stream
 language; bindings live in a linear frame stack here and in a stack of
 hash-map scopes there. The stream kernel delegates meaning to language code
-through handler traits; the microcode kernel takes meaning from tables. The
-microcode kernel runs every language; the stream kernel hosts Lumen, and
-every Lumen example runs on both under `test.sh` and CI.
+through handler traits; the microcode kernel takes meaning from tables. Both
+read the same definitions, every example runs on both under `test.sh` and
+CI, and `scripts/kernel_diff.sh` requires their output to agree.

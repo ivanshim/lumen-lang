@@ -54,12 +54,10 @@ registry.tokens.set_word_chars(|c| c.is_alphanumeric() || c == '_');
 
 The kernel caches the multi-character lexemes in descending length order for
 maximal-munch segmentation. Which characters form a "word", for the keyword
-boundary check, is supplied by the language; the kernel has no opinion. Each
-stream language declares one flag, `IDENTIFIER_UNICODE`, and derives its
-`word_start` and `word_char` predicates from it; every identifier check in
-that language goes through those two functions, and the same flag exists as
-`identifier.unicode` in the JSON definitions so both kernels read a name
-the same way.
+boundary check, is supplied by the language; the kernel has no opinion. The
+language module derives its `word_start` and `word_char` predicates from the
+definition's `identifier.unicode` flag, and every identifier check goes
+through those two functions, so both kernels read a name the same way.
 Comments are a language concept too. The lexer emits the comment marker like
 any other byte, and each language's structure pass drops the tokens from the
 marker to the end of the line, the same pass that handles indentation or
@@ -163,7 +161,8 @@ The kernel achieves complete separation of concerns through strategic delegation
 All of the following are defined and managed by language modules, not the kernel:
 
 * **Handler traits**: `ExprPrefix`, `ExprInfix`, `StmtHandler` — each language defines its own
-* **Spelling**: every keyword, operator, bracket, literal word and builtin name comes from `configs/lumen.json`, read once by `languages/lumen/definition.rs`; handlers ask the definition whether a token spells the construct they parse
+* **The definition**: which language is hosted, and every keyword, operator, bracket, literal word, builtin name, block style and comment marker, comes from a `langs/*.json` file read once by `language/definition.rs`; handlers ask the definition whether a token spells the construct they parse, and a handler for a construct the language does not spell never matches
+* **Structure**: `language/structure/structural.rs` folds case, drops the prologue and comments, and synthesises INDENT and DEDENT tokens for an indentation language or leaves the block delimiters in place for a brace language, all as token-stream transformations
 * **Precedence**: a numeric tier per operator lexeme, read from the definition's `op.precedence` table, with associativity from `op.right_associative`
 * **Skip behavior**: Extension traits like `LumenParserExt::skip_tokens()` for whitespace handling
 * **Comment removal**: a token-stream transformation inside each language's structure pass

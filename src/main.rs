@@ -1,14 +1,15 @@
 // lumen-lang: command-line host for the two kernels.
 //
-// Usage: lumen-lang [--kernel stream|microcode] [--config <definition.json>]
-//                   <file> [--lang <language>] [program args...]
+// Usage: lumen-lang [--kernel stream|microcode] [--lang <name|definition.json>]
+//                   <file> [--lang <name|definition.json>] [program args...]
 //
-// The host reads the file, picks the language from `--lang`, from the
-// definition file, or from the file extension, prepends the embedded Lumen
-// standard library for Lumen programs, and hands the source to the selected
-// kernel. Nothing here knows how either kernel works, and the kernels never
-// see each other. Which languages exist is read from the definitions the
-// microcode kernel embeds; the stream kernel hosts Lumen only.
+// The host reads the file, picks the language from `--lang` (also spelled
+// `--language`), else from the file extension, else Lumen; prepends the
+// embedded Lumen standard library for Lumen programs; and hands the source
+// to the selected kernel. A `--lang` value naming a file on disk is read as
+// a language definition; any other value is the name of an embedded one.
+// Nothing here knows how either kernel works, and the kernels never see
+// each other.
 
 use std::collections::HashSet;
 use std::env;
@@ -28,12 +29,27 @@ mod embedded_files {
 /// The prelude manifest: a list of `include "path"` lines.
 const PRELUDE_MANIFEST: &str = include_str!("../lib_lumen/prelude.lm");
 
+/// Where a language comes from.
+enum Language {
+    /// An embedded definition, by name.
+    Named(String),
+    /// A definition read from a file on disk, with the name it declares.
+    File { name: String, text: String },
+}
+
+impl Language {
+    fn name(&self) -> &str {
+        match self {
+            Language::Named(name) => name,
+            Language::File { name, .. } => name,
+        }
+    }
+}
+
 struct Invocation {
     kernel: String,
-    /// A language definition read from a file, instead of an embedded one.
-    definition: Option<String>,
     file: String,
-    language: String,
+    language: Language,
     program_args: Vec<String>,
 }
 
@@ -47,7 +63,7 @@ fn main() {
     });
 
     // Lumen programs run on top of the embedded standard library.
-    let source = if inv.language == DEFAULT_LANGUAGE {
+    let source = if inv.language.name() == DEFAULT_LANGUAGE {
         let prelude = expand_includes(PRELUDE_MANIFEST).unwrap_or_else(|e| {
             eprintln!("Include error: {}", e);
             process::exit(1);
@@ -57,11 +73,11 @@ fn main() {
         source
     };
 
-    let result = match (inv.kernel.as_str(), &inv.definition) {
-        ("stream", None) => lumen_stream::run(&inv.language, &source, &inv.program_args),
-        ("stream", Some(_)) => Err("Error: the stream kernel hosts Lumen only and takes no --config".to_string()),
-        ("microcode", None) => lumen_microcode::run(&inv.language, &source, &inv.program_args),
-        ("microcode", Some(definition)) => lumen_microcode::run_definition(definition, &source, &inv.program_args),
+    let result = match (inv.kernel.as_str(), &inv.language) {
+        ("stream", Language::Named(name)) => lumen_stream::run(name, &source, &inv.program_args),
+        ("stream", Language::File { text, .. }) => lumen_stream::run_definition(text, &source, &inv.program_args),
+        ("microcode", Language::Named(name)) => lumen_microcode::run(name, &source, &inv.program_args),
+        ("microcode", Language::File { text, .. }) => lumen_microcode::run_definition(text, &source, &inv.program_args),
         _ => unreachable!("kernel names are validated in parse_args"),
     };
 
@@ -73,10 +89,28 @@ fn main() {
 
 fn usage(program: &str) -> ! {
     eprintln!(
-        "Usage: {} [--kernel stream|microcode] [--config <definition.json>] <file> [--lang <language>] [program args...]",
+        "Usage: {} [--kernel stream|microcode] [--lang <name|definition.json>] <file> [program args...]",
         program
     );
     process::exit(1);
+}
+
+/// Resolve a `--lang` value: a file on disk is a definition, anything else
+/// names an embedded one.
+fn language_from_flag(value: &str) -> Language {
+    if Path::new(value).is_file() {
+        let text = fs::read_to_string(value).unwrap_or_else(|e| {
+            eprintln!("Error: Failed to read {}: {}", value, e);
+            process::exit(1);
+        });
+        let name = lumen_microcode::language_of(&text).unwrap_or_else(|e| {
+            eprintln!("Error: language definition {}: {}", value, e);
+            process::exit(1);
+        });
+        Language::File { name, text }
+    } else {
+        Language::Named(value.to_lowercase())
+    }
 }
 
 fn parse_args(args: &[String]) -> Invocation {
@@ -84,10 +118,13 @@ fn parse_args(args: &[String]) -> Invocation {
     let mut rest: &[String] = &args[1..];
 
     let mut kernel = DEFAULT_KERNEL.to_string();
-    let mut definition: Option<String> = None;
+    let mut language: Option<Language> = None;
+    let mut file: Option<String> = None;
+
+    // Options may precede the file; `--lang` may also follow it directly.
     loop {
         match rest.first().map(String::as_str) {
-            Some("--kernel") => {
+            Some("--kernel") if file.is_none() => {
                 if rest.len() < 2 {
                     usage(program);
                 }
@@ -98,52 +135,31 @@ fn parse_args(args: &[String]) -> Invocation {
                 }
                 rest = &rest[2..];
             }
-            Some("--config") => {
+            Some("--lang") | Some("--language") => {
                 if rest.len() < 2 {
-                    usage(program);
-                }
-                let text = fs::read_to_string(&rest[1]).unwrap_or_else(|e| {
-                    eprintln!("Error: Failed to read {}: {}", rest[1], e);
+                    eprintln!("Error: {} requires an argument", rest[0]);
                     process::exit(1);
-                });
-                definition = Some(text);
+                }
+                language = Some(language_from_flag(&rest[1]));
                 rest = &rest[2..];
+            }
+            Some(_) if file.is_none() => {
+                file = Some(rest[0].clone());
+                rest = &rest[1..];
             }
             _ => break,
         }
     }
 
-    let file = match rest.first() {
-        Some(f) => f.clone(),
-        None => usage(program),
-    };
-    rest = &rest[1..];
+    let file = file.unwrap_or_else(|| usage(program));
+    let language = language.unwrap_or_else(|| {
+        Language::Named(language_from_extension(&file).unwrap_or_else(|| DEFAULT_LANGUAGE.to_string()))
+    });
 
-    let mut language = String::new();
-    if rest.first().map(String::as_str) == Some("--lang") {
-        match rest.get(1) {
-            Some(l) => language = l.to_lowercase(),
-            None => {
-                eprintln!("Error: --lang requires an argument");
-                process::exit(1);
-            }
-        }
-        rest = &rest[2..];
-    }
-    if language.is_empty() {
-        language = match &definition {
-            Some(text) => lumen_microcode::language_of(text).unwrap_or_else(|e| {
-                eprintln!("Error: language definition: {}", e);
-                process::exit(1);
-            }),
-            None => language_from_extension(&file).unwrap_or_else(|| DEFAULT_LANGUAGE.to_string()),
-        };
-    }
-
-    Invocation { kernel, definition, file, language, program_args: rest.to_vec() }
+    Invocation { kernel, file, language, program_args: rest.to_vec() }
 }
 
-/// The language whose definition claims the file's extension.
+/// The language whose embedded definition claims the file's extension.
 fn language_from_extension(file: &str) -> Option<String> {
     let ext = Path::new(file).extension()?.to_str()?;
     let languages = lumen_microcode::languages().unwrap_or_else(|e| {

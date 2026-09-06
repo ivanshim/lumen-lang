@@ -34,12 +34,14 @@ cargo run -- --kernel stream examples/lumen/pi_machin.lm
 cargo run -- --kernel microcode examples/lumen/pi_machin.lm
 
 # Run under a language definition read from disk
-cargo run -- --config configs/php.json examples/php/loop.php
+cargo run -- --lang langs/php.json examples/php/loop.php
 ```
 
-The language is picked from the file extension (`.lm`, `.py`, `.php`, `.rs`)
-or with `--lang lumen|python|php|rust`; each definition in `configs/` names
-its own extensions. Arguments after the file are passed to the program.
+The language is picked with `--lang` (or `--language`), which takes the name
+of an embedded definition or the path of a definition file; without the
+flag it comes from the file extension (`.lm`, `.py`, `.php`, `.rs`), which
+each definition in `langs/` declares for itself, and Lumen is the default.
+Arguments after the file are passed to the program.
 
 ## Two kernels, one host
 
@@ -48,7 +50,7 @@ src/main.rs            the host: arguments, language detection, the embedded
                        Lumen standard library; the only place both kernels exist
 kernels/stream/        crate lumen-stream: a tree-walking interpreter substrate
 kernels/microcode/     crate lumen-microcode: a table-driven execution engine
-configs/               language definitions as JSON, one file per language,
+langs/               language definitions as JSON, one file per language,
                        with a generated side-by-side comparison; both kernels
                        read them
 lib_lumen/             the Lumen standard library, written in Lumen
@@ -68,30 +70,32 @@ linear frame stack in the other.
 A meta-language runtime. The kernel provides a lossless maximal-munch lexer,
 a token registry, parser navigation, AST node traits, an execution loop and a
 scoped environment. It knows no keyword, comment syntax, precedence, value
-type or runtime policy. The Lumen module gives each construct its meaning in
-code, and takes every keyword, operator, bracket and builtin name from
-`configs/lumen.json`, so a change to Lumen's spelling reaches both kernels
-from one file. See [docs/LUMEN_KERNEL_STREAM.md](docs/LUMEN_KERNEL_STREAM.md).
+type or runtime policy. The language module gives each construct its meaning
+in code, and reads the definition for everything else: which keyword,
+operator, bracket and builtin name spells each construct, whether blocks are
+indented or braced, what a comment or a variable looks like. The same four
+definitions run here as on the microcode kernel, by a different method. See
+[docs/LUMEN_KERNEL_STREAM.md](docs/LUMEN_KERNEL_STREAM.md).
 
 ### Microcode kernel
 
 A four-stage pipeline (ingest → structure → reduce → execute) that reads a
-language as data. Each language is a JSON definition in `configs/` mapping a
+language as data. Each language is a JSON definition in `langs/` mapping a
 fixed set of labels to spellings: lexemes, block rules, literal words,
 operator precedence mapped onto kernel operations, statement keywords mapped
 onto statement forms, the surface names of built-ins, and the names of
 system bindings. The kernel reduces every construct to seven primitives and
 executes them. See [docs/LUMEN_KERNEL_MICROCODE.md](docs/LUMEN_KERNEL_MICROCODE.md)
-and [configs/README.md](configs/README.md).
+and [langs/README.md](langs/README.md).
 
 ## Languages
 
 | Language | Extension | Style | Stream | Microcode |
 |----------|-----------|-------|--------|-----------|
 | Lumen | `.lm` | Python-style indentation, exact numbers, pipe operator | yes | yes |
-| Python | `.py` | indentation with `:`, `elif`, `def`, `range()` | no | yes |
-| PHP | `.php` | braces, `$variables`, `<?php`, case-insensitive keywords | no | yes |
-| Rust | `.rs` | braces, `let mut`, `fn main()`, `println!("{}", x)` | no | yes |
+| Python | `.py` | indentation with `:`, `elif`, `def`, `range()` | yes | yes |
+| PHP | `.php` | braces, `$variables`, `<?php`, case-insensitive keywords | yes | yes |
+| Rust | `.rs` | braces, `let mut`, `fn main()`, `println!("{}", x)` | yes | yes |
 
 Python, PHP and Rust are subsets of those languages spelled exactly as the
 languages spell them, running on Lumen's semantics: exact rationals, one
@@ -104,12 +108,11 @@ loops, a pipe operator, base-N literals, and a standard library in
 `lib_lumen/` built on a handful of kernel built-ins. Its design principles are
 in [docs/LUMEN_LANGUAGE_DESIGN.md](docs/LUMEN_LANGUAGE_DESIGN.md), and every
 label of its definition is compared with the other languages in
-[configs/README.md](configs/README.md).
+[langs/README.md](langs/README.md).
 
 ## Testing
 
-Every Lumen example runs on both kernels; the other languages run on the
-microcode kernel:
+Every example runs on both kernels:
 
 ```bash
 ./test.sh --lang all          # everything
@@ -120,6 +123,12 @@ microcode kernel:
 ./test.sh --help
 ```
 
+`scripts/kernel_diff.sh` goes further and requires the two kernels to print
+the same thing for every program. Fourteen Lumen programs still differ, in
+the extern capabilities, rational quotient, rounding and real subtraction;
+those are the semantic gaps between the two implementations that the
+differential test exists to find.
+
 The same command runs in GitHub Actions on every push, with warnings treated
 as errors. `TEST_QUIET=1` prints program output only for failures.
 
@@ -127,7 +136,7 @@ as errors. `TEST_QUIET=1` prints program output only for failures.
 
 - [docs/LUMEN_KERNEL_STREAM.md](docs/LUMEN_KERNEL_STREAM.md) — stream kernel charter
 - [docs/LUMEN_KERNEL_MICROCODE.md](docs/LUMEN_KERNEL_MICROCODE.md) — microcode kernel and how it reads a definition
-- [configs/README.md](configs/README.md) — the definition format, every label, and the languages side by side
+- [langs/README.md](langs/README.md) — the definition format, every label, and the languages side by side
 - [docs/LUMEN_LANGUAGE_DESIGN.md](docs/LUMEN_LANGUAGE_DESIGN.md) — design principles
 - [docs/LUMEN_COMPACT_REFERENCE.md](docs/LUMEN_COMPACT_REFERENCE.md) — Lumen quick reference
 - [docs/LUMEN_LANGUAGE_EXTERN_SYSTEM.md](docs/LUMEN_LANGUAGE_EXTERN_SYSTEM.md) — external function design

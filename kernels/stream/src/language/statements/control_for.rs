@@ -1,0 +1,116 @@
+// src/stmt/for_loop.rs
+//
+// for <identifier> in <iterable>
+//     <block>
+//
+// Iterates over iterable (range or collection).
+// Desugars into: iterator initialization + while loop
+
+use crate::language::prelude::*;
+use crate::kernel::ast::{Control, ExprNode, StmtNode};
+use crate::kernel::parser::Parser;
+use crate::kernel::runtime::Env;
+use crate::language::structure::structural;
+use crate::language::expressions::range_expr::as_range;
+use crate::language::values::LumenNumber;
+use num_bigint::BigInt;
+
+#[derive(Debug)]
+struct ForStmt {
+    var: String,
+    iterable: Box<dyn ExprNode>,
+    body: Vec<Box<dyn StmtNode>>,
+}
+
+impl StmtNode for ForStmt {
+    fn exec(&self, env: &mut Env) -> LumenResult<Control> {
+        // Evaluate the iterable expression
+        let iterable_val = self.iterable.eval(env)?;
+
+        // Handle range iteration
+        let range = as_range(iterable_val.as_ref())?;
+
+        let mut current = range.start.clone();
+        while current < range.end {
+            // Set loop variable to current value
+            env.assign(&self.var, Box::new(LumenNumber::new(current.clone())))?;
+
+            // Execute loop body in same scope (matches Microcode kernel)
+            let mut break_occurred = false;
+            for stmt in &self.body {
+                match stmt.exec(env)? {
+                    Control::Break => {
+                        break_occurred = true;
+                        break;
+                    }
+                    Control::Continue => break,
+                    Control::ExprValue(_) => {
+                        // Expression statement value - continue loop
+                    }
+                    Control::Return(val) => {
+                        return Ok(Control::Return(val));
+                    }
+                    Control::None => {}
+                }
+            }
+            if break_occurred {
+                return Ok(Control::None);
+            }
+
+            current += BigInt::from(1);
+        }
+
+        Ok(Control::None)
+    }
+}
+
+pub struct ForStmtHandler;
+
+impl StmtHandler for ForStmtHandler {
+    fn matches(&self, parser: &Parser) -> bool {
+        def().is("stmt.for", &parser.peek().lexeme)
+    }
+
+    fn parse(
+        &self,
+        parser: &mut Parser,
+        registry: &super::super::registry::Registry,
+    ) -> LumenResult<Box<dyn StmtNode>> {
+        parser.advance(); // consume 'for'
+        parser.skip_tokens();
+
+        // Parse loop variable name
+        let var_name = parser
+            .take_identifier()
+            .ok_or_else(|| err_at(parser, "Expected a loop variable"))?;
+        parser.skip_tokens();
+
+        // Expect the in-keyword
+        if !def().is("stmt.for.in", &parser.peek().lexeme) {
+            return Err(format!("Expected '{}' after for loop variable", def().first("stmt.for.in")));
+        }
+        parser.advance();
+        parser.skip_tokens();
+
+        // Parse iterable expression
+        let iterable = parser.parse_expr(registry)?;
+        parser.skip_tokens();
+
+        // Parse indented body
+        let body = structural::parse_block(parser, registry)?;
+
+        Ok(Box::new(ForStmt {
+            var: var_name,
+            iterable,
+            body,
+        }))
+    }
+}
+
+// --------------------
+// Registration
+// --------------------
+
+pub fn register(reg: &mut Registry) {
+    reg.register_stmt(Box::new(ForStmtHandler));
+}

@@ -8,17 +8,17 @@ Generated from the tree; regenerate with:
 lumen-lang/
   Cargo.toml                       workspace + host package
   src/main.rs                      command-line host (the only place both kernels meet)
-  test.sh, test_e.sh, test_pi.sh   test drivers (test.sh runs every Lumen example on both kernels, the other languages on microcode)
+  test.sh, test_e.sh, test_pi.sh   test drivers (test.sh runs every example on both kernels)
   .github/workflows/ci.yml         GitHub Actions: kernel independence, build with -D warnings, run test.sh
 
-  configs/                         language definitions as JSON, one per language, plus a comparison table
-    configs/README.md
-    configs/lumen.json
-    configs/php.json
-    configs/python.json
-    configs/rust.json
+  langs/                           language definitions as JSON, one per language, plus a comparison table
+    langs/README.md
+    langs/lumen.json
+    langs/php.json
+    langs/python.json
+    langs/rust.json
 
-  kernels/stream/                  crate lumen-stream (hosts Lumen; spelling from configs/lumen.json)
+  kernels/stream/                  crate lumen-stream (handlers in code, shaped by a definition)
     kernels/stream/Cargo.toml
     kernels/stream/src/kernel/ast.rs
     kernels/stream/src/kernel/eval.rs
@@ -29,56 +29,56 @@ lumen-lang/
     kernels/stream/src/kernel/runtime/env.rs
     kernels/stream/src/kernel/runtime/mod.rs
     kernels/stream/src/kernel/runtime/value.rs
-    kernels/stream/src/languages/lumen/definition.rs
-    kernels/stream/src/languages/lumen/expressions/arithmetic.rs
-    kernels/stream/src/languages/lumen/expressions/array_index.rs
-    kernels/stream/src/languages/lumen/expressions/array_literal.rs
-    kernels/stream/src/languages/lumen/expressions/calls.rs
-    kernels/stream/src/languages/lumen/expressions/comparison.rs
-    kernels/stream/src/languages/lumen/expressions/extern_expr.rs
-    kernels/stream/src/languages/lumen/expressions/grouping.rs
-    kernels/stream/src/languages/lumen/expressions/literals.rs
-    kernels/stream/src/languages/lumen/expressions/logic.rs
-    kernels/stream/src/languages/lumen/expressions/mod.rs
-    kernels/stream/src/languages/lumen/expressions/pipe.rs
-    kernels/stream/src/languages/lumen/expressions/range_expr.rs
-    kernels/stream/src/languages/lumen/expressions/variable.rs
-    kernels/stream/src/languages/lumen/extern_system/capabilities.rs
-    kernels/stream/src/languages/lumen/extern_system/mod.rs
-    kernels/stream/src/languages/lumen/extern_system/registry.rs
-    kernels/stream/src/languages/lumen/extern_system/selector.rs
-    kernels/stream/src/languages/lumen/memo.rs
-    kernels/stream/src/languages/lumen/mod.rs
-    kernels/stream/src/languages/lumen/numeric.rs
-    kernels/stream/src/languages/lumen/prelude.rs
-    kernels/stream/src/languages/lumen/registry/mod.rs
-    kernels/stream/src/languages/lumen/registry/precedence.rs
-    kernels/stream/src/languages/lumen/registry/traits.rs
-    kernels/stream/src/languages/lumen/src_lumen.rs
-    kernels/stream/src/languages/lumen/statements/array_assign.rs
-    kernels/stream/src/languages/lumen/statements/assignment.rs
-    kernels/stream/src/languages/lumen/statements/control_for.rs
-    kernels/stream/src/languages/lumen/statements/control_if_else.rs
-    kernels/stream/src/languages/lumen/statements/control_until.rs
-    kernels/stream/src/languages/lumen/statements/control_while.rs
-    kernels/stream/src/languages/lumen/statements/expr_stmt.rs
-    kernels/stream/src/languages/lumen/statements/flow_break.rs
-    kernels/stream/src/languages/lumen/statements/flow_continue.rs
-    kernels/stream/src/languages/lumen/statements/function_emit.rs
-    kernels/stream/src/languages/lumen/statements/functions.rs
-    kernels/stream/src/languages/lumen/statements/let_binding.rs
-    kernels/stream/src/languages/lumen/statements/let_mut_binding.rs
-    kernels/stream/src/languages/lumen/statements/mod.rs
-    kernels/stream/src/languages/lumen/statements/push_stmt.rs
-    kernels/stream/src/languages/lumen/statements/return_stmt.rs
-    kernels/stream/src/languages/lumen/statements/system_memoization.rs
-    kernels/stream/src/languages/lumen/structure/mod.rs
-    kernels/stream/src/languages/lumen/structure/structural.rs
-    kernels/stream/src/languages/lumen/values.rs
-    kernels/stream/src/languages/mod.rs
+    kernels/stream/src/language/definition.rs
+    kernels/stream/src/language/dispatcher.rs
+    kernels/stream/src/language/expressions/arithmetic.rs
+    kernels/stream/src/language/expressions/array_index.rs
+    kernels/stream/src/language/expressions/array_literal.rs
+    kernels/stream/src/language/expressions/calls.rs
+    kernels/stream/src/language/expressions/comparison.rs
+    kernels/stream/src/language/expressions/extern_expr.rs
+    kernels/stream/src/language/expressions/grouping.rs
+    kernels/stream/src/language/expressions/literals.rs
+    kernels/stream/src/language/expressions/logic.rs
+    kernels/stream/src/language/expressions/mod.rs
+    kernels/stream/src/language/expressions/pipe.rs
+    kernels/stream/src/language/expressions/range_expr.rs
+    kernels/stream/src/language/expressions/variable.rs
+    kernels/stream/src/language/extern_system/capabilities.rs
+    kernels/stream/src/language/extern_system/mod.rs
+    kernels/stream/src/language/extern_system/registry.rs
+    kernels/stream/src/language/extern_system/selector.rs
+    kernels/stream/src/language/memo.rs
+    kernels/stream/src/language/mod.rs
+    kernels/stream/src/language/numeric.rs
+    kernels/stream/src/language/prelude.rs
+    kernels/stream/src/language/registry/mod.rs
+    kernels/stream/src/language/registry/precedence.rs
+    kernels/stream/src/language/registry/traits.rs
+    kernels/stream/src/language/statements/array_assign.rs
+    kernels/stream/src/language/statements/assignment.rs
+    kernels/stream/src/language/statements/control_for.rs
+    kernels/stream/src/language/statements/control_if_else.rs
+    kernels/stream/src/language/statements/control_until.rs
+    kernels/stream/src/language/statements/control_while.rs
+    kernels/stream/src/language/statements/expr_stmt.rs
+    kernels/stream/src/language/statements/flow_break.rs
+    kernels/stream/src/language/statements/flow_continue.rs
+    kernels/stream/src/language/statements/function_emit.rs
+    kernels/stream/src/language/statements/functions.rs
+    kernels/stream/src/language/statements/let_binding.rs
+    kernels/stream/src/language/statements/let_mut_binding.rs
+    kernels/stream/src/language/statements/mod.rs
+    kernels/stream/src/language/statements/pass_stmt.rs
+    kernels/stream/src/language/statements/push_stmt.rs
+    kernels/stream/src/language/statements/return_stmt.rs
+    kernels/stream/src/language/statements/system_memoization.rs
+    kernels/stream/src/language/structure/mod.rs
+    kernels/stream/src/language/structure/structural.rs
+    kernels/stream/src/language/values.rs
     kernels/stream/src/lib.rs
 
-  kernels/microcode/               crate lumen-microcode (reads every definition)
+  kernels/microcode/               crate lumen-microcode (tables and an instruction tree, from a definition)
     kernels/microcode/Cargo.toml
     kernels/microcode/src/kernel/_1_ingest.rs
     kernels/microcode/src/kernel/_2_structure.rs
@@ -112,9 +112,10 @@ lumen-lang/
     lib_lumen/string_to_value.lm
     lib_lumen/value_to_string.lm
 
-  scripts/                         CI checks and generators
-    scripts/config_table.py
+  scripts/                         CI checks, the table generator, the differential test
+    scripts/kernel_diff.sh
     scripts/kernel_independence.py
+    scripts/lang_table.py
 
   examples/                        100 programs: lumen/ (+constructs/, libraries/), python/, rust/, php/
   docs/                            design documents, references, history
