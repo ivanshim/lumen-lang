@@ -10,10 +10,10 @@ Each entry is intentionally self-contained so that it remains meaningful even if
 **Change:** Languages defined as data; both kernels read the definitions
 
 ### What was done:
-- **Definitions**: `configs/<language>.json` is the definition of a
+- **Definitions**: `langs/<language>.json` is the definition of a
   language's surface: a fixed set of labels, each mapped to the strings the
   language spells it with. Lexeme labels take alias lists, settings take
-  scalars, precedence is a list of tiers. `configs/README.md` states the
+  scalars, precedence is a list of tiers. `langs/README.md` states the
   format rules and carries a generated table comparing every label across
   Lumen, Python, PHP and Rust.
 - **Microcode kernel**: reads the definitions instead of YAML schemas, with a
@@ -23,13 +23,18 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   rules, case-folded keywords, builtin names ending in an operator character
   (`println!`), parameter and return-type annotations, a `range` builtin, an
   entry function, and value rendering with each language's literal words.
-- **Stream kernel**: hosts Lumen only and takes every keyword, operator,
-  bracket, literal word and builtin name from `lumen.json`; the Python-like
-  and Rust-like modules are removed. Both kernels read one identifier
-  character class.
+- **Stream kernel**: reads the same definitions by its own method. One
+  language module, `kernels/stream/src/language/`, registers handlers for
+  the constructs a definition spells and transforms the token stream by its
+  block style, comment markers, prologue, variable prefix and case rules;
+  the Python-like and Rust-like modules are removed. Both kernels read one
+  identifier character class.
+- **Host**: `--lang` (or `--language`) takes an embedded name or a
+  definition file; the file extension decides otherwise, and Lumen is the
+  default. Definitions live in `langs/`.
 - **Languages**: the Python and Rust examples are written as Python and
-  Rust, and PHP examples are added; all three run on the microcode kernel
-  and every Lumen example runs on both.
+  Rust, and PHP examples are added; every example runs on both kernels, and
+  `scripts/kernel_diff.sh` compares their output program by program.
 - **Removed**: `yaml/`, `grammar/`, the BNF document and the language
   comparison document, all superseded by the definitions and their table.
 

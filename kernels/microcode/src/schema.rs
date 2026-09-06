@@ -1,6 +1,6 @@
 // Language definition: the data that turns the kernel into a language.
 //
-// A definition is one flat JSON object (configs/<language>.json) mapping a
+// A definition is one flat JSON object (langs/<language>.json) mapping a
 // fixed set of labels, the things the kernel can do, to the strings the
 // language spells them with. This module reads that object strictly: every
 // label present, every value of the right type, no unknown keys, and every
