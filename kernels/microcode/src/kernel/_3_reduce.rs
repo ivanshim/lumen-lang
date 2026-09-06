@@ -227,6 +227,9 @@ impl<'a> Parser<'a> {
     fn binding(&mut self) -> Result<Instruction, String> {
         let schema: &'a LanguageSchema = self.schema;
         let binding = schema.statements.binding.as_ref().expect("binding form present");
+        if binding.type_first {
+            return self.typed_declaration();
+        }
         self.advance(); // keyword
         if self.peek().kind == Kind::Word && spelled(&binding.mutable_modifier, &self.peek().text) {
             self.advance();
@@ -243,6 +246,25 @@ impl<'a> Parser<'a> {
             return Ok(Instruction::assign(name, Instruction::Literal(Value::Null)));
         }
         self.expect_assignment("in a binding")?;
+        let value = self.expression(0.0)?;
+        Ok(Instruction::assign(name, value))
+    }
+
+    /// With `stmt.let.type_first` the keyword is the type (C's `int`): the
+    /// call bracket after the name makes a function definition, the end of
+    /// the statement a null binding, and otherwise a value is assigned.
+    fn typed_declaration(&mut self) -> Result<Instruction, String> {
+        self.advance(); // the type
+        let name = self.expect_word("after the type")?;
+        if let Some(call) = self.schema.structure.call.clone() {
+            if self.is_op(&call.open) {
+                return self.function_rest(name);
+            }
+        }
+        if self.is_terminator() || self.at_end() {
+            return Ok(Instruction::assign(name, Instruction::Literal(Value::Null)));
+        }
+        self.expect_assignment("in a declaration")?;
         let value = self.expression(0.0)?;
         Ok(Instruction::assign(name, value))
     }
@@ -395,19 +417,38 @@ impl<'a> Parser<'a> {
 
     /// A function definition becomes a binding of a function value.
     fn function_def(&mut self) -> Result<Instruction, String> {
-        let schema: &'a LanguageSchema = self.schema;
         self.advance();
         let name = self.expect_word("after the function keyword")?;
+        self.function_rest(name)
+    }
+
+    /// From the parameter list on: `( params ) [returns type] block`. A
+    /// parameter is a name with an optional annotation or, with
+    /// `stmt.let.type_first`, a type word and a name, where a type word
+    /// alone (C's `void`) declares nothing.
+    fn function_rest(&mut self, name: String) -> Result<Instruction, String> {
+        let schema: &'a LanguageSchema = self.schema;
         let call = self.schema.structure.call.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
         self.expect_op(&call.open, "after function name")?;
-        let annotation: &[String] =
-            schema.statements.binding.as_ref().map_or(&[], |b| b.type_annotation.as_slice());
+        let binding = schema.statements.binding.as_ref();
+        let annotation: &[String] = binding.map_or(&[], |b| b.type_annotation.as_slice());
+        let type_first = binding.map_or(false, |b| b.type_first);
         let mut params = Vec::new();
         while !self.is_op(&call.close) && !self.at_end() {
-            params.push(self.expect_word("as a parameter name")?);
-            if self.peek().kind == Kind::Op && spelled(annotation, &self.peek().text) {
-                self.advance();
-                self.expect_word("as a type name")?;
+            if type_first {
+                let type_word = self.expect_word("as a parameter type")?;
+                if !binding.map_or(false, |b| spelled(&b.keyword, &type_word)) {
+                    return Err(format!("'{}' is not a type word", type_word));
+                }
+                if self.peek().kind == Kind::Word {
+                    params.push(self.advance().text);
+                }
+            } else {
+                params.push(self.expect_word("as a parameter name")?);
+                if self.peek().kind == Kind::Op && spelled(annotation, &self.peek().text) {
+                    self.advance();
+                    self.expect_word("as a type name")?;
+                }
             }
             if let Some(sep) = &call.separator {
                 if self.is_op(sep) {
@@ -517,18 +558,12 @@ impl<'a> Parser<'a> {
                     Instruction::Literal(Value::Null)
                 } else {
                     self.advance();
-                    let mut name = tok.text;
-                    if self.peek().kind == Kind::Op {
-                        let joined = format!("{}{}", name, self.peek().text);
-                        if schema.functions.contains_key(&joined) {
-                            self.advance();
-                            name = joined;
-                        }
-                    }
+                    // A compound builtin name (println!, console.log) is one token.
+                    let name = tok.text;
                     match structure.call.clone() {
                         Some(call) if self.is_op(&call.open) => {
                             self.advance();
-                            let args = self.list(&call.close, call.separator.as_deref())?;
+                            let args = self.list(&call.close, call.separator.as_deref(), &structure.call_labels)?;
                             Instruction::Invoke { function: name, args }
                         }
                         _ => Instruction::Variable(name),
@@ -547,7 +582,7 @@ impl<'a> Parser<'a> {
                 if let Some(array) = structure.array.clone() {
                     if tok.text == array.open {
                         self.advance();
-                        let elements = self.list(&array.close, array.separator.as_deref())?;
+                        let elements = self.list(&array.close, array.separator.as_deref(), &[])?;
                         return self.postfix(Instruction::Operate { op: Op::ArrayLiteral, operands: elements });
                     }
                 }
@@ -575,12 +610,20 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
-    /// Comma-separated expressions up to `close`, which is consumed.
-    fn list(&mut self, close: &str, separator: Option<&str>) -> Result<Vec<Instruction>, String> {
+    /// Comma-separated expressions up to `close`, which is consumed. An
+    /// item may carry an argument label (Swift's `f(n: 1)`), a word followed
+    /// by one of `labels`; arguments pass by position, so it is dropped.
+    fn list(&mut self, close: &str, separator: Option<&str>, labels: &[String]) -> Result<Vec<Instruction>, String> {
         let mut items = Vec::new();
         while !self.is_op(close) {
             if self.at_end() {
                 return Err(format!("Expected '{}'", close));
+            }
+            let labelled = self.peek().kind == Kind::Word
+                && self.peek_at(1).kind == Kind::Op
+                && spelled(labels, &self.peek_at(1).text);
+            if labelled {
+                self.pos += 2;
             }
             items.push(self.expression(0.0)?);
             match separator {

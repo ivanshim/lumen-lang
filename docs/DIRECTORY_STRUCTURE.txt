@@ -16,10 +16,13 @@ lumen-lang/
     langs/lumen.json                 built in (embedded at build time)
     langs/python.json                built in
     langs/rust.json                  built in
-    langs/extra/lua.json             read from disk at run time with --lang <path>
-    langs/extra/pascal.json
-    langs/extra/php.json
-    langs/extra/ruby.json
+    langs/extras/c.json              read from disk at run time with --lang <path>
+    langs/extras/javascript.json
+    langs/extras/lua.json
+    langs/extras/pascal.json
+    langs/extras/php.json
+    langs/extras/ruby.json
+    langs/extras/swift.json
 
   kernels/stream/                  crate lumen-stream (handlers in code, shaped by a definition)
     kernels/stream/Cargo.toml
@@ -121,7 +124,7 @@ lumen-lang/
     scripts/kernel_independence.py
     scripts/lang_table.py
 
-  examples/                        109 programs: lumen/ (+constructs/, libraries/), python/, rust/, php/, ruby/, lua/, pascal/
+  examples/                        118 programs: lumen/ (+constructs/, libraries/), python/, rust/, php/, ruby/, lua/, pascal/, c/, javascript/, swift/
   docs/                            design documents, references, history
     docs/DIRECTORY_STRUCTURE.txt
     docs/LUMEN_COMPACT_REFERENCE.md

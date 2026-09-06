@@ -146,7 +146,8 @@ impl Value {
             rem -= &digit * denominator;
             frac_digits -= 1;
         }
-        format!("{}.{}", int_part, decimal)
+        let sign = if numerator < &BigInt::from(0) && int_part == BigInt::from(0) { "-" } else { "" };
+        format!("{}{}.{}", sign, int_part, decimal)
     }
 }
 

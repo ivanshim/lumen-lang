@@ -123,23 +123,32 @@ fn call_builtin(name: &str, values: Vec<Value>) -> LumenResult<Value> {
 }
 
 /// Text for print and write: the values joined by spaces, or, when the
-/// first value is a string holding `{}` placeholders and more values
-/// follow, that string with each placeholder filled in order.
+/// first value is a string holding placeholders (`builtin.print.placeholder`:
+/// Rust's `{}`, C's `%d`) and more values follow, that string with each
+/// placeholder filled in order.
 fn render(values: &[Value]) -> String {
     use crate::language::values::as_string;
+    let placeholders = def().list("builtin.print.placeholder");
+    // The earliest placeholder in a piece of the template, with its width.
+    let next_hole = |s: &str| {
+        placeholders
+            .iter()
+            .filter_map(|p| s.find(p.as_str()).map(|at| (at, p.len())))
+            .min()
+    };
     if values.len() > 1 {
         if let Ok(template) = as_string(values[0].as_ref()) {
-            if template.value.contains("{}") {
+            if next_hole(&template.value).is_some() {
                 let mut out = String::new();
                 let mut rest = values[1..].iter();
                 let mut s = template.value.as_str();
-                while let Some(pos) = s.find("{}") {
-                    out.push_str(&s[..pos]);
+                while let Some((at, width)) = next_hole(s) {
+                    out.push_str(&s[..at]);
                     match rest.next() {
                         Some(v) => out.push_str(&v.as_display_string()),
-                        None => out.push_str("{}"),
+                        None => out.push_str(&s[at..at + width]),
                     }
-                    s = &s[pos + 2..];
+                    s = &s[at + width..];
                 }
                 out.push_str(s);
                 return out;
@@ -211,14 +220,8 @@ impl ExprPrefix for VariablePrefix {
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
-        let mut name = parser.take_identifier().ok_or_else(|| err_at(parser, "Expected identifier"))?;
-
-        // A builtin name may end in one operator character (Rust's println!)
-        let joined = format!("{}{}", name, parser.peek().lexeme);
-        if parser.peek().lexeme.chars().count() == 1 && def().is_builtin(&joined) {
-            parser.advance();
-            name = joined;
-        }
+        // A compound builtin name (println!, console.log) arrives as one token.
+        let name = parser.take_identifier().ok_or_else(|| err_at(parser, "Expected identifier"))?;
 
         // A call is a name followed by the call bracket
         parser.skip_tokens();

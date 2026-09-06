@@ -230,10 +230,12 @@ fn fold_case(tokens: Vec<SpannedToken>) -> Vec<SpannedToken> {
 ///
 /// Comments are dropped from the marker to the end of the line, or from a
 /// block opener to its closer, outside strings. Whitespace is dropped
-/// outside strings. For an indentation language, INDENT and DEDENT tokens
-/// are synthesised from indentation changes at bracket depth zero and each
-/// line ends with NEWLINE; for a brace language the block delimiters stay
-/// as they are and line ends are insignificant, so no NEWLINE is emitted.
+/// outside strings. Each line ends with NEWLINE, which separates statements
+/// in every block style (Swift writes no semicolons), except inside array
+/// brackets and parentheses, where line ends are whitespace. For an
+/// indentation language, INDENT and DEDENT tokens are synthesised from
+/// indentation changes at bracket depth zero; for the other styles the
+/// block delimiters stay as they are.
 pub fn process(source: &str, raw_tokens: Vec<SpannedToken>) -> LumenResult<Vec<SpannedToken>> {
     let d = def();
     let raw_tokens = fold_case(raw_tokens);
@@ -248,7 +250,13 @@ pub fn process(source: &str, raw_tokens: Vec<SpannedToken>) -> LumenResult<Vec<S
     let mut out = Vec::new();
     let mut indents = vec![0usize];
     let mut line_no = 1usize;
-    let mut bracket_depth_global = 0i32; // array brackets suspend line structure
+    let mut bracket_depth_global = 0i32; // brackets and parentheses suspend line structure
+    let opens_bracket = |lexeme: &str| {
+        d.is("syntax.array.open", lexeme) || d.is("syntax.group.open", lexeme) || d.is("syntax.call.open", lexeme)
+    };
+    let closes_bracket = |lexeme: &str| {
+        d.is("syntax.array.close", lexeme) || d.is("syntax.group.close", lexeme) || d.is("syntax.call.close", lexeme)
+    };
     // Which comment pair is open, if any; its closer ends it.
     let mut in_block_comment: Option<usize> = None;
     let mut seen_code = false;
@@ -337,11 +345,11 @@ pub fn process(source: &str, raw_tokens: Vec<SpannedToken>) -> LumenResult<Vec<S
                 continue;
             }
 
-            if d.is("syntax.array.open", lexeme) {
+            if opens_bracket(lexeme) {
                 bracket_depth_line += 1;
                 bracket_depth_global += 1;
                 out.push(raw_tok.clone());
-            } else if d.is("syntax.array.close", lexeme) {
+            } else if closes_bracket(lexeme) {
                 bracket_depth_line -= 1;
                 bracket_depth_global -= 1;
                 out.push(raw_tok.clone());
@@ -349,7 +357,7 @@ pub fn process(source: &str, raw_tokens: Vec<SpannedToken>) -> LumenResult<Vec<S
                 in_string = one;
                 out.push(raw_tok.clone());
             } else if bracket_depth_line > 0 {
-                // Inside an array literal: line ends are whitespace
+                // Inside brackets: line ends are whitespace
                 if one == Some('\n') || one == Some('\r') {
                     continue;
                 }
@@ -363,10 +371,8 @@ pub fn process(source: &str, raw_tokens: Vec<SpannedToken>) -> LumenResult<Vec<S
             }
         }
 
-        // Indentation and keyword languages end each line with NEWLINE,
-        // outside arrays; a brace language treats line ends as whitespace.
-        let line_ends_matter = d.block_style != BlockStyle::Braces;
-        if line_ends_matter && bracket_depth_global == 0 && in_block_comment.is_none() {
+        // Every line ends with NEWLINE, outside brackets and block comments.
+        if bracket_depth_global == 0 && in_block_comment.is_none() {
             out.push(synthetic(NEWLINE, line_no, spaces + rest.len() + 1));
         }
 

@@ -38,7 +38,7 @@ const LABELS: &[&str] = &[
     "identifier.unicode", "identifier.variable_prefix", "identifier.case_insensitive",
     "block.style", "block.open", "block.close", "block.intro", "block.indent_size", "stmt.terminator",
     "syntax.group.open", "syntax.group.close",
-    "syntax.call.open", "syntax.call.separator", "syntax.call.close",
+    "syntax.call.open", "syntax.call.separator", "syntax.call.close", "syntax.call.label",
     "syntax.array.open", "syntax.array.separator", "syntax.array.close",
     "syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close",
     "literal.true", "literal.false", "literal.null",
@@ -47,12 +47,12 @@ const LABELS: &[&str] = &[
     "op.eq", "op.ne", "op.lt", "op.le", "op.gt", "op.ge",
     "op.and", "op.or", "op.not", "op.negate",
     "op.concat", "op.range", "op.index.open", "op.index.close", "op.pipe",
-    "stmt.assign", "stmt.let", "stmt.let.mutable", "stmt.let.annotation",
+    "stmt.assign", "stmt.let", "stmt.let.mutable", "stmt.let.annotation", "stmt.let.type_first",
     "stmt.if", "stmt.elif", "stmt.else", "stmt.while", "stmt.until", "stmt.for", "stmt.for.in",
     "stmt.foreach", "stmt.foreach.as", "stmt.foreach.pair",
     "stmt.return", "stmt.break", "stmt.continue", "stmt.function", "stmt.function.returns",
     "stmt.pass", "stmt.emit",
-    "builtin.emit", "builtin.print", "builtin.write", "builtin.len", "builtin.char_at", "builtin.ord",
+    "builtin.emit", "builtin.print", "builtin.write", "builtin.print.placeholder", "builtin.len", "builtin.char_at", "builtin.ord",
     "builtin.chr", "builtin.typeof", "builtin.error", "builtin.extern", "builtin.range",
     "builtin.real", "builtin.int_to_string", "builtin.real_to_string", "builtin.rational_to_string",
     "builtin.bool_to_string", "builtin.array_to_string", "builtin.null_to_string", "builtin.kind_to_string",
@@ -78,6 +78,9 @@ pub struct Definition {
     pub identifier_unicode: bool,
     pub identifiers_case_insensitive: bool,
     pub keywords_case_insensitive: bool,
+    /// The binding words are type names placed first (C's `int x = 1;`),
+    /// and a name followed by the call bracket defines a function.
+    pub type_first: bool,
     pub block_style: BlockStyle,
     pub indent_size: usize,
     /// Every reserved word, computed once: the parser asks on every token.
@@ -144,6 +147,7 @@ impl Definition {
             identifier_unicode: false,
             identifiers_case_insensitive: false,
             keywords_case_insensitive: false,
+            type_first: false,
             block_style: BlockStyle::Indentation,
             indent_size: 4,
             reserved: Vec::new(),
@@ -171,6 +175,7 @@ impl Definition {
                 ("identifier.unicode", Json::Bool(flag)) => definition.identifier_unicode = *flag,
                 ("identifier.case_insensitive", Json::Bool(flag)) => definition.identifiers_case_insensitive = *flag,
                 ("lexical.keywords_case_insensitive", Json::Bool(flag)) => definition.keywords_case_insensitive = *flag,
+                ("stmt.let.type_first", Json::Bool(flag)) => definition.type_first = *flag,
                 ("block.style", Json::String(style)) => {
                     style_seen = true;
                     definition.block_style = match style.as_str() {
@@ -213,6 +218,19 @@ impl Definition {
         if definition.list("lexical.comment_block.open").len() != definition.list("lexical.comment_block.close").len() {
             return Err("lexical.comment_block.open and .close must pair up position by position".to_string());
         }
+        if definition.type_first {
+            if definition.list("stmt.let").is_empty() {
+                return Err("stmt.let.type_first needs stmt.let to list the type words".to_string());
+            }
+            for label in ["stmt.let.mutable", "stmt.let.annotation", "stmt.function", "stmt.function.returns"] {
+                if !definition.list(label).is_empty() {
+                    return Err(format!("stmt.let.type_first leaves no place for {label}; leave it empty"));
+                }
+            }
+        }
+        if !definition.list("syntax.call.label").is_empty() && definition.list("syntax.call.open").is_empty() {
+            return Err("syntax.call.label needs syntax.call.open".to_string());
+        }
         definition.reserved = definition.collect_reserved_words();
         Ok(definition)
     }
@@ -254,7 +272,21 @@ impl Definition {
 
     /// Whether `name` spells any builtin.
     pub fn is_builtin(&self, name: &str) -> bool {
-        self.lexemes.iter().any(|(label, list)| label.starts_with("builtin.") && list.iter().any(|s| s == name))
+        self.lexemes.iter().any(|(label, list)| names_builtins(label) && list.iter().any(|s| s == name))
+    }
+
+    /// Builtin names not shaped like one word (`println!`, `console.log`);
+    /// the lexer recognises them whole, as it does reserved words.
+    pub fn compound_builtins(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .lexemes
+            .iter()
+            .filter(|(label, _)| names_builtins(label))
+            .flat_map(|(_, list)| list.iter().filter(|s| !self.word_shaped(s)).cloned())
+            .collect();
+        names.sort();
+        names.dedup();
+        names
     }
 
     /// Precedence of a binary operator: the first tier it appears in.
@@ -346,6 +378,11 @@ impl Definition {
         let mut chars = s.chars();
         chars.next().map_or(false, start) && chars.all(cont)
     }
+}
+
+/// Whether a label lists builtin names (rather than the print placeholders).
+fn names_builtins(label: &str) -> bool {
+    label.starts_with("builtin.") && label != "builtin.print.placeholder"
 }
 
 fn single(s: &str) -> Option<char> {

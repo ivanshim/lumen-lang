@@ -43,7 +43,7 @@ def tiers(value) -> str:
 
 def main() -> int:
     built_in = sorted(LANGS.glob("*.json"), key=lambda p: (FIRST.index(p.stem) if p.stem in FIRST else len(FIRST), p.stem))
-    extras = sorted((LANGS / "extra").glob("*.json"))
+    extras = sorted((LANGS / "extras").glob("*.json"))
     langs = {p.stem: json.loads(p.read_text(encoding="utf-8")) for p in built_in}
     langs.update({f"{p.stem} (extra)": json.loads(p.read_text(encoding="utf-8")) for p in extras})
     orders = {name: [k for k in data if not k.startswith("$comment")] for name, data in langs.items()}

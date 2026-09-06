@@ -81,9 +81,36 @@ impl StmtHandler for LetStmtHandler {
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
         let keyword = parser.advance().lexeme; // consume the binding keyword
         parser.skip_tokens();
+        if def().type_first {
+            return parse_typed_declaration(parser, registry, keyword);
+        }
         let (name, _type_annotation, expr) = parse_binding_tail(parser, registry, &keyword)?;
         Ok(Box::new(LetStmt { name, _type_annotation, expr }))
     }
+}
+
+/// With `stmt.let.type_first` the keyword is the type (C's `int`). What
+/// follows the name decides: the call bracket makes a function definition,
+/// the end of the statement a null binding, otherwise a value is assigned.
+fn parse_typed_declaration(parser: &mut Parser, registry: &Registry, type_word: String) -> LumenResult<Box<dyn StmtNode>> {
+    let d = def();
+    let name = parser
+        .take_identifier()
+        .ok_or_else(|| err_at(parser, &format!("Expected a name after '{}'", type_word)))?;
+    parser.skip_tokens();
+    if crate::language::expressions::calls::at_call_open(parser) {
+        return super::functions::parse_function_tail(parser, registry, name);
+    }
+    let expr: Box<dyn ExprNode> = if crate::language::structure::structural::at_statement_end(parser) {
+        Box::new(NullValue)
+    } else {
+        if !d.is("stmt.assign", &parser.advance().lexeme) {
+            return Err(err_at(parser, &format!("Expected '{}' after the declared name", d.first("stmt.assign"))));
+        }
+        parser.skip_tokens();
+        parser.parse_expr(registry)?
+    };
+    Ok(Box::new(LetStmt { name, _type_annotation: Some(type_word), expr }))
 }
 
 pub fn register(reg: &mut Registry) {

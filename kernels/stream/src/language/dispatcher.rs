@@ -21,6 +21,9 @@ pub fn register_all(registry: &mut Registry) {
     for word in def().reserved_words() {
         tokens.push(TokenDefinition::keyword(word.clone()));
     }
+    for name in def().compound_builtins() {
+        tokens.push(TokenDefinition::keyword(name));
+    }
     registry.tokens.set_token_definitions(tokens);
     registry.tokens.set_word_chars(crate::language::word_char);
 

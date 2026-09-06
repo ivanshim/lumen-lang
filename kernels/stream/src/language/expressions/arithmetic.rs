@@ -93,13 +93,13 @@ impl ExprNode for ArithmeticExpr {
             return Ok(Box::new(LumenString::new(result)));
         }
 
-        // Special handling for + operator: can be string concatenation or addition
+        // Special handling for + operator: with a string on either side it
+        // concatenates the rendered operands, otherwise it adds
         if self.op == Arith::Add {
             use crate::language::values::{LumenString, as_string};
 
-            // Try to treat both as strings for concatenation
-            if let (Ok(left_str), Ok(right_str)) = (as_string(l.as_ref()), as_string(r.as_ref())) {
-                let result = format!("{}{}", left_str.value, right_str.value);
+            if as_string(l.as_ref()).is_ok() || as_string(r.as_ref()).is_ok() {
+                let result = format!("{}{}", l.as_display_string(), r.as_display_string());
                 return Ok(Box::new(LumenString::new(result)));
             }
         }
@@ -117,97 +117,20 @@ impl ExprNode for ArithmeticExpr {
         };
         let result_is_real = left_is_real || right_is_real;
 
-        // Fast path for modulo and integer quotient (integer-only operations)
-        // For Real values, extract the integer part and perform the operation
-        // This avoids expensive rational conversion and cloning for these operators
+        // Integer quotient and remainder. The quotient divides the exact
+        // values and truncates toward zero; the remainder is taken between
+        // the integer parts. A real operand makes the result real.
         if self.op == Arith::Rem || self.op == Arith::Quot {
-            // Extract integers directly by reference, then clone only if needed
-            let result = if let Ok(real) = as_real(l.as_ref()) {
-                let left_int = &real.numerator / &real.denominator;
-                if let Ok(real2) = as_real(r.as_ref()) {
-                    let right_int = &real2.numerator / &real2.denominator;
-                    if self.op == Arith::Quot {
-                        if right_int == BigInt::from(0) {
-                            return Err("Division by zero".into());
-                        }
-                        &left_int / &right_int
-                    } else {
-                        numeric::modulo(&left_int, &right_int)?
-                    }
-                } else if let Ok(num) = as_number(r.as_ref()) {
-                    if self.op == Arith::Quot {
-                        if num.value == BigInt::from(0) {
-                            return Err("Division by zero".into());
-                        }
-                        &left_int / &num.value
-                    } else {
-                        numeric::modulo(&left_int, &num.value)?
-                    }
-                } else if let Ok(rat) = as_rational(r.as_ref()) {
-                    if self.op == Arith::Quot {
-                        if rat.numerator == BigInt::from(0) {
-                            return Err("Division by zero".into());
-                        }
-                        &left_int / &rat.numerator
-                    } else {
-                        numeric::modulo(&left_int, &rat.numerator)?
-                    }
-                } else {
-                    return Err("Right operand must be a number".into());
+            let (left_num, left_den) = exact_parts(l.as_ref(), "Left operand must be a number")?;
+            let (right_num, right_den) = exact_parts(r.as_ref(), "Right operand must be a number")?;
+            let result = if self.op == Arith::Quot {
+                let divisor = &right_num * &left_den;
+                if divisor == BigInt::from(0) {
+                    return Err("Division by zero".into());
                 }
-            } else if let Ok(num) = as_number(l.as_ref()) {
-                let left_ref = &num.value;
-                if let Ok(num2) = as_number(r.as_ref()) {
-                    let right_ref = &num2.value;
-                    if self.op == Arith::Rem {
-                        numeric::modulo(left_ref, right_ref)?
-                    } else {
-                        if right_ref == &BigInt::from(0) {
-                            return Err("Division by zero".into());
-                        }
-                        left_ref / right_ref
-                    }
-                } else if let Ok(rat) = as_rational(r.as_ref()) {
-                    if self.op == Arith::Rem {
-                        numeric::modulo(left_ref, &rat.numerator)?
-                    } else {
-                        if rat.numerator == BigInt::from(0) {
-                            return Err("Division by zero".into());
-                        }
-                        left_ref / &rat.numerator
-                    }
-                } else {
-                    return Err("Right operand must be a number".into());
-                }
-            } else if let Ok(rat) = as_rational(l.as_ref()) {
-                // For modulo/quotient with rationals, extract integer part first (numerator / denominator)
-                let left_int = &rat.numerator / &rat.denominator;
-                if let Ok(num) = as_number(r.as_ref()) {
-                    let right_ref = &num.value;
-                    if self.op == Arith::Rem {
-                        numeric::modulo(&left_int, right_ref)?
-                    } else {
-                        if right_ref == &BigInt::from(0) {
-                            return Err("Division by zero".into());
-                        }
-                        &left_int / right_ref
-                    }
-                } else if let Ok(rat2) = as_rational(r.as_ref()) {
-                    // For modulo/quotient with two rationals, extract integer parts from both
-                    let right_int = &rat2.numerator / &rat2.denominator;
-                    if self.op == Arith::Rem {
-                        numeric::modulo(&left_int, &right_int)?
-                    } else {
-                        if right_int == BigInt::from(0) {
-                            return Err("Division by zero".into());
-                        }
-                        &left_int / &right_int
-                    }
-                } else {
-                    return Err("Right operand must be a number".into());
-                }
+                (&left_num * &right_den) / divisor
             } else {
-                return Err("Left operand must be a number".into());
+                numeric::modulo(&(&left_num / &left_den), &(&right_num / &right_den))?
             };
 
             // Determine result precision for real operations
@@ -386,5 +309,18 @@ pub fn register(reg: &mut Registry) {
             let prec = Precedence::binary(lexeme);
             reg.register_infix(Box::new(ArithmeticInfix { lexeme: lexeme.clone(), op, prec }));
         }
+    }
+}
+
+/// A number of any kind as an exact numerator and denominator.
+fn exact_parts(value: &dyn crate::kernel::runtime::RuntimeValue, error: &str) -> LumenResult<(BigInt, BigInt)> {
+    if let Ok(real) = as_real(value) {
+        Ok((real.numerator.clone(), real.denominator.clone()))
+    } else if let Ok(rat) = as_rational(value) {
+        Ok((rat.numerator.clone(), rat.denominator.clone()))
+    } else if let Ok(num) = as_number(value) {
+        Ok((num.value.clone(), BigInt::from(1)))
+    } else {
+        Err(error.into())
     }
 }

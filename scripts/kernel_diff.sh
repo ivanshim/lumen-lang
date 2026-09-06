@@ -7,16 +7,19 @@ cd "$(dirname "$0")/.." || exit 1
 cargo build --quiet || exit 1
 B=./target/debug/lumen-lang
 same=0; differing=0
-# Languages in langs/extra/ are passed as a definition file.
+# Languages in langs/extras/ are passed as a definition file.
 flag_for() {
     case "${1##*.}" in
-        php) echo "--lang langs/extra/php.json" ;;
-        rb) echo "--lang langs/extra/ruby.json" ;;
-        pas) echo "--lang langs/extra/pascal.json" ;;
-        lua) echo "--lang langs/extra/lua.json" ;;
+        php) echo "--lang langs/extras/php.json" ;;
+        rb) echo "--lang langs/extras/ruby.json" ;;
+        pas) echo "--lang langs/extras/pascal.json" ;;
+        lua) echo "--lang langs/extras/lua.json" ;;
+        c) echo "--lang langs/extras/c.json" ;;
+        js) echo "--lang langs/extras/javascript.json" ;;
+        swift) echo "--lang langs/extras/swift.json" ;;
     esac
 }
-for f in examples/lumen/*.lm examples/lumen/constructs/*.lm examples/lumen/libraries/*.lm examples/python/*.py examples/rust/*.rs examples/php/*.php examples/ruby/*.rb examples/pascal/*.pas examples/lua/*.lua; do
+for f in examples/lumen/*.lm examples/lumen/constructs/*.lm examples/lumen/libraries/*.lm examples/python/*.py examples/rust/*.rs examples/php/*.php examples/ruby/*.rb examples/pascal/*.pas examples/lua/*.lua examples/c/*.c examples/javascript/*.js examples/swift/*.swift; do
     flag=$(flag_for "$f")
     # shellcheck disable=SC2086
     a=$($B --kernel stream $flag "$f" 2>&1)
