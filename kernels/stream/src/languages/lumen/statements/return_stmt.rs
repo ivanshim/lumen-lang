@@ -4,7 +4,6 @@
 use crate::languages::lumen::prelude::*;
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::Env;
 
 #[derive(Debug)]
@@ -28,15 +27,17 @@ pub struct ReturnStmtHandler;
 
 impl StmtHandler for ReturnStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme == "return"
+        def().is("stmt.return", &parser.peek().lexeme)
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'return'
         parser.skip_tokens();
 
-        // Check if there's an expression after return (before newline)
-        let value = if parser.peek().lexeme == "\n" || parser.i >= parser.toks.len() {
+        // Check if there's an expression after return (before the line ends)
+        use crate::languages::lumen::structure::structural::{DEDENT, EOF, NEWLINE};
+        let at_line_end = matches!(parser.peek().lexeme.as_str(), NEWLINE | DEDENT | EOF);
+        let value = if at_line_end || parser.i >= parser.toks.len() {
             None
         } else {
             Some(parser.parse_expr(registry)?)
@@ -44,11 +45,6 @@ impl StmtHandler for ReturnStmtHandler {
 
         Ok(Box::new(ReturnStmt { value }))
     }
-}
-
-pub fn patterns() -> PatternSet {
-    PatternSet::new()
-        .with_literals(vec!["return"])
 }
 
 pub fn register(reg: &mut Registry) {

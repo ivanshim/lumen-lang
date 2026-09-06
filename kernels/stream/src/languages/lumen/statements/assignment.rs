@@ -5,7 +5,6 @@ use crate::languages::lumen::prelude::*;
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::{Env, Value};
 
 #[derive(Debug)]
@@ -16,9 +15,9 @@ struct AssignStmt {
 
 impl StmtNode for AssignStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
-        // ARGS is a system-provided immutable semantic value
-        if self.name == "ARGS" {
-            return Err("Cannot reassign ARGS (system-provided immutable value)".to_string());
+        // The arguments binding is a system-provided immutable value
+        if def().is("system.args", &self.name) {
+            return Err(format!("Cannot reassign {} (system-provided immutable value)", self.name));
         }
         let val: Value = self.expr.eval(env)?;
         env.assign(&self.name, val)?;
@@ -30,66 +29,34 @@ pub struct AssignStmtHandler;
 
 impl StmtHandler for AssignStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        // Check if current token is the start of an identifier
-        let curr = &parser.peek().lexeme;
-        let is_ident_start = curr.chars().next().map_or(false, word_start);
-
-        if !is_ident_start {
+        if !parser.at_identifier() {
             return false;
         }
 
-        // Look ahead for '=' (skip whitespace tokens and identifier continuation tokens)
-        // Since the kernel lexer is agnostic, multi-character identifiers are split into single chars
+        // Look ahead for the assignment sign, skipping whitespace tokens and
+        // the single-character tokens that continue the identifier.
         let mut i = 1;
         while let Some(t) = parser.peek_n(i) {
             let lexeme = &t.lexeme;
-
-            // Skip whitespace tokens
             if lexeme.chars().count() == 1 {
                 let ch = lexeme.chars().next().unwrap();
-                if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
-                    i += 1;
-                    continue;
-                }
-                // Skip identifier continuation characters (letters, digits, underscores)
-                if word_char(ch) {
+                if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || word_char(ch) {
                     i += 1;
                     continue;
                 }
             }
-
-            // Check if we found '='
-            if lexeme == "=" {
-                return true;
-            }
-
-            // Anything else means not an assignment
-            break;
+            return def().is("stmt.assign", lexeme);
         }
 
         false
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
-        // Consume the identifier (which may span multiple tokens for the kernel's agnostic lexer)
-        let mut name = parser.advance().lexeme;
+        let name = parser.take_identifier().ok_or_else(|| err_at(parser, "Expected identifier"))?;
         parser.skip_tokens();
 
-        // Continue consuming identifier characters if split across tokens
-        loop {
-            if parser.peek().lexeme.chars().count() == 1 {
-                let ch = parser.peek().lexeme.chars().next().unwrap();
-                if word_char(ch) {
-                    name.push_str(&parser.advance().lexeme);
-                    parser.skip_tokens();
-                    continue;
-                }
-            }
-            break;
-        }
-
-        if parser.advance().lexeme != "=" {
-            return Err(err_at(parser, "Expected '=' in assignment"));
+        if !def().is("stmt.assign", &parser.advance().lexeme) {
+            return Err(err_at(parser, &format!("Expected '{}' in assignment", def().first("stmt.assign"))));
         }
         parser.skip_tokens();
 
@@ -98,23 +65,6 @@ impl StmtHandler for AssignStmtHandler {
     }
 }
 
-// --------------------
-// Pattern Declaration
-// --------------------
-
-/// Declare what patterns this module recognizes
-pub fn patterns() -> PatternSet {
-    PatternSet::new()
-        .with_literals(vec!["="])
-        .with_char_classes(vec!["ident_start"])
-}
-
-// --------------------
-// Registration
-// --------------------
-
 pub fn register(reg: &mut Registry) {
-    // No tokens to register (uses '=' single-char operator emitted automatically)
-    // Register handlers
     reg.register_stmt(Box::new(AssignStmtHandler));
 }

@@ -11,8 +11,10 @@ use std::collections::HashMap;
 use crate::kernel::runtime::{Env, Value};
 use crate::languages::lumen::values::LumenBool;
 
-/// Reserved identifier; registered as a keyword so programs cannot read it.
-pub const MEMOIZATION: &str = "MEMOIZATION";
+/// The switch's name: a reserved word, so programs cannot read it as a value.
+fn switch() -> &'static str {
+    crate::languages::lumen::definition::def().first("system.memoization")
+}
 
 #[derive(Default)]
 pub struct MemoCache {
@@ -20,11 +22,11 @@ pub struct MemoCache {
 }
 
 pub fn set_enabled(env: &mut Env, enabled: bool) {
-    env.define(MEMOIZATION.to_string(), Box::new(LumenBool::new(enabled)));
+    env.define(switch().to_string(), Box::new(LumenBool::new(enabled)));
 }
 
 pub fn enabled(env: &Env) -> bool {
-    env.get(MEMOIZATION)
+    env.get(switch())
         .ok()
         .and_then(|v| v.as_any().downcast_ref::<LumenBool>().map(|b| b.value))
         .unwrap_or(false)

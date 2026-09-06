@@ -1,12 +1,15 @@
 use crate::languages::lumen::prelude::*;
-// Number, boolean, string, and none literals
+// Number, boolean, string and null literals.
+//
+// Which words mean true, false and null, which characters delimit strings,
+// which quotes are raw, which escape letters exist and how numbers are
+// punctuated all come from the definition.
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
-use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::{Env, Value};
 use crate::languages::lumen::values::{LumenNumber, LumenBool, LumenString, LumenNull, LumenReal};
-use crate::languages::lumen::numeric;
+use crate::languages::lumen::numeric::{self, NumberMarks};
 use num_bigint::BigInt;
 
 #[derive(Debug)]
@@ -33,14 +36,14 @@ impl ExprNode for NumberLiteral {
 /// Calculate precision (significant figures) from a float literal string
 /// E.g., "1.5" -> 2, "3.14" -> 3, "0.05" -> 1
 fn calculate_precision(s: &str) -> usize {
-    // Remove decimal point
-    let without_dot: String = s.chars().filter(|c| *c != '.' && *c != '-').collect();
+    // Keep the digits only
+    let digits: String = s.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
 
     // Count leading zeros to skip them
-    let leading_zeros = without_dot.chars().take_while(|c| *c == '0').count();
+    let leading_zeros = digits.chars().take_while(|c| *c == '0').count();
 
     // Significant figures = total digits minus leading zeros
-    let significant_count = without_dot.len().saturating_sub(leading_zeros);
+    let significant_count = digits.len().saturating_sub(leading_zeros);
 
     // Use at least 15 significant figures as default minimum
     std::cmp::max(significant_count.max(1), 15)
@@ -55,22 +58,29 @@ impl ExprPrefix for NumberLiteralPrefix {
     }
 
     fn parse(&self, parser: &mut Parser, _registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
+        let marks = NumberMarks::from_definition();
         // Consume the first digit
         let mut value = parser.advance().lexeme;
+        let mut in_base_n = false;
 
         // Since the kernel lexer is fully agnostic, it emits each digit as a separate token.
         // We need to consume consecutive digit tokens to build the full number.
         // For base-N literals: <base>@<digits>[.<fraction>][^<exponent>]
         loop {
-            // Check if next token is a digit, '.', '@', or '^' (for base-N literals)
             if parser.peek().lexeme.chars().count() == 1 {
                 let ch = parser.peek().lexeme.chars().next().unwrap();
-                if ch.is_ascii_digit() || ch == '.' || ch == '@' || ch == '^' {
+                let punctuation = Some(ch) == marks.point
+                    || Some(ch) == marks.base
+                    || (in_base_n && Some(ch) == marks.exponent);
+                if Some(ch) == marks.base {
+                    in_base_n = true;
+                }
+                if ch.is_ascii_digit() || punctuation {
                     value.push_str(&parser.advance().lexeme);
                     continue;
                 }
-                // For base-N literals, also consume letters (a-z, A-Z) after '@'
-                if value.contains('@') && (ch.is_ascii_lowercase() || ch.is_ascii_uppercase()) {
+                // Within a base-N literal the digits may be letters too.
+                if in_base_n && ch.is_ascii_alphabetic() {
                     value.push_str(&parser.advance().lexeme);
                     continue;
                 }
@@ -99,98 +109,13 @@ pub struct BoolLiteralPrefix;
 
 impl ExprPrefix for BoolLiteralPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        // Check if the next characters form "true" or "false" (which are not registered as tokens)
-        for keyword in &["true", "false"] {
-            let mut i = parser.i;
-            let mut collected = String::new();
-
-            // Collect characters to check if they form our keyword
-            for expected_ch in keyword.chars() {
-                if i >= parser.toks.len() {
-                    break;
-                }
-                let actual = &parser.toks[i].tok.lexeme;
-                if actual.len() == 1 && actual.chars().next() == Some(expected_ch) {
-                    collected.push(expected_ch);
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-
-            // Make sure we collected the full keyword
-            if collected == *keyword {
-                // Make sure next character doesn't extend the keyword
-                if i < parser.toks.len() {
-                    let next = &parser.toks[i].tok.lexeme;
-                    if next.chars().count() == 1 {
-                        let next_ch = next.chars().next().unwrap();
-                        if word_char(next_ch) {
-                            continue; // This keyword is extended, try next one
-                        }
-                    }
-                }
-                return true;
-            }
-        }
-        false
+        let lexeme = &parser.peek().lexeme;
+        def().is("literal.true", lexeme) || def().is("literal.false", lexeme)
     }
 
     fn parse(&self, parser: &mut Parser, _registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
-        // Determine which keyword we're parsing
-        let keywords = ["true", "false"];
-        let mut collected = String::new();
-        let mut matched_keyword = "";
-
-        for keyword in &keywords {
-            let mut i = parser.i;
-            collected.clear();
-
-            // Collect characters to check if they form our keyword
-            for expected_ch in keyword.chars() {
-                if i >= parser.toks.len() {
-                    break;
-                }
-                let actual = &parser.toks[i].tok.lexeme;
-                if actual.len() == 1 && actual.chars().next() == Some(expected_ch) {
-                    collected.push(expected_ch);
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-
-            // Check if we matched the full keyword
-            if collected == *keyword {
-                // Make sure next character doesn't extend the keyword
-                if i < parser.toks.len() {
-                    let next = &parser.toks[i].tok.lexeme;
-                    if next.chars().count() == 1 {
-                        let next_ch = next.chars().next().unwrap();
-                        if word_char(next_ch) {
-                            continue; // This keyword is extended, try next one
-                        }
-                    }
-                }
-                matched_keyword = keyword;
-                break;
-            }
-        }
-
-        // Consume the matched keyword characters
-        for _ in matched_keyword.chars() {
-            parser.advance();
-        }
-
-        // Check if it's actually a boolean literal
-        if matched_keyword == "true" {
-            Ok(Box::new(BoolLiteral { value: true }))
-        } else if matched_keyword == "false" {
-            Ok(Box::new(BoolLiteral { value: false }))
-        } else {
-            // Not a boolean literal, this is an error
-            Err(format!("Expected 'true' or 'false', got '{}'", matched_keyword))
-        }
+        let word = parser.advance().lexeme;
+        Ok(Box::new(BoolLiteral { value: def().is("literal.true", &word) }))
     }
 }
 
@@ -198,91 +123,57 @@ impl ExprPrefix for BoolLiteralPrefix {
 
 #[derive(Debug)]
 struct StringLiteral {
-    value: String,
-    is_single_quoted: bool,
+    /// The characters between the quotes, escapes still in place.
+    content: String,
+    quote: char,
 }
 
 impl ExprNode for StringLiteral {
     fn eval(&self, _env: &mut Env) -> LumenResult<Value> {
-        // Remove quotes from the tokenized string: "hello" -> hello or 'hello' -> hello
-        let content = &self.value[1..self.value.len() - 1];
-
-        let unescaped = if self.is_single_quoted {
-            // Single-quoted strings: only process \' and \\ escapes
-            process_single_quote_escapes(content)
-        } else {
-            // Double-quoted strings: process all standard escapes
-            process_double_quote_escapes(content)
-        };
-        Ok(Box::new(LumenString::new(unescaped)))
+        Ok(Box::new(LumenString::new(unescape(&self.content, self.quote))))
     }
 }
 
-/// Process escape sequences in single-quoted strings: \' and \\
-fn process_single_quote_escapes(s: &str) -> String {
+/// Resolve escapes. Inside a raw quote only the quote itself and the
+/// backslash may be escaped; inside any other quote the definition's escape
+/// letters apply too. A backslash before an unlisted letter stays as written.
+fn unescape(s: &str, quote: char) -> String {
+    let d = def();
+    let raw = d.chars("lexical.raw_quotes").contains(&quote);
+    let letters = if raw { Vec::new() } else { d.chars("lexical.string_escapes") };
+    let quotes = d.chars("lexical.string_quotes");
     let mut result = String::new();
     let mut chars = s.chars().peekable();
 
     while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            if let Some(&next) = chars.peek() {
-                match next {
-                    '\'' => {
-                        chars.next();  // consume the '
-                        result.push('\'');
-                    }
-                    '\\' => {
-                        chars.next();  // consume the \
-                        result.push('\\');
-                    }
-                    _ => {
-                        result.push(ch);  // backslash followed by other char - keep as-is
-                    }
-                }
-            } else {
-                result.push(ch);  // trailing backslash
-            }
-        } else {
+        if ch != '\\' {
             result.push(ch);
+            continue;
         }
-    }
-    result
-}
-
-/// Process escape sequences in double-quoted strings: \", \\, \n, \t
-fn process_double_quote_escapes(s: &str) -> String {
-    let mut result = String::new();
-    let mut chars = s.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            if let Some(&next) = chars.peek() {
-                match next {
-                    '"' => {
-                        chars.next();  // consume the "
-                        result.push('"');
-                    }
-                    '\\' => {
-                        chars.next();  // consume the \
-                        result.push('\\');
-                    }
-                    'n' => {
-                        chars.next();  // consume the n
-                        result.push('\n');
-                    }
-                    't' => {
-                        chars.next();  // consume the t
-                        result.push('\t');
-                    }
-                    _ => {
-                        result.push(ch);  // backslash followed by other char - keep as-is
-                    }
-                }
-            } else {
-                result.push(ch);  // trailing backslash
+        let Some(&next) = chars.peek() else {
+            result.push(ch); // trailing backslash
+            continue;
+        };
+        let replacement = if next == quote || next == '\\' {
+            Some(next.to_string())
+        } else if letters.contains(&next) {
+            match next {
+                'n' => Some("\n".to_string()),
+                't' => Some("\t".to_string()),
+                'r' => Some("\r".to_string()),
+                '0' => Some("\0".to_string()),
+                c if quotes.contains(&c) => Some(c.to_string()),
+                _ => None,
             }
         } else {
-            result.push(ch);
+            None
+        };
+        match replacement {
+            Some(text) => {
+                chars.next();
+                result.push_str(&text);
+            }
+            None => result.push(ch), // backslash followed by other char - keep as-is
         }
     }
     result
@@ -292,129 +183,73 @@ pub struct StringLiteralPrefix;
 
 impl ExprPrefix for StringLiteralPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        // Check if lexeme starts with a double quote
-        parser.peek().lexeme == "\""
+        opening_quote(&parser.peek().lexeme).is_some()
     }
 
     fn parse(&self, parser: &mut Parser, _registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
-        // Consume opening quote
-        let mut value = parser.advance().lexeme;
-
-        // Since the kernel lexer is agnostic, it emits each character separately.
-        // Assemble the full string by consuming characters until closing quote (unescaped).
-        loop {
-            let ch = parser.peek().lexeme.clone();
-
-            // Check for backslash (escape character)
-            if ch == "\\" {
-                value.push_str(&parser.advance().lexeme);
-                // Consume the next character as escaped
-                if parser.i < parser.toks.len() {
-                    value.push_str(&parser.advance().lexeme);
-                }
-                continue;
-            }
-
-            // Check for closing quote
-            if ch == "\"" {
-                value.push_str(&parser.advance().lexeme);
-                break;
-            }
-
-            // Add character to string (including whitespace, newlines, etc.)
-            value.push_str(&parser.advance().lexeme);
-
-            // Protect against unterminated strings
-            if parser.i >= parser.toks.len() {
-                return Err("Unterminated string literal".into());
-            }
-        }
-
-        Ok(Box::new(StringLiteral { value, is_single_quoted: false }))
+        let quote = opening_quote(&parser.peek().lexeme).expect("matches() saw a quote");
+        parser.advance(); // opening quote
+        let content = take_string_body(parser, quote)?;
+        Ok(Box::new(StringLiteral { content, quote }))
     }
 }
 
-// Single-quoted string literals
-
-pub struct SingleQuotedStringPrefix;
-
-impl ExprPrefix for SingleQuotedStringPrefix {
-    fn matches(&self, parser: &Parser) -> bool {
-        // Check if lexeme starts with a single quote
-        parser.peek().lexeme == "'"
-    }
-
-    fn parse(&self, parser: &mut Parser, _registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
-        // Consume opening quote
-        let mut value = parser.advance().lexeme;
-
-        // Since the kernel lexer is agnostic, it emits each character separately.
-        // Assemble the full string by consuming characters until closing quote (unescaped).
-        loop {
-            let ch = parser.peek().lexeme.clone();
-
-            // Check for backslash (escape character)
-            if ch == "\\" {
-                value.push_str(&parser.advance().lexeme);
-                // Consume the next character as escaped
-                if parser.i < parser.toks.len() {
-                    value.push_str(&parser.advance().lexeme);
-                }
-                continue;
-            }
-
-            // Check for closing quote
-            if ch == "'" {
-                value.push_str(&parser.advance().lexeme);
-                break;
-            }
-
-            // Add character to string (including whitespace, newlines, etc.)
-            value.push_str(&parser.advance().lexeme);
-
-            // Protect against unterminated strings
-            if parser.i >= parser.toks.len() {
-                return Err("Unterminated string literal".into());
-            }
-        }
-
-        Ok(Box::new(StringLiteral { value, is_single_quoted: true }))
+/// The quote character a one-character lexeme is, if it is one.
+fn opening_quote(lexeme: &str) -> Option<char> {
+    let mut chars = lexeme.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) if def().chars("lexical.string_quotes").contains(&c) => Some(c),
+        _ => None,
     }
 }
 
-// None literal
+/// Consume tokens up to and including the closing `quote`, returning the
+/// characters between the quotes with escapes still in place. The kernel
+/// lexer emits each character separately, so the body is reassembled here.
+pub fn take_string_body(parser: &mut Parser, quote: char) -> LumenResult<String> {
+    let mut content = String::new();
+    loop {
+        if parser.i >= parser.toks.len() {
+            return Err("Unterminated string literal".into());
+        }
+        let lexeme = parser.advance().lexeme;
+        if lexeme == "\\" {
+            content.push_str(&lexeme);
+            // The escaped character, whatever it is
+            if parser.i < parser.toks.len() {
+                content.push_str(&parser.advance().lexeme);
+            }
+            continue;
+        }
+        if lexeme.chars().count() == 1 && lexeme.starts_with(quote) {
+            return Ok(content);
+        }
+        content.push_str(&lexeme);
+    }
+}
+
+// Null literal
 
 #[derive(Debug)]
-struct NoneLiteral;
+struct NullLiteral;
 
-impl ExprNode for NoneLiteral {
+impl ExprNode for NullLiteral {
     fn eval(&self, _env: &mut Env) -> LumenResult<Value> {
         Ok(Box::new(LumenNull))
     }
 }
 
-pub struct NoneLiteralPrefix;
+pub struct NullLiteralPrefix;
 
-impl ExprPrefix for NoneLiteralPrefix {
+impl ExprPrefix for NullLiteralPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme == "null"
+        def().is("literal.null", &parser.peek().lexeme)
     }
 
     fn parse(&self, parser: &mut Parser, _registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
-        parser.advance(); // consume 'null'
-        Ok(Box::new(NoneLiteral))
+        parser.advance(); // consume the null word
+        Ok(Box::new(NullLiteral))
     }
-}
-
-// --------------------
-// Pattern Declaration
-// --------------------
-
-/// Declare what patterns this module recognizes
-pub fn patterns() -> PatternSet {
-    PatternSet::new()
-        .with_literals(vec!["true", "false", "null", "\"", "'"])
-        .with_char_classes(vec!["digit", "quote"])
 }
 
 // --------------------
@@ -422,11 +257,8 @@ pub fn patterns() -> PatternSet {
 // --------------------
 
 pub fn register(reg: &mut Registry) {
-    // No token registration needed - kernel handles all segmentation
-    // Register handlers
     reg.register_prefix(Box::new(NumberLiteralPrefix));
     reg.register_prefix(Box::new(BoolLiteralPrefix));
-    reg.register_prefix(Box::new(NoneLiteralPrefix));
+    reg.register_prefix(Box::new(NullLiteralPrefix));
     reg.register_prefix(Box::new(StringLiteralPrefix));
-    reg.register_prefix(Box::new(SingleQuotedStringPrefix));
 }

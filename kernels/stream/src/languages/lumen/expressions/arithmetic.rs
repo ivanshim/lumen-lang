@@ -1,14 +1,28 @@
 use crate::languages::lumen::prelude::*;
 // src/expr/arithmetic.rs
 //
-// + - * / % // ** and unary minus
+// Arithmetic: add, subtract, multiply, divide, integer quotient, remainder,
+// power, concatenation and negation. The lexemes that spell each operation
+// come from the definition; the operations are named here.
 // Supports integers, rationals, and real values (exact rational arithmetic + real precision)
 
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
-use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::registry::KernelResult as LumenResult;
 use crate::languages::lumen::registry::{ExprInfix, ExprPrefix, Precedence, Registry};
+
+/// The arithmetic operations, independent of their spelling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Arith {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Quot,
+    Rem,
+    Pow,
+    Concat,
+}
 use crate::kernel::runtime::{Env, Value};
 use crate::languages::lumen::numeric;
 use crate::languages::lumen::values::{LumenNumber, LumenRational, LumenReal, as_number, as_rational, as_real};
@@ -45,13 +59,13 @@ pub struct UnaryMinusPrefix;
 
 impl ExprPrefix for UnaryMinusPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme == "-"
+        def().is("op.negate", &parser.peek().lexeme)
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
-        parser.advance(); // '-'
+        let lexeme = parser.advance().lexeme; // the negation sign
         parser.skip_tokens();
-        let expr = parser.parse_expr_prec(registry, Precedence::Unary)?;
+        let expr = parser.parse_expr_prec(registry, Precedence::unary(&lexeme))?;
         Ok(Box::new(UnaryMinusExpr { expr }))
     }
 }
@@ -59,7 +73,7 @@ impl ExprPrefix for UnaryMinusPrefix {
 #[derive(Debug)]
 struct ArithmeticExpr {
     left: Box<dyn ExprNode>,
-    op: String,
+    op: Arith,
     right: Box<dyn ExprNode>,
 }
 
@@ -69,7 +83,7 @@ impl ExprNode for ArithmeticExpr {
         let r = self.right.eval(env)?;
 
         // Special handling for . operator: string concatenation with coercion
-        if self.op == "." {
+        if self.op == Arith::Concat {
             use crate::languages::lumen::values::LumenString;
 
             // Coerce both operands to strings using str()
@@ -80,7 +94,7 @@ impl ExprNode for ArithmeticExpr {
         }
 
         // Special handling for + operator: can be string concatenation or addition
-        if self.op == "+" {
+        if self.op == Arith::Add {
             use crate::languages::lumen::values::{LumenString, as_string};
 
             // Try to treat both as strings for concatenation
@@ -106,13 +120,13 @@ impl ExprNode for ArithmeticExpr {
         // Fast path for modulo and integer quotient (integer-only operations)
         // For Real values, extract the integer part and perform the operation
         // This avoids expensive rational conversion and cloning for these operators
-        if self.op == "%" || self.op == "//" {
+        if self.op == Arith::Rem || self.op == Arith::Quot {
             // Extract integers directly by reference, then clone only if needed
             let result = if let Ok(real) = as_real(l.as_ref()) {
                 let left_int = &real.numerator / &real.denominator;
                 if let Ok(real2) = as_real(r.as_ref()) {
                     let right_int = &real2.numerator / &real2.denominator;
-                    if self.op == "//" {
+                    if self.op == Arith::Quot {
                         if right_int == BigInt::from(0) {
                             return Err("Division by zero".into());
                         }
@@ -121,7 +135,7 @@ impl ExprNode for ArithmeticExpr {
                         numeric::modulo(&left_int, &right_int)?
                     }
                 } else if let Ok(num) = as_number(r.as_ref()) {
-                    if self.op == "//" {
+                    if self.op == Arith::Quot {
                         if num.value == BigInt::from(0) {
                             return Err("Division by zero".into());
                         }
@@ -130,7 +144,7 @@ impl ExprNode for ArithmeticExpr {
                         numeric::modulo(&left_int, &num.value)?
                     }
                 } else if let Ok(rat) = as_rational(r.as_ref()) {
-                    if self.op == "//" {
+                    if self.op == Arith::Quot {
                         if rat.numerator == BigInt::from(0) {
                             return Err("Division by zero".into());
                         }
@@ -145,7 +159,7 @@ impl ExprNode for ArithmeticExpr {
                 let left_ref = &num.value;
                 if let Ok(num2) = as_number(r.as_ref()) {
                     let right_ref = &num2.value;
-                    if self.op == "%" {
+                    if self.op == Arith::Rem {
                         numeric::modulo(left_ref, right_ref)?
                     } else {
                         if right_ref == &BigInt::from(0) {
@@ -154,7 +168,7 @@ impl ExprNode for ArithmeticExpr {
                         left_ref / right_ref
                     }
                 } else if let Ok(rat) = as_rational(r.as_ref()) {
-                    if self.op == "%" {
+                    if self.op == Arith::Rem {
                         numeric::modulo(left_ref, &rat.numerator)?
                     } else {
                         if rat.numerator == BigInt::from(0) {
@@ -170,7 +184,7 @@ impl ExprNode for ArithmeticExpr {
                 let left_int = &rat.numerator / &rat.denominator;
                 if let Ok(num) = as_number(r.as_ref()) {
                     let right_ref = &num.value;
-                    if self.op == "%" {
+                    if self.op == Arith::Rem {
                         numeric::modulo(&left_int, right_ref)?
                     } else {
                         if right_ref == &BigInt::from(0) {
@@ -181,7 +195,7 @@ impl ExprNode for ArithmeticExpr {
                 } else if let Ok(rat2) = as_rational(r.as_ref()) {
                     // For modulo/quotient with two rationals, extract integer parts from both
                     let right_int = &rat2.numerator / &rat2.denominator;
-                    if self.op == "%" {
+                    if self.op == Arith::Rem {
                         numeric::modulo(&left_int, &right_int)?
                     } else {
                         if right_int == BigInt::from(0) {
@@ -208,7 +222,7 @@ impl ExprNode for ArithmeticExpr {
         }
 
         // Handle exponentiation separately (base can be any numeric type, exponent must be integer)
-        if self.op == "**" {
+        if self.op == Arith::Pow {
             // Extract base as rational (supports integer, rational, and real)
             let base_num = if let Ok(real) = as_real(l.as_ref()) {
                 LumenRational::new(real.numerator.clone(), real.denominator.clone())
@@ -281,26 +295,26 @@ impl ExprNode for ArithmeticExpr {
         // Determine result precision for real operations
         let result_precision = left_real_prec.or(right_real_prec).unwrap_or(15);
 
-        let result = match self.op.as_str() {
-            "+" => {
+        let result = match self.op {
+            Arith::Add => {
                 // a/b + c/d = (ad + bc) / bd
                 let num = left_num.numerator * &right_num.denominator + right_num.numerator * &left_num.denominator;
                 let denom = left_num.denominator * right_num.denominator;
                 LumenRational::new(num, denom)
             }
-            "-" => {
+            Arith::Sub => {
                 // a/b - c/d = (ad - bc) / bd
                 let num = left_num.numerator * &right_num.denominator - right_num.numerator * &left_num.denominator;
                 let denom = left_num.denominator * right_num.denominator;
                 LumenRational::new(num, denom)
             }
-            "*" => {
+            Arith::Mul => {
                 // a/b * c/d = (ac) / (bd)
                 let num = left_num.numerator * &right_num.numerator;
                 let denom = left_num.denominator * right_num.denominator;
                 LumenRational::new(num, denom)
             }
-            "/" => {
+            Arith::Div => {
                 // a/b ÷ c/d = (ad) / (bc)
                 if right_num.numerator == BigInt::from(0) {
                     return Err("Division by zero".into());
@@ -327,20 +341,16 @@ impl ExprNode for ArithmeticExpr {
     }
 }
 
+/// One spelling of one arithmetic operation, at the tier the definition gives it.
 pub struct ArithmeticInfix {
-    op: String,
+    lexeme: String,
+    op: Arith,
     prec: Precedence,
-}
-
-impl ArithmeticInfix {
-    pub fn new(op: &str, prec: Precedence) -> Self {
-        Self { op: op.to_string(), prec }
-    }
 }
 
 impl ExprInfix for ArithmeticInfix {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme == self.op
+        parser.peek().lexeme == self.lexeme
     }
 
     fn precedence(&self) -> Precedence {
@@ -350,19 +360,9 @@ impl ExprInfix for ArithmeticInfix {
     fn parse(&self, parser: &mut Parser, left: Box<dyn ExprNode>, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {
         parser.advance(); // consume operator
         parser.skip_tokens();
-        let right = parser.parse_expr_prec(registry, self.precedence() + 1)?;
-        Ok(Box::new(ArithmeticExpr { left, op: self.op.clone(), right }))
+        let right = parser.parse_expr_prec(registry, self.prec.right_operand(&self.lexeme))?;
+        Ok(Box::new(ArithmeticExpr { left, op: self.op, right }))
     }
-}
-
-// --------------------
-// Pattern Declaration
-// --------------------
-
-/// Declare what patterns this module recognizes
-pub fn patterns() -> PatternSet {
-    PatternSet::new()
-        .with_literals(vec!["+", "-", "*", "/", "%", "//", "**", "."])
 }
 
 // --------------------
@@ -370,15 +370,21 @@ pub fn patterns() -> PatternSet {
 // --------------------
 
 pub fn register(reg: &mut Registry) {
-    // No token registration needed - kernel handles all segmentation
-    // Register handlers
     reg.register_prefix(Box::new(UnaryMinusPrefix));
-    reg.register_infix(Box::new(ArithmeticInfix::new("+", Precedence::Term)));
-    reg.register_infix(Box::new(ArithmeticInfix::new("-", Precedence::Term)));
-    reg.register_infix(Box::new(ArithmeticInfix::new("*", Precedence::Factor)));
-    reg.register_infix(Box::new(ArithmeticInfix::new("/", Precedence::Factor)));
-    reg.register_infix(Box::new(ArithmeticInfix::new("%", Precedence::Factor)));
-    reg.register_infix(Box::new(ArithmeticInfix::new("//", Precedence::Factor)));
-    reg.register_infix(Box::new(ArithmeticInfix::new("**", Precedence::Power)));
-    reg.register_infix(Box::new(ArithmeticInfix::new(".", Precedence::Factor))); // String concatenation with coercion
+    let labels = [
+        ("op.add", Arith::Add),
+        ("op.sub", Arith::Sub),
+        ("op.mul", Arith::Mul),
+        ("op.div", Arith::Div),
+        ("op.quot", Arith::Quot),
+        ("op.rem", Arith::Rem),
+        ("op.pow", Arith::Pow),
+        ("op.concat", Arith::Concat),
+    ];
+    for (label, op) in labels {
+        for lexeme in def().list(label) {
+            let prec = Precedence::binary(lexeme);
+            reg.register_infix(Box::new(ArithmeticInfix { lexeme: lexeme.clone(), op, prec }));
+        }
+    }
 }

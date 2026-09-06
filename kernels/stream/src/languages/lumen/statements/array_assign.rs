@@ -3,8 +3,6 @@ use crate::languages::lumen::prelude::*;
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::languages::lumen::patterns::PatternSet;
-use crate::languages::lumen::structure::structural::LBRACKET;
 use crate::kernel::runtime::Env;
 
 #[derive(Debug)]
@@ -58,65 +56,52 @@ pub struct ArrayAssignHandler;
 
 impl StmtHandler for ArrayAssignHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        // Check if current token is identifier
-        let curr = &parser.peek().lexeme;
-        let is_ident_start = curr.chars().next().map_or(false, word_start);
-
-        if !is_ident_start {
+        let d = def();
+        if !parser.at_identifier() {
             return false;
         }
 
-        // Look ahead for '[' followed by ']' and then '='
+        // Look ahead: the rest of the identifier, the index brackets, then
+        // the assignment sign.
         let mut i = 1;
         let mut found_bracket = false;
-
-        // Skip identifier characters
         while let Some(t) = parser.peek_n(i) {
             let lexeme = &t.lexeme;
             if lexeme.chars().count() == 1 {
                 let ch = lexeme.chars().next().unwrap();
-                if word_char(ch) {
+                if word_char(ch) || ch == ' ' || ch == '\t' {
                     i += 1;
                     continue;
-                }
-                if ch == ' ' || ch == '\t' {
-                    i += 1;
-                    continue;
-                }
-                if lexeme == LBRACKET {
-                    found_bracket = true;
-                    i += 1;
-                    break;
                 }
             }
-            return false;
+            if d.is("op.index.open", lexeme) {
+                found_bracket = true;
+                i += 1;
+            }
+            break;
         }
 
         if !found_bracket {
             return false;
         }
 
-        // Now skip to the closing bracket and look for '='
+        // Skip to the matching closing bracket and look for the assignment sign
         let mut bracket_depth = 1;
         while let Some(t) = parser.peek_n(i) {
             let lexeme = &t.lexeme;
-            if lexeme == LBRACKET {
+            if d.is("op.index.open", lexeme) {
                 bracket_depth += 1;
-            } else if lexeme == "]" {
+            } else if d.is("op.index.close", lexeme) {
                 bracket_depth -= 1;
                 if bracket_depth == 0 {
-                    // Found matching ], now look for =
                     i += 1;
                     while let Some(t2) = parser.peek_n(i) {
                         let lex = &t2.lexeme;
-                        if lex.chars().count() == 1 {
-                            let ch = lex.chars().next().unwrap();
-                            if ch == ' ' || ch == '\t' {
-                                i += 1;
-                                continue;
-                            }
+                        if lex == " " || lex == "\t" {
+                            i += 1;
+                            continue;
                         }
-                        return lex == "=";
+                        return d.is("stmt.assign", lex);
                     }
                     return false;
                 }
@@ -128,26 +113,13 @@ impl StmtHandler for ArrayAssignHandler {
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
-        // Parse identifier
-        let mut name = parser.advance().lexeme;
+        let d = def();
+        let name = parser.take_identifier().ok_or_else(|| err_at(parser, "Expected identifier"))?;
         parser.skip_tokens();
 
-        // Continue consuming identifier characters if split across tokens
-        loop {
-            if parser.peek().lexeme.chars().count() == 1 {
-                let ch = parser.peek().lexeme.chars().next().unwrap();
-                if word_char(ch) {
-                    name.push_str(&parser.advance().lexeme);
-                    parser.skip_tokens();
-                    continue;
-                }
-            }
-            break;
-        }
-
-        // Expect '['
-        if parser.advance().lexeme != LBRACKET {
-            return Err(err_at(parser, "Expected '[' in array assignment"));
+        // Expect the opening index bracket
+        if !d.is("op.index.open", &parser.advance().lexeme) {
+            return Err(err_at(parser, &format!("Expected '{}' in array assignment", d.first("op.index.open"))));
         }
         parser.skip_tokens();
 
@@ -155,15 +127,15 @@ impl StmtHandler for ArrayAssignHandler {
         let index_expr = parser.parse_expr(registry)?;
         parser.skip_tokens();
 
-        // Expect ']'
-        if parser.advance().lexeme != "]" {
-            return Err(err_at(parser, "Expected ']' in array assignment"));
+        // Expect the closing index bracket
+        if !d.is("op.index.close", &parser.advance().lexeme) {
+            return Err(err_at(parser, &format!("Expected '{}' in array assignment", d.first("op.index.close"))));
         }
         parser.skip_tokens();
 
-        // Expect '='
-        if parser.advance().lexeme != "=" {
-            return Err(err_at(parser, "Expected '=' in array assignment"));
+        // Expect the assignment sign
+        if !d.is("stmt.assign", &parser.advance().lexeme) {
+            return Err(err_at(parser, &format!("Expected '{}' in array assignment", d.first("stmt.assign"))));
         }
         parser.skip_tokens();
 
@@ -177,20 +149,6 @@ impl StmtHandler for ArrayAssignHandler {
         }))
     }
 }
-
-// --------------------
-// Pattern Declaration
-// --------------------
-
-pub fn patterns() -> PatternSet {
-    PatternSet::new()
-        .with_literals(vec!["[", "]", "="])
-        .with_char_classes(vec!["ident_start"])
-}
-
-// --------------------
-// Registration
-// --------------------
 
 pub fn register(reg: &mut Registry) {
     reg.register_stmt(Box::new(ArrayAssignHandler));

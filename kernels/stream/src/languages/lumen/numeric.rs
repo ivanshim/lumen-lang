@@ -2,20 +2,42 @@
 // Arbitrary-precision integer and rational operations using BigInt
 
 use crate::kernel::registry::KernelResult as LumenResult;
+use crate::languages::lumen::definition::def;
 use num_bigint::BigInt;
 use num_traits::cast::ToPrimitive;
+
+/// The number punctuation Lumen spells: decimal point, base marker, exponent marker.
+pub struct NumberMarks {
+    pub point: Option<char>,
+    pub base: Option<char>,
+    pub exponent: Option<char>,
+}
+
+impl NumberMarks {
+    pub fn from_definition() -> Self {
+        let d = def();
+        NumberMarks {
+            point: d.first_char("lexical.number.decimal_point"),
+            base: d.first_char("lexical.number.base_marker"),
+            exponent: d.first_char("lexical.number.exponent_marker"),
+        }
+    }
+}
 
 /// Parse a numeric string to either BigInt (integer) or a rational representation (numerator, denominator)
 /// Returns (numerator, denominator) where denominator is 1 for integers
 /// Supports both base-10 (e.g., "123.45") and base-N (e.g., "16@FF.AB^C") literals
 pub fn parse_number_rational(s: &str) -> LumenResult<(BigInt, BigInt)> {
-    // Check if this is a base-N literal (contains '@')
-    if s.contains('@') {
-        return parse_base_n_literal(s);
+    let marks = NumberMarks::from_definition();
+    // A base-N literal carries the base marker.
+    if let Some(base) = marks.base {
+        if s.contains(base) {
+            return parse_base_n_literal(s, base, marks.point, marks.exponent);
+        }
     }
 
-    // Base-10 parsing (existing logic)
-    if let Some(dot_pos) = s.find('.') {
+    // Base-10 parsing
+    if let Some(dot_pos) = marks.point.and_then(|p| s.find(p)) {
         // Parse as decimal/rational
         let before_dot = &s[..dot_pos];
         let after_dot = &s[dot_pos + 1..];
@@ -55,10 +77,10 @@ pub fn parse_number_rational(s: &str) -> LumenResult<(BigInt, BigInt)> {
 /// Parse a base-N numeric literal: <base>@<digits>[.<fraction>][^<exponent>]
 /// Examples: 16@FF, 2@1011, 36@1234.wxyz, 10@123.45^6
 /// Returns (numerator, denominator) where denominator is 1 for integers
-fn parse_base_n_literal(s: &str) -> LumenResult<(BigInt, BigInt)> {
-    // Find the '@' separator
-    let at_pos = s.find('@')
-        .ok_or_else(|| format!("Invalid base-N literal: missing '@' in '{}'", s))?;
+fn parse_base_n_literal(s: &str, base_mark: char, point: Option<char>, exponent: Option<char>) -> LumenResult<(BigInt, BigInt)> {
+    // Find the base marker
+    let at_pos = s.find(base_mark)
+        .ok_or_else(|| format!("Invalid base-N literal: missing '{}' in '{}'", base_mark, s))?;
 
     // Parse base (always in decimal)
     let base_str = &s[..at_pos];
@@ -74,11 +96,11 @@ fn parse_base_n_literal(s: &str) -> LumenResult<(BigInt, BigInt)> {
     let rest = &s[at_pos + 1..];
 
     if rest.is_empty() {
-        return Err(format!("Invalid base-N literal '{}': missing digits after '@'", s).into());
+        return Err(format!("Invalid base-N literal '{}': missing digits after '{}'", s, base_mark).into());
     }
 
-    // Split by '^' for exponent
-    let (mantissa_str, exp_str) = if let Some(exp_pos) = rest.find('^') {
+    // Split at the exponent marker
+    let (mantissa_str, exp_str) = if let Some(exp_pos) = exponent.and_then(|e| rest.find(e)) {
         let mantissa = &rest[..exp_pos];
         let exp = &rest[exp_pos + 1..];
         if exp.is_empty() {
@@ -89,8 +111,8 @@ fn parse_base_n_literal(s: &str) -> LumenResult<(BigInt, BigInt)> {
         (rest, None)
     };
 
-    // Split mantissa by '.' for fractional part
-    let (int_str, frac_str) = if let Some(dot_pos) = mantissa_str.find('.') {
+    // Split the mantissa at the decimal point
+    let (int_str, frac_str) = if let Some(dot_pos) = point.and_then(|p| mantissa_str.find(p)) {
         let int_part = &mantissa_str[..dot_pos];
         let frac_part = &mantissa_str[dot_pos + 1..];
         if frac_part.is_empty() {

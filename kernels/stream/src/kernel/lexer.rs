@@ -66,7 +66,8 @@ pub fn lex(source: &str, token_reg: &TokenRegistry) -> KernelResult<Vec<SpannedT
         let remaining = &source[byte_pos..];
         let mut matched = false;
 
-        for &multichar in token_reg.multichar_lexemes() {
+        for multichar in token_reg.multichar_lexemes() {
+            let multichar = multichar.as_str();
             if !remaining.starts_with(multichar) {
                 continue;
             }

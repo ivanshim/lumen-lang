@@ -1,11 +1,9 @@
 // Language implementations hosted by the stream kernel.
 
 pub mod lumen;
-pub mod rust_core;
-pub mod python_core;
 
-// Identifier character classes. Each language sets one flag, IDENTIFIER_UNICODE,
-// and routes every identifier check through its own `word_start` and
+// Identifier character classes. The language sets one flag from its
+// definition and routes every identifier check through `word_start` and
 // `word_char`, which come here. Underscore always belongs to a word.
 
 /// Whether `c` may begin an identifier.

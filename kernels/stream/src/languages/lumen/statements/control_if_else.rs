@@ -3,7 +3,6 @@ use crate::languages::lumen::prelude::*;
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::Env;
 use crate::languages::lumen::structure::structural;
 use crate::languages::lumen::values::as_bool;
@@ -71,7 +70,7 @@ pub struct IfStmtHandler;
 
 impl StmtHandler for IfStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme == "if"
+        def().is("stmt.if", &parser.peek().lexeme)
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
@@ -83,7 +82,7 @@ impl StmtHandler for IfStmtHandler {
 
         structural::consume_newlines(parser);
 
-        let else_block = if parser.peek().lexeme == "else" {
+        let else_block = if def().is("stmt.else", &parser.peek().lexeme) {
             parser.advance(); // consume 'else'
             parser.skip_tokens();
             Some(structural::parse_block(parser, registry)?)
@@ -97,16 +96,6 @@ impl StmtHandler for IfStmtHandler {
             else_block,
         }))
     }
-}
-
-// --------------------
-// Pattern Declaration
-// --------------------
-
-/// Declare what patterns this module recognizes
-pub fn patterns() -> PatternSet {
-    PatternSet::new()
-        .with_literals(vec!["if", "else"])
 }
 
 // --------------------

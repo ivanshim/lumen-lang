@@ -11,9 +11,7 @@ use crate::languages::lumen::prelude::*;
 
 use crate::kernel::ast::{Control, ExprNode, StmtNode};
 use crate::kernel::parser::Parser;
-use crate::languages::lumen::patterns::PatternSet;
 use crate::kernel::runtime::Env;
-use crate::languages::lumen::structure::structural::{LPAREN, RPAREN};
 use crate::languages::lumen::values::as_string;
 
 #[derive(Debug)]
@@ -40,7 +38,7 @@ pub struct EmitStmtHandler;
 
 impl StmtHandler for EmitStmtHandler {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme == "emit"
+        def().is("builtin.emit", &parser.peek().lexeme)
     }
 
     fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
@@ -48,32 +46,22 @@ impl StmtHandler for EmitStmtHandler {
         parser.advance();
         parser.skip_tokens();
 
-        // expect '('
-        if parser.advance().lexeme != LPAREN {
-            return Err("Expected '(' after emit".into());
+        // expect the call bracket
+        if !def().is("syntax.call.open", &parser.advance().lexeme) {
+            return Err(format!("Expected '{}' after {}", def().first("syntax.call.open"), def().first("builtin.emit")));
         }
         parser.skip_tokens();
 
         let expr = parser.parse_expr(registry)?;
         parser.skip_tokens();
 
-        // expect ')'
-        if parser.advance().lexeme != RPAREN {
-            return Err("Expected ')' after expression".into());
+        // expect the closing bracket
+        if !def().is("syntax.call.close", &parser.advance().lexeme) {
+            return Err(format!("Expected '{}' after expression", def().first("syntax.call.close")));
         }
 
         Ok(Box::new(EmitStmt { expr }))
     }
-}
-
-// --------------------
-// Pattern Declaration
-// --------------------
-
-/// Declare what patterns this module recognizes
-pub fn patterns() -> PatternSet {
-    PatternSet::new()
-        .with_literals(vec!["emit", "(", ")"])
 }
 
 // --------------------
