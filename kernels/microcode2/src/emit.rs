@@ -588,6 +588,17 @@ impl<'a> Writer<'a> {
                 self.statement_line(depth, text);
                 Ok(())
             }
+            Form::Call { callee: Callee::Native(Native::Put, _), args }
+                if to.style != Style::Postfix && !to.has("builtin.put") && to.has("op.index.open") && args.len() == 3 =>
+            {
+                let Form::Load(slot) = &args[0].form else { unreachable!() };
+                let node = Node::new(node.line, Form::AssignIndex {
+                    to: slot.clone(),
+                    index: Box::new(args[1].clone_shallow()),
+                    value: Box::new(args[2].clone_shallow()),
+                });
+                self.statement(depth, &node)
+            }
             Form::Call { .. } | Form::Operate { .. } | Form::Literal(_) | Form::Load(_) => {
                 if to.style == Style::Postfix {
                     let text = self.postfix_expr(node)?;
@@ -937,6 +948,11 @@ impl<'a> Writer<'a> {
     }
 
     fn expr(&mut self, node: &Node) -> Result<Piece, String> {
+        if let Form::Sequence(items) = &node.form {
+            if items.len() == 1 {
+                return self.expr(&items[0]);
+            }
+        }
         match &node.form {
             Form::Literal(v) => Ok(Piece::atom(self.literal(v)?)),
             Form::Load(slot) => {
@@ -1133,6 +1149,12 @@ impl<'a> Writer<'a> {
                 Ok(Piece::atom(format!("{}{}{}{}", target, to.first("op.index.open").unwrap(), index.text, to.first("op.index.close").unwrap())))
             }
             Native::Range => Err("a range outside a for loop".to_string()),
+            Native::Get if !to.has("builtin.get") && to.has("op.index.open") && pieces.len() == 2 => {
+                let mut it = pieces.into_iter();
+                let target = self.brackets(it.next().unwrap(), u32::MAX, false)?;
+                let index = it.next().unwrap();
+                Ok(Piece::atom(format!("{}{}{}{}", target, to.first("op.index.open").unwrap(), index.text, to.first("op.index.close").unwrap())))
+            }
             other => {
                 let name = self.native_name(other)?;
                 Ok(Piece::atom(self.call_text(&name, pieces)))
@@ -1306,10 +1328,47 @@ impl<'a> Writer<'a> {
         }
     }
 
+    /// Statements written on one line, for a body inside an expression.
+    fn postfix_inline(&mut self, node: &Node) -> Text {
+        let items: Vec<&Node> = match &node.form {
+            Form::Sequence(items) => items.iter().collect(),
+            _ => vec![node],
+        };
+        let saved = std::mem::take(&mut self.lines);
+        let mut parts = Vec::new();
+        for (i, item) in items.iter().enumerate() {
+            let last = i + 1 == items.len();
+            let is_value = matches!(item.form, Form::Call { .. } | Form::Operate { .. } | Form::Literal(_) | Form::Load(_) | Form::Branch { .. });
+            if last && is_value {
+                parts.push(self.postfix_expr(item)?);
+            } else {
+                self.statement(0, item)?;
+                parts.extend(self.lines.drain(..).map(|l| l.trim().to_string()));
+            }
+        }
+        self.lines = saved;
+        Ok(parts.join(" "))
+    }
+
     fn postfix_expr(&mut self, node: &Node) -> Text {
         let to = self.to;
         let q = to.first("lexical.name_quote").unwrap_or("'").to_string();
         match &node.form {
+            Form::Sequence(items) if items.len() == 1 => self.postfix_expr(&items[0]),
+            Form::Sequence(_) => self.postfix_inline(node),
+            Form::Branch { test, then, otherwise } => {
+                let test = self.postfix_expr(test)?;
+                let then = self.postfix_inline(then)?;
+                let word_if = self.lexeme("stmt.if", "if")?;
+                let end = to.first("block.close").unwrap();
+                match otherwise {
+                    Some(o) => {
+                        let o = self.postfix_inline(o)?;
+                        Ok(format!("{} {} {} {} {} {}", test, word_if, then, self.lexeme("stmt.else", "else")?, o, end))
+                    }
+                    None => Ok(format!("{} {} {} {}", test, word_if, then, end)),
+                }
+            }
             Form::Literal(Value::Routine(p)) => {
                 let mut lines = std::mem::take(&mut self.lines);
                 self.function(0, "<program>", p, false)?;

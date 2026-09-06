@@ -1273,6 +1273,7 @@ fn until_node(line: u32, test: Node, body: Node) -> Node {
 /// A sequence with one more item at the end.
 fn append(seq: Node, item: Node) -> Node {
     match seq.form {
+        Form::Sequence(items) if items.is_empty() => item,
         Form::Sequence(mut items) => {
             items.push(item);
             Node::seq(seq.line, items)
