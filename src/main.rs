@@ -1,6 +1,6 @@
 // lumen-lang: command-line host for the three kernels.
 //
-// Usage: lumen-lang [--kernel stream|microcode|stack|microcode2] [--lang <name|definition.json>]
+// Usage: lumen-lang [--kernel stream|microcode|stack|microcode2|microcode3] [--lang <name|definition.json>]
 //                   <file> [--lang <name|definition.json>] [program args...]
 //
 // The host reads the file, picks the language from `--lang` (also spelled
@@ -18,7 +18,7 @@ use std::fs;
 use std::path::Path;
 use std::process;
 
-const KERNELS: [&str; 4] = ["stream", "microcode", "stack", "microcode2"];
+const KERNELS: [&str; 5] = ["stream", "microcode", "stack", "microcode2", "microcode3"];
 const DEFAULT_KERNEL: &str = "microcode";
 const DEFAULT_LANGUAGE: &str = "lumen";
 
@@ -109,6 +109,8 @@ fn main() {
         ("stack", Language::File { text, .. }) => lumen_stack::run_definition(text, &source, &inv.program_args),
         ("microcode2", Language::Named(name)) => lumen_microcode2::run(name, &source, &inv.program_args),
         ("microcode2", Language::File { text, .. }) => lumen_microcode2::run_definition(text, &source, &inv.program_args),
+        ("microcode3", Language::Named(name)) => lumen_microcode3::run(name, &source, &inv.program_args),
+        ("microcode3", Language::File { text, .. }) => lumen_microcode3::run_definition(text, &source, &inv.program_args),
         _ => unreachable!("kernel names are validated in parse_args"),
     };
 
@@ -120,7 +122,7 @@ fn main() {
 
 fn usage(program: &str) -> ! {
     eprintln!(
-        "Usage: {} [--kernel stream|microcode|stack|microcode2] [--lang <name|extension|definition.json>] [--emit <name|extension|definition.json>] <file> [program args...]",
+        "Usage: {} [--kernel stream|microcode|stack|microcode2|microcode3] [--lang <name|extension|definition.json>] [--emit <name|extension|definition.json>] <file> [program args...]",
         program
     );
     process::exit(1);

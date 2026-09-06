@@ -1,11 +1,11 @@
 [workspace]
-members = ["kernels/stream", "kernels/microcode", "kernels/stack", "kernels/microcode2"]
+members = ["kernels/stream", "kernels/microcode", "kernels/stack", "kernels/microcode2", "kernels/microcode3"]
 
 [package]
 name = "lumen-lang"
 version = "0.2.0"
 edition = "2021"
-description = "Lumen: one command-line host, four independent interpreter kernels"
+description = "Lumen: one command-line host, five independent interpreter kernels"
 
 [[bin]]
 name = "lumen-lang"
@@ -16,3 +16,4 @@ lumen-stream = { path = "kernels/stream" }
 lumen-microcode = { path = "kernels/microcode" }
 lumen-stack = { path = "kernels/stack" }
 lumen-microcode2 = { path = "kernels/microcode2" }
+lumen-microcode3 = { path = "kernels/microcode3" }
