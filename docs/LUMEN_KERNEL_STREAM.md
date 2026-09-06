@@ -163,7 +163,7 @@ All of the following are defined and managed by language modules, not the kernel
 * **Handler traits**: `ExprPrefix`, `ExprInfix`, `StmtHandler` — each language defines its own
 * **The definition**: which language is hosted, and every keyword, operator, bracket, literal word, builtin name, block style and comment marker, comes from a `langs/*.json` file read once by `language/definition.rs`; handlers ask the definition whether a token spells the construct they parse, and a handler for a construct the language does not spell never matches
 * **Structure**: `language/structure/structural.rs` folds case, drops the prologue and comments (several block-comment pairs allowed), ends every line with a NEWLINE token outside brackets, and synthesises INDENT and DEDENT tokens for an indentation language, leaves the paired delimiters in place for a brace language, or leaves the closing word in place for a keyword-block language (`then` ... `end`), all as token-stream transformations
-* **Precedence**: a numeric tier per operator lexeme, read from the definition's `op.precedence` table, with associativity from `op.right_associative`
+* **Precedence**: a numeric tier per operator lexeme, read from the definition's `op.precedence` table, with associativity from `op.right_associative`; the pipe spelled `.` at the highest tier is how method syntax (`arr.push(x)`, `s.length`) reaches the same handlers as `push(arr, x)` and `len(s)`
 * **Skip behavior**: Extension traits like `LumenParserExt::skip_tokens()` for whitespace handling
 * **Comment removal**: a token-stream transformation inside each language's structure pass
 * **Runtime policy**: Lumen's memoization lives in `languages/lumen/memo.rs`, using the environment's typed extension slot

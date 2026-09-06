@@ -330,7 +330,7 @@ impl LumenReal {
         // the fraction. Every digit is written, zeros included, until the
         // remainder runs out or the digits do.
         let mut remainder = remainder.abs();
-        let used = int_part.to_string().len();
+        let used = int_part.to_string().trim_start_matches('-').len();
         let mut room = self.precision.saturating_sub(used);
         let ten = BigInt::from(10);
         let mut digits = String::new();

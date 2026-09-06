@@ -1,0 +1,70 @@
+// Ported from examples/lumen/constructs/string_operations.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+function char_at_or_null(s, index) {
+    if (index < 0 || index >= s.length) {
+        return null;
+    }
+    return s.charAt(index);
+}
+
+console.log("=== String Operations Test ===");
+const str1 = "Hello";
+const str2 = " World";
+const result1 = str1 + str2;
+process.stdout.write("Period operator (string . string): ");
+console.log(result1);
+const num = 42;
+const result2 = "Answer: " + num;
+process.stdout.write("Period operator with number coercion: ");
+console.log(result2);
+const x = 10;
+const y = 20;
+const result3 = "Sum: " + (x + y);
+process.stdout.write("Period operator with expression: ");
+console.log(result3);
+const test_str = "Hello";
+const str_len = test_str.length;
+process.stdout.write("len('Hello'): ");
+console.log(str_len);
+const utf8_str = "abc123";
+const utf8_len = utf8_str.length;
+process.stdout.write("len('abc123'): ");
+console.log(utf8_len);
+const empty_str = "";
+const empty_len = empty_str.length;
+process.stdout.write("len(''): ");
+console.log(empty_len);
+const arr = [1, 2, 3, 4, 5];
+const arr_len = arr.length;
+process.stdout.write("len([1,2,3,4,5]): ");
+console.log(arr_len);
+const text = "Lumen";
+const ch0 = text.charAt(0);
+process.stdout.write("char_at('Lumen', 0): ");
+console.log(ch0);
+const ch2 = text.charAt(2);
+process.stdout.write("char_at('Lumen', 2): ");
+console.log(ch2);
+const ch4 = text.charAt(4);
+process.stdout.write("char_at('Lumen', 4): ");
+console.log(ch4);
+console.log("");
+console.log("=== Testing char_at_or_null (permissive wrapper) ===");
+const ch_valid = char_at_or_null(text, 1);
+process.stdout.write("char_at_or_null('Lumen', 1): ");
+console.log(ch_valid);
+const ch_oob = char_at_or_null(text, 10);
+process.stdout.write("char_at_or_null('Lumen', 10) [out of bounds]: ");
+console.log(ch_oob);
+const ch_neg = char_at_or_null(text, -1);
+process.stdout.write("char_at_or_null('Lumen', -1) [negative]: ");
+console.log(ch_neg);
+const ch_edge = char_at_or_null(text, 5);
+process.stdout.write("char_at_or_null('Lumen', 5) [at length]: ");
+console.log(ch_edge);
+const word = "Test";
+const length_ = word.length;
+const first_char = word.charAt(0);
+const result10 = "Word: " + word + ", Length: " + length_ + ", First: " + first_char;
+process.stdout.write("Combined operations: ");
+console.log(result10);
+console.log("Done!");

@@ -158,10 +158,12 @@ pub(crate) fn invoke(function: &str, args: &[Instruction], env: &mut Environment
         values.push(eval!(arg, env, schema));
     }
 
-    let def = match env.lookup(function) {
+    let def = match env.lookup_function(function) {
         Some(Value::Function(def)) => def.clone(),
-        Some(_) => return Err(format!("'{}' is not a function", function)),
-        None => return Err(format!("Unknown function: {}", function)),
+        _ => match env.lookup(function) {
+            Some(_) => return Err(format!("'{}' is not a function", function)),
+            None => return Err(format!("Unknown function: {}", function)),
+        },
     };
     if def.params.len() != values.len() {
         return Err(format!("Function {} expects {} arguments, got {}", function, def.params.len(), values.len()));
@@ -184,7 +186,17 @@ pub(crate) fn invoke(function: &str, args: &[Instruction], env: &mut Environment
         for (param, value) in def.params.iter().zip(values.iter()) {
             env.bind(param.clone(), value.clone());
         }
-        execute(&def.body, env, schema)
+        let (value, flow) = execute(&def.body, env, schema)?;
+        // Pascal: a body that ends without returning yields what it
+        // assigned to the function's own name.
+        if flow == Flow::Normal && schema.statements.function_result_by_name {
+            if let Some(named) = env.lookup(function) {
+                if !matches!(named, Value::Function(_)) {
+                    return Ok((named.clone(), flow));
+                }
+            }
+        }
+        Ok((value, flow))
     })?;
 
     if let Some(key) = key {
@@ -335,55 +347,40 @@ fn builtin_apply(builtin: Builtin, name: &str, values: &[Value], schema: &Langua
                 _ => Err(format!("{}() requires a number, rational, or real argument", name)),
             }
         }
-        IntToString => {
+        Precision => {
             arity(name, values, 1)?;
             match &values[0] {
-                Value::Number(n) => Ok(Value::String(n.to_string())),
-                _ => Err(format!("{}() requires an integer argument", name)),
-            }
-        }
-        RealToString => {
-            arity(name, values, 1)?;
-            match &values[0] {
-                Value::Real { numerator, denominator, precision } => {
-                    Ok(Value::String(Value::real_to_decimal(numerator, denominator, *precision)))
-                }
+                Value::Real { precision, .. } => Ok(Value::Number(BigInt::from(*precision))),
                 _ => Err(format!("{}() requires a real argument", name)),
             }
         }
-        RationalToString => {
+        ToString => {
+            arity(name, values, 1)?;
+            Ok(Value::String(values[0].render(&words)))
+        }
+        ToInt => {
             arity(name, values, 1)?;
             match &values[0] {
-                v @ Value::Rational { .. } => Ok(Value::String(v.to_string())),
-                _ => Err(format!("{}() requires a rational argument", name)),
+                Value::Number(n) => Ok(Value::Number(n.clone())),
+                Value::Rational { numerator, denominator } | Value::Real { numerator, denominator, .. } => {
+                    Ok(Value::Number(numerator / denominator))
+                }
+                _ => Err(format!("{}() requires a number argument", name)),
             }
         }
-        BoolToString => {
+        ToReal => {
             arity(name, values, 1)?;
             match &values[0] {
-                v @ Value::Bool(_) => Ok(Value::String(v.render(&words))),
-                _ => Err(format!("{}() requires a boolean argument", name)),
-            }
-        }
-        ArrayToString => {
-            arity(name, values, 1)?;
-            match &values[0] {
-                v @ Value::Array(_) => Ok(Value::String(v.render(&words))),
-                _ => Err(format!("{}() requires an array argument", name)),
-            }
-        }
-        NullToString => {
-            arity(name, values, 1)?;
-            match &values[0] {
-                v @ Value::Null => Ok(Value::String(v.render(&words))),
-                _ => Err(format!("{}() requires a null argument", name)),
-            }
-        }
-        KindToString => {
-            arity(name, values, 1)?;
-            match &values[0] {
-                Value::Kind(k) => Ok(Value::String(k.name().to_string())),
-                _ => Err(format!("{}() requires a kind argument", name)),
+                Value::Number(n) => {
+                    Ok(Value::Real { numerator: n.clone(), denominator: BigInt::from(1), precision: DEFAULT_REAL_PRECISION })
+                }
+                Value::Rational { numerator, denominator } => Ok(Value::Real {
+                    numerator: numerator.clone(),
+                    denominator: denominator.clone(),
+                    precision: DEFAULT_REAL_PRECISION,
+                }),
+                v @ Value::Real { .. } => Ok(v.clone()),
+                _ => Err(format!("{}() requires a number argument", name)),
             }
         }
         Len => {
@@ -579,12 +576,19 @@ fn binary(op: Op, left: &Value, right: &Value, schema: &LanguageSchema) -> Resul
         Op::Concat => Ok(Value::String(format!("{}{}", left.render(&words), right.render(&words)))),
         Op::Range => Ok(Value::Range { start: left.to_number()?, end: right.to_number()? }),
         Op::Index => {
-            let items = match left {
-                Value::Array(items) => items,
-                _ => return Err("Cannot index non-array value".to_string()),
-            };
             let idx = array_index(right)?;
-            items.get(idx).cloned().ok_or_else(|| format!("Array index {} out of bounds (length: {})", idx, items.len()))
+            match left {
+                Value::Array(items) => items
+                    .get(idx)
+                    .cloned()
+                    .ok_or_else(|| format!("Array index {} out of bounds (length: {})", idx, items.len())),
+                Value::String(s) if schema.structure.index_strings => s
+                    .chars()
+                    .nth(idx)
+                    .map(|c| Value::String(c.to_string()))
+                    .ok_or_else(|| format!("String index {} out of bounds (length: {})", idx, s.chars().count())),
+                _ => Err("Cannot index non-array value".to_string()),
+            }
         }
         Op::Add if matches!(left, Value::String(_)) || matches!(right, Value::String(_)) => {
             Ok(Value::String(format!("{}{}", left.render(&words), right.render(&words))))

@@ -3,6 +3,7 @@ var x: integer;
 var y: integer;
 var i: integer;
 var sum: integer;
+
 begin
     writeln(1 + 2 * 3);
     x := 0;

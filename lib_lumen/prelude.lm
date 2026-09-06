@@ -4,6 +4,7 @@
 # It contains only include directives, not library implementations.
 # ============================================================
 
+include "lib_lumen/render.lm"
 include "lib_lumen/value_to_string.lm"
 include "lib_lumen/string_to_value.lm"
 include "lib_lumen/numeric.lm"

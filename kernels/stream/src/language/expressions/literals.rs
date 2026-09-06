@@ -89,7 +89,10 @@ impl ExprPrefix for NumberLiteralPrefix {
         loop {
             if parser.peek().lexeme.chars().count() == 1 {
                 let ch = parser.peek().lexeme.chars().next().unwrap();
-                let punctuation = Some(ch) == marks.point
+                // A decimal point belongs to the number only when a digit
+                // follows: `42.to_s` is a method call on 42.
+                let digit_follows = parser.peek_n(1).map_or(false, |t| t.lexeme.chars().all(|c| c.is_ascii_digit() || (in_base_n && c.is_ascii_alphanumeric())));
+                let punctuation = (Some(ch) == marks.point && digit_follows)
                     || Some(ch) == marks.base
                     || (in_base_n && Some(ch) == marks.exponent);
                 if Some(ch) == marks.base {

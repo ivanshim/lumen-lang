@@ -6,7 +6,7 @@ in the same relative path, or names the first construct the language's
 definition has no spelling for. The library functions an example uses are
 ported into the file with it.
 
-Lumen has 84 examples; python carries 45, rust carries 33, c carries 21, javascript carries 38, pascal carries 18, php carries 39, ruby carries 36, swift carries 25.
+Lumen has 84 examples; python carries 56, rust carries 35, c carries 22, javascript carries 44, pascal carries 28, php carries 49, ruby carries 46, swift carries 26.
 
 | Example | python | rust | c | javascript | pascal | php | ruby | swift |
 |---|---|---|---|---|---|---|---|---|
@@ -14,13 +14,13 @@ Lumen has 84 examples; python carries 45, rust carries 33, c carries 21, javascr
 | `constructs/array_empty.lm` | yes | yes | no `array literal` | yes | no type word for a array | yes | yes | yes |
 | `constructs/array_mixed.lm` | yes | yes | no `array literal` | yes | no type word for a array | yes | yes | yes |
 | `constructs/array_multiline.lm` | yes | yes | no `array literal` | yes | no type word for a array | yes | yes | yes |
-| `constructs/array_mutations.lm` | no `push` | no `push` | no `array literal` | no `push` | no type word for a array | no `push` | no `push` | no `write` |
+| `constructs/array_mutations.lm` | yes | yes | no `array literal` | yes | no type word for a array | yes | yes | no `write` |
 | `constructs/array_nested.lm` | yes | yes | no `array literal` | yes | no type word for a array | yes | yes | yes |
 | `constructs/array_simple.lm` | yes | yes | no `array literal` | yes | no type word for a array | yes | yes | yes |
 | `constructs/base_n_literals.lm` | yes | no `**` | no `**` | yes | no `**` | yes | no `/` | no `write` |
 | `constructs/bracket_grouping.lm` | yes | yes | yes | yes | yes | yes | yes | yes |
-| `constructs/comments.lm` | yes | yes | yes | yes | no functions | yes | yes | yes |
-| `constructs/constants.lm` | no `real` | no `/` | C has no spelling here for a variable holding a rational | no `//` | no functions | no `//` | no `/` | no `/` |
+| `constructs/comments.lm` | yes | yes | yes | yes | yes | yes | yes | yes |
+| `constructs/constants.lm` | no `real` | no `/` | C has no spelling here for a variable holding a rational | no `//` | no `error` | no `//` | no `/` | no `/` |
 | `constructs/demo.lm` | yes | yes | yes | yes | yes | yes | yes | yes |
 | `constructs/extern_args.lm` | no `extern` | no `extern` | no `extern` | no `extern` | no `extern` | no `extern` | no `extern` | no `extern` |
 | `constructs/extern_basic.lm` | no `extern` | no `extern` | no `extern` | no `extern` | no `extern` | no `extern` | no `extern` | no `extern` |
@@ -32,65 +32,65 @@ Lumen has 84 examples; python carries 45, rust carries 33, c carries 21, javascr
 | `constructs/extern_test.lm` | no `extern` | no `extern` | no `extern` | no `extern` | no `extern` | no `extern` | no `extern` | no `extern` |
 | `constructs/extern_type.lm` | no `extern` | no `extern` | no `extern` | no `extern` | no `extern` | no `extern` | no `extern` | no `extern` |
 | `constructs/for_loop.lm` | yes | yes | yes | yes | yes | yes | yes | no `write` |
-| `constructs/for_loop_continue.lm` | yes | yes | no `for`; a `continue` in the loop keeps it from being a while loop | no `for`; a `continue` in the loop keeps it from being a while loop | no `for`; a `continue` in the loop keeps it from being a while loop | no `for`; a `continue` in the loop keeps it from being a while loop | yes | no `write` |
+| `constructs/for_loop_continue.lm` | yes | yes | yes | yes | yes | yes | yes | no `write` |
 | `constructs/for_loop_control.lm` | yes | yes | yes | yes | yes | yes | yes | no `write` |
-| `constructs/functions_basic.lm` | yes | yes | C has no spelling here for a variable holding a str | yes | no functions | yes | yes | yes |
-| `constructs/functions_recursion.lm` | yes | yes | yes | yes | no functions | yes | yes | yes |
+| `constructs/functions_basic.lm` | yes | yes | C has no spelling here for a variable holding a str | yes | yes | yes | yes | yes |
+| `constructs/functions_recursion.lm` | yes | yes | yes | yes | yes | yes | yes | yes |
 | `constructs/integer_quotient.lm` | yes | no `/` | no `/` | no `//` | a string the language cannot spell | no `//` | no `/` | no `write` |
 | `constructs/integer_quotient_minimal.lm` | yes | no `/` | no `/` | no `//` | a string the language cannot spell | no `//` | no `/` | no `write` |
-| `constructs/kind_constants.lm` | no `INTEGER` | no `kind` | no `kind` | no `kind` | no functions | no `INTEGER` | no `kind` | no `kind` |
-| `constructs/kind_function.lm` | no `INTEGER` | no `kind` | no `kind` | no `kind` | no functions | no `INTEGER` | no `kind` | no `kind` |
-| `constructs/kind_simple.lm` | no `INTEGER` | no `kind` | no `kind` | no `kind` | no functions | no `INTEGER` | no `kind` | no `kind` |
-| `constructs/kind_test.lm` | no `INTEGER` | no `kind` | no `kind` | no `kind` | no functions | no `INTEGER` | no `kind` | no `kind` |
-| `constructs/let_keyword.lm` | yes | yes | yes | yes | no functions | yes | yes | yes |
+| `constructs/kind_constants.lm` | no `INTEGER` | no `INTEGER` | C has no spelling here for a variable holding a str | no `INTEGER` | no `INTEGER` | no `INTEGER` | no `INTEGER` | no `INTEGER` |
+| `constructs/kind_function.lm` | no `INTEGER` | no `INTEGER` | C has no spelling here for a variable holding a str | no `INTEGER` | no `INTEGER` | no `INTEGER` | no `INTEGER` | no `INTEGER` |
+| `constructs/kind_simple.lm` | no `INTEGER` | no `INTEGER` | C has no spelling here for a variable holding a str | no `INTEGER` | no `INTEGER` | no `INTEGER` | no `INTEGER` | no `INTEGER` |
+| `constructs/kind_test.lm` | no `INTEGER` | no `INTEGER` | C has no spelling here for a variable holding a str | no `INTEGER` | no type word for a array | no `INTEGER` | no `INTEGER` | no `INTEGER` |
+| `constructs/let_keyword.lm` | yes | yes | yes | yes | yes | yes | yes | yes |
 | `constructs/loop.lm` | yes | yes | yes | yes | yes | yes | yes | no `write` |
-| `constructs/none_type.lm` | yes | no type word for a null | C has no spelling here for a variable holding a null | yes | no functions | yes | yes | no type word for a null |
-| `constructs/numeric_decomposition.lm` | no `INTEGER` | no `kind` | no `kind` | no `kind` | no functions | no `INTEGER` | no `kind` | no `kind` |
-| `constructs/operators_complete.lm` | yes | no `**` | no `**` | yes | no functions | yes | no `/` | no `**` |
-| `constructs/ord_chr.lm` | yes | no `ord` | no `ord` | no `ord` | a string the language cannot spell | yes | no `ord` | no `write` |
-| `constructs/pipe_operator.lm` | yes | yes | yes | yes | no functions | yes | yes | yes |
-| `constructs/real_type.lm` | no `real` | no `real` | no `real` | no `real` | no functions | no `real` | no `real` | no `real` |
-| `constructs/return_explicit.lm` | yes | no `/` | no `/` | yes | no functions | yes | no `/` | no `/` |
-| `constructs/round_function.lm` | yes | no `/` | no `/` | no `//` | no functions | no `//` | no `/` | no `/` |
+| `constructs/none_type.lm` | yes | no type word for a null | C has no spelling here for a variable holding a null | yes | no type word for a null | yes | yes | no type word for a null |
+| `constructs/numeric_decomposition.lm` | no `INTEGER` | no `INTEGER` | C has no spelling here for a variable holding a str | no `INTEGER` | no `INTEGER` | no `INTEGER` | no `INTEGER` | no `INTEGER` |
+| `constructs/operators_complete.lm` | yes | no `**` | no `**` | yes | no `**` | yes | no `/` | no `**` |
+| `constructs/ord_chr.lm` | yes | no `ord` | no `ord` | no `ord` | a string the language cannot spell | yes | yes | no `write` |
+| `constructs/pipe_operator.lm` | yes | yes | yes | yes | yes | yes | yes | yes |
+| `constructs/real_type.lm` | no `real` | no `real` | no `real` | no `real` | no `real` | no `real` | no `/` | no `/` |
+| `constructs/return_explicit.lm` | yes | no `/` | no `/` | yes | yes | yes | no `/` | no `/` |
+| `constructs/round_function.lm` | yes | no `/` | no `/` | no `//` | a string the language cannot spell | no `//` | no `/` | no `/` |
 | `constructs/scope_if.lm` | yes | yes | yes | yes | yes | yes | yes | yes |
 | `constructs/scope_leak.lm` | yes | yes | yes | yes | yes | yes | yes | yes |
 | `constructs/scope_loop.lm` | yes | yes | yes | yes | yes | yes | yes | yes |
 | `constructs/scope_nested.lm` | yes | yes | yes | yes | yes | yes | yes | yes |
 | `constructs/scope_shadowing.lm` | yes | yes | yes | yes | yes | yes | yes | yes |
 | `constructs/scope_update.lm` | yes | yes | yes | yes | yes | yes | yes | yes |
-| `constructs/short_circuit.lm` | yes | no `/` | no `/` | yes | no functions | yes | no `/` | no `/` |
+| `constructs/short_circuit.lm` | yes | no `/` | no `/` | yes | yes | yes | no `/` | no `/` |
 | `constructs/string_basic.lm` | yes | yes | yes | yes | yes | yes | yes | yes |
 | `constructs/string_comprehensive.lm` | yes | yes | C has no spelling here for a variable holding a str | yes | yes | yes | yes | yes |
 | `constructs/string_equality.lm` | yes | yes | C has no spelling here for a variable holding a str | yes | yes | yes | yes | yes |
 | `constructs/string_literals.lm` | yes | yes | C has no spelling here for a variable holding a str | yes | a string the language cannot spell | yes | yes | yes |
 | `constructs/string_mixed.lm` | yes | yes | C has no spelling here for a variable holding a str | yes | yes | yes | yes | yes |
-| `constructs/string_operations.lm` | no `char_at` | no `char_at` | C has no spelling here for a variable holding a str | no `len` | no functions | no `char_at` | no `len` | no `len` |
-| `constructs/test_decomp_comprehensive.lm` | no `INTEGER` | no `kind` | no `kind` | no `kind` | no functions | no `INTEGER` | no `kind` | no `kind` |
+| `constructs/string_operations.lm` | yes | no `char_at` | C has no spelling here for a variable holding a str | yes | no type word for a array | yes | yes | no `char_at` |
+| `constructs/test_decomp_comprehensive.lm` | no `INTEGER` | no `INTEGER` | C has no spelling here for a variable holding a str | no `INTEGER` | no `INTEGER` | no `INTEGER` | no `INTEGER` | no `INTEGER` |
 | `constructs/test_decomp_errors.lm` | yes | yes | yes | yes | a string the language cannot spell | yes | yes | yes |
-| `constructs/test_decomp_simple.lm` | no `INTEGER` | no `kind` | no `kind` | no `kind` | no functions | no `INTEGER` | no `kind` | no `kind` |
-| `constructs/type_annotations.lm` | yes | no type word for a null | C has no spelling here for a variable holding a str | yes | no functions | yes | yes | no type word for a null |
-| `constructs/type_hierarchy.lm` | no `INTEGER` | no `kind` | no `kind` | no `kind` | no functions | no `INTEGER` | no `kind` | no `kind` |
-| `constructs/unicode_identifiers.lm` | yes | no `/` | no `/` | yes | no functions | yes | no `/` | no `/` |
+| `constructs/test_decomp_simple.lm` | no `INTEGER` | no `INTEGER` | C has no spelling here for a variable holding a str | no `INTEGER` | no `INTEGER` | no `INTEGER` | no `INTEGER` | no `INTEGER` |
+| `constructs/type_annotations.lm` | yes | no type word for a null | C has no spelling here for a variable holding a str | yes | no type word for a null | yes | yes | no type word for a null |
+| `constructs/type_hierarchy.lm` | yes | no `real` | C has no spelling here for a variable holding a str | no `//` | no `char_at` | no `//` | no `/` | no `/` |
+| `constructs/unicode_identifiers.lm` | yes | no `/` | no `/` | yes | yes | yes | no `/` | no `/` |
 | `constructs/until_loop.lm` | yes | yes | yes | yes | yes | yes | yes | no `write` |
 | `constructs/write_function.lm` | yes | yes | yes | yes | yes | yes | yes | no `write` |
-| `e_integer.lm` | no `INTEGER` | no `kind` | no `kind` | no `kind` | no functions | no `INTEGER` | no `kind` | no `kind` |
-| `exponentiation_exponent_then_mod.lm` | yes | yes | yes | no `//` | no functions | no `//` | yes | no `write` |
+| `e_integer.lm` | no `real` | no `char_at` | C has no spelling here for a variable holding a str | no `//` | no `char_at` | no `//` | no `/` | no `char_at` |
+| `exponentiation_exponent_then_mod.lm` | yes | yes | yes | no `//` | yes | no `//` | yes | no `write` |
 | `exponentiation_naive.lm` | yes | yes | yes | yes | yes | yes | yes | no `write` |
-| `factorial.lm` | no `ARGS` | no `ARGS` | no `ARGS` | no `ARGS` | no functions | no `ARGS` | no `ARGS` | no `ARGS` |
-| `fibonacci_iterative.lm` | no `INTEGER` | no `kind` | no `kind` | no `kind` | no functions | no `INTEGER` | no `kind` | no `kind` |
-| `fibonacci_recursive.lm` | no `INTEGER` | no `kind` | no `kind` | no `kind` | no functions | no `INTEGER` | no `kind` | no `kind` |
-| `libraries/test_base_basic.lm` | no `real` | function `integer_to_base_string` reads program-level `alphabet` | function `integer_to_base_string` reads program-level `alphabet` | no `real` | function `integer_to_base_string` reads program-level `alphabet` | function `integer_to_base_string` reads program-level `alphabet` | function `integer_to_base_string` reads program-level `alphabet` | no `real` |
-| `libraries/test_base_comprehensive.lm` | no `INTEGER` | function `integer_to_base_string` reads program-level `alphabet` | function `integer_to_base_string` reads program-level `alphabet` | no `kind` | function `integer_to_base_string` reads program-level `alphabet` | function `integer_to_base_string` reads program-level `alphabet` | function `integer_to_base_string` reads program-level `alphabet` | no `kind` |
-| `libraries/test_base_minimal.lm` | no `char_at` | function `integer_to_base_string` reads program-level `alphabet` | function `integer_to_base_string` reads program-level `alphabet` | no `char_at` | function `integer_to_base_string` reads program-level `alphabet` | function `integer_to_base_string` reads program-level `alphabet` | function `integer_to_base_string` reads program-level `alphabet` | no `char_at` |
-| `libraries/test_base_roundtrip.lm` | no `INTEGER` | function `integer_to_base_string` reads program-level `alphabet` | function `integer_to_base_string` reads program-level `alphabet` | no `kind` | function `integer_to_base_string` reads program-level `alphabet` | function `integer_to_base_string` reads program-level `alphabet` | function `integer_to_base_string` reads program-level `alphabet` | no `kind` |
-| `libraries/test_char_classification.lm` | no `INTEGER` | no `kind` | no `kind` | no `kind` | no functions | no `INTEGER` | no `kind` | no `kind` |
-| `libraries/test_char_utilities.lm` | no `INTEGER` | no `kind` | no `kind` | no `kind` | no functions | no `INTEGER` | no `kind` | no `kind` |
-| `libraries/test_string_comprehensive.lm` | no `INTEGER` | no `kind` | no `kind` | no `kind` | no functions | no `INTEGER` | no `kind` | no `kind` |
-| `libraries/test_string_to_value.lm` | no `INTEGER` | function `integer_to_base_string` reads program-level `alphabet` | function `integer_to_base_string` reads program-level `alphabet` | no `kind` | function `integer_to_base_string` reads program-level `alphabet` | function `integer_to_base_string` reads program-level `alphabet` | function `integer_to_base_string` reads program-level `alphabet` | no `kind` |
-| `libraries/test_string_transform.lm` | no `INTEGER` | no `kind` | no `kind` | no `kind` | no functions | no `INTEGER` | no `kind` | no `kind` |
-| `libraries/test_string_validation.lm` | no `INTEGER` | no `kind` | no `kind` | no `kind` | no functions | no `INTEGER` | no `kind` | no `kind` |
-| `pi_machin.lm` | no `INTEGER` | no `kind` | no `kind` | no `kind` | no functions | no `INTEGER` | no `kind` | no `kind` |
-| `rsa_demo.lm` | yes | no type word for a array | C has no spelling here for a variable holding a array | no `//` | no functions | no `//` | yes | no type word for a array |
-| `sieve.lm` | no `INTEGER` | no `kind` | no `kind` | no `kind` | no functions | no `INTEGER` | no `kind` | no `kind` |
-| `string_library_demo.lm` | no `char_at` | no `char_at` | C has no spelling here for a variable holding a str | no `char_at` | no functions | no `char_at` | no `char_at` | no `char_at` |
-| `test_scope_leak_fix.lm` | no `INTEGER` | no `kind` | no `kind` | no `kind` | no functions | no `INTEGER` | no `kind` | no `kind` |
+| `factorial.lm` | no `ARGS` | no `ARGS` | no `ARGS` | no `ARGS` | no `ARGS` | no `ARGS` | no `ARGS` | no `ARGS` |
+| `fibonacci_iterative.lm` | no `ARGS` | no `char_at` | C has no spelling here for a variable holding a str | no `ARGS` | no `char_at` | no `ARGS` | no `ARGS` | no `char_at` |
+| `fibonacci_recursive.lm` | no `ARGS` | no `char_at` | C has no spelling here for a variable holding a str | no `ARGS` | no `char_at` | no `ARGS` | no `ARGS` | no `char_at` |
+| `libraries/test_base_basic.lm` | no `num` | no `real` | no `real` | no `kind` | no `real` | no `//` | no `kind` | no `kind` |
+| `libraries/test_base_comprehensive.lm` | no `INTEGER` | no `kind` | C has no spelling here for a variable holding a str | no `kind` | no type word for a array | no `INTEGER` | no `kind` | no `kind` |
+| `libraries/test_base_minimal.lm` | yes | no `char_at` | C has no spelling here for a variable holding a str | no `//` | no `char_at` | no `//` | yes | no `char_at` |
+| `libraries/test_base_roundtrip.lm` | no `INTEGER` | no `kind` | C has no spelling here for a variable holding a str | no `kind` | no `char_at` | no `INTEGER` | no `kind` | no `kind` |
+| `libraries/test_char_classification.lm` | yes | no `ord` | C has no spelling here for a variable holding a str | no `ord` | no type word for a array | yes | yes | no `ord` |
+| `libraries/test_char_utilities.lm` | no `NULL` | no `kind` | C has no spelling here for a variable holding a str | no `kind` | no type word for a array | no `NULL` | no `kind` | no `kind` |
+| `libraries/test_string_comprehensive.lm` | yes | no `ord` | C has no spelling here for a variable holding a str | no `ord` | no type word for a array | yes | no `/` | no `ord` |
+| `libraries/test_string_to_value.lm` | no `INTEGER` | no `kind` | C has no spelling here for a variable holding a str | no `kind` | no `char_at` | no `INTEGER` | no `kind` | no `kind` |
+| `libraries/test_string_transform.lm` | yes | no `char_at` | C has no spelling here for a variable holding a str | no `ord` | no type word for a array | yes | yes | no `char_at` |
+| `libraries/test_string_validation.lm` | yes | no `ord` | C has no spelling here for a variable holding a str | no `ord` | no type word for a array | yes | yes | no `ord` |
+| `pi_machin.lm` | no `real` | no `char_at` | C has no spelling here for a variable holding a str | no `//` | no `char_at` | no `//` | no `/` | no `char_at` |
+| `rsa_demo.lm` | yes | no type word for a array | C has no spelling here for a variable holding a array | no `//` | no type word for a array | no `//` | yes | no type word for a array |
+| `sieve.lm` | yes | no `char_at` | C has no spelling here for a variable holding a str | yes | no type word for a array | yes | yes | no `char_at` |
+| `string_library_demo.lm` | yes | no `char_at` | C has no spelling here for a variable holding a str | yes | no type word for a array | yes | yes | no `char_at` |
+| `test_scope_leak_fix.lm` | yes | yes | C has no spelling here for a variable holding a str | yes | no `char_at` | yes | yes | yes |

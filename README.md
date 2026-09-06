@@ -103,14 +103,14 @@ and [langs/README.md](langs/README.md).
 | Language | Extension | Definition | Style | Stream | Microcode |
 |----------|-----------|------------|-------|--------|-----------|
 | Lumen | `.lm` | built in | Python-style indentation, exact numbers, pipe operator | yes | yes |
-| Python | `.py` | built in | indentation with `:`, `elif`, `def`, `range()` | yes | yes |
-| Rust | `.rs` | built in | braces, `let mut`, `fn main()`, `println!("{}", x)` | yes | yes |
-| PHP | `.php` | `langs/extras/php.json` | braces, `$variables`, `<?php`, case-insensitive keywords | yes | yes |
-| Ruby | `.rb` | `langs/extras/ruby.json` | keyword blocks closed by `end`, `elsif`, `def`, `puts`, `nil` | yes | yes |
-| Pascal | `.pas` | `langs/extras/pascal.json` | `begin`/`end`, `:=`, `<>`, `div`/`mod`, `;` terminators, case-insensitive | yes | yes |
+| Python | `.py` | built in | indentation with `:`, `elif`, `def`, `range()`, `str`, `arr.append(x)`, `s[i]` | yes | yes |
+| Rust | `.rs` | built in | braces, `let mut`, `fn main()`, `println!("{}", x)`, `v.len()`, `x.to_string()` | yes | yes |
+| PHP | `.php` | `langs/extras/php.json` | braces, `$variables`, `<?php`, case-insensitive keywords, `strval`, `array_push` | yes | yes |
+| Ruby | `.rb` | `langs/extras/ruby.json` | keyword blocks closed by `end`, `elsif`, `def`, `puts`, `nil`, `x.to_s`, `s.length` | yes | yes |
+| Pascal | `.pas` | `langs/extras/pascal.json` | `begin`/`end`, `:=`, `<>`, `div`/`mod`, `function f(n: integer): integer;` with a `var` section, `f := ...` | yes | yes |
 | C | `.c` | `langs/extras/c.json` | braces, `int x = 0;`, `long fib(int n)`, `printf("%d\n", x)`, `puts`, `main` | yes | yes |
-| JavaScript | `.js` | `langs/extras/javascript.json` | braces, `let`/`const`, `function`, `===`, `**`, `console.log` | yes | yes |
-| Swift | `.swift` | `langs/extras/swift.json` | braces without `;`, `let`/`var x: Int`, `func f(n: Int) -> Int`, `f(n: 1)`, `0..<n` | yes | yes |
+| JavaScript | `.js` | `langs/extras/javascript.json` | braces, `let`/`const`, `function`, `===`, `**`, `console.log`, `arr.push(x)`, `s.length` | yes | yes |
+| Swift | `.swift` | `langs/extras/swift.json` | braces without `;`, `let`/`var x: Int`, `func f(n: Int) -> Int`, `f(n: 1)`, `0..<n`, `arr.append(x)` | yes | yes |
 
 The eight other languages are subsets of those languages spelled exactly as
 the languages spell them, running on Lumen's semantics: one value model,

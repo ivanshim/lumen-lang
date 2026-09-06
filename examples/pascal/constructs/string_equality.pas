@@ -2,6 +2,7 @@
 var x: string;
 var y: string;
 var z: string;
+
 begin
     x := 'hello';
     y := 'hello';

@@ -35,12 +35,31 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   declares (`let x;`).
 - **The Lumen suite in every language**: `scripts/port_examples.py` ports
   each of the 84 Lumen examples, with the library functions it calls, to
-  every other language whose definition spells what it needs, 255
+  every other language whose definition spells what it needs, 306
   programs in all, and writes `examples/PORTS.md` saying which and, where
-  not, which construct the language has no spelling for. The test driver
-  runs every example under `examples/` on both kernels (740 runs), and
-  `scripts/kernel_diff.sh` finds all 370 programs printing the same on
-  both.
+  not, which construct the language has no spelling for. Builtins are
+  written the way each language writes them (`arr.push(x)`, `s.length`,
+  `x.to_s`, `strlen`), a constant a function reads is inlined where
+  functions cannot see top-level names, and Pascal gets typed functions
+  with `var` sections. The test driver runs every example under
+  `examples/` on both kernels (842 runs), and `scripts/kernel_diff.sh`
+  finds all 421 programs printing the same on both.
+- **The kernel renders nothing for Lumen**: the seven renderer builtins
+  (`int_to_string` and the rest) are gone from both kernels and live in
+  `lib_lumen/render.lm` as Lumen code, written against the primitives; a
+  new primitive, `precision`, reads the significant digits a real
+  carries. `to_string`, `to_int` and `to_real` are the one-name
+  conversions of languages that have them (`str`, `String`, `intval`);
+  Lumen gives them no name. Every Lumen example prints exactly what it did.
+- **Method syntax and Pascal functions**: the pipe may be spelled `.` at
+  the highest tier, and a bare name after it is a call, so `arr.push(x)`,
+  `s.length`, `42.to_s` and `v.len()` are the same kernel calls as
+  `push(arr, x)`, `len(s)`, `to_string(42)`; `op.index.strings` lets
+  `s[i]` index a string. A function header ending in a terminator may be
+  followed by declarations before the body, typed parameter groups are
+  separated by the terminator, and `stmt.function.result_by_name` makes
+  the value assigned to the function's own name its result, which is how
+  Pascal declares `function f(n: integer): integer;`.
 - **Kernels agree**: `scripts/kernel_diff.sh` reports every example
   printing the same on both kernels. The stream kernel's integer quotient
   now divides the exact values before truncating, its reals keep zero

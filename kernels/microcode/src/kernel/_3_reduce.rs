@@ -448,10 +448,15 @@ impl<'a> Parser<'a> {
                     self.expect_word("as a type name")?;
                 }
             }
+            // Parameters are separated by the call separator or, between
+            // typed groups (Pascal's `a: integer; b: real`), the terminator.
             if let Some(sep) = &call.separator {
                 if self.is_op(sep) {
                     self.advance();
                 }
+            }
+            if self.peek().kind == Kind::Op && schema.is_terminator(&self.peek().text) {
+                self.advance();
             }
         }
         self.expect_op(&call.close, "after parameters")?;
@@ -459,7 +464,28 @@ impl<'a> Parser<'a> {
             self.advance();
             self.expect_word("as a return type")?;
         }
-        let body = self.block()?;
+        // A header that ends with a terminator (Pascal's `;`) may be followed
+        // by declarations before the body block; they open the body.
+        let mut prelude = Vec::new();
+        if self.peek().kind == Kind::Op && schema.is_terminator(&self.peek().text) {
+            loop {
+                self.skip_terminators();
+                let declares = self.peek().kind == Kind::Word
+                    && !type_first
+                    && binding.map_or(false, |b| spelled(&b.keyword, &self.peek().text));
+                if !declares {
+                    break;
+                }
+                prelude.push(self.binding()?);
+            }
+        }
+        let block = self.block()?;
+        let body = if prelude.is_empty() {
+            block
+        } else {
+            prelude.push(block);
+            Instruction::Sequence(prelude)
+        };
         let def = Function { name: name.clone(), params, body };
         Ok(Instruction::assign(name, Instruction::Literal(Value::Function(Rc::new(def)))))
     }
@@ -507,11 +533,15 @@ impl<'a> Parser<'a> {
             let next_min = if info.associativity == Assoc::Left { info.precedence + EPSILON } else { info.precedence };
             let right = self.expression(next_min)?;
             left = match info.op {
+                // The pipe passes the left value as the first argument of the
+                // call on the right; a bare name is a call with no other
+                // arguments (`s.length` where the pipe is spelled `.`).
                 Op::Pipe => match right {
                     Instruction::Invoke { function, mut args } => {
                         args.insert(0, left);
                         Instruction::Invoke { function, args }
                     }
+                    Instruction::Variable(function) => Instruction::Invoke { function, args: vec![left] },
                     _ => return Err("Pipe operator requires a function call on the right side".to_string()),
                 },
                 op => Instruction::binary(op, left, right),

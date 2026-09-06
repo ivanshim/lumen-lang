@@ -96,6 +96,8 @@ pub struct Structure {
     pub call_labels: Vec<String>,
     pub array: Option<Pair>,
     pub index: Option<Pair>,
+    /// Indexing a string yields the character at that position.
+    pub index_strings: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -194,6 +196,9 @@ pub struct Statements {
     pub function: Vec<String>,
     /// Token introducing an (ignored) return type after the parameters, e.g. `->`.
     pub function_returns: Vec<String>,
+    /// A function's result is the value last assigned to its own name
+    /// (Pascal), when the body does not return one explicitly.
+    pub function_result_by_name: bool,
     /// A no-op statement keyword, e.g. Python's `pass`.
     pub pass: Vec<String>,
 }
@@ -229,13 +234,14 @@ pub enum Builtin {
     PrintLine,
     Write,
     Real,
-    IntToString,
-    RealToString,
-    RationalToString,
-    BoolToString,
-    ArrayToString,
-    NullToString,
-    KindToString,
+    /// The significant digits a real carries.
+    Precision,
+    /// Any value as the text print would show; the integer part of any
+    /// number; any number as a real. The polymorphic conversions of
+    /// languages that have one (`str`, `int`, `float`).
+    ToString,
+    ToInt,
+    ToReal,
     Len,
     CharAt,
     Ord,
@@ -579,6 +585,10 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
         l.unsupported(key)?;
     }
     let index = pair(l, "op.index.open", "op.index.close", None)?;
+    let index_strings = l.flag("op.index.strings")?;
+    if index_strings && index.is_none() {
+        return Err("op.index.strings needs op.index.open".to_string());
+    }
 
     // ---- literals ----
     let literals = Literals {
@@ -698,8 +708,12 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
         continue_: l.lexemes("stmt.continue")?,
         function: l.lexemes("stmt.function")?,
         function_returns: l.lexemes("stmt.function.returns")?,
+        function_result_by_name: l.flag("stmt.function.result_by_name")?,
         pass: l.lexemes("stmt.pass")?,
     };
+    if statements.function_result_by_name && statements.function.is_empty() {
+        return Err("stmt.function.result_by_name needs stmt.function".to_string());
+    }
     l.unsupported("stmt.emit")?;
     if type_first {
         let taken = [
@@ -727,13 +741,10 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
         ("builtin.extern", Builtin::Extern),
         ("builtin.range", Builtin::Range),
         ("builtin.real", Builtin::Real),
-        ("builtin.int_to_string", Builtin::IntToString),
-        ("builtin.real_to_string", Builtin::RealToString),
-        ("builtin.rational_to_string", Builtin::RationalToString),
-        ("builtin.bool_to_string", Builtin::BoolToString),
-        ("builtin.array_to_string", Builtin::ArrayToString),
-        ("builtin.null_to_string", Builtin::NullToString),
-        ("builtin.kind_to_string", Builtin::KindToString),
+        ("builtin.precision", Builtin::Precision),
+        ("builtin.to_string", Builtin::ToString),
+        ("builtin.to_int", Builtin::ToInt),
+        ("builtin.to_real", Builtin::ToReal),
         ("builtin.num", Builtin::Num),
         ("builtin.den", Builtin::Den),
         ("builtin.int", Builtin::Int),
@@ -902,6 +913,7 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
             call_labels,
             array,
             index,
+            index_strings,
         },
         literals,
         operators: Operators { binary, unary },

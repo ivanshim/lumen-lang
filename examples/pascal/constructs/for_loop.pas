@@ -1,5 +1,6 @@
 // Ported from examples/lumen/constructs/for_loop.lm by scripts/port_examples.py; edit the Lumen original, not this file.
 var i: integer;
+
 begin
     i := 0;
     while i < 10 do begin

@@ -1,5 +1,6 @@
 // Ported from examples/lumen/constructs/write_function.lm by scripts/port_examples.py; edit the Lumen original, not this file.
 var i: integer;
+
 begin
     write('Hello');
     write(' ');
