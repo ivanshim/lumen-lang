@@ -14,7 +14,7 @@ use num_traits::ToPrimitive;
 use super::_1_ingest::{Kind, Token};
 use super::instruction::{Instruction, Target, TransferKind};
 use super::value::{Function, Value};
-use crate::schema::{spelled, Assoc, BlockStyle, LanguageSchema, Op};
+use crate::schema::{spelled, Assoc, BlockStyle, Builtin, LanguageSchema, Op};
 
 pub fn parse(tokens: &[Token], schema: &LanguageSchema) -> Result<Instruction, String> {
     let mut parser = Parser { tokens, pos: 0, schema, hidden: 0 };
@@ -370,6 +370,8 @@ impl<'a> Parser<'a> {
 
     /// `for v in range { body }` binds v to the range start and loops while
     /// v is below the range end, stepping by one after each pass.
+    /// A for loop over a range is a counted loop: the range is loop syntax
+    /// (`start..end`, or the range call), not a value.
     fn for_loop(&mut self) -> Result<Instruction, String> {
         let schema: &'a LanguageSchema = self.schema;
         let form = schema.statements.loop_for.as_ref().expect("for form present");
@@ -382,21 +384,30 @@ impl<'a> Parser<'a> {
         let iterable = self.expression(0.0)?;
         let body = self.block()?;
 
-        let range = self.hidden_name("range");
-        let bind_range = Instruction::assign(range.clone(), iterable);
-        let bind_var =
-            Instruction::assign(var.clone(), Instruction::unary(Op::RangeStart, Instruction::Variable(range.clone())));
-        let condition = Instruction::binary(
-            Op::Lt,
-            Instruction::Variable(var.clone()),
-            Instruction::unary(Op::RangeEnd, Instruction::Variable(range)),
-        );
+        let (start, end) = match iterable {
+            Instruction::Operate { op: Op::Range, mut operands } if operands.len() == 2 => {
+                let end = operands.pop().expect("two operands");
+                (operands.pop().expect("two operands"), end)
+            }
+            Instruction::Invoke { function, mut args }
+                if schema.functions.get(&function) == Some(&Builtin::Range) && args.len() == 2 =>
+            {
+                let end = args.pop().expect("two arguments");
+                (args.pop().expect("two arguments"), end)
+            }
+            _ => return Err("A for loop needs a range: start..end".to_string()),
+        };
+
+        let limit = self.hidden_name("end");
+        let bind_limit = Instruction::assign(limit.clone(), end);
+        let bind_var = Instruction::assign(var.clone(), start);
+        let condition = Instruction::binary(Op::Lt, Instruction::Variable(var.clone()), Instruction::Variable(limit));
         let step = Instruction::assign(
             var.clone(),
             Instruction::binary(Op::Add, Instruction::Variable(var), Instruction::Literal(Value::Number(BigInt::from(1)))),
         );
         Ok(Instruction::Sequence(vec![
-            bind_range,
+            bind_limit,
             bind_var,
             Instruction::Loop { condition: Box::new(condition), body: Box::new(body), step: Some(Box::new(step)) },
         ]))
@@ -682,7 +693,7 @@ impl<'a> Parser<'a> {
                 return Ok(if denominator == BigInt::from(1) {
                     Value::Number(numerator)
                 } else {
-                    Value::Real { numerator, denominator, precision: significant_figures(text) }
+                    super::numeric::real(numerator, denominator, significant_figures(text))
                 });
             }
         }
@@ -694,7 +705,7 @@ impl<'a> Parser<'a> {
                 let integer: BigInt = if before.is_empty() { BigInt::from(0) } else { parse_int(before, text)? };
                 let fraction = parse_int(after, text)?;
                 let numerator = integer * &denominator + fraction;
-                return Ok(Value::Real { numerator, denominator, precision: significant_figures(text) });
+                return Ok(super::numeric::real(numerator, denominator, significant_figures(text)));
             }
         }
         Ok(Value::Number(parse_int(text, text)?))

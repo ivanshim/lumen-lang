@@ -323,13 +323,7 @@ fn builtin_apply(builtin: Builtin, name: &str, values: &[Value], schema: &Langua
             print!("{}", render(values, schema));
             Ok(Value::Null)
         }
-        Range => {
-            arity(name, values, 2)?;
-            match (&values[0], &values[1]) {
-                (Value::Number(start), Value::Number(end)) => Ok(Value::Range { start: start.clone(), end: end.clone() }),
-                _ => Err(format!("{}() requires two integer arguments", name)),
-            }
-        }
+        Range => Err(format!("{}() spells a range, which belongs in a for loop", name)),
         Real => {
             if values.is_empty() || values.len() > 2 {
                 return Err(format!("{}() expects 1 or 2 arguments, got {}", name, values.len()));
@@ -437,39 +431,22 @@ fn builtin_apply(builtin: Builtin, name: &str, values: &[Value], schema: &Langua
             arity(name, values, 1)?;
             values[0].kind().map(Value::Kind).ok_or_else(|| format!("{}(): unknown value type", name))
         }
+        // Numerator and denominator of any number: an integer is over 1, a
+        // real is the fraction it carries. int and frac are library code over these.
         Num => {
             arity(name, values, 1)?;
             match &values[0] {
-                Value::Rational { numerator, .. } => Ok(Value::Number(numerator.clone())),
-                _ => Err(format!("{}() requires a rational argument", name)),
+                Value::Number(n) => Ok(Value::Number(n.clone())),
+                Value::Rational { numerator, .. } | Value::Real { numerator, .. } => Ok(Value::Number(numerator.clone())),
+                _ => Err(format!("{}() requires a number argument", name)),
             }
         }
         Den => {
             arity(name, values, 1)?;
             match &values[0] {
-                Value::Rational { denominator, .. } => Ok(Value::Number(denominator.clone())),
-                _ => Err(format!("{}() requires a rational argument", name)),
-            }
-        }
-        Int => {
-            arity(name, values, 1)?;
-            match &values[0] {
-                Value::Real { numerator, denominator, .. } => Ok(Value::Number(numerator / denominator)),
-                _ => Err(format!("{}() requires a real argument", name)),
-            }
-        }
-        Frac => {
-            arity(name, values, 1)?;
-            match &values[0] {
-                Value::Real { numerator, denominator, precision } => {
-                    let int_part = numerator / denominator;
-                    Ok(Value::Real {
-                        numerator: numerator - &int_part * denominator,
-                        denominator: denominator.clone(),
-                        precision: *precision,
-                    })
-                }
-                _ => Err(format!("{}() requires a real argument", name)),
+                Value::Number(_) => Ok(Value::Number(BigInt::from(1))),
+                Value::Rational { denominator, .. } | Value::Real { denominator, .. } => Ok(Value::Number(denominator.clone())),
+                _ => Err(format!("{}() requires a number argument", name)),
             }
         }
         Extern => {
@@ -521,19 +498,18 @@ fn operate(op: Op, operands: &[Instruction], env: &mut Environment, schema: &Lan
             }
             return Ok((Value::Array(items), Flow::Normal));
         }
-        Op::Not | Op::Negate | Op::RangeStart | Op::RangeEnd => {
+        Op::Not | Op::Negate => {
             if operands.len() != 1 {
                 return Err("Unary operator requires 1 operand".to_string());
             }
             let v = eval!(&operands[0], env, schema);
             let result = match op {
                 Op::Not => Value::Bool(!v.to_bool()),
-                Op::Negate => numeric::negate(&v)?,
-                Op::RangeStart | Op::RangeEnd => match v {
-                    Value::Range { start, end } => Value::Number(if op == Op::RangeStart { start } else { end }),
-                    other => return Err(format!("For loop requires a range, got {}", other)),
+                // Derived: -x is 0 - x, so a real keeps its precision.
+                _ => match numeric::to_num(&v) {
+                    Some(n) => numeric::arith(Op::Sub, &numeric::to_num(&Value::Number(BigInt::from(0))).expect("a number"), &n)?,
+                    None => return Err("Cannot negate non-numeric value".to_string()),
                 },
-                _ => unreachable!(),
             };
             return Ok((result, Flow::Normal));
         }
@@ -574,7 +550,7 @@ fn binary(op: Op, left: &Value, right: &Value, schema: &LanguageSchema) -> Resul
         Op::Eq => Ok(Value::Bool(equal(left, right))),
         Op::Ne => Ok(Value::Bool(!equal(left, right))),
         Op::Concat => Ok(Value::String(format!("{}{}", left.render(&words), right.render(&words)))),
-        Op::Range => Ok(Value::Range { start: left.to_number()?, end: right.to_number()? }),
+        Op::Range => Err("A range belongs in a for loop".to_string()),
         Op::Index => {
             let idx = array_index(right)?;
             match left {
@@ -612,18 +588,22 @@ fn binary(op: Op, left: &Value, right: &Value, schema: &LanguageSchema) -> Resul
             }
         }
         Op::Lt | Op::Le | Op::Gt | Op::Ge => {
-            let ordering = match (numeric::to_num(left), numeric::to_num(right)) {
-                (Some(a), Some(b)) => numeric::compare(&a, &b),
-                _ => left.to_number()?.cmp(&right.to_number()?),
+            // Derived from less-than alone: a > b is b < a, a <= b is not
+            // b < a, a >= b is not a < b.
+            let less = |x: &Value, y: &Value| -> Result<bool, String> {
+                Ok(match (numeric::to_num(x), numeric::to_num(y)) {
+                    (Some(a), Some(b)) => numeric::compare(&a, &b) == Ordering::Less,
+                    _ => x.to_number()? < y.to_number()?,
+                })
             };
             Ok(Value::Bool(match op {
-                Op::Lt => ordering == Ordering::Less,
-                Op::Le => ordering != Ordering::Greater,
-                Op::Gt => ordering == Ordering::Greater,
-                _ => ordering != Ordering::Less,
+                Op::Lt => less(left, right)?,
+                Op::Gt => less(right, left)?,
+                Op::Le => !less(right, left)?,
+                _ => !less(left, right)?,
             }))
         }
-        Op::Pipe | Op::Not | Op::Negate | Op::ArrayLiteral | Op::RangeStart | Op::RangeEnd => {
+        Op::Pipe | Op::Not | Op::Negate | Op::ArrayLiteral => {
             Err(format!("{:?} is not a binary operation", op))
         }
     }

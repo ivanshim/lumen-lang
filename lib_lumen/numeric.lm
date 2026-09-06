@@ -1,3 +1,11 @@
 # Convert numeric value to real using REAL_DEFAULT_PRECISION
 fn real_default(x)
     return real(x, REAL_DEFAULT_PRECISION)
+
+# Integer part of any number, truncated toward zero: derived from num and den
+fn int(x)
+    num(x) // den(x)
+
+# Fractional part of any number, at its own precision: derived from int
+fn frac(x)
+    x - int(x)

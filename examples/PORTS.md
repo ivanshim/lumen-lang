@@ -6,12 +6,13 @@ in the same relative path, or names the first construct the language's
 definition has no spelling for. The library functions an example uses are
 ported into the file with it.
 
-Lumen has 84 examples; python carries 56, rust carries 35, c carries 22, javascript carries 44, pascal carries 28, php carries 49, ruby carries 46, swift carries 26.
+Lumen has 85 examples; python carries 57, rust carries 35, c carries 22, javascript carries 45, pascal carries 28, php carries 50, ruby carries 47, swift carries 26.
 
 | Example | python | rust | c | javascript | pascal | php | ruby | swift |
 |---|---|---|---|---|---|---|---|---|
 | `constructs/array_constraint_no_multiline.lm` | yes | yes | no `array literal` | yes | no type word for a array | yes | yes | yes |
 | `constructs/array_empty.lm` | yes | yes | no `array literal` | yes | no type word for a array | yes | yes | yes |
+| `constructs/array_library.lm` | yes | no type word for a array | C has no spelling here for a variable holding a array | yes | no type word for a array | yes | yes | no type word for a array |
 | `constructs/array_mixed.lm` | yes | yes | no `array literal` | yes | no type word for a array | yes | yes | yes |
 | `constructs/array_multiline.lm` | yes | yes | no `array literal` | yes | no type word for a array | yes | yes | yes |
 | `constructs/array_mutations.lm` | yes | yes | no `array literal` | yes | no type word for a array | yes | yes | no `write` |
@@ -73,12 +74,12 @@ Lumen has 84 examples; python carries 56, rust carries 35, c carries 22, javascr
 | `constructs/unicode_identifiers.lm` | yes | no `/` | no `/` | yes | yes | yes | no `/` | no `/` |
 | `constructs/until_loop.lm` | yes | yes | yes | yes | yes | yes | yes | no `write` |
 | `constructs/write_function.lm` | yes | yes | yes | yes | yes | yes | yes | no `write` |
-| `e_integer.lm` | no `real` | no `char_at` | C has no spelling here for a variable holding a str | no `//` | no `char_at` | no `//` | no `/` | no `char_at` |
+| `e_integer.lm` | no `real` | no `num` | C has no spelling here for a variable holding a str | no `//` | no `char_at` | no `//` | no `/` | no `char_at` |
 | `exponentiation_exponent_then_mod.lm` | yes | yes | yes | no `//` | yes | no `//` | yes | no `write` |
 | `exponentiation_naive.lm` | yes | yes | yes | yes | yes | yes | yes | no `write` |
-| `factorial.lm` | no `ARGS` | no `ARGS` | no `ARGS` | no `ARGS` | no `ARGS` | no `ARGS` | no `ARGS` | no `ARGS` |
-| `fibonacci_iterative.lm` | no `ARGS` | no `char_at` | C has no spelling here for a variable holding a str | no `ARGS` | no `char_at` | no `ARGS` | no `ARGS` | no `char_at` |
-| `fibonacci_recursive.lm` | no `ARGS` | no `char_at` | C has no spelling here for a variable holding a str | no `ARGS` | no `char_at` | no `ARGS` | no `ARGS` | no `char_at` |
+| `factorial.lm` | no `ARGS` | no `num` | no `num` | no `ARGS` | no `num` | no `ARGS` | no `ARGS` | no `ARGS` |
+| `fibonacci_iterative.lm` | no `ARGS` | no `num` | C has no spelling here for a variable holding a str | no `ARGS` | no `char_at` | no `ARGS` | no `ARGS` | no `char_at` |
+| `fibonacci_recursive.lm` | no `ARGS` | no `num` | C has no spelling here for a variable holding a str | no `ARGS` | no `char_at` | no `ARGS` | no `ARGS` | no `char_at` |
 | `libraries/test_base_basic.lm` | no `num` | no `real` | no `real` | no `kind` | no `real` | no `//` | no `kind` | no `kind` |
 | `libraries/test_base_comprehensive.lm` | no `INTEGER` | no `kind` | C has no spelling here for a variable holding a str | no `kind` | no type word for a array | no `INTEGER` | no `kind` | no `kind` |
 | `libraries/test_base_minimal.lm` | yes | no `char_at` | C has no spelling here for a variable holding a str | no `//` | no `char_at` | no `//` | yes | no `char_at` |

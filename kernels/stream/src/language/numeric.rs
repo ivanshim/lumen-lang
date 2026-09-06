@@ -199,36 +199,3 @@ fn parse_digits_in_base(digits: &str, base: u32) -> LumenResult<BigInt> {
 
     Ok(result)
 }
-
-/// Modulo operation on two BigInts
-pub fn modulo(a: &BigInt, b: &BigInt) -> LumenResult<BigInt> {
-    if b == &BigInt::from(0) {
-        return Err("Modulo by zero".into());
-    }
-    Ok(a % b)
-}
-
-/// Negate a BigInt
-pub fn negate(a: &BigInt) -> LumenResult<BigInt> {
-    Ok(-a)
-}
-
-/// Compare less than
-pub fn compare_lt(a: &BigInt, b: &BigInt) -> LumenResult<bool> {
-    Ok(a < b)
-}
-
-/// Compare less than or equal
-pub fn compare_le(a: &BigInt, b: &BigInt) -> LumenResult<bool> {
-    Ok(a <= b)
-}
-
-/// Compare greater than
-pub fn compare_gt(a: &BigInt, b: &BigInt) -> LumenResult<bool> {
-    Ok(a > b)
-}
-
-/// Compare greater than or equal
-pub fn compare_ge(a: &BigInt, b: &BigInt) -> LumenResult<bool> {
-    Ok(a >= b)
-}

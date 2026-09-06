@@ -45,7 +45,7 @@ Seven primitives carry all control and data flow:
 |---|---|
 | `while c { b }` | `Loop { c, b }` |
 | `until c { b }` | `Loop { true, b, step: Branch { c, Transfer(Break) } }` |
-| `for v in r { b }` | bind the range once, bind `v` to its start, `Loop { v < end, b, step: v = v + 1 }` |
+| `for v in a..b { b }` | bind the end once, bind `v` to the start, `Loop { v < end, b, step: v = v + 1 }`; the range is loop syntax, not a value |
 | `fn f(p) { b }` | `Assign f = Literal(function value)` |
 | `a[i] = x` | `Assign` to an index target |
 | `x \|> f(y)` | `Invoke f(x, y)` |
@@ -57,19 +57,25 @@ and each call.
 ## Kernel operations
 
 Schemas map operator lexemes onto this fixed set: `add sub mul div quot rem
-pow eq ne lt le gt ge and or not negate concat range index pipe`. Arithmetic
-runs on one exact numeric tower: integers stay integers for closed
-operations, other results are reduced rationals, and a real on either side
-makes the result real with the left real's precision. Comparisons are exact
-for every numeric kind.
+pow eq ne lt le gt ge and or not negate concat range index pipe`. Of these,
+`add sub mul quot div lt eq and or not concat index` are the floor;
+`rem` is `a - b * (a // b)`, `pow` is multiplication by squaring, `negate`
+is `0 - x`, and `ne gt le ge` are `not eq`, `lt` reversed, `not lt`
+reversed and `not lt`, computed that way in `numeric.rs` and
+`_4_execute.rs`. `range` is loop syntax that reduce turns into a counted
+loop, and `pipe` a call. Arithmetic runs on one exact numeric tower:
+integers stay integers for closed operations, other results are reduced
+rationals, and a real on either side makes the result real with the left
+real's precision. Comparisons are exact for every numeric kind.
 
 ## Built-ins
 
 The kernel can provide `emit print_line write real precision to_string
-to_int to_real len char_at ord chr error kind num den int frac extern push
-range`. A definition decides which surface names reach them. Lumen maps
-`emit` and the primitives that reach into a value (`kind num den int frac
-precision`) and writes `print` and every renderer in Lumen itself
+to_int to_real len char_at ord chr error kind num den extern push`, and
+`range` as the call that spells a for loop's range. A definition decides
+which surface names reach them. Lumen maps `emit` and the primitives that
+reach into a value (`kind num den precision`), derives `int` and `frac`
+from `num` and `den`, and writes `print` and every renderer in Lumen itself
 (`lib_lumen/render.lm`), so the kernel renders nothing for Lumen; Python,
 PHP and Rust map `print` and friends directly, and `to_string`, `to_int`
 and `to_real` are the one-name conversions of languages that have them

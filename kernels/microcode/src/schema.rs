@@ -176,8 +176,6 @@ pub enum Op {
     Index,
     Pipe,
     ArrayLiteral,
-    RangeStart,
-    RangeEnd,
 }
 
 /// Statement forms and the words that introduce them. An empty list means
@@ -250,8 +248,6 @@ pub enum Builtin {
     Kind,
     Num,
     Den,
-    Int,
-    Frac,
     Extern,
     Push,
     Range,
@@ -747,8 +743,6 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
         ("builtin.to_real", Builtin::ToReal),
         ("builtin.num", Builtin::Num),
         ("builtin.den", Builtin::Den),
-        ("builtin.int", Builtin::Int),
-        ("builtin.frac", Builtin::Frac),
         ("builtin.push", Builtin::Push),
     ];
     let placeholders = l.lexemes("builtin.print.placeholder")?;

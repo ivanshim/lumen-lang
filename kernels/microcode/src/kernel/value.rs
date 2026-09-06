@@ -62,7 +62,6 @@ pub enum Value {
     String(String),
     Bool(bool),
     Null,
-    Range { start: BigInt, end: BigInt },
     Array(Vec<Value>),
     Function(Rc<Function>),
     Kind(KindValue),
@@ -79,7 +78,7 @@ impl Value {
             Value::Array(_) => KindValue::Array,
             Value::Null => KindValue::Null,
             Value::Kind(_) => KindValue::Null,
-            Value::Range { .. } | Value::Function(_) => return None,
+            Value::Function(_) => return None,
         })
     }
 
@@ -91,7 +90,7 @@ impl Value {
             Value::Number(n) => n != &BigInt::from(0),
             Value::Rational { numerator, .. } | Value::Real { numerator, .. } => numerator != &BigInt::from(0),
             Value::String(s) => !s.is_empty(),
-            Value::Range { .. } | Value::Array(_) | Value::Function(_) | Value::Kind(_) => true,
+            Value::Array(_) | Value::Function(_) | Value::Kind(_) => true,
         }
     }
 
@@ -105,7 +104,6 @@ impl Value {
             Value::Bool(false) => Ok(BigInt::from(0)),
             Value::Null => Ok(BigInt::from(0)),
             Value::String(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
-            Value::Range { .. } => Err("Cannot coerce range to number".to_string()),
             Value::Array(_) => Err("Cannot coerce array to number".to_string()),
             Value::Function(_) => Err("Cannot coerce function to number".to_string()),
             Value::Kind(_) => Err("Cannot coerce kind meta-value to number".to_string()),
@@ -169,7 +167,6 @@ impl fmt::Display for Value {
             Value::String(s) => write!(f, "{}", s),
             Value::Bool(b) => write!(f, "{}", if *b { "true" } else { "false" }),
             Value::Null => write!(f, "null"),
-            Value::Range { start, end } => write!(f, "{}..{}", start, end),
             Value::Array(elements) => {
                 write!(f, "[")?;
                 for (i, elem) in elements.iter().enumerate() {
@@ -206,7 +203,6 @@ impl PartialEq for Value {
             (String(a), String(b)) => a == b,
             (Bool(a), Bool(b)) => a == b,
             (Null, Null) => true,
-            (Range { start: a0, end: a1 }, Range { start: b0, end: b1 }) => a0 == b0 && a1 == b1,
             (Array(a), Array(b)) => a == b,
             (Function(a), Function(b)) => Rc::ptr_eq(a, b),
             (Kind(a), Kind(b)) => a == b,

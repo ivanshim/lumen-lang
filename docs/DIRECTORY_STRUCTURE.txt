@@ -47,7 +47,6 @@ lumen-lang/
     kernels/stream/src/language/expressions/logic.rs
     kernels/stream/src/language/expressions/mod.rs
     kernels/stream/src/language/expressions/pipe.rs
-    kernels/stream/src/language/expressions/range_expr.rs
     kernels/stream/src/language/expressions/variable.rs
     kernels/stream/src/language/extern_system/capabilities.rs
     kernels/stream/src/language/extern_system/mod.rs
@@ -106,7 +105,8 @@ lumen-lang/
     lib_lumen/factorial.lm
     lib_lumen/modular_arithmetic.lm
     lib_lumen/number_theory.lm
-    lib_lumen/numeric.lm
+    lib_lumen/array.lm               the array library, derived from len, indexing and push
+    lib_lumen/numeric.lm             real_default, int and frac over num and den
     lib_lumen/output.lm
     lib_lumen/pi_machin.lm
     lib_lumen/prelude.lm
@@ -125,7 +125,7 @@ lumen-lang/
     scripts/lang_table.py
     scripts/port_examples.py         writes every Lumen example in every other language, and examples/PORTS.md
 
-  examples/                        421 programs: lumen/ (+constructs/, libraries/) and, mirroring it, python/, rust/, php/, ruby/, pascal/, c/, javascript/, swift/; PORTS.md says which Lumen example is in which language
+  examples/                        426 programs: lumen/ (+constructs/, libraries/) and, mirroring it, python/, rust/, php/, ruby/, pascal/, c/, javascript/, swift/; PORTS.md says which Lumen example is in which language
   docs/                            design documents, references, history
     docs/DIRECTORY_STRUCTURE.txt
     docs/LUMEN_COMPACT_REFERENCE.md
