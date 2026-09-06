@@ -6,6 +6,7 @@ var iterations: integer;
 var result: integer;
 var i: integer;
 var j: integer;
+
 begin
     base := 7;
     exp := 100;

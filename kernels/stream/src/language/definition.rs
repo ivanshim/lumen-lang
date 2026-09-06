@@ -46,11 +46,12 @@ const LABELS: &[&str] = &[
     "op.add", "op.sub", "op.mul", "op.div", "op.div.result", "op.quot", "op.rem", "op.pow",
     "op.eq", "op.ne", "op.lt", "op.le", "op.gt", "op.ge",
     "op.and", "op.or", "op.not", "op.negate",
-    "op.concat", "op.range", "op.index.open", "op.index.close", "op.pipe",
+    "op.concat", "op.range", "op.index.open", "op.index.close", "op.index.strings", "op.pipe",
     "stmt.assign", "stmt.let", "stmt.let.mutable", "stmt.let.annotation", "stmt.let.type_first",
     "stmt.if", "stmt.elif", "stmt.else", "stmt.while", "stmt.until", "stmt.for", "stmt.for.in",
     "stmt.foreach", "stmt.foreach.as", "stmt.foreach.pair",
     "stmt.return", "stmt.break", "stmt.continue", "stmt.function", "stmt.function.returns",
+    "stmt.function.result_by_name",
     "stmt.pass", "stmt.emit",
     "builtin.emit", "builtin.print", "builtin.write", "builtin.print.placeholder", "builtin.len", "builtin.char_at", "builtin.ord",
     "builtin.chr", "builtin.typeof", "builtin.error", "builtin.extern", "builtin.range",
@@ -82,6 +83,11 @@ pub struct Definition {
     pub type_first: bool,
     /// `op.div` yields a real (Python's `/`) rather than an exact rational.
     pub div_real: bool,
+    /// Indexing a string yields the character at that position.
+    pub index_strings: bool,
+    /// A function's result is the value last assigned to its own name
+    /// (Pascal) when the body does not return one explicitly.
+    pub result_by_name: bool,
     pub block_style: BlockStyle,
     pub indent_size: usize,
     /// Every reserved word, computed once: the parser asks on every token.
@@ -150,6 +156,8 @@ impl Definition {
             keywords_case_insensitive: false,
             type_first: false,
             div_real: false,
+            index_strings: false,
+            result_by_name: false,
             block_style: BlockStyle::Indentation,
             indent_size: 4,
             reserved: Vec::new(),
@@ -178,6 +186,8 @@ impl Definition {
                 ("identifier.case_insensitive", Json::Bool(flag)) => definition.identifiers_case_insensitive = *flag,
                 ("lexical.keywords_case_insensitive", Json::Bool(flag)) => definition.keywords_case_insensitive = *flag,
                 ("stmt.let.type_first", Json::Bool(flag)) => definition.type_first = *flag,
+                ("op.index.strings", Json::Bool(flag)) => definition.index_strings = *flag,
+                ("stmt.function.result_by_name", Json::Bool(flag)) => definition.result_by_name = *flag,
                 ("op.div.result", Json::String(result)) => {
                     definition.div_real = match result.as_str() {
                         "real" => true,
@@ -239,6 +249,12 @@ impl Definition {
         }
         if !definition.list("syntax.call.label").is_empty() && definition.list("syntax.call.open").is_empty() {
             return Err("syntax.call.label needs syntax.call.open".to_string());
+        }
+        if definition.index_strings && definition.list("op.index.open").is_empty() {
+            return Err("op.index.strings needs op.index.open".to_string());
+        }
+        if definition.result_by_name && definition.list("stmt.function").is_empty() {
+            return Err("stmt.function.result_by_name needs stmt.function".to_string());
         }
         definition.reserved = definition.collect_reserved_words();
         Ok(definition)

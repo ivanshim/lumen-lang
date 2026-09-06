@@ -1,5 +1,5 @@
 {
-  "$comment": "Python: indentation blocks introduced by a colon, word-form logic operators, true division yielding a real, floor division. sys.stdout.write and sys.exit are builtin names, so the `import sys` line that makes them Python is the prologue the kernel drops; str, int and float are the conversions. Dictionary literals are omitted until the kernel has a map type; everything listed is Python.",
+  "$comment": "Python: indentation blocks introduced by a colon, word-form logic operators, true division yielding a real, floor division, method calls on builtins (arr.append(x)) as the pipe spelled with a dot, and indexing into strings. sys.stdout.write and sys.exit are builtin names, so the `import sys` line that makes them Python is the prologue the kernel drops; str, int and float are the conversions. Dictionary literals are omitted until the kernel has a map type; everything listed is Python.",
   "format_version": 1,
   "language": "python",
   "extensions": ["py"],
@@ -48,7 +48,8 @@
     ["+", "-"],
     ["*", "/", "//", "%"],
     ["-"],
-    ["**"]
+    ["**"],
+    ["."]
   ],
   "op.right_associative": ["**"],
   "op.add": ["+"],
@@ -73,7 +74,8 @@
   "op.range": [],
   "op.index.open": ["["],
   "op.index.close": ["]"],
-  "op.pipe": [],
+  "op.index.strings": true,
+  "op.pipe": ["."],
   "stmt.assign": ["="],
   "stmt.let": [],
   "stmt.let.mutable": [],
@@ -94,6 +96,7 @@
   "stmt.continue": ["continue"],
   "stmt.function": ["def"],
   "stmt.function.returns": [],
+  "stmt.function.result_by_name": false,
   "stmt.pass": ["pass"],
   "stmt.emit": [],
   "builtin.emit": [],
@@ -113,7 +116,7 @@
   "builtin.den": [],
   "builtin.int": [],
   "builtin.frac": [],
-  "builtin.push": [],
+  "builtin.push": ["append"],
   "builtin.precision": [],
   "builtin.to_string": ["str"],
   "builtin.to_int": ["int"],

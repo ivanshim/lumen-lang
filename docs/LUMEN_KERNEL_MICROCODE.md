@@ -17,8 +17,8 @@ is table-driven. Definitions contain no executable logic, only data.
 |---|---|---|---|
 | 1. Ingest | `kernel/_1_ingest.rs` | source text → tokens (words, numbers, decoded strings, operators, line ends, indentation) | line and block comment markers, a prologue to drop, string delimiters with their escape letters and which quotes are raw, operator lexemes, number punctuation and hexadecimal prefix, the identifier character class, a variable prefix, case folding of keywords or identifiers, builtin names read whole (`println!`, `console.log`) |
 | 2. Structure | `kernel/_2_structure.rs` | tokens → tokens with explicit block delimiters | block style (indentation, braces or keyword), indent size, paired open/close delimiters, optional block-intro tokens, bracket pairs that suspend line structure |
-| 3. Reduce | `kernel/_3_reduce.rs` | tokens → instruction tree | literal words, operator precedence and associativity with the kernel operation each maps to, statement keywords with the form each introduces, block-intro words to skip and the closer that ends a keyword-style chain, call/group/array syntax, argument labels to drop, type-first declarations |
-| 4. Execute | `kernel/_4_execute.rs` | instruction tree → values | the surface names that reach built-ins, the placeholders print fills, the names of system bindings |
+| 3. Reduce | `kernel/_3_reduce.rs` | tokens → instruction tree | literal words, operator precedence and associativity with the kernel operation each maps to, statement keywords with the form each introduces, block-intro words to skip and the closer that ends a keyword-style chain, call/group/array syntax, argument labels to drop, type-first declarations, declarations before a function body and the terminator between parameter groups, the pipe's lexeme (a bare name after it is a call) |
+| 4. Execute | `kernel/_4_execute.rs` | instruction tree → values | the surface names that reach built-ins, the placeholders print fills, whether a function's result is what it assigned to its own name, whether strings may be indexed, the names of system bindings |
 
 Supporting modules: `kernel/instruction.rs` (the instruction set),
 `kernel/value.rs` (the value model), `kernel/numeric.rs` (the exact numeric
@@ -65,17 +65,21 @@ for every numeric kind.
 
 ## Built-ins
 
-The kernel can provide `emit print_line write real int_to_string
-real_to_string rational_to_string bool_to_string array_to_string
-null_to_string kind_to_string len char_at ord chr error kind num den int frac
-extern push range`. A definition decides which surface names reach them.
-Lumen maps `emit` and the conversion primitives and writes `print` in Lumen
-itself; Python, PHP and Rust map `print` and friends directly. A builtin name
-may end in one operator character, which is how Rust's `println!` is a
-name. `print` and `write` join their arguments with spaces; when the first
-argument is a string holding `{}` placeholders and more arguments follow,
-they fill the placeholders in order. Booleans and null render with the
-first spelling the definition gives for them, so Python prints `True`.
+The kernel can provide `emit print_line write real precision to_string
+to_int to_real len char_at ord chr error kind num den int frac extern push
+range`. A definition decides which surface names reach them. Lumen maps
+`emit` and the primitives that reach into a value (`kind num den int frac
+precision`) and writes `print` and every renderer in Lumen itself
+(`lib_lumen/render.lm`), so the kernel renders nothing for Lumen; Python,
+PHP and Rust map `print` and friends directly, and `to_string`, `to_int`
+and `to_real` are the one-name conversions of languages that have them
+(`str`, `String`, `intval`). A builtin name begins like an identifier and
+may go on with operator characters and further words (`println!`,
+`console.log`). `print` and `write` join their arguments with spaces; when
+the first argument is a string holding a placeholder from
+`builtin.print.placeholder` and more arguments follow, they fill the
+placeholders in order. Booleans and null render with the first spelling the
+definition gives for them, so Python prints `True`.
 
 ## System bindings
 

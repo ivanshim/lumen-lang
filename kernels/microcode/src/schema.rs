@@ -96,6 +96,8 @@ pub struct Structure {
     pub call_labels: Vec<String>,
     pub array: Option<Pair>,
     pub index: Option<Pair>,
+    /// Indexing a string yields the character at that position.
+    pub index_strings: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -194,6 +196,9 @@ pub struct Statements {
     pub function: Vec<String>,
     /// Token introducing an (ignored) return type after the parameters, e.g. `->`.
     pub function_returns: Vec<String>,
+    /// A function's result is the value last assigned to its own name
+    /// (Pascal), when the body does not return one explicitly.
+    pub function_result_by_name: bool,
     /// A no-op statement keyword, e.g. Python's `pass`.
     pub pass: Vec<String>,
 }
@@ -580,6 +585,10 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
         l.unsupported(key)?;
     }
     let index = pair(l, "op.index.open", "op.index.close", None)?;
+    let index_strings = l.flag("op.index.strings")?;
+    if index_strings && index.is_none() {
+        return Err("op.index.strings needs op.index.open".to_string());
+    }
 
     // ---- literals ----
     let literals = Literals {
@@ -699,8 +708,12 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
         continue_: l.lexemes("stmt.continue")?,
         function: l.lexemes("stmt.function")?,
         function_returns: l.lexemes("stmt.function.returns")?,
+        function_result_by_name: l.flag("stmt.function.result_by_name")?,
         pass: l.lexemes("stmt.pass")?,
     };
+    if statements.function_result_by_name && statements.function.is_empty() {
+        return Err("stmt.function.result_by_name needs stmt.function".to_string());
+    }
     l.unsupported("stmt.emit")?;
     if type_first {
         let taken = [
@@ -900,6 +913,7 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
             call_labels,
             array,
             index,
+            index_strings,
         },
         literals,
         operators: Operators { binary, unary },

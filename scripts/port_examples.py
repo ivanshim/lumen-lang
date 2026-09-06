@@ -14,7 +14,10 @@ first missing spelling is the reason recorded in examples/PORTS.md.
 Constructs the target lacks a keyword for but can express otherwise are
 rewritten: `until c` as `while not c`, a range loop as a while loop, the
 pipe as a nested call, base-N literals as decimal, and a function's tail
-expression as an explicit return.
+expression as an explicit return. Builtins are called the way the language
+writes them (METHOD_FORM: `arr.push(x)`, `s.length`), a library constant a
+function reads is inlined where functions cannot see top-level names, and
+Pascal gets its var sections and result-by-name functions.
 
 Ports are spelled as the definition says the language is spelled; they are
 run by the kernels, not compiled by the languages' own toolchains.
@@ -460,15 +463,19 @@ SYSTEM_NAMES = {"ARGS", "MEMOIZATION", "REAL_DEFAULT_PRECISION", "INTEGER", "RAT
 
 
 def load_library():
-    """Every library function by name, with the top-level assignments of its file."""
+    """Every library function by name, with the top-level assignments of its
+    file, and every library constant by name."""
     fns = {}
+    constants = {}
     for name in LIB_FILES:
         prog = parse((LIB / name).read_text(encoding="utf-8"))
         globals_ = [s for s in prog.body if s.kind in ("Assign", "Let")]
+        for g in globals_:
+            constants[g.name] = g
         for s in prog.body:
             if s.kind == "Fn":
                 fns[s.name] = (s, globals_)
-    return fns
+    return fns, constants
 
 
 def walk(node):
@@ -501,13 +508,15 @@ def free_names(nodes):
     return names
 
 
-def library_closure(program, lib):
+def library_closure(program, lib, constants, replaced):
     """The library functions the program needs, in definition order, with
-    the top-level library assignments they read."""
+    the library constants the program or those functions read. A function
+    in `replaced` is spelled by a builtin of the target and is not ported."""
     defined = {s.name for s in program.body if s.kind == "Fn"}
     needed = []
     seen = set()
-    pending = [n for n in called_names(program.body) if n in lib and n not in defined]
+    wanted = lambda n: n in lib and n not in defined and n not in replaced
+    pending = [n for n in called_names(program.body) if wanted(n)]
     while pending:
         name = pending.pop()
         if name in seen:
@@ -516,16 +525,13 @@ def library_closure(program, lib):
         fn, _ = lib[name]
         needed.append(fn)
         for callee in called_names([fn]):
-            if callee in lib and callee not in defined and callee not in seen:
+            if wanted(callee) and callee not in seen:
                 pending.append(callee)
     order = {name: i for i, name in enumerate(lib)}
     needed.sort(key=lambda f: order[f.name])
-    globals_ = []
-    for fn in needed:
-        free = free_names([fn])
-        for g in lib[fn.name][1]:
-            if g.name in free and all(g is not h for h in globals_):
-                globals_.append(g)
+    assigned = {s.name for s in walk(Node("B", body=program.body)) if s.kind in ("Assign", "Let")}
+    free = free_names(program.body + needed)
+    globals_ = [g for name, g in constants.items() if name in free and name not in assigned]
     return globals_, needed
 
 
@@ -671,6 +677,27 @@ TYPE_WORDS = {
     "c": {INT: "long", REAL: "double", BOOL: "bool", UNKNOWN: "long"},
 }
 C_FORMATS = {INT: "%ld", REAL: "%f", STR: "%s", BOOL: "%d", UNKNOWN: "%ld", RATIONAL: "%f"}
+
+# Builtin names a language writes with the receiver first, `arr.push(x)`:
+# the pipe spelled `.`. A name not listed is called as a function (Python's
+# len(s)). This is how each language is written, not something a definition
+# says; the kernels accept both forms.
+METHOD_FORM = {
+    "python": {"append"},
+    "javascript": {"push", "length", "charAt"},
+    "ruby": {"push", "length", "size", "to_s", "to_i", "to_f", "ord", "chr"},
+    "swift": {"append", "count"},
+    "rust": {"push", "len", "to_string"},
+}
+# Where one kernel builtin has a name per kind of argument (PHP's strlen
+# and count), the name to use for each kind.
+LEN_BY_KIND = {"php": {STR: "strlen", ARRAY: "count"}}
+# Method names written without a call bracket: properties.
+PROPERTY_FORM = {
+    "javascript": {"length"},
+    "swift": {"count"},
+    "ruby": {"length", "size", "to_s", "to_i", "to_f", "ord", "chr"},
+}
 
 
 class Emitter:
@@ -865,14 +892,39 @@ class Emitter:
             raise Skip("`print` as a value")
         if name in POLYMORPHIC and self.has(POLYMORPHIC[name]):
             # str(x) where Lumen's library spells each kind's renderer
-            return self.d[POLYMORPHIC[name]][0] + self.arguments(e.args, scope)
+            return self.builtin_call(self.d[POLYMORPHIC[name]][0], e.args, scope)
         if name in scope.functions:
             labels = [p for p, _ in scope.functions[name].params]
             return self.ident(name, True) + self.arguments(e.args, scope, labels)
+        if name == "char_at" and not self.has("builtin.char_at") and self.d["op.index.strings"] and len(e.args) == 2:
+            # s[i] where the language indexes into strings
+            target, tier = self.expr(e.args[0], scope)
+            if tier is not None:
+                target = self.paren(target)
+            index, _ = self.expr(e.args[1], scope)
+            return target + self.w("op.index.open") + index + self.w("op.index.close")
         if name in KERNEL_BUILTINS:
             builtin = self.w(KERNEL_BUILTINS[name], name)
-            return builtin + self.arguments(e.args, scope)
+            if name == "len" and self.name in LEN_BY_KIND and e.args:
+                kind = self.kinds.kind_of(e.args[0], scope.kinds_env)
+                chosen = LEN_BY_KIND[self.name].get(kind)
+                if chosen in self.d["builtin.len"]:
+                    builtin = chosen
+            return self.builtin_call(builtin, e.args, scope)
         raise Skip(f"unknown function `{name}`")
+
+    def builtin_call(self, builtin, args, scope):
+        """A builtin call as the language writes it: a function call, or a
+        method call on the first argument where that is the language's form."""
+        if builtin in METHOD_FORM.get(self.name, set()) and args:
+            receiver, tier = self.expr(args[0], scope)
+            if tier is not None:
+                receiver = self.paren(receiver)
+            dot = self.w("op.pipe")
+            if builtin in PROPERTY_FORM.get(self.name, set()) and len(args) == 1:
+                return f"{receiver}{dot}{builtin}"
+            return f"{receiver}{dot}{builtin}{self.arguments(args[1:], scope)}"
+        return builtin + self.arguments(args, scope)
 
     # ---- statements
     def program(self, prog, lib_globals, lib_fns, source_path):
@@ -915,15 +967,28 @@ class Emitter:
 
     def check_globals(self, prog, lib_globals, lib_fns):
         """A function reading a program-level variable needs the language to
-        share top-level names with functions; Python, JavaScript and Swift do."""
-        if self.name in ("python", "javascript", "swift"):
+        share top-level names with functions; Python, JavaScript, Swift and
+        Pascal do. Elsewhere a library constant is inlined into the function
+        that reads it, and an example's own variable is a reason to skip."""
+        self.inline = {}
+        if self.name in ("python", "javascript", "swift", "pascal"):
             return
+        constants = {g.name: g for g in lib_globals}
+        # A program-level name assigned once, to a literal, is a constant too.
+        counts = assignment_counts(prog.body)
+        for st in prog.body:
+            if st.kind in ("Assign", "Let") and st.expr is not None and st.expr.kind in ("Str", "Num", "Bool") and counts.get(st.name) == 1:
+                constants[st.name] = st
         top = {s.name for s in prog.body + lib_globals if s.kind in ("Assign", "Let")}
         for f in [s for s in prog.body if s.kind == "Fn"] + lib_fns:
             params = {p for p, _ in f.params}
             assigned = {s.name for s in walk(Node("B", body=f.body)) if s.kind in ("Assign", "Let")}
-            for n in free_names(f.body) & top:
-                if n not in params and n not in assigned:
+            for n in sorted(free_names(f.body) & top):
+                if n in params or n in assigned:
+                    continue
+                if n in constants:
+                    self.inline.setdefault(f.name, []).append(constants[n])
+                else:
                     raise Skip(f"function `{f.name}` reads program-level `{n}`")
 
     def statements(self, body, scope, depth):
@@ -984,6 +1049,8 @@ class Emitter:
             if s.expr is None:
                 return [ind + self.terminated(word)]
             text, _ = self.expr(s.expr, scope)
+            if self.name == "pascal":
+                return [ind + self.terminated(f"{word}({text})")]
             return [ind + self.terminated(f"{word} {text}")]
         if k == "Break":
             return [ind + self.terminated(self.w("stmt.break"))]
@@ -1081,16 +1148,13 @@ class Emitter:
             with scope.declaring(s.body):
                 lines, closer = self.block(f"{self.d['stmt.for'][0]} {var} {self.d['stmt.for.in'][0]} {rng}", s.body, scope, depth, then_word=self.intro("do"))
             return self.close(lines, closer, depth, self.block_end())
-        # A while loop with an explicit counter. A `continue` in the body
-        # would skip the step, so such loops are not rewritten.
-        for m in loop_body_nodes(s.body):
-            if m.kind == "Continue":
-                raise Skip("no `for`; a `continue` in the loop keeps it from being a while loop")
+        # A while loop with an explicit counter; the step also runs before
+        # each `continue` of this loop, which would otherwise skip it.
         step = Node("Assign", name=s.var, expr=Node("Bin", op="+", left=Node("Var", name=s.var), right=Node("Num", value=Fraction(1), real=False, base=10, text="1")), line=s.line)
         init = Node("Assign", name=s.var, expr=s.start, line=s.line)
         cond = Node("Bin", op="<", left=Node("Var", name=s.var), right=s.end)
         lines = self.statement(init, scope, depth)
-        loop = Node("While", cond=cond, body=s.body + [step], line=s.line)
+        loop = Node("While", cond=cond, body=step_before_continue(s.body, step) + [step], line=s.line)
         return lines + self.statement(loop, scope, depth)
 
     def binding(self, s, scope, depth):
@@ -1149,6 +1213,8 @@ class Emitter:
         params = []
         param_kinds = self.kinds.fn_params.get(s.name, [UNKNOWN] * len(s.params))
         ret_kind = self.kinds.fn_returns.get(s.name, UNKNOWN)
+        if self.name == "pascal":
+            return self.pascal_function(s, scope, depth, param_kinds, ret_kind)
         if self.type_first:
             ret_word = "void" if ret_kind == NULL else self.c_type(ret_kind)
             for (p, _), k in zip(s.params, param_kinds):
@@ -1167,6 +1233,7 @@ class Emitter:
         if is_entry and self.type_first:
             header = f"int {name}(void)"
         body = explicit_returns(s.body) if not is_entry else s.body
+        body = self.inline.get(s.name, []) + body
         hoisted = self.hoist(body, inner, depth + 1)
         lines, closer = self.block(header, body, inner, depth)
         lines[1:1] = hoisted
@@ -1238,27 +1305,68 @@ class Emitter:
 
     # ---- Pascal: declarations first, then the main block
     def pascal_program(self, body, scope):
-        if any(s.kind == "Fn" for s in body):
-            raise Skip("no functions")
-        names = []
-        for s in walk(Node("B", body=body)):
-            if s.kind in ("Assign", "Let") and s.name not in names:
-                names.append(s.name)
-            if s.kind == "For" and s.var not in names:
-                names.append(s.var)
-        lowered = [n.lower() for n in names]
-        if len(set(lowered)) != len(lowered):
-            raise Skip("identifiers that differ only in case")
+        """Program-level variables first, then the functions, then the main block."""
+        main = [s for s in body if s.kind != "Fn"]
+        names = self.pascal_names(main, set())
         env = {}
         self.kinds.infer_body(body, env)
         lines = []
         for n in names:
             lines.append(f"var {self.ident(n)}: {self.type_word(env.get(n, UNKNOWN))};")
             scope.declare(n)
-        lines.append("begin")
+        if names:
+            lines.append("")
         for s in body:
+            if s.kind == "Fn":
+                lines.extend(self.statement(s, scope, 0))
+                lines.append("")
+        lines.append("begin")
+        for s in main:
             lines.extend(self.statement(s, scope, 1))
         lines.append("end.")
+        return lines
+
+    def pascal_names(self, body, exclude):
+        """Every name assigned in `body`, for a var section; Pascal ignores case."""
+        names = []
+        for m in walk(Node("B", body=body)):
+            if m.kind in ("Assign", "Let") and m.name not in names and m.name not in exclude:
+                names.append(m.name)
+            if m.kind == "For" and m.var not in names and m.var not in exclude:
+                names.append(m.var)
+        lowered = [n.lower() for n in names]
+        if len(set(lowered)) != len(lowered):
+            raise Skip("identifiers that differ only in case")
+        return names
+
+    def pascal_function(self, s, scope, depth, param_kinds, ret_kind):
+        """`function f(a: integer): integer;` with its var section and body;
+        the tail return assigns the function's name, other returns exit
+        with their value; a function with no result is a procedure."""
+        ind = self.indent(depth)
+        name = self.ident(s.name, True)
+        inner = FunctionScope(scope, s)
+        params = "; ".join(f"{self.ident(p)}: {self.type_word(k)}" for (p, _), k in zip(s.params, param_kinds))
+        body = self.inline.get(s.name, []) + explicit_returns(s.body)
+        if ret_kind == NULL:
+            header = f"procedure {name}({params});"
+        else:
+            header = f"function {name}({params}): {self.type_word(ret_kind)};"
+            if body and body[-1].kind == "Return" and body[-1].expr is not None:
+                body[-1] = Node("Assign", name=s.name, expr=body[-1].expr, line=body[-1].line)
+        env = dict(scope.kinds_env)
+        for (p, _), k in zip(s.params, param_kinds):
+            env[p] = k
+        self.kinds.infer_body(body, env)
+        lines = [ind + header]
+        exclude = {p for p, _ in s.params} | {s.name}
+        for n in self.pascal_names(body, exclude):
+            lines.append(ind + f"var {self.ident(n)}: {self.type_word(env.get(n, UNKNOWN))};")
+            inner.declare(n)
+        inner.declare(s.name)
+        lines.append(ind + "begin")
+        lines.extend(self.statements(body, inner, depth + 1))
+        lines.append(ind + "end;")
         return lines
 
 
@@ -1274,6 +1382,22 @@ def decimal_of(v):
         digits += str(rem.numerator // rem.denominator)
         rem = Fraction(rem.numerator % rem.denominator, rem.denominator)
     return f"{sign}{whole}.{digits or '0'}"
+
+
+def step_before_continue(body, step):
+    """The loop body with `step` before each `continue` that belongs to this
+    loop rather than to a loop nested inside it."""
+    out = []
+    for s in body:
+        if s.kind == "Continue":
+            out.append(step)
+            out.append(s)
+        elif s.kind == "If":
+            orelse = step_before_continue(s.orelse, step) if s.orelse else None
+            out.append(Node("If", cond=s.cond, body=step_before_continue(s.body, step), orelse=orelse, line=s.line))
+        else:
+            out.append(s)
+    return out
 
 
 def loop_body_nodes(body):
@@ -1383,18 +1507,19 @@ def definitions():
     return defs
 
 
-def port_one(emitter, source_path, lib):
+def port_one(emitter, source_path, lib, constants):
     try:
         prog = parse(source_path.read_text(encoding="utf-8"))
     except SyntaxError as e:
         raise SyntaxError(f"{source_path}: {e}") from None
-    lib_globals, lib_fns = library_closure(prog, lib)
+    replaced = {name for name, label in POLYMORPHIC.items() if emitter.has(label)}
+    lib_globals, lib_fns = library_closure(prog, lib, constants, replaced)
     rel = source_path.relative_to(ROOT)
     return emitter.program(prog, lib_globals, lib_fns, str(rel))
 
 
 def main():
-    lib = load_library()
+    lib, constants = load_library()
     defs = definitions()
     examples = sorted(LUMEN_EXAMPLES.rglob("*.lm"))
     results = {}  # (example, language) -> None or reason
@@ -1409,7 +1534,7 @@ def main():
         for ex in examples:
             rel = ex.relative_to(LUMEN_EXAMPLES).with_suffix(f".{ext}")
             try:
-                text = port_one(Emitter(d), ex, lib)
+                text = port_one(Emitter(d), ex, lib, constants)
             except Skip as why:
                 results[(ex, lang)] = str(why)
                 continue

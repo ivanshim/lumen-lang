@@ -158,10 +158,12 @@ pub(crate) fn invoke(function: &str, args: &[Instruction], env: &mut Environment
         values.push(eval!(arg, env, schema));
     }
 
-    let def = match env.lookup(function) {
+    let def = match env.lookup_function(function) {
         Some(Value::Function(def)) => def.clone(),
-        Some(_) => return Err(format!("'{}' is not a function", function)),
-        None => return Err(format!("Unknown function: {}", function)),
+        _ => match env.lookup(function) {
+            Some(_) => return Err(format!("'{}' is not a function", function)),
+            None => return Err(format!("Unknown function: {}", function)),
+        },
     };
     if def.params.len() != values.len() {
         return Err(format!("Function {} expects {} arguments, got {}", function, def.params.len(), values.len()));
@@ -184,7 +186,17 @@ pub(crate) fn invoke(function: &str, args: &[Instruction], env: &mut Environment
         for (param, value) in def.params.iter().zip(values.iter()) {
             env.bind(param.clone(), value.clone());
         }
-        execute(&def.body, env, schema)
+        let (value, flow) = execute(&def.body, env, schema)?;
+        // Pascal: a body that ends without returning yields what it
+        // assigned to the function's own name.
+        if flow == Flow::Normal && schema.statements.function_result_by_name {
+            if let Some(named) = env.lookup(function) {
+                if !matches!(named, Value::Function(_)) {
+                    return Ok((named.clone(), flow));
+                }
+            }
+        }
+        Ok((value, flow))
     })?;
 
     if let Some(key) = key {
@@ -564,12 +576,19 @@ fn binary(op: Op, left: &Value, right: &Value, schema: &LanguageSchema) -> Resul
         Op::Concat => Ok(Value::String(format!("{}{}", left.render(&words), right.render(&words)))),
         Op::Range => Ok(Value::Range { start: left.to_number()?, end: right.to_number()? }),
         Op::Index => {
-            let items = match left {
-                Value::Array(items) => items,
-                _ => return Err("Cannot index non-array value".to_string()),
-            };
             let idx = array_index(right)?;
-            items.get(idx).cloned().ok_or_else(|| format!("Array index {} out of bounds (length: {})", idx, items.len()))
+            match left {
+                Value::Array(items) => items
+                    .get(idx)
+                    .cloned()
+                    .ok_or_else(|| format!("Array index {} out of bounds (length: {})", idx, items.len())),
+                Value::String(s) if schema.structure.index_strings => s
+                    .chars()
+                    .nth(idx)
+                    .map(|c| Value::String(c.to_string()))
+                    .ok_or_else(|| format!("String index {} out of bounds (length: {})", idx, s.chars().count())),
+                _ => Err("Cannot index non-array value".to_string()),
+            }
         }
         Op::Add if matches!(left, Value::String(_)) || matches!(right, Value::String(_)) => {
             Ok(Value::String(format!("{}{}", left.render(&words), right.render(&words))))

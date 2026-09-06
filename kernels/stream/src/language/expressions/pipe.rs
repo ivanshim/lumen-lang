@@ -1,11 +1,13 @@
 // Pipe operator expression: expr |> func(args)
-// Passes the left value as the first argument to the right function
+// Passes the left value as the first argument to the right function. A
+// bare name on the right is a call with no other arguments, which is how
+// method syntax reads when the pipe is spelled `.` (`s.length`, `v.len()`).
 
 use crate::language::prelude::*;
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
 use crate::language::expressions::calls;
-use crate::language::expressions::variable::call_user_function;
+use crate::language::expressions::variable::{call_builtin, call_user_function};
 use crate::language::registry::{ExprInfix, Precedence, Registry};
 use crate::kernel::runtime::{Env, Value};
 
@@ -22,6 +24,9 @@ impl ExprNode for PipeExpr {
         let mut arg_values = vec![self.left.eval(env)?];
         for arg in &self.args {
             arg_values.push(arg.eval(env)?);
+        }
+        if def().is_builtin(&self.func_name) {
+            return call_builtin(&self.func_name, arg_values);
         }
         call_user_function(&self.func_name, arg_values, env)
     }
@@ -51,10 +56,11 @@ impl ExprInfix for PipeInfix {
             .ok_or_else(|| "Expected function name after pipe operator".to_string())?;
         parser.skip_tokens();
 
-        if !calls::at_call_open(parser) {
-            return Err("Expected a call after the function name in a pipe expression".into());
-        }
-        let args = calls::parse_arguments(parser, registry, "in pipe expression")?;
+        let args = if calls::at_call_open(parser) {
+            calls::parse_arguments(parser, registry, "in pipe expression")?
+        } else {
+            Vec::new()
+        };
 
         Ok(Box::new(PipeExpr {
             left,

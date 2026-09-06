@@ -58,6 +58,13 @@ impl Environment {
         self.bindings.iter().rev().find(|(n, _)| n == name).map(|(_, v)| v)
     }
 
+    /// The youngest binding of `name` that holds a function: a language
+    /// whose functions return by assigning to their own name (Pascal) may
+    /// shadow the function with that variable inside its body.
+    pub fn lookup_function(&self, name: &str) -> Option<&Value> {
+        self.bindings.iter().rev().find(|(n, v)| n == name && matches!(v, Value::Function(_))).map(|(_, v)| v)
+    }
+
     pub fn lookup_mut(&mut self, name: &str) -> Option<&mut Value> {
         let index = self.bindings.iter().rposition(|(n, _)| n == name)?;
         Some(&mut self.bindings[index].1)

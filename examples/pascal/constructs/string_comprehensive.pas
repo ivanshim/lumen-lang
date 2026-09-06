@@ -3,6 +3,7 @@ var a: string;
 var b: string;
 var x: integer;
 var y: string;
+
 begin
     a := 'alpha';
     b := 'beta';

@@ -1,6 +1,7 @@
 // Ported from examples/lumen/constructs/until_loop.lm by scripts/port_examples.py; edit the Lumen original, not this file.
 var i: integer;
 var x: integer;
+
 begin
     write('Until loop ascending (0-9): ');
     i := 0;

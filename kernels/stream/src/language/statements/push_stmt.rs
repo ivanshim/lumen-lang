@@ -31,6 +31,60 @@ impl StmtNode for PushStmt {
     }
 }
 
+/// Method syntax for push where the pipe is spelled `.`: `arr.push(value)`.
+/// The array must be a named variable, as with the call form, so the
+/// statement is recognised from its shape: a name, the pipe, the push word
+/// and the call bracket.
+pub struct MethodPushHandler;
+
+impl MethodPushHandler {
+    /// How many tokens the name before the pipe spans, if the statement is a method push.
+    fn shape(parser: &Parser) -> Option<usize> {
+        let d = def();
+        if !parser.at_identifier() {
+            return None;
+        }
+        let prefix = d.first_char("identifier.variable_prefix");
+        let mut n = 0;
+        while parser.peek_n(n).map_or(false, |t| {
+            let mut chars = t.lexeme.chars();
+            matches!((chars.next(), chars.next()), (Some(c), None) if crate::language::word_char(c) || Some(c) == prefix)
+        }) {
+            n += 1;
+        }
+        let pipe = parser.peek_n(n)?;
+        if !d.is("op.pipe", &pipe.lexeme) {
+            return None;
+        }
+        let word = parser.peek_n(n + 1)?;
+        if !d.is("builtin.push", &word.lexeme) {
+            return None;
+        }
+        let bracket = parser.peek_n(n + 2)?;
+        if !d.is("syntax.call.open", &bracket.lexeme) {
+            return None;
+        }
+        Some(n)
+    }
+}
+
+impl StmtHandler for MethodPushHandler {
+    fn matches(&self, parser: &Parser) -> bool {
+        Self::shape(parser).is_some()
+    }
+
+    fn parse(&self, parser: &mut Parser, registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
+        let arr_name = parser.take_identifier().ok_or_else(|| err_at(parser, "Expected an array name"))?;
+        parser.advance(); // the pipe
+        parser.advance(); // the push word
+        let mut args = crate::language::expressions::calls::parse_arguments(parser, registry, "after push")?;
+        if args.len() != 1 {
+            return Err(err_at(parser, "push takes one value"));
+        }
+        Ok(Box::new(PushStmt { arr_name, value_expr: args.remove(0) }))
+    }
+}
+
 pub struct PushStmtHandler;
 
 impl StmtHandler for PushStmtHandler {
@@ -80,4 +134,5 @@ impl StmtHandler for PushStmtHandler {
 
 pub fn register(reg: &mut Registry) {
     reg.register_stmt(Box::new(PushStmtHandler));
+    reg.register_stmt(Box::new(MethodPushHandler));
 }

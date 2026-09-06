@@ -112,6 +112,7 @@ lumen-lang/
     lib_lumen/prelude.lm
     lib_lumen/prelude.rs
     lib_lumen/primes.lm
+    lib_lumen/render.lm              the renderers, as Lumen code over the primitives
     lib_lumen/round.lm
     lib_lumen/string.lm
     lib_lumen/string_ord_chr.lm
@@ -124,7 +125,7 @@ lumen-lang/
     scripts/lang_table.py
     scripts/port_examples.py         writes every Lumen example in every other language, and examples/PORTS.md
 
-  examples/                        370 programs: lumen/ (+constructs/, libraries/) and, mirroring it, python/, rust/, php/, ruby/, pascal/, c/, javascript/, swift/; PORTS.md says which Lumen example is in which language
+  examples/                        421 programs: lumen/ (+constructs/, libraries/) and, mirroring it, python/, rust/, php/, ruby/, pascal/, c/, javascript/, swift/; PORTS.md says which Lumen example is in which language
   docs/                            design documents, references, history
     docs/DIRECTORY_STRUCTURE.txt
     docs/LUMEN_COMPACT_REFERENCE.md

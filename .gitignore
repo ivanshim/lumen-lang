@@ -5,3 +5,4 @@ Cargo.lock
 # Debug files
 *.pdb
 test.log
+__pycache__/

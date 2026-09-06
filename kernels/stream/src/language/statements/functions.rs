@@ -120,7 +120,9 @@ pub fn parse_function_tail(parser: &mut Parser, registry: &Registry, name: Strin
             }
         }
 
-        if d.is("syntax.call.separator", &parser.peek().lexeme) {
+        // Parameters are separated by the call separator or, between typed
+        // groups (Pascal's `a: integer; b: real`), the terminator.
+        if d.is("syntax.call.separator", &parser.peek().lexeme) || d.is("stmt.terminator", &parser.peek().lexeme) {
             parser.advance();
             parser.skip_tokens();
         } else if !d.is("syntax.call.close", &parser.peek().lexeme) {
@@ -141,8 +143,22 @@ pub fn parse_function_tail(parser: &mut Parser, registry: &Registry, name: Strin
         parser.skip_tokens();
     }
 
+    // A header that ends with a terminator (Pascal's `;`) may be followed
+    // by declarations before the body block; they open the body.
+    let mut body = Vec::new();
+    if d.is("stmt.terminator", &parser.peek().lexeme) {
+        loop {
+            crate::language::structure::structural::consume_separators(parser);
+            if !d.is("stmt.let", &parser.peek().lexeme) || d.type_first {
+                break;
+            }
+            let handler = registry.find_stmt(parser).ok_or_else(|| err_at(parser, "Unknown declaration"))?;
+            body.push(handler.parse(parser, registry)?);
+        }
+    }
+
     // Parse function body (a block)
-    let body = crate::language::structure::structural::parse_block(parser, registry)?;
+    body.extend(crate::language::structure::structural::parse_block(parser, registry)?);
 
     // Register the function
     define_function(name, params, body);

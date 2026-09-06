@@ -66,7 +66,7 @@ impl ExprNode for FunctionCallExpr {
 }
 
 /// Apply the builtin `name` spells to evaluated arguments.
-fn call_builtin(name: &str, values: Vec<Value>) -> LumenResult<Value> {
+pub(crate) fn call_builtin(name: &str, values: Vec<Value>) -> LumenResult<Value> {
     let d = def();
     if let Some((_, f)) = UNARY_BUILTINS.iter().find(|(label, _)| d.is(label, name)) {
         return match values.as_slice() {
@@ -170,13 +170,14 @@ pub fn call_user_function(name: &str, arg_values: Vec<Value>, env: &mut Env) -> 
         return Ok(cached);
     }
 
-    let result = execute_function(&params, &body, &arg_values, env)?;
+    let result = execute_function(name, &params, &body, &arg_values, env)?;
     crate::language::memo::store(env, name, &arg_values, &result);
     Ok(result)
 }
 
 /// Execute a function body in a fresh scope that is popped on every exit path.
 fn execute_function(
+    name: &str,
     params: &[String],
     body: &Rc<RefCell<Vec<Box<dyn StmtNode>>>>,
     arg_values: &[Value],
@@ -188,18 +189,27 @@ fn execute_function(
         }
 
         let mut result = Box::new(crate::language::values::LumenNull) as Value;
+        let mut returned = false;
         let body_ref = body.borrow();
         for stmt in body_ref.iter() {
             match stmt.exec(env)? {
                 crate::kernel::ast::Control::ExprValue(val) => result = val,
                 crate::kernel::ast::Control::Return(val) => {
                     result = val;
+                    returned = true;
                     break;
                 }
                 crate::kernel::ast::Control::Break | crate::kernel::ast::Control::Continue => {
                     return Err("break/continue outside of loop".into());
                 }
                 crate::kernel::ast::Control::None => {}
+            }
+        }
+        // Pascal: a body that ends without returning yields what it assigned
+        // to the function's own name.
+        if !returned && def().result_by_name {
+            if let Ok(named) = env.get(name) {
+                result = named;
             }
         }
         Ok(result)

@@ -4,7 +4,7 @@ use crate::language::prelude::*;
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
 use crate::kernel::runtime::{Env, Value};
-use crate::language::values::as_array;
+use crate::language::values::{as_array, as_string, LumenString};
 
 #[derive(Debug)]
 pub struct ArrayIndex {
@@ -16,9 +16,6 @@ impl ExprNode for ArrayIndex {
     fn eval(&self, env: &mut Env) -> LumenResult<Value> {
         let array_val = self.array_expr.eval(env)?;
         let index_val = self.index_expr.eval(env)?;
-
-        // Get the array
-        let arr = as_array(array_val.as_ref())?;
 
         // Get the index as an integer
         let index_bigint = crate::language::values::as_number(index_val.as_ref())?;
@@ -39,6 +36,17 @@ impl ExprNode for ArrayIndex {
             return Err("Array index out of bounds".to_string());
         };
 
+        // A string, where the definition lets strings be indexed, yields its character
+        if def().index_strings {
+            if let Ok(s) = as_string(array_val.as_ref()) {
+                return match s.value.chars().nth(idx) {
+                    Some(c) => Ok(Box::new(LumenString::new(c.to_string()))),
+                    None => Err("String index out of bounds".to_string()),
+                };
+            }
+        }
+
+        let arr = as_array(array_val.as_ref())?;
         if idx >= arr.elements.len() {
             return Err(format!("Array index out of bounds"));
         }
