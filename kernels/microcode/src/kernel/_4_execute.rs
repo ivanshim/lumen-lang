@@ -589,10 +589,10 @@ fn binary(op: Op, left: &Value, right: &Value, schema: &LanguageSchema) -> Resul
         Op::Add if matches!(left, Value::String(_)) || matches!(right, Value::String(_)) => {
             Ok(Value::String(format!("{}{}", left.render(&words), right.render(&words))))
         }
-        Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Quot | Op::Rem | Op::Pow => {
+        Op::Add | Op::Sub | Op::Mul | Op::Div | Op::DivReal | Op::Quot | Op::Rem | Op::Pow => {
             match (numeric::to_num(left), numeric::to_num(right)) {
                 (Some(a), Some(b)) => numeric::arith(op, &a, &b),
-                _ if matches!(op, Op::Div | Op::Quot | Op::Rem | Op::Pow) => {
+                _ if matches!(op, Op::Div | Op::DivReal | Op::Quot | Op::Rem | Op::Pow) => {
                     Err(format!("{} requires numeric operands", op_name(op)))
                 }
                 // Legacy coercion for the closed operations on booleans and null.
@@ -627,7 +627,7 @@ fn binary(op: Op, left: &Value, right: &Value, schema: &LanguageSchema) -> Resul
 
 fn op_name(op: Op) -> &'static str {
     match op {
-        Op::Div => "Division",
+        Op::Div | Op::DivReal => "Division",
         Op::Quot => "Integer quotient",
         Op::Rem => "Modulo",
         Op::Pow => "Exponentiation",

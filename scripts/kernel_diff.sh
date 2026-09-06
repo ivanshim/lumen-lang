@@ -13,13 +13,12 @@ flag_for() {
         php) echo "--lang langs/extras/php.json" ;;
         rb) echo "--lang langs/extras/ruby.json" ;;
         pas) echo "--lang langs/extras/pascal.json" ;;
-        lua) echo "--lang langs/extras/lua.json" ;;
         c) echo "--lang langs/extras/c.json" ;;
         js) echo "--lang langs/extras/javascript.json" ;;
         swift) echo "--lang langs/extras/swift.json" ;;
     esac
 }
-for f in examples/lumen/*.lm examples/lumen/constructs/*.lm examples/lumen/libraries/*.lm examples/python/*.py examples/rust/*.rs examples/php/*.php examples/ruby/*.rb examples/pascal/*.pas examples/lua/*.lua examples/c/*.c examples/javascript/*.js examples/swift/*.swift; do
+for f in $(find examples -type f \( -name "*.lm" -o -name "*.py" -o -name "*.rs" -o -name "*.php" -o -name "*.rb" -o -name "*.pas" -o -name "*.c" -o -name "*.js" -o -name "*.swift" \) | sort); do
     flag=$(flag_for "$f")
     # shellcheck disable=SC2086
     a=$($B --kernel stream $flag "$f" 2>&1)

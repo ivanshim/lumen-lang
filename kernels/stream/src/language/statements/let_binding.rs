@@ -55,8 +55,8 @@ pub fn parse_binding_tail(
         None
     };
 
-    // A declaration with a type and no value binds null (Pascal's `var x: integer;`)
-    if type_annotation.is_some() && crate::language::structure::structural::at_statement_end(parser) {
+    // A declaration without a value binds null (Pascal's `var x: integer;`, Rust's `let x;`)
+    if crate::language::structure::structural::at_statement_end(parser) {
         let null: Box<dyn ExprNode> = Box::new(NullValue);
         return Ok((name, type_annotation, null));
     }

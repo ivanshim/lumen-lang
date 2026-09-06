@@ -43,7 +43,7 @@ const LABELS: &[&str] = &[
     "syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close",
     "literal.true", "literal.false", "literal.null",
     "op.precedence", "op.right_associative",
-    "op.add", "op.sub", "op.mul", "op.div", "op.quot", "op.rem", "op.pow",
+    "op.add", "op.sub", "op.mul", "op.div", "op.div.result", "op.quot", "op.rem", "op.pow",
     "op.eq", "op.ne", "op.lt", "op.le", "op.gt", "op.ge",
     "op.and", "op.or", "op.not", "op.negate",
     "op.concat", "op.range", "op.index.open", "op.index.close", "op.pipe",
@@ -81,6 +81,8 @@ pub struct Definition {
     /// The binding words are type names placed first (C's `int x = 1;`),
     /// and a name followed by the call bracket defines a function.
     pub type_first: bool,
+    /// `op.div` yields a real (Python's `/`) rather than an exact rational.
+    pub div_real: bool,
     pub block_style: BlockStyle,
     pub indent_size: usize,
     /// Every reserved word, computed once: the parser asks on every token.
@@ -148,6 +150,7 @@ impl Definition {
             identifiers_case_insensitive: false,
             keywords_case_insensitive: false,
             type_first: false,
+            div_real: false,
             block_style: BlockStyle::Indentation,
             indent_size: 4,
             reserved: Vec::new(),
@@ -176,6 +179,13 @@ impl Definition {
                 ("identifier.case_insensitive", Json::Bool(flag)) => definition.identifiers_case_insensitive = *flag,
                 ("lexical.keywords_case_insensitive", Json::Bool(flag)) => definition.keywords_case_insensitive = *flag,
                 ("stmt.let.type_first", Json::Bool(flag)) => definition.type_first = *flag,
+                ("op.div.result", Json::String(result)) => {
+                    definition.div_real = match result.as_str() {
+                        "real" => true,
+                        "rational" => false,
+                        other => return Err(format!("op.div.result must be 'rational', 'real' or null, got '{other}'")),
+                    };
+                }
                 ("block.style", Json::String(style)) => {
                     style_seen = true;
                     definition.block_style = match style.as_str() {

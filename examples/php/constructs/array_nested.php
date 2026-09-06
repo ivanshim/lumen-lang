@@ -1,0 +1,4 @@
+<?php
+// Ported from examples/lumen/constructs/array_nested.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+$matrix = [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
+print($matrix . "\n");

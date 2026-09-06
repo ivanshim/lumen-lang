@@ -154,6 +154,8 @@ pub enum Op {
     Sub,
     Mul,
     Div,
+    /// Division whose result is a real (Python's, JavaScript's and PHP's `/`).
+    DivReal,
     Quot,
     Rem,
     Pow,
@@ -382,6 +384,15 @@ impl<'a> Labels<'a> {
         }
     }
 
+    /// A setting that is a word or null.
+    fn text_or_null(&mut self, key: &str) -> Result<Option<String>, String> {
+        match self.raw(key)? {
+            Json::Null => Ok(None),
+            Json::String(s) if !s.is_empty() => Ok(Some(s.clone())),
+            _ => Err(format!("label '{key}' must be a non-empty string or null")),
+        }
+    }
+
     fn text(&mut self, key: &str) -> Result<String, String> {
         match self.raw(key)? {
             Json::String(s) if !s.is_empty() => Ok(s.clone()),
@@ -579,11 +590,16 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
     // ---- operators ----
     let tiers = l.tiers("op.precedence")?;
     let right_assoc = l.lexemes("op.right_associative")?;
+    let div_op = match l.text_or_null("op.div.result")?.as_deref() {
+        None | Some("rational") => Op::Div,
+        Some("real") => Op::DivReal,
+        Some(other) => return Err(format!("op.div.result must be 'rational', 'real' or null, got '{other}'")),
+    };
     let binary_labels = [
         ("op.add", Op::Add),
         ("op.sub", Op::Sub),
         ("op.mul", Op::Mul),
-        ("op.div", Op::Div),
+        ("op.div", div_op),
         ("op.quot", Op::Quot),
         ("op.rem", Op::Rem),
         ("op.pow", Op::Pow),

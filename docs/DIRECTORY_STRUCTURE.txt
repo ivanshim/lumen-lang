@@ -18,7 +18,6 @@ lumen-lang/
     langs/rust.json                  built in
     langs/extras/c.json              read from disk at run time with --lang <path>
     langs/extras/javascript.json
-    langs/extras/lua.json
     langs/extras/pascal.json
     langs/extras/php.json
     langs/extras/ruby.json
@@ -119,12 +118,13 @@ lumen-lang/
     lib_lumen/string_to_value.lm
     lib_lumen/value_to_string.lm
 
-  scripts/                         CI checks, the table generator, the differential test
+  scripts/                         CI checks, the table generator, the differential test, the example porter
     scripts/kernel_diff.sh
     scripts/kernel_independence.py
     scripts/lang_table.py
+    scripts/port_examples.py         writes every Lumen example in every other language, and examples/PORTS.md
 
-  examples/                        118 programs: lumen/ (+constructs/, libraries/), python/, rust/, php/, ruby/, lua/, pascal/, c/, javascript/, swift/
+  examples/                        370 programs: lumen/ (+constructs/, libraries/) and, mirroring it, python/, rust/, php/, ruby/, pascal/, c/, javascript/, swift/; PORTS.md says which Lumen example is in which language
   docs/                            design documents, references, history
     docs/DIRECTORY_STRUCTURE.txt
     docs/LUMEN_COMPACT_REFERENCE.md

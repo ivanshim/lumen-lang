@@ -107,19 +107,29 @@ and [langs/README.md](langs/README.md).
 | Rust | `.rs` | built in | braces, `let mut`, `fn main()`, `println!("{}", x)` | yes | yes |
 | PHP | `.php` | `langs/extras/php.json` | braces, `$variables`, `<?php`, case-insensitive keywords | yes | yes |
 | Ruby | `.rb` | `langs/extras/ruby.json` | keyword blocks closed by `end`, `elsif`, `def`, `puts`, `nil` | yes | yes |
-| Lua | `.lua` | `langs/extras/lua.json` | `then`/`do` ... `end`, `elseif`, `local`, `function`, `..`, `~=` | yes | yes |
 | Pascal | `.pas` | `langs/extras/pascal.json` | `begin`/`end`, `:=`, `<>`, `div`/`mod`, `;` terminators, case-insensitive | yes | yes |
 | C | `.c` | `langs/extras/c.json` | braces, `int x = 0;`, `long fib(int n)`, `printf("%d\n", x)`, `puts`, `main` | yes | yes |
 | JavaScript | `.js` | `langs/extras/javascript.json` | braces, `let`/`const`, `function`, `===`, `**`, `console.log` | yes | yes |
 | Swift | `.swift` | `langs/extras/swift.json` | braces without `;`, `let`/`var x: Int`, `func f(n: Int) -> Int`, `f(n: 1)`, `0..<n` | yes | yes |
 
-The nine other languages are subsets of those languages spelled exactly as
-the languages spell them, running on Lumen's semantics: exact rationals,
-one value model, one scoping rule. Constructs the kernel lacks (maps,
-`foreach`, `echo`, C's pointers, Swift's optionals) are left out of their
-definitions rather than approximated. The built-in definitions are
+The eight other languages are subsets of those languages spelled exactly as
+the languages spell them, running on Lumen's semantics: one value model,
+one scoping rule, and `/` yielding an exact rational in Lumen or a real
+where the language says so (`op.div.result`). Constructs the kernel lacks
+(maps, `foreach`, `echo`, C's pointers, Swift's optionals) are left out of
+their definitions rather than approximated. The built-in definitions are
 compiled into the binary; the ones in `langs/extras/` are read from disk
 with `--lang <path>`, which is also how a definition of your own is run.
+
+Every Lumen example is also written in every other language whose
+definition spells what it needs: `scripts/port_examples.py` reads
+`examples/lumen/`, ports each program (with the library functions it
+calls) into `examples/<language>/` under the same relative path, and
+writes [examples/PORTS.md](examples/PORTS.md), which says for each example
+and language either that the port exists or which construct the language
+has no spelling for. Those ports, the hand-written examples and the Lumen
+suite all run on both kernels, and `scripts/kernel_diff.sh` checks that
+the two kernels print the same for every one of them.
 
 Lumen is the reference language: integers, exact rationals and reals of
 configurable precision, strings, arrays, functions, `for`/`while`/`until`
@@ -143,13 +153,15 @@ Every example runs on both kernels:
 ```
 
 `scripts/kernel_diff.sh` goes further and requires the two kernels to print
-the same thing for every program. Fourteen Lumen programs still differ, in
-the extern capabilities, rational quotient, rounding and real subtraction;
-those are the semantic gaps between the two implementations that the
-differential test exists to find.
+the same thing for every program; today every program does. The
+differential test exists to find semantic gaps between the two
+implementations, and each one it has found has been closed in whichever
+kernel was wrong.
 
-The same command runs in GitHub Actions on every push, with warnings treated
-as errors. `TEST_QUIET=1` prints program output only for failures.
+GitHub Actions runs the independence check, the build with warnings as
+errors, a check that the ported examples match what
+`scripts/port_examples.py` writes, and the whole suite on every push.
+`TEST_QUIET=1` prints program output only for failures.
 
 ## Documentation
 
