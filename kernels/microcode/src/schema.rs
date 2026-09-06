@@ -49,6 +49,9 @@ pub struct Lexical {
     pub escapes: HashMap<char, HashMap<char, String>>,
     /// Operator and punctuation lexemes; longest match wins.
     pub operators: Vec<String>,
+    /// Whether identifiers may use letters and digits beyond ASCII.
+    #[serde(default)]
+    pub identifier_unicode: bool,
     #[serde(default)]
     pub number: NumberSyntax,
 }

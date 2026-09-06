@@ -40,9 +40,9 @@ impl ExprPrefix for NumberLiteralPrefix {
         // We need to consume consecutive digit tokens to build the full number.
         loop {
             // Check if next token is a digit
-            if parser.peek().lexeme.len() == 1 {
-                let ch = parser.peek().lexeme.as_bytes()[0];
-                if ch.is_ascii_digit() || ch == b'.' {
+            if parser.peek().lexeme.chars().count() == 1 {
+                let ch = parser.peek().lexeme.chars().next().unwrap();
+                if ch.is_ascii_digit() || ch == '.' {
                     value.push_str(&parser.advance().lexeme);
                     continue;
                 }

@@ -49,12 +49,17 @@ let tokens = vec![
     TokenDefinition::keyword("if"),     // lexeme that must stand alone as a word
 ];
 registry.tokens.set_token_definitions(tokens);
-registry.tokens.set_identifier_bytes(|b| b.is_ascii_alphanumeric() || b == b'_');
+registry.tokens.set_word_chars(|c| c.is_alphanumeric() || c == '_');
 ```
 
 The kernel caches the multi-character lexemes in descending length order for
-maximal-munch segmentation. Which bytes form a "word", for the keyword
-boundary check, is supplied by the language; the kernel has no opinion.
+maximal-munch segmentation. Which characters form a "word", for the keyword
+boundary check, is supplied by the language; the kernel has no opinion. Each
+stream language declares one flag, `IDENTIFIER_UNICODE`, and derives its
+`word_start` and `word_char` predicates from it; every identifier check in
+that language goes through those two functions, and the same flag exists as
+`identifier_unicode` in the microcode schemas so both kernels read a name
+the same way.
 Comments are a language concept too. The lexer emits the comment marker like
 any other byte, and each language's structure pass drops the tokens from the
 marker to the end of the line, the same pass that handles indentation or

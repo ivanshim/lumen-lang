@@ -234,9 +234,9 @@ pub fn process_indentation(source: &str, raw_tokens: Vec<SpannedToken>) -> Lumen
                     out.push(raw_tok.clone());
                 } else {
                     // Outside both strings and arrays - filter whitespace tokens
-                    if lexeme.len() == 1 {
-                        let ch = lexeme.as_bytes()[0];
-                        if ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' {
+                    if lexeme.chars().count() == 1 {
+                        let ch = lexeme.chars().next().unwrap();
+                        if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
                             continue;  // Skip whitespace outside strings and arrays
                         }
                     }

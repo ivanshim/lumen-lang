@@ -63,9 +63,9 @@ impl ExprPrefix for NumberLiteralPrefix {
         // For base-N literals: <base>@<digits>[.<fraction>][^<exponent>]
         loop {
             // Check if next token is a digit, '.', '@', or '^' (for base-N literals)
-            if parser.peek().lexeme.len() == 1 {
-                let ch = parser.peek().lexeme.as_bytes()[0];
-                if ch.is_ascii_digit() || ch == b'.' || ch == b'@' || ch == b'^' {
+            if parser.peek().lexeme.chars().count() == 1 {
+                let ch = parser.peek().lexeme.chars().next().unwrap();
+                if ch.is_ascii_digit() || ch == '.' || ch == '@' || ch == '^' {
                     value.push_str(&parser.advance().lexeme);
                     continue;
                 }
@@ -123,9 +123,9 @@ impl ExprPrefix for BoolLiteralPrefix {
                 // Make sure next character doesn't extend the keyword
                 if i < parser.toks.len() {
                     let next = &parser.toks[i].tok.lexeme;
-                    if next.len() == 1 {
+                    if next.chars().count() == 1 {
                         let next_ch = next.chars().next().unwrap();
-                        if next_ch.is_ascii_alphanumeric() || next_ch == '_' {
+                        if word_char(next_ch) {
                             continue; // This keyword is extended, try next one
                         }
                     }
@@ -165,9 +165,9 @@ impl ExprPrefix for BoolLiteralPrefix {
                 // Make sure next character doesn't extend the keyword
                 if i < parser.toks.len() {
                     let next = &parser.toks[i].tok.lexeme;
-                    if next.len() == 1 {
+                    if next.chars().count() == 1 {
                         let next_ch = next.chars().next().unwrap();
-                        if next_ch.is_ascii_alphanumeric() || next_ch == '_' {
+                        if word_char(next_ch) {
                             continue; // This keyword is extended, try next one
                         }
                     }

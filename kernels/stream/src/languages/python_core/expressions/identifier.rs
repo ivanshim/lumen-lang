@@ -1,5 +1,6 @@
 // Variable reference expression
 
+use crate::languages::python_core::word_start;
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::KernelResult as LumenResult;
@@ -21,7 +22,7 @@ pub struct IdentPrefix;
 
 impl ExprPrefix for IdentPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_')
+        parser.peek().lexeme.chars().next().map_or(false, word_start)
     }
 
     fn parse(&self, parser: &mut Parser, _registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {

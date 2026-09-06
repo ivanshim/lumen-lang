@@ -9,8 +9,8 @@
 // The lexer has no notion of whitespace, comments, strings, numbers or
 // identifiers. Languages strip comments before lexing, register the lexemes
 // they care about, and interpret every token afterwards. The only language
-// input beyond the lexeme list is the word-byte predicate used for keyword
-// boundary checks, also supplied through the registry.
+// input beyond the lexeme list is the word-character predicate used for
+// keyword boundary checks, also supplied through the registry.
 
 use crate::kernel::registry::{KernelResult, TokenRegistry};
 
@@ -73,8 +73,8 @@ pub fn lex(source: &str, token_reg: &TokenRegistry) -> KernelResult<Vec<SpannedT
 
             if token_reg.requires_word_boundary(multichar) {
                 let end = byte_pos + multichar.len();
-                let left_ok = byte_pos == 0 || !token_reg.is_identifier_byte(bytes[byte_pos - 1]);
-                let right_ok = end >= bytes.len() || !token_reg.is_identifier_byte(bytes[end]);
+                let left_ok = source[..byte_pos].chars().next_back().map_or(true, |c| !token_reg.is_word_char(c));
+                let right_ok = source[end..].chars().next().map_or(true, |c| !token_reg.is_word_char(c));
                 if !(left_ok && right_ok) {
                     continue;
                 }

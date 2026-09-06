@@ -81,18 +81,29 @@ fn strip_comments(source: &str, schema: &LanguageSchema) -> String {
     out
 }
 
-fn is_word_start(c: char) -> bool {
-    c.is_alphabetic() || c == '_'
+/// Identifier characters: underscore always; letters (and, for continuation,
+/// digits) from either ASCII or all of Unicode, as the schema chooses.
+fn is_word_start(c: char, unicode: bool) -> bool {
+    match (c, unicode) {
+        ('_', _) => true,
+        (c, true) => c.is_alphabetic(),
+        (c, false) => c.is_ascii_alphabetic(),
+    }
 }
 
-fn is_word_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
+fn is_word_char(c: char, unicode: bool) -> bool {
+    match (c, unicode) {
+        ('_', _) => true,
+        (c, true) => c.is_alphanumeric(),
+        (c, false) => c.is_ascii_alphanumeric(),
+    }
 }
 
 pub fn lex(source: &str, schema: &LanguageSchema) -> Result<Vec<Token>, String> {
     let source = strip_comments(source, schema);
     let operators = schema.operators_longest_first();
     let number = &schema.lexical.number;
+    let unicode = schema.lexical.identifier_unicode;
     let chars: Vec<char> = source.chars().collect();
     let mut tokens = Vec::new();
     let mut i = 0;
@@ -228,9 +239,9 @@ pub fn lex(source: &str, schema: &LanguageSchema) -> Result<Vec<Token>, String> 
         }
 
         // Words: identifiers and keywords alike; meaning is decided later.
-        if is_word_start(c) {
+        if is_word_start(c, unicode) {
             let mut text = String::new();
-            while i < chars.len() && is_word_char(chars[i]) {
+            while i < chars.len() && is_word_char(chars[i], unicode) {
                 text.push(chars[i]);
                 i += 1;
             }

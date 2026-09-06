@@ -14,7 +14,7 @@ is table-driven. Schemas contain no executable logic, only data.
 
 | Stage | File | Input → output | What the schema supplies |
 |---|---|---|---|
-| 1. Ingest | `kernel/_1_ingest.rs` | source text → tokens (words, numbers, decoded strings, operators, line ends, indentation) | comment marker, string delimiters and escape tables, operator lexemes, number punctuation |
+| 1. Ingest | `kernel/_1_ingest.rs` | source text → tokens (words, numbers, decoded strings, operators, line ends, indentation) | comment marker, string delimiters and escape tables, operator lexemes, number punctuation, whether identifiers extend beyond ASCII |
 | 2. Structure | `kernel/_2_structure.rs` | tokens → tokens with explicit block delimiters | block style (indentation or braces), indent size, delimiters, optional block-intro token, bracket pairs that suspend line structure |
 | 3. Reduce | `kernel/_3_reduce.rs` | tokens → instruction tree | literal words, operator precedence and associativity with the kernel operation each maps to, statement keywords with the form each introduces, call/group/array syntax |
 | 4. Execute | `kernel/_4_execute.rs` | instruction tree → values | the surface names that reach built-ins, the names of system bindings |
@@ -86,7 +86,8 @@ supplies the values; the schema supplies the names.
 ```yaml
 name: lumen
 error_prefix: LumenError
-lexical:      # stage 1: comment, quotes, escapes, operators, number syntax
+lexical:      # stage 1: comment, quotes, escapes, operators, identifier_unicode,
+              #          number syntax
 structure:    # stage 2: blocks, indent_size, block_open/close, block_intro,
               #          terminators, group/call/array bracket pairs
 literals:     # stage 3: words for true, false and null

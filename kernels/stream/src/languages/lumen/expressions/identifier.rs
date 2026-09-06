@@ -21,7 +21,7 @@ pub struct IdentPrefix;
 
 impl ExprPrefix for IdentPrefix {
     fn matches(&self, parser: &Parser) -> bool {
-        parser.peek().lexeme.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_')
+        parser.peek().lexeme.chars().next().map_or(false, word_start)
     }
 
     fn parse(&self, parser: &mut Parser, _registry: &super::super::registry::Registry) -> LumenResult<Box<dyn ExprNode>> {

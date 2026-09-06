@@ -39,3 +39,6 @@ impl PythonCoreParserExt for Parser<'_> {
         }
     }
 }
+
+/// Identifier character classes for this language.
+pub use crate::languages::python_core::{word_char, word_start};

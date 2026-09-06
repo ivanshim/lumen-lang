@@ -55,7 +55,7 @@ impl StmtHandler for ExprStmtHandler {
 
         // Check if it's an identifier or number literal
         if let Some(ch) = lexeme.chars().next() {
-            if ch.is_alphabetic() || ch == '_' || ch.is_numeric() || ch == '"' || ch == '\'' {
+            if word_start(ch) || ch.is_numeric() || ch == '"' || ch == '\'' {
                 return true;
             }
         }

@@ -48,9 +48,9 @@ impl crate::languages::lumen::registry::StmtHandler for MemoizationHandler {
         // Skip whitespace to find '='
         loop {
             let lexeme = &parser.peek().lexeme;
-            if lexeme.len() == 1 {
-                let ch = lexeme.as_bytes()[0];
-                if ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' {
+            if lexeme.chars().count() == 1 {
+                let ch = lexeme.chars().next().unwrap();
+                if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
                     parser.advance();
                     continue;
                 }
@@ -67,9 +67,9 @@ impl crate::languages::lumen::registry::StmtHandler for MemoizationHandler {
         // Skip whitespace to find boolean value
         loop {
             let lexeme = &parser.peek().lexeme;
-            if lexeme.len() == 1 {
-                let ch = lexeme.as_bytes()[0];
-                if ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' {
+            if lexeme.chars().count() == 1 {
+                let ch = lexeme.chars().next().unwrap();
+                if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
                     parser.advance();
                     continue;
                 }
@@ -82,9 +82,9 @@ impl crate::languages::lumen::registry::StmtHandler for MemoizationHandler {
         // Consume identifier characters
         loop {
             let lexeme = parser.peek().lexeme.clone();
-            if lexeme.len() == 1 {
-                let ch = lexeme.as_bytes()[0];
-                if ch.is_ascii_alphabetic() || ch == b'_' {
+            if lexeme.chars().count() == 1 {
+                let ch = lexeme.chars().next().unwrap();
+                if word_char(ch) {
                     value.push_str(&lexeme);
                     parser.advance();
                     continue;

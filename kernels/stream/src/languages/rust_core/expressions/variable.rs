@@ -1,5 +1,6 @@
 // Variable reference expressions
 
+use crate::languages::rust_core::{word_char, word_start};
 use crate::kernel::ast::ExprNode;
 use crate::kernel::parser::Parser;
 use crate::kernel::registry::KernelResult as LumenResult;
@@ -24,7 +25,7 @@ impl ExprPrefix for VariablePrefix {
         // Check if lexeme is a valid identifier (starts with letter or underscore)
         // But exclude reserved keywords
         let lex = &parser.peek().lexeme;
-        let is_identifier = lex.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_');
+        let is_identifier = lex.chars().next().map_or(false, word_start);
         let is_reserved = matches!(lex.as_str(), "let" | "if" | "else" | "while" | "break" | "continue" | "print" | "true" | "false");
         is_identifier && !is_reserved
     }
@@ -36,9 +37,9 @@ impl ExprPrefix for VariablePrefix {
         // Since the kernel lexer is agnostic, multi-character identifiers are split into single chars
         // Continue consuming identifier characters
         loop {
-            if parser.peek().lexeme.len() == 1 {
-                let ch = parser.peek().lexeme.as_bytes()[0];
-                if ch.is_ascii_alphanumeric() || ch == b'_' {
+            if parser.peek().lexeme.chars().count() == 1 {
+                let ch = parser.peek().lexeme.chars().next().unwrap();
+                if word_char(ch) {
                     name.push_str(&parser.advance().lexeme);
                     continue;
                 }

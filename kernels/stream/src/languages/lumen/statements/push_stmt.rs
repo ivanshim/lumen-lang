@@ -57,9 +57,9 @@ impl StmtHandler for PushStmtHandler {
 
         // Continue consuming identifier characters if split across tokens
         loop {
-            if parser.peek().lexeme.len() == 1 {
-                let ch = parser.peek().lexeme.as_bytes()[0];
-                if ch.is_ascii_alphanumeric() || ch == b'_' {
+            if parser.peek().lexeme.chars().count() == 1 {
+                let ch = parser.peek().lexeme.chars().next().unwrap();
+                if word_char(ch) {
                     arr_name.push_str(&parser.advance().lexeme);
                     parser.skip_tokens();
                     continue;

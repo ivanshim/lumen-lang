@@ -1,0 +1,14 @@
+# Identifiers may use letters beyond ASCII. Both kernels read the same
+# character classes: a word starts with a letter or underscore and continues
+# with letters, digits and underscores, from all of Unicode.
+café = 3
+π = 22 / 7
+数 = café * 2
+
+fn größe(x)
+    x + 1
+
+print(café)
+print(π)
+print(数)
+print(größe(数))

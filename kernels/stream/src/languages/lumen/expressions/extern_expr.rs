@@ -58,9 +58,9 @@ impl ExprPrefix for ExternPrefix {
         // Make sure next character doesn't extend the keyword
         if i < parser.toks.len() {
             let next = &parser.toks[i].tok.lexeme;
-            if next.len() == 1 {
+            if next.chars().count() == 1 {
                 let next_ch = next.chars().next().unwrap();
-                if next_ch.is_ascii_alphanumeric() || next_ch == '_' {
+                if word_char(next_ch) {
                     return false;
                 }
             }
