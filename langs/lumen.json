@@ -1,5 +1,6 @@
 {
   "$comment": "Lumen: indentation blocks, exact numbers, a pipe operator. The reference language; the standard library in lib_lumen/ is written against the builtin names below, and renders every value itself (render.lm), so the kernel renders nothing for Lumen.",
+  "$library": {"builtin.print": "print", "builtin.write": "write", "builtin.to_string": "value_to_string", "builtin.to_int": "int", "builtin.to_real": "real_default"},
   "format_version": 1,
   "language": "lumen",
   "extensions": ["lm"],

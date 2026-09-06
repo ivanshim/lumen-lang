@@ -27,9 +27,12 @@ def plain(s: str) -> str:
     return "`" + s + "`"
 
 
-def cell(value) -> str:
+def cell(value, provided=None) -> str:
+    """A table cell; an empty label the language's library provides says so."""
     if isinstance(value, list):
-        return " ".join(code(v) for v in value) if value else "-"
+        if value:
+            return " ".join(code(v) for v in value)
+        return f"(library: {code(provided)})" if provided else "-"
     if value is None:
         return "-"
     if isinstance(value, bool):
@@ -46,7 +49,7 @@ def main() -> int:
     extras = sorted((LANGS / "extras").glob("*.json"))
     langs = {p.stem: json.loads(p.read_text(encoding="utf-8")) for p in built_in}
     langs.update({f"{p.stem} (extra)": json.loads(p.read_text(encoding="utf-8")) for p in extras})
-    orders = {name: [k for k in data if not k.startswith("$comment")] for name, data in langs.items()}
+    orders = {name: [k for k in data if not k.startswith("$")] for name, data in langs.items()}
     reference = next(iter(orders.values()))
     for name, order in orders.items():
         if order != reference:
@@ -60,7 +63,7 @@ def main() -> int:
     for key in reference:
         if key == "op.precedence":
             continue
-        lines.append("| " + code(key) + " | " + " | ".join(cell(langs[n][key]) for n in names) + " |")
+        lines.append("| " + code(key) + " | " + " | ".join(cell(langs[n][key], langs[n].get("$library", {}).get(key)) for n in names) + " |")
     lines.append("")
     lines.append("Operator precedence, lowest tier first. Unary operators sit in their own tier.")
     lines.append("")

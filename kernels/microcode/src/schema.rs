@@ -434,7 +434,7 @@ impl<'a> Labels<'a> {
 
     fn finish(self) -> Result<(), String> {
         let mut unknown: Vec<&String> =
-            self.map.keys().filter(|k| !k.starts_with("$comment") && !self.seen.contains(*k)).collect();
+            self.map.keys().filter(|k| !k.starts_with('$') && !self.seen.contains(*k)).collect();
         unknown.sort();
         if unknown.is_empty() {
             Ok(())
