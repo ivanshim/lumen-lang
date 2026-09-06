@@ -43,6 +43,8 @@ src/main.rs            the host: arguments, language detection, the embedded
 kernels/stream/        crate lumen-stream: a tree-walking interpreter substrate
 kernels/microcode/     crate lumen-microcode: a table-driven execution engine
 lib_lumen/             the Lumen standard library, written in Lumen
+configs/               language definitions as JSON, one file per language,
+                       with a generated side-by-side comparison
 examples/              programs for all three languages
 ```
 
@@ -111,6 +113,7 @@ as errors. `TEST_QUIET=1` prints program output only for failures.
 - [docs/LUMEN_COMPACT_REFERENCE.md](docs/LUMEN_COMPACT_REFERENCE.md) — Lumen quick reference
 - [docs/LUMEN_LANGUAGE_EXTERN_SYSTEM.md](docs/LUMEN_LANGUAGE_EXTERN_SYSTEM.md) — external function design
 - [docs/LANGUAGE_COMPARISON.md](docs/LANGUAGE_COMPARISON.md) — the three syntaxes side by side
+- [configs/README.md](configs/README.md) — language definitions as data, with every label compared across languages
 - [docs/LUMEN_LANGUAGE_ROADMAP.md](docs/LUMEN_LANGUAGE_ROADMAP.md) — planned evolution
 - [docs/DIRECTORY_STRUCTURE.txt](docs/DIRECTORY_STRUCTURE.txt) — file map
 - [docs/VERSION_HISTORY.md](docs/VERSION_HISTORY.md) — release notes

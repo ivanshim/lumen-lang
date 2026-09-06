@@ -122,7 +122,6 @@ lumen-lang/
     kernels/stream/src/languages/rust_core/structure/mod.rs
     kernels/stream/src/languages/rust_core/structure/structural.rs
     kernels/stream/src/languages/rust_core/values.rs
-    kernels/stream/src/languages/text.rs
     kernels/stream/src/lib.rs
 
   kernels/microcode/               crate lumen-microcode
@@ -162,7 +161,17 @@ lumen-lang/
     lib_lumen/string_to_value.lm
     lib_lumen/value_to_string.lm
 
-  examples/                        94 programs: lumen/ (+constructs/, libraries/), python/, rust/
+  configs/                         language definitions as JSON, one per language, plus a comparison table
+    configs/README.md
+    configs/lumen.json
+    configs/php.json
+    configs/python.json
+    configs/rust.json
+  scripts/                         CI checks and generators
+    scripts/config_table.py
+    scripts/kernel_independence.py
+
+  examples/                        97 programs: lumen/ (+constructs/, libraries/), python/, rust/
   docs/                            design documents, references, history
     docs/DIRECTORY_STRUCTURE.txt
     docs/LANGUAGE_COMPARISON.md
