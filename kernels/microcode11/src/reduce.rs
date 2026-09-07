@@ -44,6 +44,9 @@ impl Globals {
 struct Frame {
     top: bool,
     slot_names: Vec<String>,
+    /// Whether a bare block declared each slot; such a slot is found only
+    /// inside its block, never once the block has closed.
+    block_owned: Vec<bool>,
     blocks: Vec<Vec<usize>>,
     params: Vec<String>,
     param_slots: Vec<usize>,
@@ -80,7 +83,7 @@ pub fn reduce(tokens: &[Token], spec: &Spec, globals: &mut Globals, arities: Has
         toks: tokens,
         at: 0,
         globals,
-        frames: vec![Frame { top: true, slot_names: Vec::new(), blocks: Vec::new(), params: Vec::new(), param_slots: Vec::new(), postfix_program: false }],
+        frames: vec![Frame { top: true, slot_names: Vec::new(), block_owned: Vec::new(), blocks: Vec::new(), params: Vec::new(), param_slots: Vec::new(), postfix_program: false }],
         hidden: 0,
         arities,
         found: HashMap::new(),
@@ -211,46 +214,43 @@ impl<'a> Reducer<'a> {
         self.frames.last_mut().expect("frame")
     }
 
-    /// Where a name is read from.
+    /// The slot a name has outside every bare block; at the top level
+    /// there is none, such names being global.
+    fn outer_slot(frame: &Frame, name: &str) -> Option<usize> {
+        (0..frame.slot_names.len()).rev().find(|&s| frame.slot_names[s] == name && !frame.block_owned[s])
+    }
+
+    /// Where a name is read from: the open blocks innermost first, then
+    /// the program's own slot, then the global. A closed block's slot is
+    /// never found.
     fn slot_of(&mut self, name: &str) -> Slot {
         let global = self.globals.slot(name);
         let frame = self.frames.last().expect("frame");
         let mut locals = Vec::new();
-        if !frame.top {
-            let in_blocks: Vec<usize> = frame.blocks.iter().flatten().copied().collect();
-            for block in frame.blocks.iter().rev() {
-                locals.extend(block.iter().rev().filter(|&&s| frame.slot_names[s] == name).copied());
-            }
-            if let Some(s) = frame.slot_names.iter().rposition(|n| n == name).filter(|s| !in_blocks.contains(s)) {
-                locals.push(s);
-            }
+        for block in frame.blocks.iter().rev() {
+            locals.extend(block.iter().rev().filter(|&&s| frame.slot_names[s] == name).copied());
         }
+        locals.extend(Self::outer_slot(frame, name));
         Slot { name: Rc::from(name), locals, global }
     }
 
     /// Where a name is written to: the innermost binding of the current
-    /// block or program, made new if there is none.
+    /// block or program, made new if there is none. At the top level a
+    /// name outside every block is global; inside a block it is the
+    /// block's own and is forgotten on leaving it.
     fn target(&mut self, name: &str) -> Slot {
         let global = self.globals.slot(name);
         let frame = self.frames.last_mut().expect("frame");
-        if frame.top {
-            let known = frame.slot_names.iter().any(|n| n == name);
-            match frame.blocks.last_mut() {
-                Some(block) if !known && !block.contains(&global) => block.push(global),
-                None if !known => frame.slot_names.push(name.to_string()),
-                _ => {}
-            }
+        if frame.top && frame.blocks.is_empty() {
             return Slot { name: Rc::from(name), locals: Vec::new(), global };
         }
         let found = match frame.blocks.last() {
             Some(block) => block.iter().rev().find(|&&s| frame.slot_names[s] == name).copied(),
-            None => {
-                let in_blocks: Vec<usize> = frame.blocks.iter().flatten().copied().collect();
-                frame.slot_names.iter().rposition(|n| n == name).filter(|s| !in_blocks.contains(s))
-            }
+            None => Self::outer_slot(frame, name),
         };
         let slot = found.unwrap_or_else(|| {
             frame.slot_names.push(name.to_string());
+            frame.block_owned.push(!frame.blocks.is_empty());
             let s = frame.slot_names.len() - 1;
             if let Some(block) = frame.blocks.last_mut() {
                 block.push(s);
@@ -397,17 +397,12 @@ impl<'a> Reducer<'a> {
         self.frame().blocks.push(Vec::new());
         let body = self.block()?;
         let slots = self.frame().blocks.pop().expect("block");
-        let top = self.frame().top;
         let forget = slots
             .into_iter()
             .map(|s| {
-                if top {
-                    Slot { name: Rc::from(self.globals.names[s].as_str()), locals: Vec::new(), global: s }
-                } else {
-                    let name = self.frames.last().unwrap().slot_names[s].clone();
-                    let global = self.globals.slot(&name);
-                    Slot { name: Rc::from(name.as_str()), locals: vec![s], global }
-                }
+                let name = self.frames.last().unwrap().slot_names[s].clone();
+                let global = self.globals.slot(&name);
+                Slot { name: Rc::from(name.as_str()), locals: vec![s], global }
             })
             .collect();
         Ok(Node::new(line, Form::Scope { forget, body: Box::new(body) }))
@@ -634,7 +629,7 @@ impl<'a> Reducer<'a> {
         }
         let declared = self.peek().kind == Kind::Symbol && spec.spells("stmt.terminator", &self.peek().text);
         let param_slots: Vec<usize> = (0..params.len()).collect();
-        self.frames.push(Frame { top: false, slot_names: params.clone(), blocks: Vec::new(), params: Vec::new(), param_slots, postfix_program: false });
+        self.frames.push(Frame { top: false, slot_names: params.clone(), block_owned: vec![false; params.len()], blocks: Vec::new(), params: Vec::new(), param_slots, postfix_program: false });
         let mut prelude = Vec::new();
         if declared {
             loop {
@@ -880,6 +875,7 @@ impl<'a> Reducer<'a> {
         let name = format!("p{}", frame.params.len() + 1);
         frame.params.push(name.clone());
         frame.slot_names.push(name.clone());
+        frame.block_owned.push(false);
         frame.param_slots.push(frame.slot_names.len() - 1);
         Ok(self.load(line, &name))
     }
@@ -1093,7 +1089,7 @@ impl<'a> Reducer<'a> {
             let close = spec.words("stack.program.close")[k].clone();
             self.hidden += 1;
             let name = format!("<program{}>", self.hidden);
-            self.frames.push(Frame { top: false, slot_names: Vec::new(), blocks: Vec::new(), params: Vec::new(), param_slots: Vec::new(), postfix_program: true });
+            self.frames.push(Frame { top: false, slot_names: Vec::new(), block_owned: Vec::new(), blocks: Vec::new(), params: Vec::new(), param_slots: Vec::new(), postfix_program: true });
             let (mut body, left) = self.postfix_block(std::slice::from_ref(&close))?;
             self.need_lex(&close)?;
             if let Some(value) = left {

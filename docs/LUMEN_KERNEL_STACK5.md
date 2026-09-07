@@ -70,9 +70,12 @@ Supporting: `words.rs` (the five words, the operations, the program),
 
 As in stack26: a local is a slot in the running frame, a global a slot in
 one table; a load names every slot of that name from the innermost open
-block outward and the global, and reads the first that holds a value; a
-store writes the innermost, or the global at the top level. A callee
-reading its caller's world falls through to the global. In a language
+block outward, then the one outside every block, then the global, and
+reads the first that holds a value; a store writes the innermost, or the
+global for a top-level name outside every block. A slot a bare block
+declared is found only from inside that block, so after the block the
+outer binding is back. A callee reading its caller's world falls through
+to the global. In a language
 that names a function's result after the function (Pascal), a call of the
 function's own name inside its body is assembled straight to the global,
 since the local of that name is the result being built.

@@ -57,6 +57,9 @@ struct Unit {
     top: bool,
     name: String,
     names: Vec<String>,
+    /// Which slots a bare block declared: found from inside that block
+    /// only, never once it has closed.
+    owned: Vec<bool>,
     blocks: Vec<Vec<usize>>,
     loops: Vec<Loop>,
     exits: Vec<usize>,
@@ -83,6 +86,7 @@ pub fn assemble(toks: &[Tok], def: &Def, table: &mut Table) -> Outcome<Rc<Progra
         top: true,
         name: "<program>".to_string(),
         names: Vec::new(),
+        owned: Vec::new(),
         blocks: Vec::new(),
         loops: Vec::new(),
         exits: Vec::new(),
@@ -106,7 +110,7 @@ pub fn assemble(toks: &[Tok], def: &Def, table: &mut Table) -> Outcome<Rc<Progra
         a.unit().words[at] = Word::Unless(end);
     }
     let unit = a.units.pop().expect("the top unit");
-    Ok(Rc::new(Program { name: unit.name, params: Vec::new(), names: Vec::new(), yields: false, words: unit.words }))
+    Ok(Rc::new(Program { name: unit.name, params: Vec::new(), names: unit.names, yields: false, words: unit.words }))
 }
 
 impl<'a> Assembler<'a> {
@@ -257,49 +261,43 @@ impl<'a> Assembler<'a> {
         self.unit().exits.push(at);
     }
 
+    /// The slot a name has outside every bare block: none at the top
+    /// level, where such names are global.
+    fn unblocked(unit: &Unit, name: &str) -> Option<usize> {
+        (0..unit.names.len()).rev().find(|&s| unit.names[s] == name && !unit.owned[s])
+    }
+
     /// Where a name is read: every slot of that name from the innermost
-    /// open block outward, then the global.
+    /// open block outward, then the one outside the blocks, then the
+    /// global. A closed block's slot is never found.
     fn read_slot(&mut self, name: &str, take: bool) -> Slot {
         let global = self.table.slot(name);
         let unit = self.units.last().expect("a unit");
         let mut locals = Vec::new();
-        if !unit.top {
-            for block in unit.blocks.iter().rev() {
-                locals.extend(block.iter().rev().filter(|&&s| unit.names[s] == name).copied());
-            }
-            let blocked: Vec<usize> = unit.blocks.iter().flatten().copied().collect();
-            if let Some(s) = unit.names.iter().rposition(|n| n == name).filter(|s| !blocked.contains(s)) {
-                locals.push(s);
-            }
+        for block in unit.blocks.iter().rev() {
+            locals.extend(block.iter().rev().filter(|&&s| unit.names[s] == name).copied());
         }
+        locals.extend(Self::unblocked(unit, name));
         Slot { name: Rc::from(name), locals, global, take }
     }
 
     /// Where a name is written: the innermost slot of that name in the
-    /// current block or function, made if there is none.
+    /// current block or function, made if there is none. At the top level
+    /// a name outside every block is global; inside a block it is the
+    /// block's own, forgotten on leaving.
     fn write_slot(&mut self, name: &str) -> Slot {
         let global = self.table.slot(name);
         let unit = self.units.last_mut().expect("a unit");
-        if unit.top {
-            // Every top-level name is global; one first bound inside a
-            // bare block is forgotten on leaving it.
-            let known = unit.names.iter().any(|n| n == name);
-            match unit.blocks.last_mut() {
-                Some(block) if !known && !block.contains(&global) => block.push(global),
-                None if !known => unit.names.push(name.to_string()),
-                _ => {}
-            }
+        if unit.top && unit.blocks.is_empty() {
             return Slot { name: Rc::from(name), locals: Vec::new(), global, take: false };
         }
         let found = match unit.blocks.last() {
             Some(block) => block.iter().rev().find(|&&s| unit.names[s] == name).copied(),
-            None => {
-                let blocked: Vec<usize> = unit.blocks.iter().flatten().copied().collect();
-                unit.names.iter().rposition(|n| n == name).filter(|s| !blocked.contains(s))
-            }
+            None => Self::unblocked(unit, name),
         };
         let slot = found.unwrap_or_else(|| {
             unit.names.push(name.to_string());
+            unit.owned.push(!unit.blocks.is_empty());
             let s = unit.names.len() - 1;
             if let Some(block) = unit.blocks.last_mut() {
                 block.push(s);
@@ -401,6 +399,7 @@ impl<'a> Assembler<'a> {
             top: false,
             name: name.to_string(),
             names: params.clone(),
+            owned: vec![false; params.len()],
             blocks: Vec::new(),
             loops: Vec::new(),
             exits: Vec::new(),
@@ -523,16 +522,10 @@ impl<'a> Assembler<'a> {
         self.unit().blocks.push(Vec::new());
         self.block()?;
         let bound = self.unit().blocks.pop().expect("the block");
-        let top = self.unit().top;
         for s in bound {
-            let slot = if top {
-                let name = self.table.names[s].clone();
-                Slot { name: Rc::from(name.as_str()), locals: Vec::new(), global: s, take: false }
-            } else {
-                let name = self.unit().names[s].clone();
-                let global = self.table.slot(&name);
-                Slot { name: Rc::from(name.as_str()), locals: vec![s], global, take: false }
-            };
+            let name = self.unit().names[s].clone();
+            let global = self.table.slot(&name);
+            let slot = Slot { name: Rc::from(name.as_str()), locals: vec![s], global, take: false };
             self.lit(Value::Empty);
             self.emit(Word::Store(slot));
         }
