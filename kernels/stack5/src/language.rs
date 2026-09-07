@@ -313,11 +313,6 @@ impl Def {
         if r.size("format_version")? != Some(1) {
             return Err("format_version must be 1".to_string());
         }
-        for (shape, label) in &shapes {
-            if *shape == 'x' && !r.list(label)?.is_empty() {
-                return Err(format!("label '{label}' is not implemented by the stack5 kernel; leave it empty"));
-            }
-        }
 
         let name = r.text("language")?;
         let unicode = r.switch("identifier.unicode")?;

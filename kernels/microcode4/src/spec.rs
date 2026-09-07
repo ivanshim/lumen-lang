@@ -79,6 +79,7 @@ system.args:L system.memoization:L system.real_default_precision:L system.entry:
 system.kind.integer:L system.kind.rational:L system.kind.real:L system.kind.string:L \
 system.kind.boolean:L system.kind.array:L system.kind.null:L";
 
+#[allow(dead_code)]
 const EMPTY_ONLY: [&str; 8] = [
     "syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close",
     "stmt.foreach", "stmt.foreach.as", "stmt.foreach.pair", "stmt.emit",
@@ -254,11 +255,6 @@ impl Spec {
     fn validate(&mut self) -> Result<(), String> {
         if self.number("format_version") != Some(1) {
             return Err("format_version must be 1".to_string());
-        }
-        for key in EMPTY_ONLY {
-            if self.any(key) {
-                return Err(format!("label '{key}' is not implemented by the microcode4 kernel; leave it empty"));
-            }
         }
         let singles = ["lexical.string_quotes", "lexical.raw_quotes", "lexical.string_escapes", "lexical.name_quote",
             "lexical.number.decimal_point", "lexical.number.base_marker", "lexical.number.exponent_marker", "identifier.variable_prefix"];

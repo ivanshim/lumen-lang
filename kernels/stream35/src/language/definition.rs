@@ -65,8 +65,10 @@ const LABELS: &[&str] = &[
     "system.kind.boolean", "system.kind.array", "system.kind.null",
 ];
 
-/// Labels the stream kernel recognises but does not implement; a
-/// definition must leave them empty.
+/// Labels the stream kernel recognises but does not implement: it reads
+/// past them, as it reads past an ext.* label, and a program using what
+/// they spell fails here instead.
+#[allow(dead_code)]
 const UNSUPPORTED: &[&str] = &[
     "syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close",
     "stmt.foreach", "stmt.foreach.as", "stmt.foreach.pair", "stmt.emit",
@@ -232,11 +234,6 @@ impl Definition {
         }
         if !style_seen {
             return Err("missing label 'block.style'".to_string());
-        }
-        for key in UNSUPPORTED {
-            if !definition.list(key).is_empty() {
-                return Err(format!("label '{key}' is not implemented by the stream kernel; leave it empty"));
-            }
         }
         let opens = definition.list("block.open").len();
         let closes = definition.list("block.close").len();

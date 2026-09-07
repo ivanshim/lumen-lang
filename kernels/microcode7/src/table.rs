@@ -84,7 +84,8 @@ ext.lexical.epilogue:L ext.builtin.echo:L ext.syntax.call.bare:B ext.op.incremen
 ext.lexical.interpolating_quotes:L ext.stmt.for.c:L ext.op.assign.compound:B ext.stmt.static:L ext.stmt.global:L \
 ext.stmt.const:L ext.builtin.define:L ext.builtin.var_dump:L ext.stmt.switch:L ext.stmt.case:L \
 ext.stmt.default:L ext.stmt.case.mark:L ext.op.ternary:L ext.block.lone_statement:B ext.stmt.function.hoisted:B \
-ext.lexical.number.exponent:L ext.op.plus:L ext.stmt.break.levels:B \
+ext.lexical.number.exponent:L ext.op.plus:L ext.stmt.break.levels:B ext.builtin.array:L ext.op.index.append:B ext.stmt.for.collection:B ext.builtin.print_r:L \
+ext.stmt.function.returns:L \
 ";
 
 fn tag_shapes(table: &'static str) -> Vec<(&'static str, char)> {
@@ -108,20 +109,23 @@ fn cell_of(key: &str, shape: char, json: &Json) -> Result<Entry, String> {
     })
 }
 
+/// Labels this kernel gives no meaning to: read past, as an ext.* label is.
+#[allow(dead_code)]
 const MUST_BE_EMPTY: [&str; 8] = [
     "syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close",
     "stmt.foreach", "stmt.foreach.as", "stmt.foreach.pair", "stmt.emit",
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 24] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 26] = [
     ("builtin.emit", Prim::Echo), ("builtin.print", Prim::Say), ("builtin.write", Prim::Out), ("builtin.len", Prim::Length),
     ("builtin.char_at", Prim::CharAtIndex), ("builtin.ord", Prim::CodeOf), ("builtin.chr", Prim::CharOf), ("builtin.typeof", Prim::SortOf),
     ("builtin.error", Prim::Raise), ("builtin.extern", Prim::External), ("builtin.range", Prim::Span), ("builtin.real", Prim::MakeReal),
     ("builtin.precision", Prim::Places), ("builtin.to_string", Prim::AsText), ("builtin.to_int", Prim::AsInt),
     ("builtin.to_real", Prim::AsReal), ("builtin.num", Prim::Numer), ("builtin.den", Prim::Denom), ("builtin.push", Prim::Append),
     ("builtin.get", Prim::Fetch), ("builtin.put", Prim::Replace), ("ext.builtin.echo", Prim::Tell),
-    ("ext.builtin.define", Prim::Define), ("ext.builtin.var_dump", Prim::Dump),
+    ("ext.builtin.define", Prim::Define), ("ext.builtin.var_dump", Prim::Dump), ("ext.builtin.array", Prim::Gather),
+    ("ext.builtin.print_r", Prim::Portray),
 ];
 
 const BINARY_LABELS: [(&str, Prim); 16] = [
@@ -279,11 +283,6 @@ impl Table {
         if self.count("format_version") != Some(1) {
             return Err("format_version must be 1".to_string());
         }
-        for key in MUST_BE_EMPTY {
-            if self.has_any(key) {
-                return Err(format!("label '{key}' is not implemented by the microcode4 kernel; leave it empty"));
-            }
-        }
         let singles = ["lexical.string_quotes", "lexical.raw_quotes", "lexical.string_escapes", "lexical.name_quote",
             "lexical.number.decimal_point", "lexical.number.base_marker", "lexical.number.exponent_marker", "identifier.variable_prefix",
             "ext.lexical.number.exponent", "ext.lexical.interpolating_quotes"];
@@ -438,6 +437,12 @@ impl Table {
         if self.has_any("ext.stmt.switch") && (!self.has_any("ext.stmt.case") || !self.has_any("ext.stmt.case.mark")) {
             return Err("ext.stmt.switch needs ext.stmt.case and ext.stmt.case.mark".to_string());
         }
+        if self.has_any("stmt.foreach") && !self.has_any("stmt.foreach.as") {
+            return Err("stmt.foreach needs stmt.foreach.as".to_string());
+        }
+        if self.has_any("stmt.foreach.pair") && !self.has_any("syntax.map.pair") {
+            return Err("stmt.foreach.pair needs syntax.map.pair".to_string());
+        }
         for label in ["op.range", "op.pipe"] {
             for lex in self.strings(label).to_vec() {
                 let tier = place(&lex, false).ok_or_else(|| format!("'{lex}' ({label}) does not appear in op.precedence"))?;
@@ -474,7 +479,9 @@ impl Table {
             "stmt.let.mutable", "stmt.if", "stmt.elif", "stmt.else", "stmt.while", "stmt.until", "stmt.for", "stmt.for.in",
             "stmt.return", "stmt.break", "stmt.continue", "stmt.function", "stmt.pass", "literal.true", "literal.false", "literal.null",
             "ext.op.increment", "ext.op.decrement", "ext.stmt.case.mark", "ext.op.ternary", "ext.stmt.for.c", "ext.stmt.static",
-            "ext.stmt.global", "ext.stmt.const", "ext.stmt.switch", "ext.stmt.case", "ext.stmt.default", "ext.op.plus"];
+            "ext.stmt.global", "ext.stmt.const", "ext.stmt.switch", "ext.stmt.case", "ext.stmt.default", "ext.op.plus",
+            "syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close", "stmt.foreach", "stmt.foreach.as",
+            "ext.stmt.function.returns"];
         for key in symbol_labels {
             all.extend(self.strings(key).iter().cloned());
         }

@@ -337,7 +337,37 @@ impl<'a> Engine<'a> {
                     }
                 };
             }
-            Action::MakeArray => Value::array(self.drop_many(argc)?),
+            Action::MakeArray => gathered(self.drop_many(argc)?, false),
+            Action::MakeMap => gathered(self.drop_many(argc)?, true),
+            Action::Tie => {
+                let pair = self.drop_many(2)?;
+                let mut pair = pair.into_iter();
+                let (k, v) = (pair.next().expect("the key"), pair.next().expect("the value"));
+                Value::Tie(Rc::new((k, v)))
+            }
+            Action::KeyAt | Action::ValueAt => {
+                let pair = self.drop_many(2)?;
+                let at = as_index(&pair[1])?;
+                let key = matches!(op, Action::KeyAt);
+                match &pair[0] {
+                    Value::Array(items) => match items.get(at) {
+                        Some(v) if !key => v.clone(),
+                        Some(_) => Value::Small(at as i64),
+                        None => return Err(format!("Array index {} out of bounds (length: {})", at, items.len())),
+                    },
+                    Value::Map(pairs) => match pairs.get(at) {
+                        Some((k, v)) => if key { k.clone() } else { v.clone() },
+                        None => return Err(format!("Array index {} out of bounds (length: {})", at, pairs.len())),
+                    },
+                    _ => return Err("Cannot walk a value that is not an array".to_string()),
+                }
+            }
+            Action::AtEnd => return Err("An empty index belongs on the left of an assignment".to_string()),
+            Action::Extent => match self.drop_top()? {
+                Value::Array(items) => Value::Small(items.len() as i64),
+                Value::Map(pairs) => Value::Small(pairs.len() as i64),
+                _ => return Err("Cannot walk a value that is not an array".to_string()),
+            },
             Action::Collect => {
                 let mark = self.data.iter().rposition(|v| matches!(v, Value::Fence)).ok_or("Stack underflow")?;
                 let items = self.data.split_off(mark + 1);
@@ -424,6 +454,10 @@ impl<'a> Engine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value) -> Res<Value> {
+        if let Value::Map(pairs) = target {
+            let found = pairs.iter().find(|(k, _)| k.equals(at));
+            return found.map(|(_, v)| v.clone()).ok_or_else(|| format!("Undefined array key {}", at.plain()));
+        }
         let i = as_index(at)?;
         match target {
             Value::Array(items) => {
@@ -545,6 +579,7 @@ impl<'a> Engine<'a> {
                 match &args[0] {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
                     Value::Array(items) => Value::Small(items.len() as i64),
+                    Value::Map(pairs) => Value::Small(pairs.len() as i64),
                     _ => return Err(format!("{}() requires a string or array argument", name)),
                 }
             }
@@ -606,26 +641,53 @@ impl<'a> Engine<'a> {
             }
             Builtin::Append => {
                 arity(2)?;
-                let Some(Value::Array(mut items)) = args.pop() else {
-                    return Err(format!("{}() requires an array", name));
-                };
+                let target = args.pop().expect("the array");
                 let v = args.pop().expect("the value");
-                Rc::make_mut(&mut items).push(v);
-                Value::Array(items)
+                match target {
+                    Value::Array(mut items) => {
+                        Rc::make_mut(&mut items).push(v);
+                        Value::Array(items)
+                    }
+                    // The next whole-number key one past the highest.
+                    Value::Map(mut pairs) => {
+                        let key = next_key(&pairs);
+                        Rc::make_mut(&mut pairs).push((Value::Small(key), v));
+                        Value::Map(pairs)
+                    }
+                    _ => return Err(format!("{}() requires an array", name)),
+                }
             }
             Builtin::Replace => {
                 arity(3)?;
-                let Some(Value::Array(mut items)) = args.pop() else {
-                    return Err(format!("{}() requires an array", name));
-                };
+                let target = args.pop().expect("the array");
                 let v = args.pop().expect("the value");
-                let i = as_index(&args[0])?;
-                let list = Rc::make_mut(&mut items);
-                if i >= list.len() {
-                    return Err(format!("Array index {} out of bounds (length: {})", i, list.len()));
+                let at = args.pop().expect("the key");
+                match target {
+                    // A list written at a place it already holds stays a list.
+                    Value::Array(mut items) if as_index(&at).map_or(false, |i| i < items.len()) => {
+                        let i = as_index(&at)?;
+                        Rc::make_mut(&mut items)[i] = v;
+                        Value::Array(items)
+                    }
+                    // Any other key makes it a map, its places the keys.
+                    Value::Array(items) => {
+                        let mut pairs: Vec<(Value, Value)> =
+                            items.iter().enumerate().map(|(i, x)| (Value::Small(i as i64), x.clone())).collect();
+                        put_key(&mut pairs, at, v);
+                        Value::Map(Rc::new(pairs))
+                    }
+                    Value::Map(mut pairs) => {
+                        put_key(Rc::make_mut(&mut pairs), at, v);
+                        Value::Map(pairs)
+                    }
+                    _ => return Err(format!("{}() requires an array", name)),
                 }
-                list[i] = v;
-                Value::Array(items)
+            }
+            Builtin::Pack => return Err(format!("{}() is a literal, not a call", name)),
+            Builtin::Layout => {
+                arity(1)?;
+                print!("{}", laid_out(&args[0], 0));
+                Value::Flag(true)
             }
             Builtin::External => self.external(name, &args)?,
         })
@@ -698,6 +760,85 @@ fn dumped(v: &Value, depth: usize) -> String {
             out.push('}');
             out
         }
+        Value::Map(pairs) => {
+            let mut out = format!("array({}) {{\n", pairs.len());
+            for (k, item) in pairs.iter() {
+                // A text key is shown in quotes, a number bare.
+                let shown = match k {
+                    Value::Text(s) => format!("\"{}\"", s),
+                    other => other.plain(),
+                };
+                out.push_str(&format!("{pad}  [{shown}]=>\n{pad}  {}\n", dumped(item, depth + 1)));
+            }
+            out.push_str(&pad);
+            out.push('}');
+            out
+        }
         _ => "NULL".to_string(),
     }
+}
+
+/// The values of a literal: a map when any of them is a tie or the
+/// literal asks for one, otherwise a list. An untied value takes the
+/// next whole-number key, as in a list.
+fn gathered(items: Vec<Value>, always_map: bool) -> Value {
+    if !always_map && !items.iter().any(|v| matches!(v, Value::Tie(_))) {
+        return Value::array(items);
+    }
+    let mut pairs: Vec<(Value, Value)> = Vec::with_capacity(items.len());
+    for item in items {
+        match item {
+            Value::Tie(pair) => {
+                let (k, v) = (pair.0.clone(), pair.1.clone());
+                put_key(&mut pairs, k, v);
+            }
+            v => {
+                let key = next_key(&pairs);
+                pairs.push((Value::Small(key), v));
+            }
+        }
+    }
+    Value::Map(Rc::new(pairs))
+}
+
+/// One past the highest whole-number key, or zero when there is none.
+fn next_key(pairs: &[(Value, Value)]) -> i64 {
+    pairs
+        .iter()
+        .filter_map(|(k, _)| match k {
+            Value::Small(n) => Some(*n + 1),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0)
+        .max(0)
+}
+
+/// Write a key: over the value it already holds, or at the end.
+fn put_key(pairs: &mut Vec<(Value, Value)>, key: Value, value: Value) {
+    match pairs.iter_mut().find(|(k, _)| k.equals(&key)) {
+        Some(slot) => slot.1 = value,
+        None => pairs.push((key, value)),
+    }
+}
+
+/// A value over lines, as PHP's print_r writes it: a scalar bare, an
+/// array as `Array` and its places in brackets, each nested array set
+/// eight spaces further in and followed by a blank line.
+fn laid_out(v: &Value, indent: usize) -> String {
+    let pairs: Vec<(String, &Value)> = match v {
+        Value::Array(items) => items.iter().enumerate().map(|(i, x)| (i.to_string(), x)).collect(),
+        Value::Map(entries) => entries.iter().map(|(k, x)| (k.plain(), x)).collect(),
+        other => return other.plain(),
+    };
+    let pad = " ".repeat(indent);
+    let mut out = format!("Array\n{pad}(\n");
+    for (key, item) in pairs {
+        // What an array lays out ends its own line, so the newline
+        // here is the gap PHP leaves after it; for a scalar it ends the line.
+        let shown = laid_out(item, indent + 8);
+        out.push_str(&format!("{pad}    [{key}] => {shown}\n"));
+    }
+    out.push_str(&format!("{pad})\n"));
+    out
 }

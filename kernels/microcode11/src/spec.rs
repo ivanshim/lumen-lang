@@ -64,7 +64,9 @@ const SCHEMA: &[(&str, Shape)] = &[
     ("system.kind.string", Words), ("system.kind.boolean", Words), ("system.kind.array", Words), ("system.kind.null", Words),
 ];
 
-/// Labels with no meaning in this kernel; they must be empty.
+/// Labels with no meaning in this kernel: their value is read past, as
+/// an ext.* label's is, and a program using what they spell fails here.
+#[allow(dead_code)]
 const MUST_BE_EMPTY: &[&str] = &[
     "syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close",
     "stmt.foreach", "stmt.foreach.as", "stmt.foreach.pair", "stmt.emit",
@@ -329,11 +331,6 @@ impl Spec {
     fn check(&mut self) -> Result<(), String> {
         if self.count("format_version") != Some(1) {
             return Err("format_version must be 1".to_string());
-        }
-        for label in MUST_BE_EMPTY {
-            if self.has(label) {
-                return Err(format!("label '{label}' is not implemented by the microcode11 kernel; leave it empty"));
-            }
         }
         for label in ["lexical.string_quotes", "lexical.raw_quotes", "lexical.string_escapes", "lexical.name_quote",
                       "lexical.number.decimal_point", "lexical.number.base_marker", "lexical.number.exponent_marker",

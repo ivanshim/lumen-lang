@@ -63,6 +63,11 @@ pub enum Value {
     Flag(bool),
     Nil,
     Vector(Rc<Vec<Value>>),
+    /// Keys with their values, kept in the order they were written.
+    Dict(Rc<Vec<(Value, Value)>>),
+    /// A key written together with its value (`k => v`), until a
+    /// literal takes it in.
+    Couple(Rc<(Value, Value)>),
     /// A program not yet bound to a frame: only inside the tree.
     Routine(Rc<Routine>),
     /// A program bound to the frame it was made in.
@@ -102,9 +107,9 @@ impl Value {
             Value::Frac(e) => if e.places.is_some() { Kind::Decimal } else { Kind::Fraction },
             Value::Text(_) => Kind::Chars,
             Value::Flag(_) => Kind::Truth,
-            Value::Vector(_) => Kind::Vector,
+            Value::Vector(_) | Value::Dict(_) => Kind::Vector,
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
-            Value::Routine(_) | Value::Bound(..) | Value::Unset => return None,
+            Value::Couple(_) | Value::Routine(_) | Value::Bound(..) | Value::Unset => return None,
         })
     }
 
@@ -129,7 +134,7 @@ impl Value {
             Value::Flag(b) => BigInt::from(*b as i64),
             Value::Nil | Value::Unset => BigInt::zero(),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
-            Value::Vector(_) => return Err("Cannot coerce array to number".to_string()),
+            Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
             Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::KindOf(_) => return Err("Cannot coerce kind meta-value to number".to_string()),
         })
@@ -144,6 +149,10 @@ impl Value {
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Nil, Value::Nil) => true,
             (Value::Vector(a), Value::Vector(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
+            (Value::Dict(a), Value::Dict(b)) => {
+                a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
+            }
+            (Value::Couple(a), Value::Couple(b)) => a.0.equals(&b.0) && a.1.equals(&b.1),
             (Value::Bound(a, _), Value::Bound(b, _)) => Rc::ptr_eq(a, b),
             (Value::KindOf(a), Value::KindOf(b)) => a == b,
             _ => false,
@@ -156,6 +165,10 @@ impl Value {
             Value::Flag(false) => w.falsity.to_string(),
             Value::Nil | Value::Unset => w.nil.to_string(),
             Value::Vector(items) => format!("[{}]", items.iter().map(|v| v.render(w)).collect::<Vec<_>>().join(", ")),
+            Value::Dict(entries) => {
+                format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.render(w), v.render(w))).collect::<Vec<_>>().join(", "))
+            }
+            Value::Couple(e) => format!("{} => {}", e.0.render(w), e.1.render(w)),
             other => other.bare(),
         }
     }
@@ -172,6 +185,10 @@ impl Value {
             Value::Flag(b) => if *b { "true" } else { "false" }.to_string(),
             Value::Nil | Value::Unset => "null".to_string(),
             Value::Vector(items) => format!("[{}]", items.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
+            Value::Dict(entries) => {
+                format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.bare(), v.bare())).collect::<Vec<_>>().join(", "))
+            }
+            Value::Couple(e) => format!("{} => {}", e.0.bare(), e.1.bare()),
             Value::Routine(p) | Value::Bound(p, _) => format!("<function({})>", p.formals.join(", ")),
             Value::KindOf(s) => s.tag().to_string(),
         }
@@ -184,6 +201,20 @@ impl Value {
                 out.push('[');
                 items.iter().for_each(|v| v.memo_key(out));
                 out.push(']');
+            }
+            Value::Dict(entries) => {
+                out.push('{');
+                entries.iter().for_each(|(k, v)| {
+                    k.memo_key(out);
+                    v.memo_key(out);
+                });
+                out.push('}');
+            }
+            Value::Couple(e) => {
+                out.push('(');
+                e.0.memo_key(out);
+                e.1.memo_key(out);
+                out.push(')');
             }
             Value::Bound(p, _) => out.push_str(&format!("f{:p}", Rc::as_ptr(p))),
             other => out.push_str(&other.bare()),

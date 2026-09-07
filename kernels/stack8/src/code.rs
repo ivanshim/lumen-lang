@@ -58,6 +58,19 @@ pub enum Action {
     Execute,
     /// The arguments as an array.
     MakeArray,
+    /// A map from the values above: every tie a pair, everything else
+    /// keyed by its position among the untied.
+    MakeMap,
+    /// `k => v` as one value, until a literal gathers it.
+    Tie,
+    /// The key, or the value, of the pair at a position: how a foreach
+    /// walks an array or a map.
+    KeyAt,
+    ValueAt,
+    /// `a[]`, which only an assignment may write to.
+    AtEnd,
+    /// How many places an array or a map holds.
+    Extent,
     /// Everything above the nearest mark as an array, the mark removed.
     Collect,
     Builtin(Builtin, Rc<str>),
@@ -73,6 +86,10 @@ pub enum Builtin {
     Tell,
     /// A named global constant (ext.builtin.define); bound at compile time.
     Define,
+    /// An array or map written as a call (ext.builtin.array).
+    Pack,
+    /// A value laid out over lines, PHP's print_r (ext.builtin.print_r).
+    Layout,
     /// Each argument with its kind, PHP's var_dump (ext.builtin.var_dump).
     Dump,
     MakeReal,

@@ -164,7 +164,7 @@ fn inert(node: &Form) -> bool {
             _ => true,
         }),
         Form::Apply(Callee::Prim(op, _), args) => {
-            !matches!(op, Prim::Echo | Prim::Say | Prim::Out | Prim::Tell | Prim::Dump | Prim::Define | Prim::Raise | Prim::External | Prim::Append | Prim::Replace | Prim::Yield | Prim::Leave | Prim::Resume | Prim::Choose | Prim::Both | Prim::Either | Prim::Seq)
+            !matches!(op, Prim::Echo | Prim::Say | Prim::Out | Prim::Tell | Prim::Dump | Prim::Define | Prim::Gather | Prim::Raise | Prim::External | Prim::Append | Prim::Replace | Prim::Yield | Prim::Leave | Prim::Resume | Prim::Choose | Prim::Both | Prim::Either | Prim::Seq)
                 && args.iter().all(inert)
         }
         _ => false,
@@ -603,6 +603,9 @@ impl<'a> Builder<'a> {
                 self.advance();
                 return Ok(constant(Value::Nil));
             }
+            if self.key("stmt.foreach") {
+                return self.foreach_stmt();
+            }
             if self.key("ext.stmt.for.c") {
                 return self.three_part_for();
             }
@@ -695,6 +698,79 @@ impl<'a> Builder<'a> {
             };
         }
         Ok(sequence(items))
+    }
+
+    /// `foreach (a as v)` and `foreach (a as k => v)`: the array or map
+    /// held aside and walked by position, its key and item bound at the
+    /// head of each pass.
+    fn foreach_stmt(&mut self) -> Res<Form> {
+        let table = self.table;
+        self.advance();
+        let open = table.single("syntax.group.open").ok_or_else(|| "A foreach needs syntax.group".to_string())?;
+        let close = table.single("syntax.group.close").unwrap().to_string();
+        self.need_sign(open, "after foreach")?;
+        let source = self.expr(0)?;
+        if !self.key("stmt.foreach.as") {
+            return Err(format!("Expected '{}' in foreach, got '{}'", table.single("stmt.foreach.as").unwrap(), self.look().lexeme));
+        }
+        self.advance();
+        let first = self.need_word("as the foreach variable")?;
+        let coupled = table.single("syntax.map.pair").map_or(false, |m| self.sign(m));
+        let (key, item) = if coupled {
+            self.advance();
+            (Some(first), self.need_word("as the foreach value")?)
+        } else {
+            (None, first)
+        };
+        self.need_sign(&close, "after the foreach names")?;
+        self.walk(source, key, item)
+    }
+
+    /// The walk itself: a place counted to the extent, the key and the
+    /// item read from it at the head of every pass.
+    fn walk(&mut self, source: Form, key: Option<String>, item: String) -> Res<Form> {
+        let bag = self.gensym("bag");
+        let bag_name = bag.ident.to_string();
+        let hold = Form::Write(bag, Box::new(source));
+        let at = self.gensym("at");
+        let at_name = at.ident.to_string();
+        let start = Form::Write(at, Box::new(constant(Value::Small(0))));
+        let extent = self.gensym("extent");
+        let extent_name = extent.ident.to_string();
+        let reach = self.read(&bag_name);
+        let size = Form::Write(extent, Box::new(prim_call(Prim::Extent, vec![reach])));
+        if let Some(k) = &key {
+            self.address_to_write(k);
+        }
+        self.address_to_write(&item);
+        let (test_at, test_end) = (at_name.clone(), extent_name);
+        let (walk, walk_at) = (bag_name, at_name.clone());
+        let step_at = at_name;
+        let looped = self.cycle(
+            move |r| {
+                let (here, end) = (r.read(&test_at), r.read(&test_end));
+                Ok(prim_call(Prim::Lt, vec![here, end]))
+            },
+            move |r| {
+                let mut items = Vec::new();
+                if let Some(k) = key {
+                    let (bag, at) = (r.read(&walk), r.read(&walk_at));
+                    let found = prim_call(Prim::KeyAt, vec![bag, at]);
+                    items.push(r.write(&k, found));
+                }
+                let (bag, at) = (r.read(&walk), r.read(&walk_at));
+                let found = prim_call(Prim::ItemAt, vec![bag, at]);
+                items.push(r.write(&item, found));
+                items.push(r.body()?);
+                Ok(sequence(items))
+            },
+            Some(move |r: &mut Self| {
+                let here = r.read(&step_at);
+                let next = prim_call(Prim::Plus, vec![here, constant(Value::Small(1))]);
+                Ok(r.write(&step_at, next))
+            }),
+        )?;
+        Ok(sequence(vec![hold, start, size, looped]))
     }
 
     /// `for (init; test; step) body`: the init, then a cycle whose step
@@ -814,7 +890,7 @@ impl<'a> Builder<'a> {
             let bracketed = self.table.single("syntax.call.open").map_or(false, |o| next.shape == Shape::Sign && next.lexeme == o);
             let bare = match op {
                 Some(Prim::Tell) => true,
-                Some(Prim::Append | Prim::Replace | Prim::Define) | None => false,
+                Some(Prim::Append | Prim::Replace | Prim::Define | Prim::Gather) | None => false,
                 Some(_) => !bracketed,
             };
             if bare {
@@ -941,7 +1017,12 @@ impl<'a> Builder<'a> {
             let tier = table.strings("op.range").iter().filter_map(|r| table.precedence.get(r.as_str())).min().copied().unwrap_or(0);
             let start = self.expr(tier + 1)?;
             if !(self.look().shape == Shape::Sign && table.spells("op.range", &self.look().lexeme)) {
-                return Err("A for loop needs a range: start..end".to_string());
+                // No range mark: what was read is something to walk through.
+                if !table.flag("ext.stmt.for.collection") {
+                    return Err("A for loop needs a range: start..end".to_string());
+                }
+                self.address_to_write(&var);
+                return self.walk(start, None, var);
             }
             self.advance();
             let end = self.expr(tier + 1)?;
@@ -1035,7 +1116,11 @@ impl<'a> Builder<'a> {
             }
         }
         self.need_sign(close, "after parameters")?;
-        if self.look().shape == Shape::Sign && table.spells("stmt.function.returns", &self.look().lexeme) {
+        let returns_here = |b: &Self| {
+            b.look().shape == Shape::Sign
+                && (table.spells("stmt.function.returns", &b.look().lexeme) || table.spells("ext.stmt.function.returns", &b.look().lexeme))
+        };
+        if returns_here(self) {
             self.advance();
             self.need_word("as a return type")?;
         }
@@ -1080,6 +1165,14 @@ impl<'a> Builder<'a> {
                 None => Ok(self.write(&slot.ident, value)),
             },
             _ if compound.is_some() => Err(format!("'{}' needs a plain variable on its left", assign.lexeme)),
+            // a[] = v appends.
+            Form::Apply(Callee::Prim(Prim::AtEnd, _), mut args) if args.len() == 1 => match args.pop().unwrap() {
+                Form::Read(slot) => {
+                    let target = self.read(&slot.ident);
+                    Ok(prim_call(Prim::Append, vec![target, value]))
+                }
+                _ => Err("Invalid assignment target".to_string()),
+            },
             Form::Apply(Callee::Prim(Prim::At, _), mut args) if args.len() == 2 => {
                 let index = args.pop().unwrap();
                 match args.pop().unwrap() {
@@ -1196,6 +1289,11 @@ impl<'a> Builder<'a> {
                     constant(Value::Nil)
                 } else if table.single("syntax.call.open").map_or(false, |o| self.sign(o)) {
                     self.advance();
+                    if table.prims.get(&t.lexeme) == Some(&Prim::Gather) {
+                        // array(...) gathers what it is given, like a literal.
+                        let items = self.elements("syntax.call.close", "syntax.call.separator")?;
+                        return self.subscript(prim_call(Prim::MakeArray, items));
+                    }
                     let mut args = self.args("syntax.call.close", "syntax.call.separator")?;
                     if table.prims.get(&t.lexeme) == Some(&Prim::Define) {
                         // define("NAME", v) binds the global NAME here; its value is true.
@@ -1229,8 +1327,12 @@ impl<'a> Builder<'a> {
                     inner
                 } else if table.single("syntax.array.open") == Some(t.lexeme.as_str()) {
                     self.advance();
-                    let items = self.args("syntax.array.close", "syntax.array.separator")?;
+                    let items = self.elements("syntax.array.close", "syntax.array.separator")?;
                     prim_call(Prim::MakeArray, items)
+                } else if table.single("syntax.map.open") == Some(t.lexeme.as_str()) {
+                    self.advance();
+                    let items = self.elements("syntax.map.close", "syntax.map.separator")?;
+                    prim_call(Prim::MakeMap, items)
                 } else {
                     return Err(format!("Unexpected token: {}", t.lexeme));
                 }
@@ -1243,12 +1345,48 @@ impl<'a> Builder<'a> {
     fn subscript(&mut self, mut node: Form) -> Res<Form> {
         let (Some(open), Some(close)) = (self.table.single("op.index.open"), self.table.single("op.index.close")) else { return Ok(node) };
         while self.sign(open) {
+            // `a[]`: the place after the last, which only a store reaches.
+            if self.table.flag("ext.op.index.append") && self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == close {
+                self.pos += 2;
+                node = prim_call(Prim::AtEnd, vec![node]);
+                continue;
+            }
             self.advance();
             let index = self.expr(0)?;
             self.need_sign(close, "after array index")?;
             node = prim_call(Prim::At, vec![node, index]);
         }
         Ok(node)
+    }
+
+    /// The elements of a literal: as `args` reads them, except that
+    /// `k => v` becomes one coupled value.
+    fn elements(&mut self, close_key: &str, sep_key: &str) -> Res<Vec<Form>> {
+        let close = self.table.single(close_key).unwrap().to_string();
+        let sep = self.table.single(sep_key).map(str::to_string);
+        let mark = self.table.single("syntax.map.pair").map(str::to_string);
+        let mut items = Vec::new();
+        while !self.sign(&close) {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", close));
+            }
+            let item = self.expr(0)?;
+            items.push(match &mark {
+                Some(m) if self.sign(m) => {
+                    self.advance();
+                    let value = self.expr(0)?;
+                    prim_call(Prim::Couple, vec![item, value])
+                }
+                _ => item,
+            });
+            if let Some(s) = &sep {
+                if self.sign(s) {
+                    self.advance();
+                }
+            }
+        }
+        self.advance();
+        Ok(items)
     }
 
     fn args(&mut self, close_key: &str, sep_key: &str) -> Res<Vec<Form>> {
@@ -1794,7 +1932,8 @@ impl<'a> Builder<'a> {
                 Prim::Append | Prim::Replace => return Err(format!("'{}' needs a quoted name before it", w)),
                 Prim::External | Prim::Span => return Err(format!("'{}' has no postfix form", w)),
                 Prim::Echo | Prim::Say | Prim::Out | Prim::Tell | Prim::Dump | Prim::Raise => (1, false),
-                Prim::Define => return Err(format!("'{}' has no postfix form", w)),
+                Prim::Portray => (1, true),
+                Prim::Define | Prim::Gather => return Err(format!("'{}' has no postfix form", w)),
                 Prim::CharAtIndex | Prim::Fetch | Prim::MakeReal => (2, true),
                 _ => (1, true),
             };

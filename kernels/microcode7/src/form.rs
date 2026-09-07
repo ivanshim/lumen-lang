@@ -39,6 +39,10 @@ pub enum Prim {
     Tell,
     /// A named global constant, bound when built (ext.builtin.define).
     Define,
+    /// An array or a map written like a call (ext.builtin.array).
+    Gather,
+    /// A value written over lines, PHP's print_r (ext.builtin.print_r).
+    Portray,
     /// Each argument with its kind, as PHP's var_dump (ext.builtin.var_dump).
     Dump,
     MakeReal,
@@ -59,6 +63,18 @@ pub enum Prim {
     Fetch,
     Replace,
     Span,
+    /// A map from the values given: a couple is a key and its value,
+    /// anything else takes the next whole number as its key.
+    MakeMap,
+    /// `k => v` held as one value until a literal takes it in.
+    Couple,
+    /// The key, or the item, at a position: how a foreach walks.
+    KeyAt,
+    ItemAt,
+    /// How many places an array or a map holds.
+    Extent,
+    /// `a[]`, a place only a store reaches.
+    AtEnd,
     // operators
     Plus,
     Minus,

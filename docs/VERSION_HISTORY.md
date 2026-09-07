@@ -148,6 +148,26 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   `scripts/port_examples.py` now reports the first unwritable callee in
   source order, so `docs/LIBRARY_PORTS.md` no longer changes between
   runs.
+- **Maps, and a kernel reads past what it cannot do**: the full kernels
+  hold an ordered map of keys and values beside the plain array, so PHP's
+  associative arrays and Python's dictionaries run: `syntax.map.pair`
+  (`k => v` inside a literal), `syntax.map.*` brackets for a map literal
+  of its own, `stmt.foreach` with `.as` and `.pair`, `ext.builtin.array`
+  (`array(...)`), `ext.op.index.append` (`a[] = v`),
+  `ext.stmt.for.collection` (`for x in [1, 2]`) and `ext.builtin.print_r`
+  in PHP's layout. A list stays a list until a key it does not hold is
+  written to it, so ordinary arrays keep their speed; a literal becomes a
+  map as soon as one element is tied, and an untied one takes the next
+  whole number, as PHP does. PHP also gains its return-type mark
+  (`function f(): int`), under `ext.stmt.function.returns` rather than
+  the core label, since the porter writes a type for every function it
+  ports and PHP has no word for a rational. With that, the six kernels no longer refuse a
+  definition for spelling something they cannot do: each reads past a
+  label it gives no meaning to, exactly as it reads past an `ext.` label,
+  and the program using that spelling is what fails. `tests/php/lang`
+  goes from 17 to 22 passing on both kernels; Python's dictionary wall
+  (22 tests) is gone, though its suite still needs classes and
+  decorators.
 - **Notation and block style are separate labels; RPLumen is indented**:
   a new label `syntax.notation` (`infix` or `postfix`) says how a
   language is read, and `block.style` is free to be `indentation`,
