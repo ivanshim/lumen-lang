@@ -58,18 +58,18 @@ Lumen has 136 library functions; python carries 70, rplumen carries 98, rust car
 | `is_ascii` | `string_ord_chr.lm` | yes | yes | no `ord` | no `ord` | no `ord` | yes | yes | yes | no `ord` |
 | `is_digit` | `string_ord_chr.lm` | yes | yes | no `ord` | no `ord` | no `ord` | yes | yes | yes | no `ord` |
 | `is_alpha` | `string_ord_chr.lm` | yes | yes | no `ord` | no `ord` | no `ord` | yes | yes | yes | no `ord` |
-| `is_alnum` | `string_ord_chr.lm` | yes | yes | calls `is_digit`: no `ord` | calls `is_digit`: no `ord` | calls `is_digit`: no `ord` | yes | yes | yes | calls `is_digit`: no `ord` |
+| `is_alnum` | `string_ord_chr.lm` | yes | yes | calls `is_alpha`: no `ord` | calls `is_alpha`: no `ord` | calls `is_alpha`: no `ord` | yes | yes | yes | calls `is_alpha`: no `ord` |
 | `char_to_upper` | `string_ord_chr.lm` | yes | yes | no `ord` | C has no spelling here for a variable holding a str | no `ord` | yes | yes | yes | no `ord` |
 | `char_to_lower` | `string_ord_chr.lm` | yes | yes | no `ord` | C has no spelling here for a variable holding a str | no `ord` | yes | yes | yes | no `ord` |
 | `string_to_upper` | `string_ord_chr.lm` | yes | yes | no `char_at` | C has no spelling here for a variable holding a str | calls `char_to_upper`: no `ord` | no `char_at` | yes | yes | no `char_at` |
 | `string_to_lower` | `string_ord_chr.lm` | yes | yes | no `char_at` | C has no spelling here for a variable holding a str | calls `char_to_lower`: no `ord` | no `char_at` | yes | yes | no `char_at` |
 | `reverse_characters` | `string_ord_chr.lm` | yes | yes | no `char_at` | C has no spelling here for a variable holding a str | yes | no `char_at` | yes | yes | no `char_at` |
-| `capitalize_first_word` | `string_ord_chr.lm` | yes | yes | no `char_at` | C has no spelling here for a variable holding a str | calls `char_to_upper`: no `ord` | no `char_at` | yes | yes | no `char_at` |
-| `capitalize_words` | `string_ord_chr.lm` | yes | yes | no `char_at` | C has no spelling here for a variable holding a str | calls `char_to_upper`: no `ord` | no `char_at` | yes | yes | no `char_at` |
+| `capitalize_first_word` | `string_ord_chr.lm` | yes | yes | no `char_at` | C has no spelling here for a variable holding a str | calls `is_alpha`: no `ord` | no `char_at` | yes | yes | no `char_at` |
+| `capitalize_words` | `string_ord_chr.lm` | yes | yes | no `char_at` | C has no spelling here for a variable holding a str | calls `is_alpha`: no `ord` | no `char_at` | yes | yes | no `char_at` |
 | `is_whitespace` | `string_ord_chr.lm` | yes | yes | no `ord` | no `ord` | no `ord` | yes | yes | yes | no `ord` |
 | `trim_start` | `string_ord_chr.lm` | yes | a branch in a loop condition | no `char_at` | C has no spelling here for a variable holding a str | calls `is_whitespace`: no `ord` | no `char_at` | yes | yes | no `char_at` |
 | `trim_end` | `string_ord_chr.lm` | yes | a branch in a loop condition | no `char_at` | C has no spelling here for a variable holding a str | calls `is_whitespace`: no `ord` | no `char_at` | yes | yes | no `char_at` |
-| `trim` | `string_ord_chr.lm` | yes | calls `trim_end`: a branch in a loop condition | calls `trim_end`: no `char_at` | C has no spelling here for a variable holding a str | calls `trim_end`: calls `is_whitespace`: no `ord` | calls `trim_end`: no `char_at` | yes | yes | calls `trim_end`: no `char_at` |
+| `trim` | `string_ord_chr.lm` | yes | calls `trim_start`: a branch in a loop condition | calls `trim_start`: no `char_at` | C has no spelling here for a variable holding a str | calls `trim_start`: calls `is_whitespace`: no `ord` | calls `trim_start`: no `char_at` | yes | yes | calls `trim_start`: no `char_at` |
 | `is_alpha_string` | `string_ord_chr.lm` | yes | yes | no `char_at` | no `char_at` | calls `is_alpha`: no `ord` | no `char_at` | yes | yes | no `char_at` |
 | `factorial` | `factorial.lm` | yes | yes | yes | yes | yes | yes | yes | yes | yes |
 | `round` | `round.lm` | yes | yes | no `/` | C has no spelling here for a variable holding a rational | no `//` | yes | no `//` | no `/` | no `/` |
@@ -98,7 +98,7 @@ Lumen has 136 library functions; python carries 70, rplumen carries 98, rust car
 | `element_order` | `number_theory.lm` | yes | yes | calls `euler_phi`: calls `prime_factors`: no type word for a array | no `error` | no `error` | no `error` | calls `mod_pow`: no `//` | yes | calls `euler_phi`: calls `prime_factors`: no type word for a array |
 | `is_cyclic` | `number_theory.lm` | yes | yes | calls `prime_factors`: no type word for a array | calls `prime_factors`: C has no spelling here for a variable holding a array | no `//` | no type word for a array | no `//` | yes | calls `prime_factors`: no type word for a array |
 | `primitive_root` | `number_theory.lm` | yes | yes | calls `prime_factors`: no type word for a array | no `error` | no `error` | no type word for a array | no `//` | yes | calls `prime_factors`: no type word for a array |
-| `all_primitive_roots` | `number_theory.lm` | yes | yes | no type word for a array | C has no spelling here for a variable holding a array | no `error` | no type word for a array | calls `euler_phi`: no `//` | yes | no type word for a array |
+| `all_primitive_roots` | `number_theory.lm` | yes | yes | no type word for a array | C has no spelling here for a variable holding a array | no `error` | no type word for a array | calls `mod_pow`: no `//` | yes | no type word for a array |
 | `discrete_log` | `number_theory.lm` | yes | yes | calls `euler_phi`: calls `prime_factors`: no type word for a array | no `error` | no `error` | no type word for a array | calls `isqrt`: no `//` | yes | calls `euler_phi`: calls `prime_factors`: no type word for a array |
 | `legendre_symbol` | `number_theory.lm` | yes | yes | yes | no `error` | no `error` | no `error` | no `//` | yes | yes |
 | `jacobi_symbol` | `number_theory.lm` | yes | yes | yes | no `error` | no `error` | no `error` | no `//` | yes | yes |

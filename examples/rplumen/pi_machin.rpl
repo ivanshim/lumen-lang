@@ -1,5 +1,5 @@
 # Ported from examples/lumen/pi_machin.lm by scripts/port_examples.py; edit the Lumen original, not this file.
-1000 'significant_figures' =
+200 'significant_figures' =
 significant_figures pi_machin 'result' =
 result to_string 'result_string' =
 result_string 100 substring_start print

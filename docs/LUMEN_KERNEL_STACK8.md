@@ -87,6 +87,6 @@ on every program, and the host's default.
 
 The kernels never import each other; `scripts/kernel_independence.py`
 checks every pair, and this kernel is written in its own words, not
-stack5's. `scripts/kernel_diff.sh` compares it with the others on every
+stack5's. The test suite compares it with the others on every
 program under `examples/`; all 498 print the same. microcode7 is the same
 promotion on the tree.

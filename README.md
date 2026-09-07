@@ -213,8 +213,8 @@ the same relative path, and writes [examples/PORTS.md](examples/PORTS.md),
 which says for each example and language either that the port exists or
 which construct the language has no spelling for. Those ports, the
 hand-written examples and the Lumen suite all run on every kernel, and
-`scripts/kernel_diff.sh` checks that the six kernels print the same for
-every one of them.
+the suite requires the six kernels to print the same for every one of
+them.
 
 The library goes with them. The same porter writes every function of
 `lib_lumen/` that a language can spell into `lib_<language>/`, file for
@@ -248,11 +248,14 @@ Every example runs on every kernel:
 ./test.sh --help
 ```
 
-`scripts/kernel_diff.sh` goes further and requires the six kernels to
-print the same thing for every program; today every program does. The
-differential test exists to find semantic gaps between the
-implementations, and each one it has found has been closed in whichever
-kernel was wrong.
+The suite is also the differential test: each program runs on stream35
+first, and every other kernel must print what it printed, whether the
+program succeeds or fails; today every program does. The differential
+test exists to find semantic gaps between the implementations, and each
+one it has found has been closed in whichever kernel was wrong.
+`scripts/kernel_diff.sh` runs the suite over every language. The suite
+uses the release binary; the debug one is ten times slower on the heavy
+programs, and the whole run takes about a minute.
 
 GitHub Actions runs the independence check, the build with warnings as
 errors, a check that the ported examples match what

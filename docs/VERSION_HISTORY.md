@@ -89,6 +89,15 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   program's name to a value ends the name's life as a program for the
   words after it. All 2988 tests pass, the six kernels print the same
   for all 498 programs, and the emitter round-trip is unchanged.
+- **A faster suite**: `test.sh` uses the release binary (the debug one
+  was ten times slower on the heavy programs), and is now the
+  differential test as well: each program runs on stream35 first and
+  every other kernel must print what it printed, whether the program
+  succeeds or fails, so one pass does what `test.sh` and
+  `scripts/kernel_diff.sh` did in two; the latter now runs the suite over
+  every language. The `pi_machin` example computes 200 digits instead of
+  1000 (`bench/pi.lm` keeps 1000). The full run fell from eleven minutes
+  to about one.
 - **Notation and block style are separate labels; RPLumen is indented**:
   a new label `syntax.notation` (`infix` or `postfix`) says how a
   language is read, and `block.style` is free to be `indentation`,

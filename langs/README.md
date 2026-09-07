@@ -17,7 +17,7 @@ file extension, `--lang <name>` or `--lang <extension>`; the ones in
 `extras/` (PHP, Ruby, Pascal, C, JavaScript, Swift) are never compiled
 in and are read from disk with `--lang extras/<name>.json`, the same path
 any definition of your own takes. Every example runs on every kernel, and
-`scripts/kernel_diff.sh` requires them to print the same thing.
+the test suite requires them to print the same thing.
 
 These files replace the earlier YAML specifications, EBNF grammars and
 grammar documents: a language's surface syntax is its definition, its

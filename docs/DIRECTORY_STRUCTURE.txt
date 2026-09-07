@@ -175,7 +175,7 @@ lumen-lang/
   lib_swift/                       ... as Swift spells it; each holds a prelude.rs the host embeds
 
   scripts/                         CI checks, the table generator, the differential test, the example porter
-    scripts/kernel_diff.sh
+    scripts/kernel_diff.sh           the suite over every language; the suite itself is the differential test
     scripts/bench.sh                 times every program under bench/ on every kernel
     scripts/kernel_independence.py
     scripts/lang_table.py

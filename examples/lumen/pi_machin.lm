@@ -1,11 +1,11 @@
-# Parameter: significant_figures (default: 1000)
+# Parameter: significant_figures (default: 200 here; bench/pi.lm computes 1000)
 # Usage: lumen-lang pi_machin.lm [significant_figures]
-# Example: lumen-lang pi_machin.lm 1000
-# Default: Computes 1000 digits of pi using Machin's formula
+# Example: lumen-lang pi_machin.lm 200
+# Default: Computes 200 digits of pi using Machin's formula
 
 # import("lib_lumen/pi_machin.lm")  # Not needed - functions already linked from lib_lumen
 
-significant_figures = 1000
+significant_figures = 200
 # Note: ARGS parsing with to_int() doesn't work yet - to_int() doesn't parse strings
 # if ARGS != ""
 #     significant_figures = to_int(ARGS)
