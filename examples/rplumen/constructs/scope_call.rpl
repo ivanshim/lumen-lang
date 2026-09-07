@@ -1,0 +1,17 @@
+# Ported from examples/lumen/constructs/scope_call.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+1 'k' =
+«
+    k print
+    null return
+» 'show' =
+
+«
+    5 'k' =
+    show drop
+    k print
+    null return
+» 'caller' =
+
+caller drop
+k print
+show drop

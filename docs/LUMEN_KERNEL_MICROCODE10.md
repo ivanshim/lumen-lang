@@ -134,7 +134,8 @@ problem by compiling to a flat word list instead of reducing to a tree
 problems differently on purpose: comments are a text-level pass driven by
 the definition here and a token-stream transformation in the stream35
 language; bindings live in a linear frame stack here and in a stack of
-hash-map scopes there. The stream35 kernel delegates meaning to language code
+hash-map scopes there, and in both a call sees its own frame and the
+globals, not its caller's, as the slot kernels do. The stream35 kernel delegates meaning to language code
 through handler traits; the microcode10 kernel takes meaning from tables. Both
 read the same definitions, every example runs on both under `test.sh` and
 CI, and `scripts/kernel_diff.sh` requires their output to agree.

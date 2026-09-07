@@ -80,9 +80,9 @@ definition mapped the surface names onto.
 
 Names are resolved when compiling. Inside a function every name it assigns
 is a local slot; every other name is a global slot. A `Load` names both,
-and a local slot that holds nothing yet falls through to the global, which
-gives a callee the view of its caller's world that the other kernels give
-through their frame chains. A bare block gets fresh slots for what it
+and a local slot that holds nothing yet falls through to the global: a
+function sees its own bindings and the program's, never its caller's or
+an enclosing function's, which is the scoping every kernel implements. A bare block gets fresh slots for what it
 binds and a `Forget` on the way out, so it shadows rather than overwrites;
 a slot a block declared is found only from inside that block, so once the
 block has closed the outer binding of the same name is back. At the top

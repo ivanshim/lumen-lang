@@ -1,0 +1,13 @@
+# A function defined inside another sees its own bindings and the
+# program's, not the enclosing function's.
+m = 1
+
+fn outer()
+    m = 7
+    fn inner()
+        print(m)
+    inner()
+    print(m)
+
+outer()
+print(m)

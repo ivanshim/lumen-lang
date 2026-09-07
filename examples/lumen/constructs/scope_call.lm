@@ -1,0 +1,15 @@
+# A function sees its own bindings and the program's, not its caller's.
+# Inside caller, k is caller's own; show still reads the program's k.
+k = 1
+
+fn show()
+    print(k)
+
+fn caller()
+    k = 5
+    show()
+    print(k)
+
+caller()
+print(k)
+show()

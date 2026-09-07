@@ -172,7 +172,7 @@ fn execute_function(
     arg_values: &[Value],
     env: &mut Env,
 ) -> LumenResult<Value> {
-    env.with_scope(|env| {
+    env.with_call_scope(|env| {
         for (param, arg_val) in params.iter().zip(arg_values) {
             env.define(param.clone(), arg_val.clone());
         }

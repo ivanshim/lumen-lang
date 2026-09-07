@@ -31,6 +31,18 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   definition is loaded at run time. PHP moved there, and Ruby, Pascal, C,
   JavaScript and Swift are added with examples; all nine languages run on
   both kernels.
+- **One scoping rule on every kernel**: a function sees its own
+  bindings and the program's, never its caller's and never an enclosing
+  function's. stream35 and microcode10 kept one scope stack for the
+  whole run, so a callee saw whatever its caller had bound (dynamic
+  scoping by accident); each now records where a call begins and looks
+  up within the call and the global scope only, which is what the four
+  slot kernels always did. Three examples pin it:
+  `examples/lumen/constructs/scope_call.lm` (a callee reads the program's
+  binding, not the caller's), `scope_nested_function.lm` (an inner
+  function reads the program's, not the enclosing function's) and
+  `examples/javascript/constructs/scope_call_block.js` (a function called
+  inside a bare block reads the program's, not the block's).
 - **Bare-block shadowing fixed in the slot kernels**: in stack26,
   microcode11 and stack5, a name bound inside a bare block (`{ let v =
   10; }` in Rust, C, JavaScript, Swift or PHP) shadowed an outer binding

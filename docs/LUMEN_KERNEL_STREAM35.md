@@ -179,7 +179,7 @@ The kernel provides only:
 * **Parser**: Generic token stream navigation and dispatch
 * **AST**: Abstract syntax tree node traits (language-neutral)
 * **Evaluator**: Generic evaluation engine
-* **Runtime**: Value storage and a scoped environment with `define`, `assign`, `update`, `get`, `get_mut`, `with_scope`, and a typed extension slot for language-owned state
+* **Runtime**: Value storage and a scoped environment with `define`, `assign`, `update`, `get`, `get_mut`, `with_scope`, `with_call_scope` (a call sees its own scopes and the global one, not its caller's), and a typed extension slot for language-owned state
 
 ### Result: Zero Language Knowledge in Kernel
 
