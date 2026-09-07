@@ -603,5 +603,14 @@
   ],
   "ext.builtin.time_limit": [
     "set_time_limit"
+  ],
+  "ext.system.kind.brief": [
+    "int",
+    "-",
+    "float",
+    "string",
+    "bool",
+    "array",
+    "null"
   ]
 }

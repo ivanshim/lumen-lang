@@ -145,6 +145,11 @@ pub struct Lang {
     pub precision_binding: Option<String>,
     pub entry_binding: Option<String>,
     pub sort_bindings: Vec<(String, Sort)>,
+    /// The shorter name each kind goes by where a complaint names one,
+    /// in the order the kinds are listed under `system.kind.*`: whole,
+    /// fraction, real, text, flag, array, nothing. A lone dash says the
+    /// kind has no shorter name and the usual one stands.
+    pub brief_kinds: Vec<String>,
     /// Whether the kind of a value is given as text spelled by the
     /// `system.kind.*` names, rather than as a value of its own. Where
     /// it is, those names are not bound to anything.
@@ -324,7 +329,7 @@ w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at | b ext.op.assign.value | b ext.op.index.plain_keys
 w ext.system.source.file | w ext.system.source.directory | w ext.system.source.line
 w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.complaint.deprecated | w ext.system.complaint.fatal
-w ext.system.fault.class | w ext.builtin.time_limit
+w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 ";
@@ -864,6 +869,7 @@ impl Lang {
             precision_binding: precision_name,
             entry_binding: entry_name,
             sort_bindings: kind_names,
+            brief_kinds: r.strings("ext.system.kind.brief")?,
             kind_spelled: r.flag("ext.system.kind.spelled")?,
             spare_args: reads_arguments,
             assign_gives_value: r.flag("ext.op.assign.value")?,

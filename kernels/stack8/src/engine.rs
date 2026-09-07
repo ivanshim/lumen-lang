@@ -569,7 +569,16 @@ impl<'a> Engine<'a> {
                 Instr::BondItem(slot) => {
                     let at = self.drop_top()?;
                     let held = self.peek_cell_mut(slot, frame)?;
-                    let shared = shared_item(held, &at)?;
+                    // A name standing for a shared cell is walked
+                    // through that cell, since the array lives inside it.
+                    let shared = match held {
+                        Value::Bond(cell) => {
+                            let cell = cell.clone();
+                            let mut inside = cell.borrow_mut();
+                            shared_item(&mut inside, &at)?
+                        }
+                        _ => shared_item(held, &at)?,
+                    };
                     self.data.push(Value::Bond(shared));
                 }
                 Instr::Forget(slot) => {
@@ -908,6 +917,14 @@ impl<'a> Engine<'a> {
             Action::Extent => match self.drop_top()? {
                 Value::Array(items) => Value::Small(items.len() as i64),
                 Value::Map(pairs) => Value::Small(pairs.len() as i64),
+                // A language with a word for a warning is told a value
+                // cannot be walked and walks it no times, rather than
+                // having the run stopped over it.
+                other if self.lang.warns_of_unwritten => {
+                    let told = format!("foreach() argument must be of type array|object, {} given", self.kind_named(&other));
+                    self.complain(Complaint::Warning, &told);
+                    Value::Small(0)
+                }
                 _ => return Err("Cannot walk a value that is not an array".to_string().into()),
             },
             Action::Collect => {
@@ -1192,6 +1209,27 @@ impl<'a> Engine<'a> {
         match self.lang.plain_keys {
             true => key_taken(at.clone()),
             false => at.clone(),
+        }
+    }
+
+    /// How a value is named where a complaint names its kind. A flag is
+    /// named by the word a program writes for it, since that is what
+    /// was written; anything else by its kind, in the shorter form
+    /// where the language gives one. Nothing is named by its kind too,
+    /// since a language may write it as no word at all and a complaint
+    /// still has to name it.
+    fn kind_named(&self, v: &Value) -> String {
+        if matches!(v, Value::Flag(_)) {
+            return v.display(&self.wording());
+        }
+        let Some(kind) = v.sort() else { return "value".to_string() };
+        let at = [Sort::Integer, Sort::Rational, Sort::Real, Sort::Text, Sort::Boolean, Sort::Array, Sort::Null]
+            .iter()
+            .position(|k| *k == kind);
+        let brief = at.and_then(|i| self.lang.brief_kinds.get(i)).filter(|word| *word != "-");
+        match brief {
+            Some(word) => word.clone(),
+            None => self.lang.sort_bindings.iter().find(|(_, k)| *k == kind).map_or("value".to_string(), |(n, _)| n.clone()),
         }
     }
 

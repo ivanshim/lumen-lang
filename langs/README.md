@@ -350,6 +350,14 @@ only. The extension labels so far, all from PHP:
   writing goes.
 - `ext.system.source.line`: the name a program calls the line it is
   written on (`__LINE__`), which is known while the program is read.
+- `ext.system.kind.brief`: the shorter name each kind goes by where a
+  complaint names one, since a language may call a kind one thing when
+  asked outright and another when complaining — PHP's `gettype` says
+  `integer` where its warnings say `int`. The names are given in the
+  order the kinds are listed under `system.kind.*`: whole, fraction,
+  real, text, flag, array, nothing; a lone dash says a kind has no
+  shorter name and the usual one stands. A flag is named by the word
+  the program writes for it, since that is what was written.
 - `ext.builtin.time_limit`: a builtin saying how long the run may take
   from here, counted in seconds, with nought taking the limit away. A
   run that passes it is stopped and told with the word for the end of a
@@ -762,6 +770,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.complaint.warning` | - | - | - | - | - | - | - | `Warning` | - | - |
 | `ext.system.fault.class` | - | - | - | - | - | - | - | `Error` | - | - |
 | `ext.system.integer.bits` | - | - | - | - | - | - | - | `64` | - | - |
+| `ext.system.kind.brief` | - | - | - | - | - | - | - | `int` `-` `float` `string` `bool` `array` `null` | - | - |
 | `ext.system.kind.spelled` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.system.real.bits` | - | - | - | - | - | - | - | `64` | - | - |
 | `ext.system.request.all` | - | - | - | - | - | - | - | `$_REQUEST` | - | - |

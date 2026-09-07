@@ -825,20 +825,51 @@ impl<'a> Compiler<'a> {
             }
             _ => None,
         };
-        let bag = match &named {
-            Some(name) => name.clone(),
-            None => {
-                self.expr(0)?;
-                let bag = self.gensym("bag");
-                self.write(&bag);
-                bag
-            }
-        };
+        if named.is_none() {
+            self.expr(0)?;
+        }
         if !self.on_keyword(&lang.foreach_as_words) {
             return Err(format!("Expected '{}' in foreach, got '{}'", lang.foreach_as_words[0], self.look().lexeme));
         }
         self.take();
         let mut shared = self.lang.reference_mark.as_ref().map_or(false, |m| self.at_symbol(m));
+        // The sign that hands items out may stand before the value
+        // rather than before the pair, so the whole of the head is read
+        // through before the walk's subject is settled: a walk that
+        // hands items out walks the binding itself, and one that does
+        // not walks what the binding held when the walk began, so that
+        // writing to it while it is walked changes nothing.
+        let hands_out = match &lang.reference_mark {
+            None => false,
+            Some(mark) => {
+                let mut at = self.pos;
+                let mut found = false;
+                while at < self.tokens.len() {
+                    let w = &self.tokens[at];
+                    if w.shape == Shape::Sign && w.lexeme == group.close {
+                        break;
+                    }
+                    if w.shape == Shape::Sign && w.lexeme == *mark {
+                        found = true;
+                        break;
+                    }
+                    at += 1;
+                }
+                found
+            }
+        };
+        let bag = match &named {
+            Some(name) if hands_out => name.clone(),
+            _ => {
+                let bag = self.gensym("bag");
+                if let Some(name) = &named {
+                    let name = name.clone();
+                    self.read(&name);
+                }
+                self.write(&bag);
+                bag
+            }
+        };
         if shared {
             self.take();
         }

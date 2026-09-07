@@ -235,6 +235,34 @@ impl<'a> Machine<'a> {
         Some(Value::Thing(Rc::new(Thing { of, holds: RefCell::new(holds), turn: self.made })))
     }
 
+    /// What a complaint calls a value where it names its kind. A flag
+    /// is called by the word a program writes for it, since that is
+    /// what was written; everything else by its kind, in the shorter
+    /// form where the language gives one, a lone dash saying it gives
+    /// none. Nothing is called by its kind too, since a language may
+    /// write it as no word at all.
+    fn kind_called(&self, v: &Value) -> String {
+        if matches!(v, Value::Flag(_)) {
+            return v.render(self.wording());
+        }
+        let Some(kind) = v.kind() else { return "value".to_string() };
+        let order = [Kind::Whole, Kind::Fraction, Kind::Decimal, Kind::Chars, Kind::Truth, Kind::Vector, Kind::Nothing];
+        let brief = order
+            .iter()
+            .position(|k| *k == kind)
+            .and_then(|at| self.table.strings("ext.system.kind.brief").get(at))
+            .filter(|word| *word != "-");
+        match brief {
+            Some(word) => word.clone(),
+            None => KIND_LABELS
+                .iter()
+                .find(|(_, k)| *k == kind)
+                .and_then(|(label, _)| self.table.single(label))
+                .unwrap_or("value")
+                .to_string(),
+        }
+    }
+
     /// Whether the run has taken longer than the language allowed it.
     fn past_its_time(&self) -> Option<Escape> {
         let started = self.started?;
@@ -943,6 +971,14 @@ impl<'a> Machine<'a> {
                 match &v[0] {
                     Value::Vector(items) => Value::Small(items.len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
+                    // A language with a word for a warning hears that a
+                    // value cannot be walked and walks it no times,
+                    // rather than having the run stopped over it.
+                    other if self.complaint_words.iter().any(|(k, _)| *k == "warning") => {
+                        let told = format!("foreach() argument must be of type array|object, {} given", self.kind_called(other));
+                        self.grumble("warning", &told);
+                        Value::Small(0)
+                    }
                     _ => return Err("Cannot walk a value that is not an array".to_string()),
                 }
             }
