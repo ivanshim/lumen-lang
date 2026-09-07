@@ -866,7 +866,16 @@ impl<'a> Machine<'a> {
                 match &v[0] {
                     Value::Thing(thing) => {
                         let found = thing.holds.borrow().iter().find(|(k, _)| *k == called).map(|(_, x)| x.clone());
-                        found.ok_or_else(|| format!("Undefined property: {}::${}", thing.of.name, called))?
+                        match found {
+                            Some(x) => x,
+                            // A language with a word for a warning says
+                            // a property is not there, and reads nothing.
+                            None if self.complaint_words.iter().any(|(k, _)| *k == "warning") => {
+                                self.grumble("warning", &format!("Undefined property: {}::${}", thing.of.name, called));
+                                Value::Nil
+                            }
+                            None => return Err(format!("Undefined property: {}::${}", thing.of.name, called)),
+                        }
                     }
                     other => return Err(format!("Cannot read property '{}' of {}", called, other.bare())),
                 }
@@ -1383,23 +1392,35 @@ impl<'a> Machine<'a> {
     fn element(&self, target: &Value, at: &Value) -> Result<Value, String> {
         // A language may say that a place an array does not hold reads as
         // nothing rather than stopping the program.
-        let missing = |told: String| if self.table.flag("ext.op.index.absent") { Ok(Value::Nil) } else { Err(told) };
+        // A language that reads an absent place as nothing, and has a
+        // word for a warning, says which place was missing first.
+        let missing = |told: String, key: &Value| {
+            if !self.table.flag("ext.op.index.absent") {
+                return Err(told);
+            }
+            let named = match key {
+                Value::Text(s) => format!("\"{}\"", s),
+                other => other.bare(),
+            };
+            self.grumble("warning", &format!("Undefined array key {}", named));
+            Ok(Value::Nil)
+        };
         if let Value::Dict(entries) = target {
             let at = &self.as_key(at);
             let found = entries.iter().find(|(k, _)| k.equals(at));
             return match found {
                 Some((_, v)) => Ok(v.clone()),
-                None => missing(format!("Undefined array key {}", at.bare())),
+                None => missing(format!("Undefined array key {}", at.bare()), at),
             };
         }
         let i = match as_index(at) {
             Ok(i) => i,
-            Err(told) => return missing(told),
+            Err(told) => return missing(told, at),
         };
         match target {
             Value::Vector(l) => match l.get(i) {
                 Some(v) => Ok(v.clone()),
-                None => missing(format!("Array index {} out of bounds (length: {})", i, l.len())),
+                None => missing(format!("Array index {} out of bounds (length: {})", i, l.len()), at),
             },
             Value::Text(s) if self.table.flag("op.index.strings") => s
                 .chars()

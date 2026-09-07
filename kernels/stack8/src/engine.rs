@@ -682,7 +682,17 @@ impl<'a> Engine<'a> {
             Action::Grab(name) => match self.drop_top()? {
                 Value::Object(o) => {
                     let found = o.fields.borrow().iter().find(|(n, _)| n == name.as_ref()).map(|(_, v)| v.clone());
-                    found.ok_or_else(|| format!("Undefined property: {}::${}", o.class.name, name))?
+                    match found {
+                        Some(v) => v,
+                        // A language with a word for a warning says a
+                        // property is not there and reads nothing.
+                        None if self.lang.warns_of_unwritten => {
+                            let told = format!("Undefined property: {}::${}", o.class.name, name);
+                            self.complain(Complaint::Warning, &told);
+                            Value::Null
+                        }
+                        None => return Err(format!("Undefined property: {}::${}", o.class.name, name).into()),
+                    }
                 }
                 v => return Err(format!("Cannot read property '{}' of {}", name, v.plain()).into()),
             },
@@ -1042,26 +1052,42 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// How a key an array does not hold is named in a complaint: text
+    /// in quotation marks, a number as it stands.
+    fn key_named(&self, at: &Value) -> String {
+        match at {
+            Value::Text(s) => format!("\"{}\"", s),
+            other => other.plain(),
+        }
+    }
+
     fn element(&self, target: &Value, at: &Value) -> Res<Value> {
         // A language may say that a place an array does not hold reads as
-        // nothing rather than stopping the program.
-        let absent = |told: String| if self.lang.absent_index { Ok(Value::Null) } else { Err(told) };
+        // nothing rather than stopping the program, and one with a word
+        // for a warning says so before reading nothing there.
+        let absent = |told: String, key: &Value| {
+            if !self.lang.absent_index {
+                return Err(told);
+            }
+            self.complain(Complaint::Warning, &format!("Undefined array key {}", self.key_named(key)));
+            Ok(Value::Null)
+        };
         if let Value::Map(pairs) = target {
             let at = &self.key(at);
             let found = pairs.iter().find(|(k, _)| k.equals(at));
             return match found {
                 Some((_, v)) => Ok(v.clone()),
-                None => absent(format!("Undefined array key {}", at.plain())),
+                None => absent(format!("Undefined array key {}", at.plain()), at),
             };
         }
         let i = match as_index(at) {
             Ok(i) => i,
-            Err(told) => return absent(told),
+            Err(told) => return absent(told, at),
         };
         match target {
             Value::Array(items) => match items.get(i) {
                 Some(v) => Ok(v.clone()),
-                None => absent(format!("Array index {} out of bounds (length: {})", i, items.len())),
+                None => absent(format!("Array index {} out of bounds (length: {})", i, items.len()), at),
             },
             Value::Text(s) if self.lang.text_indexable => s
                 .chars()
