@@ -41,7 +41,7 @@ for f in $(find examples -type f ! -name "*.md" | sort); do
     ext="${f##*.}"
     src=$(flag_for "$ext")
     # shellcheck disable=SC2086
-    expected=$(timeout 30 $B --kernel stack26 $src "$f" 2>&1)
+    expected=$(timeout 30 $B --kernel stack8 $src "$f" 2>&1)
     for t in $TARGETS; do
         tflag=$(flag_for "$t")
         target="${tflag#--lang }"; [ -z "$target" ] && target="$t"
@@ -51,7 +51,7 @@ for f in $(find examples -type f ! -name "*.md" | sort); do
             SKIP[$t]=$((SKIP[$t] + 1)); echo "$f -> $t: $(head -c 200 "$T/error.txt")" >> "$T/skips.txt"; continue
         fi
         # shellcheck disable=SC2086
-        got=$(timeout 30 $B --kernel stack26 $tflag "$out" 2>&1)
+        got=$(timeout 30 $B --kernel stack8 $tflag "$out" 2>&1)
         want=$(mapped "$expected" "$ext" "$t")
         if [ "$got" = "$want" ]; then
             OK[$t]=$((OK[$t] + 1))

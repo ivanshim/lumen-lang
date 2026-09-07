@@ -1,0 +1,160 @@
+// Exact arithmetic. Two small integers go through checked native
+// arithmetic; anything else is a big fraction. A real on either side makes
+// the result real, at the left real's precision. Floor: add, subtract,
+// multiply, divide, integer quotient, compare; the rest are derived here.
+
+use std::cmp::Ordering;
+use std::rc::Rc;
+
+use num_bigint::BigInt;
+use num_integer::Integer;
+use num_traits::{One, Signed, ToPrimitive, Zero};
+
+use crate::value::{Frac, Real, Value};
+
+/// Significant digits when no operand says.
+pub const DEFAULT_PLACES: usize = 15;
+
+/// Any number as p/q, with its precision when real.
+#[derive(Clone)]
+pub struct Exact {
+    pub p: BigInt,
+    pub q: BigInt,
+    pub places: Option<usize>,
+}
+
+impl Exact {
+    pub fn from_value(v: &Value) -> Option<Exact> {
+        Some(match v {
+            Value::Small(n) => Exact { p: BigInt::from(*n), q: BigInt::one(), places: None },
+            Value::Huge(n) => Exact { p: (**n).clone(), q: BigInt::one(), places: None },
+            Value::Frac(r) => Exact { p: r.p.clone(), q: r.q.clone(), places: None },
+            Value::Real(r) => Exact { p: r.p.clone(), q: r.q.clone(), places: Some(r.places) },
+            _ => return None,
+        })
+    }
+
+    fn is_whole(&self) -> bool {
+        self.q.is_one() && self.places.is_none()
+    }
+
+    fn cmp_exact(&self, other: &Exact) -> Ordering {
+        (&self.p * &other.q).cmp(&(&other.p * &self.q))
+    }
+}
+
+/// A value from p/q: reduced; an integer when it divides out and nothing
+/// was real; a real at the given precision otherwise.
+pub fn shape_number(p: BigInt, q: BigInt, places: Option<usize>) -> Value {
+    if p.is_zero() {
+        return match places {
+            Some(places) => Value::Real(Rc::new(Real { p, q: BigInt::one(), places })),
+            None => Value::Small(0),
+        };
+    }
+    let (p, q) = if q.is_negative() { (-p, -q) } else { (p, q) };
+    let g = p.gcd(&q);
+    let (p, q) = if g.is_one() { (p, q) } else { (&p / &g, &q / &g) };
+    match places {
+        Some(places) => Value::Real(Rc::new(Real { p, q, places })),
+        None if q.is_one() => Value::of_big(p),
+        None => Value::Frac(Rc::new(Frac { p, q })),
+    }
+}
+
+pub fn to_real(v: &Value, places: usize) -> Option<Value> {
+    let f = Exact::from_value(v)?;
+    Some(shape_number(f.p, f.q, Some(places)))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Operation {
+    Plus,
+    Minus,
+    Times,
+    Over,
+    OverReal,
+    Floor,
+    Remainder,
+    Raise,
+}
+
+/// `a calc b`, or None when either is not a number.
+pub fn calculate(calc: Operation, a: &Value, b: &Value) -> Option<Result<Value, String>> {
+    if let (Value::Small(x), Value::Small(y)) = (a, b) {
+        let (x, y) = (*x, *y);
+        let quick = match calc {
+            Operation::Plus => x.checked_add(y),
+            Operation::Minus => x.checked_sub(y),
+            Operation::Times => x.checked_mul(y),
+            Operation::Floor if y != 0 => x.checked_div(y),
+            Operation::Remainder if y != 0 => x.checked_rem(y),
+            _ => None,
+        };
+        if let Some(r) = quick {
+            return Some(Ok(Value::Small(r)));
+        }
+    }
+    let (a, b) = (Exact::from_value(a)?, Exact::from_value(b)?);
+    Some(precise(calc, &a, &b))
+}
+
+fn precise(calc: Operation, a: &Exact, b: &Exact) -> Result<Value, String> {
+    let places = a.places.or(b.places);
+    let cross = |sign: i32| &a.p * &b.q + sign * (&b.p * &a.q);
+    if a.is_whole() && b.is_whole() {
+        match calc {
+            Operation::Plus => return Ok(Value::of_big(&a.p + &b.p)),
+            Operation::Minus => return Ok(Value::of_big(&a.p - &b.p)),
+            Operation::Times => return Ok(Value::of_big(&a.p * &b.p)),
+            _ => {}
+        }
+    }
+    if matches!(calc, Operation::Over | Operation::OverReal | Operation::Floor) && b.p.is_zero() {
+        return Err("Division by zero".to_string());
+    }
+    Ok(match calc {
+        Operation::Plus => shape_number(cross(1), &a.q * &b.q, places),
+        Operation::Minus => shape_number(cross(-1), &a.q * &b.q, places),
+        Operation::Times => shape_number(&a.p * &b.p, &a.q * &b.q, places),
+        Operation::Over => shape_number(&a.p * &b.q, &a.q * &b.p, places),
+        Operation::OverReal => shape_number(&a.p * &b.q, &a.q * &b.p, Some(places.unwrap_or(DEFAULT_PLACES))),
+        Operation::Floor => shape_number((&a.p * &b.q) / (&b.p * &a.q), BigInt::one(), places),
+        Operation::Remainder => {
+            // a - b * (a // b)
+            let q = Exact::from_value(&precise(Operation::Floor, a, b)?).expect("a number");
+            let bq = Exact::from_value(&precise(Operation::Times, b, &q)?).expect("a number");
+            precise(Operation::Minus, a, &bq)?
+        }
+        Operation::Raise => {
+            // By squaring, on the exponent's integer part.
+            let mut n = (&b.p / &b.q).to_u64().ok_or_else(|| "Exponent too large".to_string())?;
+            let mut base = a.clone();
+            let mut acc = Exact { p: BigInt::one(), q: BigInt::one(), places: a.places };
+            while n > 0 {
+                if n & 1 == 1 {
+                    acc = Exact::from_value(&precise(Operation::Times, &acc, &base)?).expect("a number");
+                }
+                n >>= 1;
+                if n > 0 {
+                    base = Exact::from_value(&precise(Operation::Times, &base, &base)?).expect("a number");
+                }
+            }
+            shape_number(acc.p, acc.q, acc.places)
+        }
+    })
+}
+
+/// The order of two numbers, or None when either is not one.
+pub fn order_values(a: &Value, b: &Value) -> Option<Ordering> {
+    if let (Value::Small(x), Value::Small(y)) = (a, b) {
+        return Some(x.cmp(y));
+    }
+    Some(Exact::from_value(a)?.cmp_exact(&Exact::from_value(b)?))
+}
+
+/// Numerator and denominator; an integer is over one.
+pub fn parts(v: &Value) -> Option<(BigInt, BigInt)> {
+    let f = Exact::from_value(v)?;
+    Some((f.p, f.q))
+}

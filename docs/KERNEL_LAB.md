@@ -1,9 +1,10 @@
 # The Kernel Lab
 
 An experiment in evolving the two kernel shapes for speed. Each lineage
-is one mutable specimen under `lab/`, a copy of its floor kernel that is
-patched cycle by cycle and measured after each: `lab/stacklab` descends
-from stack5, `lab/microlab` from microcode4. A second experiment,
+was one mutable specimen under `lab/`, a copy of its floor kernel that
+was patched cycle by cycle and measured after each: `lab/stacklab`
+descended from stack5, `lab/microlab` from microcode4. The specimens are
+gone now, promoted: see the last section. A second experiment,
 in the section on equal engineering below, measured the floor kernels
 with the lab's count-neutral improvements and their counts unchanged,
 and those improvements are now folded into stack5 and microcode4. The
@@ -173,6 +174,62 @@ speed, because only a word can keep an operand off the stack. For a
 tree, half the speed was there for the taking under four forms, and the
 other half needed a loop and a conditional that are forms of their own.
 
+## Ablation: which primitives earned their place
+
+Before promotion, each added word and form was switched off on its own
+(`LAB_OFF=Incr`, `LAB_OFF=Loop`, and so on: the specimen falls back to
+the shape it had before that primitive) and the four programs the
+primitives touch were timed, best of five. Both specimens first got the
+count-neutral improvements they lacked: microlab the frameless arms and
+the borrowed frame walk, stacklab a builtin that takes its arguments
+without copying the array (its `Put` had been copying, which made the
+array words look worth 130 times; they are worth 14 percent).
+
+| stacklab without | loop | loop3m | fib | sieve |
+|---|---|---|---|---|
+| (nothing) | 0.032 | 0.038 | 0.021 | 0.014 |
+| Incr | 0.036 | 0.061 | 0.022 | 0.014 |
+| Arith | 0.052 | 0.038 | 0.027 | 0.019 |
+| the store folded into Arith | 0.032 | 0.037 | 0.021 | 0.014 |
+| UnlessLess | 0.032 | 0.038 | 0.024 | 0.015 |
+| WhenLess | 0.037 | 0.061 | 0.021 | 0.015 |
+| Jump | 0.032 | 0.037 | 0.023 | 0.014 |
+| When | 0.039 | 0.089 | 0.021 | 0.014 |
+| Call | 0.032 | 0.037 | 0.024 | 0.014 |
+| PutAt, PushTo | 0.032 | 0.041 | 0.021 | 0.016 |
+
+| microlab without | loop | loop3m | fib | sieve |
+|---|---|---|---|---|
+| (nothing) | 0.068 | 0.240 | 0.043 | 0.024 |
+| Step | 0.075 | 0.308 | 0.043 | 0.024 |
+| Binary | 0.221 | 0.900 | 0.082 | 0.033 |
+| If | 0.068 | 0.238 | 0.046 | 0.024 |
+| Loop | 0.086 | 0.437 | 0.042 | 0.027 |
+
+What earned a place: on the stack, `Arith` (1.6 times on arithmetic,
+1.3 on calls and arrays), `Incr` (1.6 on the bare loop) and a
+compare-and-jump (1.6 on the bare loop). On the tree, `Binary` (3.7 on
+the bare loop, 2 on calls), `Loop` (1.8 on the bare loop) and `Step`
+(1.3 on the bare loop).
+
+What did not: `Jump` and the store folded into `Arith` measured
+nothing. `When` measured 2.3 times, but only because stacklab jumps back
+on a true test with `Not; Unless` when it has no `When`; stack5's fold
+flips the comparison instead (`Ge` for `Lt`), which costs nothing, so a
+jump-on-true is not needed and `UnlessLess` and `WhenLess` collapse into
+one compare-and-jump on any comparison. `Call`, `PutAt` and `PushTo` are
+each worth 14 percent on the one program that uses them; a word that
+earns under a fifth on its best program is not worth a word. On the
+tree, `If` measured 7 percent on calls and nothing on loops: with
+frameless arms, choosing a program value and running it costs about what
+choosing a node does.
+
+So the promoted counts are eight words (`Lit`, `Load`, `Store`, `Apply`,
+`Unless`, `Arith`, `Incr`, `UnlessCmp`) and seven forms (`Literal`,
+`Load`, `Assign`, `Call`, `Loop`, `Binary`, `Step`): stack8 and
+microcode7. The forecast of eight or nine words was right; the tree
+kept one form more than the six forecast.
+
 ## Where the lineages stopped, and why
 
 Thirteen cycles. The stack line stopped when the bare loop was two words
@@ -189,7 +246,33 @@ two shapes at their floors differ by 2 times on arithmetic and calls and
   benchmark; nothing else on the hot paths is left.
 - Tree: frames without `RefCell`, and a narrower result type; both are
   executor plumbing rather than forms, and each is worth perhaps a tenth.
-- Promotion: a survivor becomes a kernel by being rewritten in its own
-  words under `kernels/`, numbered by its count, and held to the
-  independence check like the rest. Until then the specimens stay in
-  `lab/`.
+- Promotion: done, below.
+
+## Promotion
+
+The survivors were rewritten in their own words under `kernels/` at the
+counts the ablation settled on, and held to the independence check like
+the rest: `kernels/stack8` (Lit, Load, Store, Apply, Unless, and the
+fused Dyad, Bump and SkipCmp, made by a peephole over the five) and
+`kernels/microcode7` (Literal, Load, Assign, Call, and Cycle, Dyad and
+Bump as forms; a branch stays a call of `choose` with frameless arms).
+Both print the same as the other kernels on all 498 programs. Best of
+five, release build, seconds, at promotion:
+
+| Program | stack5 | stack8 | microcode4 | microcode7 | microcode11 |
+|---|---|---|---|---|---|
+| loop | 0.055 | 0.034 | 0.125 | 0.067 | 0.190 |
+| loop3m | 0.228 | 0.045 | 0.590 | 0.237 | 0.801 |
+| fib | 0.032 | 0.025 | 0.047 | 0.045 | 0.068 |
+| sieve | 0.021 | 0.016 | 0.029 | 0.024 | 0.030 |
+| strings | 0.041 | 0.039 | 0.047 | 0.043 | 0.045 |
+| pi | 0.861 | 0.876 | 0.858 | 0.873 | 0.853 |
+
+stack8 gives up the three words the ablation found not worth a word,
+and pays for it what the ablation said: 14 percent on calls (`Call`) and
+on array writes (`PutAt`, `PushTo`) against stacklab. microcode7 gives
+up `If` and pays 7 percent on calls against microlab. stack8 is the
+fastest kernel on every program and became the host's default. The
+specimens under `lab/` were removed with the promotion, as were the two
+first designs they made redundant, stack26 and microcode10; the
+benchmark programs and `scripts/bench.sh` stay.

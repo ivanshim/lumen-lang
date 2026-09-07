@@ -17,11 +17,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 KERNELS = {
     "stream35": (ROOT / "kernels/stream35/src", "lumen_stream35"),
-    "microcode10": (ROOT / "kernels/microcode10/src", "lumen_microcode10"),
-    "stack26": (ROOT / "kernels/stack26/src", "lumen_stack26"),
     "microcode11": (ROOT / "kernels/microcode11/src", "lumen_microcode11"),
     "microcode4": (ROOT / "kernels/microcode4/src", "lumen_microcode4"),
     "stack5": (ROOT / "kernels/stack5/src", "lumen_stack5"),
+    "stack8": (ROOT / "kernels/stack8/src", "lumen_stack8"),
+    "microcode7": (ROOT / "kernels/microcode7/src", "lumen_microcode7"),
 }
 MIN_RUN = 12
 
