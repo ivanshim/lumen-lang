@@ -94,6 +94,9 @@ ext.stmt.catch:L ext.stmt.finally:L ext.stmt.throw:L ext.stmt.catch.separator:L 
 ext.system.request.query:L ext.system.request.form:L ext.system.request.cookies:L ext.system.request.server:L \
 ext.system.request.env:L ext.system.request.files:L ext.system.request.all:L ext.op.index.absent:B \
 ext.stmt.class.interface:L ext.stmt.class.implements:L ext.op.compare:L ext.builtin.unset:L ext.lexical.template:B \
+ext.op.otherwise:L ext.op.bit.and:L ext.op.bit.or:L ext.op.bit.xor:L ext.op.bit.not:L \
+ext.op.bit.left:L ext.op.bit.right:L ext.op.identical:L ext.op.not_identical:L ext.system.kind.spelled:B ext.builtin.args.all:L \
+ext.builtin.args.count:L ext.builtin.args.at:L ext.op.assign.value:B ext.op.index.plain_keys:B \
 ";
 
 fn tag_shapes(table: &'static str) -> Vec<(&'static str, char)> {
@@ -125,7 +128,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 27] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 30] = [
     ("builtin.emit", Prim::Echo), ("builtin.print", Prim::Say), ("builtin.write", Prim::Out), ("builtin.len", Prim::Length),
     ("builtin.char_at", Prim::CharAtIndex), ("builtin.ord", Prim::CodeOf), ("builtin.chr", Prim::CharOf), ("builtin.typeof", Prim::SortOf),
     ("builtin.error", Prim::Raise), ("builtin.extern", Prim::External), ("builtin.range", Prim::Span), ("builtin.real", Prim::MakeReal),
@@ -134,13 +137,17 @@ pub const BUILTIN_LABELS: [(&str, Prim); 27] = [
     ("builtin.get", Prim::Fetch), ("builtin.put", Prim::Replace), ("ext.builtin.echo", Prim::Tell),
     ("ext.builtin.define", Prim::Define), ("ext.builtin.var_dump", Prim::Dump), ("ext.builtin.array", Prim::Gather),
     ("ext.builtin.print_r", Prim::Portray), ("ext.builtin.unset", Prim::Erase),
+    ("ext.builtin.args.all", Prim::Handed), ("ext.builtin.args.count", Prim::HowMany),
+    ("ext.builtin.args.at", Prim::HandedAt),
 ];
 
-const BINARY_LABELS: [(&str, Prim); 17] = [
+const BINARY_LABELS: [(&str, Prim); 24] = [
     ("op.add", Prim::Plus), ("op.sub", Prim::Minus), ("op.mul", Prim::Times), ("op.div", Prim::Over), ("op.quot", Prim::IntDiv),
     ("op.rem", Prim::Mod), ("op.pow", Prim::Power), ("op.eq", Prim::Eq), ("op.ne", Prim::Ne), ("op.lt", Prim::Lt), ("op.le", Prim::Le),
     ("op.gt", Prim::Gt), ("op.ge", Prim::Ge), ("op.and", Prim::Both), ("op.or", Prim::Either), ("op.concat", Prim::Join),
-    ("ext.op.compare", Prim::Rank),
+    ("ext.op.compare", Prim::Rank), ("ext.op.bit.and", Prim::BitsBoth), ("ext.op.bit.or", Prim::BitsEither),
+    ("ext.op.bit.xor", Prim::BitsOne), ("ext.op.bit.left", Prim::BitsUp), ("ext.op.bit.right", Prim::BitsDown),
+    ("ext.op.identical", Prim::Selfsame), ("ext.op.not_identical", Prim::Unlike),
 ];
 
 fn top_object(text: &str) -> Result<serde_json::Map<String, Json>, String> {
@@ -425,7 +432,7 @@ impl Table {
                 }
             }
         }
-        for (label, op) in [("op.not", Prim::Invert), ("op.negate", Prim::Negate)] {
+        for (label, op) in [("op.not", Prim::Invert), ("op.negate", Prim::Negate), ("ext.op.bit.not", Prim::BitsOver)] {
             for lex in self.strings(label).to_vec() {
                 let tier = place(&lex, true).ok_or_else(|| format!("'{lex}' ({label}) does not appear in op.precedence"))?;
                 if self.monadic.insert(lex.clone(), Infix { prim: op, level: tier, right_assoc: false }).is_some() {
@@ -504,7 +511,7 @@ impl Table {
             "ext.stmt.class.new", "ext.stmt.class.modifier", "ext.stmt.class.shared", "ext.op.instanceof",
             "ext.stmt.class.parent", "ext.stmt.class.self", "ext.stmt.class.interface", "ext.stmt.class.implements",
             "ext.stmt.try", "ext.stmt.catch", "ext.stmt.finally",
-            "ext.stmt.throw", "ext.stmt.catch.separator", "ext.op.reference"];
+            "ext.stmt.throw", "ext.stmt.catch.separator", "ext.op.reference", "ext.op.otherwise"];
         for key in symbol_labels {
             all.extend(self.strings(key).iter().cloned());
         }

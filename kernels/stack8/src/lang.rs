@@ -119,6 +119,23 @@ pub struct Lang {
     pub precision_binding: Option<String>,
     pub entry_binding: Option<String>,
     pub sort_bindings: Vec<(String, Sort)>,
+    /// Whether the kind of a value is given as text spelled by the
+    /// `system.kind.*` names, rather than as a value of its own. Where
+    /// it is, those names are not bound to anything.
+    pub kind_spelled: bool,
+    /// Whether a call may give more than the routine it calls names.
+    /// A language that can read what a call was given lets it.
+    pub spare_args: bool,
+    /// Whether an assignment counts as an expression, its value what
+    /// was written.
+    pub assign_gives_value: bool,
+    /// Whether every key of an array is either a whole number or text,
+    /// so that a key spelling a whole number is that number.
+    pub plain_keys: bool,
+    /// Whether being equal is the looser question. A language with an
+    /// operator for being the very same means something looser by being
+    /// equal: text that spells a number stands for that number.
+    pub loose_equality: bool,
 
     /// The ext.* labels: extensions of the core, read by the full
     /// kernels and ignored by the reference ones; absent means none.
@@ -178,6 +195,8 @@ pub struct Lang {
     pub instanceof_words: Vec<String>,
     /// A class of method names only, and the word saying a class
     /// answers to one.
+    /// `a ?? b`: a when it is something, else b.
+    pub otherwise_mark: Option<String>,
     pub interface_words: Vec<String>,
     pub implements_words: Vec<String>,
     pub parent_words: Vec<String>,
@@ -256,7 +275,10 @@ w ext.op.member | w ext.op.scope | w ext.op.instanceof | w ext.stmt.class.parent
 w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.try | w ext.stmt.catch
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
-w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | b ext.op.index.absent | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template
+w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | b ext.op.index.absent | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
+w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right
+w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
+w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at | b ext.op.assign.value | b ext.op.index.plain_keys
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -537,6 +559,9 @@ impl Lang {
             ("op.quot", Action::IntDiv), ("op.rem", Action::Mod), ("op.pow", Action::Power), ("op.eq", Action::Eq),
             ("op.ne", Action::Ne), ("op.lt", Action::Lt), ("op.le", Action::Le), ("op.gt", Action::Gt), ("op.ge", Action::Ge),
             ("op.and", Action::And), ("op.or", Action::Or), ("op.concat", Action::Join), ("ext.op.compare", Action::Rank),
+            ("ext.op.bit.and", Action::BitBoth), ("ext.op.bit.or", Action::BitEither), ("ext.op.bit.xor", Action::BitOne),
+            ("ext.op.bit.left", Action::BitUp), ("ext.op.bit.right", Action::BitDown),
+            ("ext.op.identical", Action::Same), ("ext.op.not_identical", Action::Unsame),
         ] {
             for lex in r.strings(tag)? {
                 let tier = tier_of(&lex, false).ok_or_else(|| format!("'{lex}' ({tag}) does not appear in op.precedence"))?;
@@ -547,7 +572,7 @@ impl Lang {
             }
         }
         let mut unary = HashMap::new();
-        for (tag, op) in [("op.not", Action::Not), ("op.negate", Action::Negate)] {
+        for (tag, op) in [("op.not", Action::Not), ("op.negate", Action::Negate), ("ext.op.bit.not", Action::BitTurn)] {
             for lex in r.strings(tag)? {
                 let tier = tier_of(&lex, true).ok_or_else(|| format!("'{lex}' ({tag}) does not appear in op.precedence"))?;
                 if unary.insert(lex.clone(), Operator { action: op.clone(), level: tier, right_assoc: false }).is_some() {
@@ -639,6 +664,8 @@ impl Lang {
             ("builtin.put", Builtin::Replace), ("ext.builtin.echo", Builtin::Tell), ("ext.builtin.define", Builtin::Define),
             ("ext.builtin.var_dump", Builtin::Dump), ("ext.builtin.array", Builtin::Pack),
             ("ext.builtin.print_r", Builtin::Layout), ("ext.builtin.unset", Builtin::Erase),
+            ("ext.builtin.args.all", Builtin::Given), ("ext.builtin.args.count", Builtin::GivenCount),
+            ("ext.builtin.args.at", Builtin::GivenAt),
         ] {
             for lex in r.strings(tag)? {
                 let begins = lex.chars().next().map_or(false, |c| c == '_' || c.is_alphabetic());
@@ -672,6 +699,14 @@ impl Lang {
                 return Err(format!("system name '{n}' must be shaped like an identifier"));
             }
         }
+
+        // A language with an operator for being the very same means
+        // something looser by being equal.
+        let tells_same = binary.values().any(|op| matches!(op.action, Action::Same));
+
+        // A language that can read what a call was given is one whose
+        // calls may give more than a routine names.
+        let reads_arguments = natives.values().any(|b| matches!(b, Builtin::Given | Builtin::GivenCount | Builtin::GivenAt));
 
         let mut prefix: String = name.chars().take(1).flat_map(char::to_uppercase).collect();
         prefix.push_str(name.get(1..).unwrap_or(""));
@@ -756,6 +791,11 @@ impl Lang {
             precision_binding: precision_name,
             entry_binding: entry_name,
             sort_bindings: kind_names,
+            kind_spelled: r.flag("ext.system.kind.spelled")?,
+            spare_args: reads_arguments,
+            assign_gives_value: r.flag("ext.op.assign.value")?,
+            plain_keys: r.flag("ext.op.index.plain_keys")?,
+            loose_equality: tells_same,
             epilogue: r.strings("ext.lexical.epilogue")?,
             bare_calls: r.flag("ext.syntax.call.bare")?,
             increments: r.strings("ext.op.increment")?,
@@ -796,6 +836,7 @@ impl Lang {
             member_mark: r.head("ext.op.member")?,
             scope_mark: r.head("ext.op.scope")?,
             instanceof_words: r.strings("ext.op.instanceof")?,
+            otherwise_mark: r.head("ext.op.otherwise")?,
             interface_words: r.strings("ext.stmt.class.interface")?,
             implements_words: r.strings("ext.stmt.class.implements")?,
             parent_words: r.strings("ext.stmt.class.parent")?,
@@ -892,7 +933,7 @@ impl Lang {
         if let Some(mark) = &self.pair_mark {
             place(mark);
         }
-        for mark in [&self.member_mark, &self.scope_mark, &self.catch_between, &self.reference_mark].into_iter().flatten() {
+        for mark in [&self.member_mark, &self.scope_mark, &self.catch_between, &self.reference_mark, &self.otherwise_mark].into_iter().flatten() {
             place(mark);
         }
         for pair in [&self.grouping, &self.calling, &self.array_brackets, &self.map_brackets, &self.index_brackets].into_iter().flatten() {

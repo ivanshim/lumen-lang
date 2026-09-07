@@ -71,6 +71,8 @@ pub struct Builder<'a> {
     strict: bool,
     /// Settings of hidden globals for `static` names, run where the function is defined.
     statics: Vec<Form>,
+    /// The parameters of the method just read that name properties too.
+    also_property: Vec<String>,
 }
 
 pub struct Built {
@@ -90,7 +92,7 @@ enum Mode {
 pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool) -> Res<Built> {
     let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let shared_args = shared_parameters(tokens, table);
-    let mut r = Builder { within: None, shared_args, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new() };
+    let mut r = Builder { within: None, shared_args, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new() };
     let body = if table.rpn {
         let (mut stmts, rest) = r.rpn_body(&[], Mode::Body)?;
         if !r.exhausted() {
@@ -291,6 +293,17 @@ impl<'a> Builder<'a> {
     fn on_stmt_end(&self) -> bool {
         let t = self.look();
         t.shape == Shape::LineEnd || (t.shape == Shape::Sign && self.table.spells("stmt.terminator", &t.lexeme))
+    }
+
+    /// Whether a block opens here, past any line ends before it, so
+    /// that a body written on the line after a name is still a body.
+    fn block_opens_ahead(&self) -> bool {
+        let mut ahead = 0;
+        while self.glance(ahead).shape == Shape::LineEnd {
+            ahead += 1;
+        }
+        let t = self.glance(ahead);
+        t.shape == Shape::Sign && self.table.strings("block.open").iter().any(|o| *o == t.lexeme)
     }
 
     fn skip_line_ends(&mut self) {
@@ -674,6 +687,14 @@ impl<'a> Builder<'a> {
             if self.key("ext.stmt.class") || self.key("ext.stmt.class.interface") {
                 return self.class_decl();
             }
+            // A class may be marked before it is named: `abstract class C`.
+            if self.key("ext.stmt.class.modifier") && self.glance(1).shape == Shape::Bare {
+                let next = self.glance(1).lexeme.clone();
+                if self.table.spells("ext.stmt.class", &next) || self.table.spells("ext.stmt.class.interface", &next) {
+                    self.advance();
+                    return self.class_decl();
+                }
+            }
             if self.key("ext.stmt.try") {
                 return self.attempt_stmt();
             }
@@ -740,29 +761,45 @@ impl<'a> Builder<'a> {
 
     /// `static x = e;`: x means a hidden global, set where the function
     /// is defined, so it keeps its value between calls. The setting is
-    /// read outside the function's layer, where it will run.
+    /// read outside the function's layer, where it will run. Outside
+    /// every function there is no layer around this one, so the setting
+    /// stands where it is written and is guarded: it happens the first
+    /// time the statement is reached and no other time.
     fn static_names(&mut self) -> Res<Form> {
-        if self.layers.len() < 2 {
-            return Err("static belongs inside a function".to_string());
-        }
-        self.listed_names("after the static keyword", |r, name| {
-            r.gensyms += 1;
-            let hidden = format!("#static{}", r.gensyms);
-            let inner = r.layers.pop().expect("the function's layer");
-            let value = if r.on_assign() {
-                r.advance();
-                r.expr(0)
+        self.advance();
+        let alone = self.layers.len() < 2;
+        let sep = self.table.single("syntax.call.separator").map(str::to_string);
+        let mut here = Vec::new();
+        loop {
+            let name = self.need_word("after the static keyword")?;
+            self.gensyms += 1;
+            let hidden = format!("#static{}", self.gensyms);
+            let inner = if alone { None } else { Some(self.layers.pop().expect("the function's layer")) };
+            let value = if self.on_assign() {
+                self.advance();
+                self.expr(0)
             } else {
                 Ok(constant(Value::Nil))
             };
-            let slot = r.global_address(&hidden);
-            r.layers.push(inner);
-            let value = value?;
-            r.statics.push(Form::Write(slot, Box::new(value)));
-            let owner = r.layers.iter_mut().rev().find(|s| s.holds == Holds::Every).expect("the function's layer");
+            let slot = self.global_address(&hidden);
+            if let Some(inner) = inner {
+                self.layers.push(inner);
+            }
+            let written = Form::Write(slot.clone(), Box::new(value?));
+            match alone {
+                true => {
+                    let once = self.choose(Form::Missing(slot), written, constant(Value::Nil));
+                    here.push(once);
+                }
+                false => self.statics.push(written),
+            }
+            let owner = self.layers.iter_mut().rev().find(|s| s.holds == Holds::Every).expect("the outermost layer");
             owner.aliases.push((name, hidden));
-            Ok(())
-        })
+            match &sep {
+                Some(s) if self.sign(s) => self.advance(),
+                _ => return Ok(sequence(here)),
+            };
+        }
     }
 
     /// Statements separated as call arguments are, up to a closing sign.
@@ -789,6 +826,8 @@ impl<'a> Builder<'a> {
         let open = table.single("syntax.group.open").ok_or_else(|| "A catch needs syntax.group".to_string())?.to_string();
         let close = table.single("syntax.group.close").unwrap().to_string();
         let mut clauses = Vec::new();
+        // A clause may stand on a line of its own, after what it follows.
+        self.skip_line_ends();
         while self.key("ext.stmt.catch") {
             self.advance();
             self.need_sign(&open, "after catch")?;
@@ -807,6 +846,7 @@ impl<'a> Builder<'a> {
             self.need_sign(&close, "after the class caught")?;
             let body = self.body()?;
             clauses.push(Clause { classes, held, body });
+            self.skip_line_ends();
         }
         let last = match self.key("ext.stmt.finally") {
             true => {
@@ -855,6 +895,9 @@ impl<'a> Builder<'a> {
             }
         }
         let outer = self.within.replace((name.clone(), under.clone()));
+        // A class body may open on a line of its own, as any body may.
+        self.skip_lead_word();
+        self.skip_line_ends();
         let opens = table.strings("block.open");
         let k = opens.iter().position(|o| self.lexeme_of(o)).ok_or_else(|| format!("Expected '{}' to open the class, got '{}'", opens[0], self.look().lexeme))?;
         self.advance();
@@ -883,27 +926,45 @@ impl<'a> Builder<'a> {
                 let member = self.need_word("as the method name")?;
                 let program = self.method(&member)?;
                 methods.push((member, program));
+                // A parameter of the maker that names a property makes
+                // the class carry that property too.
+                for named in std::mem::take(&mut self.also_property) {
+                    let bare = match table.letter("identifier.variable_prefix") {
+                        Some(sigil) => named.trim_start_matches(sigil).to_string(),
+                        None => named,
+                    };
+                    fields.push((bare, constant(Value::Nil)));
+                }
             } else {
                 // A property, perhaps with a type word before its name.
                 if self.look().shape == Shape::Bare && self.glance(1).shape == Shape::Bare {
                     self.advance();
                 }
-                let member = self.need_word("as the property name")?;
-                let bare = match table.letter("identifier.variable_prefix") {
-                    Some(sigil) => member.trim_start_matches(sigil).to_string(),
-                    None => member.clone(),
-                };
-                let value = match self.on_assign() {
-                    true => {
-                        self.advance();
-                        self.expr(0)?
+                // One declaration may name several properties, written
+                // apart the way a call's arguments are.
+                let apart = table.single("syntax.call.separator").map(str::to_string);
+                loop {
+                    let member = self.need_word("as the property name")?;
+                    let bare = match table.letter("identifier.variable_prefix") {
+                        Some(sigil) => member.trim_start_matches(sigil).to_string(),
+                        None => member.clone(),
+                    };
+                    let value = match self.on_assign() {
+                        true => {
+                            self.advance();
+                            self.expr(0)?
+                        }
+                        false => constant(Value::Nil),
+                    };
+                    if kept {
+                        shared.push((bare, value));
+                    } else {
+                        fields.push((bare, value));
                     }
-                    false => constant(Value::Nil),
-                };
-                if kept {
-                    shared.push((bare, value));
-                } else {
-                    fields.push((bare, value));
+                    match &apart {
+                        Some(sep) if self.sign(sep) => self.advance(),
+                        _ => break,
+                    };
                 }
             }
             self.skip_line_ends();
@@ -945,8 +1006,8 @@ impl<'a> Builder<'a> {
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
         self.need_sign(open, "after method name")?;
         let this = table.single("ext.stmt.class.this").ok_or_else(|| "A class needs ext.stmt.class.this".to_string())?.to_string();
-        let mut params = vec![this];
-        let (given, spares) = self.parameters()?;
+        let mut params = vec![this.clone()];
+        let (given, spares, also_property) = self.parameters()?;
         params.extend(given);
         // The thing it is for is always given, so every place moves by one.
         let least = params.len() - spares.len();
@@ -960,16 +1021,31 @@ impl<'a> Builder<'a> {
             self.need_word("as a return type")?;
         }
         // A method may be named and not written out, in a class of
-        // method names only; it answers with nothing.
-        if self.on_stmt_end() {
+        // method names only; it answers with nothing. A body on the line
+        // after the name is still a body.
+        if self.on_stmt_end() && !self.block_opens_ahead() {
             let named = self.routine(name, Holds::Every, Traps::Yields, params, least, |_| Ok(constant(Value::Nil)))?;
             return match named {
                 Form::Const(Value::Routine(p)) => Ok(p),
                 _ => Err("A method must be a program".to_string()),
             };
         }
+        let named = also_property.clone();
+        self.also_property = also_property;
+        let sigil = table.letter("identifier.variable_prefix");
         let program = self.routine(name, Holds::Every, Traps::Yields, params, least, |r| {
             let mut items = r.spare_values(spares, &formals)?;
+            // What a parameter that names a property was handed is put
+            // into the thing before the body runs.
+            for member in &named {
+                let bare = match sigil {
+                    Some(mark) => member.trim_start_matches(mark).to_string(),
+                    None => member.clone(),
+                };
+                let thing = r.read(&this);
+                let held = r.read(member);
+                items.push(prim_call(Prim::Onto, vec![thing, constant(Value::text(&bare)), held]));
+            }
             items.push(r.body()?);
             Ok(sequence(items))
         })?;
@@ -1400,7 +1476,7 @@ impl<'a> Builder<'a> {
 
 
     /// The parameters of a function or a method, up to the closing bracket.
-    fn parameters(&mut self) -> Res<(Vec<String>, Vec<(usize, usize)>)> {
+    fn parameters(&mut self) -> Res<(Vec<String>, Vec<(usize, usize)>, Vec<String>)> {
         let table = self.table;
         let close = table.single("syntax.call.close").unwrap().to_string();
         let typed = table.flag("stmt.let.type_first");
@@ -1408,8 +1484,16 @@ impl<'a> Builder<'a> {
         // Which parameter, and where its own value stands: it is read
         // again inside the program, where its names mean what they should.
         let mut spares: Vec<(usize, usize)> = Vec::new();
+        // A parameter with a class modifier before it names a property
+        // of the thing as well, which the maker fills in.
+        let mut also_property: Vec<String> = Vec::new();
         while !self.sign(&close) && !self.exhausted() {
             self.skip_reference();
+            let mut for_the_thing = false;
+            while self.look().shape == Shape::Bare && self.key("ext.stmt.class.modifier") {
+                self.advance();
+                for_the_thing = true;
+            }
             if typed {
                 let t = self.need_word("as a parameter type")?;
                 if !table.spells("stmt.let", &t) {
@@ -1431,6 +1515,9 @@ impl<'a> Builder<'a> {
                     self.need_word("as a type name")?;
                 }
             }
+            if for_the_thing {
+                also_property.push(params.last().expect("the parameter just read").clone());
+            }
             // A parameter may carry a value of its own for calls that
             // leave it out.
             if self.on_assign() {
@@ -1449,7 +1536,7 @@ impl<'a> Builder<'a> {
             }
         }
         self.need_sign(&close, "after parameters")?;
-        Ok((params, spares))
+        Ok((params, spares, also_property))
     }
 
     /// Step over the sign saying a type takes nothing as well: `?int`.
@@ -1491,7 +1578,7 @@ impl<'a> Builder<'a> {
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
         self.need_sign(open, "after function name")?;
         let typed = table.flag("stmt.let.type_first");
-        let (params, spares) = self.parameters()?;
+        let (params, spares, _) = self.parameters()?;
         let least = params.len() - spares.len();
         let formals = params.clone();
         let returns_here = |b: &Self| {
@@ -1526,45 +1613,77 @@ impl<'a> Builder<'a> {
     }
 
     fn write_or_expr(&mut self) -> Res<Form> {
-        let expr = self.expr(0)?;
-        let compound = if self.look().shape == Shape::Sign { self.table.compound.get(&self.look().lexeme).copied() } else { None };
-        if !self.on_assign() && compound.is_none() {
+        let expr = self.expr_at(0, false)?;
+        if !self.on_writing() {
             return Ok(expr);
         }
+        self.written(expr, false)
+    }
+
+    /// Whether a sign that writes stands here: the assignment sign, or
+    /// an operator run together with it.
+    fn on_writing(&self) -> bool {
+        let compound = self.look().shape == Shape::Sign && self.table.compound.contains_key(&self.look().lexeme);
+        self.on_assign() || compound
+    }
+
+    /// A write of what follows the sign into the target already read.
+    /// Where the write is itself an expression, what was written is kept
+    /// in a cell of its own and given back once the writing is done.
+    fn written(&mut self, expr: Form, gives_back: bool) -> Res<Form> {
+        let compound = if self.look().shape == Shape::Sign { self.table.compound.get(&self.look().lexeme).copied() } else { None };
+        let plain = compound.is_none();
         let assign = self.advance();
         // `b = &a`: b is tied to a's cell rather than given a copy.
-        if self.table.single("ext.op.reference").map_or(false, |m| self.sign(m)) && compound.is_none() {
+        if self.table.single("ext.op.reference").map_or(false, |m| self.sign(m)) && plain {
             if let Form::Read(slot) = &expr {
                 let held = slot.ident.to_string();
                 self.advance();
                 let source = self.need_word("as the name to share a cell with")?;
                 let shared = self.address_to_write(&source);
                 let tied = self.address_to_write(&held);
-                return Ok(Form::Tie(tied, Box::new(Form::Share(shared))));
+                let tie = Form::Tie(tied, Box::new(Form::Share(shared)));
+                return Ok(match gives_back {
+                    true => sequence(vec![tie, self.read(&held)]),
+                    false => tie,
+                });
             }
         }
-        let value = self.expr(0)?;
-        match expr {
+        let mut value = self.expr(0)?;
+        let keep = (gives_back && plain).then(|| {
+            self.gensyms += 1;
+            format!("#written{}", self.gensyms)
+        });
+        if let Some(cell) = &keep {
+            let stored = self.write(cell, value);
+            let back = self.read(cell);
+            value = sequence(vec![stored, back]);
+        }
+        let made = match expr {
             // x op= e is x = x op e.
             Form::Read(slot) => match compound {
                 Some(op) => {
                     let current = self.read(&slot.ident);
                     let combined = prim_call(op, vec![current, value]);
-                    Ok(self.write(&slot.ident, combined))
+                    let stored = self.write(&slot.ident, combined);
+                    match gives_back {
+                        true => sequence(vec![stored, self.read(&slot.ident)]),
+                        false => stored,
+                    }
                 }
-                None => Ok(self.write(&slot.ident, value)),
+                None => self.write(&slot.ident, value),
             },
-            _ if compound.is_some() => Err(format!("'{}' needs a plain variable on its left", assign.lexeme)),
+            _ if compound.is_some() => return Err(format!("'{}' needs a plain variable on its left", assign.lexeme)),
             // A read of a member becomes a write of it.
             Form::Apply(Callee::Prim(Prim::Of, _), mut args) if args.len() == 2 => {
                 let named = args.pop().unwrap();
                 let thing = args.pop().unwrap();
-                Ok(prim_call(Prim::Onto, vec![thing, named, value]))
+                prim_call(Prim::Onto, vec![thing, named, value])
             }
             Form::Apply(Callee::Prim(Prim::Within, _), mut args) if args.len() == 2 => {
                 let named = args.pop().unwrap();
                 let class = args.pop().unwrap();
-                Ok(prim_call(Prim::Into, vec![class, named, value]))
+                prim_call(Prim::Into, vec![class, named, value])
             }
             // `t->a[i] = v` and `t->a[] = v`: the property's array is
             // rewritten and the property written back.
@@ -1584,35 +1703,50 @@ impl<'a> Builder<'a> {
                     None => prim_call(Prim::Added, vec![held, value]),
                 };
                 let target = self.read(&ident);
-                Ok(prim_call(Prim::Onto, vec![target, constant(Value::text(&named)), written]))
+                prim_call(Prim::Onto, vec![target, constant(Value::text(&named)), written])
             }
             // a[] = v appends.
             Form::Apply(Callee::Prim(Prim::AtEnd, _), mut args) if args.len() == 1 => match args.pop().unwrap() {
                 Form::Read(slot) => {
                     let target = self.read(&slot.ident);
-                    Ok(prim_call(Prim::Append, vec![target, value]))
+                    prim_call(Prim::Append, vec![target, value])
                 }
-                _ => Err("Invalid assignment target".to_string()),
+                _ => return Err("Invalid assignment target".to_string()),
             },
             Form::Apply(Callee::Prim(Prim::At, _), mut args) if args.len() == 2 => {
                 let index = args.pop().unwrap();
                 match args.pop().unwrap() {
                     Form::Read(slot) => {
                         let target = self.read(&slot.ident);
-                        Ok(prim_call(Prim::Replace, vec![target, index, value]))
+                        prim_call(Prim::Replace, vec![target, index, value])
                     }
-                    _ => Err("Invalid assignment target".to_string()),
+                    _ => return Err("Invalid assignment target".to_string()),
                 }
             }
-            _ => Err(format!("Invalid assignment target before '{}'", assign.lexeme)),
-        }
+            _ => return Err(format!("Invalid assignment target before '{}'", assign.lexeme)),
+        };
+        Ok(match keep {
+            Some(cell) => sequence(vec![made, self.read(&cell)]),
+            None => made,
+        })
     }
 
     // ---------- expressions
 
     fn expr(&mut self, floor: u32) -> Res<Form> {
+        self.expr_at(floor, true)
+    }
+
+    /// An expression. Where a language counts a write as one, a target
+    /// followed by a sign that writes is read as a write whose value is
+    /// what was written — but not where the write is the whole
+    /// statement, which is read as a statement.
+    fn expr_at(&mut self, floor: u32, may_write: bool) -> Res<Form> {
         let table = self.table;
         let mut left = self.monadic_expr()?;
+        if floor == 0 && may_write && table.flag("ext.op.assign.value") && self.on_writing() {
+            return self.written(left, true);
+        }
         loop {
             let t = self.look();
             if t.shape != Shape::Sign && t.shape != Shape::Bare {
@@ -1633,6 +1767,13 @@ impl<'a> Builder<'a> {
                     }
                 }
                 left = self.named_call(&name, args)?;
+                continue;
+            }
+            if table.single("ext.op.otherwise").map_or(false, |m| self.sign(m)) {
+                // `a ?? b`: b is a program, read only when a is nothing.
+                self.advance();
+                let otherwise = self.limb(Traps::Naught, |r| r.expr(0))?;
+                left = prim_call(Prim::Otherwise, vec![left, otherwise]);
                 continue;
             }
             if self.look().shape == Shape::Bare && table.spells("ext.op.instanceof", &text) {

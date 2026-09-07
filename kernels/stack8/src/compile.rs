@@ -95,6 +95,8 @@ pub struct Compiler<'a> {
     /// Which parameters of each program take a name's own cell rather
     /// than a copy of what it holds, found before anything is read.
     shared_args: HashMap<String, Vec<bool>>,
+    /// The parameters of the method just read that name properties too.
+    promoted: Vec<String>,
 }
 
 type Res<T> = Result<T, String>;
@@ -129,7 +131,7 @@ pub fn compile(tokens: &[Token], lang: &Lang, table: &mut Registry) -> Res<Rc<Ro
         instrs: Vec::new(),
     };
     let shared_args = shared_parameters(tokens, lang);
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args };
+    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, promoted: Vec::new() };
     if lang.rpn {
         a.rpn_body(&[], Span::Block)?;
         if !a.exhausted() {
@@ -166,7 +168,7 @@ pub fn compile(tokens: &[Token], lang: &Lang, table: &mut Registry) -> Res<Rc<Ro
         a.piece().instrs[at] = Instr::Skip(end);
     }
     let unit = a.pieces.pop().expect("the top unit");
-    Ok(Rc::new(Routine { ident: unit.ident, formals: Vec::new(), least: 0, idents: unit.idents, returns_value: false, instrs: peephole(unit.instrs) }))
+    Ok(Rc::new(Routine { ident: unit.ident, formals: Vec::new(), least: 0, idents: unit.idents, returns_value: false, body_of_all: true, instrs: peephole(unit.instrs) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -200,6 +202,17 @@ impl<'a> Compiler<'a> {
     fn at_lexeme(&self, text: &str) -> bool {
         let t = self.look();
         matches!(t.shape, Shape::Sign | Shape::Instr) && t.lexeme == text
+    }
+
+    /// Whether a block opens here, past any line ends before it: a
+    /// method may be written with its body on the line after its name.
+    fn block_ahead(&self) -> bool {
+        let mut ahead = 0;
+        while self.look_ahead(ahead).shape == Shape::LineEnd {
+            ahead += 1;
+        }
+        let t = self.look_ahead(ahead);
+        t.shape == Shape::Sign && self.lang.block_opens.iter().any(|o| *o == t.lexeme)
     }
 
     fn on_any(&self, list: &[String]) -> bool {
@@ -532,7 +545,7 @@ impl<'a> Compiler<'a> {
         }
         let unit = self.pieces.pop().expect("the unit");
         let instrs = if returns_value && !used { relocated(unit.instrs.into_iter().skip(2).collect(), -2) } else { unit.instrs };
-        Ok(Rc::new(Routine { ident: unit.ident, formals, least, idents: unit.idents, returns_value, instrs: peephole(instrs) }))
+        Ok(Rc::new(Routine { ident: unit.ident, formals, least, idents: unit.idents, returns_value, body_of_all: false, instrs: peephole(instrs) }))
     }
 
     // ---------- statements ----------
@@ -632,7 +645,13 @@ impl<'a> Compiler<'a> {
                 self.take();
                 return Ok(());
             }
-            if Lang::spells(&lang.class_words, &w) || Lang::spells(&lang.interface_words, &w) {
+            let names_class = |word: &str| Lang::spells(&lang.class_words, word) || Lang::spells(&lang.interface_words, word);
+            if names_class(&w) {
+                return self.class_decl();
+            }
+            // A class may be marked before it is named: `abstract class C`.
+            if Lang::spells(&lang.modifier_words, &w) && self.look_ahead(1).shape == Shape::Instr && names_class(&self.look_ahead(1).lexeme) {
+                self.take();
                 return self.class_decl();
             }
             if Lang::spells(&lang.try_words, &w) {
@@ -720,7 +739,10 @@ impl<'a> Compiler<'a> {
 
     /// `static x = e;`: x names a hidden global, set when the function
     /// is defined, so it keeps its value from call to call. The setting
-    /// is assembled in the unit around this one, where the definition runs.
+    /// is assembled in the unit around this one, where the definition
+    /// runs. Outside every function there is no unit around this one, so
+    /// the setting stands here and is guarded: it happens the first time
+    /// this statement is reached and no other time.
     fn static_stmt(&mut self) -> Res<()> {
         self.take();
         let sep = self.lang.calling.as_ref().and_then(|c| c.between.clone());
@@ -728,9 +750,16 @@ impl<'a> Compiler<'a> {
             let name = self.want_name("after the static keyword")?;
             let hidden = self.gensym("static");
             let inner = self.pieces.pop().expect("the unit");
-            if self.pieces.is_empty() {
+            let outermost = self.pieces.is_empty();
+            let mut held = None;
+            let mut past = 0;
+            if outermost {
                 self.pieces.push(inner);
-                return Err("static belongs inside a function".to_string());
+                let far = self.registry.slot(&hidden);
+                self.put(Instr::Unwritten(far));
+                past = self.skip();
+            } else {
+                held = Some(inner);
             }
             if self.on_assign() {
                 self.take();
@@ -739,7 +768,10 @@ impl<'a> Compiler<'a> {
                 self.constant(Value::Null);
             }
             self.write_global(&hidden);
-            self.pieces.push(inner);
+            match held {
+                Some(inner) => self.pieces.push(inner),
+                None => self.land(past),
+            }
             self.piece().globals.push((name, hidden));
             match &sep {
                 Some(s) if self.at_symbol(s) => {
@@ -1360,6 +1392,8 @@ impl<'a> Compiler<'a> {
         self.piece().instrs[guard] = Instr::Guard(here);
         let group = lang.grouping.clone().ok_or_else(|| "A catch needs syntax.group".to_string())?;
         let mut clauses = 0;
+        // A clause may stand on a line of its own, after the body it follows.
+        self.skip_seps();
         while self.on_keyword(&lang.catch_words) {
             self.take();
             self.want_sign(&group.open, "after catch")?;
@@ -1384,6 +1418,7 @@ impl<'a> Compiler<'a> {
             done.push(self.leap());
             self.land(past);
             clauses += 1;
+            self.skip_seps();
         }
         if last.is_some() {
             self.piece().lasts.pop();
@@ -1500,6 +1535,9 @@ impl<'a> Compiler<'a> {
         let (mut fields, mut shared, mut constants) = (Vec::new(), Vec::new(), Vec::new());
         let mut methods = Vec::new();
         let outer = self.within.replace((name.clone(), base.clone()));
+        // The body may open on a line of its own, as every other block may.
+        self.skip_intro();
+        self.skip_seps();
         let which = lang.block_opens.iter().position(|o| self.at_lexeme(o));
         let Some(i) = which else {
             return Err(format!("Expected '{}' to open the class, got '{}'", lang.block_opens[0], self.look().lexeme));
@@ -1528,24 +1566,39 @@ impl<'a> Compiler<'a> {
                 self.skip_reference();
                 let member = self.want_name("as the method name")?;
                 methods.push((member.clone(), self.method(&member)?));
+                // A parameter of the maker that names a property makes
+                // the class carry that property too.
+                for named in std::mem::take(&mut self.promoted) {
+                    let bare = lang.sigil.map_or(named.clone(), |s| named.trim_start_matches(s).to_string());
+                    fields.push((bare, vec![Instr::Const(Value::Null)]));
+                }
             } else {
                 // A property, perhaps with a type word before its name.
+                // One declaration may name several, written apart the
+                // way a call's arguments are.
                 if self.look().shape == Shape::Instr && self.look_ahead(1).shape == Shape::Instr {
                     self.take();
                 }
-                let member = self.want_name("as the property name")?;
-                let bare = lang.sigil.map_or(member.clone(), |s| member.trim_start_matches(s).to_string());
-                let value = match self.on_assign() {
-                    true => {
-                        self.take();
-                        self.member_value()?
+                let apart = lang.calling.as_ref().and_then(|c| c.between.clone());
+                loop {
+                    let member = self.want_name("as the property name")?;
+                    let bare = lang.sigil.map_or(member.clone(), |s| member.trim_start_matches(s).to_string());
+                    let value = match self.on_assign() {
+                        true => {
+                            self.take();
+                            self.member_value()?
+                        }
+                        false => vec![Instr::Const(Value::Null)],
+                    };
+                    if own {
+                        shared.push((bare, value));
+                    } else {
+                        fields.push((bare, value));
                     }
-                    false => vec![Instr::Const(Value::Null)],
-                };
-                if own {
-                    shared.push((bare, value));
-                } else {
-                    fields.push((bare, value));
+                    match &apart {
+                        Some(sep) if self.at_symbol(sep) => self.take(),
+                        _ => break,
+                    };
                 }
             }
             self.skip_seps();
@@ -1599,8 +1652,9 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
         self.want_sign(&call.open, "after method name")?;
-        let mut formals = vec![lang.this_word.clone().ok_or_else(|| "A class needs ext.stmt.class.this".to_string())?];
-        let (params, spares) = self.parameters(&call)?;
+        let this = lang.this_word.clone().ok_or_else(|| "A class needs ext.stmt.class.this".to_string())?;
+        let mut formals = vec![this.clone()];
+        let (params, spares, promoted) = self.parameters(&call)?;
         formals.extend(params);
         // The object it is for is always given, so the count is one more.
         let least = formals.len() - spares.len();
@@ -1612,8 +1666,9 @@ impl<'a> Compiler<'a> {
             self.want_name("as a return type")?;
         }
         // A method may be named and not written out, in a class of
-        // method names only; it answers with nothing.
-        if self.on_sep() {
+        // method names only; it answers with nothing. A body on the line
+        // after the name is still a body.
+        if self.on_sep() && !self.block_ahead() {
             return self.routine(name, formals, least, true, |a| {
                 a.constant(Value::Null);
                 a.piece().result_touched = true;
@@ -1621,21 +1676,40 @@ impl<'a> Compiler<'a> {
                 Ok(())
             });
         }
+        let named = promoted.clone();
+        self.promoted = promoted;
         self.routine(name, formals, least, true, |a| {
             a.spare_values(&spares, &given)?;
+            // What a parameter that names a property was given is
+            // written into the object before anything else runs.
+            for member in &named {
+                let bare = a.lang.sigil.map_or(member.clone(), |s| member.trim_start_matches(s).to_string());
+                a.read(&this);
+                a.read(member);
+                a.act(Action::Plant(Rc::from(bare.as_str())), 2);
+                a.discard();
+            }
             a.body()
         })
     }
 
     /// The parameters of a function or a method, up to the closing bracket.
-    fn parameters(&mut self, call: &Brackets) -> Res<(Vec<String>, Vec<(usize, usize)>)> {
+    /// A parameter with a class modifier before it names a property as
+    /// well, which the maker writes what it was given into.
+    fn parameters(&mut self, call: &Brackets) -> Res<(Vec<String>, Vec<(usize, usize)>, Vec<String>)> {
         let lang = self.lang;
         let mut formals = Vec::new();
         // Which parameter, and where its own value is written: it is read
         // again inside the program, where its names mean what they should.
         let mut spares: Vec<(usize, usize)> = Vec::new();
+        let mut promoted: Vec<String> = Vec::new();
         while !self.at_symbol(&call.close) && !self.exhausted() {
             self.skip_reference();
+            let mut names_property = false;
+            while self.look().shape == Shape::Instr && Lang::spells(&lang.modifier_words, &self.look().lexeme) {
+                self.take();
+                names_property = true;
+            }
             if lang.types_first {
                 let type_word = self.want_name("as a parameter type")?;
                 if !Lang::spells(&lang.let_words, &type_word) {
@@ -1659,6 +1733,9 @@ impl<'a> Compiler<'a> {
                     self.want_name("as a type name")?;
                 }
             }
+            if names_property {
+                promoted.push(formals.last().expect("the parameter just read").clone());
+            }
             // A parameter may carry a value of its own for calls that
             // leave it out.
             if self.on_assign() {
@@ -1677,7 +1754,7 @@ impl<'a> Compiler<'a> {
             }
         }
         self.want_sign(&call.close, "after parameters")?;
-        Ok((formals, spares))
+        Ok((formals, spares, promoted))
     }
 
     /// Step over the sign saying a type takes nothing as well: `?int`.
@@ -1717,7 +1794,7 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
         self.want_sign(&call.open, "after function name")?;
-        let (formals, spares) = self.parameters(&call)?;
+        let (formals, spares, _) = self.parameters(&call)?;
         let least = formals.len() - spares.len();
         let given = formals.clone();
         if self.look().shape == Shape::Sign && Lang::spells(&lang.return_marks, &self.look().lexeme) {
@@ -1748,13 +1825,42 @@ impl<'a> Compiler<'a> {
     /// An assignment, an indexed assignment, or an expression statement.
     fn assign_or_expr(&mut self) -> Res<()> {
         let from = self.mark();
-        self.expr(0)?;
-        let compound = self.lang.compound.get(&self.look().lexeme).filter(|_| self.look().shape == Shape::Sign).cloned();
-        if !self.on_assign() && compound.is_none() {
+        self.expr_at(0, false)?;
+        if !self.on_writing() {
             self.piece().result_touched = true;
             self.write(RESULT_CELL);
             return Ok(());
         }
+        self.assignment(from, None)
+    }
+
+    /// Whether a sign that writes stands here: the assignment sign, or
+    /// one of an operator and the assignment sign run together.
+    fn on_writing(&self) -> bool {
+        let compound = self.lang.compound.contains_key(&self.look().lexeme) && self.look().shape == Shape::Sign;
+        self.on_assign() || compound
+    }
+
+    /// The value written by an assignment. Where the assignment is
+    /// itself an expression, the value is kept in a cell of its own so
+    /// that it can be read again once the writing is done.
+    fn value_written(&mut self, keep: Option<&str>) -> Res<()> {
+        self.expr(0)?;
+        self.kept(keep);
+        Ok(())
+    }
+
+    fn kept(&mut self, keep: Option<&str>) {
+        if let Some(cell) = keep {
+            self.write(cell);
+            self.read(cell);
+        }
+    }
+
+    /// Turn the load of a target, already assembled from `from`, into a
+    /// store of what follows the assignment sign.
+    fn assignment(&mut self, from: usize, keep: Option<&str>) -> Res<()> {
+        let compound = self.lang.compound.get(&self.look().lexeme).filter(|_| self.look().shape == Shape::Sign).cloned();
         let assign = self.take().lexeme;
         // The target came out as a load; turn it into a store.
         let target: Vec<Instr> = self.piece().instrs.drain(from..).collect();
@@ -1772,6 +1878,10 @@ impl<'a> Compiler<'a> {
                 self.put(Instr::Bond(shared));
                 let held = self.cell_to_write(&name);
                 self.put(Instr::Fasten(held));
+                if keep.is_some() {
+                    self.read(&name);
+                    self.kept(keep);
+                }
                 Ok(())
             }
             [Instr::Read(slot)] if !slot.moving => {
@@ -1781,8 +1891,9 @@ impl<'a> Compiler<'a> {
                     self.read(&name);
                     self.expr(0)?;
                     self.act(op, 2);
+                    self.kept(keep);
                 } else {
-                    self.expr(0)?;
+                    self.value_written(keep)?;
                 }
                 self.write(&name);
                 Ok(())
@@ -1794,7 +1905,7 @@ impl<'a> Compiler<'a> {
                 for w in relocated(rest, 0) {
                     self.put(w);
                 }
-                self.expr(0)?;
+                self.value_written(keep)?;
                 self.act(Action::Plant(member), 2);
                 Ok(())
             }
@@ -1803,7 +1914,7 @@ impl<'a> Compiler<'a> {
                 for w in relocated(rest, 0) {
                     self.put(w);
                 }
-                self.expr(0)?;
+                self.value_written(keep)?;
                 self.act(Action::Sow(member), 2);
                 Ok(())
             }
@@ -1822,7 +1933,7 @@ impl<'a> Compiler<'a> {
                         self.put(w);
                     }
                 }
-                self.expr(0)?;
+                self.value_written(keep)?;
                 self.read(&name);
                 self.act(Action::Grab(member.clone()), 1);
                 let native = if appending { Builtin::Append } else { Builtin::Replace };
@@ -1834,7 +1945,7 @@ impl<'a> Compiler<'a> {
             [Instr::Read(slot), Instr::Act(Action::AtEnd, 1)] if !slot.moving => {
                 // a[] = v appends.
                 let name = slot.ident.to_string();
-                self.expr(0)?;
+                self.value_written(keep)?;
                 self.read_taking(&name);
                 self.act(Action::Builtin(Builtin::Append, Rc::from("push")), 2);
                 self.restore(&name);
@@ -1845,7 +1956,7 @@ impl<'a> Compiler<'a> {
                 for w in relocated(index.to_vec(), -1) {
                     self.put(w);
                 }
-                self.expr(0)?;
+                self.value_written(keep)?;
                 self.read_taking(&name);
                 self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
                 self.restore(&name);
@@ -1858,9 +1969,23 @@ impl<'a> Compiler<'a> {
     // ---------- expressions ----------
 
     fn expr(&mut self, floor: u32) -> Res<()> {
+        self.expr_at(floor, true)
+    }
+
+    /// An expression. Where a language counts an assignment as one, a
+    /// target followed by a sign that writes is read as an assignment
+    /// whose value is what was written — but not where the assignment
+    /// is the whole statement, which is read as a statement.
+    fn expr_at(&mut self, floor: u32, may_write: bool) -> Res<()> {
         let lang = self.lang;
         let from = self.mark();
         self.prefix()?;
+        if floor == 0 && may_write && lang.assign_gives_value && self.on_writing() {
+            let keep = self.gensym("written");
+            self.assignment(from, Some(&keep))?;
+            self.read(&keep);
+            return Ok(());
+        }
         loop {
             let t = self.look();
             if !matches!(t.shape, Shape::Sign | Shape::Instr) {
@@ -1873,6 +1998,19 @@ impl<'a> Compiler<'a> {
                 }
                 self.take();
                 self.pipe_target(from)?;
+                continue;
+            }
+            if lang.otherwise_mark.as_ref().map_or(false, |m| self.at_symbol(m)) {
+                // `a ?? b`: b is worked out only when a is nothing.
+                self.take();
+                self.write(TEMP_CELL);
+                self.read(TEMP_CELL);
+                self.act(Action::Nothing, 1);
+                let done = self.skip();
+                self.expr(0)?;
+                self.write(TEMP_CELL);
+                self.land(done);
+                self.read(TEMP_CELL);
                 continue;
             }
             if self.on_keyword(&lang.instanceof_words) {

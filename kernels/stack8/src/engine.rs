@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::cell::RefCell;
+use num_bigint::BigInt;
 use std::rc::Rc;
 
 use num_traits::ToPrimitive;
@@ -22,6 +23,11 @@ pub struct Engine<'a> {
     memo: HashMap<String, Value>,
     /// The arguments of a builtin call, one buffer reused across calls.
     buffer: Vec<Value>,
+    /// What each call still running was given, the innermost last. Kept
+    /// only where the language can read it.
+    given: Vec<Vec<Value>>,
+    /// How many objects have been made, so that each carries its turn.
+    made: usize,
     args_cell: Option<usize>,
     memo_cell: Option<usize>,
 }
@@ -75,6 +81,8 @@ impl<'a> Engine<'a> {
             data: Vec::new(),
             memo: HashMap::new(),
             buffer: Vec::new(),
+            given: Vec::new(),
+            made: 0,
             args_cell: find(&lang.args_binding),
             memo_cell: find(&lang.memo_binding),
             idents,
@@ -283,7 +291,10 @@ impl<'a> Engine<'a> {
     /// A call whose arguments are the top `n` of the data stack: they move
     /// straight into the frame, one allocation instead of two.
     pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
-        if n > program.formals.len() || n < program.least {
+        // Where a language can read what a call was given, a call may
+        // give more than the routine names; the rest is kept aside.
+        let most = if self.lang.spare_args { usize::MAX } else { program.formals.len() };
+        if n > most || n < program.least {
             let wanted = program.formals.len();
             return Err(format!("Function {} expects {} arguments, got {}", program.ident, wanted, n).into());
         }
@@ -305,10 +316,21 @@ impl<'a> Engine<'a> {
             return Ok(());
         }
         let mut frame: Vec<Value> = Vec::with_capacity(program.idents.len());
+        let watching = self.lang.spare_args && !program.body_of_all;
+        if watching {
+            self.given.push(self.data[at..].to_vec());
+        }
         frame.extend(self.data.drain(at..));
+        // What the routine does not name stays aside rather than
+        // spilling into the slots its own names sit in.
+        frame.truncate(program.formals.len());
         frame.resize(program.idents.len(), Value::Blank);
         let base = self.data.len();
-        self.run_instrs(program, &mut frame)?;
+        let outcome = self.run_instrs(program, &mut frame);
+        if watching {
+            self.given.pop();
+        }
+        outcome?;
         if !program.returns_value {
             return Ok(());
         }
@@ -388,6 +410,10 @@ impl<'a> Engine<'a> {
                 }
                 Instr::Missing(slot) => {
                     let empty = matches!(frame[*slot], Value::Blank);
+                    self.data.push(Value::Flag(empty));
+                }
+                Instr::Unwritten(at) => {
+                    let empty = matches!(self.world[*at], Value::Blank);
                     self.data.push(Value::Flag(empty));
                 }
                 Instr::Skip(to) => {
@@ -477,6 +503,16 @@ impl<'a> Engine<'a> {
         let result = match op {
             Action::Not => Value::Flag(!self.drop_top()?.is_true()),
             Action::AsBool => Value::Flag(self.drop_top()?.is_true()),
+            Action::BitTurn => {
+                let v = self.drop_top()?;
+                match &v {
+                    Value::Text(s) => {
+                        let out: Vec<u8> = s.as_bytes().iter().map(|c| !c).collect();
+                        Value::text(&String::from_utf8_lossy(&out))
+                    }
+                    _ => Value::Small(!bits_of(&v)?),
+                }
+            }
             Action::Negate => {
                 // 0 - x, so a real keeps its precision.
                 let v = self.drop_top()?;
@@ -507,8 +543,8 @@ impl<'a> Engine<'a> {
                     }
                 };
             }
-            Action::MakeArray => gathered(self.drop_many(argc)?, false),
-            Action::MakeMap => gathered(self.drop_many(argc)?, true),
+            Action::MakeArray => gathered(self.drop_many(argc)?, false, self.lang.plain_keys),
+            Action::MakeMap => gathered(self.drop_many(argc)?, true, self.lang.plain_keys),
             Action::Tie => {
                 let pair = self.drop_many(2)?;
                 let mut pair = pair.into_iter();
@@ -572,7 +608,8 @@ impl<'a> Engine<'a> {
                 let Value::Class(class) = args.remove(0) else {
                     return Err("Only a class can be made into an object".to_string().into());
                 };
-                let object = Rc::new(Instance { class: class.clone(), fields: RefCell::new(class.all_fields()) });
+                self.made += 1;
+                let object = Rc::new(Instance { class: class.clone(), fields: RefCell::new(class.all_fields()), mark: self.made });
                 let maker = self.lang.constructor.as_deref().and_then(|m| class.method(m)).cloned();
                 match maker {
                     Some(maker) => {
@@ -681,6 +718,7 @@ impl<'a> Engine<'a> {
                 Value::Class(c) => Value::text(&c.name),
                 v => return Err(format!("{} has no class name", v.plain()).into()),
             },
+            Action::Nothing => Value::Flag(matches!(self.drop_top()?, Value::Null | Value::Blank | Value::Gap)),
             Action::Extent => match self.drop_top()? {
                 Value::Array(items) => Value::Small(items.len() as i64),
                 Value::Map(pairs) => Value::Small(pairs.len() as i64),
@@ -732,8 +770,45 @@ impl<'a> Engine<'a> {
         Ok(match op {
             Action::And => Value::Flag(a.is_true() && b.is_true()),
             Action::Or => Value::Flag(a.is_true() || b.is_true()),
+            // Where a language has an operator for being the very same,
+            // being equal is the looser question: text that spells a
+            // number stands for that number, and a number met by text
+            // that spells none is itself read as text.
+            Action::Eq | Action::Ne if self.lang.loose_equality => {
+                let numeric = |v: &Value| v.sort().map_or(false, |k| matches!(k, Sort::Integer | Sort::Rational | Sort::Real));
+                let nothing = |v: &Value| matches!(v, Value::Null | Value::Blank | Value::Gap | Value::Fence);
+                let alike = match (a, b) {
+                    // A flag on either side turns the question into
+                    // whether the other side is true, and nothing
+                    // counts as untrue.
+                    (Value::Flag(_), _) | (_, Value::Flag(_)) => a.is_true() == b.is_true(),
+                    (one, other) | (other, one) if nothing(one) && numeric(other) => !other.is_true(),
+                    (one, Value::Text(s)) | (Value::Text(s), one) if nothing(one) => s.is_empty(),
+                    (one, other) | (other, one) if nothing(one) && matches!(other, Value::Array(_) | Value::Map(_)) => !other.is_true() || {
+                        match other {
+                            Value::Array(items) => items.is_empty(),
+                            Value::Map(pairs) => pairs.is_empty(),
+                            _ => false,
+                        }
+                    },
+                    // Two pieces of text that both spell numbers stand
+                    // for those numbers.
+                    (Value::Text(x), Value::Text(y)) => match (number_spelled(x), number_spelled(y)) {
+                        (Some(m), Some(n)) => m.equals(&n),
+                        _ => x == y,
+                    },
+                    (Value::Text(s), other) | (other, Value::Text(s)) if numeric(other) => match number_spelled(s) {
+                        Some(n) => n.equals(other),
+                        None => s.as_ref() == other.display(&sp),
+                    },
+                    _ => a.equals(b),
+                };
+                Value::Flag(matches!(op, Action::Eq) == alike)
+            }
             Action::Eq => Value::Flag(a.equals(b)),
             Action::Ne => Value::Flag(!a.equals(b)),
+            Action::Same => Value::Flag(a.identical(b)),
+            Action::Unsame => Value::Flag(!a.identical(b)),
             Action::Join => joined(),
             Action::At => self.element(a, b)?,
             Action::Rank => match crate::arith::order_values(a, b) {
@@ -746,7 +821,74 @@ impl<'a> Engine<'a> {
                     _ => 0,
                 }),
             },
-            Action::Add if matches!(a, Value::Text(_)) || matches!(b, Value::Text(_)) => joined(),
+            // Adding text joins it only where the language has no
+            // operator of its own for joining; where it has one, adding
+            // is arithmetic and the text stands for a number.
+            // Two pieces of text take their bits letter by letter, which
+            // is what a language that spells these operators means by
+            // them; the shorter side decides the length, save for `or`,
+            // where the longer one stands on as it is.
+            Action::BitBoth | Action::BitEither | Action::BitOne if matches!(a, Value::Text(_)) && matches!(b, Value::Text(_)) => {
+                let (x, y) = (a.display(&sp), b.display(&sp));
+                let (x, y) = (x.as_bytes(), y.as_bytes());
+                let mut out: Vec<u8> = Vec::new();
+                let reach = if matches!(op, Action::BitEither) { x.len().max(y.len()) } else { x.len().min(y.len()) };
+                for i in 0..reach {
+                    let (p, q) = (x.get(i).copied().unwrap_or(0), y.get(i).copied().unwrap_or(0));
+                    out.push(match op {
+                        Action::BitBoth => p & q,
+                        Action::BitEither => p | q,
+                        _ => p ^ q,
+                    });
+                }
+                Value::text(&String::from_utf8_lossy(&out))
+            }
+            // Working on the bits reads each side as a whole number of
+            // sixty-four bits, sign and all, whatever it was written as.
+            Action::BitBoth | Action::BitEither | Action::BitOne | Action::BitUp | Action::BitDown => {
+                let (x, y) = (bits_of(a)?, bits_of(b)?);
+                Value::Small(match op {
+                    Action::BitBoth => x & y,
+                    Action::BitEither => x | y,
+                    Action::BitOne => x ^ y,
+                    _ => {
+                        if y < 0 {
+                            return Err("Bit shift by a negative number".to_string());
+                        }
+                        let places = y.min(64) as u32;
+                        match op {
+                            Action::BitUp => x.checked_shl(places).unwrap_or(0),
+                            // Moving down keeps the sign, so a negative
+                            // number falls to -1 rather than to 0.
+                            _ => x.checked_shr(places).unwrap_or(if x < 0 { -1 } else { 0 }),
+                        }
+                    }
+                })
+            }
+            Action::Add if self.lang.concat.is_none() && (matches!(a, Value::Text(_)) || matches!(b, Value::Text(_))) => joined(),
+            // Text that spells a number is worked with as that number,
+            // fractions included, rather than only as a whole one.
+            _ if matches!(a, Value::Text(_)) || matches!(b, Value::Text(_)) => {
+                let spelled = |v: &Value| match v {
+                    Value::Text(s) => number_spelled(s),
+                    _ => None,
+                };
+                match (spelled(a), spelled(b)) {
+                    (None, None) => return self.dyadic_numbers(op, a, b),
+                    (x, y) => {
+                        let (x, y) = (x.unwrap_or_else(|| a.clone()), y.unwrap_or_else(|| b.clone()));
+                        return self.dyadic_numbers(op, &x, &y);
+                    }
+                }
+            }
+            _ => return self.dyadic_numbers(op, a, b),
+        })
+    }
+
+    /// The arithmetic itself, both values already numbers as far as they
+    /// can be made so.
+    fn dyadic_numbers(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        Ok(match op {
             Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv | Action::Mod | Action::Power => {
                 let calc = match op {
                     Action::Add => Operation::Plus,
@@ -787,8 +929,16 @@ impl<'a> Engine<'a> {
                     _ => !below(a, b)?,
                 })
             }
-            other => unreachable!("{other:?} is not dyadic"),
+            other => return Err(format!("{:?} is not a two-value operation", other)),
         })
+    }
+
+    /// A key as this language takes one.
+    fn key(&self, at: &Value) -> Value {
+        match self.lang.plain_keys {
+            true => key_taken(at.clone()),
+            false => at.clone(),
+        }
     }
 
     fn element(&self, target: &Value, at: &Value) -> Res<Value> {
@@ -796,6 +946,7 @@ impl<'a> Engine<'a> {
         // nothing rather than stopping the program.
         let absent = |told: String| if self.lang.absent_index { Ok(Value::Null) } else { Err(told) };
         if let Value::Map(pairs) = target {
+            let at = &self.key(at);
             let found = pairs.iter().find(|(k, _)| k.equals(at));
             return match found {
                 Some((_, v)) => Ok(v.clone()),
@@ -862,6 +1013,29 @@ impl<'a> Engine<'a> {
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
                 print!("{}", s);
                 Value::Null
+            }
+            Builtin::Given | Builtin::GivenCount | Builtin::GivenAt => {
+                let Some(given) = self.given.last() else {
+                    return Err(format!("{}() belongs inside a function", name));
+                };
+                match builtin {
+                    Builtin::Given => {
+                        arity(0)?;
+                        Value::array(given.clone())
+                    }
+                    Builtin::GivenCount => {
+                        arity(0)?;
+                        Value::Small(given.len() as i64)
+                    }
+                    _ => {
+                        arity(1)?;
+                        let at = as_index(&args[0])?;
+                        match given.get(at) {
+                            Some(v) => v.clone(),
+                            None => return Err(format!("{}(): the call was given no argument {}", name, at)),
+                        }
+                    }
+                }
             }
             Builtin::Say => {
                 println!("{}", self.render(&args));
@@ -973,9 +1147,17 @@ impl<'a> Engine<'a> {
             }
             Builtin::SortOf => {
                 arity(1)?;
-                match args[0].sort() {
-                    Some(k) => Value::SortOf(k),
-                    None => return Err(format!("{}(): unknown value type", name)),
+                let Some(kind) = args[0].sort() else {
+                    return Err(format!("{}(): unknown value type", name));
+                };
+                // Some languages say a kind in words rather than hand
+                // back a value standing for it.
+                match self.lang.kind_spelled {
+                    false => Value::SortOf(kind),
+                    true => match self.lang.sort_bindings.iter().find(|(_, k)| *k == kind) {
+                        Some((word, _)) => Value::text(word),
+                        None => return Err(format!("{}(): the language has no word for that kind", name)),
+                    },
                 }
             }
             Builtin::Numer | Builtin::Denom => {
@@ -1009,7 +1191,7 @@ impl<'a> Engine<'a> {
                 arity(3)?;
                 let target = args.pop().expect("the array");
                 let v = args.pop().expect("the value");
-                let at = args.pop().expect("the key");
+                let at = self.key(&args.pop().expect("the key"));
                 match target {
                     // A list written at a place it already holds stays a list.
                     Value::Array(mut items) if as_index(&at).map_or(false, |i| i < items.len()) => {
@@ -1036,7 +1218,7 @@ impl<'a> Engine<'a> {
                 // Taking a place out of an array: the array is given back
                 // without it.
                 arity(2)?;
-                let at = args.pop().expect("the place");
+                let at = self.key(&args.pop().expect("the place"));
                 match args.pop().expect("the array") {
                     Value::Array(items) => {
                         let i = as_index(&at)?;
@@ -1145,6 +1327,16 @@ fn dumped(v: &Value, depth: usize) -> String {
             out.push('}');
             out
         }
+        Value::Object(thing) => {
+            let held = thing.fields.borrow();
+            let mut out = format!("object({})#{} ({}) {{\n", thing.class.name, thing.mark, held.len());
+            for (member, item) in held.iter() {
+                out.push_str(&format!("{pad}  [\"{member}\"]=>\n{pad}  {}\n", dumped(item, depth + 1)));
+            }
+            out.push_str(&pad);
+            out.push('}');
+            out
+        }
         _ => "NULL".to_string(),
     }
 }
@@ -1152,7 +1344,7 @@ fn dumped(v: &Value, depth: usize) -> String {
 /// The values of a literal: a map when any of them is a tie or the
 /// literal asks for one, otherwise a list. An untied value takes the
 /// next whole-number key, as in a list.
-fn gathered(items: Vec<Value>, always_map: bool) -> Value {
+fn gathered(items: Vec<Value>, always_map: bool, plain_keys: bool) -> Value {
     if !always_map && !items.iter().any(|v| matches!(v, Value::Tie(_))) {
         return Value::array(items);
     }
@@ -1161,6 +1353,7 @@ fn gathered(items: Vec<Value>, always_map: bool) -> Value {
         match item {
             Value::Tie(pair) => {
                 let (k, v) = (pair.0.clone(), pair.1.clone());
+                let k = if plain_keys { key_taken(k) } else { k };
                 put_key(&mut pairs, k, v);
             }
             v => {
@@ -1197,13 +1390,18 @@ fn put_key(pairs: &mut Vec<(Value, Value)>, key: Value, value: Value) {
 /// array as `Array` and its places in brackets, each nested array set
 /// eight spaces further in and followed by a blank line.
 fn laid_out(v: &Value, indent: usize) -> String {
-    let pairs: Vec<(String, &Value)> = match v {
-        Value::Array(items) => items.iter().enumerate().map(|(i, x)| (i.to_string(), x)).collect(),
-        Value::Map(entries) => entries.iter().map(|(k, x)| (k.plain(), x)).collect(),
+    let held;
+    let (what, pairs): (String, Vec<(String, &Value)>) = match v {
+        Value::Array(items) => ("Array".to_string(), items.iter().enumerate().map(|(i, x)| (i.to_string(), x)).collect()),
+        Value::Map(entries) => ("Array".to_string(), entries.iter().map(|(k, x)| (k.plain(), x)).collect()),
+        Value::Object(thing) => {
+            held = thing.fields.borrow();
+            (format!("{} Object", thing.class.name), held.iter().map(|(k, x)| (k.clone(), x)).collect())
+        }
         other => return other.plain(),
     };
     let pad = " ".repeat(indent);
-    let mut out = format!("Array\n{pad}(\n");
+    let mut out = format!("{what}\n{pad}(\n");
     for (key, item) in pairs {
         // What an array lays out ends its own line, so the newline
         // here is the gap PHP leaves after it; for a scalar it ends the line.
@@ -1245,4 +1443,107 @@ fn shared_item(held: &mut Value, at: &Value) -> Res<Rc<RefCell<Value>>> {
     let shared = Rc::new(RefCell::new(std::mem::replace(place, Value::Null)));
     *place = Value::Bond(shared.clone());
     Ok(shared)
+}
+
+/// The number a piece of text spells, whole or fractional, with room
+/// for a sign and for space around it. Anything else is not a number.
+fn number_spelled(s: &str) -> Option<Value> {
+    let text = s.trim();
+    // A number may carry a power of ten after it: 1e2, 1.5E-3.
+    if let Some(at) = text.find(['e', 'E']) {
+        let (front, back) = text.split_at(at);
+        let power: i32 = back[1..].parse().ok()?;
+        let base = number_spelled(front)?;
+        let scale = Value::of_big(BigInt::from(10).pow(power.unsigned_abs()));
+        let how = if power >= 0 { Operation::Times } else { Operation::OverReal };
+        return arith::calculate(how, &base, &scale)?.ok();
+    }
+    let (sign, digits) = match text.strip_prefix('-') {
+        Some(rest) => (-1, rest),
+        None => (1, text.strip_prefix('+').unwrap_or(text)),
+    };
+    if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        return None;
+    }
+    let whole = match digits.split_once('.') {
+        None => return digits.parse::<BigInt>().ok().map(|n| Value::of_big(n * sign)),
+        Some((whole, fraction)) if fraction.chars().all(|c| c.is_ascii_digit()) => (whole, fraction),
+        Some(_) => return None,
+    };
+    let (before, after) = whole;
+    if after.is_empty() {
+        return before.parse::<BigInt>().ok().map(|n| Value::of_big(n * sign));
+    }
+    let scale = BigInt::from(10).pow(after.len() as u32);
+    let above: BigInt = if before.is_empty() { BigInt::from(0) } else { before.parse().ok()? };
+    let below: BigInt = after.parse().ok()?;
+    let places = (before.len() + after.len()).max(15);
+    Some(arith::shape_number((above * &scale + below) * sign, scale, Some(places)))
+}
+
+/// A value as sixty-four bits. Anything that is not a whole number is
+/// cut down to one first, the way a language that works on bits expects:
+/// what lies past the point is dropped towards nothing, so -1.5 stands
+/// for -1, and a flag or nothing stands for 1 or 0.
+fn bits_of(v: &Value) -> Res<i64> {
+    let whole = match v {
+        Value::Small(n) => return Ok(*n),
+        Value::Flag(yes) => return Ok(i64::from(*yes)),
+        Value::Null | Value::Blank | Value::Gap | Value::Fence => return Ok(0),
+        Value::Text(s) => match number_spelled(s) {
+            Some(n) => n,
+            None => return Ok(0),
+        },
+        other => other.clone(),
+    };
+    if let Value::Huge(n) = &whole {
+        return Ok(n.to_i64().unwrap_or(0));
+    }
+    match arith::Exact::from_value(&whole) {
+        // Dividing whole numbers cuts towards nothing, which is what
+        // dropping what lies past the point comes to.
+        Some(exact) => Ok((&exact.p / &exact.q).to_i64().unwrap_or(0)),
+        None => Err("Working on bits needs a whole number".to_string()),
+    }
+}
+
+/// A key as a language whose keys are plain takes one: text spelling a
+/// whole number is that number, so `a['7']` and `a[7]` name one place;
+/// a number with a point stands for the whole number towards nothing; a
+/// flag stands for 1 or 0, and nothing for text with nothing in it.
+/// Text that spells a number any other way stays as it was written.
+fn key_taken(v: Value) -> Value {
+    match &v {
+        Value::Text(s) => match whole_spelled(s) {
+            Some(n) => Value::Small(n),
+            None => v,
+        },
+        Value::Flag(yes) => Value::Small(i64::from(*yes)),
+        Value::Null | Value::Blank | Value::Gap => Value::text(""),
+        Value::Frac(_) | Value::Real(_) => match bits_of(&v) {
+            Ok(n) => Value::Small(n),
+            Err(_) => v,
+        },
+        _ => v,
+    }
+}
+
+/// The whole number a piece of text spells, where it spells one the way
+/// a whole number is written out: digits, a minus before them at most,
+/// no space around them and no nought leading.
+fn whole_spelled(s: &str) -> Option<i64> {
+    let (sign, digits) = match s.strip_prefix('-') {
+        Some(rest) => (-1i64, rest),
+        None => (1, s),
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    if digits.len() > 1 && digits.starts_with('0') {
+        return None;
+    }
+    if sign < 0 && digits == "0" {
+        return None;
+    }
+    digits.parse::<i64>().ok().map(|n| n * sign)
 }

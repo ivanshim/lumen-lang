@@ -114,6 +114,15 @@
       "&&"
     ],
     [
+      "|"
+    ],
+    [
+      "^"
+    ],
+    [
+      "&"
+    ],
+    [
       "==",
       "!=",
       "===",
@@ -130,6 +139,10 @@
       "."
     ],
     [
+      "<<",
+      ">>"
+    ],
+    [
       "+",
       "-"
     ],
@@ -139,7 +152,8 @@
       "%"
     ],
     [
-      "!"
+      "!",
+      "~"
     ],
     [
       "-"
@@ -172,12 +186,10 @@
     "**"
   ],
   "op.eq": [
-    "==",
-    "==="
+    "=="
   ],
   "op.ne": [
-    "!=",
-    "!=="
+    "!="
   ],
   "op.lt": [
     "<"
@@ -510,5 +522,44 @@
   "ext.builtin.unset": [
     "unset"
   ],
-  "ext.lexical.template": true
+  "ext.lexical.template": true,
+  "ext.op.otherwise": [
+    "??"
+  ],
+  "ext.op.bit.and": [
+    "&"
+  ],
+  "ext.op.bit.or": [
+    "|"
+  ],
+  "ext.op.bit.xor": [
+    "^"
+  ],
+  "ext.op.bit.not": [
+    "~"
+  ],
+  "ext.op.bit.left": [
+    "<<"
+  ],
+  "ext.op.bit.right": [
+    ">>"
+  ],
+  "ext.op.identical": [
+    "==="
+  ],
+  "ext.op.not_identical": [
+    "!=="
+  ],
+  "ext.system.kind.spelled": true,
+  "ext.builtin.args.all": [
+    "func_get_args"
+  ],
+  "ext.builtin.args.count": [
+    "func_num_args"
+  ],
+  "ext.builtin.args.at": [
+    "func_get_arg"
+  ],
+  "ext.op.assign.value": true,
+  "ext.op.index.plain_keys": true
 }

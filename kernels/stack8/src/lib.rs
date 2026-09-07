@@ -39,7 +39,7 @@ pub fn language_of(definition: &str) -> Result<String, String> {
 }
 
 /// Run `source` as the embedded language `language`.
-pub fn run(language: &str, source: &str, program_args: &[String], request: &[(String, String, String)]) -> Result<(), String> {
+pub fn run(language: &str, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     for text in BUILT_IN {
         if lang::identify(text)?.0 == language {
             let lang = Lang::parse(text).map_err(|e| format!("Error: definition of '{language}': {e}"))?;
@@ -50,16 +50,16 @@ pub fn run(language: &str, source: &str, program_args: &[String], request: &[(St
 }
 
 /// Run `source` under a definition given as JSON text.
-pub fn run_definition(definition: &str, source: &str, program_args: &[String], request: &[(String, String, String)]) -> Result<(), String> {
+pub fn run_definition(definition: &str, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     let lang = Lang::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
     go(&lang, source, program_args, request)
 }
 
-fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String)]) -> Result<(), String> {
+fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     go_inner(lang, source, program_args, request).map_err(|e| format!("{}: {}", lang.banner, e))
 }
 
-fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String)]) -> Result<(), String> {
+fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     let tokens = layout::layout(lex::lex(source, lang)?, lang)?;
     let mut registry = compile::Registry::default();
     // The system names are globals whether or not the program mentions them.
@@ -67,8 +67,10 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     for name in system.into_iter().flatten() {
         registry.slot(name);
     }
-    for (name, _) in &lang.sort_bindings {
-        registry.slot(name);
+    if !lang.kind_spelled {
+        for (name, _) in &lang.sort_bindings {
+            registry.slot(name);
+        }
     }
     for (_, name) in &lang.request_bindings {
         registry.slot(name);
@@ -88,17 +90,20 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
             other => vec![other],
         };
         let mut carried: Vec<(Value, Value)> = Vec::new();
-        for (_, key, value) in request.iter().filter(|(from, _, _)| wanted.contains(&from.as_str())) {
-            let key = Value::text(key);
-            match carried.iter_mut().find(|(k, _)| k.equals(&key)) {
-                Some(place) => place.1 = Value::text(value),
-                None => carried.push((key, Value::text(value))),
-            }
+        for (_, key, value, counted) in request.iter().filter(|(from, ..)| wanted.contains(&from.as_str())) {
+            let steps: Vec<&str> = key.split('\u{1f}').collect();
+            let held = match counted {
+                true => Value::Small(value.parse().unwrap_or(0)),
+                false => Value::text(value),
+            };
+            put_step(&mut carried, &steps, held);
         }
         machine.define(name, Value::Map(std::rc::Rc::new(carried)));
     }
-    for (name, kind) in &lang.sort_bindings {
-        machine.define(name, engine::sort_value(*kind));
+    if !lang.kind_spelled {
+        for (name, kind) in &lang.sort_bindings {
+            machine.define(name, engine::sort_value(*kind));
+        }
     }
     if let Some(name) = &lang.precision_binding {
         machine.define(name, engine::places_default());
@@ -115,4 +120,49 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
         }
     }
     Ok(())
+}
+
+/// Put a value where a name points: each step names a place in a map,
+/// and a step with no name is the next whole-number place. The maps
+/// along the way are made as they are needed.
+fn put_step(into: &mut Vec<(Value, Value)>, steps: &[&str], value: Value) {
+    let next = || {
+        let highest = into
+            .iter()
+            .filter_map(|(k, _)| match k {
+                Value::Small(n) => Some(n + 1),
+                _ => None,
+            })
+            .max();
+        Value::Small(highest.unwrap_or(0).max(0))
+    };
+    let key = match steps.first() {
+        // A step of digits names a whole-number place, not one named
+        // by that text, so `a[]` and `a[0]` name the same place.
+        Some(step) if step.chars().all(|c| c.is_ascii_digit()) && !step.is_empty() => {
+            Value::Small(step.parse().unwrap_or(0))
+        }
+        Some(step) if !step.is_empty() => Value::text(step),
+        _ => next(),
+    };
+    if steps.len() <= 1 {
+        match into.iter_mut().find(|(k, _)| k.equals(&key)) {
+            Some(place) => place.1 = value,
+            None => into.push((key, value)),
+        }
+        return;
+    }
+    let at = match into.iter().position(|(k, _)| k.equals(&key)) {
+        Some(at) => at,
+        None => {
+            into.push((key, Value::Map(std::rc::Rc::new(Vec::new()))));
+            into.len() - 1
+        }
+    };
+    let mut inside = match &into[at].1 {
+        Value::Map(pairs) => pairs.as_ref().clone(),
+        _ => Vec::new(),
+    };
+    put_step(&mut inside, &steps[1..], value);
+    into[at].1 = Value::Map(std::rc::Rc::new(inside));
 }

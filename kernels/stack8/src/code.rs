@@ -73,6 +73,21 @@ pub enum Action {
     Extent,
     /// Which of two values comes first: below, alike, or above.
     Rank,
+    /// Whether two values are the very same: of one kind, and alike
+    /// within it. 1 and 1.0 are equal but not the same.
+    Same,
+    Unsame,
+    /// The bits of two whole numbers taken together, and the bits of one
+    /// turned over. A number is read as sixty-four bits, sign and all.
+    BitBoth,
+    BitEither,
+    BitOne,
+    BitTurn,
+    /// The bits moved up or down that many places.
+    BitUp,
+    BitDown,
+    /// Whether the value above is nothing at all.
+    Nothing,
     /// Build the class this plan describes; what it stands on, if it
     /// stands on anything, is the value below.
     Forge(Rc<Plan>),
@@ -124,6 +139,12 @@ pub enum Builtin {
     Erase,
     /// Each argument with its kind, PHP's var_dump (ext.builtin.var_dump).
     Dump,
+    /// What the running call was given, however much of it the routine
+    /// named: all of it as an array, how much there was, or the one at a
+    /// position (ext.builtin.args.*).
+    Given,
+    GivenCount,
+    GivenAt,
     MakeReal,
     Places,
     ToText,
@@ -167,6 +188,8 @@ pub enum Instr {
     Skip(usize),
     /// Whether the call left the frame's slot without a value.
     Missing(usize),
+    /// Whether the global at this place has never been written.
+    Unwritten(usize),
     /// Make this binding a shared cell if it is not one already, and
     /// push that cell, so another name can be fastened to it.
     Bond(Cell),
@@ -208,6 +231,9 @@ pub struct Routine {
     /// A function leaves one value, its result; a postfix program leaves
     /// whatever it pushed.
     pub returns_value: bool,
+    /// The program's own body, which nothing called: what a call was
+    /// given cannot be read from within it.
+    pub body_of_all: bool,
     pub instrs: Vec<Instr>,
 }
 

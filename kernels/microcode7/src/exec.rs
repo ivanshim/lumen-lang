@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 use std::cell::RefCell;
+use num_bigint::BigInt;
 use std::rc::Rc;
 
 use num_traits::ToPrimitive;
@@ -21,6 +22,13 @@ use crate::math::{self, Calc};
 use crate::table::Table;
 use crate::form::{Input, Traps, Form, Prim, Routine, Address, Callee};
 use crate::data::{Blueprint, Thing, Env, Kind, Value, Names};
+
+/// The label under which a language spells each kind of value.
+pub const KIND_LABELS: [(&str, Kind); 7] = [
+    ("system.kind.integer", Kind::Whole), ("system.kind.rational", Kind::Fraction), ("system.kind.real", Kind::Decimal),
+    ("system.kind.string", Kind::Chars), ("system.kind.boolean", Kind::Truth), ("system.kind.array", Kind::Vector),
+    ("system.kind.null", Kind::Nothing),
+];
 
 pub enum Escape {
     Error(String),
@@ -54,6 +62,19 @@ pub struct Machine<'a> {
     memo: HashMap<String, Value>,
     args_cell: Option<usize>,
     memo_cell: Option<usize>,
+    /// Whether the language can read what a call was handed. Where it
+    /// can, a call may hand over more than a routine gives names to.
+    reads_handed: bool,
+    /// Whether every key of an array is a whole number or text, and
+    /// whether being equal is the looser question.
+    plain_keys: bool,
+    loose_equals: bool,
+    /// How many things have been made, so each carries its own turn.
+    made: usize,
+    /// What each call still running was handed, the innermost last, and
+    /// what the call about to start is to be handed.
+    handed: Vec<Vec<Value>>,
+    pending: Vec<Value>,
 }
 
 fn ascend(frame: &Rc<Env>, depth: usize) -> &Rc<Env> {
@@ -74,6 +95,16 @@ impl<'a> Machine<'a> {
             memo_cell: find("system.memoization"),
             idents,
             memo: HashMap::new(),
+            reads_handed: ["ext.builtin.args.all", "ext.builtin.args.count", "ext.builtin.args.at"]
+                .iter()
+                .any(|label| table.single(label).is_some()),
+            handed: Vec::new(),
+            pending: Vec::new(),
+            made: 0,
+            plain_keys: table.flag("ext.op.index.plain_keys"),
+            // A language with a word for being the very same means
+            // something looser by being equal.
+            loose_equals: table.single("ext.op.identical").is_some(),
         }
     }
 
@@ -414,6 +445,18 @@ impl<'a> Machine<'a> {
                     };
                     Err(if *op == Prim::Leave { Escape::Leave(levels) } else { Escape::Resume(levels) })
                 }
+                Prim::Otherwise => {
+                    // The second is worked out only when the first is nothing.
+                    let first = self.value_of(&args[0], frame)?;
+                    if !matches!(first, Value::Nil | Value::Unset) {
+                        return Ok(first);
+                    }
+                    // The second is read in place and run only here.
+                    match self.value_of(&args[1], frame)? {
+                        Value::Bound(p, env) => Ok(self.invoke(p, env, Vec::new())?),
+                        other => Ok(other),
+                    }
+                }
                 Prim::Hurl => {
                     let values = self.value_list(args, frame)?;
                     let raised = values.into_iter().next().ok_or_else(|| format!("{}() needs a value to raise", name))?;
@@ -427,7 +470,8 @@ impl<'a> Machine<'a> {
                     let Value::Blueprint(class) = values.remove(0) else {
                         return Err("Only a class can be made into a thing".to_string().into());
                     };
-                    let thing = Rc::new(Thing { of: class.clone(), holds: RefCell::new(class.every_field()) });
+                    self.made += 1;
+                    let thing = Rc::new(Thing { of: class.clone(), holds: RefCell::new(class.every_field()), turn: self.made });
                     let maker = self.table.single("ext.stmt.class.constructor").and_then(|m| class.program(m)).cloned();
                     match maker {
                         Some(maker) => {
@@ -487,7 +531,7 @@ impl<'a> Machine<'a> {
                     let (f, i) = self.locate(slot, frame)?;
                     let mut values = values;
                     let value = values.pop().unwrap();
-                    let key = values.pop();
+                    let key = values.pop().map(|k| self.as_key(&k));
                     // Through the shared cell when the name stands for one.
                     let shared = match &f.cells.borrow()[i] {
                         Value::Shared(cell) => Some(cell.clone()),
@@ -563,10 +607,25 @@ impl<'a> Machine<'a> {
     }
 
     fn env_for(&mut self, program: &Rc<Routine>, env: Rc<Env>, args: &[Form], caller: &Rc<Env>) -> Res<Rc<Env>> {
-        if args.len() > program.formals.len() || args.len() < program.least {
+        let most = if self.reads_handed { usize::MAX } else { program.formals.len() };
+        if args.len() > most || args.len() < program.least {
             self.value_list(args, caller)?;
             let wanted = program.formals.len();
             return Err(format!("Function {} expects {} arguments, got {}", program.ident, wanted, args.len()).into());
+        }
+        // Where what a call hands over can be read back, every argument
+        // is worked out, even one the routine gives no name to.
+        if self.reads_handed {
+            let all = self.value_list(args, caller)?;
+            let frame = if program.frameless { env } else { Env::make(program.idents.len(), Some(env)) };
+            if !program.frameless {
+                let mut cells = frame.cells.borrow_mut();
+                for (i, v) in program.formal_slots.iter().zip(all.iter()) {
+                    cells[*i] = v.clone();
+                }
+            }
+            self.pending = all;
+            return Ok(frame);
         }
         if program.frameless {
             return Ok(env);
@@ -580,9 +639,13 @@ impl<'a> Machine<'a> {
     }
 
     pub fn invoke(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
-        if args.len() > program.formals.len() || args.len() < program.least {
+        let most = if self.reads_handed { usize::MAX } else { program.formals.len() };
+        if args.len() > most || args.len() < program.least {
             let wanted = program.formals.len();
             return Err(format!("Function {} expects {} arguments, got {}", program.ident, wanted, args.len()).into());
+        }
+        if self.reads_handed {
+            self.pending = args.clone();
         }
         let frame = if program.frameless {
             env
@@ -612,9 +675,17 @@ impl<'a> Machine<'a> {
         if let Some(hit) = key.as_ref().and_then(|k| self.memo.get(k)) {
             return Ok(hit.clone());
         }
+        // What this call was handed is kept while it runs. A call in
+        // tail position takes the place of this one, so what it was
+        // handed takes the place of this call's too.
+        let watching = self.reads_handed;
+        if watching {
+            let mine = std::mem::take(&mut self.pending);
+            self.handed.push(mine);
+        }
         let (mut program, mut frame) = (program, frame);
         let mut caught: u8 = 0;
-        let result = loop {
+        let outcome: Res = loop {
             caught |= match program.traps {
                 Traps::Naught => 0,
                 Traps::Yields => 1,
@@ -628,24 +699,34 @@ impl<'a> Machine<'a> {
                         if let Some(i) = program.idents.iter().position(|n| *n == program.ident) {
                             let own = frame.cells.borrow()[i].clone();
                             if !matches!(own, Value::Unset | Value::Bound(..)) {
-                                break own;
+                                break Ok(own);
                             }
                         }
                     }
-                    break v;
+                    break Ok(v);
                 }
                 Ok(Next::Jump(p, f)) => {
                     program = p;
                     frame = f;
+                    if watching {
+                        let next = std::mem::take(&mut self.pending);
+                        if let Some(top) = self.handed.last_mut() {
+                            *top = next;
+                        }
+                    }
                 }
-                Err(Escape::Yield(v)) if caught & 1 != 0 => break v,
-                Err(Escape::Leave(1)) if caught & 2 != 0 => break Value::Nil,
-                Err(Escape::Resume(1)) if caught & 4 != 0 => break Value::Nil,
-                Err(Escape::Leave(n)) if caught & 2 != 0 => return Err(Escape::Leave(n - 1)),
-                Err(Escape::Resume(n)) if caught & 4 != 0 => return Err(Escape::Resume(n - 1)),
-                Err(e) => return Err(e),
+                Err(Escape::Yield(v)) if caught & 1 != 0 => break Ok(v),
+                Err(Escape::Leave(1)) if caught & 2 != 0 => break Ok(Value::Nil),
+                Err(Escape::Resume(1)) if caught & 4 != 0 => break Ok(Value::Nil),
+                Err(Escape::Leave(n)) if caught & 2 != 0 => break Err(Escape::Leave(n - 1)),
+                Err(Escape::Resume(n)) if caught & 4 != 0 => break Err(Escape::Resume(n - 1)),
+                Err(e) => break Err(e),
             }
         };
+        if watching {
+            self.handed.pop();
+        }
+        let result = outcome?;
         if let Some(k) = key {
             self.memo.insert(k, result.clone());
         }
@@ -660,8 +741,8 @@ impl<'a> Machine<'a> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
         };
         Ok(match op {
-            Prim::MakeArray => assembled(v.to_vec(), false),
-            Prim::MakeMap => assembled(v.to_vec(), true),
+            Prim::MakeArray => assembled(v.to_vec(), false, self.plain_keys),
+            Prim::MakeMap => assembled(v.to_vec(), true, self.plain_keys),
             Prim::Couple => {
                 n(2)?;
                 Value::Couple(Rc::new((v[0].clone(), v[1].clone())))
@@ -806,6 +887,29 @@ impl<'a> Machine<'a> {
                 }
             }
             Prim::Gather => return Err(format!("{}() is a literal, not a call", name)),
+            Prim::Handed | Prim::HowMany | Prim::HandedAt => {
+                let Some(handed) = self.handed.last() else {
+                    return Err(format!("{}() belongs inside a function", name));
+                };
+                match op {
+                    Prim::Handed => {
+                        n(0)?;
+                        Value::Vector(Rc::new(handed.clone()))
+                    }
+                    Prim::HowMany => {
+                        n(0)?;
+                        Value::Small(handed.len() as i64)
+                    }
+                    _ => {
+                        n(1)?;
+                        let at = as_index(&v[0])?;
+                        match handed.get(at) {
+                            Some(x) => x.clone(),
+                            None => return Err(format!("{}(): nothing was handed over at {}", name, at)),
+                        }
+                    }
+                }
+            }
             Prim::Rank => {
                 n(2)?;
                 // Numbers by their order, anything else by its text.
@@ -833,7 +937,8 @@ impl<'a> Machine<'a> {
                         Value::Dict(Rc::new(kept))
                     }
                     Value::Dict(entries) => {
-                        let kept: Vec<(Value, Value)> = entries.iter().filter(|(k, _)| !k.equals(&v[1])).cloned().collect();
+                        let at = self.as_key(&v[1]);
+                        let kept: Vec<(Value, Value)> = entries.iter().filter(|(k, _)| !k.equals(&at)).cloned().collect();
                         Value::Dict(Rc::new(kept))
                     }
                     other => return Err(format!("{}() cannot take a place out of {}", name, other.bare())),
@@ -845,15 +950,113 @@ impl<'a> Machine<'a> {
                 Value::Flag(true)
             }
             Prim::Invert => Value::Flag(!v[0].is_true()),
+            // Turning text over works letter by letter; anything else is
+            // read as a whole number of sixty-four bits first.
+            Prim::BitsOver => match &v[0] {
+                Value::Text(s) => Value::text(&letters_turned(s)),
+                other => Value::Small(!sixty_four(other)?),
+            },
+            // Two pieces of text meet letter by letter. The shorter one
+            // says how far it goes, save where either bit will do, and
+            // there the longer one carries on alone.
+            Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne
+                if matches!(v[0], Value::Text(_)) && matches!(v[1], Value::Text(_)) =>
+            {
+                let (left, right) = (v[0].bare(), v[1].bare());
+                let (left, right) = (left.as_bytes(), right.as_bytes());
+                let far = if op == Prim::BitsEither { left.len().max(right.len()) } else { left.len().min(right.len()) };
+                let mut letters: Vec<u8> = Vec::with_capacity(far);
+                for at in 0..far {
+                    let one = *left.get(at).unwrap_or(&0);
+                    let other = *right.get(at).unwrap_or(&0);
+                    letters.push(match op {
+                        Prim::BitsBoth => one & other,
+                        Prim::BitsEither => one | other,
+                        _ => one ^ other,
+                    });
+                }
+                Value::text(&String::from_utf8_lossy(&letters))
+            }
+            Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne => {
+                let (left, right) = (sixty_four(&v[0])?, sixty_four(&v[1])?);
+                Value::Small(match op {
+                    Prim::BitsBoth => left & right,
+                    Prim::BitsEither => left | right,
+                    _ => left ^ right,
+                })
+            }
+            Prim::BitsUp | Prim::BitsDown => {
+                let (bits, by) = (sixty_four(&v[0])?, sixty_four(&v[1])?);
+                if by < 0 {
+                    return Err("Bit shift by a negative number".to_string());
+                }
+                // Past sixty-four places nothing of the number is left,
+                // save the sign when the bits go down.
+                let far = by.min(64) as u32;
+                Value::Small(if op == Prim::BitsUp {
+                    bits.checked_shl(far).unwrap_or(0)
+                } else {
+                    bits.checked_shr(far).unwrap_or(if bits < 0 { -1 } else { 0 })
+                })
+            }
             Prim::Negate => match math::compute(Calc::Minus, &Value::Small(0), &v[0]) {
                 Some(r) => r?,
                 None => return Err("Cannot negate non-numeric value".to_string()),
             },
+            // Where a language has a word for being the very same,
+            // being equal is the looser question: text spelling a
+            // number stands for that number, a flag turns the question
+            // into whether the other side is true, and nothing counts
+            // as untrue and as text with nothing in it.
+            Prim::Eq | Prim::Ne if self.loose_equals => {
+                n(2)?;
+                let counts = |x: &Value| matches!(x.kind(), Some(Kind::Whole | Kind::Fraction | Kind::Decimal));
+                let empty = |x: &Value| matches!(x, Value::Nil | Value::Unset);
+                let (left, right) = (&v[0], &v[1]);
+                let alike = match (left, right) {
+                    (Value::Flag(_), _) | (_, Value::Flag(_)) => left.is_true() == right.is_true(),
+                    (one, other) | (other, one) if empty(one) && counts(other) => !other.is_true(),
+                    (one, Value::Text(s)) | (Value::Text(s), one) if empty(one) => s.is_empty(),
+                    (one, Value::Vector(items)) | (Value::Vector(items), one) if empty(one) => items.is_empty(),
+                    (one, Value::Dict(pairs)) | (Value::Dict(pairs), one) if empty(one) => pairs.is_empty(),
+                    (Value::Text(_), Value::Text(_)) => match (number_spelled_in(left), number_spelled_in(right)) {
+                        (Some(x), Some(y)) => x.equals(&y),
+                        _ => left.equals(right),
+                    },
+                    (Value::Text(s), other) | (other, Value::Text(s)) if counts(other) => match number_spelled_in(left).or_else(|| number_spelled_in(right)) {
+                        Some(x) => x.equals(other),
+                        None => **s == other.bare(),
+                    },
+                    _ => left.equals(right),
+                };
+                Value::Flag((op == Prim::Eq) == alike)
+            }
             Prim::Eq => Value::Flag(v[0].equals(&v[1])),
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
+            Prim::Selfsame => Value::Flag(v[0].selfsame(&v[1])),
+            Prim::Unlike => Value::Flag(!v[0].selfsame(&v[1])),
             Prim::Join => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),
             Prim::At => self.element(&v[0], &v[1])?,
-            Prim::Plus if matches!(v[0], Value::Text(_)) || matches!(v[1], Value::Text(_)) => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),
+            // Adding text joins it only where the language has no
+            // operator of its own for joining; where it has one, adding
+            // is arithmetic.
+            Prim::Plus
+                if !self.table.has_any("op.concat") && (matches!(v[0], Value::Text(_)) || matches!(v[1], Value::Text(_))) =>
+            {
+                Value::text(&format!("{}{}", v[0].render(w), v[1].render(w)))
+            }
+            // Text that spells a number is worked with as that number,
+            // fractions included, so long as one side spells one.
+            Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power
+            | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge
+                if number_spelled_in(&v[0]).is_some() || number_spelled_in(&v[1]).is_some() =>
+            {
+                let pair = [
+                    number_spelled_in(&v[0]).unwrap_or_else(|| v[0].clone()),
+                    number_spelled_in(&v[1]).unwrap_or_else(|| v[1].clone()),
+                ];
+                return self.prim(op, name, &pair);
+            }
             Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power => {
                 let sum = match op {
                     Prim::Plus => Calc::Plus,
@@ -1009,9 +1212,19 @@ impl<'a> Machine<'a> {
             }
             Prim::SortOf => {
                 n(1)?;
-                match v[0].kind() {
-                    Some(s) => Value::KindOf(s),
-                    None => return Err(format!("{}(): unknown value type", name)),
+                let Some(sort) = v[0].kind() else {
+                    return Err(format!("{}(): unknown value type", name));
+                };
+                // Where a language says a kind in words, the word it
+                // gives that kind is the answer, not a value standing
+                // for the kind itself.
+                if !self.table.flag("ext.system.kind.spelled") {
+                    Value::KindOf(sort)
+                } else {
+                    match KIND_LABELS.iter().find(|(_, k)| *k == sort).and_then(|(label, _)| self.table.single(label)) {
+                        Some(word) => Value::text(word),
+                        None => return Err(format!("{}(): the language has no word for that kind", name)),
+                    }
                 }
             }
             Prim::Numer => {
@@ -1054,8 +1267,16 @@ impl<'a> Machine<'a> {
                 x.clone()
             }
             Prim::Seq | Prim::Choose | Prim::Both | Prim::Either | Prim::Yield | Prim::Leave | Prim::Resume | Prim::Append | Prim::Replace
-            | Prim::Spawn | Prim::Ask | Prim::Bid | Prim::Hurl => unreachable!("handled in eval"),
+            | Prim::Spawn | Prim::Ask | Prim::Bid | Prim::Hurl | Prim::Otherwise => unreachable!("handled in eval"),
         })
+    }
+
+    /// A key as this language takes one.
+    fn as_key(&self, at: &Value) -> Value {
+        match self.plain_keys {
+            true => key_as_taken(at.clone()),
+            false => at.clone(),
+        }
     }
 
     fn element(&self, target: &Value, at: &Value) -> Result<Value, String> {
@@ -1063,6 +1284,7 @@ impl<'a> Machine<'a> {
         // nothing rather than stopping the program.
         let missing = |told: String| if self.table.flag("ext.op.index.absent") { Ok(Value::Nil) } else { Err(told) };
         if let Value::Dict(entries) = target {
+            let at = &self.as_key(at);
             let found = entries.iter().find(|(k, _)| k.equals(at));
             return match found {
                 Some((_, v)) => Ok(v.clone()),
@@ -1148,6 +1370,14 @@ fn with_kind(v: &Value, level: usize) -> String {
                 .collect();
             format!("array({}) {{\n{}{lead}}}", entries.len(), shown.concat())
         }
+        Value::Thing(thing) => {
+            let held = thing.holds.borrow();
+            let shown: Vec<String> = held
+                .iter()
+                .map(|(member, x)| format!("{lead}  [\"{member}\"]=>\n{lead}  {}\n", with_kind(x, level + 1)))
+                .collect();
+            format!("object({})#{} ({}) {{\n{}{lead}}}", thing.of.name, thing.turn, held.len(), shown.concat())
+        }
         _ => "NULL".to_string(),
     }
 }
@@ -1155,14 +1385,17 @@ fn with_kind(v: &Value, level: usize) -> String {
 /// The values of a literal: a map when one of them is a couple or the
 /// literal asks for one, else a list. A value with no key of its own
 /// takes the next whole number.
-fn assembled(values: Vec<Value>, map_wanted: bool) -> Value {
+fn assembled(values: Vec<Value>, map_wanted: bool, plain_keys: bool) -> Value {
     if !map_wanted && !values.iter().any(|x| matches!(x, Value::Couple(_))) {
         return Value::Vector(Rc::new(values));
     }
     let mut entries: Vec<(Value, Value)> = Vec::with_capacity(values.len());
     for value in values {
         match value {
-            Value::Couple(e) => set_key(&mut entries, e.0.clone(), e.1.clone()),
+            Value::Couple(e) => {
+                let key = if plain_keys { key_as_taken(e.0.clone()) } else { e.0.clone() };
+                set_key(&mut entries, key, e.1.clone())
+            }
             other => {
                 let key = Value::Small(after_keys(&entries));
                 entries.push((key, other));
@@ -1197,13 +1430,18 @@ fn set_key(entries: &mut Vec<(Value, Value)>, key: Value, value: Value) {
 /// own, an array as the word `Array` with its places in brackets, every
 /// array within set eight spaces further along and followed by a gap.
 fn over_lines(v: &Value, along: usize) -> String {
-    let places: Vec<(String, &Value)> = match v {
-        Value::Vector(items) => items.iter().enumerate().map(|(at, x)| (at.to_string(), x)).collect(),
-        Value::Dict(entries) => entries.iter().map(|(k, x)| (k.bare(), x)).collect(),
+    let held;
+    let (called, places): (String, Vec<(String, &Value)>) = match v {
+        Value::Vector(items) => ("Array".to_string(), items.iter().enumerate().map(|(at, x)| (at.to_string(), x)).collect()),
+        Value::Dict(entries) => ("Array".to_string(), entries.iter().map(|(k, x)| (k.bare(), x)).collect()),
+        Value::Thing(thing) => {
+            held = thing.holds.borrow();
+            (format!("{} Object", thing.of.name), held.iter().map(|(k, x)| (k.clone(), x)).collect())
+        }
         other => return other.bare(),
     };
     let lead = " ".repeat(along);
-    let mut out = format!("Array\n{lead}(\n");
+    let mut out = format!("{called}\n{lead}(\n");
     for (key, item) in places {
         // An array within ends its own line, so this newline is the gap
         // that follows it; after a scalar it is the end of the line.
@@ -1270,4 +1508,109 @@ fn shared_item(held: &mut Value, at: &Value) -> Result<Rc<RefCell<Value>>, Strin
     let cell = Rc::new(RefCell::new(std::mem::replace(place, Value::Nil)));
     *place = Value::Shared(cell.clone());
     Ok(cell)
+}
+
+/// The number a piece of text spells, whole or fractional, with room for
+/// a sign and for space around it; anything that is not such text spells
+/// no number at all.
+fn number_spelled_in(v: &Value) -> Option<Value> {
+    let Value::Text(s) = v else { return None };
+    let text = s.trim();
+    // A number may carry a power of ten after it: 1e2, 1.5E-3.
+    if let Some(at) = text.find(['e', 'E']) {
+        let (front, back) = text.split_at(at);
+        let power: i32 = back[1..].parse().ok()?;
+        let base = number_spelled_in(&Value::text(front))?;
+        let scale = Value::from_big(BigInt::from(10).pow(power.unsigned_abs()));
+        let how = if power >= 0 { Calc::Times } else { Calc::OverReal };
+        return math::compute(how, &base, &scale)?.ok();
+    }
+    let (sign, digits) = match text.strip_prefix('-') {
+        Some(rest) => (-1, rest),
+        None => (1, text.strip_prefix('+').unwrap_or(text)),
+    };
+    if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        return None;
+    }
+    let Some((before, after)) = digits.split_once('.') else {
+        return digits.parse::<BigInt>().ok().map(|n| Value::from_big(n * sign));
+    };
+    if after.is_empty() {
+        return before.parse::<BigInt>().ok().map(|n| Value::from_big(n * sign));
+    }
+    let scale = BigInt::from(10).pow(after.len() as u32);
+    let above: BigInt = if before.is_empty() { BigInt::from(0) } else { before.parse().ok()? };
+    let below: BigInt = after.parse().ok()?;
+    let digits_told = (before.len() + after.len()).max(15);
+    Some(math::make_number((above * &scale + below) * sign, scale, Some(digits_told)))
+}
+
+/// Every letter of a piece of text with its bits turned over.
+fn letters_turned(s: &str) -> String {
+    let letters: Vec<u8> = s.as_bytes().iter().map(|c| !c).collect();
+    String::from_utf8_lossy(&letters).into_owned()
+}
+
+/// A value as a whole number of sixty-four bits. Text spelling a number
+/// stands for it and text spelling none stands for nothing; what lies
+/// past the point is dropped towards nothing, so -1.5 stands for -1.
+fn sixty_four(v: &Value) -> Result<i64, String> {
+    let number = match v {
+        Value::Small(n) => return Ok(*n),
+        Value::Flag(yes) => return Ok(i64::from(*yes)),
+        Value::Nil | Value::Unset => return Ok(0),
+        Value::Huge(n) => return Ok(n.to_i64().unwrap_or(0)),
+        Value::Text(_) => match number_spelled_in(v) {
+            Some(n) => n,
+            None => return Ok(0),
+        },
+        other => other.clone(),
+    };
+    match math::ratio_of(&number) {
+        // Dividing whole numbers cuts towards nothing, which is what
+        // dropping what lies past the point comes to.
+        Some(r) => Ok((&r.above / &r.beneath).to_i64().unwrap_or(0)),
+        None => Err("Working on bits needs a whole number".to_string()),
+    }
+}
+
+/// A key as a language whose keys are plain takes one: text spelling a
+/// whole number is that number, so `a['7']` and `a[7]` name one place;
+/// a number with a point stands for the whole number towards nothing; a
+/// flag stands for 1 or 0, and nothing for text with nothing in it.
+/// Text spelling a number any other way stays as it was written.
+fn key_as_taken(v: Value) -> Value {
+    match &v {
+        Value::Text(s) => match whole_number_spelled(s) {
+            Some(n) => Value::Small(n),
+            None => v,
+        },
+        Value::Flag(yes) => Value::Small(i64::from(*yes)),
+        Value::Nil | Value::Unset => Value::text(""),
+        Value::Frac(_) => match sixty_four(&v) {
+            Ok(n) => Value::Small(n),
+            Err(_) => v,
+        },
+        _ => v,
+    }
+}
+
+/// The whole number a piece of text spells, where it spells one the way
+/// a whole number is written out: digits, a minus before them at most,
+/// no space around them and no nought leading.
+fn whole_number_spelled(s: &str) -> Option<i64> {
+    let (sign, digits) = match s.strip_prefix('-') {
+        Some(rest) => (-1i64, rest),
+        None => (1, s),
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    if digits.len() > 1 && digits.starts_with('0') {
+        return None;
+    }
+    if sign < 0 && digits == "0" {
+        return None;
+    }
+    digits.parse::<i64>().ok().map(|n| n * sign)
 }

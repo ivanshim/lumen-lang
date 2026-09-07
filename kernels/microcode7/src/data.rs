@@ -172,6 +172,40 @@ impl Value {
         }
     }
 
+    /// One and the same, which asks more than being equal: the two must
+    /// also be of one kind, so a whole number and a decimal standing for
+    /// the same amount are equal and yet not the same. Values that hold
+    /// others are the same when they hold the same keys in the same
+    /// order, each holding what is itself the same.
+    pub fn selfsame(&self, other: &Value) -> bool {
+        if let Value::Shared(cell) = self {
+            let held = cell.borrow().clone();
+            return held.selfsame(other);
+        }
+        if let Value::Shared(cell) = other {
+            let held = cell.borrow().clone();
+            return self.selfsame(&held);
+        }
+        let alike = |one: &[(Value, Value)], two: &[(Value, Value)]| {
+            one.len() == two.len() && one.iter().zip(two.iter()).all(|((j, x), (k, y))| j.selfsame(k) && x.selfsame(y))
+        };
+        let numbered = |items: &[Value]| -> Vec<(Value, Value)> {
+            items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect()
+        };
+        match (self, other) {
+            (Value::Vector(a), Value::Vector(b)) => alike(&numbered(a), &numbered(b)),
+            (Value::Dict(a), Value::Dict(b)) => alike(a, b),
+            // Written with keys or written without, an array is an
+            // array; the keys themselves then say whether it matches.
+            (Value::Vector(a), Value::Dict(b)) => alike(&numbered(a), b),
+            (Value::Dict(a), Value::Vector(b)) => alike(a, &numbered(b)),
+            _ => match (self.kind(), other.kind()) {
+                (Some(here), Some(there)) => here == there && self.equals(other),
+                _ => self.equals(other),
+            },
+        }
+    }
+
     pub fn render(&self, w: Names) -> String {
         match self {
             Value::Flag(true) => w.truth.to_string(),
@@ -331,4 +365,7 @@ impl Blueprint {
 pub struct Thing {
     pub of: Rc<Blueprint>,
     pub holds: RefCell<Vec<(String, Value)>>,
+    /// Which thing this is by the turn it was made in, counting from
+    /// one, for a language that names them when showing them.
+    pub turn: usize,
 }

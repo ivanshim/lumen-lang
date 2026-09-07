@@ -17,57 +17,57 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 13, differs 48, error 53, skipped 0 | pass 13, differs 48, error 53, skipped 0 |
-| `php/func` | 14 | pass 2, differs 2, error 10, skipped 0 | pass 2, differs 2, error 10, skipped 0 |
-| `php/lang` | 213 | pass 33, differs 24, error 154, skipped 2 | pass 33, differs 24, error 154, skipped 2 |
+| `php/basic` | 114 | pass 31, differs 38, error 45, skipped 0 | pass 31, differs 38, error 45, skipped 0 |
+| `php/func` | 14 | pass 5, differs 3, error 6, skipped 0 | pass 5, differs 3, error 6, skipped 0 |
+| `php/lang` | 213 | pass 48, differs 35, error 128, skipped 2 | pass 48, differs 35, error 128, skipped 2 |
 | `php/lang/constants` | 2 | pass 1, differs 1, error 0, skipped 0 | pass 1, differs 1, error 0, skipped 0 |
 | `php/lang/integer_literals` | 6 | pass 0, differs 0, error 6, skipped 0 | pass 0, differs 0, error 6, skipped 0 |
-| `php/lang/operators` | 64 | pass 0, differs 22, error 42, skipped 0 | pass 0, differs 22, error 42, skipped 0 |
-| `php/lang/string` | 9 | pass 1, differs 7, error 1, skipped 0 | pass 1, differs 7, error 1, skipped 0 |
-| all | 422 | pass 50, differs 104, error 266, skipped 2 | pass 50, differs 104, error 266, skipped 2 |
+| `php/lang/operators` | 64 | pass 13, differs 24, error 27, skipped 0 | pass 13, differs 24, error 27, skipped 0 |
+| `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
+| all | 422 | pass 99, differs 109, error 212, skipped 2 | pass 99, differs 109, error 212, skipped 2 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 104 |
-| } | 8 |
-| Unexpected token: & | 8 |
-| Undefined variable: set_time_limit | 8 |
-| Cannot coerce '<number>' to number | 8 |
+| ran, printed something else | 109 |
+| } | 12 |
 | Undefined variable: eval | 7 |
+| Undefined variable: include | 7 |
 | Unexpected character '$' | 6 |
-| Expected '{' to open the class, got ' | 6 |
-| Unexpected token: = | 6 |
-| static belongs inside a function | 5 |
-| Undefined variable: include | 5 |
-| Expected identifier as the property name, got '{' | 5 |
-| Unexpected token: > | 5 |
-| Undefined variable: ob_start | 4 |
+| Unexpected token: & | 5 |
+| Undefined variable: __DIR__ | 4 |
 | Unexpected token: , | 4 |
-| string(10) "..." | 4 |
 | ---( Array with 1 element(s): )--- | 4 |
-| Unexpected token: < | 4 |
-| Unexpected token: \| | 3 |
+| --- testing: 'abc' --- | 4 |
 | Cannot reassign $argv (system-provided immutable value) | 3 |
 | Unexpected character '@' | 3 |
-| Undefined variable: getenv | 3 |
-| Undefined variable: __DIR__ | 3 |
 | Test | 3 |
-| Undefined variable: var_export | 3 |
+| Undefined variable: fopen | 3 |
 | Unexpected token: : | 3 |
-| Expected ')' to close a group, got '=' | 3 |
 | Unexpected token: ) | 3 |
 | Undefined variable: require_once | 3 |
+| Undefined variable: StdClass | 3 |
 | Only a name or a place in an array can be forgotten | 3 |
-| Undefined variable: func_get_arg | 3 |
-| --- testing: '<number>' --- | 3 |
 | Unexpected token: -> | 3 |
 | Unexpected token: . | 2 |
 | Expected an expression | 2 |
-| Undefined variable: LC_ALL | 2 |
 | Unexpected token: { | 2 |
 | Undefined variable: ini_parse_quantity | 2 |
-| Undefined variable: sys_get_temp_dir | 2 |
+| timeout | 2 |
 | Expected ')' after the foreach names, got '[' | 2 |
+| Unexpected token: } | 2 |
+| Undefined variable: current | 2 |
+| no --FILE-- section | 2 |
+| i1 | 2 |
+| Expected ']' after array index, got '++' | 2 |
+| Unexpected token: ++ | 2 |
+| int(28) | 2 |
+| --- testing: '<number>' << '-44' --- | 2 |
+| Cannot coerce '' to number | 2 |
+| Cannot coerce 'true' to number | 2 |
+| Unexpected token: > | 2 |
+| Unexpected token: :: | 2 |
+| Undefined variable: $argc | 1 |
+| Undefined variable: $HTTP_RAW_POST_DATA | 1 |
 
 ### Reserved words: 41 of 68 spelled
 
@@ -111,7 +111,7 @@ Not spelled: `callable`, `clone`, `declare`, `do`, `empty`, `enddeclare`, `endfo
 | `rewind` | 9 | no |
 | `set_error_handler` | 9 | no |
 | `bar` | 9 | no |
-| `func_get_args` | 9 | no |
+| `func_get_args` | 9 | yes |
 | `array_push` | 9 | yes |
 | `getIterator` | 9 | no |
 | `returnConstantByValue` | 9 | no |
@@ -204,51 +204,51 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/007.phpt` | pass | pass |  |
 | `php/basic/008.phpt` | pass | pass |  |
 | `php/basic/009.phpt` | pass | pass |  |
-| `php/basic/010.phpt` | error | error | Unexpected token: \| |
+| `php/basic/010.phpt` | pass | pass |  |
 | `php/basic/011.phpt` | error | error | Cannot reassign $argv (system-provided immutable value) |
 | `php/basic/011_empty_query.phpt` | differs | differs | ran, printed something else |
 | `php/basic/011_register_argc_argv_disabled.phpt` | differs | differs | ran, printed something else |
 | `php/basic/011_windows.phpt` | error | error | Cannot reassign $argv (system-provided immutable value) |
 | `php/basic/012.phpt` | error | error | Cannot reassign $argv (system-provided immutable value) |
 | `php/basic/012_register_argc_argv_disabled.phpt` | error | error | Undefined variable: $argc |
-| `php/basic/013.phpt` | differs | differs | ran, printed something else |
-| `php/basic/014.phpt` | differs | differs | ran, printed something else |
-| `php/basic/015.phpt` | differs | differs | ran, printed something else |
-| `php/basic/016.phpt` | differs | differs | ran, printed something else |
-| `php/basic/017.phpt` | differs | differs | ran, printed something else |
-| `php/basic/018.phpt` | differs | differs | ran, printed something else |
-| `php/basic/019.phpt` | differs | differs | ran, printed something else |
-| `php/basic/020.phpt` | differs | differs | ran, printed something else |
-| `php/basic/021.phpt` | differs | differs | ran, printed something else |
+| `php/basic/013.phpt` | pass | pass |  |
+| `php/basic/014.phpt` | pass | pass |  |
+| `php/basic/015.phpt` | pass | pass |  |
+| `php/basic/016.phpt` | pass | pass |  |
+| `php/basic/017.phpt` | pass | pass |  |
+| `php/basic/018.phpt` | pass | pass |  |
+| `php/basic/019.phpt` | pass | pass |  |
+| `php/basic/020.phpt` | pass | pass |  |
+| `php/basic/021.phpt` | pass | pass |  |
 | `php/basic/022.phpt` | differs | differs | ran, printed something else |
-| `php/basic/023.phpt` | differs | differs | ran, printed something else |
+| `php/basic/023.phpt` | pass | pass |  |
 | `php/basic/025.phpt` | error | error | Undefined variable: $HTTP_RAW_POST_DATA |
-| `php/basic/028.phpt` | differs | differs | ran, printed something else |
+| `php/basic/028.phpt` | pass | pass |  |
 | `php/basic/029.phpt` | differs | differs | ran, printed something else |
-| `php/basic/030.phpt` | differs | differs | ran, printed something else |
-| `php/basic/031.phpt` | differs | differs | ran, printed something else |
+| `php/basic/030.phpt` | pass | pass |  |
+| `php/basic/031.phpt` | pass | pass |  |
 | `php/basic/032.phpt` | differs | differs | ran, printed something else |
 | `php/basic/GHSA-9pqp-7h25-4f32.phpt` | error | error | Unexpected token: . |
 | `php/basic/array_key_exists_null_deprecation.phpt` | differs | differs | ran, printed something else |
-| `php/basic/array_null_offset_deprecation.phpt` | error | error | baz |
+| `php/basic/array_null_offset_deprecation.phpt` | error | error | new_value |
 | `php/basic/bug20539.phpt` | error | error | Unexpected character '@' |
 | `php/basic/bug29971.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug31875.phpt` | error | error | Undefined variable: get_defined_functions |
 | `php/basic/bug45986.phpt` | error | error | Undefined variable: rename |
 | `php/basic/bug53180.phpt` | pass | pass |  |
-| `php/basic/bug54514.phpt` | error | error | Undefined variable: getenv |
+| `php/basic/bug54514.phpt` | error | error | Undefined variable: PHP_BINARY |
 | `php/basic/bug55500.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug61000.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug67198.phpt` | error | error | Expected an expression |
 | `php/basic/bug67988.phpt` | error | error | bool(false) |
-| `php/basic/bug71273.phpt` | error | error | Undefined variable: getenv |
-| `php/basic/bug73969.phpt` | error | error | static belongs inside a function |
+| `php/basic/bug71273.phpt` | error | error | Undefined variable: shell_exec |
+| `php/basic/bug73969.phpt` | error | error | Expected identifier as the property name, got '{' |
 | `php/basic/bug78236.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug78929.phpt` | differs | differs | ran, printed something else |
-| `php/basic/bug79699.phpt` | differs | differs | ran, printed something else |
+| `php/basic/bug79699.phpt` | pass | pass |  |
 | `php/basic/bug80384.phpt` | error | error | Undefined variable: __DIR__ |
 | `php/basic/build_date.phpt` | error | error | Undefined variable: PHP_BUILD_DATE |
-| `php/basic/consistent_float_string_casts.phpt` | error | error | Undefined variable: LC_ALL |
+| `php/basic/consistent_float_string_casts.phpt` | error | error | Undefined variable: string |
 | `php/basic/enable_post_data_reading_01.phpt` | error | error | } |
 | `php/basic/enable_post_data_reading_02.phpt` | error | error | } |
 | `php/basic/enable_post_data_reading_03.phpt` | error | error | } |
@@ -257,7 +257,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/enable_post_data_reading_06.phpt` | error | error | Test |
 | `php/basic/enable_post_data_reading_07.phpt` | error | error | Test |
 | `php/basic/encoding.phpt` | differs | differs | ran, printed something else |
-| `php/basic/errorlog_permission.phpt` | error | error | Unexpected token: & |
+| `php/basic/errorlog_permission.phpt` | error | error | Undefined variable: umask |
 | `php/basic/gh15905.phpt` | pass | pass |  |
 | `php/basic/gh16998.phpt` | error | error | Unexpected token: . |
 | `php/basic/gh17951_ini_parse_1.phpt` | differs | differs | ran, printed something else |
@@ -271,9 +271,9 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/gh17951_runtime_change_4.phpt` | differs | differs | ran, printed something else |
 | `php/basic/gh17951_runtime_change_5.phpt` | pass | pass |  |
 | `php/basic/gh17951_runtime_change_6.phpt` | differs | differs | ran, printed something else |
-| `php/basic/gh20858.phpt` | error | error | Undefined variable: phpversion |
+| `php/basic/gh20858.phpt` | differs | differs | ran, printed something else |
 | `php/basic/gh20964.phpt` | error | error | Undefined variable: fopen |
-| `php/basic/gh7896.phpt` | error | error | Undefined variable: getenv |
+| `php/basic/gh7896.phpt` | differs | differs | ran, printed something else |
 | `php/basic/header_register_callback.phpt` | error | error | Unexpected token: { |
 | `php/basic/header_register_callback_after_output.phpt` | error | error | Unexpected token: { |
 | `php/basic/header_register_callback_trampoline.phpt` | error | error | Undefined variable: header_register_callback |
@@ -282,18 +282,18 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/ini_parse_quantity_basic.phpt` | error | error | Undefined variable: ini_parse_quantity |
 | `php/basic/ini_parse_quantity_warnings.phpt` | error | error | Undefined variable: ini_parse_quantity |
 | `php/basic/precision.phpt` | error | error | OUTPUTS |
-| `php/basic/req44164.phpt` | error | error | Undefined variable: header |
-| `php/basic/req60524-win.phpt` | error | error | Undefined variable: sys_get_temp_dir |
-| `php/basic/req60524.phpt` | error | error | Undefined variable: sys_get_temp_dir |
-| `php/basic/rfc1867_anonymous_upload.phpt` | differs | differs | ran, printed something else |
-| `php/basic/rfc1867_array_upload.phpt` | differs | differs | ran, printed something else |
-| `php/basic/rfc1867_boundary_1.phpt` | differs | differs | ran, printed something else |
+| `php/basic/req44164.phpt` | pass | pass |  |
+| `php/basic/req60524-win.phpt` | differs | differs | ran, printed something else |
+| `php/basic/req60524.phpt` | differs | differs | ran, printed something else |
+| `php/basic/rfc1867_anonymous_upload.phpt` | pass | pass |  |
+| `php/basic/rfc1867_array_upload.phpt` | pass | pass |  |
+| `php/basic/rfc1867_boundary_1.phpt` | pass | pass |  |
 | `php/basic/rfc1867_boundary_2.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_empty_upload.phpt` | error | error | } |
 | `php/basic/rfc1867_file_upload_disabled.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_garbled_mime_headers.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_invalid_boundary.phpt` | differs | differs | ran, printed something else |
-| `php/basic/rfc1867_malicious_input.phpt` | pass | pass |  |
+| `php/basic/rfc1867_malicious_input.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_max_file_size.phpt` | error | error | } |
 | `php/basic/rfc1867_max_file_uploads_empty_files.phpt` | error | error | } |
 | `php/basic/rfc1867_missing_boundary.phpt` | differs | differs | ran, printed something else |
@@ -301,25 +301,25 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/rfc1867_multiple_webkitdirectory.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_post_max_filesize.phpt` | error | error | } |
 | `php/basic/rfc1867_post_max_size.phpt` | differs | differs | ran, printed something else |
-| `php/basic/timeout_variation_0.phpt` | error | error | Undefined variable: set_time_limit |
-| `php/basic/timeout_variation_1.phpt` | error | error | Undefined variable: set_time_limit |
-| `php/basic/timeout_variation_10.phpt` | error | error | Undefined variable: set_time_limit |
-| `php/basic/timeout_variation_2.phpt` | error | error | Undefined variable: set_time_limit |
-| `php/basic/timeout_variation_4.phpt` | error | error | Undefined variable: set_time_limit |
-| `php/basic/timeout_variation_7.phpt` | error | error | Undefined variable: set_time_limit |
-| `php/basic/timeout_variation_8.phpt` | error | error | Undefined variable: set_time_limit |
-| `php/basic/timeout_variation_9.phpt` | error | error | Undefined variable: set_time_limit |
+| `php/basic/timeout_variation_0.phpt` | error | error | timeout |
+| `php/basic/timeout_variation_1.phpt` | differs | differs | ran, printed something else |
+| `php/basic/timeout_variation_10.phpt` | differs | differs | ran, printed something else |
+| `php/basic/timeout_variation_2.phpt` | error | error | Undefined variable: array_map |
+| `php/basic/timeout_variation_4.phpt` | error | error | Undefined variable: call_user_func |
+| `php/basic/timeout_variation_7.phpt` | error | error | Undefined variable: INF |
+| `php/basic/timeout_variation_8.phpt` | error | error | Undefined variable: InfiniteIterator |
+| `php/basic/timeout_variation_9.phpt` | error | error | exit() argument must be a string |
 | `php/func/001.phpt` | pass | pass |  |
 | `php/func/002.phpt` | error | error | hey=2, -2 |
-| `php/func/003.phpt` | error | error | hey |
+| `php/func/003.phpt` | pass | pass |  |
 | `php/func/004.phpt` | pass | pass |  |
-| `php/func/005.phpt` | error | error | Undefined variable: register_shutdown_function |
-| `php/func/005a.phpt` | error | error | Start |
-| `php/func/006.phpt` | error | error | Undefined variable: ob_start |
+| `php/func/005.phpt` | differs | differs | ran, printed something else |
+| `php/func/005a.phpt` | error | error | timeout |
+| `php/func/006.phpt` | error | error | 0A0B |
 | `php/func/007.phpt` | error | error | false |
-| `php/func/008.phpt` | error | error | Undefined variable: var_export |
-| `php/func/009.phpt` | error | error | Undefined variable: var_export |
-| `php/func/010.phpt` | error | error | Undefined variable: dechex |
+| `php/func/008.phpt` | pass | pass |  |
+| `php/func/009.phpt` | pass | pass |  |
+| `php/func/010.phpt` | error | error | Undefined variable: __DIR__ |
 | `php/func/011.phpt` | differs | differs | ran, printed something else |
 | `php/func/bug64523.phpt` | differs | differs | ran, printed something else |
 | `php/func/ini_alter.phpt` | error | error | Undefined variable: ini_alter |
@@ -345,7 +345,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/020.phpt` | pass | pass |  |
 | `php/lang/021.phpt` | pass | pass |  |
 | `php/lang/022.phpt` | pass | pass |  |
-| `php/lang/023.phpt` | error | error | Expected ')' to close a group, got '=' |
+| `php/lang/023.phpt` | error | error | PHP Regression Test |
 | `php/lang/024.phpt` | error | error | Unexpected character '$' |
 | `php/lang/025.phpt` | pass | pass |  |
 | `php/lang/026.phpt` | pass | pass |  |
@@ -355,11 +355,11 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/032.phpt` | pass | pass |  |
 | `php/lang/033.phpt` | error | error | Unexpected token: : |
 | `php/lang/034.phpt` | error | error | Unexpected token: , |
-| `php/lang/035.phpt` | error | error | Expected identifier as the property name, got '{' |
-| `php/lang/036.phpt` | error | error | Expected identifier as the property name, got '{' |
-| `php/lang/037.phpt` | error | error | Expected identifier as the property name, got '{' |
-| `php/lang/038.phpt` | error | error | Expected '{' to open the class, got ' |
-| `php/lang/039.phpt` | error | error | Expected '{' to open the class, got ' |
+| `php/lang/035.phpt` | pass | pass |  |
+| `php/lang/036.phpt` | differs | differs | ran, printed something else |
+| `php/lang/037.phpt` | pass | pass |  |
+| `php/lang/038.phpt` | error | error | Undefined variable: fopen |
+| `php/lang/039.phpt` | error | error | Undefined variable: fopen |
 | `php/lang/040.phpt` | error | error | Expected ')' after the foreach names, got '[' |
 | `php/lang/041.phpt` | error | error | Cannot reach 'b' in A |
 | `php/lang/042.phpt` | error | error | Cannot reach 'B' in A |
@@ -375,73 +375,73 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug19566.phpt` | error | error | Undefined variable: get_declared_classes |
 | `php/lang/bug19943.phpt` | error | error | Unexpected character '@' |
 | `php/lang/bug20175.phpt` | error | error | Unexpected token: ) |
-| `php/lang/bug21094.phpt` | error | error | Undefined variable: trigger_error |
+| `php/lang/bug21094.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug21600.phpt` | error | error | Unexpected token: & |
 | `php/lang/bug21669.phpt` | error | error | Only a class can be made into an object |
 | `php/lang/bug21820.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug21849.phpt` | pass | pass |  |
-| `php/lang/bug21961.phpt` | error | error | Expected '{' to open the class, got ' |
+| `php/lang/bug21961.phpt` | error | error | Undefined variable: get_parent_class |
 | `php/lang/bug22231.phpt` | error | error | Unexpected token: & |
 | `php/lang/bug22510.phpt` | error | error | Unexpected character '@' |
-| `php/lang/bug22592.phpt` | error | error | Unexpected token: = |
-| `php/lang/bug23279.phpt` | error | error | Undefined variable: ob_start |
+| `php/lang/bug22592.phpt` | error | error | string(5) "..." |
+| `php/lang/bug23279.phpt` | error | error | Hello World |
 | `php/lang/bug23384.phpt` | error | error | Undefined variable: Foo |
-| `php/lang/bug23489.phpt` | error | error | Undefined variable: ob_start |
+| `php/lang/bug23489.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug23524.phpt` | pass | pass |  |
 | `php/lang/bug23584.phpt` | error | error | #!php |
 | `php/lang/bug23624.phpt` | error | error | Undefined variable: current |
-| `php/lang/bug24054.phpt` | error | error | Undefined variable: printf |
+| `php/lang/bug24054.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug24396.phpt` | error | error | Unexpected character '$' |
 | `php/lang/bug24436.phpt` | error | error | Undefined property: test::$test |
-| `php/lang/bug24499.phpt` | error | error | Expected identifier as the property name, got '{' |
+| `php/lang/bug24499.phpt` | pass | pass |  |
 | `php/lang/bug24573.phpt` | error | error | Undefined variable: debug_backtrace |
-| `php/lang/bug24640.phpt` | error | error | Undefined variable: var_export |
-| `php/lang/bug24652.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug24658.phpt` | error | error | NULL |
+| `php/lang/bug24640.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug24652.phpt` | pass | pass |  |
+| `php/lang/bug24658.phpt` | error | error | } |
 | `php/lang/bug24783.phpt` | error | error | 8: |
 | `php/lang/bug24908.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug24951.phpt` | error | error | Expected ')' to close a group, got '&' |
-| `php/lang/bug25145.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug24951.phpt` | error | error | Hello from t1 1 Hello from t1 2 |
+| `php/lang/bug25145.phpt` | pass | pass |  |
 | `php/lang/bug25547.phpt` | error | error | Cannot coerce array to number |
 | `php/lang/bug25652.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug25922.phpt` | error | error | Undefined variable: $data |
-| `php/lang/bug26182.phpt` | error | error | Expected identifier as the property name, got '{' |
+| `php/lang/bug26182.phpt` | pass | pass |  |
 | `php/lang/bug26696.phpt` | pass | pass |  |
-| `php/lang/bug26866.phpt` | error | error | A try needs a catch or a last part |
-| `php/lang/bug26869.phpt` | error | error | static belongs inside a function |
+| `php/lang/bug26866.phpt` | error | error | Undefined property: foo::$bar |
+| `php/lang/bug26869.phpt` | error | error | } |
 | `php/lang/bug27354.phpt` | error | error | int(0) |
 | `php/lang/bug27439.phpt` | error | error | Unexpected token: } |
 | `php/lang/bug27443.phpt` | error | error | Undefined variable: defined |
-| `php/lang/bug27535.phpt` | error | error | Expected '{' to open the class, got ' |
+| `php/lang/bug27535.phpt` | pass | pass |  |
 | `php/lang/bug28213.phpt` | error | error | Undefined variable: include |
-| `php/lang/bug28800.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug28800.phpt` | error | error | Cannot coerce 'into' to number |
 | `php/lang/bug29566.phpt` | error | error | Cannot walk a value that is not an array |
 | `php/lang/bug29893.phpt` | error | error | '-=' needs a plain variable on its left |
 | `php/lang/bug29944.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug30578.phpt` | error | error | Expected '{' to open the class, got ' |
-| `php/lang/bug30638.phpt` | error | error | Undefined variable: LC_NUMERIC |
+| `php/lang/bug30578.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug30638.phpt` | error | error | Undefined variable: localeconv |
 | `php/lang/bug30726.phpt` | error | error | Unexpected token: , |
-| `php/lang/bug30862.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug32828.phpt` | error | error | Undefined variable: ob_start |
+| `php/lang/bug30862.phpt` | pass | pass |  |
+| `php/lang/bug32828.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug32924.phpt` | error | error | Undefined variable: __DIR__ |
 | `php/lang/bug35176.phpt` | error | error | Undefined variable: require_once |
 | `php/lang/bug35382.phpt` | skipped | skipped | no --FILE-- section |
 | `php/lang/bug38579.phpt` | error | error | Undefined variable: __DIR__ |
-| `php/lang/bug43958.phpt` | error | error | Expected '{' to open the class, got ' |
+| `php/lang/bug43958.phpt` | error | error | Undefined variable: include |
 | `php/lang/bug44654.phpt` | pass | pass |  |
 | `php/lang/bug44827.phpt` | error | error | Undefined variable: constant |
 | `php/lang/bug45392.phpt` | error | error | Undefined variable: __LINE__ |
-| `php/lang/bug55754.phpt` | error | error | Unexpected token: = |
+| `php/lang/bug55754.phpt` | error | error | Undefined variable: current |
 | `php/lang/bug71897.phpt` | error | error | Undefined variable: eval |
-| `php/lang/bug73172.phpt` | error | error | Undefined variable: LC_ALL |
+| `php/lang/bug73172.phpt` | error | error | Undefined variable: include |
 | `php/lang/bug73329.phpt` | error | error | Undefined variable: float |
-| `php/lang/bug7515.phpt` | error | error | Undefined variable: stdClass |
+| `php/lang/bug7515.phpt` | error | error | } |
 | `php/lang/catchable_error_001.phpt` | error | error | Undefined variable: StdClass |
 | `php/lang/catchable_error_002.phpt` | error | error | Undefined variable: StdClass |
 | `php/lang/comments.phpt` | pass | pass |  |
 | `php/lang/comments2.phpt` | skipped | skipped | no --FILE-- section |
 | `php/lang/compare_objects_basic1.phpt` | pass | pass |  |
-| `php/lang/compare_objects_basic2.phpt` | error | error | Undefined variable: date_default_timezone_set |
+| `php/lang/compare_objects_basic2.phpt` | error | error | Simple test comparing two objects with different compare callback handler |
 | `php/lang/constants/PHP_INT_32bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/constants/PHP_INT_64bit.phpt` | pass | pass |  |
 | `php/lang/empty_variation.phpt` | error | error | Undefined variable: empty |
@@ -449,13 +449,13 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/engine_assignExecutionOrder_002.phpt` | error | error | Unexpected token: , |
 | `php/lang/engine_assignExecutionOrder_003.phpt` | error | error | Unexpected character '$' |
 | `php/lang/engine_assignExecutionOrder_004.phpt` | error | error | Unexpected token: , |
-| `php/lang/engine_assignExecutionOrder_005.phpt` | error | error | Unexpected token: = |
-| `php/lang/engine_assignExecutionOrder_006.phpt` | error | error | Expected ')' to close a group, got '=' |
-| `php/lang/engine_assignExecutionOrder_007.phpt` | error | error | Expected ']' after array index, got '=' |
+| `php/lang/engine_assignExecutionOrder_005.phpt` | error | error | i1 |
+| `php/lang/engine_assignExecutionOrder_006.phpt` | error | error | i1 |
+| `php/lang/engine_assignExecutionOrder_007.phpt` | error | error | Stack underflow |
 | `php/lang/engine_assignExecutionOrder_008.phpt` | error | error | Unexpected character '$' |
-| `php/lang/engine_assignExecutionOrder_009.phpt` | error | error | Unexpected token: = |
-| `php/lang/error_2_exception_001.phpt` | error | error | Undefined variable: trigger_error |
-| `php/lang/execution_order.phpt` | error | error | Expected ')' to close a group, got '=' |
+| `php/lang/engine_assignExecutionOrder_009.phpt` | error | error | Array indices: |
+| `php/lang/error_2_exception_001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/execution_order.phpt` | differs | differs | ran, printed something else |
 | `php/lang/foreachLoop.001.phpt` | error | error | string(1) "..." |
 | `php/lang/foreachLoop.002.phpt` | error | error | string(10) "..." |
 | `php/lang/foreachLoop.003.phpt` | error | error | Not an array. |
@@ -485,20 +485,20 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/foreachLoopObjects.006.phpt` | error | error | Substituting the iterated object for a different object. |
 | `php/lang/foreach_with_object_001.phpt` | pass | pass |  |
 | `php/lang/foreach_with_references_001.phpt` | pass | pass |  |
-| `php/lang/func_get_arg.001.phpt` | error | error | Undefined variable: func_get_arg |
-| `php/lang/func_get_arg.002.phpt` | error | error | Function foo expects 1 arguments, got 2 |
-| `php/lang/func_get_arg.003.phpt` | error | error | Undefined variable: func_get_arg |
-| `php/lang/func_get_arg.004.phpt` | error | error | Function foo expects 1 arguments, got 2 |
-| `php/lang/func_get_arg.005.phpt` | error | error | string(10) "..." |
-| `php/lang/func_get_arg_variation.phpt` | error | error | Undefined variable: func_get_arg |
-| `php/lang/func_get_args.001.phpt` | error | error | Undefined variable: func_get_args |
-| `php/lang/func_get_args.002.phpt` | error | error | Function foo expects 1 arguments, got 3 |
-| `php/lang/func_get_args.003.phpt` | error | error | Undefined variable: func_get_args |
-| `php/lang/func_get_args.004.phpt` | error | error | string(10) "..." |
-| `php/lang/func_num_args.001.phpt` | error | error | Undefined variable: func_num_args |
-| `php/lang/func_num_args.002.phpt` | error | error | Function foo expects 1 arguments, got 3 |
-| `php/lang/func_num_args.003.phpt` | error | error | Undefined variable: func_num_args |
-| `php/lang/func_num_args.004.phpt` | error | error | string(10) "..." |
+| `php/lang/func_get_arg.001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/func_get_arg.002.phpt` | pass | pass |  |
+| `php/lang/func_get_arg.003.phpt` | error | error | func_get_arg() belongs inside a function |
+| `php/lang/func_get_arg.004.phpt` | error | error | func_get_arg(): the call was given no argument 2 |
+| `php/lang/func_get_arg.005.phpt` | pass | pass |  |
+| `php/lang/func_get_arg_variation.phpt` | error | error | Array index out of bounds |
+| `php/lang/func_get_args.001.phpt` | pass | pass |  |
+| `php/lang/func_get_args.002.phpt` | pass | pass |  |
+| `php/lang/func_get_args.003.phpt` | error | error | func_get_args() belongs inside a function |
+| `php/lang/func_get_args.004.phpt` | differs | differs | ran, printed something else |
+| `php/lang/func_num_args.001.phpt` | pass | pass |  |
+| `php/lang/func_num_args.002.phpt` | pass | pass |  |
+| `php/lang/func_num_args.003.phpt` | error | error | func_num_args() belongs inside a function |
+| `php/lang/func_num_args.004.phpt` | differs | differs | ran, printed something else |
 | `php/lang/include_variation1.phpt` | error | error | Undefined variable: include |
 | `php/lang/include_variation2.phpt` | error | error | Undefined variable: require_once |
 | `php/lang/include_variation3.phpt` | error | error | Undefined variable: require_once |
@@ -510,29 +510,29 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/integer_literals/octal_64bit.phpt` | error | error | Undefined variable: o777777777777777777777 |
 | `php/lang/invalid_octal.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/add_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/add_variationStr.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/bitwiseAnd_basiclong_64bit.phpt` | error | error | Unexpected token: & |
-| `php/lang/operators/bitwiseAnd_variationStr.phpt` | error | error | Unexpected token: & |
-| `php/lang/operators/bitwiseNot_basiclong_64bit.phpt` | error | error | Unexpected character '~' |
-| `php/lang/operators/bitwiseNot_variationStr.phpt` | error | error | Unexpected character '~' |
-| `php/lang/operators/bitwiseOr_basiclong_64bit.phpt` | error | error | Unexpected token: \| |
-| `php/lang/operators/bitwiseOr_variationStr.phpt` | error | error | Unexpected token: \| |
-| `php/lang/operators/bitwiseShiftLeft_basiclong_64bit.phpt` | error | error | Unexpected token: < |
-| `php/lang/operators/bitwiseShiftLeft_variationStr.phpt` | error | error | Unexpected token: < |
-| `php/lang/operators/bitwiseShiftLeft_variationStr2.phpt` | error | error | Unexpected token: < |
-| `php/lang/operators/bitwiseShiftLeft_variationStr_64bit.phpt` | error | error | Unexpected token: < |
-| `php/lang/operators/bitwiseShiftRight_basiclong_64bit.phpt` | error | error | Unexpected token: > |
-| `php/lang/operators/bitwiseShiftRight_variationStr.phpt` | error | error | Unexpected token: > |
-| `php/lang/operators/bitwiseShiftRight_variationStr2.phpt` | error | error | Unexpected token: > |
-| `php/lang/operators/bitwiseXor_basiclong_64bit.phpt` | error | error | Unexpected character '^' |
-| `php/lang/operators/bitwiseXor_variationStr.phpt` | error | error | Unexpected character '^' |
-| `php/lang/operators/coalesce.phpt` | error | error | Unexpected token: ? |
+| `php/lang/operators/add_variationStr.phpt` | error | error | --- testing: '<number>' + 'abc' --- |
+| `php/lang/operators/bitwiseAnd_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/bitwiseAnd_variationStr.phpt` | pass | pass |  |
+| `php/lang/operators/bitwiseNot_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/bitwiseNot_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/bitwiseOr_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/bitwiseOr_variationStr.phpt` | pass | pass |  |
+| `php/lang/operators/bitwiseShiftLeft_basiclong_64bit.phpt` | error | error | --- testing: 9223372036854775807 << -1 --- |
+| `php/lang/operators/bitwiseShiftLeft_variationStr.phpt` | error | error | --- testing: '<number>' << '-44' --- |
+| `php/lang/operators/bitwiseShiftLeft_variationStr2.phpt` | pass | pass |  |
+| `php/lang/operators/bitwiseShiftLeft_variationStr_64bit.phpt` | error | error | --- testing: '<number>' << '-44' --- |
+| `php/lang/operators/bitwiseShiftRight_basiclong_64bit.phpt` | error | error | --- testing: 9223372036854775807 >> -1 --- |
+| `php/lang/operators/bitwiseShiftRight_variationStr.phpt` | error | error | --- testing: '<number>' >> '-44' --- |
+| `php/lang/operators/bitwiseShiftRight_variationStr2.phpt` | pass | pass |  |
+| `php/lang/operators/bitwiseXor_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/bitwiseXor_variationStr.phpt` | pass | pass |  |
+| `php/lang/operators/coalesce.phpt` | error | error | Undefined variable: StdClass |
 | `php/lang/operators/divide_basiclong_64bit.phpt` | error | error | --- testing: 9223372036854775807 / 0 --- |
 | `php/lang/operators/divide_variationStr.phpt` | error | error | --- testing: '<number>'/'<number>' --- |
 | `php/lang/operators/modulus_basiclong_64bit.phpt` | error | error | --- testing: 9223372036854775807 % 0 --- |
 | `php/lang/operators/modulus_variationStr.phpt` | error | error | --- testing: '<number>' % '<number>' --- |
 | `php/lang/operators/multiply_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/multiply_variationStr.phpt` | error | error | --- testing: '<number>' * '<number>' --- |
+| `php/lang/operators/multiply_variationStr.phpt` | error | error | --- testing: '<number>' * 'abc' --- |
 | `php/lang/operators/nan-comparison-false.phpt` | error | error | ** CONST |
 | `php/lang/operators/negate_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/negate_variationStr.phpt` | error | error | --- testing: '<number>' --- |
@@ -541,38 +541,38 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/operator_equals_variation_64bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/operator_gt_basic.phpt` | error | error | Cannot coerce '' to number |
 | `php/lang/operators/operator_gt_or_equal_basic.phpt` | error | error | Cannot coerce '' to number |
-| `php/lang/operators/operator_gt_or_equal_variation.phpt` | error | error | Cannot coerce '<number>' to number |
-| `php/lang/operators/operator_gt_or_equal_variation_64bit.phpt` | error | error | Cannot coerce '<number>' to number |
-| `php/lang/operators/operator_gt_variation.phpt` | error | error | Cannot coerce '<number>' to number |
-| `php/lang/operators/operator_gt_variation_64bit.phpt` | error | error | Cannot coerce '<number>' to number |
-| `php/lang/operators/operator_identical_basic.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_gt_or_equal_variation.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_gt_or_equal_variation_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_gt_variation.phpt` | pass | pass |  |
+| `php/lang/operators/operator_gt_variation_64bit.phpt` | pass | pass |  |
+| `php/lang/operators/operator_identical_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_identical_recusion-01.phpt` | error | error | Unexpected token: & |
 | `php/lang/operators/operator_identical_variation.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/operator_identical_variation_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_identical_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_lt_basic.phpt` | error | error | Cannot coerce 'true' to number |
 | `php/lang/operators/operator_lt_or_equal_basic.phpt` | error | error | Cannot coerce 'true' to number |
-| `php/lang/operators/operator_lt_or_equal_variation.phpt` | error | error | Cannot coerce '<number>' to number |
-| `php/lang/operators/operator_lt_or_equal_variation_64bit.phpt` | error | error | Cannot coerce '<number>' to number |
-| `php/lang/operators/operator_lt_variation.phpt` | error | error | Cannot coerce '<number>' to number |
-| `php/lang/operators/operator_lt_variation_64bit.phpt` | error | error | Cannot coerce '<number>' to number |
+| `php/lang/operators/operator_lt_or_equal_variation.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_lt_or_equal_variation_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_lt_variation.phpt` | pass | pass |  |
+| `php/lang/operators/operator_lt_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_notequals_basic.phpt` | error | error | Unexpected token: > |
 | `php/lang/operators/operator_notequals_variation.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/operator_notequals_variation_64bit.phpt` | error | error | Unexpected token: > |
-| `php/lang/operators/operator_notidentical_basic.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_notidentical_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_notidentical_variation.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/operator_notidentical_variation_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_notidentical_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_spaceship_basic.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/overloaded_property_ref.phpt` | error | error | Unexpected token: -> |
 | `php/lang/operators/postdec_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/postdec_variationStr.phpt` | error | error | --- testing: '<number>' --- |
+| `php/lang/operators/postdec_variationStr.phpt` | error | error | --- testing: 'abc' --- |
 | `php/lang/operators/postinc_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/postinc_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/postinc_variationStr.phpt` | error | error | --- testing: 'abc' --- |
 | `php/lang/operators/predec_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/predec_variationStr.phpt` | error | error | --- testing: '<number>' --- |
+| `php/lang/operators/predec_variationStr.phpt` | error | error | --- testing: 'abc' --- |
 | `php/lang/operators/preinc_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/preinc_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/preinc_variationStr.phpt` | error | error | --- testing: 'abc' --- |
 | `php/lang/operators/subtract_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/subtract_variationStr.phpt` | error | error | --- testing: '<number>' - '<number>' --- |
+| `php/lang/operators/subtract_variationStr.phpt` | error | error | --- testing: '<number>' - 'abc' --- |
 | `php/lang/passByReference_001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/passByReference_002.phpt` | differs | differs | ran, printed something else |
 | `php/lang/passByReference_003.phpt` | error | error | Passing undefined by value |
@@ -581,8 +581,8 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/passByReference_006.phpt` | error | error | ---- Pass uninitialized array & object by ref: function call --- |
 | `php/lang/passByReference_007.phpt` | differs | differs | ran, printed something else |
 | `php/lang/passByReference_008.phpt` | differs | differs | ran, printed something else |
-| `php/lang/passByReference_009.phpt` | error | error | Unexpected token: = |
-| `php/lang/passByReference_010.phpt` | error | error | Unexpected token: = |
+| `php/lang/passByReference_009.phpt` | pass | pass |  |
+| `php/lang/passByReference_010.phpt` | differs | differs | ran, printed something else |
 | `php/lang/passByReference_012.phpt` | differs | differs | ran, printed something else |
 | `php/lang/returnByReference.001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/returnByReference.002.phpt` | error | error | Unexpected token: ) |
@@ -596,9 +596,9 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/short_tags.001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/short_tags.002.phpt` | pass | pass |  |
 | `php/lang/short_tags.004.phpt` | error | error | <? $b=3; ?> |
-| `php/lang/static_basic_001.phpt` | error | error | static belongs inside a function |
-| `php/lang/static_basic_002.phpt` | error | error | static belongs inside a function |
-| `php/lang/static_variation_001.phpt` | error | error | static belongs inside a function |
+| `php/lang/static_basic_001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/static_basic_002.phpt` | differs | differs | ran, printed something else |
+| `php/lang/static_variation_001.phpt` | error | error | } |
 | `php/lang/static_variation_002.phpt` | error | error | Undefined variable: eval |
 | `php/lang/string/unicode_escape.phpt` | differs | differs | ran, printed something else |
 | `php/lang/string/unicode_escape_empty.phpt` | differs | differs | ran, printed something else |
@@ -607,7 +607,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/string/unicode_escape_legacy.phpt` | pass | pass |  |
 | `php/lang/string/unicode_escape_sign.phpt` | differs | differs | ran, printed something else |
 | `php/lang/string/unicode_escape_sign2.phpt` | differs | differs | ran, printed something else |
-| `php/lang/string/unicode_escape_surrogates.phpt` | error | error | Undefined variable: bin2hex |
+| `php/lang/string/unicode_escape_surrogates.phpt` | differs | differs | ran, printed something else |
 | `php/lang/string/unicode_escape_whitespace.phpt` | differs | differs | ran, printed something else |
 | `php/lang/string_decimals_001.phpt` | error | error | --> Testing ..9: |
 | `php/lang/syntax_errors.phpt` | error | error | Undefined variable: eval |

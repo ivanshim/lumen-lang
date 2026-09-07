@@ -45,8 +45,31 @@ pub enum Prim {
     Portray,
     /// Which of two values comes first: below, alike or above.
     Rank,
+    /// The first value when it is something, else the second, which is
+    /// worked out only then.
+    Otherwise,
     /// Give an array back without the place named (ext.builtin.unset).
     Erase,
+    /// What the running call was handed, whatever of it the routine
+    /// gave names to: the whole of it, how much there was, or the one
+    /// standing at a place (ext.builtin.args.*).
+    Handed,
+    HowMany,
+    HandedAt,
+    /// Whether two values are one and the same, which asks more than
+    /// being equal: they must also be of one kind, so 1 and 1.0 are
+    /// equal without being the same.
+    Selfsame,
+    Unlike,
+    /// The bits of a value, sixty-four of them, sign and all: both set,
+    /// either set, one alone set, all turned over, and moved up or down.
+    /// Two pieces of text take their bits letter by letter instead.
+    BitsBoth,
+    BitsEither,
+    BitsOne,
+    BitsOver,
+    BitsUp,
+    BitsDown,
     /// Each argument with its kind, as PHP's var_dump (ext.builtin.var_dump).
     Dump,
     MakeReal,
