@@ -296,8 +296,33 @@ impl<'a> Writer<'a> {
         }
     }
 
+    /// One line at `depth`; or several, when a postfix expression had to
+    /// spread over lines: each line's leading tabs are levels of
+    /// indentation relative to the statement.
     fn line(&mut self, depth: usize, text: String) {
-        self.lines.push(format!("{}{}", Self::indent(depth), text));
+        if !text.contains('\n') && !text.starts_with('\t') {
+            self.lines.push(format!("{}{}", Self::indent(depth), text));
+            return;
+        }
+        for piece in text.split('\n') {
+            let piece = piece.trim_start_matches(' ');
+            let tabs = piece.chars().take_while(|c| *c == '\t').count();
+            if piece.len() > tabs {
+                self.lines.push(format!("{}{}", Self::indent(depth + tabs), &piece[tabs..]));
+            }
+        }
+    }
+
+    /// A written line with its indentation as tabs, for nesting inside an
+    /// expression that spreads over lines.
+    fn tabbed(line: &str) -> String {
+        let spaces = line.len() - line.trim_start_matches(' ').len();
+        format!("{}{}", "\t".repeat(spaces / 4), &line[spaces..])
+    }
+
+    /// `text` one level deeper, as an arm's body.
+    fn nested(text: &str) -> String {
+        text.lines().map(|l| format!("\t{}", l)).collect::<Vec<_>>().join("\n")
     }
 
     fn statement_line(&mut self, depth: usize, text: String) {
@@ -333,11 +358,6 @@ impl<'a> Writer<'a> {
             Style::Keyword => {
                 let intro = intro.filter(|i| to.spells("block.intro", i)).map(|i| format!(" {}", i)).unwrap_or_default();
                 self.line(depth, format!("{}{}", head, intro));
-                self.body(depth + 1, body)?;
-                Ok(Some(to.first("block.close").unwrap().to_string()))
-            }
-            Style::Postfix => {
-                self.line(depth, head);
                 self.body(depth + 1, body)?;
                 Ok(Some(to.first("block.close").unwrap().to_string()))
             }
@@ -507,11 +527,14 @@ impl<'a> Writer<'a> {
                 if step.is_some() {
                     return Err("a loop with a step outside a for".to_string());
                 }
-                if to.style == Style::Postfix {
+                if to.postfix {
+                    // The condition is the rest of the head's line.
                     let word = self.lexeme("stmt.while", "while")?;
                     let cond = self.postfix_expr(test)?;
-                    let intro = to.first("block.intro").unwrap_or("repeat").to_string();
-                    let closer = self.block(depth, format!("{} {} {}", word, cond, intro), body, None)?;
+                    if cond.contains('\n') {
+                        return Err("a branch in a loop condition".to_string());
+                    }
+                    let closer = self.block(depth, format!("{} {}", word, cond), body, Some("repeat"))?;
                     self.close(depth, closer);
                     return Ok(());
                 }
@@ -537,7 +560,7 @@ impl<'a> Writer<'a> {
             }
             Form::AssignIndex { to: slot, index, value } => {
                 let name = self.spell(&slot.name, false)?;
-                if to.style == Style::Postfix {
+                if to.postfix {
                     let i = self.postfix_expr(index)?;
                     let v = self.postfix_expr(value)?;
                     let put = self.native_name(Native::Put)?;
@@ -565,7 +588,7 @@ impl<'a> Writer<'a> {
                     Exit::Continue => "stmt.continue",
                 };
                 let word = self.lexeme(label, label.trim_start_matches("stmt."))?;
-                if to.style == Style::Postfix {
+                if to.postfix {
                     let text = match value {
                         // A returned call that leaves nothing returns null after it.
                         Some(v) if !self.postfix_yields(v) => {
@@ -589,7 +612,7 @@ impl<'a> Writer<'a> {
                 Ok(())
             }
             Form::Call { callee: Callee::Native(Native::Put, _), args }
-                if to.style != Style::Postfix && !to.has("builtin.put") && to.has("op.index.open") && args.len() == 3 =>
+                if !to.postfix && !to.has("builtin.put") && to.has("op.index.open") && args.len() == 3 =>
             {
                 let Form::Load(slot) = &args[0].form else { unreachable!() };
                 let node = Node::new(node.line, Form::AssignIndex {
@@ -600,7 +623,7 @@ impl<'a> Writer<'a> {
                 self.statement(depth, &node)
             }
             Form::Call { .. } | Form::Operate { .. } | Form::Literal(_) | Form::Load(_) => {
-                if to.style == Style::Postfix {
+                if to.postfix {
                     let text = self.postfix_expr(node)?;
                     let text = if self.postfix_yields(node) { format!("{} {}", text, self.lexeme("stack.drop", "drop")?) } else { text };
                     self.line(depth, text);
@@ -617,18 +640,28 @@ impl<'a> Writer<'a> {
     fn branch(&mut self, depth: usize, node: &Node, head_word: Option<String>) -> Result<(), String> {
         let to = self.to;
         let Form::Branch { test, then, otherwise } = &node.form else { unreachable!() };
-        if to.style == Style::Postfix {
+        if to.postfix {
             let cond = self.postfix_expr(test)?;
             let word = self.lexeme("stmt.if", "if")?;
-            self.line(depth, format!("{} {}", cond, word));
-            self.body(depth + 1, then)?;
-            if let Some(o) = otherwise {
-                let else_word = self.lexeme("stmt.else", "else")?;
-                self.line(depth, else_word);
-                self.body(depth + 1, o)?;
+            let closer = self.block(depth, format!("{} {}", cond, word), then, None)?;
+            let Some(o) = otherwise else {
+                self.close(depth, closer);
+                return Ok(());
+            };
+            let else_word = self.lexeme("stmt.else", "else")?;
+            match to.style {
+                Style::Brace => {
+                    self.close(depth, closer);
+                    let closer = self.block(depth, else_word, o, None)?;
+                    self.close(depth, closer);
+                }
+                _ => {
+                    // Indented arms, or one closer for both.
+                    self.line(depth, else_word);
+                    self.body(depth + 1, o)?;
+                    self.close(depth, closer);
+                }
             }
-            let close = to.first("block.close").unwrap().to_string();
-            self.line(depth, close);
             return Ok(());
         }
         let word = match head_word {
@@ -701,13 +734,14 @@ impl<'a> Writer<'a> {
     fn until(&mut self, depth: usize, cond: &Node, body: &Node) -> Result<(), String> {
         let to = self.to;
         if let Some(word) = to.first("stmt.until").map(str::to_string) {
-            if to.style == Style::Postfix {
-                self.line(depth, word);
-                self.body(depth + 1, body)?;
-                let intro = to.words("block.intro").get(1).cloned().unwrap_or_else(|| "until".to_string());
+            if to.postfix {
+                // Head first as in Lumen: the condition is the rest of the line.
                 let cond = self.postfix_expr(cond)?;
-                let close = to.first("block.close").unwrap().to_string();
-                self.line(depth, format!("{} {} {}", intro, cond, close));
+                if cond.contains('\n') {
+                    return Err("a branch in a loop condition".to_string());
+                }
+                let closer = self.block(depth, format!("{} {}", word, cond), body, Some("repeat"))?;
+                self.close(depth, closer);
                 return Ok(());
             }
             let text = self.condition(cond)?;
@@ -752,15 +786,16 @@ impl<'a> Writer<'a> {
         }
         let to = self.to;
         let name = self.spell(&var.name, false)?;
-        if to.style == Style::Postfix {
+        if to.postfix {
             let a = self.postfix_expr(start)?;
             let b = self.postfix_expr(end)?;
             let q = to.first("lexical.name_quote").unwrap_or("'");
             let word = self.lexeme("stmt.for", "for")?;
-            self.line(depth, format!("{} {} {}{}{} {}", a, b, q, name, q, word));
-            self.body(depth + 1, body)?;
-            let close = to.words("block.close").get(1).cloned().unwrap_or_else(|| "next".to_string());
-            self.line(depth, close);
+            let head = format!("{} {} {}{}{} {}", a, b, q, name, q, word);
+            let closer = self.block(depth, head, body, None)?;
+            // A keyword-style postfix target closes a for with its second closer.
+            let closer = closer.map(|c| to.words("block.close").get(1).cloned().unwrap_or(c));
+            self.close(depth, closer);
             return Ok(Some(3));
         }
         if to.has("stmt.for") && to.has("stmt.for.in") {
@@ -809,7 +844,7 @@ impl<'a> Writer<'a> {
     /// `name = value`, declared where the language declares.
     fn binding(&mut self, name: &str, value: String) -> Text {
         let to = self.to;
-        if to.style == Style::Postfix {
+        if to.postfix {
             let q = to.first("lexical.name_quote").unwrap_or("'");
             let spelled = self.spell(name, false)?;
             return Ok(format!("{} {}{}{} {}", value, q, spelled, q, self.lexeme("stmt.assign", "assignment")?));
@@ -859,7 +894,7 @@ impl<'a> Writer<'a> {
                 body = append_return(body, load);
             }
         }
-        if to.style == Style::Postfix {
+        if to.postfix {
             let open = self.lexeme("stack.program.open", "programs")?;
             let close = self.lexeme("stack.program.close", "programs")?;
             let q = to.first("lexical.name_quote").unwrap_or("'").to_string();
@@ -919,7 +954,7 @@ impl<'a> Writer<'a> {
     // ---------- expressions
 
     fn expr_text(&mut self, node: &Node) -> Text {
-        if self.to.style == Style::Postfix {
+        if self.to.postfix {
             return self.postfix_expr(node);
         }
         Ok(self.expr(node)?.text)
@@ -1328,6 +1363,29 @@ impl<'a> Writer<'a> {
         }
     }
 
+    /// An arm inside an expression: its statements as lines at depth
+    /// zero, the last value as an expression line, indentation as tabs.
+    fn postfix_arm(&mut self, node: &Node) -> Text {
+        let items: Vec<&Node> = match &node.form {
+            Form::Sequence(items) => items.iter().collect(),
+            _ => vec![node],
+        };
+        let saved = std::mem::take(&mut self.lines);
+        for (i, item) in items.iter().enumerate() {
+            let last = i + 1 == items.len();
+            let is_value = matches!(item.form, Form::Call { .. } | Form::Operate { .. } | Form::Literal(_) | Form::Load(_) | Form::Branch { .. });
+            if last && is_value {
+                let text = self.postfix_expr(item)?;
+                self.line(0, text);
+            } else {
+                self.statement(0, item)?;
+            }
+        }
+        let written: Vec<String> = self.lines.drain(..).map(|l| Self::tabbed(&l)).collect();
+        self.lines = saved;
+        Ok(written.join("\n"))
+    }
+
     /// Statements written on one line, for a body inside an expression.
     fn postfix_inline(&mut self, node: &Node) -> Text {
         let items: Vec<&Node> = match &node.form {
@@ -1358,15 +1416,27 @@ impl<'a> Writer<'a> {
             Form::Sequence(_) => self.postfix_inline(node),
             Form::Branch { test, then, otherwise } => {
                 let test = self.postfix_expr(test)?;
-                let then = self.postfix_inline(then)?;
                 let word_if = self.lexeme("stmt.if", "if")?;
-                let end = to.first("block.close").unwrap();
+                if to.style == Style::Keyword {
+                    let then = self.postfix_inline(then)?;
+                    let end = to.first("block.close").unwrap();
+                    return match otherwise {
+                        Some(o) => {
+                            let o = self.postfix_inline(o)?;
+                            Ok(format!("{} {} {} {} {} {}", test, word_if, then, self.lexeme("stmt.else", "else")?, o, end))
+                        }
+                        None => Ok(format!("{} {} {} {}", test, word_if, then, end)),
+                    };
+                }
+                // Indented arms inside the expression; what follows goes on the next line.
+                let then = self.postfix_arm(then)?;
                 match otherwise {
                     Some(o) => {
-                        let o = self.postfix_inline(o)?;
-                        Ok(format!("{} {} {} {} {} {}", test, word_if, then, self.lexeme("stmt.else", "else")?, o, end))
+                        let o = self.postfix_arm(o)?;
+                        let else_word = self.lexeme("stmt.else", "else")?;
+                        Ok(format!("{} {}\n{}\n{}\n{}\n", test, word_if, Self::nested(&then), else_word, Self::nested(&o)))
                     }
-                    None => Ok(format!("{} {} {} {}", test, word_if, then, end)),
+                    None => Ok(format!("{} {}\n{}\n", test, word_if, Self::nested(&then))),
                 }
             }
             Form::Literal(Value::Routine(p)) => {
@@ -1374,11 +1444,12 @@ impl<'a> Writer<'a> {
                 self.function(0, "<program>", p, false)?;
                 let program_lines: Vec<String> = self.lines.drain(..).collect();
                 std::mem::swap(&mut self.lines, &mut lines);
-                // The definition minus its trailing binding: the program alone.
-                let text = program_lines.join(" ");
+                // The definition minus its trailing binding: the program
+                // alone, its lines kept, their indentation as tabs.
+                let text = program_lines.iter().map(|l| Self::tabbed(l)).collect::<Vec<_>>().join("\n");
                 let assign = self.lexeme("stmt.assign", "assignment")?;
                 let tail = format!(" {}<program>{} {}", q, q, assign);
-                Ok(text.trim_end_matches(tail.as_str()).split_whitespace().collect::<Vec<_>>().join(" "))
+                Ok(format!("{}\n", text.strip_suffix(tail.as_str()).unwrap_or(&text)))
             }
             Form::Literal(v) => self.literal(v),
             Form::Load(slot) => {
@@ -1406,12 +1477,16 @@ impl<'a> Writer<'a> {
                         // Short-circuit as a branch.
                         let word_if = self.lexeme("stmt.if", "if")?;
                         let word_else = self.lexeme("stmt.else", "else")?;
-                        let end = to.first("block.close").unwrap();
-                        if *op == Op::And {
-                            Ok(format!("{} {} {} {} {} {}", parts[0], word_if, parts[1], word_else, self.lexeme("literal.false", "false")?, end))
+                        let (then, otherwise) = if *op == Op::And {
+                            (parts[1].clone(), self.lexeme("literal.false", "false")?)
                         } else {
-                            Ok(format!("{} {} {} {} {} {}", parts[0], word_if, self.lexeme("literal.true", "true")?, word_else, parts[1], end))
+                            (self.lexeme("literal.true", "true")?, parts[1].clone())
+                        };
+                        if to.style == Style::Keyword {
+                            let end = to.first("block.close").unwrap();
+                            return Ok(format!("{} {} {} {} {} {}", parts[0], word_if, then, word_else, otherwise, end));
                         }
+                        Ok(format!("{} {}\n{}\n{}\n{}\n", parts[0], word_if, Self::nested(then.trim_end()), word_else, Self::nested(otherwise.trim_end())))
                     }
                     other => {
                         let (lex, _) = self.op_lexeme(*other)?;

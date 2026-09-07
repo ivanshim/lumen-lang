@@ -2,14 +2,19 @@
 « 'c' =
     c is_digit if
         c ord "0" ord - return
-    end
     c ord 'code' =
-    code "A" ord >= if code "Z" ord <= else false end if
+    code "A" ord >= if
+        code "Z" ord <=
+    else
+        false
+    if
         code "A" ord - 10 + return
-    end
-    code "a" ord >= if code "z" ord <= else false end if
+    code "a" ord >= if
+        code "z" ord <=
+    else
+        false
+    if
         code "a" ord - 10 + return
-    end
     1 neg return
 » 'character_to_value' =
 
@@ -17,49 +22,57 @@
     i 'start' =
     0 'value' =
     1 'scale' =
-    while i s len < repeat
+    while i s len <
         s i char_at 'c' =
         c character_to_value 'd' =
-        d 0 < if true else d base >= end if
+        d 0 < if
+            true
+        else
+            d base >=
+        if
             break
-        end
         value base * d + 'value' =
         scale base * 'scale' =
         i 1 + 'i' =
-    end
     i start == if
         "expected digit" error
-    end
     [ value scale i ] return
 » 'digits_to_base_value' =
 
 « 'i' = 's' =
     i 'start' =
     0 'base_prefix' =
-    while i s len < repeat
+    while i s len <
         s i char_at 'c' =
         c is_digit not if
             break
-        end
         base_prefix 10 * c ord "0" ord - + 'base_prefix' =
         i 1 + 'i' =
-    end
     i start == if
         [ 0 start ] return
-    end
     10 'base' =
     base_prefix 'value' =
-    i s len < if s i char_at "@" == else false end if
+    i s len < if
+        s i char_at "@" ==
+    else
+        false
+    if
         base_prefix 'base' =
-        base 2 < if true else base 36 > end if
+        base 2 < if
+            true
+        else
+            base 36 >
+        if
             "invalid base" error
-        end
         i 1 + 'i' =
         s i base digits_to_base_value 'r' =
         r 0 get 'value' =
         r 2 get 'i' =
-    end
-    i s len < if s i char_at "." == else false end if
+    i s len < if
+        s i char_at "." ==
+    else
+        false
+    if
         i 1 + 'i' =
         s i base digits_to_base_value 'r2' =
         r2 0 get 'frac_val' =
@@ -67,79 +80,100 @@
         r2 2 get 'i' =
         frac_scale 1 > if
             value frac_val frac_scale / + 'value' =
-        end
-    end
     [ value i ] return
 » 'numeric_literal_to_value' =
 
 « 's' =
     s len 0 == if
         0 return
-    end
     0 'i' =
     s i numeric_literal_to_value 'r' =
     r 0 get 'num_' =
     r 1 get 'i' =
-    i s len < if s i char_at "/" == else false end if
+    i s len < if
+        s i char_at "/" ==
+    else
+        false
+    if
         i 1 + 'i' =
         i s len == if
             s return
-        end
         s i numeric_literal_to_value 'r2' =
         r2 0 get 'denom' =
         r2 1 get 'i' =
         i s len != if
             s return
-        end
         num_ denom / return
-    end
     i s len == if
         num_ return
-    end
     s return
 » 'string_to_value' =
 
 « 'c' =
     c ord 'o' =
-    o "0" ord >= if o "9" ord <= else false end return
+    o "0" ord >= if
+        o "9" ord <=
+    else
+        false
+    return
 » 'is_digit' =
 
 « 'c' =
     c ord 'o' =
-    o "A" ord >= if o "Z" ord <= else false end if true else o "a" ord >= if o "z" ord <= else false end end return
+    o "A" ord >= if
+        o "Z" ord <=
+    else
+        false
+    if
+        true
+    else
+        o "a" ord >= if
+            o "z" ord <=
+        else
+            false
+    return
 » 'is_alpha' =
 
 « 'c' =
-    c is_alpha if true else c is_digit end return
+    c is_alpha if
+        true
+    else
+        c is_digit
+    return
 » 'is_alnum' =
 
 « 'c' =
     c ord 'o' =
-    o "a" ord >= if o "z" ord <= else false end if
+    o "a" ord >= if
+        o "z" ord <=
+    else
+        false
+    if
         o 32 - chr return
     else
         c return
-    end
     null return
 » 'char_to_upper' =
 
 « 'c' =
     c ord 'o' =
-    o "A" ord >= if o "Z" ord <= else false end if
+    o "A" ord >= if
+        o "Z" ord <=
+    else
+        false
+    if
         o 32 + chr return
     else
         c return
-    end
     null return
 » 'char_to_lower' =
 
 « 's' =
     "" 'result' =
     0 'i' =
-    while i s len < repeat
+    while i s len <
         result s i char_at char_to_lower . 'result' =
         i 1 + 'i' =
-    end
     result return
 » 'string_to_lower' =
 
@@ -148,23 +182,19 @@
 "Password Strength Validator:" print
 « 's' =
     0 'digit_i' =
-    while digit_i s len < repeat
+    while digit_i s len <
         s digit_i char_at is_digit if
             true return
-        end
         digit_i 1 + 'digit_i' =
-    end
     false return
 » 'has_digit_char' =
 
 « 's' =
     0 'alpha_i' =
-    while alpha_i s len < repeat
+    while alpha_i s len <
         s alpha_i char_at is_alpha if
             true return
-        end
         alpha_i 1 + 'alpha_i' =
-    end
     false return
 » 'has_alpha_char' =
 
@@ -172,14 +202,16 @@
     0 'upper_i' =
     "" 'c' =
     0 'o' =
-    while upper_i s len < repeat
+    while upper_i s len <
         s upper_i char_at 'c' =
         c ord 'o' =
-        o "A" ord >= if o "Z" ord <= else false end if
+        o "A" ord >= if
+            o "Z" ord <=
+        else
+            false
+        if
             true return
-        end
         upper_i 1 + 'upper_i' =
-    end
     false return
 » 'has_upper_char' =
 
@@ -187,14 +219,16 @@
     0 'lower_i' =
     "" 'c' =
     0 'o' =
-    while lower_i s len < repeat
+    while lower_i s len <
         s lower_i char_at 'c' =
         c ord 'o' =
-        o "a" ord >= if o "z" ord <= else false end if
+        o "a" ord >= if
+            o "z" ord <=
+        else
+            false
+        if
             true return
-        end
         lower_i 1 + 'lower_i' =
-    end
     false return
 » 'has_lower_char' =
 
@@ -203,33 +237,27 @@
     pwd len 8 < if
         "    WEAK: Too short (minimum 8 characters)" print
         false return
-    end
     pwd has_digit_char not if
         "    WEAK: Must contain at least one digit" print
         false return
-    end
     pwd has_alpha_char not if
         "    WEAK: Must contain at least one letter" print
         false return
-    end
     pwd has_upper_char not if
         "    WEAK: Must contain at least one uppercase letter" print
         false return
-    end
     pwd has_lower_char not if
         "    WEAK: Must contain at least one lowercase letter" print
         false return
-    end
     "    STRONG: All requirements met" print
     true return
 » 'validate_password' =
 
 [ "abc123" "PASSWORD123" "Pass123" "MyP@ssw0rd" ] 'passwords' =
 0 'pwd_i' =
-while pwd_i passwords len < repeat
+while pwd_i passwords len <
     passwords pwd_i get validate_password drop
     pwd_i 1 + 'pwd_i' =
-end
 "" print
 "Extract and Sum Numbers from Text:" print
 « 's' =
@@ -237,7 +265,7 @@ end
     "" 'current_num' =
     0 'extract_i' =
     "" 'c' =
-    while extract_i s len < repeat
+    while extract_i s len <
         s extract_i char_at 'c' =
         c is_digit if
             current_num c . 'current_num' =
@@ -245,13 +273,9 @@ end
             current_num len 0 > if
                 current_num string_to_value 'numbers' push
                 "" 'current_num' =
-            end
-        end
         extract_i 1 + 'extract_i' =
-    end
     current_num len 0 > if
         current_num string_to_value 'numbers' push
-    end
     numbers return
 » 'extract_all_numbers' =
 
@@ -259,10 +283,9 @@ end
     s extract_all_numbers 'nums' =
     0 'sum' =
     0 'sum_i' =
-    while sum_i nums len < repeat
+    while sum_i nums len <
         sum nums sum_i get + 'sum' =
         sum_i 1 + 'sum_i' =
-    end
     sum return
 » 'sum_numbers_in_text' =
 
@@ -270,13 +293,12 @@ end
 0 'text_i' =
 "" 'text' =
 0 'sum' =
-while text_i texts len < repeat
+while text_i texts len <
     texts text_i get 'text' =
     text sum_numbers_in_text 'sum' =
     "  '" text . "'" . print
     "    Sum: " sum to_string . print
     text_i 1 + 'text_i' =
-end
 "" print
 "Normalize and Compare Strings:" print
 « 's' =
@@ -284,13 +306,11 @@ end
     "" 'result' =
     0 'normalize_i' =
     "" 'c' =
-    while normalize_i lower len < repeat
+    while normalize_i lower len <
         lower normalize_i char_at 'c' =
         c is_alnum if
             result c . 'result' =
-        end
         normalize_i 1 + 'normalize_i' =
-    end
     result return
 » 'normalize_string' =
 
@@ -303,13 +323,12 @@ end
 "" 'a' =
 "" 'b' =
 false 'match' =
-while pair_i pairs len < repeat
+while pair_i pairs len <
     pairs pair_i get 0 get 'a' =
     pairs pair_i get 1 get 'b' =
     a b strings_match_normalized 'match' =
     "  '" a . "' vs '" . b . "': " . match to_string . print
     pair_i 1 + 'pair_i' =
-end
 "" print
 "Generate Acronym from Phrase:" print
 « 'phrase' =
@@ -317,31 +336,25 @@ end
     "" 'current_word' =
     0 'acronym_i' =
     "" 'c' =
-    while acronym_i phrase len < repeat
+    while acronym_i phrase len <
         phrase acronym_i char_at 'c' =
         c " " == if
             current_word len 0 > if
                 current_word 'words' push
                 "" 'current_word' =
-            end
         else
             current_word c . 'current_word' =
-        end
         acronym_i 1 + 'acronym_i' =
-    end
     current_word len 0 > if
         current_word 'words' push
-    end
     "" 'acronym' =
     0 'acronym_j' =
     "" 'word' =
-    while acronym_j words len < repeat
+    while acronym_j words len <
         words acronym_j get 'word' =
         word len 0 > if
             acronym word 0 char_at char_to_upper . 'acronym' =
-        end
         acronym_j 1 + 'acronym_j' =
-    end
     acronym return
 » 'generate_acronym' =
 
@@ -349,26 +362,27 @@ end
 0 'phrase_i' =
 "" 'phrase' =
 "" 'acronym' =
-while phrase_i phrases len < repeat
+while phrase_i phrases len <
     phrases phrase_i get 'phrase' =
     phrase generate_acronym 'acronym' =
     "  '" phrase . "' -> " . acronym . print
     phrase_i 1 + 'phrase_i' =
-end
 "" print
 "Simple Caesar Cipher (letters only, shift by 3):" print
 « 'c' =
     c is_alpha not if
         c return
-    end
     c ord 'o' =
-    o "a" ord >= if o "z" ord <= else false end if
+    o "a" ord >= if
+        o "z" ord <=
+    else
+        false
+    if
         o "a" ord - 3 + 26 % "a" ord + 'shifted' =
         shifted chr return
     else
         o "A" ord - 3 + 26 % "A" ord + 'shifted' =
         shifted chr return
-    end
     null return
 » 'caesar_shift_char' =
 
@@ -378,22 +392,23 @@ end
     "" 'c' =
     0 'o' =
     0 'shifted' =
-    while caesar_i s len < repeat
+    while caesar_i s len <
         s caesar_i char_at 'c' =
         c is_alpha not if
             result c . 'result' =
         else
             c ord 'o' =
-            o "a" ord >= if o "z" ord <= else false end if
+            o "a" ord >= if
+                o "z" ord <=
+            else
+                false
+            if
                 o "a" ord - 3 + 26 % "a" ord + 'shifted' =
                 result shifted chr . 'result' =
             else
                 o "A" ord - 3 + 26 % "A" ord + 'shifted' =
                 result shifted chr . 'result' =
-            end
-        end
         caesar_i 1 + 'caesar_i' =
-    end
     result return
 » 'caesar_encrypt' =
 
@@ -401,9 +416,8 @@ end
 0 'msg_i' =
 "" 'msg' =
 "" 'encrypted' =
-while msg_i messages len < repeat
+while msg_i messages len <
     messages msg_i get 'msg' =
     msg caesar_encrypt 'encrypted' =
     "  '" msg . "' -> '" . encrypted . "'" . print
     msg_i 1 + 'msg_i' =
-end

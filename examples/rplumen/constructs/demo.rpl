@@ -2,25 +2,25 @@
 1 2 3 * + print
 0 'x' =
 5 'y' =
-x y < if y 5 == else false end if
+x y < if
+    y 5 ==
+else
+    false
+if
     100 print
 else
     200 print
-end
 0 'i' =
 0 'sum' =
-while i 10 < repeat
+while i 10 <
     i 5 == if
         i 1 + 'i' =
         continue
-    end
     i 8 == if
         break
-    end
     sum i + 'sum' =
     sum print
     i 1 + 'i' =
-end
 sum print
 true print
 false print

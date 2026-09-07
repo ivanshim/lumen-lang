@@ -1,18 +1,17 @@
-# Counting with while, do...until and for; break and continue as in Lumen.
+# Counting with while, until and for; break and continue as in Lumen.
 0 'i' =
-while i 10 < repeat
+while i 10 <
     i 1 + 'i' =
-    i 2 % 0 == if continue end
-    i 7 > if break end
+    i 2 % 0 == if
+        continue
+    i 7 > if
+        break
     i print
-end
 
 3 'n' =
-do
+until n 0 ==
     n print
     n 1 - 'n' =
-until n 0 == end
 
 0 5 'k' for
     k k * print
-next

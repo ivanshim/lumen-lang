@@ -74,8 +74,9 @@ block outward, then the one outside every block, then the global, and
 reads the first that holds a value; a store writes the innermost, or the
 global for a top-level name outside every block. A slot a bare block
 declared is found only from inside that block, so after the block the
-outer binding is back. A callee reading its caller's world falls through
-to the global. In a language
+outer binding is back. A function sees its own bindings and the
+program's, never its caller's: an empty local falls through to the global
+and nowhere else. In a language
 that names a function's result after the function (Pascal), a call of the
 function's own name inside its body is assembled straight to the global,
 since the local of that name is the result being built.

@@ -109,7 +109,7 @@ pub fn parse_block(parser: &mut Parser, registry: &Registry) -> LumenResult<Vec<
                 .ok_or_else(|| err_at(parser, &format!("Expected '{}' to open a block", opens[0])))?;
             (opens[i].clone(), d.list("block.close")[i].clone())
         }
-        BlockStyle::Keyword | BlockStyle::Postfix => {
+        BlockStyle::Keyword => {
             let stmts = parse_body(parser, registry, d.list("block.close"))?;
             expect_close(parser)?;
             return Ok(stmts);
@@ -243,7 +243,7 @@ pub fn process(source: &str, raw_tokens: Vec<SpannedToken>) -> LumenResult<Vec<S
     let d = def();
     let raw_tokens = fold_case(raw_tokens);
     let indentation = d.block_style == BlockStyle::Indentation;
-    let postfix = d.block_style == BlockStyle::Postfix;
+    let postfix = d.postfix;
     let indent_size = d.indent_size;
     let comment_markers = d.list("lexical.comment_line");
     let block_opens = d.list("lexical.comment_block.open");

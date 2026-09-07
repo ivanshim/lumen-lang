@@ -18,7 +18,7 @@ pub mod value;
 
 use std::collections::HashMap;
 
-use spec::{Layout, Spec};
+use spec::Spec;
 use value::{Sort, Value};
 
 const EMBEDDED: &[&str] = &[
@@ -57,7 +57,7 @@ fn go(spec: &Spec, source: &str, program_args: &[String]) -> Result<(), String> 
     let system = ["system.args", "system.memoization", "system.real_default_precision", "system.entry", "system.kind.integer",
         "system.kind.rational", "system.kind.real", "system.kind.string", "system.kind.boolean", "system.kind.array", "system.kind.null"];
     let seeded: Vec<String> = system.iter().filter_map(|k| spec.one(k).map(str::to_string)).collect();
-    let reduced = if spec.layout != Layout::Postfix {
+    let reduced = if !spec.postfix {
         reduce::reduce(&toks, spec, &seeded, HashMap::new(), true)?
     } else {
         // Read leniently until the named programs' arities settle, then strictly.

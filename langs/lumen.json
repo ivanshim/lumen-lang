@@ -26,6 +26,7 @@
   "block.intro": [],
   "block.indent_size": 4,
   "stmt.terminator": [";"],
+  "syntax.notation": "infix",
   "syntax.group.open": ["("],
   "syntax.group.close": [")"],
   "syntax.call.open": ["("],

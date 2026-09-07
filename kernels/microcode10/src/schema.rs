@@ -82,6 +82,8 @@ pub struct NumberSyntax {
 
 pub struct Structure {
     pub blocks: BlockStyle,
+    /// Reverse Polish: words over one stack, no expressions or statements.
+    pub postfix: bool,
     pub indent_size: usize,
     /// Block delimiters, as parallel lists: the opener at one position pairs
     /// with the closer at the same position. Synthesised from indentation
@@ -110,8 +112,6 @@ pub enum BlockStyle {
     Braces,
     /// No opener; the body runs to a closing word, and an `if` chain shares one.
     Keyword,
-    /// Words act on one stack; control words delimit bodies (RPL).
-    Postfix,
 }
 
 #[derive(Clone)]
@@ -571,10 +571,13 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
         "indentation" => BlockStyle::Indentation,
         "braces" => BlockStyle::Braces,
         "keyword" => BlockStyle::Keyword,
-        "postfix" => BlockStyle::Postfix,
-        other => return Err(format!("block.style must be 'indentation', 'braces', 'keyword' or 'postfix', got '{other}'")),
+        other => return Err(format!("block.style must be 'indentation', 'braces' or 'keyword', got '{other}'")),
     };
-    let postfix = style == BlockStyle::Postfix;
+    let postfix = match l.text("syntax.notation")?.as_str() {
+        "infix" => false,
+        "postfix" => true,
+        other => return Err(format!("syntax.notation must be 'infix' or 'postfix', got '{other}'")),
+    };
     let block_open = l.lexemes("block.open")?;
     let block_close = l.lexemes("block.close")?;
     let block_intro = l.lexemes("block.intro")?;
@@ -586,9 +589,9 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
             }
             (block_open, block_close, indent_size.unwrap_or(4))
         }
-        BlockStyle::Keyword | BlockStyle::Postfix => {
+        BlockStyle::Keyword => {
             if !block_open.is_empty() || block_close.is_empty() {
-                return Err("keyword and postfix blocks take no block.open and need block.close".to_string());
+                return Err("keyword blocks take no block.open and need block.close".to_string());
             }
             (block_open, block_close, indent_size.unwrap_or(4))
         }
@@ -789,7 +792,7 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
             .chain(stack.program_close.iter())
     };
     if !postfix && stack_lexemes().next().is_some() {
-        return Err("the stack.* labels need block.style 'postfix'".to_string());
+        return Err("the stack.* labels need syntax.notation 'postfix'".to_string());
     }
     if stack.program_open.len() != stack.program_close.len() {
         return Err("stack.program.open and .close must pair up position by position".to_string());
@@ -975,6 +978,7 @@ fn build(l: &mut Labels) -> Result<LanguageSchema, String> {
         },
         structure: Structure {
             blocks: style,
+            postfix,
             indent_size,
             block_open,
             block_close,

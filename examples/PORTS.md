@@ -6,7 +6,7 @@ in the same relative path, or names the first construct the language's
 definition has no spelling for. The library functions an example uses are
 ported into the file with it.
 
-Lumen has 85 examples; python carries 57, rplumen carries 59, rust carries 35, c carries 22, javascript carries 45, pascal carries 28, php carries 50, ruby carries 47, swift carries 26.
+Lumen has 87 examples; python carries 58, rplumen carries 60, rust carries 35, c carries 22, javascript carries 46, pascal carries 29, php carries 50, ruby carries 47, swift carries 27.
 
 | Example | python | rplumen | rust | c | javascript | pascal | php | ruby | swift |
 |---|---|---|---|---|---|---|---|---|---|
@@ -53,10 +53,12 @@ Lumen has 85 examples; python carries 57, rplumen carries 59, rust carries 35, c
 | `constructs/real_type.lm` | no `real` | yes | no `real` | no `real` | no `real` | no `real` | no `real` | no `/` | no `/` |
 | `constructs/return_explicit.lm` | yes | yes | no `/` | no `/` | yes | yes | yes | no `/` | no `/` |
 | `constructs/round_function.lm` | yes | yes | no `/` | no `/` | no `//` | a string the language cannot spell | no `//` | no `/` | no `/` |
+| `constructs/scope_call.lm` | yes | yes | function `show` reads program-level `k` | function `show` reads program-level `k` | yes | yes | function `show` reads program-level `k` | function `show` reads program-level `k` | yes |
 | `constructs/scope_if.lm` | yes | yes | yes | yes | yes | yes | yes | yes | yes |
 | `constructs/scope_leak.lm` | yes | yes | yes | yes | yes | yes | yes | yes | yes |
 | `constructs/scope_loop.lm` | yes | yes | yes | yes | yes | yes | yes | yes | yes |
 | `constructs/scope_nested.lm` | yes | yes | yes | yes | yes | yes | yes | yes | yes |
+| `constructs/scope_nested_function.lm` | unknown function `inner` | unknown function `inner` | unknown function `inner` | unknown function `inner` | unknown function `inner` | unknown function `inner` | unknown function `inner` | unknown function `inner` | unknown function `inner` |
 | `constructs/scope_shadowing.lm` | yes | yes | yes | yes | yes | yes | yes | yes | yes |
 | `constructs/scope_update.lm` | yes | yes | yes | yes | yes | yes | yes | yes | yes |
 | `constructs/short_circuit.lm` | yes | yes | no `/` | no `/` | yes | yes | yes | no `/` | no `/` |

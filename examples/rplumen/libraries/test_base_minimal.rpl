@@ -3,21 +3,17 @@
 « 'radix' = 'n' =
     n 0 == if
         "0" return
-    end
     false 'negative' =
     n 0 < if
         true 'negative' =
         n neg 'n' =
-    end
     "" 'result' =
-    while n 0 > repeat
+    while n 0 >
         n radix % 'digit' =
         alphabet digit char_at result . 'result' =
         n radix // 'n' =
-    end
     negative if
         "-" result . 'result' =
-    end
     result return
 » 'integer_to_base_string' =
 

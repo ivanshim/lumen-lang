@@ -184,7 +184,7 @@ twenty-one words bought no speed. All 488 programs print the same as on the othe
 | Language | Extension | Definition | Style |
 |----------|-----------|------------|-------|
 | Lumen | `.lm` | built in | Python-style indentation, exact numbers, pipe operator |
-| RPLumen | `.rpl` | built in | reverse Polish Lumen: `5 3 +`, `8 'x' =`, `« 'n' = ... » 'f' =`, `cond if ... else ... end`, `dup drop swap over rot` |
+| RPLumen | `.rpl` | built in | reverse Polish Lumen with Lumen's indented blocks: `5 3 +`, `8 'x' =`, `« 'n' = ... » 'f' =`, `cond if` / `else`, `while cond`, `0 10 'i' for`, `dup drop swap over rot` |
 | Python | `.py` | built in | indentation with `:`, `elif`, `def`, `range()`, `str`, `arr.append(x)`, `s[i]` |
 | Rust | `.rs` | built in | braces, `let mut`, `fn main()`, `println!("{}", x)`, `v.len()`, `x.to_string()` |
 | PHP | `.php` | `langs/extras/php.json` | braces, `$variables`, `<?php`, case-insensitive keywords, `strval`, `array_push` |

@@ -2,10 +2,9 @@
 « 'to_end' = 'from_start' = 's' =
     from_start 'index' =
     "" 'out' =
-    while index to_end < repeat
+    while index to_end <
         out s index char_at . 'out' =
         index 1 + 'index' =
-    end
     out return
 » 'substring' =
 
@@ -16,31 +15,25 @@
 « 'limit' =
     [ ] 'sieve' =
     0 'i' =
-    while i limit <= repeat
+    while i limit <=
         true 'sieve' push
         i 1 + 'i' =
-    end
     0 false 'sieve' put
     1 false 'sieve' put
     2 'p' =
-    while p p * limit <= repeat
+    while p p * limit <=
         sieve p get if
             p p * 'k' =
-            while k limit <= repeat
+            while k limit <=
                 k false 'sieve' put
                 k p + 'k' =
-            end
-        end
         p 1 + 'p' =
-    end
     [ ] 'primes' =
     2 'i' =
-    while i limit <= repeat
+    while i limit <=
         sieve i get if
             i 'primes' push
-        end
         i 1 + 'i' =
-    end
     primes return
 » 'primes_up_to' =
 

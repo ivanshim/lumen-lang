@@ -14,7 +14,6 @@
         null return
     else
         x 2 * return
-    end
     null return
 » 'conditional_null' =
 
@@ -37,7 +36,6 @@ x print
         "Value is null" print
     else
         "Value is not null" print
-    end
     null return
 » 'check_value' =
 

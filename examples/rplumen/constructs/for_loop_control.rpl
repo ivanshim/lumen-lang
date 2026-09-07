@@ -2,10 +2,7 @@
 0 15 'i' for
     i 10 == if
         break
-    end
     i write
     i 9 < if
         ", " write
-    end
-next
 "" print

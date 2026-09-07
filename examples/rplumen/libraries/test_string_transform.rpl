@@ -2,10 +2,9 @@
 « 'to_end' = 'from_start' = 's' =
     from_start 'index' =
     "" 'out' =
-    while index to_end < repeat
+    while index to_end <
         out s index char_at . 'out' =
         index 1 + 'index' =
-    end
     out return
 » 'substring' =
 
@@ -15,51 +14,54 @@
 
 « 'c' =
     c ord 'o' =
-    o "a" ord >= if o "z" ord <= else false end if
+    o "a" ord >= if
+        o "z" ord <=
+    else
+        false
+    if
         o 32 - chr return
     else
         c return
-    end
     null return
 » 'char_to_upper' =
 
 « 'c' =
     c ord 'o' =
-    o "A" ord >= if o "Z" ord <= else false end if
+    o "A" ord >= if
+        o "Z" ord <=
+    else
+        false
+    if
         o 32 + chr return
     else
         c return
-    end
     null return
 » 'char_to_lower' =
 
 « 's' =
     "" 'result' =
     0 'i' =
-    while i s len < repeat
+    while i s len <
         result s i char_at char_to_upper . 'result' =
         i 1 + 'i' =
-    end
     result return
 » 'string_to_upper' =
 
 « 's' =
     "" 'result' =
     0 'i' =
-    while i s len < repeat
+    while i s len <
         result s i char_at char_to_lower . 'result' =
         i 1 + 'i' =
-    end
     result return
 » 'string_to_lower' =
 
 « 's' =
     "" 'result' =
     s len 1 - 'index' =
-    while index 0 >= repeat
+    while index 0 >=
         result s index char_at . 'result' =
         index 1 - 'index' =
-    end
     result return
 » 'reverse_characters' =
 
@@ -93,17 +95,15 @@
 « 's' =
     s len 0 == if
         s return
-    end
     s 0 char_at char_to_upper s string_to_lower 1 substring_end . return
 » 'to_title_case' =
 
 [ "hello" "world" "lumen" "PROGRAMMING" ] 'words' =
 0 'i' =
-while i words len < repeat
+while i words len <
     words i get 'word' =
     "  " word . " -> " . word to_title_case . print
     i 1 + 'i' =
-end
 "" print
 "=== Practical Example: Palindrome Checker ===" print
 « 's' =
@@ -113,9 +113,8 @@ end
 
 [ "racecar" "hello" "madam" "world" "level" ] 'test_words' =
 0 'i' =
-while i test_words len < repeat
+while i test_words len <
     test_words i get 'word' =
     word is_palindrome 'is_pal' =
     "  '" word . "' is palindrome: " . is_pal to_string . print
     i 1 + 'i' =
-end

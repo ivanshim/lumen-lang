@@ -4,7 +4,6 @@
         1 return
     else
         n n 1 - factorial * return
-    end
     null return
 » 'factorial' =
 
@@ -14,7 +13,6 @@
     else
         n print
         n 1 - countdown return
-    end
     null return
 » 'countdown' =
 

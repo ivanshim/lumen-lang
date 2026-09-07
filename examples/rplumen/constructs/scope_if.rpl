@@ -6,5 +6,4 @@ true if
 else
     30 'x' =
     x print
-end
 x print

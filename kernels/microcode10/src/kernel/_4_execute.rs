@@ -208,7 +208,7 @@ fn call_function(
         }
     }
 
-    let (result, flow) = env.in_frame(|env| {
+    let (result, flow) = env.in_call(|env| {
         for (param, value) in def.params.iter().zip(values.iter()) {
             env.bind(param.clone(), value.clone());
         }

@@ -12,7 +12,6 @@ pub enum Layout {
     Indent,
     Braces,
     Keyword,
-    Postfix,
 }
 
 #[derive(Debug)]
@@ -34,6 +33,8 @@ pub struct Operator {
 pub struct Spec {
     pub name: String,
     pub layout: Layout,
+    /// Reverse Polish: words over one stack, no expressions.
+    pub postfix: bool,
     cells: HashMap<&'static str, Cell>,
     pub binary: HashMap<String, Operator>,
     pub unary: HashMap<String, Operator>,
@@ -52,7 +53,7 @@ lexical.number.decimal_point:L lexical.number.base_marker:L lexical.number.expon
 lexical.number.hex_prefix:L lexical.keywords_case_insensitive:B \
 identifier.unicode:B identifier.variable_prefix:L identifier.case_insensitive:B \
 block.style:W block.open:L block.close:L block.intro:L block.indent_size:N \
-stmt.terminator:L \
+stmt.terminator:L syntax.notation:W \
 syntax.group.open:L syntax.group.close:L \
 syntax.call.open:L syntax.call.separator:L syntax.call.close:L syntax.call.label:L \
 syntax.array.open:L syntax.array.separator:L syntax.array.close:L \
@@ -155,6 +156,7 @@ impl Spec {
         let mut spec = Spec {
             name: String::new(),
             layout: Layout::Indent,
+            postfix: false,
             cells,
             binary: HashMap::new(),
             unary: HashMap::new(),
@@ -275,25 +277,29 @@ impl Spec {
             Some("indentation") => Layout::Indent,
             Some("braces") => Layout::Braces,
             Some("keyword") => Layout::Keyword,
-            Some("postfix") => Layout::Postfix,
-            other => return Err(format!("block.style must be 'indentation', 'braces', 'keyword' or 'postfix', got '{}'", other.unwrap_or(""))),
+            other => return Err(format!("block.style must be 'indentation', 'braces' or 'keyword', got '{}'", other.unwrap_or(""))),
+        };
+        self.postfix = match self.word("syntax.notation") {
+            Some("infix") => false,
+            Some("postfix") => true,
+            other => return Err(format!("syntax.notation must be 'infix' or 'postfix', got '{}'", other.unwrap_or(""))),
         };
         let (o, c) = (self.list("block.open").len(), self.list("block.close").len());
         let fits = match self.layout {
             Layout::Indent => o == 0 && c == 0 && self.number("block.indent_size").map_or(false, |n| n > 0),
             Layout::Braces => o > 0 && o == c,
-            _ => o == 0 && c > 0,
+            Layout::Keyword => o == 0 && c > 0,
         };
         if !fits {
             return Err("block.open, block.close and block.indent_size do not fit block.style".to_string());
         }
-        let postfix = self.layout == Layout::Postfix;
+        let postfix = self.postfix;
         if postfix && !self.table().is_empty() {
             return Err("a postfix language takes no op.precedence".to_string());
         }
         let stack_labels = ["stack.dup", "stack.drop", "stack.swap", "stack.over", "stack.rot", "stack.eval", "stack.program.open", "stack.program.close"];
         if !postfix && stack_labels.iter().any(|l| self.any(l)) {
-            return Err("the stack.* labels need block.style 'postfix'".to_string());
+            return Err("the stack.* labels need syntax.notation 'postfix'".to_string());
         }
         for (a, b) in [("syntax.group.open", "syntax.group.close"), ("syntax.call.open", "syntax.call.close"),
                        ("syntax.array.open", "syntax.array.close"), ("op.index.open", "op.index.close"),
@@ -347,7 +353,7 @@ impl Spec {
     }
 
     fn tables(&mut self) -> Result<(), String> {
-        let postfix = self.layout == Layout::Postfix;
+        let postfix = self.postfix;
         let table = self.table().to_vec();
         let place = |lex: &str, last: bool| -> Option<u32> {
             if postfix {

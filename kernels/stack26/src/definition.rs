@@ -15,7 +15,6 @@ pub enum Layout {
     Indented,
     Bracketed,
     Closed,
-    Postfix,
 }
 
 #[derive(Clone, Debug)]
@@ -59,6 +58,8 @@ pub struct Language {
 
     // ---- layout
     pub layout: Layout,
+    /// Reverse Polish: words over one stack, no expressions or statements.
+    pub postfix: bool,
     pub indent: usize,
     pub openers: Vec<String>,
     pub closers: Vec<String>,
@@ -132,7 +133,7 @@ const LABELS: &[&str] = &[
     "lexical.number.hex_prefix", "lexical.keywords_case_insensitive",
     "identifier.unicode", "identifier.variable_prefix", "identifier.case_insensitive",
     "block.style", "block.open", "block.close", "block.intro", "block.indent_size",
-    "stmt.terminator",
+    "stmt.terminator", "syntax.notation",
     "syntax.group.open", "syntax.group.close",
     "syntax.call.open", "syntax.call.separator", "syntax.call.close", "syntax.call.label",
     "syntax.array.open", "syntax.array.separator", "syntax.array.close",
@@ -359,8 +360,12 @@ impl Language {
             "indentation" => Layout::Indented,
             "braces" => Layout::Bracketed,
             "keyword" => Layout::Closed,
-            "postfix" => Layout::Postfix,
-            other => return Err(format!("block.style must be 'indentation', 'braces', 'keyword' or 'postfix', got '{other}'")),
+            other => return Err(format!("block.style must be 'indentation', 'braces' or 'keyword', got '{other}'")),
+        };
+        let postfix = match t.string("syntax.notation")?.as_str() {
+            "infix" => false,
+            "postfix" => true,
+            other => return Err(format!("syntax.notation must be 'infix' or 'postfix', got '{other}'")),
         };
         let openers = t.words("block.open")?;
         let closers = t.words("block.close")?;
@@ -383,14 +388,13 @@ impl Language {
                 }
                 indent_size.unwrap_or(4)
             }
-            Layout::Closed | Layout::Postfix => {
+            Layout::Closed => {
                 if !openers.is_empty() || closers.is_empty() {
-                    return Err("keyword and postfix blocks take no block.open and need block.close".to_string());
+                    return Err("keyword blocks take no block.open and need block.close".to_string());
                 }
                 indent_size.unwrap_or(4)
             }
         };
-        let postfix = layout == Layout::Postfix;
         let call = t.brackets("syntax.call.open", "syntax.call.close", Some("syntax.call.separator"))?;
         let call_labels = t.words("syntax.call.label")?;
         if !call_labels.is_empty() && call.is_none() {
@@ -515,7 +519,7 @@ impl Language {
             stack_words.push(t.words(label)?);
         }
         if !postfix && stack_words.iter().any(|list| !list.is_empty()) {
-            return Err("the stack.* labels need block.style 'postfix'".to_string());
+            return Err("the stack.* labels need syntax.notation 'postfix'".to_string());
         }
         if stack_words[6].len() != stack_words[7].len() {
             return Err("stack.program.open and .close must pair up position by position".to_string());
@@ -601,6 +605,7 @@ impl Language {
             symbols: Vec::new(),
             reserved: HashSet::new(),
             layout,
+            postfix,
             indent,
             openers,
             closers,

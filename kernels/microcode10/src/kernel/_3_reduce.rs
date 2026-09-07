@@ -106,7 +106,7 @@ impl<'a> Parser<'a> {
     // ---------- statements ----------
 
     fn program(&mut self) -> Result<Instruction, String> {
-        if self.schema.structure.blocks == BlockStyle::Postfix {
+        if self.schema.structure.postfix {
             return self.postfix_program();
         }
         let mut stmts = Vec::new();
@@ -155,7 +155,7 @@ impl<'a> Parser<'a> {
                 self.expect_close(&close[0])?;
                 Ok(body)
             }
-            BlockStyle::Keyword | BlockStyle::Postfix => {
+            BlockStyle::Keyword => {
                 let body = self.body_until(&structure.block_close)?;
                 self.expect_any_close()?;
                 Ok(body)
@@ -803,6 +803,14 @@ fn digits_in_base(digits: &str, base: u32) -> Result<BigInt, String> {
 /// The hidden binding holding the stack.
 pub const STACK: &str = "#stack";
 
+/// What a run of postfix words is part of, which says where it ends.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Run {
+    Block,
+    Program,
+    Line,
+}
+
 fn push(value: Instruction) -> Instruction {
     Instruction::Invoke { function: "<push>".to_string(), args: vec![Instruction::Variable(STACK.to_string()), value] }
 }
@@ -814,7 +822,7 @@ fn pop() -> Instruction {
 impl<'a> Parser<'a> {
     fn postfix_program(&mut self) -> Result<Instruction, String> {
         let stack = Instruction::assign(STACK.to_string(), Instruction::Literal(Value::Array(Vec::new())));
-        let body = self.postfix_body(&[])?;
+        let body = self.postfix_body(&[], Run::Block)?;
         if !self.at_end() {
             return Err(format!("Unexpected '{}'", self.peek().text));
         }
@@ -822,14 +830,39 @@ impl<'a> Parser<'a> {
     }
 
     /// Words up to one in `stops` (not consumed) or the end. A quoted
-    /// name is held for the word after it, which must take one.
-    fn postfix_body(&mut self, stops: &[String]) -> Result<Instruction, String> {
+    /// name is held for the word after it, which must take one. What else
+    /// ends the words is what they are part of: a block's end at its
+    /// closing delimiter (an opener inside it is an indentation error), a
+    /// program value's at its bracket (delimiters pass), a line's at the
+    /// line end.
+    fn postfix_body(&mut self, stops: &[String], run: Run) -> Result<Instruction, String> {
+        let structure: &'a crate::schema::Structure = &self.schema.structure;
         let mut items = Vec::new();
         let mut name: Option<String> = None;
         loop {
-            self.skip_terminators();
+            if run == Run::Line {
+                while self.peek().kind == Kind::Op && self.schema.is_terminator(&self.peek().text) {
+                    self.advance();
+                }
+                if self.peek().kind == Kind::Newline {
+                    break;
+                }
+            } else {
+                self.skip_terminators();
+            }
             if self.at_end() || self.at_one_of(stops).is_some() {
                 break;
+            }
+            let opener = self.at_one_of(&structure.block_open).is_some();
+            if opener || self.at_one_of(&structure.block_close).is_some() {
+                match run {
+                    Run::Program => {
+                        self.advance();
+                        continue;
+                    }
+                    Run::Block if opener => return Err("Unexpected indentation".to_string()),
+                    _ => break,
+                }
             }
             let tok = self.advance();
             match tok.kind {
@@ -853,6 +886,63 @@ impl<'a> Parser<'a> {
             return Err(format!("The name '{}' has no word to take it", name));
         }
         Ok(Instruction::Sequence(items))
+    }
+
+    /// The body a control word governs, in the block style: between the
+    /// delimiters synthesised from indentation or written as braces, or
+    /// the words up to a closer.
+    fn governed(&mut self) -> Result<Instruction, String> {
+        let structure: &'a crate::schema::Structure = &self.schema.structure;
+        match structure.blocks {
+            BlockStyle::Indentation | BlockStyle::Braces => {
+                self.skip_terminators();
+                let i = self
+                    .at_one_of(&structure.block_open)
+                    .ok_or_else(|| format!("Expected an indented block, got '{}'", self.peek().text))?;
+                self.advance();
+                let close = std::slice::from_ref(&structure.block_close[i]);
+                let body = self.postfix_body(close, Run::Block)?;
+                self.expect_close(&close[0])?;
+                Ok(body)
+            }
+            BlockStyle::Keyword => {
+                let body = self.postfix_body(&structure.block_close, Run::Block)?;
+                self.expect_any_close()?;
+                Ok(body)
+            }
+        }
+    }
+
+    /// A loop's condition, run again each pass: the words up to where the
+    /// body begins, which is the line end, the opener or the intro word.
+    fn postfix_condition(&mut self) -> Result<Instruction, String> {
+        let structure: &'a crate::schema::Structure = &self.schema.structure;
+        match structure.blocks {
+            BlockStyle::Indentation => self.postfix_body(&[], Run::Line),
+            BlockStyle::Braces => self.postfix_body(&structure.block_open, Run::Block),
+            BlockStyle::Keyword => {
+                let condition = self.postfix_body(&structure.block_intro, Run::Block)?;
+                self.expect_intro()?;
+                Ok(condition)
+            }
+        }
+    }
+
+    /// Step onto an else word when one follows past line ends.
+    fn take_else(&mut self, else_words: &[String]) -> bool {
+        let mut ahead = 0;
+        loop {
+            let tok = &self.tokens[(self.pos + ahead).min(self.tokens.len() - 1)];
+            let between = tok.kind == Kind::Newline || (tok.kind == Kind::Op && self.schema.is_terminator(&tok.text));
+            if between {
+                ahead += 1;
+            } else if (tok.kind == Kind::Word || tok.kind == Kind::Op) && else_words.iter().any(|w| *w == tok.text) {
+                self.pos += ahead + 1;
+                return true;
+            } else {
+                return false;
+            }
+        }
     }
 
     fn expect_intro(&mut self) -> Result<(), String> {
@@ -890,8 +980,7 @@ impl<'a> Parser<'a> {
                 return Ok(Instruction::assign(taken, pop()));
             }
             if s.loop_for.as_ref().map_or(false, |f| spelled(&f.keyword, word)) {
-                let body = self.postfix_body(closes)?;
-                self.expect_any_close()?;
+                let body = self.governed()?;
                 let limit = self.hidden_name("end");
                 let bind_limit = Instruction::assign(limit.clone(), pop());
                 let bind_var = Instruction::assign(taken.clone(), pop());
@@ -938,16 +1027,32 @@ impl<'a> Parser<'a> {
 
         // Control words: the condition is the top of the stack.
         if let Some(branch) = s.branch.as_ref().filter(|b| spelled(&b.keyword, word)) {
-            let mut stops = closes.clone();
-            stops.extend(branch.else_keyword.iter().cloned());
-            let then_branch = self.postfix_body(&stops)?;
-            let else_branch = if self.at_one_of(&branch.else_keyword).is_some() {
-                self.advance();
-                Some(self.postfix_body(closes)?)
+            // In the keyword style one closer ends both arms; otherwise
+            // each arm is a governed block.
+            let keyword = structure.blocks == BlockStyle::Keyword;
+            let then_branch = if keyword {
+                let mut stops = closes.clone();
+                stops.extend(branch.else_keyword.iter().cloned());
+                self.postfix_body(&stops, Run::Block)?
+            } else {
+                self.governed()?
+            };
+            let has_else = if keyword {
+                self.at_one_of(&branch.else_keyword).is_some() && {
+                    self.advance();
+                    true
+                }
+            } else {
+                self.take_else(&branch.else_keyword)
+            };
+            let else_branch = if has_else {
+                Some(if keyword { self.postfix_body(closes, Run::Block)? } else { self.governed()? })
             } else {
                 None
             };
-            self.expect_any_close()?;
+            if keyword {
+                self.expect_any_close()?;
+            }
             return Ok(Instruction::Branch {
                 condition: Box::new(pop()),
                 then_branch: Box::new(then_branch),
@@ -955,18 +1060,15 @@ impl<'a> Parser<'a> {
             });
         }
         if spelled(&s.loop_while, word) {
-            let condition = self.postfix_body(&structure.block_intro)?;
-            self.expect_intro()?;
-            let body = self.postfix_body(closes)?;
-            self.expect_any_close()?;
+            let condition = self.postfix_condition()?;
+            let body = self.governed()?;
             let condition = Instruction::Sequence(vec![condition, pop()]);
             return Ok(Instruction::Loop { condition: Box::new(condition), body: Box::new(body), step: None });
         }
         if spelled(&s.loop_until, word) {
-            let body = self.postfix_body(&structure.block_intro)?;
-            self.expect_intro()?;
-            let condition = self.postfix_body(closes)?;
-            self.expect_any_close()?;
+            // Head first as in Lumen; the condition is tested after the body.
+            let condition = self.postfix_condition()?;
+            let body = self.governed()?;
             let stop = Instruction::Branch {
                 condition: Box::new(Instruction::Sequence(vec![condition, pop()])),
                 then_branch: Box::new(Instruction::transfer(TransferKind::Break, None)),
@@ -991,7 +1093,7 @@ impl<'a> Parser<'a> {
         // A program value: its body, reduced now, runs when a word names it.
         if let Some(i) = stack.program_open.iter().position(|o| o == word) {
             let close = std::slice::from_ref(&stack.program_close[i]);
-            let body = self.postfix_body(close)?;
+            let body = self.postfix_body(close, Run::Program)?;
             self.expect_close(&close[0])?;
             let def = Function { name: "<program>".to_string(), params: Vec::new(), body };
             return Ok(push(Instruction::Literal(Value::Function(Rc::new(def)))));
@@ -1000,7 +1102,7 @@ impl<'a> Parser<'a> {
         // An array literal gathers what its body pushes.
         if let Some(array) = structure.array.as_ref().filter(|a| a.open == word) {
             let close = std::slice::from_ref(&array.close);
-            let body = self.postfix_body(close)?;
+            let body = self.postfix_body(close, Run::Block)?;
             self.expect_close(&array.close)?;
             let mark = self.hidden_name("mark");
             let depth = Instruction::Invoke { function: "<depth>".to_string(), args: vec![variable(STACK)] };

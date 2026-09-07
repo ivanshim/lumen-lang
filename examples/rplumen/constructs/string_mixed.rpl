@@ -5,4 +5,3 @@ message print
 n print
 n 42 == if
     "correct" print
-end

@@ -2,9 +2,11 @@
 //
 // Bindings are pushed in order; a frame records where it began and leaving
 // it truncates the stack back to that point. Lookup scans from the youngest
-// binding down, so an inner binding shadows an outer one and a callee sees
-// its caller's bindings for as long as the call lasts. The call cache holds
-// memoised function results.
+// binding down, so an inner binding shadows an outer one. A call also
+// records where it began: inside it, lookup sees the call's own bindings
+// (its blocks included) and the globals, the bindings made before any
+// frame, and not the caller's. The call cache holds memoised function
+// results.
 
 use std::collections::HashMap;
 
@@ -13,12 +15,35 @@ use crate::kernel::value::Value;
 pub struct Environment {
     bindings: Vec<(String, Value)>,
     frames: Vec<usize>,
+    calls: Vec<usize>,
     call_cache: HashMap<(String, String), Value>,
 }
 
 impl Environment {
     pub fn new() -> Self {
-        Environment { bindings: Vec::new(), frames: Vec::new(), call_cache: HashMap::new() }
+        Environment { bindings: Vec::new(), frames: Vec::new(), calls: Vec::new(), call_cache: HashMap::new() }
+    }
+
+    /// Run `f` inside a call's frame: what it binds is its own, and what
+    /// it sees is its own and the globals.
+    pub fn in_call<T>(&mut self, f: impl FnOnce(&mut Environment) -> Result<T, String>) -> Result<T, String> {
+        self.calls.push(self.bindings.len());
+        let outcome = self.in_frame(f);
+        self.calls.pop();
+        outcome
+    }
+
+    /// Whether the binding at `index` is in view: the innermost call's own
+    /// bindings, or the globals, which lie before the first frame.
+    fn visible(&self, index: usize) -> bool {
+        match self.calls.last() {
+            Some(&own) => index >= own || index < self.frames.first().copied().unwrap_or(0),
+            None => true,
+        }
+    }
+
+    fn position(&self, name: &str, wanted: impl Fn(&Value) -> bool) -> Option<usize> {
+        (0..self.bindings.len()).rev().find(|&i| self.bindings[i].0 == name && self.visible(i) && wanted(&self.bindings[i].1))
     }
 
     fn frame_start(&self) -> usize {
@@ -53,20 +78,20 @@ impl Environment {
         }
     }
 
-    /// The youngest binding of `name`, if any.
+    /// The youngest binding of `name` in view, if any.
     pub fn lookup(&self, name: &str) -> Option<&Value> {
-        self.bindings.iter().rev().find(|(n, _)| n == name).map(|(_, v)| v)
+        self.position(name, |_| true).map(|i| &self.bindings[i].1)
     }
 
     /// The youngest binding of `name` that holds a function: a language
     /// whose functions return by assigning to their own name (Pascal) may
     /// shadow the function with that variable inside its body.
     pub fn lookup_function(&self, name: &str) -> Option<&Value> {
-        self.bindings.iter().rev().find(|(n, v)| n == name && matches!(v, Value::Function(_))).map(|(_, v)| v)
+        self.position(name, |v| matches!(v, Value::Function(_))).map(|i| &self.bindings[i].1)
     }
 
     pub fn lookup_mut(&mut self, name: &str) -> Option<&mut Value> {
-        let index = self.bindings.iter().rposition(|(n, _)| n == name)?;
+        let index = self.position(name, |_| true)?;
         Some(&mut self.bindings[index].1)
     }
 

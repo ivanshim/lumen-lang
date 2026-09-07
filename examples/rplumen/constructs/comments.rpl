@@ -14,10 +14,8 @@ value 20 > if
     "Value is greater than 20" print
 else
     "Value is 20 or less" print
-end
 0 'counter' =
-while counter 3 < repeat
+while counter 3 <
     counter print
     counter 1 + 'counter' =
-end
 "Done testing comments" print

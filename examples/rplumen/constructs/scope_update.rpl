@@ -2,8 +2,6 @@
 0 'counter' =
 true if
     counter 1 + 'counter' =
-end
 true if
     counter 1 + 'counter' =
-end
 counter print

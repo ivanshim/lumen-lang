@@ -12,6 +12,9 @@ use crate::kernel::runtime::Value;
 
 pub struct Env {
     scopes: Vec<HashMap<String, Value>>,
+    /// The index of each active call's first scope. Inside a call, lookup
+    /// sees the call's own scopes and the global one, not the caller's.
+    calls: Vec<usize>,
     extensions: HashMap<TypeId, Box<dyn Any>>,
 }
 
@@ -20,8 +23,25 @@ impl Env {
     pub fn new() -> Self {
         Self {
             scopes: vec![HashMap::new()],
+            calls: Vec::new(),
             extensions: HashMap::new(),
         }
+    }
+
+    /// Run `f` inside a fresh scope that is a call's own: it sees itself,
+    /// the scopes it opens, and the global scope.
+    pub fn with_call_scope<T>(&mut self, f: impl FnOnce(&mut Env) -> Result<T, String>) -> Result<T, String> {
+        self.calls.push(self.scopes.len());
+        let result = self.with_scope(f);
+        self.calls.pop();
+        result
+    }
+
+    /// The scopes in view, innermost first.
+    fn in_view(&self) -> impl Iterator<Item = usize> {
+        let floor = self.calls.last().copied().unwrap_or(0);
+        let top = self.scopes.len();
+        (floor..top).rev().chain((floor > 0).then_some(0))
     }
 
     /// Enter a new lexical scope.
@@ -60,33 +80,25 @@ impl Env {
     /// Replace the innermost existing binding of `name`; if there is none,
     /// bind it in the current scope.
     pub fn update(&mut self, name: &str, value: Value) {
-        for scope in self.scopes.iter_mut().rev() {
-            if let Some(slot) = scope.get_mut(name) {
-                *slot = value;
-                return;
-            }
+        match self.get_mut(name) {
+            Some(slot) => *slot = value,
+            None => self.define(name.to_string(), value),
         }
-        self.define(name.to_string(), value);
     }
 
-    /// Look up `name` from the innermost scope outward.
+    /// Look up `name` from the innermost scope in view outward.
     pub fn get(&self, name: &str) -> Result<Value, String> {
-        for scope in self.scopes.iter().rev() {
-            if let Some(v) = scope.get(name) {
-                return Ok(v.clone());
-            }
-        }
-        Err(format!("Undefined variable '{}'", name))
+        self.in_view()
+            .find_map(|i| self.scopes[i].get(name))
+            .cloned()
+            .ok_or_else(|| format!("Undefined variable '{}'", name))
     }
 
-    /// Mutable access to the innermost binding of `name`, for in-place mutation.
+    /// Mutable access to the innermost binding of `name` in view, for
+    /// in-place mutation.
     pub fn get_mut(&mut self, name: &str) -> Option<&mut Value> {
-        for scope in self.scopes.iter_mut().rev() {
-            if let Some(v) = scope.get_mut(name) {
-                return Some(v);
-            }
-        }
-        None
+        let i = self.in_view().find(|&i| self.scopes[i].contains_key(name))?;
+        self.scopes[i].get_mut(name)
     }
 
     /// Typed side storage for language-defined runtime state.

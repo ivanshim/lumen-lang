@@ -67,11 +67,19 @@ pub struct Reduced {
     pub found: HashMap<String, Arity>,
 }
 
+/// What a run of postfix words is part of, which says where it stops.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Run {
+    Block,
+    Program,
+    Line,
+}
+
 pub fn reduce(toks: &[Tok], spec: &Spec, seeded: &[String], assumed: HashMap<String, Arity>, strict: bool) -> Out<Reduced> {
     let top = Scope { owns: Owns::All, names: seeded.to_vec(), params: Vec::new(), param_slots: Vec::new(), postfix: false };
     let mut r = Reducer { spec, toks, at: 0, scopes: vec![top], hidden: 0, assumed, found: HashMap::new(), strict };
-    let body = if spec.layout == Layout::Postfix {
-        let (mut stmts, rest) = r.postfix_body(&[])?;
+    let body = if spec.postfix {
+        let (mut stmts, rest) = r.postfix_body(&[], Run::Block)?;
         if !r.done() {
             return Err(format!("Unexpected '{}'", r.peek().text));
         }
@@ -368,8 +376,9 @@ impl<'a> Reducer<'a> {
         let name = slot.name.to_string();
         let name2 = name.clone();
         let program = self.program("<loop>", Owns::None, Catch::Break, Vec::new(), |r| {
-            let body = r.arm(Catch::Continue, body)?;
+            // Read in source order: the test is written before the body.
             let test = test(r)?;
+            let body = r.arm(Catch::Continue, body)?;
             let stop = r.arm(Catch::Nothing, |_| Ok(lit(Value::Null)))?;
             let again = r.arm(Catch::Nothing, |r| {
                 let again = r.read_slot(&name2);
@@ -911,12 +920,33 @@ impl<'a> Reducer<'a> {
 
     // ---------- postfix
 
-    fn postfix_body(&mut self, stops: &[String]) -> Out<(Vec<Node>, Vec<Node>)> {
+    /// Words up to a stop or the end, as statements and a symbolic stack.
+    /// Where else they stop depends on what they are: a block's words at
+    /// its end (a deeper indentation is an error), a program value's at
+    /// its bracket (indentation passes), a line's at the line end.
+    fn postfix_body(&mut self, stops: &[String], run: Run) -> Out<(Vec<Node>, Vec<Node>)> {
         let mut stmts = Vec::new();
         let mut stack = Vec::new();
         loop {
-            self.skip_ends();
+            if run == Run::Line {
+                while self.peek().kind == Tk::Sym && self.spec.is("stmt.terminator", &self.peek().text) {
+                    self.next();
+                }
+            } else {
+                self.skip_ends();
+            }
             if self.done() || stops.iter().any(|s| self.lex(s)) {
+                return Ok((stmts, stack));
+            }
+            let mark = self.peek().kind;
+            if matches!(mark, Tk::BlockOpen | Tk::BlockClose | Tk::Eol) {
+                if run == Run::Program {
+                    self.next();
+                    continue;
+                }
+                if run == Run::Block && mark == Tk::BlockOpen {
+                    return Err("Unexpected indentation".to_string());
+                }
                 return Ok((stmts, stack));
             }
             let t = self.next();
@@ -972,9 +1002,79 @@ impl<'a> Reducer<'a> {
         }
     }
 
+    /// The body a control word governs, in the block style: indented
+    /// lines, a bracketed run, or words up to a closer, which is taken.
+    fn governed(&mut self) -> Out<(Vec<Node>, Option<Node>)> {
+        match self.spec.layout {
+            Layout::Indent => {
+                self.skip_ends();
+                if self.peek().kind != Tk::BlockOpen {
+                    return Err(format!("Expected an indented block, got '{}'", self.peek().text));
+                }
+                self.next();
+                let body = self.postfix_block(&[], Run::Block)?;
+                if self.peek().kind != Tk::BlockClose {
+                    return Err("Expected the end of an indented block".to_string());
+                }
+                self.next();
+                Ok(body)
+            }
+            Layout::Braces => {
+                let opens = self.spec.list("block.open");
+                let k = opens.iter().position(|o| self.lex(o)).ok_or_else(|| format!("Expected '{}' to open a block, got '{}'", opens[0], self.peek().text))?;
+                self.next();
+                let close = self.spec.list("block.close")[k].clone();
+                let body = self.postfix_block(std::slice::from_ref(&close), Run::Block)?;
+                self.want_lex(&close)?;
+                Ok(body)
+            }
+            Layout::Keyword => {
+                let closers = self.spec.list("block.close").to_vec();
+                let body = self.postfix_block(&closers, Run::Block)?;
+                self.want_closer()?;
+                Ok(body)
+            }
+        }
+    }
+
+    /// A loop's condition, read again each pass: the words up to where the
+    /// body begins by style, the line end, the opener, or the intro word.
+    fn postfix_condition(&mut self) -> Out<(Vec<Node>, Option<Node>)> {
+        match self.spec.layout {
+            Layout::Indent => self.postfix_block(&[], Run::Line),
+            Layout::Braces => {
+                let opens = self.spec.list("block.open").to_vec();
+                self.postfix_block(&opens, Run::Block)
+            }
+            Layout::Keyword => {
+                let intros = self.spec.list("block.intro").to_vec();
+                let test = self.postfix_block(&intros, Run::Block)?;
+                self.want_intro()?;
+                Ok(test)
+            }
+        }
+    }
+
+    /// Step onto an else word if one follows past line ends.
+    fn take_else(&mut self) -> bool {
+        let mut ahead = 0;
+        loop {
+            let t = &self.toks[(self.at + ahead).min(self.toks.len() - 1)];
+            let separator = t.kind == Tk::Eol || (t.kind == Tk::Sym && self.spec.is("stmt.terminator", &t.text));
+            if !separator {
+                if t.kind == Tk::Word && self.spec.is("stmt.else", &t.text) {
+                    self.at += ahead + 1;
+                    return true;
+                }
+                return false;
+            }
+            ahead += 1;
+        }
+    }
+
     /// A body: its statements and what it leaves, at most one value.
-    fn postfix_block(&mut self, stops: &[String]) -> Out<(Vec<Node>, Option<Node>)> {
-        let (mut stmts, mut rest) = self.postfix_body(stops)?;
+    fn postfix_block(&mut self, stops: &[String], run: Run) -> Out<(Vec<Node>, Option<Node>)> {
+        let (mut stmts, mut rest) = self.postfix_body(stops, run)?;
         let left = match rest.len() {
             0 => None,
             1 => rest.pop(),
@@ -1026,12 +1126,10 @@ impl<'a> Reducer<'a> {
             let start = self.pop(stack)?;
             self.spill(stmts, stack);
             self.write_slot(name);
-            let closers = spec.list("block.close").to_vec();
-            let node = self.counted(name, start, end, move |r| {
-                let (s, left) = r.postfix_block(&closers)?;
+            let node = self.counted(name, start, end, |r| {
+                let (s, left) = r.governed()?;
                 r.loop_body(s, left)
             })?;
-            self.want_closer()?;
             stmts.push(node);
             return Ok(());
         }
@@ -1068,13 +1166,16 @@ impl<'a> Reducer<'a> {
         if spec.is("stmt.if", w) {
             let test = self.pop(stack)?;
             self.spill(stmts, stack);
+            // In the keyword style one closer ends both arms; in the
+            // others each arm is a governed block.
+            let keyword = spec.layout == Layout::Keyword;
             let mut stops = closers.clone();
             stops.extend(spec.list("stmt.else").iter().cloned());
             // Each arm is read inside its own program; what it leaves is its value.
             let mut then_left = false;
             let mut then_returns = false;
             let then = self.arm(Catch::Nothing, |r| {
-                let (mut s, left) = r.postfix_block(&stops)?;
+                let (mut s, left) = if keyword { r.postfix_block(&stops, Run::Block)? } else { r.governed()? };
                 then_returns = matches!(s.last(), Some(Node::Call(Target::Op(Op::Return | Op::Break | Op::Continue, _), _)));
                 then_left = left.is_some();
                 s.extend(left);
@@ -1082,10 +1183,10 @@ impl<'a> Reducer<'a> {
             })?;
             let mut else_left = false;
             let mut else_returns = false;
-            let otherwise = if self.at_any("stmt.else") {
-                self.next();
+            let has_else = if keyword { self.at_any("stmt.else") && { self.next(); true } } else { self.take_else() };
+            let otherwise = if has_else {
                 self.arm(Catch::Nothing, |r| {
-                    let (mut s, left) = r.postfix_block(&closers)?;
+                    let (mut s, left) = if keyword { r.postfix_block(&closers, Run::Block)? } else { r.governed()? };
                     else_returns = matches!(s.last(), Some(Node::Call(Target::Op(Op::Return | Op::Break | Op::Continue, _), _)));
                     else_left = left.is_some();
                     s.extend(left);
@@ -1094,7 +1195,9 @@ impl<'a> Reducer<'a> {
             } else {
                 self.arm(Catch::Nothing, |_| Ok(lit(Value::Null)))?
             };
-            self.want_closer()?;
+            if keyword {
+                self.want_closer()?;
+            }
             let as_value = match (then_left, else_left) {
                 (false, false) => false,
                 (true, true) => true,
@@ -1113,42 +1216,37 @@ impl<'a> Reducer<'a> {
         }
         if spec.is("stmt.while", w) {
             self.spill(stmts, stack);
-            let intros = spec.list("block.intro").to_vec();
             let node = self.looping(
-                move |r| {
-                    let (s, left) = r.postfix_block(&intros)?;
-                    r.want_intro()?;
+                |r| {
+                    let (s, left) = r.postfix_condition()?;
                     let mut items = s;
                     items.push(left.ok_or_else(|| "A while condition must leave one value".to_string())?);
                     Ok(seq(items))
                 },
-                move |r| {
-                    let (s, left) = r.postfix_block(&closers)?;
+                |r| {
+                    let (s, left) = r.governed()?;
                     r.loop_body(s, left)
                 },
                 None::<fn(&mut Self) -> Out<Node>>,
             )?;
-            self.want_closer()?;
             stmts.push(node);
             return Ok(());
         }
         if spec.is("stmt.until", w) {
+            // Written head first as in Lumen, the condition tested after the body.
             self.spill(stmts, stack);
-            let intros = spec.list("block.intro").to_vec();
             let node = self.until(
-                move |r| {
-                    let (s, left) = r.postfix_block(&intros)?;
-                    r.want_intro()?;
+                |r| {
+                    let (s, left) = r.governed()?;
                     r.loop_body(s, left)
                 },
-                move |r| {
-                    let (s, left) = r.postfix_block(&closers)?;
+                |r| {
+                    let (s, left) = r.postfix_condition()?;
                     let mut items = s;
                     items.push(left.ok_or_else(|| "An until condition must leave one value".to_string())?);
                     Ok(seq(items))
                 },
             )?;
-            self.want_closer()?;
             stmts.push(node);
             return Ok(());
         }
@@ -1176,7 +1274,7 @@ impl<'a> Reducer<'a> {
             self.hidden += 1;
             let name = format!("<program{}>", self.hidden);
             self.scopes.push(Scope { owns: Owns::All, names: Vec::new(), params: Vec::new(), param_slots: Vec::new(), postfix: true });
-            let (mut s, left) = self.postfix_block(std::slice::from_ref(&close))?;
+            let (mut s, left) = self.postfix_block(std::slice::from_ref(&close), Run::Program)?;
             self.want_lex(&close)?;
             if let Some(v) = left {
                 s.push(call(Op::Return, vec![v]));
@@ -1192,7 +1290,7 @@ impl<'a> Reducer<'a> {
         }
         if spec.one("syntax.array.open") == Some(w) {
             let close = spec.one("syntax.array.close").unwrap().to_string();
-            let (inner, items) = self.postfix_body(std::slice::from_ref(&close))?;
+            let (inner, items) = self.postfix_body(std::slice::from_ref(&close), Run::Block)?;
             self.want_lex(&close)?;
             if !inner.is_empty() {
                 self.spill(stmts, stack);

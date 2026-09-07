@@ -85,10 +85,18 @@ pub struct Compiler<'a> {
 
 type Fallible<T> = Result<T, String>;
 
+/// What a run of postfix words belongs to, which says where it stops.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Run {
+    Block,
+    Program,
+    Line,
+}
+
 pub fn compile(tokens: &[Token], lang: &Language, globals: &mut Globals) -> Fallible<Rc<Program>> {
     let mut c = Compiler { lang, toks: tokens, at: 0, globals, frames: vec![Frame::new(true, &[])], programs: 0 };
-    if lang.layout == Layout::Postfix {
-        c.postfix_body(&[])?;
+    if lang.postfix {
+        c.postfix_body(&[], Run::Block)?;
         if !c.done() {
             return Err(format!("Unexpected '{}'", c.peek().text));
         }
@@ -398,7 +406,7 @@ impl<'a> Compiler<'a> {
                 self.body_until(std::slice::from_ref(&close))?;
                 self.expect_lexeme(&close)
             }
-            Layout::Closed | Layout::Postfix => {
+            Layout::Closed => {
                 let closers = self.lang.closers.clone();
                 self.body_until(&closers)?;
                 self.expect_closer()
@@ -658,9 +666,7 @@ impl<'a> Compiler<'a> {
         let exit = self.emit(Word::Unless(0));
         self.open_loop(None);
         if postfix {
-            let closers = self.lang.closers.clone();
-            self.postfix_body(&closers)?;
-            self.expect_closer()?;
+            self.postfix_block()?;
         } else {
             self.block()?;
         }
@@ -1008,12 +1014,33 @@ impl<'a> Compiler<'a> {
     // ---------- postfix ----------
 
     /// Words up to one of `stops` or the end. A quoted name is data for the
-    /// word right after it, which must take one.
-    fn postfix_body(&mut self, stops: &[String]) -> Fallible<()> {
+    /// word right after it, which must take one. What else stops the words
+    /// depends on what they are part of: a block ends at its Close token
+    /// and refuses a deeper indentation; a program value, bracketed, lets
+    /// indentation pass; a line ends at its end.
+    fn postfix_body(&mut self, stops: &[String], run: Run) -> Fallible<()> {
         loop {
-            self.skip_separators();
+            match run {
+                Run::Line => {
+                    while self.peek().kind == Tk::Symbol && self.lang.terminator(&self.peek().text) {
+                        self.next();
+                    }
+                }
+                _ => self.skip_separators(),
+            }
             if self.done() || self.at_any(stops) {
                 return Ok(());
+            }
+            let kind = self.peek().kind;
+            if kind == Tk::Open || kind == Tk::Close || kind == Tk::Eol {
+                match run {
+                    Run::Program => {
+                        self.next();
+                        continue;
+                    }
+                    Run::Block if kind == Tk::Open => return Err("Unexpected indentation".to_string()),
+                    _ => return Ok(()),
+                }
             }
             let tok = self.next();
             match tok.kind {
@@ -1033,9 +1060,78 @@ impl<'a> Compiler<'a> {
                     self.emit(Word::Lit(Value::text(&tok.text)));
                 }
                 Tk::Word | Tk::Symbol => self.postfix_word(&tok)?,
-                _ => unreachable!("separators are skipped"),
+                _ => unreachable!("separators, line ends and block marks are handled above"),
             }
         }
+    }
+
+    /// The body a control word governs, in the language's block style:
+    /// indented lines, a bracketed run, or words up to a closer.
+    fn postfix_block(&mut self) -> Fallible<()> {
+        match self.lang.layout {
+            Layout::Indented => {
+                self.skip_separators();
+                if self.peek().kind != Tk::Open {
+                    return Err(format!("Expected an indented block, got '{}'", self.peek().text));
+                }
+                self.next();
+                self.postfix_body(&[], Run::Block)?;
+                if self.peek().kind != Tk::Close {
+                    return Err("Expected the end of an indented block".to_string());
+                }
+                self.next();
+                Ok(())
+            }
+            Layout::Bracketed => {
+                let which = self.lang.openers.iter().position(|o| self.at_lexeme(o));
+                let Some(i) = which else {
+                    return Err(format!("Expected '{}' to open a block, got '{}'", self.lang.openers[0], self.peek().text));
+                };
+                self.next();
+                let close = self.lang.closers[i].clone();
+                self.postfix_body(std::slice::from_ref(&close), Run::Block)?;
+                self.expect_lexeme(&close)
+            }
+            Layout::Closed => {
+                let closers = self.lang.closers.clone();
+                self.postfix_body(&closers, Run::Block)?;
+                self.expect_closer()
+            }
+        }
+    }
+
+    /// A loop's condition, run again each pass: the words up to where the
+    /// body begins, which is the line end, the block opener, or the intro
+    /// word by style.
+    fn postfix_condition(&mut self) -> Fallible<()> {
+        match self.lang.layout {
+            Layout::Indented => self.postfix_body(&[], Run::Line),
+            Layout::Bracketed => {
+                let openers = self.lang.openers.clone();
+                self.postfix_body(&openers, Run::Block)
+            }
+            Layout::Closed => {
+                let intros = self.lang.intros.clone();
+                self.postfix_body(&intros, Run::Block)?;
+                self.expect_intro()
+            }
+        }
+    }
+
+    /// Whether an else word comes next, past line ends; if so, step onto it.
+    fn take_else(&mut self) -> bool {
+        let mut ahead = 0;
+        while self.peek_at(ahead).kind == Tk::Eol
+            || (self.peek_at(ahead).kind == Tk::Symbol && self.lang.terminator(&self.peek_at(ahead).text))
+        {
+            ahead += 1;
+        }
+        let t = self.peek_at(ahead);
+        if t.kind == Tk::Word && Language::spells(&self.lang.else_words, &t.text) {
+            self.at += ahead + 1;
+            return true;
+        }
+        false
     }
 
     fn expect_intro(&mut self) -> Fallible<()> {
@@ -1092,44 +1188,60 @@ impl<'a> Compiler<'a> {
             self.emit(Word::Lit(Value::Null));
             return Ok(());
         }
-        let closers = lang.closers.clone();
         if Language::spells(&lang.if_words, word) {
             let skip = self.emit(Word::Unless(0));
-            let mut stops = closers.clone();
-            stops.extend(lang.else_words.iter().cloned());
-            self.postfix_body(&stops)?;
-            if self.at_any(&lang.else_words) {
-                self.next();
+            if lang.layout == Layout::Closed {
+                // One closer ends the whole if/else.
+                let closers = lang.closers.clone();
+                let mut stops = closers.clone();
+                stops.extend(lang.else_words.iter().cloned());
+                self.postfix_body(&stops, Run::Block)?;
+                if self.at_any(&lang.else_words) {
+                    self.next();
+                    let over = self.emit(Word::Jump(0));
+                    self.patch(skip);
+                    self.postfix_body(&closers, Run::Block)?;
+                    self.patch(over);
+                } else {
+                    self.patch(skip);
+                }
+                return self.expect_closer();
+            }
+            self.postfix_block()?;
+            if self.take_else() {
                 let over = self.emit(Word::Jump(0));
                 self.patch(skip);
-                self.postfix_body(&closers)?;
+                self.postfix_block()?;
                 self.patch(over);
             } else {
                 self.patch(skip);
             }
-            return self.expect_closer();
+            return Ok(());
         }
         if Language::spells(&lang.while_words, word) {
             let top = self.here();
-            self.postfix_body(&lang.intros)?;
-            self.expect_intro()?;
+            self.postfix_condition()?;
             let exit = self.emit(Word::Unless(0));
             self.open_loop(Some(top));
-            self.postfix_body(&closers)?;
-            self.expect_closer()?;
+            self.postfix_block()?;
             self.emit(Word::Jump(top));
             self.patch(exit);
             self.close_loop(top);
             return Ok(());
         }
         if Language::spells(&lang.until_words, word) {
+            // The condition is written first and tested after the body:
+            // lifted out and put back after it, as in the infix form.
+            let start = self.here();
+            self.postfix_condition()?;
+            let condition: Vec<Word> = self.frame().words.drain(start..).collect();
             let top = self.here();
             self.open_loop(None);
-            self.postfix_body(&lang.intros)?;
-            self.expect_intro()?;
+            self.postfix_block()?;
             let test = self.here();
-            self.postfix_body(&closers)?;
-            self.expect_closer()?;
+            for word in relocated(condition, test as i64 - start as i64) {
+                self.emit(word);
+            }
             self.emit(Word::Unless(top));
             self.close_loop(test);
             return Ok(());
@@ -1152,7 +1264,7 @@ impl<'a> Compiler<'a> {
             self.programs += 1;
             let name = format!("<program{}>", self.programs);
             let program = self.program(&name, Vec::new(), |c| {
-                c.postfix_body(std::slice::from_ref(&close))?;
+                c.postfix_body(std::slice::from_ref(&close), Run::Program)?;
                 c.expect_lexeme(&close)?;
                 c.emit(Word::Exit);
                 Ok(())
@@ -1163,7 +1275,7 @@ impl<'a> Compiler<'a> {
         if let Some(array) = lang.array.as_ref().filter(|a| a.open == word) {
             let close = array.close.clone();
             self.emit(Word::Mark);
-            self.postfix_body(std::slice::from_ref(&close))?;
+            self.postfix_body(std::slice::from_ref(&close), Run::Block)?;
             self.expect_lexeme(&close)?;
             self.emit(Word::Gather);
             return Ok(());

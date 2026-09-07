@@ -25,6 +25,7 @@
   "block.intro": ["then", "do"],
   "block.indent_size": null,
   "stmt.terminator": [";", "."],
+  "syntax.notation": "infix",
   "syntax.group.open": ["("],
   "syntax.group.close": [")"],
   "syntax.call.open": ["("],

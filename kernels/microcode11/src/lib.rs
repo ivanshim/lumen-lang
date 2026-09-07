@@ -21,7 +21,7 @@ pub mod value;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use spec::{Spec, Style};
+use spec::Spec;
 use tree::Program;
 use value::Value;
 
@@ -73,7 +73,7 @@ pub fn build(spec: &Spec, source: &str) -> Result<(Rc<Program>, reduce::Globals)
             globals.slot(name);
         }
     }
-    if spec.style != Style::Postfix {
+    if !spec.postfix {
         let (program, _) = reduce::reduce(&tokens, spec, &mut globals, HashMap::new(), true)?;
         return Ok((program, globals));
     }

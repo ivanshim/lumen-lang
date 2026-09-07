@@ -77,6 +77,17 @@ pub struct Assembler<'a> {
 
 type Outcome<T> = Result<T, String>;
 
+/// What a run of postfix words is part of.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Body {
+    /// A block or the top level: ends at the block's end.
+    Block,
+    /// A program value: ends at its closing bracket, indented freely.
+    Program,
+    /// One line: ends at the line end.
+    Line,
+}
+
 const RESULT: &str = "#result";
 const TEMP: &str = "#t";
 const SCRATCH: [&str; 3] = ["#a", "#b", "#c"];
@@ -93,8 +104,8 @@ pub fn assemble(toks: &[Tok], def: &Def, table: &mut Table) -> Outcome<Rc<Progra
         words: Vec::new(),
     };
     let mut a = Assembler { def, toks, at: 0, table, units: vec![top], serial: 0 };
-    if def.style == Style::Postfix {
-        a.postfix_body(&[])?;
+    if def.postfix {
+        a.postfix_body(&[], Body::Block)?;
         if !a.done() {
             return Err(format!("Unexpected '{}'", a.peek().text));
         }
@@ -463,7 +474,7 @@ impl<'a> Assembler<'a> {
                 self.statements_until(std::slice::from_ref(&close))?;
                 self.expect_lexeme(&close)
             }
-            Style::Keyword | Style::Postfix => {
+            Style::Keyword => {
                 let closers = self.def.closers.clone();
                 self.statements_until(&closers)?;
                 self.expect_closer()
@@ -728,9 +739,7 @@ impl<'a> Assembler<'a> {
         let out = self.unless();
         self.open_loop(None);
         if postfix {
-            let closers = self.def.closers.clone();
-            self.postfix_body(&closers)?;
-            self.expect_closer()?;
+            self.postfix_block()?;
         } else {
             self.block()?;
         }
@@ -1079,12 +1088,30 @@ impl<'a> Assembler<'a> {
     // ---------- postfix ----------
 
     /// Words up to one of `stops` or the end. A quoted name is data for
-    /// the word after it.
-    fn postfix_body(&mut self, stops: &[String]) -> Outcome<()> {
+    /// the word after it. In a block, a deeper indentation is an error and
+    /// the block's own end stops the words; in a program value the
+    /// indentation is free, since its brackets say where it ends; on a
+    /// line, the line end stops them.
+    fn postfix_body(&mut self, stops: &[String], body: Body) -> Outcome<()> {
         loop {
-            self.skip_separators();
+            if body == Body::Line {
+                while self.peek().kind == Kind::Symbol && self.def.ends_statement(&self.peek().text) {
+                    self.next();
+                }
+            } else {
+                self.skip_separators();
+            }
             if self.done() || self.at_any(stops) {
                 return Ok(());
+            }
+            match (self.peek().kind, body) {
+                (Kind::Eol, Body::Line) | (Kind::Close, Body::Block) | (Kind::Open | Kind::Close, Body::Line) => return Ok(()),
+                (Kind::Open | Kind::Close, Body::Program) => {
+                    self.next();
+                    continue;
+                }
+                (Kind::Open, Body::Block) => return Err("Unexpected indentation".to_string()),
+                _ => {}
             }
             let tok = self.next();
             match tok.kind {
@@ -1102,7 +1129,81 @@ impl<'a> Assembler<'a> {
                 }
                 Kind::Text => self.lit(Value::str(&tok.text)),
                 Kind::Word | Kind::Symbol => self.postfix_word(&tok)?,
-                _ => unreachable!("separators are skipped"),
+                _ => unreachable!("separators and block marks are handled above"),
+            }
+        }
+    }
+
+    /// The body after a control word, in the language's block style.
+    fn postfix_block(&mut self) -> Outcome<()> {
+        let stops = self.postfix_open()?;
+        self.postfix_body(&stops, Body::Block)?;
+        self.postfix_close(&stops)
+    }
+
+    /// Where a block begins: the words that end its body.
+    fn postfix_open(&mut self) -> Outcome<Vec<String>> {
+        match self.def.style {
+            Style::Indented => {
+                self.skip_separators();
+                if self.peek().kind != Kind::Open {
+                    return Err(format!("Expected an indented block, got '{}'", self.peek().text));
+                }
+                self.next();
+                Ok(Vec::new())
+            }
+            Style::Braced => {
+                let which = self.def.openers.iter().position(|o| self.at_lexeme(o));
+                let Some(i) = which else {
+                    return Err(format!("Expected '{}' to open a block, got '{}'", self.def.openers[0], self.peek().text));
+                };
+                self.next();
+                Ok(vec![self.def.closers[i].clone()])
+            }
+            Style::Keyword => Ok(self.def.closers.clone()),
+        }
+    }
+
+    fn postfix_close(&mut self, stops: &[String]) -> Outcome<()> {
+        match self.def.style {
+            Style::Indented => {
+                if self.peek().kind != Kind::Close {
+                    return Err("Expected the end of an indented block".to_string());
+                }
+                self.next();
+                Ok(())
+            }
+            Style::Braced => self.expect_lexeme(&stops[0]),
+            Style::Keyword => self.expect_closer(),
+        }
+    }
+
+    /// A loop's condition: the words up to where its body begins, which
+    /// is the intro word, the line end, or the block opener by style.
+    fn postfix_condition(&mut self) -> Outcome<()> {
+        match self.def.style {
+            Style::Indented => self.postfix_body(&[], Body::Line),
+            Style::Braced => {
+                let openers = self.def.openers.clone();
+                self.postfix_body(&openers, Body::Block)
+            }
+            Style::Keyword => {
+                let intros = self.def.intros.clone();
+                self.postfix_body(&intros, Body::Block)?;
+                self.expect_intro()
+            }
+        }
+    }
+
+    /// How far ahead an else word follows, past line ends.
+    fn else_ahead(&self) -> Option<usize> {
+        let mut ahead = 0;
+        loop {
+            let t = self.peek_at(ahead);
+            if t.kind == Kind::Eol || (t.kind == Kind::Symbol && self.def.ends_statement(&t.text)) {
+                ahead += 1;
+            } else {
+                return (t.kind == Kind::Word && Def::has(&self.def.elses, &t.text)).then_some(ahead);
             }
         }
     }
@@ -1172,44 +1273,63 @@ impl<'a> Assembler<'a> {
             self.lit(Value::Null);
             return Ok(());
         }
-        let closers = def.closers.clone();
         if Def::has(&def.ifs, word) {
+            // In the keyword style one closer ends the whole if/else; in
+            // the others each arm is a block of its own.
+            let keyword = def.style == Style::Keyword;
             let skip = self.unless();
-            let mut stops = closers.clone();
-            stops.extend(def.elses.iter().cloned());
-            self.postfix_body(&stops)?;
-            if self.at_any(&def.elses) {
-                self.next();
-                let over = self.jump();
-                self.patch(skip);
-                self.postfix_body(&closers)?;
-                self.patch(over);
-            } else {
-                self.patch(skip);
+            let stops = self.postfix_open()?;
+            let mut arm_stops = stops.clone();
+            if keyword {
+                arm_stops.extend(def.elses.iter().cloned());
             }
-            return self.expect_closer();
+            self.postfix_body(&arm_stops, Body::Block)?;
+            if !keyword {
+                self.postfix_close(&stops)?;
+            }
+            let else_at = if keyword { self.at_any(&def.elses).then_some(0) } else { self.else_ahead() };
+            match else_at {
+                Some(ahead) => {
+                    self.at += ahead + 1;
+                    let over = self.jump();
+                    self.patch(skip);
+                    if keyword {
+                        self.postfix_body(&stops, Body::Block)?;
+                    } else {
+                        self.postfix_block()?;
+                    }
+                    self.patch(over);
+                }
+                None => self.patch(skip),
+            }
+            if keyword {
+                self.postfix_close(&stops)?;
+            }
+            return Ok(());
         }
         if Def::has(&def.whiles, word) {
             let top = self.here();
-            self.postfix_body(&def.intros)?;
-            self.expect_intro()?;
+            self.postfix_condition()?;
             let out = self.unless();
             self.open_loop(Some(top));
-            self.postfix_body(&closers)?;
-            self.expect_closer()?;
+            self.postfix_block()?;
             self.jump_to(top);
             self.patch(out);
             self.close_loop(top);
             return Ok(());
         }
         if Def::has(&def.untils, word) {
+            // Written first, tested after each pass: lifted past the body.
+            let from = self.here();
+            self.postfix_condition()?;
+            let test: Vec<Word> = self.unit().words.drain(from..).collect();
             let top = self.here();
             self.open_loop(None);
-            self.postfix_body(&def.intros)?;
-            self.expect_intro()?;
+            self.postfix_block()?;
             let again = self.here();
-            self.postfix_body(&closers)?;
-            self.expect_closer()?;
+            for w in shifted(test, again as i64 - from as i64) {
+                self.emit(w);
+            }
             self.emit(Word::Unless(top));
             self.close_loop(again);
             return Ok(());
@@ -1231,7 +1351,7 @@ impl<'a> Assembler<'a> {
             let close = def.program_close[i].clone();
             let name = self.fresh("program");
             let program = self.program(&format!("<{}>", &name[1..]), Vec::new(), false, |a| {
-                a.postfix_body(std::slice::from_ref(&close))?;
+                a.postfix_body(std::slice::from_ref(&close), Body::Program)?;
                 a.expect_lexeme(&close)
             })?;
             self.lit(Value::Program(program));
@@ -1240,7 +1360,7 @@ impl<'a> Assembler<'a> {
         if let Some(array) = def.array.as_ref().filter(|a| a.open == word) {
             let close = array.close.clone();
             self.lit(Value::Mark);
-            self.postfix_body(std::slice::from_ref(&close))?;
+            self.postfix_body(std::slice::from_ref(&close), Body::Block)?;
             self.expect_lexeme(&close)?;
             self.apply(Op::Gather, 0);
             return Ok(());
