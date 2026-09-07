@@ -1,0 +1,50 @@
+# The Lumen library file langs/lib_lumen/to_string.lm, ported by scripts/port_examples.py; edit the Lumen original, not this file.
+
+« 'radix' = 'n' =
+    n 0 == if
+        "0" return
+    false 'negative' =
+    n 0 < if
+        true 'negative' =
+        n neg 'n' =
+    "" 'result' =
+    while n 0 >
+        n radix % 'digit' =
+        alphabet digit char_at result . 'result' =
+        n radix // 'n' =
+    negative if
+        "-" result . 'result' =
+    radix to_string "@" . result . return
+» 'integer_to_base_string' =
+
+« 'radix' = 'r' =
+    r num 'n' =
+    r den 'd' =
+    n radix integer_to_base_string 'n_str' =
+    d radix integer_to_base_string 'd_str' =
+    n_str "/" . d_str . return
+» 'rational_to_base_string' =
+
+« 'precision_' = 'radix' = 'value' =
+    value to_int 'i' =
+    value frac 'f' =
+    i radix integer_to_base_string 'int_part' =
+    f 0 == if
+        int_part return
+    f radix precision_ frac_to_base_string 'frac_part' =
+    int_part "." . frac_part . return
+» 'real_to_base_string' =
+
+« 'limit' = 'radix' = 'f' =
+    "" 'result' =
+    0 'count' =
+    while count limit <
+        f 0 to_real == if
+            result return
+        f radix to_real * 'f' =
+        f to_int 'digit' =
+        result alphabet digit char_at . 'result' =
+        f frac 'f' =
+        count 1 + 'count' =
+    result return
+» 'frac_to_base_string' =

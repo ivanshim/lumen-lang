@@ -1,0 +1,79 @@
+# The Lumen library file langs/lib_lumen/string.lm, ported by scripts/port_examples.py; edit the Lumen original, not this file.
+
+« 'index' = 's' =
+    index 0 < if
+        true
+    else
+        index s len >=
+    if
+        null return
+    s index char_at return
+» 'char_at_or_null' =
+
+« 'to_end' = 'from_start' = 's' =
+    from_start 'index' =
+    "" 'out' =
+    while index to_end <
+        out s index char_at . 'out' =
+        index 1 + 'index' =
+    out return
+» 'substring' =
+
+« 'from_here' = 's' =
+    s from_here s len substring return
+» 'substring_end' =
+
+« 'to_here' = 's' =
+    s 0 to_here substring return
+» 'substring_start' =
+
+« 'prefix' = 's' =
+    prefix len s len <= if
+        s 0 prefix len substring prefix ==
+    else
+        false
+    return
+» 'starts_with' =
+
+« 'suffix' = 's' =
+    suffix len s len <= if
+        s s len suffix len - s len substring suffix ==
+    else
+        false
+    return
+» 'ends_with' =
+
+« 'repetitions' = 's' =
+    "" 'out' =
+    0 'i' =
+    while i repetitions <
+        out s . 'out' =
+        i 1 + 'i' =
+    out return
+» 'repeat_string' =
+
+« 'separator' = 'arr' =
+    "" 'out' =
+    arr len 'n' =
+    0 'i' =
+    while i n <
+        i 0 > if
+            out separator . 'out' =
+        out arr i get . 'out' =
+        i 1 + 'i' =
+    out return
+» 'join_strings' =
+
+« 'needle' = 's' =
+    needle len 'n' =
+    0 'i' =
+    while i n + s len <=
+        s i i n + substring needle == if
+            i return
+        i 1 + 'i' =
+    1 neg return
+» 'index_of' =
+
+« 'needle' = 's' =
+    s needle index_of 0 >= return
+» 'has_substring' =

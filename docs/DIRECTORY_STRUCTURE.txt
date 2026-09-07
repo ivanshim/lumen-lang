@@ -3,12 +3,12 @@ DIRECTORY STRUCTURE
 ================================================================================
 
 Generated from the tree; regenerate with:
-  git ls-files | grep -v -E '^(examples|lib_lumen)/' | sort
+  git ls-files | grep -v -E '^(examples|langs/lib_)' | sort
 
 lumen-lang/
   Cargo.toml                       workspace + host package
   src/main.rs                      command-line host (the only place the kernels meet)
-  test.sh, test_e.sh, test_pi.sh   test drivers (test.sh runs every example on every kernel)
+  test.sh                          runs every example on every kernel and requires the kernels to agree
   .github/workflows/ci.yml         GitHub Actions: kernel independence, build with -D warnings, run test.sh
 
   langs/                           language definitions as JSON, one per language, plus a comparison table
@@ -143,40 +143,42 @@ lumen-lang/
     kernels/stack8/src/lib.rs
     kernels/stack8/src/value.rs
 
-  lib_lumen/                       Lumen standard library (.lm) + prelude.rs (embedding list)
-    lib_lumen/constants.lm
-    lib_lumen/constants_1024.lm
-    lib_lumen/constants_default.lm
-    lib_lumen/e_integer.lm
-    lib_lumen/factorial.lm
-    lib_lumen/modular_arithmetic.lm
-    lib_lumen/number_theory.lm
-    lib_lumen/array.lm               the array library, derived from len, indexing and push
-    lib_lumen/numeric.lm             to_real, to_int and frac over num and den
-    lib_lumen/output.lm
-    lib_lumen/pi_machin.lm
-    lib_lumen/prelude.lm
-    lib_lumen/prelude.rs
-    lib_lumen/primes.lm
-    lib_lumen/render.lm              the renderers, as Lumen code over the primitives
-    lib_lumen/round.lm
-    lib_lumen/string.lm
-    lib_lumen/string_ord_chr.lm
-    lib_lumen/string_to_value.lm
-    lib_lumen/to_string.lm
-  lib_python/                      the library as Python spells it: written by scripts/port_examples.py from lib_lumen/, prepended to every Python program
-  lib_rplumen/                     ... as RPLumen spells it
-  lib_rust/                        ... as Rust spells it
-  lib_c/                           ... as C spells it
-  lib_javascript/                  ... as JavaScript spells it
-  lib_pascal/                      ... as Pascal spells it
-  lib_php/                         ... as PHP spells it
-  lib_ruby/                        ... as Ruby spells it
-  lib_swift/                       ... as Swift spells it; each holds a prelude.rs the host embeds
+  langs/lib_lumen/                 Lumen standard library (.lm) + prelude.rs (embedding list)
+    langs/lib_lumen/constants.lm
+    langs/lib_lumen/constants_1024.lm
+    langs/lib_lumen/constants_default.lm
+    langs/lib_lumen/e_integer.lm
+    langs/lib_lumen/factorial.lm
+    langs/lib_lumen/modular_arithmetic.lm
+    langs/lib_lumen/number_theory.lm
+    langs/lib_lumen/array.lm         the array library, derived from len, indexing and push
+    langs/lib_lumen/numeric.lm       to_real, to_int and frac over num and den
+    langs/lib_lumen/output.lm
+    langs/lib_lumen/pi_machin.lm
+    langs/lib_lumen/prelude.lm
+    langs/lib_lumen/prelude.rs
+    langs/lib_lumen/primes.lm
+    langs/lib_lumen/render.lm        the renderers, as Lumen code over the primitives
+    langs/lib_lumen/round.lm
+    langs/lib_lumen/string.lm
+    langs/lib_lumen/string_ord_chr.lm
+    langs/lib_lumen/string_to_value.lm
+    langs/lib_lumen/to_string.lm
+  langs/lib_python/                the library as Python spells it: written by scripts/port_examples.py from lib_lumen/, prepended to every Python program
+  langs/lib_rplumen/               ... as RPLumen spells it
+  langs/lib_rust/                  ... as Rust spells it
+  langs/lib_c/                     ... as C spells it
+  langs/lib_javascript/            ... as JavaScript spells it
+  langs/lib_pascal/                ... as Pascal spells it
+  langs/lib_php/                   ... as PHP spells it
+  langs/lib_ruby/                  ... as Ruby spells it
+  langs/lib_swift/                 ... as Swift spells it; each holds a prelude.rs the host embeds
 
   scripts/                         CI checks, the table generator, the differential test, the example porter
     scripts/kernel_diff.sh           the suite over every language; the suite itself is the differential test
     scripts/bench.sh                 times every program under bench/ on every kernel
+    scripts/test_e.sh                e_integer at 1 to 30 significant figures
+    scripts/test_pi.sh               pi_machin at 1 to 30 significant figures
     scripts/kernel_independence.py
     scripts/lang_table.py
     scripts/port_examples.py         writes every Lumen example and the library in every other language: examples/<language>/, lib_<language>/, examples/PORTS.md, docs/LIBRARY_PORTS.md
