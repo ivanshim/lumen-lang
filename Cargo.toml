@@ -1,5 +1,5 @@
 [workspace]
-members = ["kernels/stream35", "kernels/microcode10", "kernels/stack26", "kernels/microcode11", "kernels/microcode4", "kernels/stack5", "lab/stacklab", "lab/microlab"]
+members = ["kernels/stream35", "kernels/microcode10", "kernels/stack26", "kernels/microcode11", "kernels/microcode4", "kernels/stack5", "kernels/stack8", "kernels/microcode7", "lab/stacklab", "lab/microlab"]
 
 [package]
 name = "lumen-lang"
@@ -18,3 +18,5 @@ lumen-stack26 = { path = "kernels/stack26" }
 lumen-microcode11 = { path = "kernels/microcode11" }
 lumen-microcode4 = { path = "kernels/microcode4" }
 lumen-stack5 = { path = "kernels/stack5" }
+lumen-stack8 = { path = "kernels/stack8" }
+lumen-microcode7 = { path = "kernels/microcode7" }

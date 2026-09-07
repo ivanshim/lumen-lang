@@ -18,7 +18,7 @@ use std::fs;
 use std::path::Path;
 use std::process;
 
-const KERNELS: [&str; 6] = ["stream35", "microcode10", "stack26", "microcode11", "microcode4", "stack5"];
+const KERNELS: [&str; 8] = ["stream35", "microcode10", "stack26", "microcode11", "microcode4", "stack5", "stack8", "microcode7"];
 const DEFAULT_KERNEL: &str = "microcode10";
 const DEFAULT_LANGUAGE: &str = "lumen";
 
@@ -113,6 +113,10 @@ fn main() {
         ("microcode4", Language::File { text, .. }) => lumen_microcode4::run_definition(text, &source, &inv.program_args),
         ("stack5", Language::Named(name)) => lumen_stack5::run(name, &source, &inv.program_args),
         ("stack5", Language::File { text, .. }) => lumen_stack5::run_definition(text, &source, &inv.program_args),
+        ("stack8", Language::Named(name)) => lumen_stack8::run(name, &source, &inv.program_args),
+        ("stack8", Language::File { text, .. }) => lumen_stack8::run_definition(text, &source, &inv.program_args),
+        ("microcode7", Language::Named(name)) => lumen_microcode7::run(name, &source, &inv.program_args),
+        ("microcode7", Language::File { text, .. }) => lumen_microcode7::run_definition(text, &source, &inv.program_args),
         _ => unreachable!("kernel names are validated in parse_args"),
     };
 
