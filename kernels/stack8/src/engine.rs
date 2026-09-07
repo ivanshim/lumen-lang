@@ -38,6 +38,10 @@ pub struct Engine<'a> {
     /// The line the last value raised was raised on, which a language
     /// that tells where a run ended names.
     hurled_at: std::cell::Cell<u32>,
+    /// How long the run may take, in seconds, and when the count began;
+    /// nought is no limit at all.
+    limit: std::cell::Cell<usize>,
+    began: std::cell::Cell<Option<std::time::Instant>>,
     args_cell: Option<usize>,
     memo_cell: Option<usize>,
 }
@@ -48,6 +52,9 @@ type Res<T> = Result<T, String>;
 pub enum Fault {
     Note(String),
     Thrown(Value),
+    /// The run is over and no guard may take it back: a limit the
+    /// language set on the run itself was passed.
+    Stopped(String),
 }
 
 impl From<String> for Fault {
@@ -75,6 +82,7 @@ impl Fault {
                 }
             }
             Fault::Thrown(v) => format!("Uncaught {}", v.display(sp)),
+            Fault::Stopped(told) => told,
         }
     }
 }
@@ -97,6 +105,8 @@ impl<'a> Engine<'a> {
             source: String::new(),
             nothing: Value::Null,
             hurled_at: std::cell::Cell::new(0),
+            limit: std::cell::Cell::new(0),
+            began: std::cell::Cell::new(None),
             args_cell: find(&lang.args_binding),
             memo_cell: find(&lang.memo_binding),
             idents,
@@ -133,6 +143,11 @@ impl<'a> Engine<'a> {
         let Some((_, word)) = self.lang.complaint_words.iter().find(|(k, _)| *k == Complaint::Fatal) else { return };
         let sp = self.wording();
         let raised = match fault {
+            // A limit passed is told plainly, since nothing was raised.
+            Fault::Stopped(told) => {
+                println!("\n{}: {} in {} on line {}", word, told, self.source, self.line);
+                return;
+            }
             Fault::Thrown(raised) => raised,
             // A fault of the kernel's own is told under the class the
             // language names for one, where it names any.
@@ -471,13 +486,33 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
+    /// Whether the run has taken longer than the language allowed it.
+    /// Counted now and then rather than at every word, since asking the
+    /// clock costs more than the words between two askings.
+    fn out_of_time(&self) -> Option<Fault> {
+        let seconds = self.limit.get();
+        let began = self.began.get()?;
+        if seconds == 0 || began.elapsed().as_secs() < seconds as u64 {
+            return None;
+        }
+        let ending = if seconds == 1 { "second" } else { "seconds" };
+        Some(Fault::Stopped(format!("Maximum execution time of {} {} exceeded", seconds, ending)))
+    }
+
     fn run_instrs(&mut self, program: &Rc<Routine>, frame: &mut [Value]) -> Flow<()> {
         let instrs = &program.instrs;
         let mut pc = 0;
+        let mut counted = 0u32;
         // Where a raised value is caught, and how deep the stack was
         // when the guard was set.
         let mut guards: Vec<(usize, usize)> = Vec::new();
         while pc < instrs.len() {
+            counted = counted.wrapping_add(1);
+            if counted % 4096 == 0 {
+                if let Some(over) = self.out_of_time() {
+                    return Err(over);
+                }
+            }
             match &instrs[pc] {
                 Instr::Const(v) => self.data.push(v.clone()),
                 Instr::Read(slot) => match self.load_cell(slot, frame) {
@@ -1228,6 +1263,13 @@ impl<'a> Engine<'a> {
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
                 print!("{}", s);
                 Value::Null
+            }
+            Builtin::TimeLimit => {
+                arity(1)?;
+                let seconds = as_index(&args[0])?;
+                self.limit.set(seconds);
+                self.began.set(Some(std::time::Instant::now()));
+                Value::Flag(true)
             }
             Builtin::Given | Builtin::GivenCount | Builtin::GivenAt => {
                 let Some(given) = self.given.last() else {

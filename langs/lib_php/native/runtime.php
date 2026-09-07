@@ -213,7 +213,6 @@ function is_callable($value) { return false; }
 
 // What a run from a command line has nothing to answer with, and the
 // few library functions that only need what is already here.
-function set_time_limit($seconds) { return true; }
 function sys_get_temp_dir() { return "/tmp"; }
 function header($line, $replace = true, $code = 0) { return null; }
 function headers_sent() { return false; }

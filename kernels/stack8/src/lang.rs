@@ -324,7 +324,7 @@ w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at | b ext.op.assign.value | b ext.op.index.plain_keys
 w ext.system.source.file | w ext.system.source.directory | w ext.system.source.line
 w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.complaint.deprecated | w ext.system.complaint.fatal
-w ext.system.fault.class
+w ext.system.fault.class | w ext.builtin.time_limit
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 ";
@@ -726,7 +726,7 @@ impl Lang {
             ("ext.builtin.var_dump", Builtin::Dump), ("ext.builtin.array", Builtin::Pack),
             ("ext.builtin.print_r", Builtin::Layout), ("ext.builtin.unset", Builtin::Erase),
             ("ext.builtin.args.all", Builtin::Given), ("ext.builtin.args.count", Builtin::GivenCount),
-            ("ext.builtin.args.at", Builtin::GivenAt),
+            ("ext.builtin.args.at", Builtin::GivenAt), ("ext.builtin.time_limit", Builtin::TimeLimit),
         ] {
             for lex in r.strings(tag)? {
                 let begins = lex.chars().next().map_or(false, |c| c == '_' || c.is_alphabetic());

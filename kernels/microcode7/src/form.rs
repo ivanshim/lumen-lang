@@ -50,6 +50,9 @@ pub enum Prim {
     Otherwise,
     /// Give an array back without the place named (ext.builtin.unset).
     Erase,
+    /// How long the run may take from here, counted in seconds; nought
+    /// takes the limit away (ext.builtin.time_limit).
+    Clock,
     /// What the running call was handed, whatever of it the routine
     /// gave names to: the whole of it, how much there was, or the one
     /// standing at a place (ext.builtin.args.*).

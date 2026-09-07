@@ -600,5 +600,8 @@
   ],
   "ext.system.fault.class": [
     "Error"
+  ],
+  "ext.builtin.time_limit": [
+    "set_time_limit"
   ]
 }

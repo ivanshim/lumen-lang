@@ -139,6 +139,9 @@ pub enum Builtin {
     Erase,
     /// Each argument with its kind, PHP's var_dump (ext.builtin.var_dump).
     Dump,
+    /// How long the run may take from here, in seconds; nought lifts
+    /// the limit (ext.builtin.time_limit).
+    TimeLimit,
     /// What the running call was given, however much of it the routine
     /// named: all of it as an array, how much there was, or the one at a
     /// position (ext.builtin.args.*).

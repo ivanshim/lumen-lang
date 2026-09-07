@@ -40,6 +40,9 @@ pub const KIND_LABELS: [(&str, Kind); 7] = [
 
 pub enum Escape {
     Error(String),
+    /// The run is over and no clause may take it back: a limit the
+    /// language set on the run itself was passed.
+    Stopped(String),
     Yield(Value),
     /// A value raised for a clause to take.
     Thrown(Value),
@@ -87,6 +90,10 @@ pub struct Machine<'a> {
     written_in: String,
     /// The words this language has for the kinds of complaint.
     complaint_words: Vec<(&'static str, String)>,
+    /// How many seconds the run may take and when the count began;
+    /// nought is no limit at all.
+    allowed: usize,
+    started: Option<std::time::Instant>,
     /// What each call still running was handed, the innermost last, and
     /// what the call about to start is to be handed.
     handed: Vec<Vec<Value>>,
@@ -119,6 +126,8 @@ impl<'a> Machine<'a> {
             made: 0,
             row: 0,
             raised_on: 0,
+            allowed: 0,
+            started: None,
             written_in: String::new(),
             complaint_words: COMPLAINT_LABELS
                 .iter()
@@ -226,6 +235,16 @@ impl<'a> Machine<'a> {
         Some(Value::Thing(Rc::new(Thing { of, holds: RefCell::new(holds), turn: self.made })))
     }
 
+    /// Whether the run has taken longer than the language allowed it.
+    fn past_its_time(&self) -> Option<Escape> {
+        let started = self.started?;
+        if self.allowed == 0 || started.elapsed().as_secs() < self.allowed as u64 {
+            return None;
+        }
+        let ending = if self.allowed == 1 { "second" } else { "seconds" };
+        Some(Escape::Stopped(format!("Maximum execution time of {} {} exceeded", self.allowed, ending)))
+    }
+
     /// How a run ended, told the way a language with a word for the end
     /// of one tells it: what stopped it, where, and how the run stood.
     /// Nothing is written where a language has no word for it.
@@ -253,6 +272,13 @@ impl<'a> Machine<'a> {
                 let said = format!("Uncaught {}", v.bare());
                 self.end_of_run(&said);
                 Err(said)
+            }
+            // A limit passed is told plainly, since nothing was raised.
+            Err(Escape::Stopped(told)) => {
+                if let Some((_, word)) = self.complaint_words.iter().find(|(k, _)| *k == "fatal") {
+                    println!("\n{}: {} in {} on line {}", word, told, self.written_in, self.row);
+                }
+                Err(told)
             }
             // A fault of the kernel's own is told under the class the
             // language names for one, where it names any.
@@ -428,6 +454,12 @@ impl<'a> Machine<'a> {
             }
             Form::OnLine(row, inner) => {
                 self.row = *row;
+                // A statement is a fair place to look at the clock:
+                // often enough to stop a run that runs away, seldom
+                // enough that asking costs little.
+                if let Some(over) = self.past_its_time() {
+                    return Err(over);
+                }
                 self.value_of(inner, frame)
             }
             Form::Missing(slot) => {
@@ -1038,6 +1070,12 @@ impl<'a> Machine<'a> {
                 }
             }
             Prim::Gather => return Err(format!("{}() is a literal, not a call", name)),
+            Prim::Clock => {
+                n(1)?;
+                self.allowed = as_index(&v[0])?;
+                self.started = Some(std::time::Instant::now());
+                Value::Flag(true)
+            }
             Prim::Handed | Prim::HowMany | Prim::HandedAt => {
                 let Some(handed) = self.handed.last() else {
                     return Err(format!("{}() belongs inside a function", name));

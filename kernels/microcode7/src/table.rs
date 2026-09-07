@@ -98,7 +98,7 @@ ext.op.otherwise:L ext.op.bit.and:L ext.op.bit.or:L ext.op.bit.xor:L ext.op.bit.
 ext.op.bit.left:L ext.op.bit.right:L ext.op.identical:L ext.op.not_identical:L ext.system.kind.spelled:B ext.builtin.args.all:L \
 ext.builtin.args.count:L ext.builtin.args.at:L ext.op.assign.value:B ext.op.index.plain_keys:B \
 ext.system.source.file:L ext.system.source.directory:L ext.system.source.line:L \
-ext.system.complaint.warning:L ext.system.complaint.notice:L ext.system.complaint.deprecated:L ext.system.complaint.fatal:L ext.system.fault.class:L \
+ext.system.complaint.warning:L ext.system.complaint.notice:L ext.system.complaint.deprecated:L ext.system.complaint.fatal:L ext.system.fault.class:L ext.builtin.time_limit:L \
 ext.lexical.number.binary_prefix:L ext.lexical.number.octal_prefix:L ext.lexical.number.octal_lead:B \
 ext.lexical.number.separator:L ext.system.integer.bits:N ext.system.real.bits:N ext.system.real.digits:N \
 ";
@@ -132,7 +132,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 30] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 31] = [
     ("builtin.emit", Prim::Echo), ("builtin.print", Prim::Say), ("builtin.write", Prim::Out), ("builtin.len", Prim::Length),
     ("builtin.char_at", Prim::CharAtIndex), ("builtin.ord", Prim::CodeOf), ("builtin.chr", Prim::CharOf), ("builtin.typeof", Prim::SortOf),
     ("builtin.error", Prim::Raise), ("builtin.extern", Prim::External), ("builtin.range", Prim::Span), ("builtin.real", Prim::MakeReal),
@@ -142,7 +142,7 @@ pub const BUILTIN_LABELS: [(&str, Prim); 30] = [
     ("ext.builtin.define", Prim::Define), ("ext.builtin.var_dump", Prim::Dump), ("ext.builtin.array", Prim::Gather),
     ("ext.builtin.print_r", Prim::Portray), ("ext.builtin.unset", Prim::Erase),
     ("ext.builtin.args.all", Prim::Handed), ("ext.builtin.args.count", Prim::HowMany),
-    ("ext.builtin.args.at", Prim::HandedAt),
+    ("ext.builtin.args.at", Prim::HandedAt), ("ext.builtin.time_limit", Prim::Clock),
 ];
 
 const BINARY_LABELS: [(&str, Prim); 24] = [

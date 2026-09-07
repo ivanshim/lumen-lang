@@ -350,6 +350,11 @@ only. The extension labels so far, all from PHP:
   writing goes.
 - `ext.system.source.line`: the name a program calls the line it is
   written on (`__LINE__`), which is known while the program is read.
+- `ext.builtin.time_limit`: a builtin saying how long the run may take
+  from here, counted in seconds, with nought taking the limit away. A
+  run that passes it is stopped and told with the word for the end of a
+  run; nothing may take it back, since it is the run itself that ended
+  and not a value raised within it.
 - `ext.system.fault.class`: the class a fault of the kernel's own is
   raised as, where a language names one. A statement written to take a
   raised value then takes a fault as it takes anything else, and one
@@ -687,6 +692,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.define` | - | - | - | - | - | - | - | `define` | - | - |
 | `ext.builtin.echo` | - | - | - | - | - | - | - | `echo` | - | - |
 | `ext.builtin.print_r` | - | - | - | - | - | - | - | `print_r` | - | - |
+| `ext.builtin.time_limit` | - | - | - | - | - | - | - | `set_time_limit` | - | - |
 | `ext.builtin.unset` | - | - | - | - | - | - | - | `unset` | - | - |
 | `ext.builtin.var_dump` | - | - | - | - | - | - | - | `var_dump` | - | - |
 | `ext.lexical.epilogue` | - | - | - | - | - | - | - | `?>` | - | - |
