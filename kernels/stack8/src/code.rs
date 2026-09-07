@@ -188,6 +188,8 @@ pub enum Instr {
     Skip(usize),
     /// Whether the call left the frame's slot without a value.
     Missing(usize),
+    /// Whether the global at this place has never been written.
+    Unwritten(usize),
     /// Make this binding a shared cell if it is not one already, and
     /// push that cell, so another name can be fastened to it.
     Bond(Cell),

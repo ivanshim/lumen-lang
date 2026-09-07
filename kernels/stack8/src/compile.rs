@@ -726,7 +726,10 @@ impl<'a> Compiler<'a> {
 
     /// `static x = e;`: x names a hidden global, set when the function
     /// is defined, so it keeps its value from call to call. The setting
-    /// is assembled in the unit around this one, where the definition runs.
+    /// is assembled in the unit around this one, where the definition
+    /// runs. Outside every function there is no unit around this one, so
+    /// the setting stands here and is guarded: it happens the first time
+    /// this statement is reached and no other time.
     fn static_stmt(&mut self) -> Res<()> {
         self.take();
         let sep = self.lang.calling.as_ref().and_then(|c| c.between.clone());
@@ -734,9 +737,16 @@ impl<'a> Compiler<'a> {
             let name = self.want_name("after the static keyword")?;
             let hidden = self.gensym("static");
             let inner = self.pieces.pop().expect("the unit");
-            if self.pieces.is_empty() {
+            let outermost = self.pieces.is_empty();
+            let mut held = None;
+            let mut past = 0;
+            if outermost {
                 self.pieces.push(inner);
-                return Err("static belongs inside a function".to_string());
+                let far = self.registry.slot(&hidden);
+                self.put(Instr::Unwritten(far));
+                past = self.skip();
+            } else {
+                held = Some(inner);
             }
             if self.on_assign() {
                 self.take();
@@ -745,7 +755,10 @@ impl<'a> Compiler<'a> {
                 self.constant(Value::Null);
             }
             self.write_global(&hidden);
-            self.pieces.push(inner);
+            match held {
+                Some(inner) => self.pieces.push(inner),
+                None => self.land(past),
+            }
             self.piece().globals.push((name, hidden));
             match &sep {
                 Some(s) if self.at_symbol(s) => {
@@ -1506,6 +1519,9 @@ impl<'a> Compiler<'a> {
         let (mut fields, mut shared, mut constants) = (Vec::new(), Vec::new(), Vec::new());
         let mut methods = Vec::new();
         let outer = self.within.replace((name.clone(), base.clone()));
+        // The body may open on a line of its own, as every other block may.
+        self.skip_intro();
+        self.skip_seps();
         let which = lang.block_opens.iter().position(|o| self.at_lexeme(o));
         let Some(i) = which else {
             return Err(format!("Expected '{}' to open the class, got '{}'", lang.block_opens[0], self.look().lexeme));

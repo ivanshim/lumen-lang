@@ -409,6 +409,10 @@ impl<'a> Engine<'a> {
                     let empty = matches!(frame[*slot], Value::Blank);
                     self.data.push(Value::Flag(empty));
                 }
+                Instr::Unwritten(at) => {
+                    let empty = matches!(self.world[*at], Value::Blank);
+                    self.data.push(Value::Flag(empty));
+                }
                 Instr::Skip(to) => {
                     if !self.drop_top()?.is_true() {
                         pc = *to;

@@ -19,25 +19,23 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 31, differs 38, error 45, skipped 0 | pass 31, differs 38, error 45, skipped 0 |
 | `php/func` | 14 | pass 5, differs 3, error 6, skipped 0 | pass 5, differs 3, error 6, skipped 0 |
-| `php/lang` | 213 | pass 40, differs 31, error 140, skipped 2 | pass 40, differs 31, error 140, skipped 2 |
+| `php/lang` | 213 | pass 40, differs 33, error 138, skipped 2 | pass 40, differs 33, error 138, skipped 2 |
 | `php/lang/constants` | 2 | pass 1, differs 1, error 0, skipped 0 | pass 1, differs 1, error 0, skipped 0 |
 | `php/lang/integer_literals` | 6 | pass 0, differs 0, error 6, skipped 0 | pass 0, differs 0, error 6, skipped 0 |
 | `php/lang/operators` | 64 | pass 13, differs 24, error 27, skipped 0 | pass 13, differs 24, error 27, skipped 0 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 91, differs 105, error 224, skipped 2 | pass 91, differs 105, error 224, skipped 2 |
+| all | 422 | pass 91, differs 107, error 222, skipped 2 | pass 91, differs 107, error 222, skipped 2 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 105 |
-| } | 8 |
+| ran, printed something else | 107 |
+| Expected identifier as the property name, got '{' | 10 |
+| } | 10 |
 | Undefined variable: eval | 7 |
-| Undefined variable: include | 6 |
+| Undefined variable: include | 7 |
 | Unexpected character '$' | 6 |
-| Expected '{' to open the class, got ' | 6 |
 | Unexpected token: = | 6 |
-| static belongs inside a function | 5 |
 | Unexpected token: & | 5 |
-| Expected identifier as the property name, got '{' | 5 |
 | Undefined variable: __DIR__ | 4 |
 | Unexpected token: , | 4 |
 | ---( Array with 1 element(s): )--- | 4 |
@@ -68,6 +66,8 @@ is listed, since the full kernels are meant to behave alike.
 | Cannot coerce 'true' to number | 2 |
 | Unexpected token: > | 2 |
 | Unexpected token: :: | 2 |
+| Undefined variable: $argc | 1 |
+| Undefined variable: $HTTP_RAW_POST_DATA | 1 |
 
 ### Reserved words: 41 of 68 spelled
 
@@ -242,7 +242,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/bug67198.phpt` | error | error | Expected an expression |
 | `php/basic/bug67988.phpt` | error | error | bool(false) |
 | `php/basic/bug71273.phpt` | error | error | Undefined variable: shell_exec |
-| `php/basic/bug73969.phpt` | error | error | static belongs inside a function |
+| `php/basic/bug73969.phpt` | error | error | Expected identifier as the property name, got '{' |
 | `php/basic/bug78236.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug78929.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug79699.phpt` | pass | pass |  |
@@ -358,8 +358,8 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/035.phpt` | error | error | Expected identifier as the property name, got '{' |
 | `php/lang/036.phpt` | error | error | Expected identifier as the property name, got '{' |
 | `php/lang/037.phpt` | error | error | Expected identifier as the property name, got '{' |
-| `php/lang/038.phpt` | error | error | Expected '{' to open the class, got ' |
-| `php/lang/039.phpt` | error | error | Expected '{' to open the class, got ' |
+| `php/lang/038.phpt` | error | error | Expected identifier as the property name, got '{' |
+| `php/lang/039.phpt` | error | error | Expected identifier as the property name, got '{' |
 | `php/lang/040.phpt` | error | error | Expected ')' after the foreach names, got '[' |
 | `php/lang/041.phpt` | error | error | Cannot reach 'b' in A |
 | `php/lang/042.phpt` | error | error | Cannot reach 'B' in A |
@@ -380,7 +380,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug21669.phpt` | error | error | Only a class can be made into an object |
 | `php/lang/bug21820.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug21849.phpt` | pass | pass |  |
-| `php/lang/bug21961.phpt` | error | error | Expected '{' to open the class, got ' |
+| `php/lang/bug21961.phpt` | error | error | Expected identifier as the property name, got ',' |
 | `php/lang/bug22231.phpt` | error | error | Unexpected token: & |
 | `php/lang/bug22510.phpt` | error | error | Unexpected character '@' |
 | `php/lang/bug22592.phpt` | error | error | Unexpected token: = |
@@ -408,17 +408,17 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug26182.phpt` | error | error | Expected identifier as the property name, got '{' |
 | `php/lang/bug26696.phpt` | pass | pass |  |
 | `php/lang/bug26866.phpt` | error | error | A try needs a catch or a last part |
-| `php/lang/bug26869.phpt` | error | error | static belongs inside a function |
+| `php/lang/bug26869.phpt` | error | error | } |
 | `php/lang/bug27354.phpt` | error | error | int(0) |
 | `php/lang/bug27439.phpt` | error | error | Unexpected token: } |
 | `php/lang/bug27443.phpt` | error | error | Undefined variable: defined |
-| `php/lang/bug27535.phpt` | error | error | Expected '{' to open the class, got ' |
+| `php/lang/bug27535.phpt` | error | error | Expected identifier as the property name, got '{' |
 | `php/lang/bug28213.phpt` | error | error | Undefined variable: include |
 | `php/lang/bug28800.phpt` | error | error | Cannot coerce 'into' to number |
 | `php/lang/bug29566.phpt` | error | error | Cannot walk a value that is not an array |
 | `php/lang/bug29893.phpt` | error | error | '-=' needs a plain variable on its left |
 | `php/lang/bug29944.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug30578.phpt` | error | error | Expected '{' to open the class, got ' |
+| `php/lang/bug30578.phpt` | error | error | Expected identifier as the property name, got '{' |
 | `php/lang/bug30638.phpt` | error | error | Undefined variable: localeconv |
 | `php/lang/bug30726.phpt` | error | error | Unexpected token: , |
 | `php/lang/bug30862.phpt` | differs | differs | ran, printed something else |
@@ -427,7 +427,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug35176.phpt` | error | error | Undefined variable: require_once |
 | `php/lang/bug35382.phpt` | skipped | skipped | no --FILE-- section |
 | `php/lang/bug38579.phpt` | error | error | Undefined variable: __DIR__ |
-| `php/lang/bug43958.phpt` | error | error | Expected '{' to open the class, got ' |
+| `php/lang/bug43958.phpt` | error | error | Undefined variable: include |
 | `php/lang/bug44654.phpt` | pass | pass |  |
 | `php/lang/bug44827.phpt` | error | error | Undefined variable: constant |
 | `php/lang/bug45392.phpt` | error | error | Undefined variable: __LINE__ |
@@ -596,9 +596,9 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/short_tags.001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/short_tags.002.phpt` | pass | pass |  |
 | `php/lang/short_tags.004.phpt` | error | error | <? $b=3; ?> |
-| `php/lang/static_basic_001.phpt` | error | error | static belongs inside a function |
-| `php/lang/static_basic_002.phpt` | error | error | static belongs inside a function |
-| `php/lang/static_variation_001.phpt` | error | error | static belongs inside a function |
+| `php/lang/static_basic_001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/static_basic_002.phpt` | differs | differs | ran, printed something else |
+| `php/lang/static_variation_001.phpt` | error | error | } |
 | `php/lang/static_variation_002.phpt` | error | error | Undefined variable: eval |
 | `php/lang/string/unicode_escape.phpt` | differs | differs | ran, printed something else |
 | `php/lang/string/unicode_escape_empty.phpt` | differs | differs | ran, printed something else |

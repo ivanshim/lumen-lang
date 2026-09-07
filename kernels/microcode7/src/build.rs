@@ -748,29 +748,45 @@ impl<'a> Builder<'a> {
 
     /// `static x = e;`: x means a hidden global, set where the function
     /// is defined, so it keeps its value between calls. The setting is
-    /// read outside the function's layer, where it will run.
+    /// read outside the function's layer, where it will run. Outside
+    /// every function there is no layer around this one, so the setting
+    /// stands where it is written and is guarded: it happens the first
+    /// time the statement is reached and no other time.
     fn static_names(&mut self) -> Res<Form> {
-        if self.layers.len() < 2 {
-            return Err("static belongs inside a function".to_string());
-        }
-        self.listed_names("after the static keyword", |r, name| {
-            r.gensyms += 1;
-            let hidden = format!("#static{}", r.gensyms);
-            let inner = r.layers.pop().expect("the function's layer");
-            let value = if r.on_assign() {
-                r.advance();
-                r.expr(0)
+        self.advance();
+        let alone = self.layers.len() < 2;
+        let sep = self.table.single("syntax.call.separator").map(str::to_string);
+        let mut here = Vec::new();
+        loop {
+            let name = self.need_word("after the static keyword")?;
+            self.gensyms += 1;
+            let hidden = format!("#static{}", self.gensyms);
+            let inner = if alone { None } else { Some(self.layers.pop().expect("the function's layer")) };
+            let value = if self.on_assign() {
+                self.advance();
+                self.expr(0)
             } else {
                 Ok(constant(Value::Nil))
             };
-            let slot = r.global_address(&hidden);
-            r.layers.push(inner);
-            let value = value?;
-            r.statics.push(Form::Write(slot, Box::new(value)));
-            let owner = r.layers.iter_mut().rev().find(|s| s.holds == Holds::Every).expect("the function's layer");
+            let slot = self.global_address(&hidden);
+            if let Some(inner) = inner {
+                self.layers.push(inner);
+            }
+            let written = Form::Write(slot.clone(), Box::new(value?));
+            match alone {
+                true => {
+                    let once = self.choose(Form::Missing(slot), written, constant(Value::Nil));
+                    here.push(once);
+                }
+                false => self.statics.push(written),
+            }
+            let owner = self.layers.iter_mut().rev().find(|s| s.holds == Holds::Every).expect("the outermost layer");
             owner.aliases.push((name, hidden));
-            Ok(())
-        })
+            match &sep {
+                Some(s) if self.sign(s) => self.advance(),
+                _ => return Ok(sequence(here)),
+            };
+        }
     }
 
     /// Statements separated as call arguments are, up to a closing sign.
@@ -863,6 +879,9 @@ impl<'a> Builder<'a> {
             }
         }
         let outer = self.within.replace((name.clone(), under.clone()));
+        // A class body may open on a line of its own, as any body may.
+        self.skip_lead_word();
+        self.skip_line_ends();
         let opens = table.strings("block.open");
         let k = opens.iter().position(|o| self.lexeme_of(o)).ok_or_else(|| format!("Expected '{}' to open the class, got '{}'", opens[0], self.look().lexeme))?;
         self.advance();
