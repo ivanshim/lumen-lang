@@ -16,7 +16,7 @@ use num_traits::ToPrimitive;
 
 use crate::arith::{self, Sum};
 use crate::spec::Spec;
-use crate::tree::{Catch, Node, Op, Program, Slot, Target};
+use crate::tree::{Operand, Catch, Node, Op, Program, Slot, Target};
 use crate::value::{Frame, Sort, Value, Words};
 
 pub enum Signal {
@@ -36,7 +36,8 @@ type R<T = Value> = Result<T, Signal>;
 
 enum Step {
     Done(Value),
-    Tail(Rc<Program>, Rc<Frame>, Vec<Value>),
+    /// The program to run next, its frame already built.
+    Tail(Rc<Program>, Rc<Frame>),
 }
 
 pub struct Runner<'a> {
@@ -139,6 +140,15 @@ impl<'a> Runner<'a> {
 
     // ---------- evaluation
 
+    /// Cycle 6: a binding or a constant is read without visiting a node.
+    fn operand(&mut self, o: &Operand, frame: &Rc<Frame>) -> R {
+        match o {
+            Operand::Slot(slot) => Ok(self.read(slot, frame)?),
+            Operand::Lit(v) => Ok(v.clone()),
+            Operand::Node(n) => self.eval(n, frame),
+        }
+    }
+
     fn eval(&mut self, node: &Node, frame: &Rc<Frame>) -> R {
         match node {
             Node::Literal(Value::Code(p)) => Ok(Value::Closure(p.clone(), frame.clone())),
@@ -157,8 +167,8 @@ impl<'a> Runner<'a> {
                 Ok(r)
             }
             Node::Binary { op, name, a, b } => {
-                let av = self.eval(a, frame)?;
-                let bv = self.eval(b, frame)?;
+                let av = self.operand(a, frame)?;
+                let bv = self.operand(b, frame)?;
                 let fast = match (&av, &bv) {
                     (Value::Int(x), Value::Int(y)) => match op {
                         Op::Add => x.checked_add(*y).map(Value::Int),
@@ -214,8 +224,8 @@ impl<'a> Runner<'a> {
             }
             Node::Call(Target::Program(target), args) => {
                 let (p, env) = self.closure(target, frame)?;
-                let values = self.values(args, frame)?;
-                self.call(p, env, values)
+                let callee = self.frame_for(&p, env, args, frame)?;
+                self.enter(p, callee)
             }
             Node::Call(Target::Op(op, name), args) => match op {
                 Op::Last => {
@@ -307,8 +317,8 @@ impl<'a> Runner<'a> {
         match node {
             Node::Call(Target::Program(target), args) => {
                 let (p, env) = self.closure(target, frame)?;
-                let values = self.values(args, frame)?;
-                Ok(Step::Tail(p, env, values))
+                let callee = self.frame_for(&p, env, args, frame)?;
+                Ok(Step::Tail(p, callee))
             }
             Node::Call(Target::Op(Op::Last, _), args) if !args.is_empty() => {
                 for a in &args[..args.len() - 1] {
@@ -327,29 +337,50 @@ impl<'a> Runner<'a> {
     /// Run a program: a frame under the closure's, the parameters bound,
     /// the body stepped. A tail call replaces the program; what the
     /// replaced programs caught is still caught.
+    /// Cycle 5: the callee's frame, its arguments evaluated straight into
+    /// their slots, with no vector between.
+    fn frame_for(&mut self, program: &Rc<Program>, env: Rc<Frame>, args: &[Node], caller: &Rc<Frame>) -> R<Rc<Frame>> {
+        if args.len() != program.params.len() {
+            return Err(format!("Function {} expects {} arguments, got {}", program.name, program.params.len(), args.len()).into());
+        }
+        let frame = Frame::new(program.names.len(), Some(env));
+        for (i, a) in program.param_slots.iter().zip(args) {
+            let v = self.eval(a, caller)?;
+            frame.slots.borrow_mut()[*i] = v;
+        }
+        Ok(frame)
+    }
+
     pub fn call(&mut self, program: Rc<Program>, env: Rc<Frame>, args: Vec<Value>) -> R {
+        if args.len() != program.params.len() {
+            return Err(format!("Function {} expects {} arguments, got {}", program.name, program.params.len(), args.len()).into());
+        }
+        let frame = Frame::new(program.names.len(), Some(env));
+        {
+            let mut slots = frame.slots.borrow_mut();
+            for (i, a) in program.param_slots.iter().zip(args) {
+                slots[*i] = a;
+            }
+        }
+        self.enter(program, frame)
+    }
+
+    /// Run a program in a frame already built. A tail call replaces the
+    /// program and the frame; what the replaced programs caught is still caught.
+    fn enter(&mut self, program: Rc<Program>, frame: Rc<Frame>) -> R {
         let memo = program.catches == Catch::Return && self.memo_slot.map_or(false, |i| matches!(self.top.slots.borrow()[i], Value::Bool(true)));
         let key = memo.then(|| {
             let mut k = format!("{}(", program.name);
-            args.iter().for_each(|a| a.cache_key(&mut k));
+            let slots = frame.slots.borrow();
+            program.param_slots.iter().for_each(|i| slots[*i].cache_key(&mut k));
             k
         });
         if let Some(hit) = key.as_ref().and_then(|k| self.cache.get(k)) {
             return Ok(hit.clone());
         }
-        let (mut program, mut env, mut args) = (program, env, args);
+        let (mut program, mut frame) = (program, frame);
         let mut caught: u8 = 0;
         let result = loop {
-            if args.len() != program.params.len() {
-                return Err(format!("Function {} expects {} arguments, got {}", program.name, program.params.len(), args.len()).into());
-            }
-            let frame = Frame::new(program.names.len(), Some(env));
-            {
-                let mut slots = frame.slots.borrow_mut();
-                for (i, a) in program.param_slots.iter().zip(args) {
-                    slots[*i] = a;
-                }
-            }
             caught |= match program.catches {
                 Catch::Nothing => 0,
                 Catch::Return => 1,
@@ -369,10 +400,9 @@ impl<'a> Runner<'a> {
                     }
                     break v;
                 }
-                Ok(Step::Tail(p, e, a)) => {
+                Ok(Step::Tail(p, f)) => {
                     program = p;
-                    env = e;
-                    args = a;
+                    frame = f;
                 }
                 Err(Signal::Return(v)) if caught & 1 != 0 => break v,
                 Err(Signal::Break) if caught & 2 != 0 => break Value::Null,

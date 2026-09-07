@@ -21,7 +21,7 @@ use num_traits::ToPrimitive;
 use crate::arith;
 use crate::lexer::{Tk, Tok};
 use crate::spec::{Layout, Spec};
-use crate::tree::{Catch, Node, Op, Program, Slot, Target};
+use crate::tree::{Operand, Catch, Node, Op, Program, Slot, Target};
 use crate::value::Value;
 
 type Out<T> = Result<T, String>;
@@ -121,7 +121,7 @@ fn call(op: Op, args: Vec<Node>) -> Node {
     if two && args.len() == 2 {
         let mut it = args.into_iter();
         let (a, b) = (it.next().unwrap(), it.next().unwrap());
-        return Node::Binary { op, name: Rc::from(name), a: Box::new(a), b: Box::new(b) };
+        return Node::Binary { op, name: Rc::from(name), a: Operand::of(a), b: Operand::of(b) };
     }
     Node::Call(Target::Op(op, Rc::from(name)), args)
 }
@@ -142,7 +142,10 @@ fn seq(mut items: Vec<Node>) -> Node {
 fn pure(node: &Node) -> bool {
     match node {
         Node::Literal(_) | Node::Load(_) => true,
-        Node::Binary { a, b, .. } => pure(a) && pure(b),
+        Node::Binary { a, b, .. } => [a, b].iter().all(|o| match o {
+            Operand::Node(n) => pure(n),
+            _ => true,
+        }),
         Node::Call(Target::Op(op, _), args) => {
             !matches!(op, Op::Emit | Op::Print | Op::Write | Op::Error | Op::Extern | Op::Push | Op::Put | Op::Return | Op::Break | Op::Continue | Op::If | Op::And | Op::Or | Op::Last)
                 && args.iter().all(pure)
@@ -322,7 +325,7 @@ impl<'a> Reducer<'a> {
         let slot = self.write_slot(name);
         // Cycle 4: `x = x + k` steps the binding in place.
         if let Node::Binary { op: Op::Add, a, b, .. } = &value {
-            if let (Node::Load(read), Node::Literal(Value::Int(k))) = (a.as_ref(), b.as_ref()) {
+            if let (Operand::Slot(read), Operand::Lit(Value::Int(k))) = (a, b) {
                 if read.name == slot.name && read.depth == slot.depth && read.index == slot.index && read.global == slot.global {
                     return Node::Step { slot, by: *k };
                 }

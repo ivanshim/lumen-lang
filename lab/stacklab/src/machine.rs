@@ -18,6 +18,8 @@ pub struct Machine<'a> {
     names: Vec<String>,
     stack: Vec<Value>,
     cache: HashMap<String, Value>,
+    /// Cycle 7: the arguments of a builtin call, reused across calls.
+    scratch: Vec<Value>,
     args_slot: Option<usize>,
     memo_slot: Option<usize>,
 }
@@ -32,6 +34,7 @@ impl<'a> Machine<'a> {
             globals: vec![Value::Empty; names.len()],
             stack: Vec::new(),
             cache: HashMap::new(),
+            scratch: Vec::new(),
             args_slot: find(&def.args_name),
             memo_slot: find(&def.memo_name),
             names,
@@ -242,6 +245,60 @@ impl<'a> Machine<'a> {
                     pc = *to;
                     continue;
                 }
+                Word::When(to) => {
+                    if self.pop()?.truthy() {
+                        pc = *to;
+                        continue;
+                    }
+                }
+                Word::Call { slot, argc } => {
+                    let p = match self.cell(slot, frame)? {
+                        Value::Program(p) => p.clone(),
+                        _ => return Err(format!("'{}' is not a function", slot.name)),
+                    };
+                    self.call_from_stack(&p, *argc)?;
+                }
+                Word::PutAt(slot) => {
+                    let v = self.pop()?;
+                    let i = position(&self.pop()?)?;
+                    let Value::List(items) = self.cell_mut(slot, frame)? else {
+                        return Err(format!("Variable '{}' is not an array", slot.name));
+                    };
+                    let list = Rc::make_mut(items);
+                    if i >= list.len() {
+                        return Err(format!("Array index {} out of bounds (length: {})", i, list.len()));
+                    }
+                    list[i] = v;
+                }
+                Word::PushTo(slot) => {
+                    let v = self.pop()?;
+                    let Value::List(items) = self.cell_mut(slot, frame)? else {
+                        return Err(format!("Variable '{}' is not an array", slot.name));
+                    };
+                    Rc::make_mut(items).push(v);
+                }
+                Word::WhenLess { a, b, to } => {
+                    let bt = if matches!(b, Arg::Top) { Some(self.pop()?) } else { None };
+                    let at = if matches!(a, Arg::Top) { Some(self.pop()?) } else { None };
+                    let bv: &Value = match b {
+                        Arg::Top => bt.as_ref().expect("popped"),
+                        Arg::Lit(v) => v,
+                        Arg::Slot(s) => self.cell(s, frame)?,
+                    };
+                    let av: &Value = match a {
+                        Arg::Top => at.as_ref().expect("popped"),
+                        Arg::Lit(v) => v,
+                        Arg::Slot(s) => self.cell(s, frame)?,
+                    };
+                    let less = match (av, bv) {
+                        (Value::Int(x), Value::Int(y)) => x < y,
+                        _ => self.binary(&Op::Lt, av, bv)?.truthy(),
+                    };
+                    if less {
+                        pc = *to;
+                        continue;
+                    }
+                }
                 Word::Arith { op, a, b, into } => {
                     let bt = if matches!(b, Arg::Top) { Some(self.pop()?) } else { None };
                     let at = if matches!(a, Arg::Top) { Some(self.pop()?) } else { None };
@@ -344,8 +401,16 @@ impl<'a> Machine<'a> {
                 Value::list(items)
             }
             Op::Native(native, name) => {
-                let args = self.pop_many(argc)?;
-                self.native(*native, name, args)?
+                if self.stack.len() < argc {
+                    return Err("Stack underflow".to_string());
+                }
+                let at = self.stack.len() - argc;
+                let mut args = std::mem::take(&mut self.scratch);
+                args.clear();
+                args.extend(self.stack.drain(at..));
+                let result = self.native(*native, name, &args);
+                self.scratch = args;
+                result?
             }
             binary => {
                 let b = self.pop()?;
@@ -457,7 +522,7 @@ impl<'a> Machine<'a> {
         values.iter().map(|v| v.show(&sp)).collect::<Vec<_>>().join(" ")
     }
 
-    fn native(&mut self, native: Native, name: &str, mut args: Vec<Value>) -> Outcome<Value> {
+    fn native(&mut self, native: Native, name: &str, args: &[Value]) -> Outcome<Value> {
         let sp = self.spelling();
         let arity = |n: usize| -> Outcome<()> {
             if args.len() == n {
@@ -583,25 +648,25 @@ impl<'a> Machine<'a> {
             }
             Native::Push => {
                 arity(2)?;
-                let Some(Value::List(mut items)) = args.pop() else {
+                let Value::List(items) = &args[1] else {
                     return Err(format!("{}() requires an array", name));
                 };
-                let v = args.pop().expect("the value");
-                Rc::make_mut(&mut items).push(v);
+                let mut items = items.clone();
+                Rc::make_mut(&mut items).push(args[0].clone());
                 Value::List(items)
             }
             Native::Put => {
                 arity(3)?;
-                let Some(Value::List(mut items)) = args.pop() else {
+                let Value::List(items) = &args[2] else {
                     return Err(format!("{}() requires an array", name));
                 };
-                let v = args.pop().expect("the value");
+                let mut items = items.clone();
                 let i = position(&args[0])?;
                 let list = Rc::make_mut(&mut items);
                 if i >= list.len() {
                     return Err(format!("Array index {} out of bounds (length: {})", i, list.len()));
                 }
-                list[i] = v;
+                list[i] = args[1].clone();
                 Value::List(items)
             }
             Native::Extern => self.extern_call(name, &args)?,

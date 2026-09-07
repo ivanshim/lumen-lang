@@ -191,5 +191,5 @@ lumen-lang/
 
   bench/                           the benchmark programs scripts/bench.sh times
   lab/                             the kernel lab's specimens, not kernels: exempt from the independence check
-    lab/stacklab/                    stack5 evolved: nine words
+    lab/stacklab/                    stack5 evolved: fourteen words
     lab/microlab/                    microcode4 evolved: eight forms
