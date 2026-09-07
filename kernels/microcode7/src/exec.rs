@@ -23,6 +23,13 @@ use crate::table::Table;
 use crate::form::{Input, Traps, Form, Prim, Routine, Address, Callee};
 use crate::data::{Blueprint, Thing, Env, Kind, Value, Names};
 
+/// The label under which a language spells each kind of value.
+pub const KIND_LABELS: [(&str, Kind); 7] = [
+    ("system.kind.integer", Kind::Whole), ("system.kind.rational", Kind::Fraction), ("system.kind.real", Kind::Decimal),
+    ("system.kind.string", Kind::Chars), ("system.kind.boolean", Kind::Truth), ("system.kind.array", Kind::Vector),
+    ("system.kind.null", Kind::Nothing),
+];
+
 pub enum Escape {
     Error(String),
     Yield(Value),
@@ -55,6 +62,13 @@ pub struct Machine<'a> {
     memo: HashMap<String, Value>,
     args_cell: Option<usize>,
     memo_cell: Option<usize>,
+    /// Whether the language can read what a call was handed. Where it
+    /// can, a call may hand over more than a routine gives names to.
+    reads_handed: bool,
+    /// What each call still running was handed, the innermost last, and
+    /// what the call about to start is to be handed.
+    handed: Vec<Vec<Value>>,
+    pending: Vec<Value>,
 }
 
 fn ascend(frame: &Rc<Env>, depth: usize) -> &Rc<Env> {
@@ -75,6 +89,11 @@ impl<'a> Machine<'a> {
             memo_cell: find("system.memoization"),
             idents,
             memo: HashMap::new(),
+            reads_handed: ["ext.builtin.args.all", "ext.builtin.args.count", "ext.builtin.args.at"]
+                .iter()
+                .any(|label| table.single(label).is_some()),
+            handed: Vec::new(),
+            pending: Vec::new(),
         }
     }
 
@@ -576,10 +595,25 @@ impl<'a> Machine<'a> {
     }
 
     fn env_for(&mut self, program: &Rc<Routine>, env: Rc<Env>, args: &[Form], caller: &Rc<Env>) -> Res<Rc<Env>> {
-        if args.len() > program.formals.len() || args.len() < program.least {
+        let most = if self.reads_handed { usize::MAX } else { program.formals.len() };
+        if args.len() > most || args.len() < program.least {
             self.value_list(args, caller)?;
             let wanted = program.formals.len();
             return Err(format!("Function {} expects {} arguments, got {}", program.ident, wanted, args.len()).into());
+        }
+        // Where what a call hands over can be read back, every argument
+        // is worked out, even one the routine gives no name to.
+        if self.reads_handed {
+            let all = self.value_list(args, caller)?;
+            let frame = if program.frameless { env } else { Env::make(program.idents.len(), Some(env)) };
+            if !program.frameless {
+                let mut cells = frame.cells.borrow_mut();
+                for (i, v) in program.formal_slots.iter().zip(all.iter()) {
+                    cells[*i] = v.clone();
+                }
+            }
+            self.pending = all;
+            return Ok(frame);
         }
         if program.frameless {
             return Ok(env);
@@ -593,9 +627,13 @@ impl<'a> Machine<'a> {
     }
 
     pub fn invoke(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
-        if args.len() > program.formals.len() || args.len() < program.least {
+        let most = if self.reads_handed { usize::MAX } else { program.formals.len() };
+        if args.len() > most || args.len() < program.least {
             let wanted = program.formals.len();
             return Err(format!("Function {} expects {} arguments, got {}", program.ident, wanted, args.len()).into());
+        }
+        if self.reads_handed {
+            self.pending = args.clone();
         }
         let frame = if program.frameless {
             env
@@ -625,9 +663,17 @@ impl<'a> Machine<'a> {
         if let Some(hit) = key.as_ref().and_then(|k| self.memo.get(k)) {
             return Ok(hit.clone());
         }
+        // What this call was handed is kept while it runs. A call in
+        // tail position takes the place of this one, so what it was
+        // handed takes the place of this call's too.
+        let watching = self.reads_handed;
+        if watching {
+            let mine = std::mem::take(&mut self.pending);
+            self.handed.push(mine);
+        }
         let (mut program, mut frame) = (program, frame);
         let mut caught: u8 = 0;
-        let result = loop {
+        let outcome: Res = loop {
             caught |= match program.traps {
                 Traps::Naught => 0,
                 Traps::Yields => 1,
@@ -641,24 +687,34 @@ impl<'a> Machine<'a> {
                         if let Some(i) = program.idents.iter().position(|n| *n == program.ident) {
                             let own = frame.cells.borrow()[i].clone();
                             if !matches!(own, Value::Unset | Value::Bound(..)) {
-                                break own;
+                                break Ok(own);
                             }
                         }
                     }
-                    break v;
+                    break Ok(v);
                 }
                 Ok(Next::Jump(p, f)) => {
                     program = p;
                     frame = f;
+                    if watching {
+                        let next = std::mem::take(&mut self.pending);
+                        if let Some(top) = self.handed.last_mut() {
+                            *top = next;
+                        }
+                    }
                 }
-                Err(Escape::Yield(v)) if caught & 1 != 0 => break v,
-                Err(Escape::Leave(1)) if caught & 2 != 0 => break Value::Nil,
-                Err(Escape::Resume(1)) if caught & 4 != 0 => break Value::Nil,
-                Err(Escape::Leave(n)) if caught & 2 != 0 => return Err(Escape::Leave(n - 1)),
-                Err(Escape::Resume(n)) if caught & 4 != 0 => return Err(Escape::Resume(n - 1)),
-                Err(e) => return Err(e),
+                Err(Escape::Yield(v)) if caught & 1 != 0 => break Ok(v),
+                Err(Escape::Leave(1)) if caught & 2 != 0 => break Ok(Value::Nil),
+                Err(Escape::Resume(1)) if caught & 4 != 0 => break Ok(Value::Nil),
+                Err(Escape::Leave(n)) if caught & 2 != 0 => break Err(Escape::Leave(n - 1)),
+                Err(Escape::Resume(n)) if caught & 4 != 0 => break Err(Escape::Resume(n - 1)),
+                Err(e) => break Err(e),
             }
         };
+        if watching {
+            self.handed.pop();
+        }
+        let result = outcome?;
         if let Some(k) = key {
             self.memo.insert(k, result.clone());
         }
@@ -819,6 +875,29 @@ impl<'a> Machine<'a> {
                 }
             }
             Prim::Gather => return Err(format!("{}() is a literal, not a call", name)),
+            Prim::Handed | Prim::HowMany | Prim::HandedAt => {
+                let Some(handed) = self.handed.last() else {
+                    return Err(format!("{}() belongs inside a function", name));
+                };
+                match op {
+                    Prim::Handed => {
+                        n(0)?;
+                        Value::Vector(Rc::new(handed.clone()))
+                    }
+                    Prim::HowMany => {
+                        n(0)?;
+                        Value::Small(handed.len() as i64)
+                    }
+                    _ => {
+                        n(1)?;
+                        let at = as_index(&v[0])?;
+                        match handed.get(at) {
+                            Some(x) => x.clone(),
+                            None => return Err(format!("{}(): nothing was handed over at {}", name, at)),
+                        }
+                    }
+                }
+            }
             Prim::Rank => {
                 n(2)?;
                 // Numbers by their order, anything else by its text.
@@ -1092,9 +1171,19 @@ impl<'a> Machine<'a> {
             }
             Prim::SortOf => {
                 n(1)?;
-                match v[0].kind() {
-                    Some(s) => Value::KindOf(s),
-                    None => return Err(format!("{}(): unknown value type", name)),
+                let Some(sort) = v[0].kind() else {
+                    return Err(format!("{}(): unknown value type", name));
+                };
+                // Where a language says a kind in words, the word it
+                // gives that kind is the answer, not a value standing
+                // for the kind itself.
+                if !self.table.flag("ext.system.kind.spelled") {
+                    Value::KindOf(sort)
+                } else {
+                    match KIND_LABELS.iter().find(|(_, k)| *k == sort).and_then(|(label, _)| self.table.single(label)) {
+                        Some(word) => Value::text(word),
+                        None => return Err(format!("{}(): the language has no word for that kind", name)),
+                    }
                 }
             }
             Prim::Numer => {

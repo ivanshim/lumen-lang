@@ -549,5 +549,15 @@
   ],
   "ext.op.not_identical": [
     "!=="
+  ],
+  "ext.system.kind.spelled": true,
+  "ext.builtin.args.all": [
+    "func_get_args"
+  ],
+  "ext.builtin.args.count": [
+    "func_num_args"
+  ],
+  "ext.builtin.args.at": [
+    "func_get_arg"
   ]
 }

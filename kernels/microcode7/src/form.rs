@@ -50,6 +50,12 @@ pub enum Prim {
     Otherwise,
     /// Give an array back without the place named (ext.builtin.unset).
     Erase,
+    /// What the running call was handed, whatever of it the routine
+    /// gave names to: the whole of it, how much there was, or the one
+    /// standing at a place (ext.builtin.args.*).
+    Handed,
+    HowMany,
+    HandedAt,
     /// Whether two values are one and the same, which asks more than
     /// being equal: they must also be of one kind, so 1 and 1.0 are
     /// equal without being the same.

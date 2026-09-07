@@ -23,6 +23,9 @@ pub struct Engine<'a> {
     memo: HashMap<String, Value>,
     /// The arguments of a builtin call, one buffer reused across calls.
     buffer: Vec<Value>,
+    /// What each call still running was given, the innermost last. Kept
+    /// only where the language can read it.
+    given: Vec<Vec<Value>>,
     args_cell: Option<usize>,
     memo_cell: Option<usize>,
 }
@@ -76,6 +79,7 @@ impl<'a> Engine<'a> {
             data: Vec::new(),
             memo: HashMap::new(),
             buffer: Vec::new(),
+            given: Vec::new(),
             args_cell: find(&lang.args_binding),
             memo_cell: find(&lang.memo_binding),
             idents,
@@ -284,7 +288,10 @@ impl<'a> Engine<'a> {
     /// A call whose arguments are the top `n` of the data stack: they move
     /// straight into the frame, one allocation instead of two.
     pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
-        if n > program.formals.len() || n < program.least {
+        // Where a language can read what a call was given, a call may
+        // give more than the routine names; the rest is kept aside.
+        let most = if self.lang.spare_args { usize::MAX } else { program.formals.len() };
+        if n > most || n < program.least {
             let wanted = program.formals.len();
             return Err(format!("Function {} expects {} arguments, got {}", program.ident, wanted, n).into());
         }
@@ -306,10 +313,21 @@ impl<'a> Engine<'a> {
             return Ok(());
         }
         let mut frame: Vec<Value> = Vec::with_capacity(program.idents.len());
+        let watching = self.lang.spare_args && !program.body_of_all;
+        if watching {
+            self.given.push(self.data[at..].to_vec());
+        }
         frame.extend(self.data.drain(at..));
+        // What the routine does not name stays aside rather than
+        // spilling into the slots its own names sit in.
+        frame.truncate(program.formals.len());
         frame.resize(program.idents.len(), Value::Blank);
         let base = self.data.len();
-        self.run_instrs(program, &mut frame)?;
+        let outcome = self.run_instrs(program, &mut frame);
+        if watching {
+            self.given.pop();
+        }
+        outcome?;
         if !program.returns_value {
             return Ok(());
         }
@@ -944,6 +962,29 @@ impl<'a> Engine<'a> {
                 print!("{}", s);
                 Value::Null
             }
+            Builtin::Given | Builtin::GivenCount | Builtin::GivenAt => {
+                let Some(given) = self.given.last() else {
+                    return Err(format!("{}() belongs inside a function", name));
+                };
+                match builtin {
+                    Builtin::Given => {
+                        arity(0)?;
+                        Value::array(given.clone())
+                    }
+                    Builtin::GivenCount => {
+                        arity(0)?;
+                        Value::Small(given.len() as i64)
+                    }
+                    _ => {
+                        arity(1)?;
+                        let at = as_index(&args[0])?;
+                        match given.get(at) {
+                            Some(v) => v.clone(),
+                            None => return Err(format!("{}(): the call was given no argument {}", name, at)),
+                        }
+                    }
+                }
+            }
             Builtin::Say => {
                 println!("{}", self.render(&args));
                 Value::Null
@@ -1054,9 +1095,17 @@ impl<'a> Engine<'a> {
             }
             Builtin::SortOf => {
                 arity(1)?;
-                match args[0].sort() {
-                    Some(k) => Value::SortOf(k),
-                    None => return Err(format!("{}(): unknown value type", name)),
+                let Some(kind) = args[0].sort() else {
+                    return Err(format!("{}(): unknown value type", name));
+                };
+                // Some languages say a kind in words rather than hand
+                // back a value standing for it.
+                match self.lang.kind_spelled {
+                    false => Value::SortOf(kind),
+                    true => match self.lang.sort_bindings.iter().find(|(_, k)| *k == kind) {
+                        Some((word, _)) => Value::text(word),
+                        None => return Err(format!("{}(): the language has no word for that kind", name)),
+                    },
                 }
             }
             Builtin::Numer | Builtin::Denom => {

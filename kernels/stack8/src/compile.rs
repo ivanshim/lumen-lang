@@ -166,7 +166,7 @@ pub fn compile(tokens: &[Token], lang: &Lang, table: &mut Registry) -> Res<Rc<Ro
         a.piece().instrs[at] = Instr::Skip(end);
     }
     let unit = a.pieces.pop().expect("the top unit");
-    Ok(Rc::new(Routine { ident: unit.ident, formals: Vec::new(), least: 0, idents: unit.idents, returns_value: false, instrs: peephole(unit.instrs) }))
+    Ok(Rc::new(Routine { ident: unit.ident, formals: Vec::new(), least: 0, idents: unit.idents, returns_value: false, body_of_all: true, instrs: peephole(unit.instrs) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -532,7 +532,7 @@ impl<'a> Compiler<'a> {
         }
         let unit = self.pieces.pop().expect("the unit");
         let instrs = if returns_value && !used { relocated(unit.instrs.into_iter().skip(2).collect(), -2) } else { unit.instrs };
-        Ok(Rc::new(Routine { ident: unit.ident, formals, least, idents: unit.idents, returns_value, instrs: peephole(instrs) }))
+        Ok(Rc::new(Routine { ident: unit.ident, formals, least, idents: unit.idents, returns_value, body_of_all: false, instrs: peephole(instrs) }))
     }
 
     // ---------- statements ----------

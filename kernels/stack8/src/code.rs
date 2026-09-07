@@ -139,6 +139,12 @@ pub enum Builtin {
     Erase,
     /// Each argument with its kind, PHP's var_dump (ext.builtin.var_dump).
     Dump,
+    /// What the running call was given, however much of it the routine
+    /// named: all of it as an array, how much there was, or the one at a
+    /// position (ext.builtin.args.*).
+    Given,
+    GivenCount,
+    GivenAt,
     MakeReal,
     Places,
     ToText,
@@ -223,6 +229,9 @@ pub struct Routine {
     /// A function leaves one value, its result; a postfix program leaves
     /// whatever it pushed.
     pub returns_value: bool,
+    /// The program's own body, which nothing called: what a call was
+    /// given cannot be read from within it.
+    pub body_of_all: bool,
     pub instrs: Vec<Instr>,
 }
 

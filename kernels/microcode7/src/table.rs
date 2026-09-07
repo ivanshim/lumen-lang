@@ -95,7 +95,8 @@ ext.system.request.query:L ext.system.request.form:L ext.system.request.cookies:
 ext.system.request.env:L ext.system.request.files:L ext.system.request.all:L ext.op.index.absent:B \
 ext.stmt.class.interface:L ext.stmt.class.implements:L ext.op.compare:L ext.builtin.unset:L ext.lexical.template:B \
 ext.op.otherwise:L ext.op.bit.and:L ext.op.bit.or:L ext.op.bit.xor:L ext.op.bit.not:L \
-ext.op.bit.left:L ext.op.bit.right:L ext.op.identical:L ext.op.not_identical:L \
+ext.op.bit.left:L ext.op.bit.right:L ext.op.identical:L ext.op.not_identical:L ext.system.kind.spelled:B ext.builtin.args.all:L \
+ext.builtin.args.count:L ext.builtin.args.at:L \
 ";
 
 fn tag_shapes(table: &'static str) -> Vec<(&'static str, char)> {
@@ -127,7 +128,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 27] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 30] = [
     ("builtin.emit", Prim::Echo), ("builtin.print", Prim::Say), ("builtin.write", Prim::Out), ("builtin.len", Prim::Length),
     ("builtin.char_at", Prim::CharAtIndex), ("builtin.ord", Prim::CodeOf), ("builtin.chr", Prim::CharOf), ("builtin.typeof", Prim::SortOf),
     ("builtin.error", Prim::Raise), ("builtin.extern", Prim::External), ("builtin.range", Prim::Span), ("builtin.real", Prim::MakeReal),
@@ -136,6 +137,8 @@ pub const BUILTIN_LABELS: [(&str, Prim); 27] = [
     ("builtin.get", Prim::Fetch), ("builtin.put", Prim::Replace), ("ext.builtin.echo", Prim::Tell),
     ("ext.builtin.define", Prim::Define), ("ext.builtin.var_dump", Prim::Dump), ("ext.builtin.array", Prim::Gather),
     ("ext.builtin.print_r", Prim::Portray), ("ext.builtin.unset", Prim::Erase),
+    ("ext.builtin.args.all", Prim::Handed), ("ext.builtin.args.count", Prim::HowMany),
+    ("ext.builtin.args.at", Prim::HandedAt),
 ];
 
 const BINARY_LABELS: [(&str, Prim); 24] = [

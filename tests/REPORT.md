@@ -17,57 +17,57 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 31, differs 36, error 47, skipped 0 | pass 31, differs 36, error 47, skipped 0 |
-| `php/func` | 14 | pass 2, differs 3, error 9, skipped 0 | pass 2, differs 3, error 9, skipped 0 |
-| `php/lang` | 213 | pass 34, differs 26, error 151, skipped 2 | pass 34, differs 26, error 151, skipped 2 |
+| `php/basic` | 114 | pass 31, differs 38, error 45, skipped 0 | pass 31, differs 38, error 45, skipped 0 |
+| `php/func` | 14 | pass 5, differs 3, error 6, skipped 0 | pass 5, differs 3, error 6, skipped 0 |
+| `php/lang` | 213 | pass 40, differs 31, error 140, skipped 2 | pass 40, differs 31, error 140, skipped 2 |
 | `php/lang/constants` | 2 | pass 1, differs 1, error 0, skipped 0 | pass 1, differs 1, error 0, skipped 0 |
 | `php/lang/integer_literals` | 6 | pass 0, differs 0, error 6, skipped 0 | pass 0, differs 0, error 6, skipped 0 |
 | `php/lang/operators` | 64 | pass 13, differs 24, error 27, skipped 0 | pass 13, differs 24, error 27, skipped 0 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 82, differs 98, error 240, skipped 2 | pass 82, differs 98, error 240, skipped 2 |
+| all | 422 | pass 91, differs 105, error 224, skipped 2 | pass 91, differs 105, error 224, skipped 2 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 98 |
+| ran, printed something else | 105 |
 | } | 8 |
 | Undefined variable: eval | 7 |
+| Undefined variable: include | 6 |
 | Unexpected character '$' | 6 |
 | Expected '{' to open the class, got ' | 6 |
 | Unexpected token: = | 6 |
 | static belongs inside a function | 5 |
-| Undefined variable: include | 5 |
 | Unexpected token: & | 5 |
 | Expected identifier as the property name, got '{' | 5 |
 | Undefined variable: __DIR__ | 4 |
 | Unexpected token: , | 4 |
-| string(10) "..." | 4 |
 | ---( Array with 1 element(s): )--- | 4 |
 | --- testing: 'abc' --- | 4 |
 | Cannot reassign $argv (system-provided immutable value) | 3 |
 | Unexpected character '@' | 3 |
 | Test | 3 |
-| Undefined variable: var_export | 3 |
 | Unexpected token: : | 3 |
 | Expected ')' to close a group, got '=' | 3 |
 | Unexpected token: ) | 3 |
 | Undefined variable: require_once | 3 |
 | Undefined variable: StdClass | 3 |
 | Only a name or a place in an array can be forgotten | 3 |
-| Undefined variable: func_get_arg | 3 |
 | Unexpected token: -> | 3 |
 | Unexpected token: . | 2 |
 | Expected an expression | 2 |
 | Unexpected token: { | 2 |
 | Undefined variable: ini_parse_quantity | 2 |
 | timeout | 2 |
-| Function register_shutdown_function expects 1 arguments, got 2 | 2 |
 | Expected ')' after the foreach names, got '[' | 2 |
 | Unexpected token: } | 2 |
 | no --FILE-- section | 2 |
 | Expected ']' after array index, got '++' | 2 |
 | Unexpected token: ++ | 2 |
-| Function foo expects 1 arguments, got 2 | 2 |
-| Undefined variable: func_get_args | 2 |
+| int(28) | 2 |
+| --- testing: '<number>' << '-44' --- | 2 |
+| Cannot coerce '' to number | 2 |
+| Cannot coerce 'true' to number | 2 |
+| Unexpected token: > | 2 |
+| Unexpected token: :: | 2 |
 
 ### Reserved words: 41 of 68 spelled
 
@@ -111,7 +111,7 @@ Not spelled: `callable`, `clone`, `declare`, `do`, `empty`, `enddeclare`, `endfo
 | `rewind` | 9 | no |
 | `set_error_handler` | 9 | no |
 | `bar` | 9 | no |
-| `func_get_args` | 9 | no |
+| `func_get_args` | 9 | yes |
 | `array_push` | 9 | yes |
 | `getIterator` | 9 | no |
 | `returnConstantByValue` | 9 | no |
@@ -248,7 +248,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/bug79699.phpt` | pass | pass |  |
 | `php/basic/bug80384.phpt` | error | error | Undefined variable: __DIR__ |
 | `php/basic/build_date.phpt` | error | error | Undefined variable: PHP_BUILD_DATE |
-| `php/basic/consistent_float_string_casts.phpt` | error | error | Function setlocale expects 2 arguments, got 13 |
+| `php/basic/consistent_float_string_casts.phpt` | error | error | Undefined variable: string |
 | `php/basic/enable_post_data_reading_01.phpt` | error | error | } |
 | `php/basic/enable_post_data_reading_02.phpt` | error | error | } |
 | `php/basic/enable_post_data_reading_03.phpt` | error | error | } |
@@ -271,7 +271,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/gh17951_runtime_change_4.phpt` | differs | differs | ran, printed something else |
 | `php/basic/gh17951_runtime_change_5.phpt` | pass | pass |  |
 | `php/basic/gh17951_runtime_change_6.phpt` | differs | differs | ran, printed something else |
-| `php/basic/gh20858.phpt` | error | error | Function error_log expects 1 arguments, got 3 |
+| `php/basic/gh20858.phpt` | differs | differs | ran, printed something else |
 | `php/basic/gh20964.phpt` | error | error | Undefined variable: fopen |
 | `php/basic/gh7896.phpt` | differs | differs | ran, printed something else |
 | `php/basic/header_register_callback.phpt` | error | error | Unexpected token: { |
@@ -303,22 +303,22 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/rfc1867_post_max_size.phpt` | differs | differs | ran, printed something else |
 | `php/basic/timeout_variation_0.phpt` | error | error | timeout |
 | `php/basic/timeout_variation_1.phpt` | differs | differs | ran, printed something else |
-| `php/basic/timeout_variation_10.phpt` | error | error | Function register_shutdown_function expects 1 arguments, got 2 |
+| `php/basic/timeout_variation_10.phpt` | differs | differs | ran, printed something else |
 | `php/basic/timeout_variation_2.phpt` | error | error | Undefined variable: array_map |
 | `php/basic/timeout_variation_4.phpt` | error | error | Undefined variable: call_user_func |
 | `php/basic/timeout_variation_7.phpt` | error | error | Undefined variable: INF |
 | `php/basic/timeout_variation_8.phpt` | error | error | Undefined variable: InfiniteIterator |
-| `php/basic/timeout_variation_9.phpt` | error | error | Function register_shutdown_function expects 1 arguments, got 2 |
+| `php/basic/timeout_variation_9.phpt` | error | error | exit() argument must be a string |
 | `php/func/001.phpt` | pass | pass |  |
 | `php/func/002.phpt` | error | error | hey=2, -2 |
-| `php/func/003.phpt` | error | error | hey |
+| `php/func/003.phpt` | pass | pass |  |
 | `php/func/004.phpt` | pass | pass |  |
 | `php/func/005.phpt` | differs | differs | ran, printed something else |
 | `php/func/005a.phpt` | error | error | timeout |
 | `php/func/006.phpt` | error | error | 0A0B |
 | `php/func/007.phpt` | error | error | false |
-| `php/func/008.phpt` | error | error | Undefined variable: var_export |
-| `php/func/009.phpt` | error | error | Undefined variable: var_export |
+| `php/func/008.phpt` | pass | pass |  |
+| `php/func/009.phpt` | pass | pass |  |
 | `php/func/010.phpt` | error | error | Undefined variable: __DIR__ |
 | `php/func/011.phpt` | differs | differs | ran, printed something else |
 | `php/func/bug64523.phpt` | differs | differs | ran, printed something else |
@@ -390,12 +390,12 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug23524.phpt` | pass | pass |  |
 | `php/lang/bug23584.phpt` | error | error | #!php |
 | `php/lang/bug23624.phpt` | error | error | Undefined variable: current |
-| `php/lang/bug24054.phpt` | error | error | Undefined variable: printf |
+| `php/lang/bug24054.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug24396.phpt` | error | error | Unexpected character '$' |
 | `php/lang/bug24436.phpt` | error | error | Undefined property: test::$test |
 | `php/lang/bug24499.phpt` | error | error | Expected identifier as the property name, got '{' |
 | `php/lang/bug24573.phpt` | error | error | Undefined variable: debug_backtrace |
-| `php/lang/bug24640.phpt` | error | error | Undefined variable: var_export |
+| `php/lang/bug24640.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug24652.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug24658.phpt` | error | error | NULL |
 | `php/lang/bug24783.phpt` | error | error | 8: |
@@ -419,7 +419,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug29893.phpt` | error | error | '-=' needs a plain variable on its left |
 | `php/lang/bug29944.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug30578.phpt` | error | error | Expected '{' to open the class, got ' |
-| `php/lang/bug30638.phpt` | error | error | Function setlocale expects 2 arguments, got 7 |
+| `php/lang/bug30638.phpt` | error | error | Undefined variable: localeconv |
 | `php/lang/bug30726.phpt` | error | error | Unexpected token: , |
 | `php/lang/bug30862.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug32828.phpt` | differs | differs | ran, printed something else |
@@ -433,7 +433,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug45392.phpt` | error | error | Undefined variable: __LINE__ |
 | `php/lang/bug55754.phpt` | error | error | Unexpected token: = |
 | `php/lang/bug71897.phpt` | error | error | Undefined variable: eval |
-| `php/lang/bug73172.phpt` | error | error | Function setlocale expects 2 arguments, got 3 |
+| `php/lang/bug73172.phpt` | error | error | Undefined variable: include |
 | `php/lang/bug73329.phpt` | error | error | Undefined variable: float |
 | `php/lang/bug7515.phpt` | error | error | Undefined variable: stdClass |
 | `php/lang/catchable_error_001.phpt` | error | error | Undefined variable: StdClass |
@@ -485,20 +485,20 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/foreachLoopObjects.006.phpt` | error | error | Substituting the iterated object for a different object. |
 | `php/lang/foreach_with_object_001.phpt` | pass | pass |  |
 | `php/lang/foreach_with_references_001.phpt` | pass | pass |  |
-| `php/lang/func_get_arg.001.phpt` | error | error | Undefined variable: func_get_arg |
-| `php/lang/func_get_arg.002.phpt` | error | error | Function foo expects 1 arguments, got 2 |
-| `php/lang/func_get_arg.003.phpt` | error | error | Undefined variable: func_get_arg |
-| `php/lang/func_get_arg.004.phpt` | error | error | Function foo expects 1 arguments, got 2 |
-| `php/lang/func_get_arg.005.phpt` | error | error | string(10) "..." |
-| `php/lang/func_get_arg_variation.phpt` | error | error | Undefined variable: func_get_arg |
-| `php/lang/func_get_args.001.phpt` | error | error | Undefined variable: func_get_args |
-| `php/lang/func_get_args.002.phpt` | error | error | Function foo expects 1 arguments, got 3 |
-| `php/lang/func_get_args.003.phpt` | error | error | Undefined variable: func_get_args |
-| `php/lang/func_get_args.004.phpt` | error | error | string(10) "..." |
-| `php/lang/func_num_args.001.phpt` | error | error | Undefined variable: func_num_args |
-| `php/lang/func_num_args.002.phpt` | error | error | Function foo expects 1 arguments, got 3 |
-| `php/lang/func_num_args.003.phpt` | error | error | Undefined variable: func_num_args |
-| `php/lang/func_num_args.004.phpt` | error | error | string(10) "..." |
+| `php/lang/func_get_arg.001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/func_get_arg.002.phpt` | pass | pass |  |
+| `php/lang/func_get_arg.003.phpt` | error | error | func_get_arg() belongs inside a function |
+| `php/lang/func_get_arg.004.phpt` | error | error | func_get_arg(): the call was given no argument 2 |
+| `php/lang/func_get_arg.005.phpt` | pass | pass |  |
+| `php/lang/func_get_arg_variation.phpt` | error | error | Array index out of bounds |
+| `php/lang/func_get_args.001.phpt` | pass | pass |  |
+| `php/lang/func_get_args.002.phpt` | pass | pass |  |
+| `php/lang/func_get_args.003.phpt` | error | error | func_get_args() belongs inside a function |
+| `php/lang/func_get_args.004.phpt` | differs | differs | ran, printed something else |
+| `php/lang/func_num_args.001.phpt` | pass | pass |  |
+| `php/lang/func_num_args.002.phpt` | pass | pass |  |
+| `php/lang/func_num_args.003.phpt` | error | error | func_num_args() belongs inside a function |
+| `php/lang/func_num_args.004.phpt` | differs | differs | ran, printed something else |
 | `php/lang/include_variation1.phpt` | error | error | Undefined variable: include |
 | `php/lang/include_variation2.phpt` | error | error | Undefined variable: require_once |
 | `php/lang/include_variation3.phpt` | error | error | Undefined variable: require_once |

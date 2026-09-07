@@ -21,7 +21,7 @@ pub mod data;
 use std::collections::HashMap;
 
 use table::Table;
-use data::{Kind, Value};
+use data::Value;
 
 const EMBEDDED: &[&str] = &[
     include_str!("../../../langs/lumen.json"),
@@ -105,10 +105,11 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         }
         machine.define(name, Value::Dict(std::rc::Rc::new(carried)));
     }
-    for (key, sort) in [("system.kind.integer", Kind::Whole), ("system.kind.rational", Kind::Fraction), ("system.kind.real", Kind::Decimal),
-        ("system.kind.string", Kind::Chars), ("system.kind.boolean", Kind::Truth), ("system.kind.array", Kind::Vector), ("system.kind.null", Kind::Nothing)] {
-        if let Some(n) = table.single(key) {
-            machine.define(n, Value::KindOf(sort));
+    if !table.flag("ext.system.kind.spelled") {
+        for (key, sort) in exec::KIND_LABELS {
+            if let Some(n) = table.single(key) {
+                machine.define(n, Value::KindOf(sort));
+            }
         }
     }
     if let Some(n) = table.single("system.real_default_precision") {

@@ -145,18 +145,65 @@ function str_repeat($text, $times) {
     return $out;
 }
 
-// gettype answers with a kind, and the definition names the kinds under
-// system.kind.*, so these read the names it gives rather than strings.
-function is_int($value) { return gettype($value) === integer; }
+// gettype answers with the name of a kind, which is what PHP has always
+// given back, so these read that name.
+function is_int($value) { return gettype($value) === "integer"; }
 function is_integer($value) { return is_int($value); }
 function is_long($value) { return is_int($value); }
-function is_string($value) { return gettype($value) === string; }
-function is_bool($value) { return gettype($value) === boolean; }
-function is_array($value) { return gettype($value) === array; }
-function is_null($value) { return gettype($value) === NULL; }
-function is_float($value) { return gettype($value) === double; }
+function is_string($value) { return gettype($value) === "string"; }
+function is_bool($value) { return gettype($value) === "boolean"; }
+function is_array($value) { return gettype($value) === "array"; }
+function is_null($value) { return $value === null; }
+function is_float($value) { return gettype($value) === "double"; }
 function is_double($value) { return is_float($value); }
-function is_numeric($value) { return is_int($value) || is_float($value); }
+function is_numeric($value) {
+    if (is_int($value) || is_float($value)) { return true; }
+    if (!is_string($value)) { return false; }
+    $text = trim($value);
+    $at = 0;
+    if (starts_with($text, "+") || starts_with($text, "-")) { $at = 1; }
+    $digits = 0;
+    $points = 0;
+    while ($at < strlen($text)) {
+        $letter = $text[$at];
+        if (is_digit($letter)) { $digits = $digits + 1; }
+        elseif ($letter === ".") { $points = $points + 1; }
+        elseif (($letter === "e" || $letter === "E") && $digits > 0) {
+            $rest = substr($text, $at + 1);
+            if (starts_with($rest, "+") || starts_with($rest, "-")) { $rest = substr($rest, 1); }
+            if (strlen($rest) == 0) { return false; }
+            $each = 0;
+            while ($each < strlen($rest)) {
+                if (!is_digit($rest[$each])) { return false; }
+                $each = $each + 1;
+            }
+            return $digits > 0 && $points < 2;
+        }
+        else { return false; }
+        $at = $at + 1;
+    }
+    return $digits > 0 && $points < 2;
+}
+
+// A value as a number, whether it was written as one or spelled out.
+function whole_of($value) {
+    if (is_int($value)) { return $value; }
+    if (is_bool($value)) { if ($value) { return 1; } return 0; }
+    if ($value === null) { return 0; }
+    if (is_string($value)) {
+        if (!is_numeric($value)) { return 0; }
+        return intval(0 + trim($value));
+    }
+    return intval($value);
+}
+
+function real_of($value) {
+    if (is_int($value) || is_float($value)) { return floatval($value); }
+    if (is_bool($value)) { if ($value) { return 1.0; } return 0.0; }
+    if ($value === null) { return 0.0; }
+    if (is_string($value) && is_numeric($value)) { return floatval(0 + trim($value)); }
+    return 0.0;
+}
 function is_object($value) { return false; }
 function is_callable($value) { return false; }
 
@@ -389,3 +436,163 @@ define("LC_MESSAGES", 5);
 define("STR_PAD_RIGHT", 1);
 define("STR_PAD_LEFT", 0);
 define("STR_PAD_BOTH", 2);
+
+// A value written the way a program would write it, which is what
+// var_export means by exporting one.
+
+function var_export_string($value, $indent) {
+    $kind = gettype($value);
+    if ($kind === "NULL") { return "NULL"; }
+    if ($kind === "boolean") { if ($value) { return "true"; } return "false"; }
+    if ($kind === "string") { return "'" . str_replace("'", "\\'", str_replace("\\", "\\\\", $value)) . "'"; }
+    if ($kind === "array") {
+        $pad = str_repeat(" ", $indent);
+        $out = "array (\n";
+        foreach ($value as $key => $held) {
+            $out = $out . $pad . "  " . var_export_string($key, $indent + 2) . " => ";
+            if (gettype($held) === "array") { $out = $out . "\n" . $pad . "  "; }
+            $out = $out . var_export_string($held, $indent + 2) . ",\n";
+        }
+        return $out . $pad . ")";
+    }
+    if ($kind === "double") {
+        $shown = strval($value);
+        if (!str_contains($shown, ".") && !str_contains($shown, "E") && !str_contains($shown, "e")) {
+            return $shown . ".0";
+        }
+        return $shown;
+    }
+    return strval($value);
+}
+
+function var_export($value, $give_back = false) {
+    $out = var_export_string($value, 0);
+    if ($give_back) { return $out; }
+    print($out);
+    return null;
+}
+
+// Text laid out to a pattern, as printf has always spelled it.
+
+function pad_to($text, $width, $filler, $to_the_left) {
+    if (strlen($text) >= $width) { return $text; }
+    $room = str_repeat($filler, $width - strlen($text));
+    if ($to_the_left) { return $text . $room; }
+    return $room . $text;
+}
+
+function rounded_string($number, $places) {
+    $below = $number < 0;
+    if ($below) { $number = 0 - $number; }
+    $scale = 10 ** $places;
+    $whole = intval(($number * $scale) + 0.5);
+    $shown = strval($whole);
+    if ($places > 0) {
+        $shown = pad_to($shown, $places + 1, "0", false);
+        $shown = substr($shown, 0, strlen($shown) - $places) . "." . substr($shown, strlen($shown) - $places);
+    }
+    if ($below) { return "-" . $shown; }
+    return $shown;
+}
+
+function one_conversion($letter, $value, $places) {
+    if ($letter === "d" || $letter === "i") { return strval(whole_of($value)); }
+    if ($letter === "u") { $n = whole_of($value); if ($n < 0) { $n = $n + 18446744073709551616; } return strval($n); }
+    if ($letter === "s") { if ($places === null) { return strval($value); } return substr(strval($value), 0, $places); }
+    if ($letter === "f" || $letter === "F") { if ($places === null) { $places = 6; } return rounded_string(real_of($value), $places); }
+    if ($letter === "x") { return dechex(whole_of($value)); }
+    if ($letter === "X") { return strtoupper(dechex(whole_of($value))); }
+    if ($letter === "o") { return decoct(whole_of($value)); }
+    if ($letter === "b") { return decbin(whole_of($value)); }
+    if ($letter === "c") { return chr(whole_of($value)); }
+    return strval($value);
+}
+
+function sprintf_over($pattern, $values) {
+    $out = "";
+    $at = 0;
+    $taken = 0;
+    $size = strlen($pattern);
+    while ($at < $size) {
+        if ($pattern[$at] !== "%") {
+            $out = $out . $pattern[$at];
+            $at = $at + 1;
+            continue;
+        }
+        $at = $at + 1;
+        if ($at < $size && $pattern[$at] === "%") { $out = $out . "%"; $at = $at + 1; continue; }
+        $to_the_left = false;
+        $filler = " ";
+        $signed = false;
+        while ($at < $size) {
+            $flag = $pattern[$at];
+            if ($flag === "-") { $to_the_left = true; }
+            elseif ($flag === "0") { $filler = "0"; }
+            elseif ($flag === "+") { $signed = true; }
+            elseif ($flag === " ") { $filler = " "; }
+            elseif ($flag === "'") { $at = $at + 1; $filler = $pattern[$at]; }
+            else { break; }
+            $at = $at + 1;
+        }
+        $width = 0;
+        while ($at < $size && is_digit($pattern[$at])) {
+            $width = $width * 10 + character_to_value($pattern[$at]);
+            $at = $at + 1;
+        }
+        $places = null;
+        if ($at < $size && $pattern[$at] === ".") {
+            $at = $at + 1;
+            $places = 0;
+            while ($at < $size && is_digit($pattern[$at])) {
+                $places = $places * 10 + character_to_value($pattern[$at]);
+                $at = $at + 1;
+            }
+        }
+        if ($at >= $size) { return $out; }
+        $letter = $pattern[$at];
+        $at = $at + 1;
+        $value = null;
+        if ($taken < count($values)) { $value = $values[$taken]; }
+        $taken = $taken + 1;
+        $shown = one_conversion($letter, $value, $places);
+        if ($signed && $letter !== "s" && !starts_with($shown, "-")) { $shown = "+" . $shown; }
+        $out = $out . pad_to($shown, $width, $filler, $to_the_left);
+    }
+    return $out;
+}
+
+function sprintf($pattern) {
+    $values = func_get_args();
+    array_shift($values);
+    return sprintf_over($pattern, $values);
+}
+
+function printf($pattern) {
+    $values = func_get_args();
+    array_shift($values);
+    $out = sprintf_over($pattern, $values);
+    print($out);
+    return strlen($out);
+}
+
+function vsprintf($pattern, $values) { return sprintf_over($pattern, $values); }
+function vprintf($pattern, $values) { $out = sprintf_over($pattern, $values); print($out); return strlen($out); }
+
+function number_format($number, $places = 0, $point = ".", $between = ",") {
+    $shown = rounded_string($number, $places);
+    $sign = "";
+    if (starts_with($shown, "-")) { $sign = "-"; $shown = substr($shown, 1); }
+    $whole = $shown;
+    $rest = "";
+    $dot = index_of($shown, ".");
+    if ($dot >= 0) { $whole = substr($shown, 0, $dot); $rest = substr($shown, $dot + 1); }
+    $grouped = "";
+    $left = strlen($whole);
+    while ($left > 3) {
+        $grouped = $between . substr($whole, $left - 3, 3) . $grouped;
+        $left = $left - 3;
+    }
+    $grouped = substr($whole, 0, $left) . $grouped;
+    if ($places > 0) { return $sign . $grouped . $point . $rest; }
+    return $sign . $grouped;
+}

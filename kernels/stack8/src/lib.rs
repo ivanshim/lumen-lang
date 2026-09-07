@@ -67,8 +67,10 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     for name in system.into_iter().flatten() {
         registry.slot(name);
     }
-    for (name, _) in &lang.sort_bindings {
-        registry.slot(name);
+    if !lang.kind_spelled {
+        for (name, _) in &lang.sort_bindings {
+            registry.slot(name);
+        }
     }
     for (_, name) in &lang.request_bindings {
         registry.slot(name);
@@ -98,8 +100,10 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
         }
         machine.define(name, Value::Map(std::rc::Rc::new(carried)));
     }
-    for (name, kind) in &lang.sort_bindings {
-        machine.define(name, engine::sort_value(*kind));
+    if !lang.kind_spelled {
+        for (name, kind) in &lang.sort_bindings {
+            machine.define(name, engine::sort_value(*kind));
+        }
     }
     if let Some(name) = &lang.precision_binding {
         machine.define(name, engine::places_default());

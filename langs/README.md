@@ -317,6 +317,18 @@ only. The extension labels so far, all from PHP:
 - `ext.op.compare`: which of two values comes first, as -1, 0 or 1
   (`<=>`). It takes its tier from `op.precedence` like any operator; a
   kernel that does not read the label reads past its tier too.
+- `ext.system.kind.spelled`: a switch; `builtin.typeof` answers with the
+  name a kind goes by rather than a value standing for the kind, and the
+  `system.kind.*` names are then not bound to anything. PHP's `gettype`
+  works this way: it hands back the text `integer`, not a value.
+- `ext.builtin.args.all`, `ext.builtin.args.count` and
+  `ext.builtin.args.at`: what the running call was handed, whatever of
+  it the routine gave names to — the whole of it as an array, how much
+  there was, or the one standing at a place (`func_get_args`,
+  `func_num_args`, `func_get_arg`). Where a language spells any of
+  these, a call may hand over more than the routine names; the rest is
+  kept aside rather than bound. Outside a routine there is nothing to
+  read, and asking is an error.
 - `ext.op.identical` and `ext.op.not_identical`: whether two values are
   one and the same (`===`, `!==`), which asks more than being equal.
   They must also be of one kind, so a whole number and a decimal
@@ -606,6 +618,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | Label | lumen | rplumen | python | rust | c (extra) | javascript (extra) | pascal (extra) | php (extra) | ruby (extra) | swift (extra) |
 |---|---|---|---|---|---|---|---|---|---|---|
 | `ext.block.lone_statement` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.builtin.args.all` | - | - | - | - | - | - | - | `func_get_args` | - | - |
+| `ext.builtin.args.at` | - | - | - | - | - | - | - | `func_get_arg` | - | - |
+| `ext.builtin.args.count` | - | - | - | - | - | - | - | `func_num_args` | - | - |
 | `ext.builtin.array` | - | - | - | - | - | - | - | `array` | - | - |
 | `ext.builtin.define` | - | - | - | - | - | - | - | `define` | - | - |
 | `ext.builtin.echo` | - | - | - | - | - | - | - | `echo` | - | - |
@@ -667,6 +682,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.throw` | - | - | - | - | - | - | - | `throw` | - | - |
 | `ext.stmt.try` | - | - | - | - | - | - | - | `try` | - | - |
 | `ext.syntax.call.bare` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.system.kind.spelled` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.system.request.all` | - | - | - | - | - | - | - | `$_REQUEST` | - | - |
 | `ext.system.request.cookies` | - | - | - | - | - | - | - | `$_COOKIE` | - | - |
 | `ext.system.request.env` | - | - | - | - | - | - | - | `$_ENV` | - | - |
