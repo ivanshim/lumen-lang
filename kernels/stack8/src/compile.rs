@@ -3010,11 +3010,25 @@ fn relocated(instrs: Vec<Instr>, delta: i64) -> Vec<Instr> {
 
 // ---------- numbers ----------
 
+/// A whole number too wide for the language to hold as one is a real
+/// there, literal or not.
+fn within_width(v: Value, lang: &Lang) -> Value {
+    let (Some(bits), Value::Huge(n)) = (lang.integer_bits, &v) else { return v };
+    if n.bits() < bits as u64 {
+        return v;
+    }
+    arith::shape_number((**n).clone(), BigInt::from(1), Some(lang.real_digits.unwrap_or(arith::DEFAULT_PLACES)))
+}
+
 fn parse_number(text: &str, lang: &Lang) -> Res<Value> {
+    Ok(within_width(read_number(text, lang)?, lang))
+}
+
+fn read_number(text: &str, lang: &Lang) -> Res<Value> {
     // Marks put between digits to break them up count for nothing.
     let plain: String = text.chars().filter(|c| !lang.digit_separators.contains(c)).collect();
     if plain != text {
-        return parse_number(&plain, lang);
+        return read_number(&plain, lang);
     }
     for (prefix, base) in &lang.base_prefixes {
         if let Some(digits) = text.strip_prefix(prefix.as_str()) {
@@ -3038,7 +3052,7 @@ fn parse_number(text: &str, lang: &Lang) -> Res<Value> {
     if let Some(at) = text.find(|c| lang.exponent_letters.contains(&c)) {
         let (mantissa, power) = (&text[..at], &text[at + 1..]);
         let power: i32 = power.parse().map_err(|_| format!("Invalid number: {}", text))?;
-        let (p, q) = match parse_number(mantissa, lang)? {
+        let (p, q) = match read_number(mantissa, lang)? {
             Value::Real(r) => (r.p.clone(), r.q.clone()),
             Value::Small(n) => (BigInt::from(n), BigInt::from(1)),
             Value::Huge(n) => ((*n).clone(), BigInt::from(1)),

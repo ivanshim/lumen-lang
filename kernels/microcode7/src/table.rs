@@ -100,7 +100,7 @@ ext.builtin.args.count:L ext.builtin.args.at:L ext.op.assign.value:B ext.op.inde
 ext.system.source.file:L ext.system.source.directory:L ext.system.source.line:L \
 ext.system.complaint.warning:L ext.system.complaint.notice:L ext.system.complaint.deprecated:L \
 ext.lexical.number.binary_prefix:L ext.lexical.number.octal_prefix:L ext.lexical.number.octal_lead:B \
-ext.lexical.number.separator:L \
+ext.lexical.number.separator:L ext.system.integer.bits:N ext.system.real.bits:N ext.system.real.digits:N \
 ";
 
 fn tag_shapes(table: &'static str) -> Vec<(&'static str, char)> {

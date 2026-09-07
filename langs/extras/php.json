@@ -592,5 +592,7 @@
   "ext.lexical.number.octal_lead": true,
   "ext.lexical.number.separator": [
     "_"
-  ]
+  ],
+  "ext.system.integer.bits": 64,
+  "ext.system.real.bits": 64
 }

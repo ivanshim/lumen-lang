@@ -143,7 +143,12 @@ impl<'a> Engine<'a> {
     fn wording(&self) -> Wording<'a> {
         let word = |list: &'a [String], fallback: &'a str| list.first().map_or(fallback, String::as_str);
         let nothing = if self.lang.null_silent { "" } else { word(&self.lang.null_words, "null") };
-        Wording { true_word: word(&self.lang.true_words, "true"), false_word: word(&self.lang.false_words, "false"), null_word: nothing }
+        Wording {
+            true_word: word(&self.lang.true_words, "true"),
+            false_word: word(&self.lang.false_words, "false"),
+            null_word: nothing,
+            real_digits: self.lang.real_bits.and(self.lang.real_digits),
+        }
     }
 
     fn drop_top(&mut self) -> Res<Value> {
@@ -933,9 +938,57 @@ impl<'a> Engine<'a> {
         })
     }
 
+    /// A number brought within the widths the language holds numbers
+    /// in: a whole number too wide to be one becomes a real, and a real
+    /// is brought to the nearest one of its width.
+    fn within_width(&self, v: Value) -> Value {
+        if let (Some(bits), Value::Huge(n)) = (self.lang.integer_bits, &v) {
+            if n.bits() >= bits as u64 {
+                let places = self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES);
+                return arith::shape_number((**n).clone(), BigInt::from(1), Some(places));
+            }
+        }
+        self.at_real_width(v)
+    }
+
+    /// A real brought to the nearest one the language can hold. Where
+    /// its reals are exact, it is left as it stands.
+    fn at_real_width(&self, v: Value) -> Value {
+        if self.lang.real_bits.is_none() {
+            return v;
+        }
+        let places = self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES);
+        let (p, q) = match &v {
+            Value::Real(r) => (r.p.clone(), r.q.clone()),
+            Value::Frac(r) => (r.p.clone(), r.q.clone()),
+            _ => return v,
+        };
+        match crate::value::from_binary(crate::value::as_binary(&p, &q)) {
+            Some((p, q)) => arith::shape_number(p, q, Some(places)),
+            // Beyond every number of that width, and so left as it is.
+            None => v,
+        }
+    }
+
     /// The arithmetic itself, both values already numbers as far as they
-    /// can be made so.
+    /// can be made so. Where a language holds its reals to a width, a
+    /// whole number meeting a real is brought to that width first, so
+    /// that the two are added as such a language adds them.
     fn dyadic_numbers(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        let real_here = |v: &Value| matches!(v, Value::Real(_) | Value::Frac(_));
+        if self.lang.real_bits.is_some() && (real_here(a) || real_here(b)) {
+            let places = self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES);
+            let widened = |v: &Value| match arith::to_real(v, places) {
+                Some(real) => self.at_real_width(real),
+                None => v.clone(),
+            };
+            let (a, b) = (widened(a), widened(b));
+            return Ok(self.within_width(self.dyadic_exact(op, &a, &b)?));
+        }
+        Ok(self.within_width(self.dyadic_exact(op, a, b)?))
+    }
+
+    fn dyadic_exact(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
         Ok(match op {
             Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv | Action::Mod | Action::Power => {
                 let calc = match op {
@@ -1103,7 +1156,7 @@ impl<'a> Engine<'a> {
             Builtin::Define => return Err(format!("{}() needs a quoted name as its first argument", name)),
             Builtin::Dump => {
                 for v in args.iter() {
-                    println!("{}", dumped(v, 0));
+                    println!("{}", dumped(v, 0, self.lang.real_bits.is_some()));
                 }
                 Value::Null
             }
@@ -1345,17 +1398,20 @@ pub fn places_default() -> Value {
 /// A value with its kind, as PHP's var_dump shows it: a number as
 /// `int(n)` or `float(x)`, text with its byte length, an array one
 /// entry per line, nested arrays indented two more.
-fn dumped(v: &Value, depth: usize) -> String {
+fn dumped(v: &Value, depth: usize, binary_reals: bool) -> String {
     let pad = "  ".repeat(depth);
     match v {
         Value::Small(_) | Value::Huge(_) => format!("int({})", v.plain()),
+        // Shown with its kind, a binary real is written in the fewest
+        // digits that read back as the same number.
+        Value::Real(r) if binary_reals => format!("float({})", crate::value::binary_string(crate::value::as_binary(&r.p, &r.q), None)),
         Value::Real(_) | Value::Frac(_) => format!("float({})", v.plain()),
         Value::Text(s) => format!("string({}) \"{}\"", s.len(), s),
         Value::Flag(b) => format!("bool({})", b),
         Value::Array(items) => {
             let mut out = format!("array({}) {{\n", items.len());
             for (i, item) in items.iter().enumerate() {
-                out.push_str(&format!("{pad}  [{i}]=>\n{pad}  {}\n", dumped(item, depth + 1)));
+                out.push_str(&format!("{pad}  [{i}]=>\n{pad}  {}\n", dumped(item, depth + 1, binary_reals)));
             }
             out.push_str(&pad);
             out.push('}');
@@ -1369,7 +1425,7 @@ fn dumped(v: &Value, depth: usize) -> String {
                     Value::Text(s) => format!("\"{}\"", s),
                     other => other.plain(),
                 };
-                out.push_str(&format!("{pad}  [{shown}]=>\n{pad}  {}\n", dumped(item, depth + 1)));
+                out.push_str(&format!("{pad}  [{shown}]=>\n{pad}  {}\n", dumped(item, depth + 1, binary_reals)));
             }
             out.push_str(&pad);
             out.push('}');
@@ -1379,7 +1435,7 @@ fn dumped(v: &Value, depth: usize) -> String {
             let held = thing.fields.borrow();
             let mut out = format!("object({})#{} ({}) {{\n", thing.class.name, thing.mark, held.len());
             for (member, item) in held.iter() {
-                out.push_str(&format!("{pad}  [\"{member}\"]=>\n{pad}  {}\n", dumped(item, depth + 1)));
+                out.push_str(&format!("{pad}  [\"{member}\"]=>\n{pad}  {}\n", dumped(item, depth + 1, binary_reals)));
             }
             out.push_str(&pad);
             out.push('}');

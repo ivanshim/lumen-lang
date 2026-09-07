@@ -20,9 +20,8 @@ while i iterations <
     1 'result' =
     0 'j' =
     while j exp <
-        result base * 'result' =
+        result base * mod % 'result' =
         j 1 + 'j' =
-    result mod % 'result' =
     i 1 + 'i' =
 "Result: " write
 result print

@@ -4,7 +4,10 @@
 
 define("PHP_EOL", "\n");
 define("PHP_INT_MAX", 9223372036854775807);
-define("PHP_INT_MIN", -9223372036854775808);
+// Written as a subtraction because the literal 9223372036854775808 is
+// one past the widest whole number, and so a real: php-src spells its
+// own smallest whole number this way for the same reason.
+define("PHP_INT_MIN", -9223372036854775807 - 1);
 define("PHP_INT_SIZE", 8);
 define("PHP_FLOAT_DIG", 15);
 define("PHP_VERSION", "8.4.0");

@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use num_bigint::BigInt;
-use num_traits::{Signed, ToPrimitive, Zero};
+use num_traits::{One, Signed, ToPrimitive, Zero};
 
 use crate::form::Routine;
 
@@ -92,6 +92,10 @@ pub struct Names<'a> {
     pub truth: &'a str,
     pub falsity: &'a str,
     pub nil: &'a str,
+    /// Where a language holds its reals to a width of bits, how many
+    /// figures one shows when simply written out; where it says
+    /// nothing, a real is shown to the precision it carries.
+    pub real_figures: Option<usize>,
 }
 
 impl Value {
@@ -216,6 +220,9 @@ impl Value {
                 format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.render(w), v.render(w))).collect::<Vec<_>>().join(", "))
             }
             Value::Couple(e) => format!("{} => {}", e.0.render(w), e.1.render(w)),
+            // A language whose reals are numbers of bits writes one to
+            // its own count of figures.
+            Value::Frac(e) if w.real_figures.is_some() => figured(nearest_binary(&e.above, &e.beneath), w.real_figures),
             other => other.bare(),
         }
     }
@@ -368,4 +375,86 @@ pub struct Thing {
     /// Which thing this is by the turn it was made in, counting from
     /// one, for a language that names them when showing them.
     pub turn: usize,
+}
+
+/// A ratio as the nearest binary number of sixty-four bits. One too
+/// large for such a number to hold stands past all of them.
+pub fn nearest_binary(above: &BigInt, beneath: &BigInt) -> f64 {
+    let past = || if above.is_negative() { f64::NEG_INFINITY } else { f64::INFINITY };
+    if beneath.is_one() {
+        return above.to_f64().unwrap_or_else(past);
+    }
+    match (above.to_f64(), beneath.to_f64()) {
+        (Some(x), Some(y)) if x.is_finite() && y.is_finite() && y != 0.0 => x / y,
+        _ => {
+            let down = above.bits().max(beneath.bits()).saturating_sub(900);
+            let (x, y) = (above >> down, beneath >> down);
+            match (x.to_f64(), y.to_f64()) {
+                (Some(x), Some(y)) if y != 0.0 => x / y,
+                _ => past(),
+            }
+        }
+    }
+}
+
+/// What a binary real is worth, held as a ratio: the fewest figures
+/// that read back as the same number say what it stands for.
+pub fn binary_worth(x: f64) -> Option<(BigInt, BigInt)> {
+    if !x.is_finite() {
+        return None;
+    }
+    let shown = format!("{:e}", x);
+    let (front, power) = shown.split_once('e')?;
+    let power: i32 = power.parse().ok()?;
+    let below_nought = front.starts_with('-');
+    let run: String = front.trim_start_matches('-').chars().filter(|c| *c != '.').collect();
+    let step = power - (run.len() as i32 - 1);
+    let mut above: BigInt = run.parse().ok()?;
+    if below_nought {
+        above = -above;
+    }
+    Some(match step >= 0 {
+        true => (above * BigInt::from(10).pow(step as u32), BigInt::one()),
+        false => (above, BigInt::from(10).pow(step.unsigned_abs())),
+    })
+}
+
+/// A binary real written out: the fewest figures that read back as the
+/// same number, with a power of ten after them where it stands very
+/// high or very low. `figures` caps them, as a language's own setting
+/// does where a number is written out rather than shown with its kind.
+pub fn figured(x: f64, figures: Option<usize>) -> String {
+    if x.is_nan() {
+        return "NAN".to_string();
+    }
+    if x.is_infinite() {
+        return if x < 0.0 { "-INF".to_string() } else { "INF".to_string() };
+    }
+    let shown = match figures {
+        Some(n) => format!("{:.*e}", n.saturating_sub(1), x),
+        None => format!("{:e}", x),
+    };
+    let (front, power) = shown.split_once('e').expect("a power of ten was asked for");
+    let power: i32 = power.parse().unwrap_or(0);
+    let mut run = front.trim_start_matches('-').replace('.', "");
+    if figures.is_some() {
+        while run.len() > 1 && run.ends_with('0') {
+            run.pop();
+        }
+    }
+    let sign = if front.starts_with('-') { "-" } else { "" };
+    if (-5..15).contains(&power) {
+        let point = power + 1;
+        let body = if point <= 0 {
+            format!("0.{}{}", "0".repeat(-point as usize), run)
+        } else if point as usize >= run.len() {
+            format!("{}{}", run, "0".repeat(point as usize - run.len()))
+        } else {
+            format!("{}.{}", &run[..point as usize], &run[point as usize..])
+        };
+        return format!("{}{}", sign, body);
+    }
+    let tail = &run[1..];
+    let after = if tail.is_empty() { "0" } else { tail };
+    format!("{}{}.{}E{}{}", sign, &run[..1], after, if power < 0 { "-" } else { "+" }, power.abs())
 }

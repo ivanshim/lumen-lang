@@ -2734,11 +2734,26 @@ fn dup_pure(node: &Form) -> Form {
 
 // ---------- numbers
 
+/// A whole number too wide for the language to hold as one is a real
+/// there, written out as a literal or worked out.
+fn at_language_width(v: Value, table: &Table) -> Value {
+    let (Some(bits), Value::Huge(n)) = (table.count("ext.system.integer.bits"), &v) else { return v };
+    if n.bits() < bits as u64 {
+        return v;
+    }
+    let figures = table.count("ext.system.real.digits").unwrap_or(math::DEFAULT_PLACES);
+    math::make_number((**n).clone(), BigInt::from(1), Some(figures))
+}
+
 pub fn numeral(text: &str, table: &Table) -> Res<Value> {
+    Ok(at_language_width(read_numeral(text, table)?, table))
+}
+
+fn read_numeral(text: &str, table: &Table) -> Res<Value> {
     let apart = table.letters("ext.lexical.number.separator");
     let plain: String = text.chars().filter(|c| !apart.contains(c)).collect();
     if plain != text {
-        return numeral(&plain, table);
+        return read_numeral(&plain, table);
     }
     for (key, radix) in [
         ("lexical.number.hex_prefix", 16u32),
@@ -2766,7 +2781,7 @@ pub fn numeral(text: &str, table: &Table) -> Res<Value> {
     if let Some(at) = text.find(|c| powers.contains(&c)) {
         let (before, power) = (&text[..at], &text[at + 1..]);
         let power: i32 = power.parse().map_err(|_| format!("Invalid number: {}", text))?;
-        let (above, beneath) = match numeral(before, table)? {
+        let (above, beneath) = match read_numeral(before, table)? {
             Value::Frac(e) => (e.above.clone(), e.beneath.clone()),
             Value::Small(n) => (BigInt::from(n), BigInt::from(1)),
             Value::Huge(n) => ((*n).clone(), BigInt::from(1)),

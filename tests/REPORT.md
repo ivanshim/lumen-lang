@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 31, differs 40, error 43, skipped 0 | pass 31, differs 40, error 43, skipped 0 |
 | `php/func` | 14 | pass 5, differs 3, error 6, skipped 0 | pass 5, differs 3, error 6, skipped 0 |
-| `php/lang` | 213 | pass 52, differs 38, error 121, skipped 2 | pass 52, differs 38, error 121, skipped 2 |
+| `php/lang` | 213 | pass 53, differs 37, error 121, skipped 2 | pass 53, differs 37, error 121, skipped 2 |
 | `php/lang/constants` | 2 | pass 1, differs 1, error 0, skipped 0 | pass 1, differs 1, error 0, skipped 0 |
-| `php/lang/integer_literals` | 6 | pass 0, differs 6, error 0, skipped 0 | pass 0, differs 6, error 0, skipped 0 |
-| `php/lang/operators` | 64 | pass 13, differs 24, error 27, skipped 0 | pass 13, differs 24, error 27, skipped 0 |
+| `php/lang/integer_literals` | 6 | pass 3, differs 3, error 0, skipped 0 | pass 3, differs 3, error 0, skipped 0 |
+| `php/lang/operators` | 64 | pass 15, differs 22, error 27, skipped 0 | pass 15, differs 22, error 27, skipped 0 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 103, differs 120, error 197, skipped 2 | pass 103, differs 120, error 197, skipped 2 |
+| all | 422 | pass 109, differs 114, error 197, skipped 2 | pass 109, differs 114, error 197, skipped 2 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 120 |
+| ran, printed something else | 114 |
 | } | 9 |
 | Undefined variable: eval | 7 |
 | Undefined variable: include | 7 |
@@ -310,7 +310,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/timeout_variation_8.phpt` | error | error | Undefined variable: InfiniteIterator |
 | `php/basic/timeout_variation_9.phpt` | error | error | exit() argument must be a string |
 | `php/func/001.phpt` | pass | pass |  |
-| `php/func/002.phpt` | error | error | Warning: Undefined variable $hey in /tmp/tmp51o3p5ov.php on line 12 |
+| `php/func/002.phpt` | error | error | Warning: Undefined variable $hey in /tmp/tmpwm497vcw.php on line 12 |
 | `php/func/003.phpt` | pass | pass |  |
 | `php/func/004.phpt` | pass | pass |  |
 | `php/func/005.phpt` | differs | differs | ran, printed something else |
@@ -390,7 +390,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug23524.phpt` | pass | pass |  |
 | `php/lang/bug23584.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug23624.phpt` | error | error | Undefined variable: current |
-| `php/lang/bug24054.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug24054.phpt` | pass | pass |  |
 | `php/lang/bug24396.phpt` | error | error | Unexpected character '$' |
 | `php/lang/bug24436.phpt` | error | error | Undefined property: test::$test |
 | `php/lang/bug24499.phpt` | pass | pass |  |
@@ -465,10 +465,10 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/foreachLoop.009.phpt` | error | error | key: 1; value: original.1 |
 | `php/lang/foreachLoop.010.phpt` | error | error | Unexpected token: & |
 | `php/lang/foreachLoop.011.phpt` | error | error | int(1) |
-| `php/lang/foreachLoop.012.phpt` | error | error | Warning: Undefined variable $a in /tmp/tmpdmmqb8ah.php on line 9 |
-| `php/lang/foreachLoop.013.phpt` | error | error | Warning: Undefined variable $a in /tmp/tmpe5ca98vc.php on line 9 |
-| `php/lang/foreachLoop.014.phpt` | error | error | Warning: Undefined variable $a in /tmp/tmps661u079.php on line 9 |
-| `php/lang/foreachLoop.015.phpt` | error | error | Warning: Undefined variable $a in /tmp/tmpzu3nky72.php on line 9 |
+| `php/lang/foreachLoop.012.phpt` | error | error | Warning: Undefined variable $a in /tmp/tmpyic1ycgm.php on line 9 |
+| `php/lang/foreachLoop.013.phpt` | error | error | Warning: Undefined variable $a in /tmp/tmpy8ggphs7.php on line 9 |
+| `php/lang/foreachLoop.014.phpt` | error | error | Warning: Undefined variable $a in /tmp/tmpqu26tued.php on line 9 |
+| `php/lang/foreachLoop.015.phpt` | error | error | Warning: Undefined variable $a in /tmp/tmpbj02jrqd.php on line 9 |
 | `php/lang/foreachLoop.016.phpt` | error | error | Unexpected character '$' |
 | `php/lang/foreachLoop.017.phpt` | pass | pass |  |
 | `php/lang/foreachLoopIterator.001.phpt` | error | error | Expected ']' after array index, got '++' |
@@ -503,11 +503,11 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/include_variation2.phpt` | error | error | Undefined variable: require_once |
 | `php/lang/include_variation3.phpt` | error | error | Undefined variable: require_once |
 | `php/lang/integer_literals/binary_32bit.phpt` | differs | differs | ran, printed something else |
-| `php/lang/integer_literals/binary_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/integer_literals/binary_64bit.phpt` | pass | pass |  |
 | `php/lang/integer_literals/hexadecimal_32bit.phpt` | differs | differs | ran, printed something else |
-| `php/lang/integer_literals/hexadecimal_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/integer_literals/hexadecimal_64bit.phpt` | pass | pass |  |
 | `php/lang/integer_literals/octal_32bit.phpt` | differs | differs | ran, printed something else |
-| `php/lang/integer_literals/octal_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/integer_literals/octal_64bit.phpt` | pass | pass |  |
 | `php/lang/invalid_octal.phpt` | error | error | Invalid number: 08 |
 | `php/lang/operators/add_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/add_variationStr.phpt` | error | error | --- testing: '<number>' + 'abc' --- |
@@ -542,7 +542,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/operator_gt_basic.phpt` | error | error | Cannot coerce '' to number |
 | `php/lang/operators/operator_gt_or_equal_basic.phpt` | error | error | Cannot coerce '' to number |
 | `php/lang/operators/operator_gt_or_equal_variation.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/operator_gt_or_equal_variation_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_gt_or_equal_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_gt_variation.phpt` | pass | pass |  |
 | `php/lang/operators/operator_gt_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_identical_basic.phpt` | pass | pass |  |
@@ -552,7 +552,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/operator_lt_basic.phpt` | error | error | Cannot coerce 'true' to number |
 | `php/lang/operators/operator_lt_or_equal_basic.phpt` | error | error | Cannot coerce 'true' to number |
 | `php/lang/operators/operator_lt_or_equal_variation.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/operator_lt_or_equal_variation_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_lt_or_equal_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_lt_variation.phpt` | pass | pass |  |
 | `php/lang/operators/operator_lt_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_notequals_basic.phpt` | error | error | Unexpected token: > |
@@ -575,10 +575,10 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/subtract_variationStr.phpt` | error | error | --- testing: '<number>' - 'abc' --- |
 | `php/lang/passByReference_001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/passByReference_002.phpt` | differs | differs | ran, printed something else |
-| `php/lang/passByReference_003.phpt` | error | error | Warning: Undefined variable $undef1 in /tmp/tmpeilweurh.php on line 13 |
+| `php/lang/passByReference_003.phpt` | error | error | Warning: Undefined variable $undef1 in /tmp/tmpcq_24aqe.php on line 13 |
 | `php/lang/passByReference_004.phpt` | differs | differs | ran, printed something else |
 | `php/lang/passByReference_005.phpt` | differs | differs | ran, printed something else |
-| `php/lang/passByReference_006.phpt` | error | error | Warning: Undefined variable $u1 in /tmp/tmp92ydqzu5.php on line 30 |
+| `php/lang/passByReference_006.phpt` | error | error | Warning: Undefined variable $u1 in /tmp/tmp_wfsla3j.php on line 30 |
 | `php/lang/passByReference_007.phpt` | differs | differs | ran, printed something else |
 | `php/lang/passByReference_008.phpt` | pass | pass |  |
 | `php/lang/passByReference_009.phpt` | pass | pass |  |

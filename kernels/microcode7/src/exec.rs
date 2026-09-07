@@ -153,12 +153,53 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn a_real(&self, v: &Value) -> bool {
+        matches!(v, Value::Frac(_))
+    }
+
+    fn holds_reals_to_width(&self) -> bool {
+        self.table.count("ext.system.real.bits").is_some()
+    }
+
+    fn real_figures(&self) -> usize {
+        self.table.count("ext.system.real.digits").unwrap_or(math::DEFAULT_PLACES)
+    }
+
+    /// A number as a real of the language's own width.
+    fn as_wide_real(&self, v: &Value) -> Value {
+        match math::ratio_of(v) {
+            Some(r) => math::make_number(r.above, r.beneath, Some(self.real_figures())),
+            None => v.clone(),
+        }
+    }
+
+    /// A number brought within the widths the language holds numbers
+    /// in: a whole number too wide to be one becomes a real, and a real
+    /// is brought to the nearest one of its width.
+    fn at_width(&self, v: Value) -> Value {
+        if let (Some(bits), Value::Huge(n)) = (self.table.count("ext.system.integer.bits"), &v) {
+            if n.bits() >= bits as u64 {
+                return math::make_number((**n).clone(), BigInt::from(1), Some(self.real_figures()));
+            }
+        }
+        if !self.holds_reals_to_width() {
+            return v;
+        }
+        let Value::Frac(e) = &v else { return v };
+        match crate::data::binary_worth(crate::data::nearest_binary(&e.above, &e.beneath)) {
+            Some((above, beneath)) => math::make_number(above, beneath, Some(self.real_figures())),
+            // Past every number of that width, and so left as it is.
+            None => v,
+        }
+    }
+
     fn wording(&self) -> Names<'a> {
         Names {
             truth: self.table.single("literal.true").unwrap_or("true"),
             falsity: self.table.single("literal.false").unwrap_or("false"),
             // A language may show nothing as no text at all, as PHP does,
             // rather than as the word a program writes for it.
+            real_figures: self.table.count("ext.system.real.bits").and(self.table.count("ext.system.real.digits")),
             nil: match self.table.flag("literal.null.silent") {
                 true => "",
                 false => self.table.single("literal.null").unwrap_or("null"),
@@ -1114,20 +1155,34 @@ impl<'a> Machine<'a> {
                     Prim::Mod => Calc::Remainder,
                     _ => Calc::Power,
                 };
-                match math::compute(sum, &v[0], &v[1]) {
+                // Where a language holds its reals to a width of bits,
+                // a whole number meeting a real is brought to that
+                // width first, so the two are worked as it works them.
+                let (left, right) = match self.holds_reals_to_width() && (self.a_real(&v[0]) || self.a_real(&v[1])) {
+                    true => (self.at_width(self.as_wide_real(&v[0])), self.at_width(self.as_wide_real(&v[1]))),
+                    false => (v[0].clone(), v[1].clone()),
+                };
+                let worked = match math::compute(sum, &left, &right) {
                     Some(r) => r?,
                     None => match sum {
-                        Calc::Plus => Value::from_big(v[0].as_big()? + v[1].as_big()?),
-                        Calc::Minus => Value::from_big(v[0].as_big()? - v[1].as_big()?),
-                        Calc::Times => Value::from_big(v[0].as_big()? * v[1].as_big()?),
+                        Calc::Plus => Value::from_big(left.as_big()? + right.as_big()?),
+                        Calc::Minus => Value::from_big(left.as_big()? - right.as_big()?),
+                        Calc::Times => Value::from_big(left.as_big()? * right.as_big()?),
                         Calc::Over | Calc::OverReal => return Err("Division requires numeric operands".to_string()),
                         Calc::IntDiv => return Err("Integer quotient requires numeric operands".to_string()),
                         Calc::Remainder => return Err("Modulo requires numeric operands".to_string()),
                         Calc::Power => return Err("Exponentiation requires numeric operands".to_string()),
                     },
-                }
+                };
+                self.at_width(worked)
             }
             Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge => {
+                // Two numbers are set against each other at the width
+                // the language holds them in, as they are worked at it.
+                let (left, right) = match self.holds_reals_to_width() && (self.a_real(&v[0]) || self.a_real(&v[1])) {
+                    true => (self.at_width(self.as_wide_real(&v[0])), self.at_width(self.as_wide_real(&v[1]))),
+                    false => (v[0].clone(), v[1].clone()),
+                };
                 let below = |a: &Value, b: &Value| -> Result<bool, String> {
                     match math::below(a, b) {
                         Some(r) => Ok(r),
@@ -1135,10 +1190,10 @@ impl<'a> Machine<'a> {
                     }
                 };
                 Value::Flag(match op {
-                    Prim::Lt => below(&v[0], &v[1])?,
-                    Prim::Gt => below(&v[1], &v[0])?,
-                    Prim::Le => !below(&v[1], &v[0])?,
-                    _ => !below(&v[0], &v[1])?,
+                    Prim::Lt => below(&left, &right)?,
+                    Prim::Gt => below(&right, &left)?,
+                    Prim::Le => !below(&right, &left)?,
+                    _ => !below(&left, &right)?,
                 })
             }
             Prim::Echo => {
@@ -1166,7 +1221,7 @@ impl<'a> Machine<'a> {
             Prim::Define => return Err(format!("{}() needs a quoted name as its first argument", name)),
             Prim::Dump => {
                 for x in v {
-                    println!("{}", with_kind(x, 0));
+                    println!("{}", with_kind(x, 0, self.table.count("ext.system.real.bits").is_some()));
                 }
                 Value::Nil
             }
@@ -1391,15 +1446,18 @@ fn as_index(v: &Value) -> Result<usize, String> {
 /// A value shown with its kind the way PHP's var_dump does: numbers as
 /// `int(n)` and `float(x)`, text with its length in bytes, a vector
 /// one entry per line, each nested level two spaces further in.
-fn with_kind(v: &Value, level: usize) -> String {
+fn with_kind(v: &Value, level: usize, binary_reals: bool) -> String {
     let lead = "  ".repeat(level);
     match v {
         Value::Small(_) | Value::Huge(_) => format!("int({})", v.bare()),
+        // Shown with its kind, a binary real is written in the fewest
+        // figures that read back as the same number.
+        Value::Frac(e) if binary_reals => format!("float({})", crate::data::figured(crate::data::nearest_binary(&e.above, &e.beneath), None)),
         Value::Frac(_) => format!("float({})", v.bare()),
         Value::Text(s) => format!("string({}) \"{}\"", s.len(), s),
         Value::Flag(b) => format!("bool({})", b),
         Value::Vector(items) => {
-            let entries: Vec<String> = items.iter().enumerate().map(|(i, x)| format!("{lead}  [{i}]=>\n{lead}  {}\n", with_kind(x, level + 1))).collect();
+            let entries: Vec<String> = items.iter().enumerate().map(|(i, x)| format!("{lead}  [{i}]=>\n{lead}  {}\n", with_kind(x, level + 1, binary_reals))).collect();
             format!("array({}) {{\n{}{lead}}}", items.len(), entries.concat())
         }
         Value::Dict(entries) => {
@@ -1411,7 +1469,7 @@ fn with_kind(v: &Value, level: usize) -> String {
                         Value::Text(s) => format!("\"{}\"", s),
                         other => other.bare(),
                     };
-                    format!("{lead}  [{key}]=>\n{lead}  {}\n", with_kind(x, level + 1))
+                    format!("{lead}  [{key}]=>\n{lead}  {}\n", with_kind(x, level + 1, binary_reals))
                 })
                 .collect();
             format!("array({}) {{\n{}{lead}}}", entries.len(), shown.concat())
@@ -1420,7 +1478,7 @@ fn with_kind(v: &Value, level: usize) -> String {
             let held = thing.holds.borrow();
             let shown: Vec<String> = held
                 .iter()
-                .map(|(member, x)| format!("{lead}  [\"{member}\"]=>\n{lead}  {}\n", with_kind(x, level + 1)))
+                .map(|(member, x)| format!("{lead}  [\"{member}\"]=>\n{lead}  {}\n", with_kind(x, level + 1, binary_reals)))
                 .collect();
             format!("object({})#{} ({}) {{\n{}{lead}}}", thing.of.name, thing.turn, held.len(), shown.concat())
         }

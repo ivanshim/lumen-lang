@@ -329,6 +329,17 @@ only. The extension labels so far, all from PHP:
 - `ext.lexical.number.separator`: marks a program may write between the
   digits of a number to break them up (`1_000_000`), which count for
   nothing when the number is read.
+- `ext.system.integer.bits` and `ext.system.real.bits`: how many bits
+  wide a language holds a whole number and a real in. A whole number
+  that outgrows its width becomes a real, literal or worked out, and a
+  real is brought to the nearest one of its width, so a whole number
+  meeting a real is brought to that width first and the two are worked
+  as such a language works them. A real of a width is also written out
+  the way such a language writes one: shown with its kind, it is the
+  fewest figures that read back as the same number, with a power of ten
+  after them where it stands very high or very low, and a number past
+  every one of that width is written `INF`. Where a language says
+  nothing, its numbers are exact and unbounded, as Lumen's own are.
 - `ext.system.source.file` and `ext.system.source.directory`: the names
   a program calls the file it is written in and the place that file
   lies in (`__FILE__`, `__DIR__`). The host works both out from the
@@ -728,7 +739,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.complaint.deprecated` | - | - | - | - | - | - | - | `Deprecated` | - | - |
 | `ext.system.complaint.notice` | - | - | - | - | - | - | - | `Notice` | - | - |
 | `ext.system.complaint.warning` | - | - | - | - | - | - | - | `Warning` | - | - |
+| `ext.system.integer.bits` | - | - | - | - | - | - | - | `64` | - | - |
 | `ext.system.kind.spelled` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.system.real.bits` | - | - | - | - | - | - | - | `64` | - | - |
 | `ext.system.request.all` | - | - | - | - | - | - | - | `$_REQUEST` | - | - |
 | `ext.system.request.cookies` | - | - | - | - | - | - | - | `$_COOKIE` | - | - |
 | `ext.system.request.env` | - | - | - | - | - | - | - | `$_ENV` | - | - |

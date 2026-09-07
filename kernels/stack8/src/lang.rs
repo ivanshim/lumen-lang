@@ -62,6 +62,14 @@ pub struct Lang {
     /// Marks a program may put between the digits of a number to break
     /// them up, which count for nothing.
     pub digit_separators: Vec<char>,
+    /// How many bits wide a whole number is, where a language says: a
+    /// result that outgrows that width becomes a real instead.
+    pub integer_bits: Option<usize>,
+    /// How many bits wide a real is, where a language says its reals
+    /// are binary numbers rather than exact ones, and how many
+    /// significant digits one shows when simply written out.
+    pub real_bits: Option<usize>,
+    pub real_digits: Option<usize>,
     pub unicode_names: bool,
     pub sigil: Option<char>,
     pub keywords_folded: bool,
@@ -313,6 +321,7 @@ w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at | b ex
 w ext.system.source.file | w ext.system.source.directory | w ext.system.source.line
 w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.complaint.deprecated
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
+n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -330,6 +339,8 @@ fn number_shapes() -> Vec<(char, &'static str)> {
 
 static ABSENT_LIST: Json = Json::Array(Vec::new());
 static ABSENT_SWITCH: Json = Json::Bool(false);
+/// A count no definition gives stands for nothing at all.
+static ABSENT_COUNT: Json = Json::Null;
 
 struct Reader<'a>(&'a serde_json::Map<String, Json>);
 
@@ -340,6 +351,7 @@ impl<'a> Reader<'a> {
         }
         match shapes_of(EXT_LABELS).iter().find(|(_, tag)| *tag == key) {
             Some(('b', _)) => Ok(&ABSENT_SWITCH),
+            Some(('n', _)) => Ok(&ABSENT_COUNT),
             Some(_) => Ok(&ABSENT_LIST),
             None => Err(format!("missing label '{key}'")),
         }
@@ -779,6 +791,9 @@ impl Lang {
             base_prefixes,
             octal_lead: r.flag("ext.lexical.number.octal_lead")?,
             digit_separators: r.letters("ext.lexical.number.separator")?,
+            integer_bits: r.count("ext.system.integer.bits")?,
+            real_bits: r.count("ext.system.real.bits")?,
+            real_digits: r.count("ext.system.real.digits")?,
             unicode_names: unicode,
             sigil: var_prefix,
             keywords_folded: r.flag("lexical.keywords_case_insensitive")?,
