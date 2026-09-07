@@ -123,7 +123,8 @@
       "<",
       ">",
       "<=",
-      ">="
+      ">=",
+      "<=>"
     ],
     [
       "."
@@ -496,5 +497,18 @@
   "ext.system.request.all": [
     "$_REQUEST"
   ],
-  "ext.op.index.absent": true
+  "ext.op.index.absent": true,
+  "ext.stmt.class.interface": [
+    "interface"
+  ],
+  "ext.stmt.class.implements": [
+    "implements"
+  ],
+  "ext.op.compare": [
+    "<=>"
+  ],
+  "ext.builtin.unset": [
+    "unset"
+  ],
+  "ext.lexical.template": true
 }

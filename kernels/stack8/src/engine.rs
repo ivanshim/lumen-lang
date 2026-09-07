@@ -372,6 +372,20 @@ impl<'a> Engine<'a> {
                     };
                     self.put_cell(slot, frame, Value::Bond(shared));
                 }
+                Instr::BondItem(slot) => {
+                    let at = self.drop_top()?;
+                    let held = self.peek_cell_mut(slot, frame)?;
+                    let shared = shared_item(held, &at)?;
+                    self.data.push(Value::Bond(shared));
+                }
+                Instr::Forget(slot) => {
+                    for &s in &slot.near {
+                        frame[s] = Value::Blank;
+                    }
+                    if slot.near.is_empty() {
+                        self.world[slot.far] = Value::Blank;
+                    }
+                }
                 Instr::Missing(slot) => {
                     let empty = matches!(frame[*slot], Value::Blank);
                     self.data.push(Value::Flag(empty));
@@ -532,12 +546,21 @@ impl<'a> Engine<'a> {
                         None => return Err("Stack underflow".to_string().into()),
                     },
                 };
+                let mut answers = Vec::with_capacity(plan.answers);
+                for _ in 0..plan.answers {
+                    match given.next() {
+                        Some(Value::Class(c)) => answers.push(c),
+                        Some(v) => return Err(format!("Class {} cannot answer to {}", plan.name, v.plain()).into()),
+                        None => return Err("Stack underflow".to_string().into()),
+                    }
+                }
                 let mut take = |names: &[String]| -> Vec<(String, Value)> {
                     names.iter().map(|n| (n.clone(), given.next().unwrap_or(Value::Null))).collect()
                 };
                 Value::Class(Rc::new(Class {
                     name: plan.name.clone(),
                     base,
+                    answers,
                     fields: take(&plan.field_names),
                     methods: plan.methods.clone(),
                     shared: RefCell::new(take(&plan.shared_names)),
@@ -713,6 +736,16 @@ impl<'a> Engine<'a> {
             Action::Ne => Value::Flag(!a.equals(b)),
             Action::Join => joined(),
             Action::At => self.element(a, b)?,
+            Action::Rank => match crate::arith::order_values(a, b) {
+                Some(std::cmp::Ordering::Less) => Value::Small(-1),
+                Some(std::cmp::Ordering::Equal) => Value::Small(0),
+                Some(std::cmp::Ordering::Greater) => Value::Small(1),
+                None => Value::Small(match (a.display(&sp), b.display(&sp)) {
+                    (x, y) if x < y => -1,
+                    (x, y) if x > y => 1,
+                    _ => 0,
+                }),
+            },
             Action::Add if matches!(a, Value::Text(_)) || matches!(b, Value::Text(_)) => joined(),
             Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv | Action::Mod | Action::Power => {
                 let calc = match op {
@@ -999,6 +1032,29 @@ impl<'a> Engine<'a> {
                 }
             }
             Builtin::Pack => return Err(format!("{}() is a literal, not a call", name)),
+            Builtin::Erase => {
+                // Taking a place out of an array: the array is given back
+                // without it.
+                arity(2)?;
+                let at = args.pop().expect("the place");
+                match args.pop().expect("the array") {
+                    Value::Array(items) => {
+                        let i = as_index(&at)?;
+                        let kept: Vec<(Value, Value)> = items
+                            .iter()
+                            .enumerate()
+                            .filter(|(j, _)| *j != i)
+                            .map(|(j, v)| (Value::Small(j as i64), v.clone()))
+                            .collect();
+                        Value::Map(Rc::new(kept))
+                    }
+                    Value::Map(pairs) => {
+                        let kept: Vec<(Value, Value)> = pairs.iter().filter(|(k, _)| !k.equals(&at)).cloned().collect();
+                        Value::Map(Rc::new(kept))
+                    }
+                    v => return Err(format!("{}() cannot take a place out of {}", name, v.plain())),
+                }
+            }
             Builtin::Layout => {
                 arity(1)?;
                 print!("{}", laid_out(&args[0], 0));
@@ -1156,4 +1212,37 @@ fn laid_out(v: &Value, indent: usize) -> String {
     }
     out.push_str(&format!("{pad})\n"));
     out
+}
+
+/// The place an array holds, made a shared cell so that a name fastened
+/// to it writes into the array itself.
+fn shared_item(held: &mut Value, at: &Value) -> Res<Rc<RefCell<Value>>> {
+    let place: &mut Value = match held {
+        Value::Array(items) => {
+            let i = as_index(at)?;
+            let items = Rc::make_mut(items);
+            match items.get_mut(i) {
+                Some(place) => place,
+                None => return Err(format!("Array index {} out of bounds (length: {})", i, items.len())),
+            }
+        }
+        Value::Map(pairs) => {
+            // A walk counts places, so a map is reached by its position
+            // as an array is, not by the key it holds there.
+            let i = as_index(at)?;
+            let pairs = Rc::make_mut(pairs);
+            let held = pairs.len();
+            match pairs.get_mut(i) {
+                Some((_, value)) => value,
+                None => return Err(format!("Array index {} out of bounds (length: {})", i, held)),
+            }
+        }
+        _ => return Err("Cannot walk a value that is not an array".to_string()),
+    };
+    if let Value::Bond(shared) = place {
+        return Ok(shared.clone());
+    }
+    let shared = Rc::new(RefCell::new(std::mem::replace(place, Value::Null)));
+    *place = Value::Bond(shared.clone());
+    Ok(shared)
 }

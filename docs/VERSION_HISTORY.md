@@ -148,6 +148,21 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   `scripts/port_examples.py` now reports the first unwritable callee in
   source order, so `docs/LIBRARY_PORTS.md` no longer changes between
   runs.
+- **Pages, classes of method names, and more of PHP**:
+  `ext.lexical.template` makes a source text with code in it: what lies
+  between the prologue and the epilogue is code and the rest is written
+  out as it stands, so a page can be written around a loop, with a block
+  opened in one run of code and closed in another. It is what the web
+  work was missing to serve a page. `ext.stmt.class.interface` and
+  `ext.stmt.class.implements` give a class of method names only, which
+  counts for `instanceof` and for a catch; a method may be named there
+  and not written out. `foreach ($a as &$v)` hands out its items for
+  writing, walking the binding itself so that writing an item writes the
+  array. `ext.builtin.unset` takes a binding or a place in an array
+  away, and `ext.op.compare` is `<=>`. A kernel now reads past a tier in
+  `op.precedence` naming an operator it does not know, as it reads past
+  the label. `tests/php/lang` goes from 30 to 33 passing, alike on both
+  kernels, and 24 more run and print something close.
 - **The web**: a program can answer web requests. The host gathers a
   request the way a web server has always handed one to a program — the
   parts of it in the environment, the body on the input — and hands the

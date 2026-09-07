@@ -3,6 +3,7 @@
 // every c program. Not library code; edit lib_lumen/ instead.
 
 pub static PROLOGUE: &str = "";
+pub static EPILOGUE: &str = "";
 
 pub static FILES: &[(&str, &str)] = &[
     ("langs/lib_c/array.c", include_str!("array.c")),

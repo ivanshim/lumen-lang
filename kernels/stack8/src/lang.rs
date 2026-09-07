@@ -152,6 +152,9 @@ pub struct Lang {
     pub plus_words: Vec<String>,
     /// `break n` and `continue n` leave n loops.
     pub break_levels: bool,
+    /// The source is text with code between the prologue and the
+    /// epilogue; what is outside them is written out as it stands.
+    pub template: bool,
     /// `a[] = v` appends.
     pub append_index: bool,
     /// `for v in a` walks what a holds when a is not a range.
@@ -173,6 +176,10 @@ pub struct Lang {
     pub member_mark: Option<String>,
     pub scope_mark: Option<String>,
     pub instanceof_words: Vec<String>,
+    /// A class of method names only, and the word saying a class
+    /// answers to one.
+    pub interface_words: Vec<String>,
+    pub implements_words: Vec<String>,
     pub parent_words: Vec<String>,
     pub self_words: Vec<String>,
     /// Signs a name may be led by, which say nothing: PHP's `\Error`.
@@ -249,7 +256,7 @@ w ext.op.member | w ext.op.scope | w ext.op.instanceof | w ext.stmt.class.parent
 w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.try | w ext.stmt.catch
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
-w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | b ext.op.index.absent
+w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | b ext.op.index.absent | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -529,7 +536,7 @@ impl Lang {
             ("op.add", Action::Add), ("op.sub", Action::Sub), ("op.mul", Action::Mul), ("op.div", div),
             ("op.quot", Action::IntDiv), ("op.rem", Action::Mod), ("op.pow", Action::Power), ("op.eq", Action::Eq),
             ("op.ne", Action::Ne), ("op.lt", Action::Lt), ("op.le", Action::Le), ("op.gt", Action::Gt), ("op.ge", Action::Ge),
-            ("op.and", Action::And), ("op.or", Action::Or), ("op.concat", Action::Join),
+            ("op.and", Action::And), ("op.or", Action::Or), ("op.concat", Action::Join), ("ext.op.compare", Action::Rank),
         ] {
             for lex in r.strings(tag)? {
                 let tier = tier_of(&lex, false).ok_or_else(|| format!("'{lex}' ({tag}) does not appear in op.precedence"))?;
@@ -631,7 +638,7 @@ impl Lang {
             ("builtin.den", Builtin::Denom), ("builtin.push", Builtin::Append), ("builtin.get", Builtin::Fetch),
             ("builtin.put", Builtin::Replace), ("ext.builtin.echo", Builtin::Tell), ("ext.builtin.define", Builtin::Define),
             ("ext.builtin.var_dump", Builtin::Dump), ("ext.builtin.array", Builtin::Pack),
-            ("ext.builtin.print_r", Builtin::Layout),
+            ("ext.builtin.print_r", Builtin::Layout), ("ext.builtin.unset", Builtin::Erase),
         ] {
             for lex in r.strings(tag)? {
                 let begins = lex.chars().next().map_or(false, |c| c == '_' || c.is_alphabetic());
@@ -776,6 +783,7 @@ impl Lang {
             exponent_letters: r.letters("ext.lexical.number.exponent")?,
             plus_words: r.strings("ext.op.plus")?,
             break_levels: r.flag("ext.stmt.break.levels")?,
+            template: r.flag("ext.lexical.template")?,
             append_index: r.flag("ext.op.index.append")?,
             for_collections: r.flag("ext.stmt.for.collection")?,
             class_words: r.strings("ext.stmt.class")?,
@@ -788,6 +796,8 @@ impl Lang {
             member_mark: r.head("ext.op.member")?,
             scope_mark: r.head("ext.op.scope")?,
             instanceof_words: r.strings("ext.op.instanceof")?,
+            interface_words: r.strings("ext.stmt.class.interface")?,
+            implements_words: r.strings("ext.stmt.class.implements")?,
             parent_words: r.strings("ext.stmt.class.parent")?,
             self_words: r.strings("ext.stmt.class.self")?,
             name_leads: r.letters("ext.lexical.name_lead")?,
@@ -910,7 +920,7 @@ impl Lang {
             &self.false_words, &self.null_words, &self.c_for_words, &self.static_words, &self.global_words, &self.const_words,
             &self.switch_words, &self.case_words, &self.default_words, &self.foreach_words, &self.foreach_as_words,
             &self.class_words, &self.extends_words, &self.new_words, &self.modifier_words, &self.shared_words,
-            &self.instanceof_words, &self.parent_words, &self.self_words, &self.try_words, &self.catch_words,
+            &self.instanceof_words, &self.interface_words, &self.implements_words, &self.parent_words, &self.self_words, &self.try_words, &self.catch_words,
             &self.finally_words, &self.throw_words,
         ];
         for word in keywords.into_iter().flatten() {

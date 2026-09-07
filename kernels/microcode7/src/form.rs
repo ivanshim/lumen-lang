@@ -43,6 +43,10 @@ pub enum Prim {
     Gather,
     /// A value written over lines, PHP's print_r (ext.builtin.print_r).
     Portray,
+    /// Which of two values comes first: below, alike or above.
+    Rank,
+    /// Give an array back without the place named (ext.builtin.unset).
+    Erase,
     /// Each argument with its kind, as PHP's var_dump (ext.builtin.var_dump).
     Dump,
     MakeReal,
@@ -157,6 +161,11 @@ pub enum Form {
     Share(Address),
     /// Tie a name to a shared cell, past whatever it held before.
     Tie(Address, Box<Form>),
+    /// Make what the array in this binding holds at that place a shared
+    /// cell, and give it back: how a walk hands out its items.
+    ShareItem(Address, Box<Form>),
+    /// Leave this binding as though nothing were ever written to it.
+    Forget(Address),
 }
 
 /// One catch: the classes it takes, where it holds what it caught, and
@@ -173,6 +182,9 @@ pub struct Clause {
 #[derive(Debug)]
 pub struct Plan {
     pub name: String,
+    /// How many classes of method names only follow the one this class
+    /// is built on, among the values written for it.
+    pub answers: usize,
     pub field_names: Vec<String>,
     pub shared_names: Vec<String>,
     pub constant_names: Vec<String>,

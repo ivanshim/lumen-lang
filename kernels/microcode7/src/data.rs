@@ -273,6 +273,8 @@ pub fn decimal_string(above: &BigInt, beneath: &BigInt, places: usize) -> String
 pub struct Blueprint {
     pub name: String,
     pub under: Option<Rc<Blueprint>>,
+    /// The classes of method names only that this one answers to.
+    pub answers: Vec<Rc<Blueprint>>,
     pub fields: Vec<(String, Value)>,
     pub methods: Vec<(String, Rc<Routine>)>,
     pub constants: Vec<(String, Value)>,
@@ -303,7 +305,9 @@ impl Blueprint {
     }
 
     pub fn built_on(&self, name: &str) -> bool {
-        self.name == name || self.under.as_ref().map_or(false, |u| u.built_on(name))
+        self.name == name
+            || self.under.as_ref().map_or(false, |u| u.built_on(name))
+            || self.answers.iter().any(|a| a.built_on(name))
     }
 
     /// Every property a thing of this class starts with, what it is

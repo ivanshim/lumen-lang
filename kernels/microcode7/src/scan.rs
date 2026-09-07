@@ -77,7 +77,53 @@ fn drop_comments(source: &str, table: &Table) -> String {
     kept
 }
 
+/// A source that is text with code in it (ext.lexical.template): what
+/// lies between the prologue and the epilogue is code, and everything
+/// else is written out as it stands, as though the program said so.
 pub fn scan(source: &str, table: &Table) -> Result<Vec<Token>, String> {
+    if !table.flag("ext.lexical.template") {
+        return scan_code(source, table);
+    }
+    let opening = table.single("lexical.prologue").ok_or_else(|| "A template needs lexical.prologue".to_string())?;
+    let closing = table.single("ext.lexical.epilogue");
+    let telling = table
+        .prims
+        .iter()
+        .find(|(_, op)| **op == crate::form::Prim::Tell)
+        .map(|(word, _)| word.clone())
+        .ok_or_else(|| "A template needs a builtin that writes what it is given".to_string())?;
+    let ending = table.single("stmt.terminator").unwrap_or(";").to_string();
+    let mut out: Vec<Token> = Vec::new();
+    let says = |text: &str, out: &mut Vec<Token>| {
+        if text.is_empty() {
+            return;
+        }
+        out.push(Token { shape: Shape::Bare, lexeme: telling.clone(), span: 0, row: 1 });
+        out.push(Token { shape: Shape::Quote, lexeme: text.to_string(), span: 0, row: 1 });
+        out.push(Token { shape: Shape::Sign, lexeme: ending.clone(), span: 0, row: 1 });
+    };
+    let mut rest = source;
+    while let Some(at) = rest.find(opening) {
+        says(&rest[..at], &mut out);
+        let after = &rest[at + opening.len()..];
+        let (code, tail) = match closing.and_then(|e| after.find(e)) {
+            Some(end) => (&after[..end], &after[end + closing.map_or(0, str::len)..]),
+            None => (after, ""),
+        };
+        let mut inside = scan_code(code, table)?;
+        inside.pop();
+        out.append(&mut inside);
+        // Each run of code stands as a statement, however it ended.
+        out.push(Token { shape: Shape::Sign, lexeme: ending.clone(), span: 0, row: 1 });
+        // One line end straight after the closing marker belongs to it.
+        rest = tail.strip_prefix('\n').unwrap_or_else(|| tail.strip_prefix("\r\n").unwrap_or(tail));
+    }
+    says(rest, &mut out);
+    out.push(Token { shape: Shape::Finish, lexeme: "EOF".into(), span: 0, row: 1 });
+    Ok(out)
+}
+
+fn scan_code(source: &str, table: &Table) -> Result<Vec<Token>, String> {
     let text = drop_comments(source, table);
     let src: Vec<char> = text.chars().collect();
     let quotes = table.letters("lexical.string_quotes");
@@ -370,7 +416,9 @@ fn weave(s: &str, plain: &[usize], table: &Table, row: u32, tokens: &mut Vec<Tok
             }
             Piece::Code(code) => {
                 tokens.push(sign(join));
-                let inner = scan(&code, table)?;
+                // The code woven into a string is code already, so it is
+                // read as code and not as text with code in it.
+                let inner = scan_code(&code, table)?;
                 tokens.extend(inner.into_iter().filter(|t| !matches!(t.shape, Shape::Lead | Shape::Finish)).map(|mut t| {
                     t.row = row;
                     t

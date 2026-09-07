@@ -671,7 +671,7 @@ impl<'a> Builder<'a> {
                 self.advance();
                 return Ok(constant(Value::Nil));
             }
-            if self.key("ext.stmt.class") {
+            if self.key("ext.stmt.class") || self.key("ext.stmt.class.interface") {
                 return self.class_decl();
             }
             if self.key("ext.stmt.try") {
@@ -826,15 +826,34 @@ impl<'a> Builder<'a> {
     /// name, so `new C` and `C::X` are ordinary reads.
     fn class_decl(&mut self) -> Res<Form> {
         let table = self.table;
-        self.advance();
+        let word = self.advance().lexeme;
         let name = self.need_word("as the class name")?;
-        let under = match self.key("ext.stmt.class.extends") {
-            true => {
-                self.advance();
-                Some(self.need_word("as the class it is built on")?)
+        // A class of method names only may be built on several at once;
+        // a class is built on one and answers to any number.
+        let bare = table.spells("ext.stmt.class.interface", &word);
+        let between = table.single("syntax.call.separator").map(str::to_string);
+        let mut under = None;
+        let mut answers: Vec<String> = Vec::new();
+        if self.key("ext.stmt.class.extends") {
+            self.advance();
+            let first = self.need_word("as the class it is built on")?;
+            match bare {
+                true => answers.push(first),
+                false => under = Some(first),
             }
-            false => None,
-        };
+            while between.as_ref().map_or(false, |s| self.sign(s)) {
+                self.advance();
+                answers.push(self.need_word("as another class named there")?);
+            }
+        }
+        if self.key("ext.stmt.class.implements") {
+            self.advance();
+            answers.push(self.need_word("as the class it answers to")?);
+            while between.as_ref().map_or(false, |s| self.sign(s)) {
+                self.advance();
+                answers.push(self.need_word("as another class named there")?);
+            }
+        }
         let outer = self.within.replace((name.clone(), under.clone()));
         let opens = table.strings("block.open");
         let k = opens.iter().position(|o| self.lexeme_of(o)).ok_or_else(|| format!("Expected '{}' to open the class, got '{}'", opens[0], self.look().lexeme))?;
@@ -897,6 +916,10 @@ impl<'a> Builder<'a> {
         if let Some(under) = &under {
             values.push(self.read(under));
         }
+        for named in &answers {
+            let read = self.read(named);
+            values.push(read);
+        }
         let names = |parts: Vec<(String, Form)>, values: &mut Vec<Form>| -> Vec<String> {
             parts
                 .into_iter()
@@ -909,7 +932,7 @@ impl<'a> Builder<'a> {
         let field_names = names(fields, &mut values);
         let shared_names = names(shared, &mut values);
         let constant_names = names(constants, &mut values);
-        let plan = Plan { name: name.clone(), field_names, shared_names, constant_names, methods, extends: under.is_some() };
+        let plan = Plan { name: name.clone(), answers: answers.len(), field_names, shared_names, constant_names, methods, extends: under.is_some() };
         let made = Form::Class { plan: Rc::new(plan), values };
         let slot = self.global_address(&name);
         Ok(Form::Write(slot, Box::new(made)))
@@ -936,6 +959,15 @@ impl<'a> Builder<'a> {
             self.skip_nothing_mark();
             self.need_word("as a return type")?;
         }
+        // A method may be named and not written out, in a class of
+        // method names only; it answers with nothing.
+        if self.on_stmt_end() {
+            let named = self.routine(name, Holds::Every, Traps::Yields, params, least, |_| Ok(constant(Value::Nil)))?;
+            return match named {
+                Form::Const(Value::Routine(p)) => Ok(p),
+                _ => Err("A method must be a program".to_string()),
+            };
+        }
         let program = self.routine(name, Holds::Every, Traps::Yields, params, least, |r| {
             let mut items = r.spare_values(spares, &formals)?;
             items.push(r.body()?);
@@ -956,26 +988,48 @@ impl<'a> Builder<'a> {
         let open = table.single("syntax.group.open").ok_or_else(|| "A foreach needs syntax.group".to_string())?;
         let close = table.single("syntax.group.close").unwrap().to_string();
         self.need_sign(open, "after foreach")?;
-        let source = self.expr(0)?;
+        // A walk that hands out its items for writing walks the binding
+        // itself, so that writing an item writes the array it came from.
+        let named = match (self.look().shape, self.glance(1).shape) {
+            (Shape::Bare, Shape::Bare) if table.spells("stmt.foreach.as", &self.glance(1).lexeme) => Some(self.advance().lexeme),
+            _ => None,
+        };
+        let source = match &named {
+            Some(name) => self.read(name),
+            None => self.expr(0)?,
+        };
         if !self.key("stmt.foreach.as") {
             return Err(format!("Expected '{}' in foreach, got '{}'", table.single("stmt.foreach.as").unwrap(), self.look().lexeme));
         }
         self.advance();
+        let mut shares = table.single("ext.op.reference").map_or(false, |m| self.sign(m));
+        if shares {
+            self.advance();
+        }
         let first = self.need_word("as the foreach variable")?;
         let coupled = table.single("syntax.map.pair").map_or(false, |m| self.sign(m));
         let (key, item) = if coupled {
             self.advance();
+            if table.single("ext.op.reference").map_or(false, |m| self.sign(m)) {
+                self.advance();
+                shares = true;
+            }
             (Some(first), self.need_word("as the foreach value")?)
         } else {
             (None, first)
         };
+        let shares = match (shares, &named) {
+            (true, Some(name)) => Some(name.clone()),
+            (true, None) => return Err("A foreach that hands out its items for writing needs a named array".to_string()),
+            (false, _) => None,
+        };
         self.need_sign(&close, "after the foreach names")?;
-        self.walk(source, key, item)
+        self.walk(source, key, item, shares)
     }
 
     /// The walk itself: a place counted to the extent, the key and the
     /// item read from it at the head of every pass.
-    fn walk(&mut self, source: Form, key: Option<String>, item: String) -> Res<Form> {
+    fn walk(&mut self, source: Form, key: Option<String>, item: String, shares: Option<String>) -> Res<Form> {
         let bag = self.gensym("bag");
         let bag_name = bag.ident.to_string();
         let hold = Form::Write(bag, Box::new(source));
@@ -1005,9 +1059,20 @@ impl<'a> Builder<'a> {
                     let found = prim_call(Prim::KeyAt, vec![bag, at]);
                     items.push(r.write(&k, found));
                 }
-                let (bag, at) = (r.read(&walk), r.read(&walk_at));
-                let found = prim_call(Prim::ItemAt, vec![bag, at]);
-                items.push(r.write(&item, found));
+                match &shares {
+                    // The name is tied to the item's own cell.
+                    Some(named) => {
+                        let at = r.read(&walk_at);
+                        let held = r.address_to_write(named);
+                        let tied = r.address_to_write(&item);
+                        items.push(Form::Tie(tied, Box::new(Form::ShareItem(held, Box::new(at)))));
+                    }
+                    None => {
+                        let (bag, at) = (r.read(&walk), r.read(&walk_at));
+                        let found = prim_call(Prim::ItemAt, vec![bag, at]);
+                        items.push(r.write(&item, found));
+                    }
+                }
                 items.push(r.body()?);
                 Ok(sequence(items))
             },
@@ -1137,7 +1202,7 @@ impl<'a> Builder<'a> {
             let bracketed = self.table.single("syntax.call.open").map_or(false, |o| next.shape == Shape::Sign && next.lexeme == o);
             let bare = match op {
                 Some(Prim::Tell) => true,
-                Some(Prim::Append | Prim::Replace | Prim::Define | Prim::Gather) | None => false,
+                Some(Prim::Append | Prim::Replace | Prim::Define | Prim::Gather | Prim::Erase) | None => false,
                 Some(_) => !bracketed,
             };
             if bare {
@@ -1272,7 +1337,7 @@ impl<'a> Builder<'a> {
                     return Err("A for loop needs a range: start..end".to_string());
                 }
                 self.address_to_write(&var);
-                return self.walk(start, None, var);
+                return self.walk(start, None, var, None);
             }
             self.advance();
             let end = self.expr(tier + 1)?;
@@ -1665,6 +1730,9 @@ impl<'a> Builder<'a> {
                     constant(Value::Nil)
                 } else if table.single("syntax.call.open").map_or(false, |o| self.sign(o)) {
                     self.advance();
+                    if table.prims.get(&t.lexeme) == Some(&Prim::Erase) {
+                        return self.forget();
+                    }
                     if table.prims.get(&t.lexeme) == Some(&Prim::Gather) {
                         // array(...) gathers what it is given, like a literal.
                         let items = self.elements("syntax.call.close", "syntax.call.separator")?;
@@ -1716,6 +1784,45 @@ impl<'a> Builder<'a> {
             _ => return Err("Expected an expression".to_string()),
         };
         self.subscript(node)
+    }
+
+    /// `unset(a, b[k])`: each name is left as though nothing were ever
+    /// written to it, and each place named is taken out of its array.
+    fn forget(&mut self) -> Res<Form> {
+        let table = self.table;
+        let close = table.single("syntax.call.close").unwrap().to_string();
+        let sep = table.single("syntax.call.separator").map(str::to_string);
+        let mut items = Vec::new();
+        while !self.sign(&close) {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", close));
+            }
+            let named = self.expr(0)?;
+            items.push(match named {
+                Form::Read(slot) => Form::Forget(slot),
+                Form::Apply(Callee::Prim(Prim::At, _), mut args) if args.len() == 2 => {
+                    let at = args.pop().unwrap();
+                    match args.pop().unwrap() {
+                        Form::Read(slot) => {
+                            let held = slot.ident.to_string();
+                            let array = self.read(&held);
+                            let left = prim_call(Prim::Erase, vec![array, at]);
+                            self.write(&held, left)
+                        }
+                        _ => return Err("Only a name or a place in an array can be forgotten".to_string()),
+                    }
+                }
+                _ => return Err("Only a name or a place in an array can be forgotten".to_string()),
+            });
+            if let Some(s) = &sep {
+                if self.sign(s) {
+                    self.advance();
+                }
+            }
+        }
+        self.advance();
+        items.push(constant(Value::Nil));
+        Ok(sequence(items))
     }
 
     /// The class a name stands for: `self` names the class being read
@@ -2407,7 +2514,7 @@ impl<'a> Builder<'a> {
                 Prim::External | Prim::Span => return Err(format!("'{}' has no postfix form", w)),
                 Prim::Echo | Prim::Say | Prim::Out | Prim::Tell | Prim::Dump | Prim::Raise => (1, false),
                 Prim::Portray => (1, true),
-                Prim::Define | Prim::Gather => return Err(format!("'{}' has no postfix form", w)),
+                Prim::Define | Prim::Gather | Prim::Erase => return Err(format!("'{}' has no postfix form", w)),
                 Prim::CharAtIndex | Prim::Fetch | Prim::MakeReal => (2, true),
                 _ => (1, true),
             };

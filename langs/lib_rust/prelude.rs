@@ -3,6 +3,7 @@
 // every rust program. Not library code; edit lib_lumen/ instead.
 
 pub static PROLOGUE: &str = "";
+pub static EPILOGUE: &str = "";
 
 pub static FILES: &[(&str, &str)] = &[
     ("langs/lib_rust/array.rs", include_str!("array.rs")),

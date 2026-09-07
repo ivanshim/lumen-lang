@@ -441,11 +441,9 @@ impl Def {
                 syntax_tiers.insert(lex.clone(), tier);
             }
         }
-        for lex in tiers.iter().flatten() {
-            if !binary.contains_key(lex) && !unary.contains_key(lex) && !syntax_tiers.contains_key(lex) {
-                return Err(format!("op.precedence lists '{lex}', which is under no operator label"));
-            }
-        }
+        // A tier may list an operator this kernel gives no meaning to,
+        // spelled under an ext.* label it does not read; it is read past,
+        // as the label itself would be.
         if let Some(lex) = rights.iter().find(|lex| !binary.contains_key(*lex)) {
             return Err(format!("op.right_associative lists '{lex}', which is not a binary operator"));
         }

@@ -477,11 +477,9 @@ impl Spec {
                 self.syntax_tier.insert(lex, tier);
             }
         }
-        for lex in tiers.iter().flatten() {
-            if !self.infix.contains_key(lex) && !self.prefix.contains_key(lex) && !self.syntax_tier.contains_key(lex) {
-                return Err(format!("op.precedence lists '{lex}', which is under no operator label"));
-            }
-        }
+        // A tier may list an operator this kernel gives no meaning to,
+        // spelled under an ext.* label it does not read; it is read past,
+        // as the label itself would be.
         for lex in self.words("op.right_associative") {
             if !self.infix.contains_key(lex) {
                 return Err(format!("op.right_associative lists '{lex}', which is not a binary operator"));

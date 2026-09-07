@@ -3,6 +3,7 @@
 // every php program. Not library code; edit lib_lumen/ instead.
 
 pub static PROLOGUE: &str = "<?php";
+pub static EPILOGUE: &str = "?>";
 
 pub static FILES: &[(&str, &str)] = &[
     ("langs/lib_php/native/exceptions.php", include_str!("native/exceptions.php")),

@@ -3,6 +3,7 @@
 // every python program. Not library code; edit lib_lumen/ instead.
 
 pub static PROLOGUE: &str = "import sys";
+pub static EPILOGUE: &str = "";
 
 pub static FILES: &[(&str, &str)] = &[
     ("langs/lib_python/to_string.py", include_str!("to_string.py")),

@@ -3,6 +3,7 @@
 // every rplumen program. Not library code; edit lib_lumen/ instead.
 
 pub static PROLOGUE: &str = "";
+pub static EPILOGUE: &str = "";
 
 pub static FILES: &[(&str, &str)] = &[
     ("langs/lib_rplumen/to_string.rpl", include_str!("to_string.rpl")),

@@ -19,61 +19,61 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 13, differs 48, error 53, skipped 0 | pass 13, differs 48, error 53, skipped 0 |
 | `php/func` | 14 | pass 2, differs 2, error 10, skipped 0 | pass 2, differs 2, error 10, skipped 0 |
-| `php/lang` | 213 | pass 30, differs 20, error 161, skipped 2 | pass 30, differs 20, error 161, skipped 2 |
+| `php/lang` | 213 | pass 33, differs 24, error 154, skipped 2 | pass 33, differs 24, error 154, skipped 2 |
 | `php/lang/constants` | 2 | pass 1, differs 1, error 0, skipped 0 | pass 1, differs 1, error 0, skipped 0 |
 | `php/lang/integer_literals` | 6 | pass 0, differs 0, error 6, skipped 0 | pass 0, differs 0, error 6, skipped 0 |
-| `php/lang/operators` | 64 | pass 0, differs 21, error 43, skipped 0 | pass 0, differs 21, error 43, skipped 0 |
+| `php/lang/operators` | 64 | pass 0, differs 22, error 42, skipped 0 | pass 0, differs 22, error 42, skipped 0 |
 | `php/lang/string` | 9 | pass 1, differs 7, error 1, skipped 0 | pass 1, differs 7, error 1, skipped 0 |
-| all | 422 | pass 47, differs 99, error 274, skipped 2 | pass 47, differs 99, error 274, skipped 2 |
+| all | 422 | pass 50, differs 104, error 266, skipped 2 | pass 50, differs 104, error 266, skipped 2 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 99 |
-| Unexpected token: ? | 20 |
-| Unexpected token: < | 12 |
+| ran, printed something else | 104 |
 | } | 8 |
 | Unexpected token: & | 8 |
-| Expected identifier as the foreach value, got '&' | 8 |
+| Undefined variable: set_time_limit | 8 |
 | Cannot coerce '<number>' to number | 8 |
 | Undefined variable: eval | 7 |
-| Expected '{' to open the class, got 'implements' | 7 |
 | Unexpected character '$' | 6 |
+| Expected '{' to open the class, got ' | 6 |
 | Unexpected token: = | 6 |
-| Unexpected token: > | 6 |
 | static belongs inside a function | 5 |
 | Undefined variable: include | 5 |
-| Expected '{' to open the class, got ' | 5 |
+| Expected identifier as the property name, got '{' | 5 |
+| Unexpected token: > | 5 |
+| Undefined variable: ob_start | 4 |
 | Unexpected token: , | 4 |
+| string(10) "..." | 4 |
+| ---( Array with 1 element(s): )--- | 4 |
+| Unexpected token: < | 4 |
 | Unexpected token: \| | 3 |
 | Cannot reassign $argv (system-provided immutable value) | 3 |
 | Unexpected character '@' | 3 |
 | Undefined variable: getenv | 3 |
-| Undefined variable: ob_start | 3 |
+| Undefined variable: __DIR__ | 3 |
+| Test | 3 |
 | Undefined variable: var_export | 3 |
 | Unexpected token: : | 3 |
+| Expected ')' to close a group, got '=' | 3 |
 | Unexpected token: ) | 3 |
 | Undefined variable: require_once | 3 |
+| Only a name or a place in an array can be forgotten | 3 |
 | Undefined variable: func_get_arg | 3 |
-| string(10) "..." | 3 |
 | --- testing: '<number>' --- | 3 |
 | Unexpected token: -> | 3 |
 | Unexpected token: . | 2 |
 | Expected an expression | 2 |
-| Undefined variable: __DIR__ | 2 |
+| Undefined variable: LC_ALL | 2 |
 | Unexpected token: { | 2 |
 | Undefined variable: ini_parse_quantity | 2 |
 | Undefined variable: sys_get_temp_dir | 2 |
 | Expected ')' after the foreach names, got '[' | 2 |
-| Unexpected token: } | 2 |
-| Undefined variable: trigger_error | 2 |
-| Undefined variable: stdClass | 2 |
-| no --FILE-- section | 2 |
 
-### Reserved words: 38 of 68 spelled
+### Reserved words: 41 of 68 spelled
 
-Spelled: `abstract`, `and`, `array`, `as`, `break`, `case`, `catch`, `class`, `const`, `continue`, `default`, `echo`, `else`, `elseif`, `exit`, `extends`, `final`, `finally`, `for`, `foreach`, `function`, `global`, `if`, `instanceof`, `new`, `or`, `print`, `private`, `protected`, `public`, `readonly`, `return`, `static`, `switch`, `throw`, `try`, `var`, `while`
+Spelled: `abstract`, `and`, `array`, `as`, `break`, `case`, `catch`, `class`, `const`, `continue`, `default`, `echo`, `else`, `elseif`, `exit`, `extends`, `final`, `finally`, `for`, `foreach`, `function`, `global`, `if`, `implements`, `instanceof`, `interface`, `new`, `or`, `print`, `private`, `protected`, `public`, `readonly`, `return`, `static`, `switch`, `throw`, `try`, `unset`, `var`, `while`
 
-Not spelled: `callable`, `clone`, `declare`, `do`, `empty`, `enddeclare`, `endfor`, `endforeach`, `endif`, `endswitch`, `endwhile`, `eval`, `fn`, `goto`, `implements`, `include`, `include_once`, `insteadof`, `interface`, `isset`, `list`, `match`, `namespace`, `require`, `require_once`, `trait`, `unset`, `use`, `xor`, `yield`
+Not spelled: `callable`, `clone`, `declare`, `do`, `empty`, `enddeclare`, `endfor`, `endforeach`, `endif`, `endswitch`, `endwhile`, `eval`, `fn`, `goto`, `include`, `include_once`, `insteadof`, `isset`, `list`, `match`, `namespace`, `require`, `require_once`, `trait`, `use`, `xor`, `yield`
 
 ### Most-called functions in the suite, and whether the definition spells them
 
@@ -253,9 +253,9 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/enable_post_data_reading_02.phpt` | error | error | } |
 | `php/basic/enable_post_data_reading_03.phpt` | error | error | } |
 | `php/basic/enable_post_data_reading_04.phpt` | error | error | } |
-| `php/basic/enable_post_data_reading_05.phpt` | error | error | Unexpected token: ? |
-| `php/basic/enable_post_data_reading_06.phpt` | error | error | Unexpected token: ? |
-| `php/basic/enable_post_data_reading_07.phpt` | error | error | Unexpected token: ? |
+| `php/basic/enable_post_data_reading_05.phpt` | error | error | Test |
+| `php/basic/enable_post_data_reading_06.phpt` | error | error | Test |
+| `php/basic/enable_post_data_reading_07.phpt` | error | error | Test |
 | `php/basic/encoding.phpt` | differs | differs | ran, printed something else |
 | `php/basic/errorlog_permission.phpt` | error | error | Unexpected token: & |
 | `php/basic/gh15905.phpt` | pass | pass |  |
@@ -301,14 +301,14 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/rfc1867_multiple_webkitdirectory.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_post_max_filesize.phpt` | error | error | } |
 | `php/basic/rfc1867_post_max_size.phpt` | differs | differs | ran, printed something else |
-| `php/basic/timeout_variation_0.phpt` | error | error | Unexpected token: ? |
-| `php/basic/timeout_variation_1.phpt` | error | error | Unexpected token: ? |
-| `php/basic/timeout_variation_10.phpt` | error | error | Unexpected token: ? |
-| `php/basic/timeout_variation_2.phpt` | error | error | Unexpected token: ? |
-| `php/basic/timeout_variation_4.phpt` | error | error | Unexpected token: ? |
-| `php/basic/timeout_variation_7.phpt` | error | error | Unexpected token: ? |
-| `php/basic/timeout_variation_8.phpt` | error | error | Unexpected token: ? |
-| `php/basic/timeout_variation_9.phpt` | error | error | Unexpected token: ? |
+| `php/basic/timeout_variation_0.phpt` | error | error | Undefined variable: set_time_limit |
+| `php/basic/timeout_variation_1.phpt` | error | error | Undefined variable: set_time_limit |
+| `php/basic/timeout_variation_10.phpt` | error | error | Undefined variable: set_time_limit |
+| `php/basic/timeout_variation_2.phpt` | error | error | Undefined variable: set_time_limit |
+| `php/basic/timeout_variation_4.phpt` | error | error | Undefined variable: set_time_limit |
+| `php/basic/timeout_variation_7.phpt` | error | error | Undefined variable: set_time_limit |
+| `php/basic/timeout_variation_8.phpt` | error | error | Undefined variable: set_time_limit |
+| `php/basic/timeout_variation_9.phpt` | error | error | Undefined variable: set_time_limit |
 | `php/func/001.phpt` | pass | pass |  |
 | `php/func/002.phpt` | error | error | hey=2, -2 |
 | `php/func/003.phpt` | error | error | hey |
@@ -345,7 +345,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/020.phpt` | pass | pass |  |
 | `php/lang/021.phpt` | pass | pass |  |
 | `php/lang/022.phpt` | pass | pass |  |
-| `php/lang/023.phpt` | error | error | Unexpected token: < |
+| `php/lang/023.phpt` | error | error | Expected ')' to close a group, got '=' |
 | `php/lang/024.phpt` | error | error | Unexpected character '$' |
 | `php/lang/025.phpt` | pass | pass |  |
 | `php/lang/026.phpt` | pass | pass |  |
@@ -355,16 +355,16 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/032.phpt` | pass | pass |  |
 | `php/lang/033.phpt` | error | error | Unexpected token: : |
 | `php/lang/034.phpt` | error | error | Unexpected token: , |
-| `php/lang/035.phpt` | error | error | Undefined property: MyException::$error |
-| `php/lang/036.phpt` | differs | differs | ran, printed something else |
-| `php/lang/037.phpt` | pass | pass |  |
+| `php/lang/035.phpt` | error | error | Expected identifier as the property name, got '{' |
+| `php/lang/036.phpt` | error | error | Expected identifier as the property name, got '{' |
+| `php/lang/037.phpt` | error | error | Expected identifier as the property name, got '{' |
 | `php/lang/038.phpt` | error | error | Expected '{' to open the class, got ' |
-| `php/lang/039.phpt` | error | error | Expected '{' to open the class, got 'implements' |
+| `php/lang/039.phpt` | error | error | Expected '{' to open the class, got ' |
 | `php/lang/040.phpt` | error | error | Expected ')' after the foreach names, got '[' |
-| `php/lang/041.phpt` | error | error | Unexpected token: ? |
-| `php/lang/042.phpt` | error | error | Unexpected token: ? |
-| `php/lang/043.phpt` | error | error | Unexpected token: ? |
-| `php/lang/044.phpt` | error | error | Unexpected token: ? |
+| `php/lang/041.phpt` | error | error | Cannot reach 'b' in A |
+| `php/lang/042.phpt` | error | error | Cannot reach 'B' in A |
+| `php/lang/043.phpt` | error | error | Cannot call 'foo' on a value that is not a class |
+| `php/lang/044.phpt` | error | error | Cannot call '$name' on a value that is not a class |
 | `php/lang/045.phpt` | error | error | Unexpected token: } |
 | `php/lang/array_shortcut_001.phpt` | pass | pass |  |
 | `php/lang/array_shortcut_002.phpt` | pass | pass |  |
@@ -386,14 +386,14 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug22592.phpt` | error | error | Unexpected token: = |
 | `php/lang/bug23279.phpt` | error | error | Undefined variable: ob_start |
 | `php/lang/bug23384.phpt` | error | error | Undefined variable: Foo |
-| `php/lang/bug23489.phpt` | error | error | Unexpected token: ? |
+| `php/lang/bug23489.phpt` | error | error | Undefined variable: ob_start |
 | `php/lang/bug23524.phpt` | pass | pass |  |
-| `php/lang/bug23584.phpt` | error | error | Unexpected token: < |
+| `php/lang/bug23584.phpt` | error | error | #!php |
 | `php/lang/bug23624.phpt` | error | error | Undefined variable: current |
 | `php/lang/bug24054.phpt` | error | error | Undefined variable: printf |
 | `php/lang/bug24396.phpt` | error | error | Unexpected character '$' |
 | `php/lang/bug24436.phpt` | error | error | Undefined property: test::$test |
-| `php/lang/bug24499.phpt` | error | error | Undefined variable: stdClass |
+| `php/lang/bug24499.phpt` | error | error | Expected identifier as the property name, got '{' |
 | `php/lang/bug24573.phpt` | error | error | Undefined variable: debug_backtrace |
 | `php/lang/bug24640.phpt` | error | error | Undefined variable: var_export |
 | `php/lang/bug24652.phpt` | differs | differs | ran, printed something else |
@@ -405,7 +405,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug25547.phpt` | error | error | Cannot coerce array to number |
 | `php/lang/bug25652.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug25922.phpt` | error | error | Undefined variable: $data |
-| `php/lang/bug26182.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug26182.phpt` | error | error | Expected identifier as the property name, got '{' |
 | `php/lang/bug26696.phpt` | pass | pass |  |
 | `php/lang/bug26866.phpt` | error | error | A try needs a catch or a last part |
 | `php/lang/bug26869.phpt` | error | error | static belongs inside a function |
@@ -415,30 +415,30 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug27535.phpt` | error | error | Expected '{' to open the class, got ' |
 | `php/lang/bug28213.phpt` | error | error | Undefined variable: include |
 | `php/lang/bug28800.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug29566.phpt` | error | error | Undefined variable: unset |
+| `php/lang/bug29566.phpt` | error | error | Cannot walk a value that is not an array |
 | `php/lang/bug29893.phpt` | error | error | '-=' needs a plain variable on its left |
-| `php/lang/bug29944.phpt` | error | error | Unexpected token: < |
+| `php/lang/bug29944.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug30578.phpt` | error | error | Expected '{' to open the class, got ' |
 | `php/lang/bug30638.phpt` | error | error | Undefined variable: LC_NUMERIC |
 | `php/lang/bug30726.phpt` | error | error | Unexpected token: , |
-| `php/lang/bug30862.phpt` | error | error | Unexpected token: ? |
+| `php/lang/bug30862.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug32828.phpt` | error | error | Undefined variable: ob_start |
-| `php/lang/bug32924.phpt` | error | error | Unexpected token: ? |
+| `php/lang/bug32924.phpt` | error | error | Undefined variable: __DIR__ |
 | `php/lang/bug35176.phpt` | error | error | Undefined variable: require_once |
 | `php/lang/bug35382.phpt` | skipped | skipped | no --FILE-- section |
 | `php/lang/bug38579.phpt` | error | error | Undefined variable: __DIR__ |
 | `php/lang/bug43958.phpt` | error | error | Expected '{' to open the class, got ' |
-| `php/lang/bug44654.phpt` | error | error | Unexpected token: < |
+| `php/lang/bug44654.phpt` | pass | pass |  |
 | `php/lang/bug44827.phpt` | error | error | Undefined variable: constant |
 | `php/lang/bug45392.phpt` | error | error | Undefined variable: __LINE__ |
 | `php/lang/bug55754.phpt` | error | error | Unexpected token: = |
 | `php/lang/bug71897.phpt` | error | error | Undefined variable: eval |
-| `php/lang/bug73172.phpt` | error | error | Unexpected token: ? |
+| `php/lang/bug73172.phpt` | error | error | Undefined variable: LC_ALL |
 | `php/lang/bug73329.phpt` | error | error | Undefined variable: float |
 | `php/lang/bug7515.phpt` | error | error | Undefined variable: stdClass |
 | `php/lang/catchable_error_001.phpt` | error | error | Undefined variable: StdClass |
 | `php/lang/catchable_error_002.phpt` | error | error | Undefined variable: StdClass |
-| `php/lang/comments.phpt` | error | error | Unexpected token: < |
+| `php/lang/comments.phpt` | pass | pass |  |
 | `php/lang/comments2.phpt` | skipped | skipped | no --FILE-- section |
 | `php/lang/compare_objects_basic1.phpt` | pass | pass |  |
 | `php/lang/compare_objects_basic2.phpt` | error | error | Undefined variable: date_default_timezone_set |
@@ -456,35 +456,35 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/engine_assignExecutionOrder_009.phpt` | error | error | Unexpected token: = |
 | `php/lang/error_2_exception_001.phpt` | error | error | Undefined variable: trigger_error |
 | `php/lang/execution_order.phpt` | error | error | Expected ')' to close a group, got '=' |
-| `php/lang/foreachLoop.001.phpt` | error | error | Expected identifier as the foreach variable, got '&' |
-| `php/lang/foreachLoop.002.phpt` | error | error | Expected identifier as the foreach value, got '&' |
+| `php/lang/foreachLoop.001.phpt` | error | error | string(1) "..." |
+| `php/lang/foreachLoop.002.phpt` | error | error | string(10) "..." |
 | `php/lang/foreachLoop.003.phpt` | error | error | Not an array. |
 | `php/lang/foreachLoop.004.phpt` | error | error | Expected ')' after the foreach names, got '[' |
-| `php/lang/foreachLoop.005.phpt` | error | error | Expected identifier as the foreach value, got '&' |
-| `php/lang/foreachLoop.006.phpt` | error | error | Expected identifier as the foreach variable, got '&' |
-| `php/lang/foreachLoop.009.phpt` | error | error | Expected identifier as the foreach value, got '&' |
+| `php/lang/foreachLoop.005.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoop.006.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoop.009.phpt` | error | error | key: 1; value: original.1 |
 | `php/lang/foreachLoop.010.phpt` | error | error | Unexpected token: & |
-| `php/lang/foreachLoop.011.phpt` | error | error | Change from object to non iterable: |
+| `php/lang/foreachLoop.011.phpt` | error | error | int(1) |
 | `php/lang/foreachLoop.012.phpt` | error | error | ---( Array with 1 element(s): )--- |
-| `php/lang/foreachLoop.013.phpt` | error | error | Expected identifier as the foreach value, got '&' |
+| `php/lang/foreachLoop.013.phpt` | error | error | ---( Array with 1 element(s): )--- |
 | `php/lang/foreachLoop.014.phpt` | error | error | ---( Array with 1 element(s): )--- |
-| `php/lang/foreachLoop.015.phpt` | error | error | Expected identifier as the foreach value, got '&' |
+| `php/lang/foreachLoop.015.phpt` | error | error | ---( Array with 1 element(s): )--- |
 | `php/lang/foreachLoop.016.phpt` | error | error | Unexpected character '$' |
 | `php/lang/foreachLoop.017.phpt` | pass | pass |  |
-| `php/lang/foreachLoopIterator.001.phpt` | error | error | Expected '{' to open the class, got 'implements' |
-| `php/lang/foreachLoopIterator.002.phpt` | error | error | Expected '{' to open the class, got 'implements' |
-| `php/lang/foreachLoopIteratorAggregate.001.phpt` | error | error | Expected '{' to open the class, got 'implements' |
-| `php/lang/foreachLoopIteratorAggregate.002.phpt` | error | error | Expected '{' to open the class, got 'implements' |
-| `php/lang/foreachLoopIteratorAggregate.003.phpt` | error | error | Expected '{' to open the class, got 'implements' |
-| `php/lang/foreachLoopIteratorAggregate.004.phpt` | error | error | Expected '{' to open the class, got 'implements' |
+| `php/lang/foreachLoopIterator.001.phpt` | error | error | Expected ']' after array index, got '++' |
+| `php/lang/foreachLoopIterator.002.phpt` | error | error | Undefined variable: Iterator |
+| `php/lang/foreachLoopIteratorAggregate.001.phpt` | error | error | Unexpected token: ++ |
+| `php/lang/foreachLoopIteratorAggregate.002.phpt` | error | error | Undefined variable: IteratorAggregate |
+| `php/lang/foreachLoopIteratorAggregate.003.phpt` | error | error | Expected ']' after array index, got '++' |
+| `php/lang/foreachLoopIteratorAggregate.004.phpt` | error | error | Unexpected token: ++ |
 | `php/lang/foreachLoopObjects.001.phpt` | error | error | Simple loop. |
-| `php/lang/foreachLoopObjects.002.phpt` | error | error | Expected identifier as the foreach value, got '&' |
-| `php/lang/foreachLoopObjects.003.phpt` | error | error | Expected identifier as the foreach value, got '&' |
-| `php/lang/foreachLoopObjects.004.phpt` | error | error | Removing the current element from an iterated object. |
-| `php/lang/foreachLoopObjects.005.phpt` | error | error | Removing properties before the current element from an iterated object. |
+| `php/lang/foreachLoopObjects.002.phpt` | error | error | in C::doForEachOnThis |
+| `php/lang/foreachLoopObjects.003.phpt` | error | error | Only a name or a place in an array can be forgotten |
+| `php/lang/foreachLoopObjects.004.phpt` | error | error | Only a name or a place in an array can be forgotten |
+| `php/lang/foreachLoopObjects.005.phpt` | error | error | Only a name or a place in an array can be forgotten |
 | `php/lang/foreachLoopObjects.006.phpt` | error | error | Substituting the iterated object for a different object. |
 | `php/lang/foreach_with_object_001.phpt` | pass | pass |  |
-| `php/lang/foreach_with_references_001.phpt` | error | error | Expected identifier as the foreach value, got '&' |
+| `php/lang/foreach_with_references_001.phpt` | pass | pass |  |
 | `php/lang/func_get_arg.001.phpt` | error | error | Undefined variable: func_get_arg |
 | `php/lang/func_get_arg.002.phpt` | error | error | Function foo expects 1 arguments, got 2 |
 | `php/lang/func_get_arg.003.phpt` | error | error | Undefined variable: func_get_arg |
@@ -561,7 +561,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/operator_notidentical_basic.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/operator_notidentical_variation.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/operator_notidentical_variation_64bit.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/operator_spaceship_basic.phpt` | error | error | Unexpected token: > |
+| `php/lang/operators/operator_spaceship_basic.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/overloaded_property_ref.phpt` | error | error | Unexpected token: -> |
 | `php/lang/operators/postdec_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/postdec_variationStr.phpt` | error | error | --- testing: '<number>' --- |
@@ -589,13 +589,13 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/returnByReference.003.phpt` | error | error | Unexpected token: ) |
 | `php/lang/returnByReference.004.phpt` | error | error | Unexpected token: :: |
 | `php/lang/returnByReference.005.phpt` | error | error | Unexpected token: -> |
-| `php/lang/returnByReference.006.phpt` | error | error | ---> 1. Via a return by ref function call, assign by reference the return value of a function that returns by value: |
+| `php/lang/returnByReference.006.phpt` | differs | differs | ran, printed something else |
 | `php/lang/returnByReference.007.phpt` | error | error | Unexpected token: :: |
 | `php/lang/returnByReference.008.phpt` | error | error | Unexpected token: -> |
 | `php/lang/returnByReference.009.phpt` | differs | differs | ran, printed something else |
-| `php/lang/short_tags.001.phpt` | error | error | Unexpected token: < |
-| `php/lang/short_tags.002.phpt` | error | error | Unexpected token: < |
-| `php/lang/short_tags.004.phpt` | error | error | Unexpected token: < |
+| `php/lang/short_tags.001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/short_tags.002.phpt` | pass | pass |  |
+| `php/lang/short_tags.004.phpt` | error | error | <? $b=3; ?> |
 | `php/lang/static_basic_001.phpt` | error | error | static belongs inside a function |
 | `php/lang/static_basic_002.phpt` | error | error | static belongs inside a function |
 | `php/lang/static_variation_001.phpt` | error | error | static belongs inside a function |

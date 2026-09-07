@@ -249,6 +249,25 @@ impl<'a> Machine<'a> {
                 f.cells.borrow_mut()[slot.at] = cell;
                 Ok(Value::Nil)
             }
+            Form::ShareItem(slot, place) => {
+                let at = self.value_of(place, frame)?;
+                let f = ascend(frame, slot.up);
+                let mut cells = f.cells.borrow_mut();
+                let held = &mut cells[slot.at];
+                // Through the shared cell when the name stands for one.
+                if let Value::Shared(cell) = held {
+                    let cell = cell.clone();
+                    drop(cells);
+                    let mut inside = cell.borrow_mut();
+                    return Ok(Value::Shared(shared_item(&mut inside, &at)?));
+                }
+                Ok(Value::Shared(shared_item(held, &at)?))
+            }
+            Form::Forget(slot) => {
+                let f = ascend(frame, slot.up);
+                f.cells.borrow_mut()[slot.at] = Value::Unset;
+                Ok(Value::Nil)
+            }
             Form::Missing(slot) => {
                 let f = ascend(frame, slot.up);
                 let empty = matches!(f.cells.borrow()[slot.at], Value::Unset);
@@ -298,6 +317,13 @@ impl<'a> Machine<'a> {
                         _ => return Err(format!("Class {} cannot be built on that", plan.name).into()),
                     },
                 };
+                let mut answers = Vec::with_capacity(plan.answers);
+                for _ in 0..plan.answers {
+                    match given.next() {
+                        Some(Value::Blueprint(b)) => answers.push(b),
+                        _ => return Err(format!("Class {} cannot answer to that", plan.name).into()),
+                    }
+                }
                 let mut named = |names: &[String]| -> Vec<(String, Value)> {
                     names.iter().map(|n| (n.clone(), given.next().unwrap_or(Value::Nil))).collect()
                 };
@@ -309,6 +335,7 @@ impl<'a> Machine<'a> {
                 Ok(Value::Blueprint(Rc::new(Blueprint {
                     name: plan.name.clone(),
                     under,
+                    answers,
                     fields,
                     methods: plan.methods.clone(),
                     constants,
@@ -779,6 +806,39 @@ impl<'a> Machine<'a> {
                 }
             }
             Prim::Gather => return Err(format!("{}() is a literal, not a call", name)),
+            Prim::Rank => {
+                n(2)?;
+                // Numbers by their order, anything else by its text.
+                match (math::below(&v[0], &v[1]), math::below(&v[1], &v[0])) {
+                    (Some(true), _) => Value::Small(-1),
+                    (_, Some(true)) => Value::Small(1),
+                    (Some(false), Some(false)) => Value::Small(0),
+                    _ => {
+                        let (x, y) = (v[0].bare(), v[1].bare());
+                        Value::Small(if x < y { -1 } else if x > y { 1 } else { 0 })
+                    }
+                }
+            }
+            Prim::Erase => {
+                n(2)?;
+                match &v[0] {
+                    Value::Vector(items) => {
+                        let i = as_index(&v[1])?;
+                        let kept: Vec<(Value, Value)> = items
+                            .iter()
+                            .enumerate()
+                            .filter(|(at, _)| *at != i)
+                            .map(|(at, x)| (Value::Small(at as i64), x.clone()))
+                            .collect();
+                        Value::Dict(Rc::new(kept))
+                    }
+                    Value::Dict(entries) => {
+                        let kept: Vec<(Value, Value)> = entries.iter().filter(|(k, _)| !k.equals(&v[1])).cloned().collect();
+                        Value::Dict(Rc::new(kept))
+                    }
+                    other => return Err(format!("{}() cannot take a place out of {}", name, other.bare())),
+                }
+            }
             Prim::Portray => {
                 n(1)?;
                 print!("{}", over_lines(&v[0], 0));
@@ -1183,4 +1243,31 @@ fn written_into(held: &mut Value, key: Option<Value>, value: Value, ident: &str)
     let key = key.unwrap_or_else(|| Value::Small(after_keys(entries)));
     set_key(entries, key, value);
     Ok(())
+}
+
+/// The place an array holds, made a shared cell, so that a name tied to
+/// it writes into the array itself. A walk counts places, so a map is
+/// reached by its position as a vector is.
+fn shared_item(held: &mut Value, at: &Value) -> Result<Rc<RefCell<Value>>, String> {
+    let i = as_index(at)?;
+    let place: &mut Value = match held {
+        Value::Vector(items) => {
+            let items = Rc::make_mut(items);
+            let reach = items.len();
+            items.get_mut(i).ok_or_else(|| format!("Array index {} out of bounds (length: {})", i, reach))?
+        }
+        Value::Dict(entries) => {
+            let entries = Rc::make_mut(entries);
+            let reach = entries.len();
+            let entry = entries.get_mut(i).ok_or_else(|| format!("Array index {} out of bounds (length: {})", i, reach))?;
+            &mut entry.1
+        }
+        _ => return Err("Cannot walk a value that is not an array".to_string()),
+    };
+    if let Value::Shared(cell) = place {
+        return Ok(cell.clone());
+    }
+    let cell = Rc::new(RefCell::new(std::mem::replace(place, Value::Nil)));
+    *place = Value::Shared(cell.clone());
+    Ok(cell)
 }

@@ -3,6 +3,7 @@
 // every javascript program. Not library code; edit lib_lumen/ instead.
 
 pub static PROLOGUE: &str = "";
+pub static EPILOGUE: &str = "";
 
 pub static FILES: &[(&str, &str)] = &[
     ("langs/lib_javascript/to_string.js", include_str!("to_string.js")),
