@@ -78,7 +78,12 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     for (_, name) in &lang.source_bindings {
         registry.slot(name);
     }
-    let program = compile::compile(&tokens, lang, &mut registry)?;
+    let before = request
+        .iter()
+        .find(|(from, key, ..)| from == "SELF" && key == "lines_before")
+        .and_then(|(.., n, _)| n.parse().ok())
+        .unwrap_or(0);
+    let program = compile::compile(&tokens, lang, &mut registry, before)?;
 
     let mut machine = engine::Engine::new(lang, registry.idents.clone());
     if let Some(name) = &lang.args_binding {
@@ -102,6 +107,9 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
             put_step(&mut carried, &steps, held);
         }
         machine.define(name, Value::Map(std::rc::Rc::new(carried)));
+    }
+    if let Some((.., place, _)) = request.iter().find(|(from, key, ..)| from == "SELF" && key == "file") {
+        machine.written_in(place);
     }
     // Where the program is written, as the request carries it.
     for (part, name) in &lang.source_bindings {

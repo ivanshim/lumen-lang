@@ -30,6 +30,14 @@ pub struct Operator {
     pub right_assoc: bool,
 }
 
+/// The kinds of complaint a language may have a word for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Complaint {
+    Warning,
+    Notice,
+    Deprecated,
+}
+
 pub struct Lang {
     pub ident: String,
     pub extensions: Vec<String>,
@@ -132,6 +140,17 @@ pub struct Lang {
     /// Whether every key of an array is either a whole number or text,
     /// so that a key spelling a whole number is that number.
     pub plain_keys: bool,
+    /// The word a program uses for each kind of complaint, and the name
+    /// it calls the line it is written on. A language with a word for a
+    /// warning is one where reading a binding never written is a
+    /// complaint rather than a stop.
+    pub complaint_words: Vec<(Complaint, String)>,
+    pub line_binding: Option<String>,
+    /// Whether a binding never written is a complaint rather than a stop.
+    pub warns_of_unwritten: bool,
+    /// Whether the language says where a complaint happened, so that
+    /// the assembler marks which line each statement is on.
+    pub tells_place: bool,
     /// The names a program calls the file it is written in and the
     /// place that file lies in, where it has words for them.
     pub source_bindings: Vec<(String, String)>,
@@ -282,7 +301,8 @@ w ext.system.request.env | w ext.system.request.files | w ext.system.request.all
 w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right
 w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at | b ext.op.assign.value | b ext.op.index.plain_keys
-w ext.system.source.file | w ext.system.source.directory
+w ext.system.source.file | w ext.system.source.directory | w ext.system.source.line
+w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.complaint.deprecated
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -704,6 +724,12 @@ impl Lang {
             }
         }
 
+        // A language with a word for any kind of complaint says where
+        // the complaint happened, so the lines are worth marking.
+        let tells_complaints = ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated"]
+            .into_iter()
+            .try_fold(false, |found, tag| Ok::<bool, String>(found || r.head(tag)?.is_some()))?;
+
         // A language with an operator for being the very same means
         // something looser by being equal.
         let tells_same = binary.values().any(|op| matches!(op.action, Action::Same));
@@ -800,6 +826,23 @@ impl Lang {
             assign_gives_value: r.flag("ext.op.assign.value")?,
             plain_keys: r.flag("ext.op.index.plain_keys")?,
             loose_equality: tells_same,
+            complaint_words: {
+                let named = [
+                    (Complaint::Warning, "ext.system.complaint.warning"),
+                    (Complaint::Notice, "ext.system.complaint.notice"),
+                    (Complaint::Deprecated, "ext.system.complaint.deprecated"),
+                ];
+                let mut found = Vec::new();
+                for (kind, tag) in named {
+                    if let Some(word) = r.head(tag)? {
+                        found.push((kind, word));
+                    }
+                }
+                found
+            },
+            line_binding: r.head("ext.system.source.line")?,
+            warns_of_unwritten: r.head("ext.system.complaint.warning")?.is_some(),
+            tells_place: tells_complaints,
             source_bindings: {
                 let named = [("file", "ext.system.source.file"), ("directory", "ext.system.source.directory")];
                 let mut found = Vec::new();

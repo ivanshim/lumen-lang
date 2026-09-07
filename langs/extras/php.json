@@ -567,5 +567,17 @@
   ],
   "ext.system.source.directory": [
     "__DIR__"
+  ],
+  "ext.system.source.line": [
+    "__LINE__"
+  ],
+  "ext.system.complaint.warning": [
+    "Warning"
+  ],
+  "ext.system.complaint.notice": [
+    "Notice"
+  ],
+  "ext.system.complaint.deprecated": [
+    "Deprecated"
   ]
 }

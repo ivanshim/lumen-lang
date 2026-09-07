@@ -79,6 +79,9 @@ struct Piece {
     /// Whether an expression statement stored into the result slot; a
     /// function without one needs neither the slot nor its prologue.
     result_touched: bool,
+    /// Which line the last marker in this unit named, so that a run of
+    /// statements on one line marks it once.
+    line: u32,
     instrs: Vec<Instr>,
 }
 
@@ -97,6 +100,8 @@ pub struct Compiler<'a> {
     shared_args: HashMap<String, Vec<bool>>,
     /// The parameters of the method just read that name properties too.
     promoted: Vec<String>,
+    /// How many lines stand before the program's own text.
+    before: u32,
 }
 
 type Res<T> = Result<T, String>;
@@ -116,7 +121,9 @@ const RESULT_CELL: &str = "#result";
 const TEMP_CELL: &str = "#t";
 const SPARE_CELLS: [&str; 3] = ["#a", "#b", "#c"];
 
-pub fn compile(tokens: &[Token], lang: &Lang, table: &mut Registry) -> Res<Rc<Routine>> {
+/// `before` is how many lines were put before the program's own text,
+/// which the host knows and a line named in a complaint must not count.
+pub fn compile(tokens: &[Token], lang: &Lang, table: &mut Registry, before: u32) -> Res<Rc<Routine>> {
     let top = Piece {
         outermost: true,
         ident: "<program>".to_string(),
@@ -128,10 +135,11 @@ pub fn compile(tokens: &[Token], lang: &Lang, table: &mut Registry) -> Res<Rc<Ro
         cycles: Vec::new(),
         escapes: Vec::new(),
         result_touched: false,
+        line: 0,
         instrs: Vec::new(),
     };
     let shared_args = shared_parameters(tokens, lang);
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, promoted: Vec::new() };
+    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, promoted: Vec::new(), before };
     if lang.rpn {
         a.rpn_body(&[], Span::Block)?;
         if !a.exhausted() {
@@ -406,6 +414,13 @@ impl<'a> Compiler<'a> {
     }
 
     fn read(&mut self, name: &str) {
+        // The name a language gives the line it is written on stands
+        // for that line itself, known while assembling.
+        if self.lang.line_binding.as_deref() == Some(name) {
+            let row = (self.look().row as u32).saturating_sub(self.before);
+            self.constant(Value::Small(row as i64));
+            return;
+        }
         let slot = self.cell_to_read(name, false);
         self.put(Instr::Read(slot));
     }
@@ -525,6 +540,7 @@ impl<'a> Compiler<'a> {
             cycles: Vec::new(),
             escapes: Vec::new(),
             result_touched: false,
+            line: 0,
             instrs: Vec::new(),
         });
         if returns_value {
@@ -603,6 +619,15 @@ impl<'a> Compiler<'a> {
 
     fn stmt(&mut self) -> Res<()> {
         let lang = self.lang;
+        // A language that tells where a complaint happened needs to
+        // know which line is running, so each statement says so.
+        if lang.tells_place {
+            let row = (self.look().row as u32).saturating_sub(self.before);
+            if self.piece().line != row {
+                self.piece().line = row;
+                self.put(Instr::Line(row));
+            }
+        }
         if self.look().shape == Shape::Instr {
             let w = self.look().lexeme.clone();
             if !lang.let_words.is_empty() && Lang::spells(&lang.let_words, &w) {

@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use num_traits::ToPrimitive;
 
-use crate::lang::Lang;
+use crate::lang::{Complaint, Lang};
 use crate::arith::{self, Operation};
 use crate::value::{Class, Instance, Sort, Wording, Value};
 use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr};
@@ -28,6 +28,13 @@ pub struct Engine<'a> {
     given: Vec<Vec<Value>>,
     /// How many objects have been made, so that each carries its turn.
     made: usize,
+    /// Which line of the source is running, for a complaint to name.
+    line: u32,
+    /// Where the program is written, as the request carried it.
+    source: String,
+    /// Nothing at all, to hand back where a binding never written is
+    /// read in place and the language only complains about it.
+    nothing: Value,
     args_cell: Option<usize>,
     memo_cell: Option<usize>,
 }
@@ -83,10 +90,35 @@ impl<'a> Engine<'a> {
             buffer: Vec::new(),
             given: Vec::new(),
             made: 0,
+            line: 0,
+            source: String::new(),
+            nothing: Value::Null,
             args_cell: find(&lang.args_binding),
             memo_cell: find(&lang.memo_binding),
             idents,
         }
+    }
+
+    /// Where the program is written, which a complaint names.
+    pub fn written_in(&mut self, place: &str) {
+        self.source = place.to_string();
+    }
+
+    /// Whether a name never written is worth complaining about rather
+    /// than stopping for. Only a variable is: where a language marks
+    /// its variables with a sign, a name without that sign is a
+    /// constant or a class, and reaching for one that is not there is
+    /// a fault, not a complaint. The cells a kernel makes for itself
+    /// carry no such sign either, and are no business of the program's.
+    fn warns_about(&self, ident: &str) -> bool {
+        self.lang.warns_of_unwritten && self.lang.sigil.map_or(true, |mark| ident.starts_with(mark))
+    }
+
+    /// Tell a complaint the way this language tells one, and go on. A
+    /// language with no word for the kind says nothing at all.
+    fn complain(&self, kind: Complaint, message: &str) {
+        let Some((_, word)) = self.lang.complaint_words.iter().find(|(k, _)| *k == kind) else { return };
+        println!("\n{}: {} in {} on line {}", word, message, self.source, self.line);
     }
 
     pub fn define(&mut self, name: &str, v: Value) {
@@ -139,6 +171,13 @@ impl<'a> Engine<'a> {
         }
         if let Value::Bond(shared) = &self.world[slot.far] {
             return Ok(shared.borrow().clone());
+        }
+        // A language that has a word for a warning does not stop for a
+        // binding never written: it says so and reads nothing there.
+        if matches!(self.world[slot.far], Value::Blank) && self.warns_about(&slot.ident) {
+            let told = format!("Undefined variable {}", slot.ident);
+            self.complain(Complaint::Warning, &told);
+            return Ok(Value::Null);
         }
         let g = &mut self.world[slot.far];
         match g {
@@ -207,6 +246,10 @@ impl<'a> Engine<'a> {
                 return Ok(&frame[s]);
             }
         }
+        if matches!(self.world[slot.far], Value::Blank) && self.warns_about(&slot.ident) {
+            self.complain(Complaint::Warning, &format!("Undefined variable {}", slot.ident));
+            return Ok(&self.nothing);
+        }
         match &self.world[slot.far] {
             Value::Blank => Err(format!("Undefined variable: {}", slot.ident)),
             v => Ok(v),
@@ -238,6 +281,10 @@ impl<'a> Engine<'a> {
             if !matches!(frame[s], Value::Blank) {
                 return Ok(&mut frame[s]);
             }
+        }
+        if matches!(self.world[slot.far], Value::Blank) && self.warns_about(&slot.ident) {
+            self.complain(Complaint::Warning, &format!("Undefined variable {}", slot.ident));
+            self.world[slot.far] = Value::Null;
         }
         match &self.world[slot.far] {
             Value::Blank => Err(format!("Undefined variable: {}", slot.ident)),
@@ -416,6 +463,7 @@ impl<'a> Engine<'a> {
                     let empty = matches!(self.world[*at], Value::Blank);
                     self.data.push(Value::Flag(empty));
                 }
+                Instr::Line(row) => self.line = *row,
                 Instr::Skip(to) => {
                     if !self.drop_top()?.is_true() {
                         pc = *to;

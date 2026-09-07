@@ -164,8 +164,11 @@ def run_phpt(path, kernel):
     if expected is None:
         return "skipped", "no --EXPECT-- section"
     code, out, err = run(kernel, ["--lang", "langs/extras/php.json"], s["FILE"], ".php", web_request(s))
-    got = out.rstrip()
-    want = expected.rstrip()
+    # php-src's own run-tests.php trims both ends before comparing, and
+    # a complaint is written with a blank line before it, so the same
+    # trim is what the reference expects.
+    got = out.strip()
+    want = expected.strip()
     if code == 0:
         ok = (got == want) if "EXPECT" in s else (re.fullmatch(expectf_pattern(want) if "EXPECTF" in s else want, got, re.S) is not None)
         if ok:

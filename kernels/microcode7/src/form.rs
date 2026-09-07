@@ -179,6 +179,9 @@ pub enum Form {
     Attempt { body: Box<Form>, clauses: Vec<Clause>, last: Option<Box<Form>> },
     /// Whether the call left this binding without a value.
     Missing(Address),
+    /// A statement together with the line of the source it was written
+    /// on, so that a complaint can say where it happened.
+    OnLine(u32, Box<Form>),
     /// The binding's own cell, made shareable if it is not already, so
     /// another name can be tied to it.
     Share(Address),

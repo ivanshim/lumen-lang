@@ -190,6 +190,9 @@ pub enum Instr {
     Missing(usize),
     /// Whether the global at this place has never been written.
     Unwritten(usize),
+    /// Which line of the source the instrs after this one came from,
+    /// so that a complaint can say where it happened.
+    Line(u32),
     /// Make this binding a shared cell if it is not one already, and
     /// push that cell, so another name can be fastened to it.
     Bond(Cell),

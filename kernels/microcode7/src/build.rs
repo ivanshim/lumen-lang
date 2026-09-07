@@ -73,6 +73,10 @@ pub struct Builder<'a> {
     statics: Vec<Form>,
     /// The parameters of the method just read that name properties too.
     also_property: Vec<String>,
+    /// How many lines stand ahead of the program's own text, and
+    /// whether the language says where a complaint happened at all.
+    before: u32,
+    tells_place: bool,
 }
 
 pub struct Built {
@@ -89,10 +93,15 @@ enum Mode {
     Single,
 }
 
-pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool) -> Res<Built> {
+/// `before` is how many lines stand ahead of the program's own text,
+/// which the host knows and a line named in a complaint must not count.
+pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Res<Built> {
     let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let shared_args = shared_parameters(tokens, table);
-    let mut r = Builder { within: None, shared_args, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new() };
+    let mut r = Builder { within: None, shared_args, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before,
+        tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated"]
+            .iter()
+            .any(|key| table.single(key).is_some()) };
     let body = if table.rpn {
         let (mut stmts, rest) = r.rpn_body(&[], Mode::Body)?;
         if !r.exhausted() {
@@ -442,6 +451,11 @@ impl<'a> Builder<'a> {
     }
 
     fn read(&mut self, name: &str) -> Form {
+        // The word a language uses for the line it is written on stands
+        // for that line, which is known while the form is built.
+        if self.table.single("ext.system.source.line") == Some(name) {
+            return constant(Value::Small((self.look().row).saturating_sub(self.before) as i64));
+        }
         Form::Read(self.address_to_read(name))
     }
 
@@ -612,6 +626,17 @@ impl<'a> Builder<'a> {
     }
 
     fn stmt(&mut self) -> Res<Form> {
+        // A language that says where a complaint happened wants each
+        // statement to carry the line it was written on.
+        if self.tells_place {
+            let row = (self.look().row).saturating_sub(self.before);
+            let made = self.plain_or_kind()?;
+            return Ok(Form::OnLine(row, Box::new(made)));
+        }
+        self.plain_or_kind()
+    }
+
+    fn plain_or_kind(&mut self) -> Res<Form> {
         if self.look().shape == Shape::Bare {
             if self.key("stmt.let") {
                 return self.bind();

@@ -23,6 +23,13 @@ use crate::table::Table;
 use crate::form::{Input, Traps, Form, Prim, Routine, Address, Callee};
 use crate::data::{Blueprint, Thing, Env, Kind, Value, Names};
 
+/// The label under which a language spells each kind of complaint.
+pub const COMPLAINT_LABELS: [(&str, &str); 3] = [
+    ("warning", "ext.system.complaint.warning"),
+    ("notice", "ext.system.complaint.notice"),
+    ("deprecated", "ext.system.complaint.deprecated"),
+];
+
 /// The label under which a language spells each kind of value.
 pub const KIND_LABELS: [(&str, Kind); 7] = [
     ("system.kind.integer", Kind::Whole), ("system.kind.rational", Kind::Fraction), ("system.kind.real", Kind::Decimal),
@@ -71,6 +78,12 @@ pub struct Machine<'a> {
     loose_equals: bool,
     /// How many things have been made, so each carries its own turn.
     made: usize,
+    /// The line of the source now running and the file it is written
+    /// in, which a complaint names.
+    row: u32,
+    written_in: String,
+    /// The words this language has for the kinds of complaint.
+    complaint_words: Vec<(&'static str, String)>,
     /// What each call still running was handed, the innermost last, and
     /// what the call about to start is to be handed.
     handed: Vec<Vec<Value>>,
@@ -101,11 +114,29 @@ impl<'a> Machine<'a> {
             handed: Vec::new(),
             pending: Vec::new(),
             made: 0,
+            row: 0,
+            written_in: String::new(),
+            complaint_words: COMPLAINT_LABELS
+                .iter()
+                .filter_map(|(kind, key)| table.single(key).map(|word| (*kind, word.to_string())))
+                .collect(),
             plain_keys: table.flag("ext.op.index.plain_keys"),
             // A language with a word for being the very same means
             // something looser by being equal.
             loose_equals: table.single("ext.op.identical").is_some(),
         }
+    }
+
+    /// Where the program is written, which a complaint names.
+    pub fn found_in(&mut self, place: &str) {
+        self.written_in = place.to_string();
+    }
+
+    /// Say a complaint of this kind in the language's own word for it
+    /// and carry on. A language with no word for the kind says nothing.
+    fn grumble(&self, kind: &str, about: &str) {
+        let Some((_, word)) = self.complaint_words.iter().find(|(k, _)| *k == kind) else { return };
+        println!("\n{}: {} in {} on line {}", word, about, self.written_in, self.row);
     }
 
     pub fn define(&mut self, name: &str, value: Value) {
@@ -168,6 +199,17 @@ impl<'a> Machine<'a> {
             if !matches!(v, Value::Unset) {
                 return Ok(v);
             }
+        }
+        // A language with a word for a warning does not stop where a
+        // binding was never written: it says so and reads nothing. Only
+        // a variable counts — where variables carry a mark, a name
+        // without it names a constant or a class, and reaching for one
+        // that is not there is a fault. The cells the builder makes for
+        // itself wear no mark either, and are none of the program's.
+        let marked = self.table.letter("identifier.variable_prefix").map_or(true, |mark| slot.ident.starts_with(mark));
+        if marked && self.complaint_words.iter().any(|(k, _)| *k == "warning") {
+            self.grumble("warning", &format!("Undefined variable {}", slot.ident));
+            return Ok(Value::Nil);
         }
         Err(format!("Undefined variable: {}", slot.ident))
     }
@@ -298,6 +340,10 @@ impl<'a> Machine<'a> {
                 let f = ascend(frame, slot.up);
                 f.cells.borrow_mut()[slot.at] = Value::Unset;
                 Ok(Value::Nil)
+            }
+            Form::OnLine(row, inner) => {
+                self.row = *row;
+                self.value_of(inner, frame)
             }
             Form::Missing(slot) => {
                 let f = ascend(frame, slot.up);
