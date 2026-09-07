@@ -561,5 +561,11 @@
     "func_get_arg"
   ],
   "ext.op.assign.value": true,
-  "ext.op.index.plain_keys": true
+  "ext.op.index.plain_keys": true,
+  "ext.system.source.file": [
+    "__FILE__"
+  ],
+  "ext.system.source.directory": [
+    "__DIR__"
+  ]
 }

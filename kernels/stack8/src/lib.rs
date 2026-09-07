@@ -75,6 +75,9 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     for (_, name) in &lang.request_bindings {
         registry.slot(name);
     }
+    for (_, name) in &lang.source_bindings {
+        registry.slot(name);
+    }
     let program = compile::compile(&tokens, lang, &mut registry)?;
 
     let mut machine = engine::Engine::new(lang, registry.idents.clone());
@@ -99,6 +102,13 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
             put_step(&mut carried, &steps, held);
         }
         machine.define(name, Value::Map(std::rc::Rc::new(carried)));
+    }
+    // Where the program is written, as the request carries it.
+    for (part, name) in &lang.source_bindings {
+        let found = request.iter().find(|(from, key, ..)| from == "SELF" && key == part);
+        if let Some((.., value, _)) = found {
+            machine.define(name, Value::text(value));
+        }
     }
     if !lang.kind_spelled {
         for (name, kind) in &lang.sort_bindings {

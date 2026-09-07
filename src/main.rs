@@ -182,7 +182,13 @@ fn main() {
     // What a web request carries, gathered once here so that a kernel
     // has only to bind it: the full kernels take it, the others do not
     // read the labels that name it.
-    let request = web::gathered();
+    let mut request = web::gathered();
+    // Where the program itself lies. A definition may give names to
+    // these, and only the full kernels read those labels.
+    let whole = std::fs::canonicalize(&inv.file).unwrap_or_else(|_| std::path::PathBuf::from(&inv.file));
+    let held = whole.parent().map_or_else(|| ".".to_string(), |p| p.to_string_lossy().into_owned());
+    request.push(("SELF".to_string(), "file".to_string(), whole.to_string_lossy().into_owned(), false));
+    request.push(("SELF".to_string(), "directory".to_string(), held, false));
 
     // Serving runs the program once for each request that arrives, with
     // the request in its environment, so a served run is an ordinary run.

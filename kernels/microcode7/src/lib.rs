@@ -55,6 +55,10 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
 
 /// Which group of the request each label names, and the one that holds
 /// what the query, the form and the cookies carry together.
+/// What a program calls the file it is written in and the place that
+/// file lies in, where it has words for them.
+const OWN_PLACE: [(&str, &str); 2] = [("file", "ext.system.source.file"), ("directory", "ext.system.source.directory")];
+
 const REQUEST_PARTS: [(&str, &str); 7] = [
     ("GET", "ext.system.request.query"), ("POST", "ext.system.request.form"), ("COOKIE", "ext.system.request.cookies"),
     ("SERVER", "ext.system.request.server"), ("ENV", "ext.system.request.env"), ("FILES", "ext.system.request.files"),
@@ -68,6 +72,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         "system.kind.rational", "system.kind.real", "system.kind.string", "system.kind.boolean", "system.kind.array", "system.kind.null"];
     let mut seeded: Vec<String> = system.iter().filter_map(|k| table.single(k).map(str::to_string)).collect();
     seeded.extend(REQUEST_PARTS.iter().filter_map(|(_, key)| table.single(key).map(str::to_string)));
+    seeded.extend(OWN_PLACE.iter().filter_map(|(_, key)| table.single(key).map(str::to_string)));
     let reduced = if !table.rpn {
         build::build(&tokens, table, &seeded, HashMap::new(), true)?
     } else {
@@ -104,6 +109,13 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
             written_at(&mut carried, &steps, held);
         }
         machine.define(name, Value::Dict(std::rc::Rc::new(carried)));
+    }
+    // Where the program is written, as the request carries it.
+    for (part, key) in OWN_PLACE {
+        let Some(name) = table.single(key) else { continue };
+        if let Some((.., value, _)) = request.iter().find(|(from, field, ..)| from == "SELF" && field == part) {
+            machine.define(name, Value::text(value));
+        }
     }
     if !table.flag("ext.system.kind.spelled") {
         for (key, sort) in exec::KIND_LABELS {

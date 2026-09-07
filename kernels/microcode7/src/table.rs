@@ -97,6 +97,7 @@ ext.stmt.class.interface:L ext.stmt.class.implements:L ext.op.compare:L ext.buil
 ext.op.otherwise:L ext.op.bit.and:L ext.op.bit.or:L ext.op.bit.xor:L ext.op.bit.not:L \
 ext.op.bit.left:L ext.op.bit.right:L ext.op.identical:L ext.op.not_identical:L ext.system.kind.spelled:B ext.builtin.args.all:L \
 ext.builtin.args.count:L ext.builtin.args.at:L ext.op.assign.value:B ext.op.index.plain_keys:B \
+ext.system.source.file:L ext.system.source.directory:L \
 ";
 
 fn tag_shapes(table: &'static str) -> Vec<(&'static str, char)> {

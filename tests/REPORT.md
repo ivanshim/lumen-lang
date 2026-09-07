@@ -34,14 +34,13 @@ is listed, since the full kernels are meant to behave alike.
 | Undefined variable: include | 7 |
 | Unexpected character '$' | 6 |
 | Unexpected token: & | 5 |
-| Undefined variable: __DIR__ | 4 |
+| Undefined variable: fopen | 4 |
 | Unexpected token: , | 4 |
 | ---( Array with 1 element(s): )--- | 4 |
 | --- testing: 'abc' --- | 4 |
 | Cannot reassign $argv (system-provided immutable value) | 3 |
 | Unexpected character '@' | 3 |
 | Test | 3 |
-| Undefined variable: fopen | 3 |
 | Unexpected token: : | 3 |
 | Unexpected token: ) | 3 |
 | Undefined variable: require_once | 3 |
@@ -56,6 +55,7 @@ is listed, since the full kernels are meant to behave alike.
 | Expected ')' after the foreach names, got '[' | 2 |
 | Unexpected token: } | 2 |
 | Undefined variable: current | 2 |
+| Undefined variable: include_once | 2 |
 | no --FILE-- section | 2 |
 | i1 | 2 |
 | Expected ']' after array index, got '++' | 2 |
@@ -246,7 +246,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/bug78236.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug78929.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug79699.phpt` | pass | pass |  |
-| `php/basic/bug80384.phpt` | error | error | Undefined variable: __DIR__ |
+| `php/basic/bug80384.phpt` | error | error | Undefined variable: fopen |
 | `php/basic/build_date.phpt` | error | error | Undefined variable: PHP_BUILD_DATE |
 | `php/basic/consistent_float_string_casts.phpt` | error | error | Undefined variable: string |
 | `php/basic/enable_post_data_reading_01.phpt` | error | error | } |
@@ -319,7 +319,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/func/007.phpt` | error | error | false |
 | `php/func/008.phpt` | pass | pass |  |
 | `php/func/009.phpt` | pass | pass |  |
-| `php/func/010.phpt` | error | error | Undefined variable: __DIR__ |
+| `php/func/010.phpt` | error | error | Undefined variable: file_put_contents |
 | `php/func/011.phpt` | differs | differs | ran, printed something else |
 | `php/func/bug64523.phpt` | differs | differs | ran, printed something else |
 | `php/func/ini_alter.phpt` | error | error | Undefined variable: ini_alter |
@@ -423,10 +423,10 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug30726.phpt` | error | error | Unexpected token: , |
 | `php/lang/bug30862.phpt` | pass | pass |  |
 | `php/lang/bug32828.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug32924.phpt` | error | error | Undefined variable: __DIR__ |
+| `php/lang/bug32924.phpt` | error | error | Undefined variable: include_once |
 | `php/lang/bug35176.phpt` | error | error | Undefined variable: require_once |
 | `php/lang/bug35382.phpt` | skipped | skipped | no --FILE-- section |
-| `php/lang/bug38579.phpt` | error | error | Undefined variable: __DIR__ |
+| `php/lang/bug38579.phpt` | error | error | Undefined variable: include_once |
 | `php/lang/bug43958.phpt` | error | error | Undefined variable: include |
 | `php/lang/bug44654.phpt` | pass | pass |  |
 | `php/lang/bug44827.phpt` | error | error | Undefined variable: constant |

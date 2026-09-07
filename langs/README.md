@@ -317,6 +317,11 @@ only. The extension labels so far, all from PHP:
 - `ext.op.compare`: which of two values comes first, as -1, 0 or 1
   (`<=>`). It takes its tier from `op.precedence` like any operator; a
   kernel that does not read the label reads past its tier too.
+- `ext.system.source.file` and `ext.system.source.directory`: the names
+  a program calls the file it is written in and the place that file
+  lies in (`__FILE__`, `__DIR__`). The host works both out from the
+  file it was given and carries them with the request, so a kernel that
+  does not read the labels binds nothing.
 - `ext.op.index.plain_keys`: a switch; every key of an array is either a
   whole number or text, so a key spelling a whole number the way one is
   written out is that number and `a['7']` and `a[7]` name one place. A
@@ -712,4 +717,6 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.request.form` | - | - | - | - | - | - | - | `$_POST` | - | - |
 | `ext.system.request.query` | - | - | - | - | - | - | - | `$_GET` | - | - |
 | `ext.system.request.server` | - | - | - | - | - | - | - | `$_SERVER` | - | - |
+| `ext.system.source.directory` | - | - | - | - | - | - | - | `__DIR__` | - | - |
+| `ext.system.source.file` | - | - | - | - | - | - | - | `__FILE__` | - | - |
 <!-- table:end -->

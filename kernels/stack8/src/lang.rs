@@ -132,6 +132,9 @@ pub struct Lang {
     /// Whether every key of an array is either a whole number or text,
     /// so that a key spelling a whole number is that number.
     pub plain_keys: bool,
+    /// The names a program calls the file it is written in and the
+    /// place that file lies in, where it has words for them.
+    pub source_bindings: Vec<(String, String)>,
     /// Whether being equal is the looser question. A language with an
     /// operator for being the very same means something looser by being
     /// equal: text that spells a number stands for that number.
@@ -279,6 +282,7 @@ w ext.system.request.env | w ext.system.request.files | w ext.system.request.all
 w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right
 w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at | b ext.op.assign.value | b ext.op.index.plain_keys
+w ext.system.source.file | w ext.system.source.directory
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -796,6 +800,16 @@ impl Lang {
             assign_gives_value: r.flag("ext.op.assign.value")?,
             plain_keys: r.flag("ext.op.index.plain_keys")?,
             loose_equality: tells_same,
+            source_bindings: {
+                let named = [("file", "ext.system.source.file"), ("directory", "ext.system.source.directory")];
+                let mut found = Vec::new();
+                for (part, tag) in named {
+                    if let Some(word) = r.head(tag)? {
+                        found.push((part.to_string(), word));
+                    }
+                }
+                found
+            },
             epilogue: r.strings("ext.lexical.epilogue")?,
             bare_calls: r.flag("ext.syntax.call.bare")?,
             increments: r.strings("ext.op.increment")?,
