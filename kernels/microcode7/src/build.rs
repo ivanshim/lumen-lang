@@ -1167,7 +1167,10 @@ impl<'a> Builder<'a> {
                     // The name is tied to the item's own cell.
                     Some(named) => {
                         let at = r.read(&walk_at);
-                        let held = r.address_to_write(named);
+                        // Reached the way the walk reads it, so that the
+                        // item tied here and the array walked are the
+                        // one cell and not two.
+                        let held = r.address_to_read(named);
                         let tied = r.address_to_write(&item);
                         items.push(Form::Tie(tied, Box::new(Form::ShareItem(held, Box::new(at)))));
                     }

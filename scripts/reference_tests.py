@@ -79,6 +79,9 @@ def normalise(message, banner):
         m = m[len(banner) + 2:]
     m = re.sub(r"\(line \d+\)", "", m).strip()
     m = re.sub(r" at \d+:\d+", "", m)
+    # Where a language names the file and line a fault happened in, the
+    # file is a fresh temporary each run, so the shape stands for it.
+    m = re.sub(r"\s+in\s+\S+?\.php(:\d+| on line \d+)", " in <file>", m)
     m = re.sub(r"'\$[A-Za-z_][A-Za-z0-9_]*'", "'$name'", m)
     m = re.sub(r"'\d+(\.\d+)?'", "'<number>'", m)
     m = re.sub(r'"[^"]*"', '"..."', m)
