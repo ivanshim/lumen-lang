@@ -220,6 +220,10 @@ pub struct Lang {
     /// an array where a name holds nothing, and one at each place along
     /// the way that is not there yet.
     pub makes_places: bool,
+    /// Pieces of text the language counts as untrue besides text with
+    /// nothing in it, and whether an array holding nothing is untrue.
+    pub untrue_text: Vec<String>,
+    pub untrue_empty: bool,
     /// `break n` and `continue n` leave n loops.
     pub break_levels: bool,
     /// The source is text with code between the prologue and the
@@ -337,6 +341,7 @@ w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.co
 w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove
 w ext.builtin.eval | w ext.builtin.include | w ext.op.hush | w ext.builtin.isset | b ext.op.index.makes
+w ext.system.untrue.text | b ext.system.untrue.empty_array
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 ";
@@ -943,6 +948,8 @@ impl Lang {
             plus_words: r.strings("ext.op.plus")?,
             hush_words: hushes,
             makes_places: r.flag("ext.op.index.makes")?,
+            untrue_text: r.strings("ext.system.untrue.text")?,
+            untrue_empty: r.flag("ext.system.untrue.empty_array")?,
             break_levels: r.flag("ext.stmt.break.levels")?,
             template: r.flag("ext.lexical.template")?,
             append_index: r.flag("ext.op.index.append")?,

@@ -101,6 +101,10 @@ pub struct Machine<'a> {
     /// array where a name holds nothing, and one at each place along the
     /// way that is not there yet.
     builds_places: bool,
+    /// Pieces of text this language holds untrue past text with nothing
+    /// in it, and whether an array with nothing in it is untrue.
+    false_words: Vec<String>,
+    hollow_is_false: bool,
     /// What each call still running was handed, the innermost last, and
     /// what the call about to start is to be handed.
     handed: Vec<Vec<Value>>,
@@ -138,6 +142,8 @@ impl<'a> Machine<'a> {
             written_in: String::new(),
             quieted: 0,
             builds_places: table.flag("ext.op.index.makes"),
+            false_words: table.strings("ext.system.untrue.text").to_vec(),
+            hollow_is_false: table.flag("ext.system.untrue.empty_array"),
             complaint_words: COMPLAINT_LABELS
                 .iter()
                 .filter_map(|(kind, key)| table.single(key).map(|word| (*kind, word.to_string())))
@@ -156,6 +162,101 @@ impl<'a> Machine<'a> {
 
     /// Say a complaint of this kind in the language's own word for it
     /// and carry on. A language with no word for the kind says nothing.
+    /// The places of an array with their keys, a place's number standing
+    /// for its key where the places carry none.
+    fn places_with_keys(v: &Value) -> Vec<(Value, Value)> {
+        match v {
+            Value::Vector(items) => items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect(),
+            Value::Dict(pairs) => pairs.as_ref().clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Whether the first of two values comes before the second, asked
+    /// the loose way a language with a word for being the very same
+    /// means it. A flag or nothing on either hand makes the question one
+    /// of which is true; an array sits above whatever is not an array,
+    /// and two arrays are set against each other by how much they hold
+    /// and then place by place; text spelling a number stands for that
+    /// number, and a number met by text spelling none is read as text.
+    fn comes_first(&mut self, a: &Value, b: &Value) -> Result<bool, String> {
+        let w = self.wording();
+        let counts = |x: &Value| matches!(x.kind(), Some(Kind::Whole | Kind::Fraction | Kind::Decimal));
+        let empty = |x: &Value| matches!(x, Value::Nil | Value::Unset);
+        let gathered = |x: &Value| matches!(x, Value::Vector(_) | Value::Dict(_));
+        // Two numbers are set against each other at the width the
+        // language holds them in, as they are worked at it.
+        let plainly = |x: &Value, y: &Value| -> Result<bool, String> {
+            let (x, y) = match self.holds_reals_to_width() && (self.a_real(x) || self.a_real(y)) {
+                true => (self.at_width(self.as_wide_real(x)), self.at_width(self.as_wide_real(y))),
+                false => (x.clone(), y.clone()),
+            };
+            match math::below(&x, &y) {
+                Some(r) => Ok(r),
+                None => Ok(x.as_big()? < y.as_big()?),
+            }
+        };
+        Ok(match (a, b) {
+            (Value::Flag(_), _) | (_, Value::Flag(_)) => !self.stands_true(a) && self.stands_true(b),
+            // Nothing set against text is text with nothing in it, and
+            // nothing at all comes before that.
+            (one, Value::Text(s)) if empty(one) => !s.is_empty(),
+            (Value::Text(_), other) if empty(other) => false,
+            (one, other) if empty(one) => self.stands_true(other),
+            (_, other) if empty(other) => false,
+            (x, y) if gathered(x) && gathered(y) => {
+                let (mine, theirs) = (Self::places_with_keys(x), Self::places_with_keys(y));
+                if mine.len() != theirs.len() {
+                    return Ok(mine.len() < theirs.len());
+                }
+                for (key, held) in mine {
+                    let Some((_, yours)) = theirs.iter().find(|(k, _)| k.equals(&key)) else {
+                        // A place the other never names leaves the two
+                        // past setting against each other, and neither
+                        // comes before what it cannot be set against.
+                        return Ok(false);
+                    };
+                    let yours = yours.clone();
+                    if !self.prim(Prim::Eq, "equals", &[held.clone(), yours.clone()])?.is_true() {
+                        return self.comes_first(&held, &yours);
+                    }
+                }
+                false
+            }
+            (x, _) if gathered(x) => false,
+            (_, y) if gathered(y) => true,
+            (Value::Text(_), Value::Text(_)) => match (number_spelled_in(a), number_spelled_in(b)) {
+                (Some(x), Some(y)) => plainly(&x, &y)?,
+                _ => a.bare() < b.bare(),
+            },
+            (Value::Text(s), other) if counts(other) => match number_spelled_in(a) {
+                Some(x) => plainly(&x, other)?,
+                None => **s < *other.render(w),
+            },
+            (other, Value::Text(s)) if counts(other) => match number_spelled_in(b) {
+                Some(y) => plainly(other, &y)?,
+                None => *other.render(w) < **s,
+            },
+            _ => plainly(a, b)?,
+        })
+    }
+
+    /// Whether a value stands as true in this language. Past nought and
+    /// nothing, a language may hold an array with nothing in it untrue,
+    /// and may name pieces of text it holds untrue.
+    fn stands_true(&self, v: &Value) -> bool {
+        match v {
+            Value::Shared(cell) => self.stands_true(&cell.borrow()),
+            Value::Vector(items) if self.hollow_is_false => !items.is_empty(),
+            Value::Dict(pairs) if self.hollow_is_false => !pairs.is_empty(),
+            Value::Text(s) => match self.false_words.iter().any(|w| w == s.as_ref()) {
+                true => false,
+                false => v.is_true(),
+            },
+            other => other.is_true(),
+        }
+    }
+
     fn grumble(&self, kind: &str, about: &str) {
         if self.quieted > 0 {
             return;
@@ -624,7 +725,8 @@ impl<'a> Machine<'a> {
             }
             Form::Cycle { test, body, step, after } => {
                 loop {
-                    if !after && !self.value_of(test, frame)?.is_true() {
+                    let told = self.value_of(test, frame)?;
+                    if !after && !self.stands_true(&told) {
                         break;
                     }
                     match self.value_of(body, frame) {
@@ -637,7 +739,8 @@ impl<'a> Machine<'a> {
                     if let Some(step) = step {
                         self.value_of(step, frame)?;
                     }
-                    if *after && self.value_of(test, frame)?.is_true() {
+                    let told = self.value_of(test, frame)?;
+                    if *after && self.stands_true(&told) {
                         break;
                     }
                 }
@@ -666,7 +769,8 @@ impl<'a> Machine<'a> {
                     self.invoke(p, env, Vec::new())
                 }
                 Prim::Both | Prim::Either => {
-                    let left = self.value_of(&args[0], frame)?.is_true();
+                    let seen = self.value_of(&args[0], frame)?;
+                    let left = self.stands_true(&seen);
                     if (*op == Prim::Both && !left) || (*op == Prim::Either && left) {
                         return Ok(Value::Flag(left));
                     }
@@ -675,7 +779,7 @@ impl<'a> Machine<'a> {
                         Value::Bound(p, env) => self.invoke(p, env, Vec::new())?,
                         v => v,
                     };
-                    Ok(Value::Flag(right.is_true()))
+                    Ok(Value::Flag(self.stands_true(&right)))
                 }
                 Prim::Yield => {
                     let v = match args.first() {
@@ -852,7 +956,8 @@ impl<'a> Machine<'a> {
     /// The callee's environment, its arguments evaluated straight into
     /// their slots, with no vector between.
     fn pick(&mut self, args: &[Form], frame: &Rc<Env>) -> Res<(Rc<Routine>, Rc<Env>)> {
-        let test = self.value_of(&args[0], frame)?.is_true();
+        let asked = self.value_of(&args[0], frame)?;
+        let test = self.stands_true(&asked);
         self.bound(&args[if test { 1 } else { 2 }], frame)
     }
 
@@ -1274,7 +1379,7 @@ impl<'a> Machine<'a> {
                 print!("{}", over_lines(&v[0], 0));
                 Value::Flag(true)
             }
-            Prim::Invert => Value::Flag(!v[0].is_true()),
+            Prim::Invert => Value::Flag(!self.stands_true(&v[0])),
             // Turning text over works letter by letter; anything else is
             // read as a whole number of sixty-four bits first.
             Prim::BitsOver => match &v[0] {
@@ -1328,6 +1433,20 @@ impl<'a> Machine<'a> {
                 Some(r) => r?,
                 None => return Err("Cannot negate non-numeric value".to_string()),
             },
+            // Which of two comes first is asked just as loosely, so an
+            // array, a flag, nothing and text spelling no number are
+            // each set against the other the way such a language sets
+            // them.
+            Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge if self.loose_equals => {
+                n(2)?;
+                let (left, right) = (v[0].clone(), v[1].clone());
+                Value::Flag(match op {
+                    Prim::Lt => self.comes_first(&left, &right)?,
+                    Prim::Gt => self.comes_first(&right, &left)?,
+                    Prim::Le => !self.comes_first(&right, &left)?,
+                    _ => !self.comes_first(&left, &right)?,
+                })
+            }
             // Where a language has a word for being the very same,
             // being equal is the looser question: text spelling a
             // number stands for that number, a flag turns the question
@@ -1339,8 +1458,8 @@ impl<'a> Machine<'a> {
                 let empty = |x: &Value| matches!(x, Value::Nil | Value::Unset);
                 let (left, right) = (&v[0], &v[1]);
                 let alike = match (left, right) {
-                    (Value::Flag(_), _) | (_, Value::Flag(_)) => left.is_true() == right.is_true(),
-                    (one, other) | (other, one) if empty(one) && counts(other) => !other.is_true(),
+                    (Value::Flag(_), _) | (_, Value::Flag(_)) => self.stands_true(left) == self.stands_true(right),
+                    (one, other) | (other, one) if empty(one) && counts(other) => !self.stands_true(other),
                     (one, Value::Text(s)) | (Value::Text(s), one) if empty(one) => s.is_empty(),
                     (one, Value::Vector(items)) | (Value::Vector(items), one) if empty(one) => items.is_empty(),
                     (one, Value::Dict(pairs)) | (Value::Dict(pairs), one) if empty(one) => pairs.is_empty(),

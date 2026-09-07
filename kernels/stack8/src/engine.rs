@@ -158,6 +158,19 @@ impl<'a> Engine<'a> {
 
     /// Tell a complaint the way this language tells one, and go on. A
     /// language with no word for the kind says nothing at all.
+    /// Whether a value counts as true in this language. Beyond nought
+    /// and nothing, a language may count an array holding nothing as
+    /// untrue, and may name pieces of text it counts as untrue.
+    fn truth(&self, v: &Value) -> bool {
+        match v {
+            Value::Bond(shared) => self.truth(&shared.borrow()),
+            Value::Array(items) if self.lang.untrue_empty => !items.is_empty(),
+            Value::Map(pairs) if self.lang.untrue_empty => !pairs.is_empty(),
+            Value::Text(s) if self.lang.untrue_text.iter().any(|w| w == s.as_ref()) => false,
+            other => other.is_true(),
+        }
+    }
+
     fn complain(&self, kind: Complaint, message: &str) {
         if self.hushed.get() > 0 {
             return;
@@ -665,7 +678,8 @@ impl<'a> Engine<'a> {
                     });
                 }
                 Instr::Skip(to) => {
-                    if !self.drop_top()?.is_true() {
+                    let held = self.drop_top()?;
+                    if !self.truth(&held) {
                         pc = *to;
                         continue;
                     }
@@ -683,7 +697,10 @@ impl<'a> Engine<'a> {
                             Action::Eq => x == y,
                             _ => x != y,
                         },
-                        _ => self.dyadic(op, av, bv)?.is_true(),
+                        _ => {
+                            let told = self.dyadic(op, av, bv)?;
+                            self.truth(&told)
+                        }
                     };
                     if !holds {
                         pc = *to;
@@ -749,8 +766,14 @@ impl<'a> Engine<'a> {
 
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
         let result = match op {
-            Action::Not => Value::Flag(!self.drop_top()?.is_true()),
-            Action::AsBool => Value::Flag(self.drop_top()?.is_true()),
+            Action::Not => {
+                let held = self.drop_top()?;
+                Value::Flag(!self.truth(&held))
+            }
+            Action::AsBool => {
+                let held = self.drop_top()?;
+                Value::Flag(self.truth(&held))
+            }
             Action::BitTurn => {
                 let v = self.drop_top()?;
                 match &v {
@@ -1037,12 +1060,24 @@ impl<'a> Engine<'a> {
         let sp = self.wording();
         let joined = || Value::text(&format!("{}{}", a.display(&sp), b.display(&sp)));
         Ok(match op {
-            Action::And => Value::Flag(a.is_true() && b.is_true()),
-            Action::Or => Value::Flag(a.is_true() || b.is_true()),
+            Action::And => Value::Flag(self.truth(a) && self.truth(b)),
+            Action::Or => Value::Flag(self.truth(a) || self.truth(b)),
             // Where a language has an operator for being the very same,
             // being equal is the looser question: text that spells a
             // number stands for that number, and a number met by text
             // that spells none is itself read as text.
+            // Which of two comes first is asked the same loose way, so
+            // that arrays, flags, nothing and text that spells no number
+            // are all told apart as such a language tells them apart.
+            Action::Lt | Action::Le | Action::Gt | Action::Ge if self.lang.loose_equality => {
+                let first = |x: &Value, y: &Value| self.loosely_below(x, y);
+                Value::Flag(match op {
+                    Action::Lt => first(a, b)?,
+                    Action::Gt => first(b, a)?,
+                    Action::Le => !first(b, a)?,
+                    _ => !first(a, b)?,
+                })
+            }
             Action::Eq | Action::Ne if self.lang.loose_equality => {
                 let numeric = |v: &Value| v.sort().map_or(false, |k| matches!(k, Sort::Integer | Sort::Rational | Sort::Real));
                 let nothing = |v: &Value| matches!(v, Value::Null | Value::Blank | Value::Gap | Value::Fence);
@@ -1050,10 +1085,10 @@ impl<'a> Engine<'a> {
                     // A flag on either side turns the question into
                     // whether the other side is true, and nothing
                     // counts as untrue.
-                    (Value::Flag(_), _) | (_, Value::Flag(_)) => a.is_true() == b.is_true(),
-                    (one, other) | (other, one) if nothing(one) && numeric(other) => !other.is_true(),
+                    (Value::Flag(_), _) | (_, Value::Flag(_)) => self.truth(a) == self.truth(b),
+                    (one, other) | (other, one) if nothing(one) && numeric(other) => !self.truth(other),
                     (one, Value::Text(s)) | (Value::Text(s), one) if nothing(one) => s.is_empty(),
-                    (one, other) | (other, one) if nothing(one) && matches!(other, Value::Array(_) | Value::Map(_)) => !other.is_true() || {
+                    (one, other) | (other, one) if nothing(one) && matches!(other, Value::Array(_) | Value::Map(_)) => !self.truth(other) || {
                         match other {
                             Value::Array(items) => items.is_empty(),
                             Value::Map(pairs) => pairs.is_empty(),
@@ -1286,6 +1321,74 @@ impl<'a> Engine<'a> {
                 })
             }
             other => return Err(format!("{:?} is not a two-value operation", other)),
+        })
+    }
+
+    /// The keys and values of an array, a place's number standing for
+    /// its key where the places are unnamed.
+    fn keyed_places(v: &Value) -> Vec<(Value, Value)> {
+        match v {
+            Value::Array(items) => items.iter().enumerate().map(|(i, x)| (Value::Small(i as i64), x.clone())).collect(),
+            Value::Map(pairs) => pairs.as_ref().clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Which of two values comes first, asked the loose way a language
+    /// with an operator for being the very same means by it. A flag or
+    /// nothing on either side turns the question into which of the two
+    /// is true; an array stands above whatever is not an array, and two
+    /// arrays are told apart by how much they hold and then place by
+    /// place; text that spells a number stands for that number, and a
+    /// number met by text that spells none is itself read as text.
+    fn loosely_below(&self, a: &Value, b: &Value) -> Res<bool> {
+        let sp = self.wording();
+        let numeric = |v: &Value| v.sort().map_or(false, |k| matches!(k, Sort::Integer | Sort::Rational | Sort::Real));
+        let nothing = |v: &Value| matches!(v, Value::Null | Value::Blank | Value::Gap | Value::Fence);
+        let listed = |v: &Value| matches!(v, Value::Array(_) | Value::Map(_));
+        // Two numbers are set against each other at the width the
+        // language holds them in, as they are worked at it.
+        let exactly = |x: &Value, y: &Value| -> Res<bool> { Ok(self.dyadic_numbers(&Action::Lt, x, y)?.is_true()) };
+        Ok(match (a, b) {
+            (Value::Flag(_), _) | (_, Value::Flag(_)) => !self.truth(a) && self.truth(b),
+            // Nothing met by text is the empty piece of text, which
+            // nothing comes before.
+            (one, Value::Text(s)) if nothing(one) => !s.is_empty(),
+            (Value::Text(_), other) if nothing(other) => false,
+            (one, other) if nothing(one) || nothing(other) => !self.truth(one) && self.truth(other) && nothing(one),
+            (x, y) if listed(x) && listed(y) => {
+                let (left, right) = (Self::keyed_places(x), Self::keyed_places(y));
+                if left.len() != right.len() {
+                    return Ok(left.len() < right.len());
+                }
+                for (key, held) in left {
+                    let Some((_, theirs)) = right.iter().find(|(k, _)| k.equals(&key)) else {
+                        // A place the other does not name leaves the two
+                        // beyond telling apart, and an array is not below
+                        // what it cannot be told from.
+                        return Ok(false);
+                    };
+                    if !self.dyadic(&Action::Eq, &held, theirs)?.is_true() {
+                        return self.loosely_below(&held, theirs);
+                    }
+                }
+                false
+            }
+            (x, _) if listed(x) => false,
+            (_, y) if listed(y) => true,
+            (Value::Text(x), Value::Text(y)) => match (number_spelled(x), number_spelled(y)) {
+                (Some(m), Some(n)) => exactly(&m, &n)?,
+                _ => x.as_ref() < y.as_ref(),
+            },
+            (Value::Text(s), other) if numeric(other) => match number_spelled(s) {
+                Some(n) => exactly(&n, other)?,
+                None => s.as_ref() < other.display(&sp).as_str(),
+            },
+            (other, Value::Text(s)) if numeric(other) => match number_spelled(s) {
+                Some(n) => exactly(other, &n)?,
+                None => other.display(&sp).as_str() < s.as_ref(),
+            },
+            _ => exactly(a, b)?,
         })
     }
 

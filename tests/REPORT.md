@@ -22,17 +22,16 @@ is listed, since the full kernels are meant to behave alike.
 | `php/lang` | 213 | pass 63, differs 57, error 91, skipped 2 | pass 63, differs 57, error 91, skipped 2 |
 | `php/lang/constants` | 2 | pass 1, differs 1, error 0, skipped 0 | pass 1, differs 1, error 0, skipped 0 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 3, error 0, skipped 0 | pass 3, differs 3, error 0, skipped 0 |
-| `php/lang/operators` | 64 | pass 21, differs 28, error 15, skipped 0 | pass 21, differs 28, error 15, skipped 0 |
+| `php/lang/operators` | 64 | pass 26, differs 27, error 11, skipped 0 | pass 26, differs 27, error 11, skipped 0 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 128, differs 148, error 144, skipped 2 | pass 128, differs 148, error 144, skipped 2 |
+| all | 422 | pass 133, differs 147, error 140, skipped 2 | pass 133, differs 147, error 140, skipped 2 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 148 |
+| ran, printed something else | 147 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | Unexpected character '$' | 6 |
 | Unexpected token: & | 5 |
-| Fatal error: Uncaught Error: Cannot coerce array to number in <file> | 5 |
 | Unexpected token: , | 4 |
 | Unexpected token: -> | 4 |
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
@@ -68,6 +67,7 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: ENT_HTML5 in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> | 1 |
 | Expected identifier as the property name, got '{' | 1 |
+| Fatal error: Uncaught Error: Undefined variable: PHP_BUILD_DATE in <file> | 1 |
 
 ### Reserved words: 47 of 68 spelled
 
@@ -536,11 +536,11 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/nan-comparison-false.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: NAN in <file> |
 | `php/lang/operators/negate_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/negate_variationStr.phpt` | error | error | Fatal error: Uncaught Error: Cannot negate non-numeric value in <file> |
-| `php/lang/operators/operator_equals_basic.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_equals_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_equals_variation.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/operator_equals_variation_64bit.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/operator_gt_basic.phpt` | error | error | Fatal error: Uncaught Error: Cannot coerce array to number in <file> |
-| `php/lang/operators/operator_gt_or_equal_basic.phpt` | error | error | Fatal error: Uncaught Error: Cannot coerce array to number in <file> |
+| `php/lang/operators/operator_gt_basic.phpt` | pass | pass |  |
+| `php/lang/operators/operator_gt_or_equal_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_gt_or_equal_variation.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/operator_gt_or_equal_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_gt_variation.phpt` | pass | pass |  |
@@ -549,8 +549,8 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/operator_identical_recusion-01.phpt` | error | error | Unexpected token: & |
 | `php/lang/operators/operator_identical_variation.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/operator_identical_variation_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/operator_lt_basic.phpt` | error | error | Fatal error: Uncaught Error: Cannot coerce array to number in <file> |
-| `php/lang/operators/operator_lt_or_equal_basic.phpt` | error | error | Fatal error: Uncaught Error: Cannot coerce array to number in <file> |
+| `php/lang/operators/operator_lt_basic.phpt` | pass | pass |  |
+| `php/lang/operators/operator_lt_or_equal_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_lt_or_equal_variation.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/operator_lt_or_equal_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_lt_variation.phpt` | pass | pass |  |

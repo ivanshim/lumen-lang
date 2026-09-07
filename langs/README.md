@@ -384,6 +384,13 @@ only. The extension labels so far, all from PHP:
   is not there yet, so `$x[0][1] = 'deep'` builds what it needs and
   says nothing about what was not there. It is the writing counterpart
   of `ext.op.index.absent`, which says how a place not there reads.
+- `ext.system.untrue.text` and `ext.system.untrue.empty_array`: what a
+  language counts as untrue past nought and nothing. The first names
+  pieces of text held untrue besides text with nothing in it — PHP
+  holds `"0"` untrue but not `"0.0"`, which is why they are named one
+  by one rather than worked out. The second says an array holding
+  nothing is untrue. Both are read wherever truth is asked: a test, a
+  negation, `and` and `or`, and the looser questions below.
 - `ext.builtin.eval`: builtins taking a piece of the language written
   out as text, reading it as the run's own language and running it
   where the call stands. The text is read with whatever a program of
@@ -447,6 +454,15 @@ only. The extension labels so far, all from PHP:
   standing for the same amount are equal and yet not the same. An array
   is the same as another when it holds the same keys in the same order,
   each holding what is itself the same.
+
+  Which of two comes first (`op.lt`, `op.le`, `op.gt`, `op.ge`) is
+  asked the same loose way. A flag or nothing on either hand makes the
+  question one of which of the two is true. An array stands above
+  whatever is not an array, and two arrays are set against each other
+  by how much they hold and then place by place, a place one names and
+  the other does not leaving them past telling apart. Text spelling a
+  number stands for that number, and a number met by text spelling
+  none is itself read as text.
 - `ext.op.bit.and`, `ext.op.bit.or`, `ext.op.bit.xor`, `ext.op.bit.not`,
   `ext.op.bit.left` and `ext.op.bit.right`: the bits of a value taken
   together, turned over, or moved along (`&`, `|`, `^`, `~`, `<<`, `>>`).
@@ -830,4 +846,6 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.source.directory` | - | - | - | - | - | - | - | `__DIR__` | - | - |
 | `ext.system.source.file` | - | - | - | - | - | - | - | `__FILE__` | - | - |
 | `ext.system.source.line` | - | - | - | - | - | - | - | `__LINE__` | - | - |
+| `ext.system.untrue.empty_array` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.system.untrue.text` | - | - | - | - | - | - | - | `0` | - | - |
 <!-- table:end -->
