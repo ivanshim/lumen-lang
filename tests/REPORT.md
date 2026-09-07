@@ -22,13 +22,13 @@ is listed, since the full kernels are meant to behave alike.
 | `php/lang` | 213 | pass 62, differs 57, error 89, skipped 5 | pass 62, differs 57, error 89, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
-| `php/lang/operators` | 64 | pass 29, differs 18, error 11, skipped 6 | pass 29, differs 18, error 11, skipped 6 |
+| `php/lang/operators` | 64 | pass 29, differs 22, error 7, skipped 6 | pass 29, differs 22, error 7, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 142, differs 123, error 132, skipped 25 | pass 142, differs 123, error 132, skipped 25 |
+| all | 422 | pass 142, differs 127, error 128, skipped 25 | pass 142, differs 127, error 128, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 123 |
+| ran, printed something else | 127 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | Unexpected character '$' | 6 |
@@ -58,8 +58,6 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Array index 2 out of bounds (length: 1) in <file> | 2 |
 | Expected ']' after array index, got '++' | 2 |
 | Unexpected token: ++ | 2 |
-| Fatal error: Uncaught Error: Bit shift by a negative number in <file> | 2 |
-| Fatal error: Uncaught Error: Division by zero in <file> | 2 |
 | Unexpected token: > | 2 |
 | Unexpected token: :: | 2 |
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
@@ -68,6 +66,8 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: PHP_BINARY in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: ENT_HTML5 in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> | 1 |
+| Expected identifier as the property name, got '{' | 1 |
+| Fatal error: Uncaught Error: Undefined variable: PHP_BUILD_DATE in <file> | 1 |
 
 ### Reserved words: 47 of 68 spelled
 
@@ -402,7 +402,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug24908.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug24951.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ob_end_flush in <file> |
 | `php/lang/bug25145.phpt` | pass | pass |  |
-| `php/lang/bug25547.phpt` | error | error | Fatal error: Uncaught Error: Cannot coerce array to number in <file> |
+| `php/lang/bug25547.phpt` | error | error | Fatal error: Uncaught TypeError: Cannot coerce array to number in <file> |
 | `php/lang/bug25652.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug25922.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug26182.phpt` | pass | pass |  |
@@ -517,19 +517,19 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/bitwiseNot_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/bitwiseOr_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseOr_variationStr.phpt` | pass | pass |  |
-| `php/lang/operators/bitwiseShiftLeft_basiclong_64bit.phpt` | error | error | Fatal error: Uncaught Error: Bit shift by a negative number in <file> |
+| `php/lang/operators/bitwiseShiftLeft_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/bitwiseShiftLeft_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/bitwiseShiftLeft_variationStr2.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseShiftLeft_variationStr_64bit.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/bitwiseShiftRight_basiclong_64bit.phpt` | error | error | Fatal error: Uncaught Error: Bit shift by a negative number in <file> |
+| `php/lang/operators/bitwiseShiftRight_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/bitwiseShiftRight_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/bitwiseShiftRight_variationStr2.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseXor_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseXor_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/coalesce.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: StdClass in <file> |
 | `php/lang/operators/divide_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/divide_variationStr.phpt` | error | error | Fatal error: Uncaught Error: Division by zero in <file> |
-| `php/lang/operators/modulus_basiclong_64bit.phpt` | error | error | Fatal error: Uncaught Error: Division by zero in <file> |
+| `php/lang/operators/divide_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/modulus_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/modulus_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/multiply_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/multiply_variationStr.phpt` | differs | differs | ran, printed something else |

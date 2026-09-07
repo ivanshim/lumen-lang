@@ -339,8 +339,25 @@ impl<'a> Machine<'a> {
     /// A fault of the kernel's own as a value of the class the language
     /// names for one. Nothing where it names none, or where the class
     /// itself is nowhere to be found.
+    /// The class a fault of the kernel's own goes under. A language may
+    /// name one for a fault of a kind, and this kernel knows which of
+    /// its own faults are of which kind, being the one that words them.
+    /// Where the language names none for the kind, the plain class does.
+    fn class_of_fault(&self, told: &str) -> Option<String> {
+        let by_kind = match told {
+            _ if told.starts_with("Division by zero") => Some("ext.system.fault.class.division"),
+            _ if told.starts_with("Bit shift by") => Some("ext.system.fault.class.arithmetic"),
+            _ if told.starts_with("Cannot coerce") => Some("ext.system.fault.class.kind"),
+            _ => None,
+        };
+        by_kind
+            .and_then(|label| self.table.single(label))
+            .or_else(|| self.table.single("ext.system.fault.class"))
+            .map(str::to_string)
+    }
+
     fn as_raised(&mut self, told: &str) -> Option<Value> {
-        let named = self.table.single("ext.system.fault.class")?.to_string();
+        let named = self.class_of_fault(told)?;
         let Some(Value::Blueprint(of)) = self.lookup(&named) else { return None };
         self.made += 1;
         let mut holds = of.every_field();
@@ -455,7 +472,7 @@ impl<'a> Machine<'a> {
             // A fault of the kernel's own is told under the class the
             // language names for one, where it names any.
             Err(Escape::Error(e)) => {
-                if let Some(named) = self.table.single("ext.system.fault.class") {
+                if let Some(named) = self.class_of_fault(&e) {
                     if self.complaint_words.iter().any(|(k, _)| *k == "fatal") {
                         self.raised_on = self.row;
                         self.end_of_run(&format!("Uncaught {}: {}", named, e));

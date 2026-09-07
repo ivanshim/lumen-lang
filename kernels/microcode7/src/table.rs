@@ -98,7 +98,7 @@ ext.op.otherwise:L ext.op.bit.and:L ext.op.bit.or:L ext.op.bit.xor:L ext.op.bit.
 ext.op.bit.left:L ext.op.bit.right:L ext.op.identical:L ext.op.not_identical:L ext.system.kind.spelled:B ext.builtin.args.all:L \
 ext.builtin.args.count:L ext.builtin.args.at:L ext.op.assign.value:B ext.op.index.plain_keys:B \
 ext.system.source.file:L ext.system.source.directory:L ext.system.source.line:L \
-ext.system.complaint.warning:L ext.system.complaint.notice:L ext.system.complaint.deprecated:L ext.system.complaint.fatal:L ext.system.fault.class:L ext.builtin.time_limit:L ext.system.kind.brief:L ext.builtin.file.read:L ext.builtin.file.write:L \
+ext.system.complaint.warning:L ext.system.complaint.notice:L ext.system.complaint.deprecated:L ext.system.complaint.fatal:L ext.system.fault.class:L ext.system.fault.class.arithmetic:L ext.system.fault.class.division:L ext.system.fault.class.kind:L ext.builtin.time_limit:L ext.system.kind.brief:L ext.builtin.file.read:L ext.builtin.file.write:L \
 ext.builtin.file.exists:L ext.builtin.file.remove:L ext.builtin.eval:L ext.builtin.include:L ext.op.hush:L ext.builtin.isset:L ext.op.index.makes:B ext.system.untrue.text:L ext.system.untrue.empty_array:B ext.builtin.exit:L \
 ext.lexical.number.binary_prefix:L ext.lexical.number.octal_prefix:L ext.lexical.number.octal_lead:B \
 ext.lexical.number.separator:L ext.system.integer.bits:N ext.system.real.bits:N ext.system.real.digits:N \

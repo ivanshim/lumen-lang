@@ -614,6 +614,15 @@
   "ext.system.fault.class": [
     "Error"
   ],
+  "ext.system.fault.class.arithmetic": [
+    "ArithmeticError"
+  ],
+  "ext.system.fault.class.division": [
+    "DivisionByZeroError"
+  ],
+  "ext.system.fault.class.kind": [
+    "TypeError"
+  ],
   "ext.builtin.time_limit": [
     "set_time_limit"
   ],

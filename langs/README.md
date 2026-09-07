@@ -416,6 +416,15 @@ only. The extension labels so far, all from PHP:
   raised as, where a language names one. A statement written to take a
   raised value then takes a fault as it takes anything else, and one
   nobody takes is told under that class.
+- `ext.system.fault.class.arithmetic`, `.division` and `.kind`: the
+  class a fault of one of those kinds is raised as, where a language
+  names one apart from the rest: working with numbers, dividing by
+  nought, and a value of a kind the work cannot take. Each stands in
+  for the plain class above where the language names it, so a statement
+  written to take just that kind takes just that kind. Which of a
+  kernel's faults are of which kind is the kernel's own to know, since
+  it is the one that words them, and the two full kernels word them
+  differently.
 - `ext.system.source.file` and `ext.system.source.directory`: the names
   a program calls the file it is written in and the place that file
   lies in (`__FILE__`, `__DIR__`). The host works both out from the
@@ -837,6 +846,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.complaint.notice` | - | - | - | - | - | - | - | `Notice` | - | - |
 | `ext.system.complaint.warning` | - | - | - | - | - | - | - | `Warning` | - | - |
 | `ext.system.fault.class` | - | - | - | - | - | - | - | `Error` | - | - |
+| `ext.system.fault.class.arithmetic` | - | - | - | - | - | - | - | `ArithmeticError` | - | - |
+| `ext.system.fault.class.division` | - | - | - | - | - | - | - | `DivisionByZeroError` | - | - |
+| `ext.system.fault.class.kind` | - | - | - | - | - | - | - | `TypeError` | - | - |
 | `ext.system.integer.bits` | - | - | - | - | - | - | - | `64` | - | - |
 | `ext.system.kind.brief` | - | - | - | - | - | - | - | `int` `-` `float` `string` `bool` `array` `null` | - | - |
 | `ext.system.kind.spelled` | - | - | - | - | - | - | - | `true` | - | - |

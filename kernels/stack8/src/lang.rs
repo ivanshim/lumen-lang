@@ -172,6 +172,13 @@ pub struct Lang {
     /// The class a fault of the kernel's own is raised as, where a
     /// language names one, so that a program may take it like any other.
     pub fault_class: Option<String>,
+    /// The class a fault of a kind is raised as, where a language names
+    /// one: working with numbers, dividing by nought, and a value of a
+    /// kind the work cannot take. Each stands in for the plain class
+    /// where the language names it.
+    pub fault_arithmetic: Option<String>,
+    pub fault_division: Option<String>,
+    pub fault_kind: Option<String>,
     /// Whether a binding never written is a complaint rather than a stop.
     pub warns_of_unwritten: bool,
     /// Whether the language says where a complaint happened, so that
@@ -342,6 +349,7 @@ w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove
 w ext.builtin.eval | w ext.builtin.include | w ext.op.hush | w ext.builtin.isset | b ext.op.index.makes
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
+w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 ";
@@ -909,6 +917,9 @@ impl Lang {
             },
             line_binding: r.head("ext.system.source.line")?,
             fault_class: r.head("ext.system.fault.class")?,
+            fault_arithmetic: r.head("ext.system.fault.class.arithmetic")?,
+            fault_division: r.head("ext.system.fault.class.division")?,
+            fault_kind: r.head("ext.system.fault.class.kind")?,
             warns_of_unwritten: r.head("ext.system.complaint.warning")?.is_some(),
             tells_place: tells_complaints,
             source_bindings: {

@@ -202,7 +202,7 @@ impl<'a> Engine<'a> {
             // A fault of the kernel's own is told under the class the
             // language names for one, where it names any.
             Fault::Note(told) => {
-                let Some(named) = &self.lang.fault_class else { return };
+                let Some(named) = self.class_for(told) else { return };
                 let at = self.line;
                 println!("\n{}: Uncaught {}: {} in {}:{}", word, named, told, self.source, at);
                 println!("Stack trace:\n#0 {{main}}\n  thrown in {} on line {}", self.source, at);
@@ -227,8 +227,23 @@ impl<'a> Engine<'a> {
     /// A fault of the kernel's own as a value of the class the language
     /// names for one, so a program may take it. Nothing where the
     /// language names no such class, or where it is not to be found.
+    /// The class a fault of the kernel's own is raised as. A language
+    /// may name one for a fault of a kind, and the kernel knows which of
+    /// its own faults are of which kind, since it is the one that says
+    /// them. Where the language names none for the kind, the plain class
+    /// stands.
+    fn class_for(&self, told: &str) -> Option<String> {
+        let named = match told {
+            _ if told.starts_with("Division by zero") => &self.lang.fault_division,
+            _ if told.starts_with("Bit shift by") => &self.lang.fault_arithmetic,
+            _ if told.starts_with("Cannot coerce") => &self.lang.fault_kind,
+            _ => &None,
+        };
+        named.clone().or_else(|| self.lang.fault_class.clone())
+    }
+
     fn as_fault(&mut self, told: &str) -> Option<Value> {
-        let named = self.lang.fault_class.clone()?;
+        let named = self.class_for(told)?;
         let Some(Value::Class(class)) = self.lookup(&named).cloned() else { return None };
         self.hurled_at.set(self.line);
         self.made += 1;
