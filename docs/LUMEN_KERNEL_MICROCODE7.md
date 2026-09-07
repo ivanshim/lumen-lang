@@ -104,3 +104,10 @@ carrying its count down through the cycles), hoisted top-level
 functions and exponent literals. The reference kernels skip those
 labels, so the reference suites under `tests/` run on this kernel and
 stack8 only.
+
+It also holds a map: `Value::Dict`, keys with their values in the order
+they were written, beside the plain vector. A literal gathers couples
+into a dict and everything else into a vector, so a list stays a list;
+writing a key a vector does not hold spreads that vector into a dict
+first. `foreach` and `for v in a` are a `Cycle` over the places, reading
+with `Extent`, `KeyAt` and `ItemAt`.

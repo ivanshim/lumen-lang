@@ -105,3 +105,10 @@ time), `var_dump`, compound assignment, `break n`, hoisted top-level
 functions (their instrs lifted to the front of the unit) and exponent
 literals. The reference kernels skip those labels, so the reference
 suites under `tests/` run on this kernel and microcode7 only.
+
+It also holds a map, which the reference kernels do not: `Value::Map`, an
+ordered list of keys with their values, beside the plain array. A literal
+gathers ties into a map and everything else into an array, so a list
+keeps its representation and its speed; writing a key an array does not
+hold turns that array into a map. `foreach` and `for v in a` walk either
+by position, with `Extent`, `KeyAt` and `ValueAt` doing the reading.

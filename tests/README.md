@@ -21,8 +21,10 @@ the definition or a kernel does not know, which the report records.
 The suites run on the two full kernels, stack8 and microcode7, which are
 the ones that implement the `ext.` labels the languages need beyond the
 core (see `langs/README.md`); the report scores each suite directory on
-each kernel and lists any test the two disagree on. The suites are not
-part of `test.sh`: they measure distance, they do not gate. Run them with
+each kernel and lists any test the two disagree on. `php/basic` is largely out of reach by its nature: most of it tests
+PHP's web behaviour, reading `$_POST`, `$_FILES`, `$_COOKIE` and
+`$_SERVER`, which a kernel run from a command line has nothing to put in.
+The suites are not part of `test.sh`: they measure distance, they do not gate. Run them with
 
 ```bash
 python3 scripts/reference_tests.py            # both full kernels

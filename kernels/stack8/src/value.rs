@@ -60,6 +60,11 @@ pub enum Value {
     Flag(bool),
     Null,
     Array(Rc<Vec<Value>>),
+    /// Keys and their values, in the order they were put there.
+    Map(Rc<Vec<(Value, Value)>>),
+    /// A key and a value written together (`k => v`), waiting to be
+    /// gathered into a map.
+    Tie(Rc<(Value, Value)>),
     Routine(Rc<Routine>),
     SortOf(Sort),
     /// A slot nothing was stored in.
@@ -100,7 +105,7 @@ impl Value {
             Value::Real(_) => Sort::Real,
             Value::Text(_) => Sort::Text,
             Value::Flag(_) => Sort::Boolean,
-            Value::Array(_) => Sort::Array,
+            Value::Array(_) | Value::Map(_) => Sort::Array,
             Value::Null | Value::SortOf(_) => Sort::Null,
             _ => return None,
         })
@@ -114,7 +119,7 @@ impl Value {
             Value::Real(r) => !r.p.is_zero(),
             Value::Text(s) => !s.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
-            Value::Frac(_) | Value::Array(_) | Value::Routine(_) | Value::SortOf(_) => true,
+            Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::SortOf(_) => true,
         }
     }
 
@@ -129,7 +134,7 @@ impl Value {
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
-            Value::Array(_) => Err("Cannot coerce array to number".to_string()),
+            Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
             Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
         }
@@ -148,6 +153,10 @@ impl Value {
             (Value::SortOf(a), Value::SortOf(b)) => a == b,
             (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a, b),
             (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
+            (Value::Map(a), Value::Map(b)) => {
+                a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
+            }
+            (Value::Tie(a), Value::Tie(b)) => a.0.equals(&b.0) && a.1.equals(&b.1),
             _ => false,
         }
     }
@@ -163,6 +172,11 @@ impl Value {
                 let shown: Vec<String> = items.iter().map(|v| v.display(sp)).collect();
                 format!("[{}]", shown.join(", "))
             }
+            Value::Map(pairs) => {
+                let shown: Vec<String> = pairs.iter().map(|(k, v)| format!("{} => {}", k.display(sp), v.display(sp))).collect();
+                format!("[{}]", shown.join(", "))
+            }
+            Value::Tie(pair) => format!("{} => {}", pair.0.display(sp), pair.1.display(sp)),
             other => other.plain(),
         }
     }
@@ -181,6 +195,11 @@ impl Value {
                 let shown: Vec<String> = items.iter().map(Value::plain).collect();
                 format!("[{}]", shown.join(", "))
             }
+            Value::Map(pairs) => {
+                let shown: Vec<String> = pairs.iter().map(|(k, v)| format!("{} => {}", k.plain(), v.plain())).collect();
+                format!("[{}]", shown.join(", "))
+            }
+            Value::Tie(pair) => format!("{} => {}", pair.0.plain(), pair.1.plain()),
             Value::Routine(p) => format!("<function({})>", p.formals.join(", ")),
             Value::SortOf(k) => k.tag().to_string(),
         }
@@ -199,6 +218,21 @@ impl Value {
                     into.push(',');
                 }
                 into.push(']');
+            }
+            Value::Map(pairs) => {
+                into.push('{');
+                for (k, v) in pairs.iter() {
+                    k.memo_key(into);
+                    v.memo_key(into);
+                    into.push(',');
+                }
+                into.push('}');
+            }
+            Value::Tie(pair) => {
+                into.push('(');
+                pair.0.memo_key(into);
+                pair.1.memo_key(into);
+                into.push(')');
             }
             Value::Routine(p) => {
                 let _ = write!(into, "p{:p}", Rc::as_ptr(p));

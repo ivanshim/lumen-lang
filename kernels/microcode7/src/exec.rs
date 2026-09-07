@@ -278,21 +278,35 @@ impl<'a> Machine<'a> {
                     }
                     let (f, i) = self.locate(slot, frame)?;
                     let mut slots = f.cells.borrow_mut();
-                    let Value::Vector(items) = &mut slots[i] else {
+                    let mut values = values;
+                    let value = values.pop().unwrap();
+                    let key = values.pop();
+                    // A list written at a place it already holds stays a
+                    // list; any other key turns it into a map, its places
+                    // becoming the keys.
+                    let stays = match (&slots[i], &key) {
+                        (Value::Vector(items), Some(k)) => as_index(k).map_or(false, |at| at < items.len()),
+                        (Value::Vector(_), None) => true,
+                        _ => false,
+                    };
+                    if let (Value::Vector(items), true) = (&mut slots[i], stays) {
+                        let items = Rc::make_mut(items);
+                        match key {
+                            Some(k) => items[as_index(&k)?] = value,
+                            None => items.push(value),
+                        }
+                        return Ok(Value::Nil);
+                    }
+                    if let Value::Vector(items) = &slots[i] {
+                        let spread = items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect();
+                        slots[i] = Value::Dict(Rc::new(spread));
+                    }
+                    let Value::Dict(entries) = &mut slots[i] else {
                         return Err(format!("Variable '{}' is not an array", slot.ident).into());
                     };
-                    let items = Rc::make_mut(items);
-                    let mut values = values;
-                    if want == 1 {
-                        items.push(values.pop().unwrap());
-                    } else {
-                        let v = values.pop().unwrap();
-                        let at = as_index(&values.pop().unwrap())?;
-                        if at >= items.len() {
-                            return Err(format!("Array index {} out of bounds (length: {})", at, items.len()).into());
-                        }
-                        items[at] = v;
-                    }
+                    let entries = Rc::make_mut(entries);
+                    let key = key.unwrap_or_else(|| Value::Small(after_keys(entries)));
+                    set_key(entries, key, value);
                     Ok(Value::Nil)
                 }
                 op => {
@@ -451,7 +465,44 @@ impl<'a> Machine<'a> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
         };
         Ok(match op {
-            Prim::MakeArray => Value::Vector(Rc::new(v.to_vec())),
+            Prim::MakeArray => assembled(v.to_vec(), false),
+            Prim::MakeMap => assembled(v.to_vec(), true),
+            Prim::Couple => {
+                n(2)?;
+                Value::Couple(Rc::new((v[0].clone(), v[1].clone())))
+            }
+            Prim::KeyAt | Prim::ItemAt => {
+                n(2)?;
+                let at = as_index(&v[1])?;
+                let wants_key = op == Prim::KeyAt;
+                match &v[0] {
+                    Value::Vector(items) => match items.get(at) {
+                        Some(_) if wants_key => Value::Small(at as i64),
+                        Some(x) => x.clone(),
+                        None => return Err(format!("Array index {} out of bounds (length: {})", at, items.len())),
+                    },
+                    Value::Dict(entries) => match entries.get(at) {
+                        Some((k, x)) => if wants_key { k.clone() } else { x.clone() },
+                        None => return Err(format!("Array index {} out of bounds (length: {})", at, entries.len())),
+                    },
+                    _ => return Err("Cannot walk a value that is not an array".to_string()),
+                }
+            }
+            Prim::Extent => {
+                n(1)?;
+                match &v[0] {
+                    Value::Vector(items) => Value::Small(items.len() as i64),
+                    Value::Dict(entries) => Value::Small(entries.len() as i64),
+                    _ => return Err("Cannot walk a value that is not an array".to_string()),
+                }
+            }
+            Prim::AtEnd => return Err("An empty index belongs on the left of an assignment".to_string()),
+            Prim::Gather => return Err(format!("{}() is a literal, not a call", name)),
+            Prim::Portray => {
+                n(1)?;
+                print!("{}", over_lines(&v[0], 0));
+                Value::Flag(true)
+            }
             Prim::Invert => Value::Flag(!v[0].is_true()),
             Prim::Negate => match math::compute(Calc::Minus, &Value::Small(0), &v[0]) {
                 Some(r) => r?,
@@ -570,6 +621,7 @@ impl<'a> Machine<'a> {
                 match &v[0] {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
                     Value::Vector(l) => Value::Small(l.len() as i64),
+                    Value::Dict(entries) => Value::Small(entries.len() as i64),
                     _ => return Err(format!("{}() requires a string or array argument", name)),
                 }
             }
@@ -665,6 +717,10 @@ impl<'a> Machine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value) -> Result<Value, String> {
+        if let Value::Dict(entries) = target {
+            let found = entries.iter().find(|(k, _)| k.equals(at));
+            return found.map(|(_, v)| v.clone()).ok_or_else(|| format!("Undefined array key {}", at.bare()));
+        }
         let i = as_index(at)?;
         match target {
             Value::Vector(l) => l.get(i).cloned().ok_or_else(|| format!("Array index {} out of bounds (length: {})", i, l.len())),
@@ -724,6 +780,82 @@ fn with_kind(v: &Value, level: usize) -> String {
             let entries: Vec<String> = items.iter().enumerate().map(|(i, x)| format!("{lead}  [{i}]=>\n{lead}  {}\n", with_kind(x, level + 1))).collect();
             format!("array({}) {{\n{}{lead}}}", items.len(), entries.concat())
         }
+        Value::Dict(entries) => {
+            // A key of text is shown in quotes, a number bare.
+            let shown: Vec<String> = entries
+                .iter()
+                .map(|(k, x)| {
+                    let key = match k {
+                        Value::Text(s) => format!("\"{}\"", s),
+                        other => other.bare(),
+                    };
+                    format!("{lead}  [{key}]=>\n{lead}  {}\n", with_kind(x, level + 1))
+                })
+                .collect();
+            format!("array({}) {{\n{}{lead}}}", entries.len(), shown.concat())
+        }
         _ => "NULL".to_string(),
     }
+}
+
+/// The values of a literal: a map when one of them is a couple or the
+/// literal asks for one, else a list. A value with no key of its own
+/// takes the next whole number.
+fn assembled(values: Vec<Value>, map_wanted: bool) -> Value {
+    if !map_wanted && !values.iter().any(|x| matches!(x, Value::Couple(_))) {
+        return Value::Vector(Rc::new(values));
+    }
+    let mut entries: Vec<(Value, Value)> = Vec::with_capacity(values.len());
+    for value in values {
+        match value {
+            Value::Couple(e) => set_key(&mut entries, e.0.clone(), e.1.clone()),
+            other => {
+                let key = Value::Small(after_keys(&entries));
+                entries.push((key, other));
+            }
+        }
+    }
+    Value::Dict(Rc::new(entries))
+}
+
+/// One past the highest whole-number key, or nought when there is none.
+fn after_keys(entries: &[(Value, Value)]) -> i64 {
+    entries
+        .iter()
+        .filter_map(|(k, _)| match k {
+            Value::Small(n) => Some(n + 1),
+            _ => None,
+        })
+        .chain(std::iter::once(0))
+        .max()
+        .unwrap_or(0)
+}
+
+/// Write a key over what it holds, or add it at the end.
+fn set_key(entries: &mut Vec<(Value, Value)>, key: Value, value: Value) {
+    match entries.iter_mut().find(|(k, _)| k.equals(&key)) {
+        Some(entry) => entry.1 = value,
+        None => entries.push((key, value)),
+    }
+}
+
+/// A value over lines the way PHP's print_r writes it: a scalar on its
+/// own, an array as the word `Array` with its places in brackets, every
+/// array within set eight spaces further along and followed by a gap.
+fn over_lines(v: &Value, along: usize) -> String {
+    let places: Vec<(String, &Value)> = match v {
+        Value::Vector(items) => items.iter().enumerate().map(|(at, x)| (at.to_string(), x)).collect(),
+        Value::Dict(entries) => entries.iter().map(|(k, x)| (k.bare(), x)).collect(),
+        other => return other.bare(),
+    };
+    let lead = " ".repeat(along);
+    let mut out = format!("Array\n{lead}(\n");
+    for (key, item) in places {
+        // An array within ends its own line, so this newline is the gap
+        // that follows it; after a scalar it is the end of the line.
+        let shown = over_lines(item, along + 8);
+        out.push_str(&format!("{lead}    [{key}] => {shown}\n"));
+    }
+    out.push_str(&format!("{lead})\n"));
+    out
 }

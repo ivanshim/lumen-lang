@@ -617,6 +617,9 @@ impl<'a> Compiler<'a> {
                 self.take();
                 return Ok(());
             }
+            if Lang::spells(&lang.foreach_words, &w) {
+                return self.foreach();
+            }
             if Lang::spells(&lang.c_for_words, &w) {
                 return self.c_for();
             }
@@ -658,7 +661,7 @@ impl<'a> Compiler<'a> {
             let bracketed = lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).is_lexeme(Shape::Sign, &c.open));
             match lang.builtins.get(&w) {
                 Some(Builtin::Tell) => return self.bare_call(w),
-                Some(Builtin::Append) | Some(Builtin::Replace) | Some(Builtin::Define) | None => {}
+                Some(Builtin::Append) | Some(Builtin::Replace) | Some(Builtin::Define) | Some(Builtin::Pack) | None => {}
                 Some(_) if !bracketed => return self.bare_call(w),
                 Some(_) => {}
             }
@@ -718,6 +721,70 @@ impl<'a> Compiler<'a> {
                 _ => return Ok(()),
             }
         }
+    }
+
+    /// `foreach (a as v)` and `foreach (a as k => v)`: the array or map
+    /// held aside, walked by position, its key and value bound each pass.
+    fn foreach(&mut self) -> Res<()> {
+        let lang = self.lang;
+        self.take();
+        let group = lang.grouping.clone().ok_or_else(|| "A foreach needs syntax.group".to_string())?;
+        self.want_sign(&group.open, "after foreach")?;
+        self.expr(0)?;
+        let bag = self.gensym("bag");
+        self.write(&bag);
+        if !self.on_keyword(&lang.foreach_as_words) {
+            return Err(format!("Expected '{}' in foreach, got '{}'", lang.foreach_as_words[0], self.look().lexeme));
+        }
+        self.take();
+        let first = self.want_name("as the foreach variable")?;
+        let paired = lang.pair_mark.as_ref().map_or(false, |m| self.at_symbol(m));
+        let (key, value) = if paired {
+            self.take();
+            (Some(first), self.want_name("as the foreach value")?)
+        } else {
+            (None, first)
+        };
+        self.want_sign(&group.close, "after the foreach names")?;
+        self.walk(&bag, key.as_deref(), &value)
+    }
+
+    /// The walk itself: a place counted up to the extent, the key and
+    /// the value bound from it at the head of each pass.
+    fn walk(&mut self, bag: &str, key: Option<&str>, value: &str) -> Res<()> {
+        let at = self.gensym("at");
+        self.constant(Value::Small(0));
+        self.write(&at);
+        let extent = self.gensym("extent");
+        self.read(bag);
+        self.act(Action::Extent, 1);
+        self.write(&extent);
+        let to_test = self.leap();
+        let top = self.mark();
+        self.enter_cycle(None);
+        if let Some(key) = key {
+            self.read(bag);
+            self.read(&at);
+            self.act(Action::KeyAt, 2);
+            self.write(key);
+        }
+        self.read(bag);
+        self.read(&at);
+        self.act(Action::ValueAt, 2);
+        self.write(value);
+        self.body()?;
+        let again = self.mark();
+        self.read(&at);
+        self.constant(Value::Small(1));
+        self.act(Action::Add, 2);
+        self.write(&at);
+        self.land(to_test);
+        self.read(&at);
+        self.read(&extent);
+        self.act(Action::Lt, 2);
+        self.loop_back(top);
+        self.leave_cycle(again);
+        Ok(())
     }
 
     /// `for (init; test; step) body`, the test at the bottom as in a
@@ -1138,9 +1205,20 @@ impl<'a> Compiler<'a> {
             self.want_sign(&call.close, "after the range")?;
         } else {
             let tier = lang.range_marks.iter().filter_map(|r| lang.precedence.get(r)).min().copied().unwrap_or(0);
+            let from = self.mark();
             self.expr(tier + 1)?;
             if !(self.look().shape == Shape::Sign && Lang::spells(&lang.range_marks, &self.look().lexeme)) {
-                return Err("A for loop needs a range: start..end".to_string());
+                // Not a range: what was read is a thing to walk through.
+                if !lang.for_collections {
+                    return Err("A for loop needs a range: start..end".to_string());
+                }
+                let bag = self.gensym("bag");
+                let source: Vec<Instr> = self.piece().instrs.drain(from..).collect();
+                for w in relocated(source, -(from as i64) + self.mark() as i64) {
+                    self.put(w);
+                }
+                self.write(&bag);
+                return self.walk(&bag, None, &var);
             }
             self.take();
             self.write(&var);
@@ -1270,6 +1348,15 @@ impl<'a> Compiler<'a> {
                 Ok(())
             }
             _ if compound.is_some() => Err(format!("'{}' needs a plain variable on its left", assign)),
+            [Instr::Read(slot), Instr::Act(Action::AtEnd, 1)] if !slot.moving => {
+                // a[] = v appends.
+                let name = slot.ident.to_string();
+                self.expr(0)?;
+                self.read_taking(&name);
+                self.act(Action::Builtin(Builtin::Append, Rc::from("push")), 2);
+                self.restore(&name);
+                Ok(())
+            }
             [Instr::Read(slot), index @ .., Instr::Act(Action::At, 2)] if !slot.moving => {
                 let name = slot.ident.to_string();
                 for w in relocated(index.to_vec(), -1) {
@@ -1445,6 +1532,10 @@ impl<'a> Compiler<'a> {
                                 }
                                 let argc = self.arguments(&call)?;
                                 self.mutation(&tok.lexeme, &target, argc + 1)?;
+                            } else if native == Some(Builtin::Pack) {
+                                // array(...) gathers its arguments like a literal.
+                                let count = self.elements(&call)?;
+                                self.act(Action::MakeArray, count);
                             } else if native == Some(Builtin::Define) {
                                 // define("NAME", v) binds the global NAME here; its value is true.
                                 let from = self.mark();
@@ -1487,8 +1578,16 @@ impl<'a> Compiler<'a> {
                 if let Some(array) = lang.array_brackets.clone() {
                     if tok.lexeme == array.open {
                         self.take();
-                        let count = self.arguments(&array)?;
+                        let count = self.elements(&array)?;
                         self.act(Action::MakeArray, count);
+                        return self.indexing();
+                    }
+                }
+                if let Some(map) = lang.map_brackets.clone() {
+                    if tok.lexeme == map.open {
+                        self.take();
+                        let count = self.elements(&map)?;
+                        self.act(Action::MakeMap, count);
                         return self.indexing();
                     }
                 }
@@ -1503,12 +1602,47 @@ impl<'a> Compiler<'a> {
     fn indexing(&mut self) -> Res<()> {
         let Some(index) = self.lang.index_brackets.clone() else { return Ok(()) };
         while self.at_symbol(&index.open) {
+            // `a[]`: the place after the last, which only a store reaches.
+            if self.lang.append_index && self.look_ahead(1).is_lexeme(Shape::Sign, &index.close) {
+                self.take();
+                self.take();
+                self.act(Action::AtEnd, 1);
+                continue;
+            }
             self.take();
             self.expr(0)?;
             self.want_sign(&index.close, "after array index")?;
             self.act(Action::At, 2);
         }
         Ok(())
+    }
+
+    /// The elements of a literal: expressions as `arguments` reads them,
+    /// except that `k => v` makes one tied value of the two.
+    fn elements(&mut self, pair: &Brackets) -> Res<usize> {
+        let mark = self.lang.pair_mark.clone();
+        let mut count = 0;
+        while !self.at_symbol(&pair.close) {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", pair.close));
+            }
+            self.expr(0)?;
+            if let Some(mark) = &mark {
+                if self.at_symbol(mark) {
+                    self.take();
+                    self.expr(0)?;
+                    self.act(Action::Tie, 2);
+                }
+            }
+            count += 1;
+            if let Some(sep) = &pair.between {
+                if self.at_symbol(sep) {
+                    self.take();
+                }
+            }
+        }
+        self.take();
+        Ok(count)
     }
 
     /// Expressions up to the closing bracket, consumed; a tag before an
@@ -1544,6 +1678,7 @@ impl<'a> Compiler<'a> {
             Some(Builtin::Append) | Some(Builtin::Replace) => {
                 Err(format!("First argument to {}() must be an array variable name", name))
             }
+            Some(Builtin::Pack) => Err(format!("{}() is a literal, not a call", name)),
             Some(native) => {
                 self.act(Action::Builtin(native, Rc::from(name)), argc);
                 Ok(())
@@ -1881,7 +2016,8 @@ impl<'a> Compiler<'a> {
                 Builtin::Append | Builtin::Replace => return Err(format!("'{}' needs a quoted name before it", word)),
                 Builtin::External | Builtin::Span => return Err(format!("'{}' has no postfix form", word)),
                 Builtin::Echo | Builtin::Say | Builtin::Out | Builtin::Tell | Builtin::Dump | Builtin::Raise => (1, false),
-                Builtin::Define => return Err(format!("'{}' has no postfix form", word)),
+                Builtin::Layout => (1, true),
+                Builtin::Define | Builtin::Pack => return Err(format!("'{}' has no postfix form", word)),
                 Builtin::CharAtIndex | Builtin::Fetch | Builtin::MakeReal => (2, true),
                 _ => (1, true),
             };

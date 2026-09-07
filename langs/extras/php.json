@@ -86,7 +86,9 @@
   ],
   "syntax.map.open": [],
   "syntax.map.separator": [],
-  "syntax.map.pair": [],
+  "syntax.map.pair": [
+    "=>"
+  ],
   "syntax.map.close": [],
   "literal.true": [
     "true"
@@ -235,9 +237,15 @@
   "stmt.until": [],
   "stmt.for": [],
   "stmt.for.in": [],
-  "stmt.foreach": [],
-  "stmt.foreach.as": [],
-  "stmt.foreach.pair": [],
+  "stmt.foreach": [
+    "foreach"
+  ],
+  "stmt.foreach.as": [
+    "as"
+  ],
+  "stmt.foreach.pair": [
+    "=>"
+  ],
   "stmt.return": [
     "return"
   ],
@@ -380,5 +388,15 @@
   "ext.op.plus": [
     "+"
   ],
-  "ext.stmt.break.levels": true
+  "ext.stmt.break.levels": true,
+  "ext.builtin.array": [
+    "array"
+  ],
+  "ext.op.index.append": true,
+  "ext.builtin.print_r": [
+    "print_r"
+  ],
+  "ext.stmt.function.returns": [
+    ":"
+  ]
 }

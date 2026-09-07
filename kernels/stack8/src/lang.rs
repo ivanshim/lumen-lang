@@ -65,6 +65,9 @@ pub struct Lang {
     pub calling: Option<Brackets>,
     pub argument_labels: Vec<String>,
     pub array_brackets: Option<Brackets>,
+    pub map_brackets: Option<Brackets>,
+    /// `k => v` inside a literal, and between the two names of a foreach.
+    pub pair_mark: Option<String>,
     pub index_brackets: Option<Brackets>,
     pub text_indexable: bool,
 
@@ -122,6 +125,8 @@ pub struct Lang {
     pub decrements: Vec<String>,
     pub interpolating: Vec<char>,
     pub concat: Option<String>,
+    pub foreach_words: Vec<String>,
+    pub foreach_as_words: Vec<String>,
     pub c_for_words: Vec<String>,
     /// `x op= e` for every binary operator, when the switch is on.
     pub compound: HashMap<String, Action>,
@@ -144,11 +149,16 @@ pub struct Lang {
     pub plus_words: Vec<String>,
     /// `break n` and `continue n` leave n loops.
     pub break_levels: bool,
+    /// `a[] = v` appends.
+    pub append_index: bool,
+    /// `for v in a` walks what a holds when a is not a range.
+    pub for_collections: bool,
 }
 
 /// Every tag with its shape: w a word list, s a string, b a switch,
 /// n a size or null, o a string or null, t precedence tiers, x a word
-/// list this kernel gives no meaning and requires empty.
+/// list this kernel gives no meaning and passes over, as it passes over
+/// an ext.* label it does not read.
 const LABELS: &str = "
 n format_version | s language | w extensions | w lexical.comment_line
 w lexical.comment_block.open | w lexical.comment_block.close | w lexical.string_quotes | w lexical.raw_quotes
@@ -158,8 +168,8 @@ b identifier.unicode | w identifier.variable_prefix | b identifier.case_insensit
 w block.open | w block.close | w block.intro | n block.indent_size
 w stmt.terminator | s syntax.notation | w syntax.group.open | w syntax.group.close
 w syntax.call.open | w syntax.call.separator | w syntax.call.close | w syntax.call.label
-w syntax.array.open | w syntax.array.separator | w syntax.array.close | x syntax.map.open
-x syntax.map.separator | x syntax.map.pair | x syntax.map.close | w literal.true
+w syntax.array.open | w syntax.array.separator | w syntax.array.close | w syntax.map.open
+w syntax.map.separator | w syntax.map.pair | w syntax.map.close | w literal.true
 w literal.false | w literal.null | t op.precedence | w op.right_associative
 w op.add | w op.sub | w op.mul | w op.div
 o op.div.result | w op.quot | w op.rem | w op.pow
@@ -170,7 +180,7 @@ w op.index.open | w op.index.close | b op.index.strings | w op.pipe
 w stmt.assign | w stmt.let | w stmt.let.mutable | w stmt.let.annotation
 b stmt.let.type_first | w stmt.if | w stmt.elif | w stmt.else
 w stmt.while | w stmt.until | w stmt.for | w stmt.for.in
-x stmt.foreach | x stmt.foreach.as | x stmt.foreach.pair | w stmt.return
+w stmt.foreach | w stmt.foreach.as | w stmt.foreach.pair | w stmt.return
 w stmt.break | w stmt.continue | w stmt.function | w stmt.function.returns
 b stmt.function.result_by_name | w stmt.pass | x stmt.emit | w stack.dup
 w stack.drop | w stack.swap | w stack.over | w stack.rot
@@ -194,6 +204,8 @@ w ext.stmt.static | w ext.stmt.global | w ext.stmt.const | w ext.builtin.define
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
 w ext.stmt.case.mark | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted
 w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
+w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
+w ext.stmt.function.returns
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -372,9 +384,8 @@ impl Lang {
             return Err("format_version must be 1".to_string());
         }
         for (shape, tag) in &shapes {
-            if *shape == 'x' && !r.strings(tag)?.is_empty() {
-                return Err(format!("label '{tag}' is not implemented by the stack5 kernel; leave it empty"));
-            }
+            // A label this kernel gives no meaning to is read past, not refused.
+            let _ = (shape, tag);
         }
 
         let name = r.string("language")?;
@@ -530,7 +541,10 @@ impl Lang {
             return Err("stmt.for and stmt.for.in must be given together".to_string());
         }
         let functions = r.strings("stmt.function")?;
-        let returns_marks = r.strings("stmt.function.returns")?;
+        // The extension mark stands beside the core one: a language whose
+        // return types the porter cannot spell says it here instead.
+        let mut returns_marks = r.strings("stmt.function.returns")?;
+        returns_marks.extend(r.strings("ext.stmt.function.returns")?);
         let result_by_name = r.flag("stmt.function.result_by_name")?;
         if result_by_name && functions.is_empty() {
             return Err("stmt.function.result_by_name needs stmt.function".to_string());
@@ -572,7 +586,8 @@ impl Lang {
             ("builtin.to_int", Builtin::ToInt), ("builtin.to_real", Builtin::AsReal), ("builtin.num", Builtin::Numer),
             ("builtin.den", Builtin::Denom), ("builtin.push", Builtin::Append), ("builtin.get", Builtin::Fetch),
             ("builtin.put", Builtin::Replace), ("ext.builtin.echo", Builtin::Tell), ("ext.builtin.define", Builtin::Define),
-            ("ext.builtin.var_dump", Builtin::Dump),
+            ("ext.builtin.var_dump", Builtin::Dump), ("ext.builtin.array", Builtin::Pack),
+            ("ext.builtin.print_r", Builtin::Layout),
         ] {
             for lex in r.strings(tag)? {
                 let begins = lex.chars().next().map_or(false, |c| c == '_' || c.is_alphabetic());
@@ -643,6 +658,8 @@ impl Lang {
             calling: call,
             argument_labels: call_labels,
             array_brackets: r.brackets("syntax.array.open", "syntax.array.close", Some("syntax.array.separator"))?,
+            map_brackets: r.brackets("syntax.map.open", "syntax.map.close", Some("syntax.map.separator"))?,
+            pair_mark: r.head("syntax.map.pair")?,
             index_brackets: index,
             text_indexable: index_text,
             true_words: r.strings("literal.true")?,
@@ -693,6 +710,8 @@ impl Lang {
             decrements: r.strings("ext.op.decrement")?,
             interpolating: r.letters("ext.lexical.interpolating_quotes")?,
             concat: r.head("op.concat")?,
+            foreach_words: r.strings("stmt.foreach")?,
+            foreach_as_words: r.strings("stmt.foreach.as")?,
             c_for_words: r.strings("ext.stmt.for.c")?,
             compound: HashMap::new(),
             static_words: r.strings("ext.stmt.static")?,
@@ -712,7 +731,15 @@ impl Lang {
             exponent_letters: r.letters("ext.lexical.number.exponent")?,
             plus_words: r.strings("ext.op.plus")?,
             break_levels: r.flag("ext.stmt.break.levels")?,
+            append_index: r.flag("ext.op.index.append")?,
+            for_collections: r.flag("ext.stmt.for.collection")?,
         };
+        if !lang.foreach_words.is_empty() && lang.foreach_as_words.is_empty() {
+            return Err("stmt.foreach needs stmt.foreach.as".to_string());
+        }
+        if !r.strings("stmt.foreach.pair")?.is_empty() && lang.pair_mark.is_none() {
+            return Err("stmt.foreach.pair needs syntax.map.pair".to_string());
+        }
         if r.flag("ext.op.assign.compound")? {
             // Every binary operator followed by the assignment sign, unless
             // that spelling is already an operator (`<=`) or the operator
@@ -766,7 +793,10 @@ impl Lang {
         for lex in &self.plus_words {
             place(lex);
         }
-        for pair in [&self.grouping, &self.calling, &self.array_brackets, &self.index_brackets].into_iter().flatten() {
+        if let Some(mark) = &self.pair_mark {
+            place(mark);
+        }
+        for pair in [&self.grouping, &self.calling, &self.array_brackets, &self.map_brackets, &self.index_brackets].into_iter().flatten() {
             place(&pair.open);
             place(&pair.close);
             if let Some(sep) = &pair.between {
@@ -789,7 +819,7 @@ impl Lang {
             &self.let_words, &self.mutable_words, &self.if_words, &self.elif_words, &self.else_words, &self.while_words, &self.until_words, &self.for_words,
             &self.in_words, &self.return_words, &self.break_words, &self.continue_words, &self.function_words, &self.pass_words, &self.true_words,
             &self.false_words, &self.null_words, &self.c_for_words, &self.static_words, &self.global_words, &self.const_words,
-            &self.switch_words, &self.case_words, &self.default_words,
+            &self.switch_words, &self.case_words, &self.default_words, &self.foreach_words, &self.foreach_as_words,
         ];
         for word in keywords.into_iter().flatten() {
             if !name_like(word, unicode, prefix) {
