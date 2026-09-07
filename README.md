@@ -262,6 +262,17 @@ errors, a check that the ported examples match what
 `scripts/port_examples.py` writes, and the whole suite on every push.
 `TEST_QUIET=1` prints program output only for failures.
 
+## Reference suites
+
+`tests/` holds tests the languages' own projects wrote: php-src's
+`tests/lang`, `tests/basic` and `tests/func`, and the core-language files
+of CPython's `Lib/test`, copied unchanged with their licenses.
+`scripts/reference_tests.py` runs them against the definitions and writes
+[tests/REPORT.md](tests/REPORT.md): what passes, why the rest does not,
+which reserved words the definition spells and which functions the suites
+call that it does not. Today nothing passes; the report is the measure of
+the distance and the order to close it in. See [tests/README.md](tests/README.md).
+
 ## The kernel lab
 
 stack8 and microcode7 came out of an experiment recorded in

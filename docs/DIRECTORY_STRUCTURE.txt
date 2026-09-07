@@ -179,6 +179,7 @@ lumen-lang/
     scripts/bench.sh                 times every program under bench/ on every kernel
     scripts/test_e.sh                e_integer at 1 to 30 significant figures
     scripts/test_pi.sh               pi_machin at 1 to 30 significant figures
+    scripts/reference_tests.py       runs tests/ against the definitions and writes tests/REPORT.md
     scripts/kernel_independence.py
     scripts/lang_table.py
     scripts/port_examples.py         writes every Lumen example and the library in every other language: examples/<language>/, lib_<language>/, examples/PORTS.md, docs/LIBRARY_PORTS.md
@@ -200,5 +201,9 @@ lumen-lang/
     docs/VERSION_HISTORY.md
     docs/KERNEL_LAB.md               the kernel lab: cycles, predictions, results, ablation, promotion
     docs/LIBRARY_PORTS.md            generated: which library function each language's mirror has, and why not
+
+  tests/                           reference suites from php-src and CPython, unchanged, with their licenses; README.md says which, REPORT.md what they find
+    tests/php/                       php-src tests/lang, tests/basic, tests/func (.phpt)
+    tests/python/                    CPython Lib/test, the core-language files
 
   bench/                           the benchmark programs scripts/bench.sh times
