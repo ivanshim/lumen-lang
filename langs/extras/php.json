@@ -560,5 +560,6 @@
   "ext.builtin.args.at": [
     "func_get_arg"
   ],
-  "ext.op.assign.value": true
+  "ext.op.assign.value": true,
+  "ext.op.index.plain_keys": true
 }

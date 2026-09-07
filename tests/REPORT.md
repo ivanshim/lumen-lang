@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 31, differs 38, error 45, skipped 0 | pass 31, differs 38, error 45, skipped 0 |
 | `php/func` | 14 | pass 5, differs 3, error 6, skipped 0 | pass 5, differs 3, error 6, skipped 0 |
-| `php/lang` | 213 | pass 44, differs 38, error 129, skipped 2 | pass 44, differs 38, error 129, skipped 2 |
+| `php/lang` | 213 | pass 46, differs 36, error 129, skipped 2 | pass 46, differs 36, error 129, skipped 2 |
 | `php/lang/constants` | 2 | pass 1, differs 1, error 0, skipped 0 | pass 1, differs 1, error 0, skipped 0 |
 | `php/lang/integer_literals` | 6 | pass 0, differs 0, error 6, skipped 0 | pass 0, differs 0, error 6, skipped 0 |
 | `php/lang/operators` | 64 | pass 13, differs 24, error 27, skipped 0 | pass 13, differs 24, error 27, skipped 0 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 95, differs 112, error 213, skipped 2 | pass 95, differs 112, error 213, skipped 2 |
+| all | 422 | pass 97, differs 110, error 213, skipped 2 | pass 97, differs 110, error 213, skipped 2 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 112 |
+| ran, printed something else | 110 |
 | } | 10 |
 | Undefined variable: eval | 7 |
 | Undefined variable: include | 7 |
@@ -230,7 +230,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/032.phpt` | differs | differs | ran, printed something else |
 | `php/basic/GHSA-9pqp-7h25-4f32.phpt` | error | error | Unexpected token: . |
 | `php/basic/array_key_exists_null_deprecation.phpt` | differs | differs | ran, printed something else |
-| `php/basic/array_null_offset_deprecation.phpt` | error | error | baz |
+| `php/basic/array_null_offset_deprecation.phpt` | error | error | new_value |
 | `php/basic/bug20539.phpt` | error | error | Unexpected character '@' |
 | `php/basic/bug29971.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug31875.phpt` | error | error | Undefined variable: get_defined_functions |
@@ -396,7 +396,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug24499.phpt` | error | error | Undefined variable: stdClass |
 | `php/lang/bug24573.phpt` | error | error | Undefined variable: debug_backtrace |
 | `php/lang/bug24640.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug24652.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug24652.phpt` | pass | pass |  |
 | `php/lang/bug24658.phpt` | error | error | NULL |
 | `php/lang/bug24783.phpt` | error | error | 8: |
 | `php/lang/bug24908.phpt` | differs | differs | ran, printed something else |
@@ -421,7 +421,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug30578.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug30638.phpt` | error | error | Undefined variable: localeconv |
 | `php/lang/bug30726.phpt` | error | error | Unexpected token: , |
-| `php/lang/bug30862.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug30862.phpt` | pass | pass |  |
 | `php/lang/bug32828.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug32924.phpt` | error | error | Undefined variable: __DIR__ |
 | `php/lang/bug35176.phpt` | error | error | Undefined variable: require_once |

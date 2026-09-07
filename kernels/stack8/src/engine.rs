@@ -540,8 +540,8 @@ impl<'a> Engine<'a> {
                     }
                 };
             }
-            Action::MakeArray => gathered(self.drop_many(argc)?, false),
-            Action::MakeMap => gathered(self.drop_many(argc)?, true),
+            Action::MakeArray => gathered(self.drop_many(argc)?, false, self.lang.plain_keys),
+            Action::MakeMap => gathered(self.drop_many(argc)?, true, self.lang.plain_keys),
             Action::Tie => {
                 let pair = self.drop_many(2)?;
                 let mut pair = pair.into_iter();
@@ -766,6 +766,41 @@ impl<'a> Engine<'a> {
         Ok(match op {
             Action::And => Value::Flag(a.is_true() && b.is_true()),
             Action::Or => Value::Flag(a.is_true() || b.is_true()),
+            // Where a language has an operator for being the very same,
+            // being equal is the looser question: text that spells a
+            // number stands for that number, and a number met by text
+            // that spells none is itself read as text.
+            Action::Eq | Action::Ne if self.lang.loose_equality => {
+                let numeric = |v: &Value| v.sort().map_or(false, |k| matches!(k, Sort::Integer | Sort::Rational | Sort::Real));
+                let nothing = |v: &Value| matches!(v, Value::Null | Value::Blank | Value::Gap | Value::Fence);
+                let alike = match (a, b) {
+                    // A flag on either side turns the question into
+                    // whether the other side is true, and nothing
+                    // counts as untrue.
+                    (Value::Flag(_), _) | (_, Value::Flag(_)) => a.is_true() == b.is_true(),
+                    (one, other) | (other, one) if nothing(one) && numeric(other) => !other.is_true(),
+                    (one, Value::Text(s)) | (Value::Text(s), one) if nothing(one) => s.is_empty(),
+                    (one, other) | (other, one) if nothing(one) && matches!(other, Value::Array(_) | Value::Map(_)) => !other.is_true() || {
+                        match other {
+                            Value::Array(items) => items.is_empty(),
+                            Value::Map(pairs) => pairs.is_empty(),
+                            _ => false,
+                        }
+                    },
+                    // Two pieces of text that both spell numbers stand
+                    // for those numbers.
+                    (Value::Text(x), Value::Text(y)) => match (number_spelled(x), number_spelled(y)) {
+                        (Some(m), Some(n)) => m.equals(&n),
+                        _ => x == y,
+                    },
+                    (Value::Text(s), other) | (other, Value::Text(s)) if numeric(other) => match number_spelled(s) {
+                        Some(n) => n.equals(other),
+                        None => s.as_ref() == other.display(&sp),
+                    },
+                    _ => a.equals(b),
+                };
+                Value::Flag(matches!(op, Action::Eq) == alike)
+            }
             Action::Eq => Value::Flag(a.equals(b)),
             Action::Ne => Value::Flag(!a.equals(b)),
             Action::Same => Value::Flag(a.identical(b)),
@@ -894,11 +929,20 @@ impl<'a> Engine<'a> {
         })
     }
 
+    /// A key as this language takes one.
+    fn key(&self, at: &Value) -> Value {
+        match self.lang.plain_keys {
+            true => key_taken(at.clone()),
+            false => at.clone(),
+        }
+    }
+
     fn element(&self, target: &Value, at: &Value) -> Res<Value> {
         // A language may say that a place an array does not hold reads as
         // nothing rather than stopping the program.
         let absent = |told: String| if self.lang.absent_index { Ok(Value::Null) } else { Err(told) };
         if let Value::Map(pairs) = target {
+            let at = &self.key(at);
             let found = pairs.iter().find(|(k, _)| k.equals(at));
             return match found {
                 Some((_, v)) => Ok(v.clone()),
@@ -1143,7 +1187,7 @@ impl<'a> Engine<'a> {
                 arity(3)?;
                 let target = args.pop().expect("the array");
                 let v = args.pop().expect("the value");
-                let at = args.pop().expect("the key");
+                let at = self.key(&args.pop().expect("the key"));
                 match target {
                     // A list written at a place it already holds stays a list.
                     Value::Array(mut items) if as_index(&at).map_or(false, |i| i < items.len()) => {
@@ -1170,7 +1214,7 @@ impl<'a> Engine<'a> {
                 // Taking a place out of an array: the array is given back
                 // without it.
                 arity(2)?;
-                let at = args.pop().expect("the place");
+                let at = self.key(&args.pop().expect("the place"));
                 match args.pop().expect("the array") {
                     Value::Array(items) => {
                         let i = as_index(&at)?;
@@ -1286,7 +1330,7 @@ fn dumped(v: &Value, depth: usize) -> String {
 /// The values of a literal: a map when any of them is a tie or the
 /// literal asks for one, otherwise a list. An untied value takes the
 /// next whole-number key, as in a list.
-fn gathered(items: Vec<Value>, always_map: bool) -> Value {
+fn gathered(items: Vec<Value>, always_map: bool, plain_keys: bool) -> Value {
     if !always_map && !items.iter().any(|v| matches!(v, Value::Tie(_))) {
         return Value::array(items);
     }
@@ -1295,6 +1339,7 @@ fn gathered(items: Vec<Value>, always_map: bool) -> Value {
         match item {
             Value::Tie(pair) => {
                 let (k, v) = (pair.0.clone(), pair.1.clone());
+                let k = if plain_keys { key_taken(k) } else { k };
                 put_key(&mut pairs, k, v);
             }
             v => {
@@ -1385,6 +1430,15 @@ fn shared_item(held: &mut Value, at: &Value) -> Res<Rc<RefCell<Value>>> {
 /// for a sign and for space around it. Anything else is not a number.
 fn number_spelled(s: &str) -> Option<Value> {
     let text = s.trim();
+    // A number may carry a power of ten after it: 1e2, 1.5E-3.
+    if let Some(at) = text.find(['e', 'E']) {
+        let (front, back) = text.split_at(at);
+        let power: i32 = back[1..].parse().ok()?;
+        let base = number_spelled(front)?;
+        let scale = Value::of_big(BigInt::from(10).pow(power.unsigned_abs()));
+        let how = if power >= 0 { Operation::Times } else { Operation::OverReal };
+        return arith::calculate(how, &base, &scale)?.ok();
+    }
     let (sign, digits) = match text.strip_prefix('-') {
         Some(rest) => (-1, rest),
         None => (1, text.strip_prefix('+').unwrap_or(text)),
@@ -1410,47 +1464,67 @@ fn number_spelled(s: &str) -> Option<Value> {
 
 /// A value as sixty-four bits. Anything that is not a whole number is
 /// cut down to one first, the way a language that works on bits expects:
-/// a fraction loses what lies past the point, and a flag or nothing
-/// stands for 1 or 0.
+/// what lies past the point is dropped towards nothing, so -1.5 stands
+/// for -1, and a flag or nothing stands for 1 or 0.
 fn bits_of(v: &Value) -> Res<i64> {
     let whole = match v {
         Value::Small(n) => return Ok(*n),
+        Value::Flag(yes) => return Ok(i64::from(*yes)),
+        Value::Null | Value::Blank | Value::Gap | Value::Fence => return Ok(0),
         Value::Text(s) => match number_spelled(s) {
             Some(n) => n,
             None => return Ok(0),
         },
         other => other.clone(),
     };
-    match &whole {
-        Value::Small(n) => Ok(*n),
-        Value::Huge(n) => Ok(n.to_i64().unwrap_or(0)),
-        // What lies past the point is dropped, towards nothing rather
-        // than downwards, so -1.5 stands for -1.
-        Value::Frac(_) | Value::Real(_) => {
-            let below = matches!(arith::order_values(&whole, &Value::Small(0)), Some(std::cmp::Ordering::Less));
-            let size = if below { self_negated(&whole)? } else { whole.clone() };
-            match arith::calculate(Operation::Floor, &size, &Value::Small(1)) {
-                Some(Ok(v)) => {
-                    let n = match v {
-                        Value::Small(n) => n,
-                        Value::Huge(n) => n.to_i64().unwrap_or(0),
-                        _ => return Err("Working on bits needs a whole number".to_string()),
-                    };
-                    Ok(if below { -n } else { n })
-                }
-                _ => Err("Working on bits needs a whole number".to_string()),
-            }
-        }
-        Value::Flag(true) => Ok(1),
-        Value::Flag(false) | Value::Null | Value::Blank | Value::Gap => Ok(0),
-        _ => Err("Working on bits needs a whole number".to_string()),
+    if let Value::Huge(n) = &whole {
+        return Ok(n.to_i64().unwrap_or(0));
+    }
+    match arith::Exact::from_value(&whole) {
+        // Dividing whole numbers cuts towards nothing, which is what
+        // dropping what lies past the point comes to.
+        Some(exact) => Ok((&exact.p / &exact.q).to_i64().unwrap_or(0)),
+        None => Err("Working on bits needs a whole number".to_string()),
     }
 }
 
-/// 0 - x, for a number whose sign is to be turned around.
-fn self_negated(v: &Value) -> Res<Value> {
-    match arith::calculate(Operation::Minus, &Value::Small(0), v) {
-        Some(r) => r,
-        None => Err("Working on bits needs a whole number".to_string()),
+/// A key as a language whose keys are plain takes one: text spelling a
+/// whole number is that number, so `a['7']` and `a[7]` name one place;
+/// a number with a point stands for the whole number towards nothing; a
+/// flag stands for 1 or 0, and nothing for text with nothing in it.
+/// Text that spells a number any other way stays as it was written.
+fn key_taken(v: Value) -> Value {
+    match &v {
+        Value::Text(s) => match whole_spelled(s) {
+            Some(n) => Value::Small(n),
+            None => v,
+        },
+        Value::Flag(yes) => Value::Small(i64::from(*yes)),
+        Value::Null | Value::Blank | Value::Gap => Value::text(""),
+        Value::Frac(_) | Value::Real(_) => match bits_of(&v) {
+            Ok(n) => Value::Small(n),
+            Err(_) => v,
+        },
+        _ => v,
     }
+}
+
+/// The whole number a piece of text spells, where it spells one the way
+/// a whole number is written out: digits, a minus before them at most,
+/// no space around them and no nought leading.
+fn whole_spelled(s: &str) -> Option<i64> {
+    let (sign, digits) = match s.strip_prefix('-') {
+        Some(rest) => (-1i64, rest),
+        None => (1, s),
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    if digits.len() > 1 && digits.starts_with('0') {
+        return None;
+    }
+    if sign < 0 && digits == "0" {
+        return None;
+    }
+    digits.parse::<i64>().ok().map(|n| n * sign)
 }

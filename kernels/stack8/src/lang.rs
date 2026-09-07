@@ -129,6 +129,13 @@ pub struct Lang {
     /// Whether an assignment counts as an expression, its value what
     /// was written.
     pub assign_gives_value: bool,
+    /// Whether every key of an array is either a whole number or text,
+    /// so that a key spelling a whole number is that number.
+    pub plain_keys: bool,
+    /// Whether being equal is the looser question. A language with an
+    /// operator for being the very same means something looser by being
+    /// equal: text that spells a number stands for that number.
+    pub loose_equality: bool,
 
     /// The ext.* labels: extensions of the core, read by the full
     /// kernels and ignored by the reference ones; absent means none.
@@ -271,7 +278,7 @@ w ext.system.request.query | w ext.system.request.form | w ext.system.request.co
 w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | b ext.op.index.absent | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
 w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right
 w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
-w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at | b ext.op.assign.value
+w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at | b ext.op.assign.value | b ext.op.index.plain_keys
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -693,6 +700,10 @@ impl Lang {
             }
         }
 
+        // A language with an operator for being the very same means
+        // something looser by being equal.
+        let tells_same = binary.values().any(|op| matches!(op.action, Action::Same));
+
         // A language that can read what a call was given is one whose
         // calls may give more than a routine names.
         let reads_arguments = natives.values().any(|b| matches!(b, Builtin::Given | Builtin::GivenCount | Builtin::GivenAt));
@@ -783,6 +794,8 @@ impl Lang {
             kind_spelled: r.flag("ext.system.kind.spelled")?,
             spare_args: reads_arguments,
             assign_gives_value: r.flag("ext.op.assign.value")?,
+            plain_keys: r.flag("ext.op.index.plain_keys")?,
+            loose_equality: tells_same,
             epilogue: r.strings("ext.lexical.epilogue")?,
             bare_calls: r.flag("ext.syntax.call.bare")?,
             increments: r.strings("ext.op.increment")?,

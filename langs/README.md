@@ -317,6 +317,13 @@ only. The extension labels so far, all from PHP:
 - `ext.op.compare`: which of two values comes first, as -1, 0 or 1
   (`<=>`). It takes its tier from `op.precedence` like any operator; a
   kernel that does not read the label reads past its tier too.
+- `ext.op.index.plain_keys`: a switch; every key of an array is either a
+  whole number or text, so a key spelling a whole number the way one is
+  written out is that number and `a['7']` and `a[7]` name one place. A
+  number with a point stands for the whole number towards nothing, a
+  flag for 1 or 0, and nothing for text with nothing in it. Text
+  spelling a number any other way — with a nought leading, a point, a
+  space around it — stays as it was written.
 - `ext.op.assign.value`: a switch; an assignment counts as an
   expression, and its value is what was written, so `$a = $b = 5` writes
   5 to both and `f($x = 1)` writes 1 and hands it over. An assignment
@@ -338,6 +345,12 @@ only. The extension labels so far, all from PHP:
   read, and asking is an error.
 - `ext.op.identical` and `ext.op.not_identical`: whether two values are
   one and the same (`===`, `!==`), which asks more than being equal.
+  Spelling them also makes being equal (`op.eq`, `op.ne`) the looser
+  question, since a language that tells the two apart means something
+  looser by the second: text spelling a number stands for that number,
+  a flag on either side turns the question into whether the other is
+  true, and nothing counts as untrue and as text with nothing in it. A
+  number met by text spelling no number is itself read as text.
   They must also be of one kind, so a whole number and a decimal
   standing for the same amount are equal and yet not the same. An array
   is the same as another when it holds the same keys in the same order,
@@ -653,6 +666,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.increment` | - | - | - | - | - | - | - | `++` | - | - |
 | `ext.op.index.absent` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.index.append` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.op.index.plain_keys` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.instanceof` | - | - | - | - | - | - | - | `instanceof` | - | - |
 | `ext.op.member` | - | - | - | - | - | - | - | `->` | - | - |
 | `ext.op.not_identical` | - | - | - | - | - | - | - | `!==` | - | - |

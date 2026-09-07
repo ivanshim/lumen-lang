@@ -52,9 +52,10 @@ function function_exists($name) { return false; }
 function gc_collect_cycles() { return 0; }
 function memory_get_usage($real = false) { return 0; }
 
+// A key is taken as the array takes one, so 7 and "7" name one place.
 function array_key_exists($key, $array) {
     foreach ($array as $k => $v) {
-        if ($k === $key) { return true; }
+        if ($k == $key) { return true; }
     }
     return false;
 }
