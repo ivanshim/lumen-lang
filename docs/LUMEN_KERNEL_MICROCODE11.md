@@ -125,7 +125,7 @@ what the definitions do not carry, nothing is invented: a C function
 takes the first type word (`int`) for every parameter, a Pascal
 declaration carries no type, a Rust `let` is `mut` when the name is
 reassigned. `scripts/translate_all.sh` measures this: every example, in
-every language, written in every language, run on the stack26 kernel and
+every language, written in every language, run on the stack8 kernel and
 compared with the original.
 
 ## Relationship to the other kernels
@@ -134,6 +134,7 @@ The kernels never import each other; `scripts/kernel_independence.py`
 checks every pair. This kernel is the only one that can write a program,
 because it is the only one whose product is a tree with names and lines
 still in it: the stream35 kernel's product is a tree of closures and the
-stack26 kernel's a word list. It runs the Lumen loop benchmark at about
-twice the stack26 kernel's time and the same value model, and RPLumen at
-the same speed as Lumen, since the stack was read away.
+stack kernels' a word list. It runs the Lumen loop benchmark at about
+three times stack5's time and five times stack8's, with the same value
+model, and RPLumen at the same speed as Lumen, since the stack was read
+away; microcode7, the fast tree, is ahead of it everywhere.

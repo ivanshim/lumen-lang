@@ -1,9 +1,10 @@
 # The Kernel Lab
 
 An experiment in evolving the two kernel shapes for speed. Each lineage
-is one mutable specimen under `lab/`, a copy of its floor kernel that is
-patched cycle by cycle and measured after each: `lab/stacklab` descends
-from stack5, `lab/microlab` from microcode4. A second experiment,
+was one mutable specimen under `lab/`, a copy of its floor kernel that
+was patched cycle by cycle and measured after each: `lab/stacklab`
+descended from stack5, `lab/microlab` from microcode4. The specimens are
+gone now, promoted: see the last section. A second experiment,
 in the section on equal engineering below, measured the floor kernels
 with the lab's count-neutral improvements and their counts unchanged,
 and those improvements are now folded into stack5 and microcode4. The
@@ -245,7 +246,33 @@ two shapes at their floors differ by 2 times on arithmetic and calls and
   benchmark; nothing else on the hot paths is left.
 - Tree: frames without `RefCell`, and a narrower result type; both are
   executor plumbing rather than forms, and each is worth perhaps a tenth.
-- Promotion: a survivor becomes a kernel by being rewritten in its own
-  words under `kernels/`, numbered by its count, and held to the
-  independence check like the rest. Until then the specimens stay in
-  `lab/`.
+- Promotion: done, below.
+
+## Promotion
+
+The survivors were rewritten in their own words under `kernels/` at the
+counts the ablation settled on, and held to the independence check like
+the rest: `kernels/stack8` (Lit, Load, Store, Apply, Unless, and the
+fused Dyad, Bump and SkipCmp, made by a peephole over the five) and
+`kernels/microcode7` (Literal, Load, Assign, Call, and Cycle, Dyad and
+Bump as forms; a branch stays a call of `choose` with frameless arms).
+Both print the same as the other kernels on all 498 programs. Best of
+five, release build, seconds, at promotion:
+
+| Program | stack5 | stack8 | microcode4 | microcode7 | microcode11 |
+|---|---|---|---|---|---|
+| loop | 0.055 | 0.034 | 0.125 | 0.067 | 0.190 |
+| loop3m | 0.228 | 0.045 | 0.590 | 0.237 | 0.801 |
+| fib | 0.032 | 0.025 | 0.047 | 0.045 | 0.068 |
+| sieve | 0.021 | 0.016 | 0.029 | 0.024 | 0.030 |
+| strings | 0.041 | 0.039 | 0.047 | 0.043 | 0.045 |
+| pi | 0.861 | 0.876 | 0.858 | 0.873 | 0.853 |
+
+stack8 gives up the three words the ablation found not worth a word,
+and pays for it what the ablation said: 14 percent on calls (`Call`) and
+on array writes (`PutAt`, `PushTo`) against stacklab. microcode7 gives
+up `If` and pays 7 percent on calls against microlab. stack8 is the
+fastest kernel on every program and became the host's default. The
+specimens under `lab/` were removed with the promotion, as were the two
+first designs they made redundant, stack26 and microcode10; the
+benchmark programs and `scripts/bench.sh` stay.

@@ -1,6 +1,6 @@
 // lumen-lang: command-line host for the three kernels.
 //
-// Usage: lumen-lang [--kernel stream35|microcode10|stack26|microcode11|microcode4|stack5] [--lang <name|definition.json>]
+// Usage: lumen-lang [--kernel stream35|microcode11|microcode4|microcode7|stack5|stack8] [--lang <name|definition.json>]
 //                   <file> [--lang <name|definition.json>] [program args...]
 //
 // The host reads the file, picks the language from `--lang` (also spelled
@@ -18,8 +18,8 @@ use std::fs;
 use std::path::Path;
 use std::process;
 
-const KERNELS: [&str; 8] = ["stream35", "microcode10", "stack26", "microcode11", "microcode4", "stack5", "stack8", "microcode7"];
-const DEFAULT_KERNEL: &str = "microcode10";
+const KERNELS: [&str; 6] = ["stream35", "microcode11", "microcode4", "microcode7", "stack5", "stack8"];
+const DEFAULT_KERNEL: &str = "stack8";
 const DEFAULT_LANGUAGE: &str = "lumen";
 
 /// Build-time packaging of the Lumen standard library (`lib_lumen/*.lm`).
@@ -103,10 +103,6 @@ fn main() {
     let result = match (inv.kernel.as_str(), &inv.language) {
         ("stream35", Language::Named(name)) => lumen_stream35::run(name, &source, &inv.program_args),
         ("stream35", Language::File { text, .. }) => lumen_stream35::run_definition(text, &source, &inv.program_args),
-        ("microcode10", Language::Named(name)) => lumen_microcode10::run(name, &source, &inv.program_args),
-        ("microcode10", Language::File { text, .. }) => lumen_microcode10::run_definition(text, &source, &inv.program_args),
-        ("stack26", Language::Named(name)) => lumen_stack26::run(name, &source, &inv.program_args),
-        ("stack26", Language::File { text, .. }) => lumen_stack26::run_definition(text, &source, &inv.program_args),
         ("microcode11", Language::Named(name)) => lumen_microcode11::run(name, &source, &inv.program_args),
         ("microcode11", Language::File { text, .. }) => lumen_microcode11::run_definition(text, &source, &inv.program_args),
         ("microcode4", Language::Named(name)) => lumen_microcode4::run(name, &source, &inv.program_args),
@@ -128,7 +124,7 @@ fn main() {
 
 fn usage(program: &str) -> ! {
     eprintln!(
-        "Usage: {} [--kernel stream35|microcode10|stack26|microcode11|microcode4|stack5] [--lang <name|extension|definition.json>] [--emit <name|extension|definition.json>] <file> [program args...]",
+        "Usage: {} [--kernel stream35|microcode11|microcode4|microcode7|stack5|stack8] [--lang <name|extension|definition.json>] [--emit <name|extension|definition.json>] <file> [program args...]",
         program
     );
     process::exit(1);
@@ -136,7 +132,7 @@ fn usage(program: &str) -> ! {
 
 /// The embedded languages, each name with its extensions.
 fn embedded_languages() -> Vec<(String, Vec<String>)> {
-    lumen_microcode10::languages().unwrap_or_else(|e| {
+    lumen_stack8::languages().unwrap_or_else(|e| {
         eprintln!("Error: embedded language definitions: {}", e);
         process::exit(1);
     })
@@ -148,7 +144,7 @@ fn definition_from_file(path: &str) -> Language {
         eprintln!("Error: Failed to read {}: {}", path, e);
         process::exit(1);
     });
-    let name = lumen_microcode10::language_of(&text).unwrap_or_else(|e| {
+    let name = lumen_stack8::language_of(&text).unwrap_or_else(|e| {
         eprintln!("Error: language definition {}: {}", path, e);
         process::exit(1);
     });

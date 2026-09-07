@@ -113,7 +113,10 @@ integer fast path; together worth about 1.2 times on loops.
 
 The kernels never import each other; `scripts/kernel_independence.py`
 checks every pair. `scripts/kernel_diff.sh` compares this kernel with the
-others on every program under `examples/`; all 488 print the same.
+others on every program under `examples/`; all 498 print the same.
 microcode4 is the same exercise on the tree: four forms there, five words
 here, and the one extra is the conditional jump, which a flat list needs
-because it has no program values to hand a branch to.
+because it has no program values to hand a branch to. stack8 is this
+kernel with three fused words added for speed (`docs/LUMEN_KERNEL_STACK8.md`).
+stack26, the first stack design this one is measured against above, was
+retired once stack8 superseded it; its timings are kept as the record.

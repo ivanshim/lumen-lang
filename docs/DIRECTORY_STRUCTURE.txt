@@ -85,32 +85,6 @@ lumen-lang/
     kernels/stream35/src/language/values.rs
     kernels/stream35/src/lib.rs
 
-  kernels/microcode10/               crate lumen-microcode10 (tables and an instruction tree, from a definition)
-    kernels/microcode10/Cargo.toml
-    kernels/microcode10/src/kernel/_1_ingest.rs
-    kernels/microcode10/src/kernel/_2_structure.rs
-    kernels/microcode10/src/kernel/_3_reduce.rs
-    kernels/microcode10/src/kernel/_4_execute.rs
-    kernels/microcode10/src/kernel/env.rs
-    kernels/microcode10/src/kernel/instruction.rs
-    kernels/microcode10/src/kernel/mod.rs
-    kernels/microcode10/src/kernel/numeric.rs
-    kernels/microcode10/src/kernel/value.rs
-    kernels/microcode10/src/lib.rs
-    kernels/microcode10/src/schema.rs
-
-  kernels/stack26/                   crate lumen-stack26 (every language compiled to one stack machine)
-    kernels/stack26/Cargo.toml
-    kernels/stack26/src/code.rs          the word set and compiled programs
-    kernels/stack26/src/compiler.rs      tokens to words in one pass; names to slots
-    kernels/stack26/src/definition.rs    the definition reader
-    kernels/stack26/src/layout.rs        block structure
-    kernels/stack26/src/lexer.rs         scanning
-    kernels/stack26/src/lib.rs
-    kernels/stack26/src/machine.rs       the inner loop, builtins, the call cache
-    kernels/stack26/src/number.rs        the numeric tower with a machine-word fast path
-    kernels/stack26/src/value.rs         values and rendering
-
   kernels/microcode11/              crate lumen-microcode11 (the tree kept: run it, or write it out in any language)
     kernels/microcode11/Cargo.toml
     kernels/microcode11/src/emit.rs        the tree written in a target language
@@ -146,6 +120,28 @@ lumen-lang/
     kernels/stack5/src/shape.rs         block structure
     kernels/stack5/src/values.rs
     kernels/stack5/src/words.rs         the five words
+  kernels/microcode7/              crate lumen-microcode7 (seven forms: the four, and Cycle, Dyad, Bump)
+    kernels/microcode7/Cargo.toml
+    kernels/microcode7/src/build.rs       tokens to the seven forms; arms and loop bodies frameless
+    kernels/microcode7/src/data.rs        values and environments
+    kernels/microcode7/src/exec.rs        the seven forms run, with tail calls and escapes
+    kernels/microcode7/src/form.rs        the seven forms
+    kernels/microcode7/src/indent.rs      block structure
+    kernels/microcode7/src/lib.rs
+    kernels/microcode7/src/math.rs
+    kernels/microcode7/src/scan.rs        scanning
+    kernels/microcode7/src/table.rs       the definition as a table of tags
+  kernels/stack8/                  crate lumen-stack8 (eight words: the five, and Dyad, Bump, SkipCmp; the default)
+    kernels/stack8/Cargo.toml
+    kernels/stack8/src/arith.rs
+    kernels/stack8/src/code.rs          the eight words
+    kernels/stack8/src/compile.rs       tokens to the five words, then the peephole that fuses three
+    kernels/stack8/src/engine.rs        the eight words run over one stack
+    kernels/stack8/src/lang.rs          the definition as data
+    kernels/stack8/src/layout.rs        block structure
+    kernels/stack8/src/lex.rs           scanning
+    kernels/stack8/src/lib.rs
+    kernels/stack8/src/value.rs
 
   lib_lumen/                       Lumen standard library (.lm) + prelude.rs (embedding list)
     lib_lumen/constants.lm
@@ -181,15 +177,16 @@ lumen-lang/
   docs/                            design documents, references, history
     docs/DIRECTORY_STRUCTURE.txt
     docs/LUMEN_COMPACT_REFERENCE.md
-    docs/LUMEN_KERNEL_MICROCODE10.md
+    docs/LUMEN_KERNEL_MICROCODE11.md
+    docs/LUMEN_KERNEL_MICROCODE4.md
+    docs/LUMEN_KERNEL_MICROCODE7.md
+    docs/LUMEN_KERNEL_STACK5.md
+    docs/LUMEN_KERNEL_STACK8.md
     docs/LUMEN_KERNEL_STREAM35.md
     docs/LUMEN_LANGUAGE_DESIGN.md
     docs/LUMEN_LANGUAGE_EXTERN_SYSTEM.md
     docs/LUMEN_LANGUAGE_ROADMAP.md
     docs/VERSION_HISTORY.md
-    docs/KERNEL_LAB.md               the kernel lab: cycles, predictions, results
+    docs/KERNEL_LAB.md               the kernel lab: cycles, predictions, results, ablation, promotion
 
   bench/                           the benchmark programs scripts/bench.sh times
-  lab/                             the kernel lab's specimens, not kernels: exempt from the independence check
-    lab/stacklab/                    stack5 evolved: fourteen words
-    lab/microlab/                    microcode4 evolved: eight forms

@@ -104,5 +104,9 @@ written back from.
 ## Relationship to the other kernels
 
 The kernels never import each other; `scripts/kernel_independence.py`
-checks every pair. All 488 example programs print the same on this
-kernel as on the other four.
+checks every pair. All 498 example programs print the same on this
+kernel as on the other five. microcode7 is this kernel with three forms
+added for speed (`docs/LUMEN_KERNEL_MICROCODE7.md`). microcode10 and
+stack26, the first designs this one is measured against above, were
+retired once microcode7 and stack8 superseded them; their timings are
+kept as the record.

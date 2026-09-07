@@ -29,13 +29,13 @@ cargo run -- examples/python/fibonacci.py
 # Rust-like (braces, fn main, println!)
 cargo run -- examples/rust/demo.rs
 
-# Choose the kernel explicitly (microcode10 is the default)
+# Choose the kernel explicitly (stack8, the fastest, is the default)
 cargo run -- --kernel stream35 examples/lumen/pi_machin.lm
-cargo run -- --kernel microcode10 examples/lumen/pi_machin.lm
-cargo run -- --kernel stack26 examples/lumen/pi_machin.lm
 cargo run -- --kernel microcode11 examples/lumen/pi_machin.lm
 cargo run -- --kernel microcode4 examples/lumen/pi_machin.lm
+cargo run -- --kernel microcode7 examples/lumen/pi_machin.lm
 cargo run -- --kernel stack5 examples/lumen/pi_machin.lm
+cargo run -- --kernel stack8 examples/lumen/pi_machin.lm
 
 # Write a program in another language (microcode11 only)
 cargo run -- --kernel microcode11 --emit python examples/lumen/fibonacci_iterative.lm
@@ -68,12 +68,12 @@ program.
 ```
 src/main.rs            the host: arguments, language detection, the embedded
                        Lumen standard library; the only place the kernels exist
-kernels/stream35/        crate lumen-stream35: a tree-walking interpreter substrate
-kernels/microcode10/     crate lumen-microcode10: a table-driven execution engine
-kernels/stack26/         crate lumen-stack26: a compiler to one stack machine
-kernels/microcode11/    crate lumen-microcode11: the tree kept, and written back out
+kernels/stream35/      crate lumen-stream35: a tree-walking interpreter substrate
+kernels/microcode11/   crate lumen-microcode11: the tree kept, and written back out
 kernels/microcode4/    crate lumen-microcode4: four primitive forms and nothing else
+kernels/microcode7/    crate lumen-microcode7: the four, and three forms for speed
 kernels/stack5/        crate lumen-stack5: five words and nothing else
+kernels/stack8/        crate lumen-stack8: the five, and three words for speed
 langs/                 language definitions as JSON, one file per language,
                        with a generated side-by-side comparison; every kernel
                        reads them. Lumen, RPLumen, Python and Rust are embedded at
@@ -88,10 +88,10 @@ The kernels are separate crates that do not depend on each other, and
 long run of identical source lines appears in two trees. Where they need
 the same facility they take different routes by design: comment removal
 is a token-stream transformation in the stream35 language and a
-definition-driven text pass in the microcode10 ingest; bindings are hash-map
-scopes in the stream35 kernel, a linear frame stack in the microcode10 kernel,
-and slots resolved at compile time in the stack26, microcode11, microcode4 and
-stack5 kernels.
+definition-driven text pass in the others' scanners; bindings are hash-map
+scopes in the stream35 kernel and slots resolved at compile time in the
+five others, as frames up a chain in the tree kernels and as cells of a
+flat frame in the stack kernels.
 
 Each kernel is named for its shape and numbered by the size of its
 instruction set: the number of node types, forms or words that everything
@@ -100,11 +100,11 @@ a definition spells is reduced to.
 | Kernel | Product | Primitives |
 |--------|---------|------------|
 | `stream35` | a tree of handler nodes, one per construct | 35 node types |
-| `microcode10` | an instruction tree | 10 forms |
-| `stack26` | a flat word list over a data stack | 26 words |
 | `microcode11` | a tree that keeps its source lines and is written back out by `--emit` | 11 forms |
 | `microcode4` | a tree of four forms, everything else a call | 4 forms |
+| `microcode7` | the four forms and a loop, a two-operand operator and a step: the fast tree | 7 forms |
 | `stack5` | a flat word list of five kinds of word, everything else a shape made of them | 5 words |
+| `stack8` | the five words and three fused from them: the fast kernel, and the default | 8 words |
 
 ### stream35, the stream kernel
 
@@ -115,36 +115,13 @@ type or runtime policy. The language module gives each construct its meaning
 in code, and reads the definition for everything else: which keyword,
 operator, bracket and builtin name spells each construct, whether blocks are
 indented or braced, what a comment or a variable looks like. The same four
-definitions run here as on the microcode10 kernel, by a different method. See
+definitions run here as on the other kernels, by a different method. See
 [docs/LUMEN_KERNEL_STREAM35.md](docs/LUMEN_KERNEL_STREAM35.md).
-
-### microcode10, the microcode kernel
-
-A four-stage pipeline (ingest → structure → reduce → execute) that reads a
-language as data. Each language is a JSON definition in `langs/` mapping a
-fixed set of labels to spellings: lexemes, block rules, literal words,
-operator precedence mapped onto kernel operations, statement keywords mapped
-onto statement forms, the surface names of built-ins, and the names of
-system bindings. The kernel reduces every construct to ten instruction forms and
-executes them. See [docs/LUMEN_KERNEL_MICROCODE10.md](docs/LUMEN_KERNEL_MICROCODE10.md)
-and [langs/README.md](langs/README.md).
-
-### stack26, the stack kernel
-
-A compiler to one stack machine. Every language, read from the same
-definitions, compiles in a single syntax-directed pass to a flat list of
-words over a data stack: a literal pushes, an operator pops its operands
-and pushes the result, a control word is a jump, a call runs another
-word list, and names are slots resolved when compiling. RPLumen is the
-machine's own notation, so its programs compile almost word for word and
-the infix languages become RPLumen underneath. Machine-word integers stay
-unboxed and arrays are shared until written, which makes this the fast
-kernel: several times microcode10 on loops, more on array code.
-See [docs/LUMEN_KERNEL_STACK26.md](docs/LUMEN_KERNEL_STACK26.md).
 
 ### microcode11, the microcode kernel's second design
 
-The same four stages, but the tree is the product: it keeps its source
+A four-stage pipeline (scan, structure, reduce, execute) that reads a
+language as data, and the tree is the product: it keeps its source
 lines, names are resolved to slots as it is built, and a postfix program
 is read into it with a symbolic stack, so RPLumen runs as a tree with no
 stack at all. What only a tree can do is be written back out: `--emit
@@ -175,9 +152,32 @@ function's result travels through a hidden slot and `return` jumps to the
 end, `and` and `or` keep the left side in a hidden slot while they
 decide, `dup` and `swap` are stores and loads of scratch slots, and an
 array write takes the array out of its slot, rewrites it unshared and
-stores it back. Same value model as stack26, and as fast: the other
-twenty-one words bought no speed. All 488 programs print the same as on the other kernels. See
+stores it back. As fast as the first stack design's twenty-six words: the
+other twenty-one bought no speed. All 498 programs print the same as on
+the other kernels. See
 [docs/LUMEN_KERNEL_STACK5.md](docs/LUMEN_KERNEL_STACK5.md).
+
+### microcode7, the microcode kernel's fourth design
+
+The four forms of microcode4 and three more that the kernel lab measured
+worth a form of their own: `Cycle`, a loop run in the frame it appears
+in; `Dyad`, an operator whose two operands are read without a visit to a
+form; `Bump`, a binding stepped in place. A branch is still a call of
+`choose` with program values for arms, which cost nothing once arms make
+no frame. Two and a half times microcode4 on a bare loop, twice on an
+arithmetic loop, and ahead of microcode11 everywhere. See
+[docs/LUMEN_KERNEL_MICROCODE7.md](docs/LUMEN_KERNEL_MICROCODE7.md).
+
+### stack8, the stack kernel's third design
+
+The five words of stack5 and three fused from runs of them by a
+peephole: `Dyad`, an operator whose operands come straight from cells
+and never cross the stack; `Bump`, a cell stepped in place; `SkipCmp`, a
+comparison with its conditional jump. Everything a language spells is
+still first assembled from the five; the peephole then replaces each run
+it recognises with one word. Five times stack5 on a bare loop, 1.6 times
+on an arithmetic loop, and the fastest kernel on every program, so it is
+the default. See [docs/LUMEN_KERNEL_STACK8.md](docs/LUMEN_KERNEL_STACK8.md).
 
 ## Languages
 
@@ -229,7 +229,7 @@ Every example runs on every kernel:
 ./test.sh --lang all          # everything
 ./test.sh                     # Lumen only
 ./test.sh --lang php          # one language
-./test.sh --kernel stack26      # one kernel
+./test.sh --kernel stack8       # one kernel
 ./test.sh fibonacci_iterative.lm
 ./test.sh --help
 ```
@@ -247,27 +247,27 @@ errors, a check that the ported examples match what
 
 ## The kernel lab
 
-`lab/` holds two specimens, copies of the floor kernels stack5 and
-microcode4 patched cycle by cycle for speed and measured after each with
-`scripts/bench.sh` over the programs in `bench/`. They are experiments,
-not kernels: exempt from the independence check, not wired into the host.
-[docs/KERNEL_LAB.md](docs/KERNEL_LAB.md) records every cycle, the
-predictions and the results: fourteen words run the bare loop 7.5 times
-faster than five, and a tree of eight forms beats the stack floors on it.
-A second experiment measured the floor kernels with the lab's
-count-neutral improvements and nothing else, to see what the primitives
-bought: on the stack machine nearly all of it, on the tree about half.
-Those improvements are now folded into stack5 and microcode4, their
-counts unchanged.
+stack8 and microcode7 came out of an experiment recorded in
+[docs/KERNEL_LAB.md](docs/KERNEL_LAB.md): copies of the floor kernels
+stack5 and microcode4 were patched cycle by cycle for speed and measured
+after each with `scripts/bench.sh` over the programs in `bench/`. The
+notebook records every cycle, the predictions and the results, a second
+experiment that separated what the new primitives bought from what the
+engineering around them bought (on the stack machine nearly all of it,
+on the tree about half; those improvements are folded into stack5 and
+microcode4), and an ablation of every added primitive, which settled the
+counts at eight and seven. The survivors were then rewritten in their own
+words as kernels and the specimens removed; the first designs of each
+shape, stack26 and microcode10, were retired at the same time.
 
 ## Documentation
 
 - [docs/LUMEN_KERNEL_STREAM35.md](docs/LUMEN_KERNEL_STREAM35.md) — the stream35 kernel's charter
-- [docs/LUMEN_KERNEL_MICROCODE10.md](docs/LUMEN_KERNEL_MICROCODE10.md) — the microcode10 kernel and how it reads a definition
-- [docs/LUMEN_KERNEL_STACK26.md](docs/LUMEN_KERNEL_STACK26.md) — the stack26 kernel: its 26 words and the compiler
 - [docs/LUMEN_KERNEL_MICROCODE11.md](docs/LUMEN_KERNEL_MICROCODE11.md) — the microcode11 kernel: the tree kept and written back out
 - [docs/LUMEN_KERNEL_MICROCODE4.md](docs/LUMEN_KERNEL_MICROCODE4.md) — the microcode4 kernel: four primitive forms
 - [docs/LUMEN_KERNEL_STACK5.md](docs/LUMEN_KERNEL_STACK5.md) — the stack5 kernel: five words and the shapes made of them
+- [docs/LUMEN_KERNEL_MICROCODE7.md](docs/LUMEN_KERNEL_MICROCODE7.md) — the microcode7 kernel: the fast tree, seven forms
+- [docs/LUMEN_KERNEL_STACK8.md](docs/LUMEN_KERNEL_STACK8.md) — the stack8 kernel: the fast stack machine, eight words
 - [docs/KERNEL_LAB.md](docs/KERNEL_LAB.md) — the kernel lab: evolving both kernel shapes for speed, cycle by cycle
 - [langs/README.md](langs/README.md) — the definition format, every label, and the languages side by side
 - [docs/LUMEN_LANGUAGE_DESIGN.md](docs/LUMEN_LANGUAGE_DESIGN.md) — design principles

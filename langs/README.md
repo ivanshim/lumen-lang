@@ -5,14 +5,13 @@ of things the kernel can do, to the strings a language spells them with. The
 semantics behind every label belong to the kernel and are the same for every
 language: a definition changes how a program is spelled, never what it means.
 
-All six kernels read these files, each in its own way. The microcode10
-kernel reduces a definition to tables and an instruction tree; the stream35
+All six kernels read these files, each in its own way. The stream35
 kernel registers handlers for the constructs a definition spells and
-transforms the token stream by its block style and markers; the stack26
-kernel compiles every construct to words over one stack; the microcode11
+transforms the token stream by its block style and markers; the microcode11
 kernel builds a tree it can also write back out, so a definition is read
 in both directions; the microcode4 kernel reduces everything to four
-forms; the stack5 kernel assembles everything from five words. The definitions in this
+forms and microcode7 to seven; the stack5 kernel assembles everything
+from five words and stack8 from eight. The definitions in this
 directory (Lumen, RPLumen, Python, Rust) are embedded at build time and picked by
 file extension, `--lang <name>` or `--lang <extension>`; the ones in
 `extras/` (PHP, Ruby, Pascal, C, JavaScript, Swift) are never compiled

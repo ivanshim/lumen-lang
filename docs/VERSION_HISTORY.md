@@ -44,7 +44,17 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   since only a word keeps an operand off the stack; on the tree the
   engineering is worth 2 times and the forms the other 2. Those
   improvements are folded into stack5 and microcode4, still five words
-  and four forms.
+  and four forms. An ablation then switched off each added word and form
+  on its own and settled the counts at eight words and seven forms.
+- **stack8 and microcode7; stack26 and microcode10 retired**: the lab's
+  survivors rewritten in their own words as kernels. stack8 is stack5's
+  five words and `Dyad`, `Bump` and `SkipCmp`, fused by a peephole from
+  runs of the five; microcode7 is microcode4's four forms and `Cycle`,
+  `Dyad` and `Bump`. Both pass the whole suite and the independence
+  check. stack8 is the fastest kernel on every benchmark and is now the
+  host's default. The first designs of each shape, stack26 and
+  microcode10, are removed along with the lab specimens; six kernels
+  remain: stream35, microcode11, microcode4, microcode7, stack5, stack8.
 - **Notation and block style are separate labels; RPLumen is indented**:
   a new label `syntax.notation` (`infix` or `postfix`) says how a
   language is read, and `block.style` is free to be `indentation`,
