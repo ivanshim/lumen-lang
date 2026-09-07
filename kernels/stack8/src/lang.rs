@@ -122,6 +122,28 @@ pub struct Lang {
     pub decrements: Vec<String>,
     pub interpolating: Vec<char>,
     pub concat: Option<String>,
+    pub c_for_words: Vec<String>,
+    /// `x op= e` for every binary operator, when the switch is on.
+    pub compound: HashMap<String, Action>,
+    pub static_words: Vec<String>,
+    pub global_words: Vec<String>,
+    pub const_words: Vec<String>,
+    pub switch_words: Vec<String>,
+    pub case_words: Vec<String>,
+    pub default_words: Vec<String>,
+    pub case_marks: Vec<String>,
+    /// The two signs of `test ? a : b`.
+    pub ternary: Option<(String, String)>,
+    /// A lone statement may stand where a block is expected.
+    pub lone_stmt: bool,
+    /// A top-level function is bound before anything else runs.
+    pub hoisted: bool,
+    /// Letters that open a decimal exponent in a number (1e9).
+    pub exponent_letters: Vec<char>,
+    /// A sign that leaves its operand as it is.
+    pub plus_words: Vec<String>,
+    /// `break n` and `continue n` leave n loops.
+    pub break_levels: bool,
 }
 
 /// Every tag with its shape: w a word list, s a string, b a switch,
@@ -167,7 +189,11 @@ w system.kind.string | w system.kind.boolean | w system.kind.array | w system.ki
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
 w ext.lexical.epilogue | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
-w ext.op.decrement | w ext.lexical.interpolating_quotes
+w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.stmt.for.c | b ext.op.assign.compound
+w ext.stmt.static | w ext.stmt.global | w ext.stmt.const | w ext.builtin.define
+w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
+w ext.stmt.case.mark | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted
+w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -545,7 +571,8 @@ impl Lang {
             ("builtin.precision", Builtin::Places), ("builtin.to_string", Builtin::ToText),
             ("builtin.to_int", Builtin::ToInt), ("builtin.to_real", Builtin::AsReal), ("builtin.num", Builtin::Numer),
             ("builtin.den", Builtin::Denom), ("builtin.push", Builtin::Append), ("builtin.get", Builtin::Fetch),
-            ("builtin.put", Builtin::Replace), ("ext.builtin.echo", Builtin::Tell),
+            ("builtin.put", Builtin::Replace), ("ext.builtin.echo", Builtin::Tell), ("ext.builtin.define", Builtin::Define),
+            ("ext.builtin.var_dump", Builtin::Dump),
         ] {
             for lex in r.strings(tag)? {
                 let begins = lex.chars().next().map_or(false, |c| c == '_' || c.is_alphabetic());
@@ -666,7 +693,44 @@ impl Lang {
             decrements: r.strings("ext.op.decrement")?,
             interpolating: r.letters("ext.lexical.interpolating_quotes")?,
             concat: r.head("op.concat")?,
+            c_for_words: r.strings("ext.stmt.for.c")?,
+            compound: HashMap::new(),
+            static_words: r.strings("ext.stmt.static")?,
+            global_words: r.strings("ext.stmt.global")?,
+            const_words: r.strings("ext.stmt.const")?,
+            switch_words: r.strings("ext.stmt.switch")?,
+            case_words: r.strings("ext.stmt.case")?,
+            default_words: r.strings("ext.stmt.default")?,
+            case_marks: r.strings("ext.stmt.case.mark")?,
+            ternary: match r.strings("ext.op.ternary")?.as_slice() {
+                [] => None,
+                [q, m] => Some((q.clone(), m.clone())),
+                _ => return Err("ext.op.ternary takes exactly two signs, the question and the mark".to_string()),
+            },
+            lone_stmt: r.flag("ext.block.lone_statement")?,
+            hoisted: r.flag("ext.stmt.function.hoisted")?,
+            exponent_letters: r.letters("ext.lexical.number.exponent")?,
+            plus_words: r.strings("ext.op.plus")?,
+            break_levels: r.flag("ext.stmt.break.levels")?,
         };
+        if r.flag("ext.op.assign.compound")? {
+            // Every binary operator followed by the assignment sign, unless
+            // that spelling is already an operator (`<=`) or the operator
+            // itself ends in the sign (`==`, whose `===` is another operator).
+            let mut compound = HashMap::new();
+            for (lex, op) in &lang.dyadic {
+                for assign in &lang.assign_words {
+                    let joined = format!("{lex}{assign}");
+                    if !lex.ends_with(assign.as_str()) && !lang.dyadic.contains_key(&joined) && !lang.monadic.contains_key(&joined) {
+                        compound.insert(joined, op.action.clone());
+                    }
+                }
+            }
+            lang.compound = compound;
+        }
+        if !lang.switch_words.is_empty() && (lang.case_words.is_empty() || lang.case_marks.is_empty()) {
+            return Err("ext.stmt.switch needs ext.stmt.case and ext.stmt.case.mark".to_string());
+        }
         if let Some(q) = lang.interpolating.iter().find(|q| !lang.quotes.contains(q)) {
             return Err(format!("ext.lexical.interpolating_quotes '{q}' is not among lexical.string_quotes"));
         }
@@ -692,7 +756,14 @@ impl Lang {
                 symbols.push(lex.to_string());
             }
         };
-        for lex in self.dyadic.keys().chain(self.monadic.keys()).chain(self.precedence.keys()) {
+        for lex in self.dyadic.keys().chain(self.monadic.keys()).chain(self.precedence.keys()).chain(self.compound.keys()) {
+            place(lex);
+        }
+        if let Some((question, mark)) = &self.ternary {
+            place(question);
+            place(mark);
+        }
+        for lex in &self.plus_words {
             place(lex);
         }
         for pair in [&self.grouping, &self.calling, &self.array_brackets, &self.index_brackets].into_iter().flatten() {
@@ -705,7 +776,7 @@ impl Lang {
         let mut lists: Vec<&Vec<String>> = vec![
             &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.return_marks,
             &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open,
-            &self.quote_close, &self.increments, &self.decrements,
+            &self.quote_close, &self.increments, &self.decrements, &self.case_marks,
         ];
         if self.blocks != Blocks::Indented {
             lists.push(&self.block_opens);
@@ -717,7 +788,8 @@ impl Lang {
         let keywords = [
             &self.let_words, &self.mutable_words, &self.if_words, &self.elif_words, &self.else_words, &self.while_words, &self.until_words, &self.for_words,
             &self.in_words, &self.return_words, &self.break_words, &self.continue_words, &self.function_words, &self.pass_words, &self.true_words,
-            &self.false_words, &self.null_words,
+            &self.false_words, &self.null_words, &self.c_for_words, &self.static_words, &self.global_words, &self.const_words,
+            &self.switch_words, &self.case_words, &self.default_words,
         ];
         for word in keywords.into_iter().flatten() {
             if !name_like(word, unicode, prefix) {

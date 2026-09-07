@@ -71,6 +71,10 @@ pub enum Builtin {
     Out,
     /// Every argument's text, run together, no line end (ext.builtin.echo).
     Tell,
+    /// A named global constant (ext.builtin.define); bound at compile time.
+    Define,
+    /// Each argument with its kind, PHP's var_dump (ext.builtin.var_dump).
+    Dump,
     MakeReal,
     Places,
     ToText,

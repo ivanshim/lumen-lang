@@ -272,7 +272,8 @@ of CPython's `Lib/test`, copied unchanged with their licenses.
 which reserved words the definition spells and which functions the suites
 call that it does not. The suites run on the two full kernels, stack8 and
 microcode7, the ones that read the `ext.` labels a language needs beyond
-the 132 core labels (PHP's `echo`, `++`, `"$name"` and `?>` so far); the
+the 132 core labels (PHP's `echo`, `++`, `"$name"`, `?>`, the three-part
+`for`, `switch`, `static`, `define`, `var_dump` and `?:` so far); the
 report is the measure of the distance and the order to close it in. See
 [tests/README.md](tests/README.md).
 

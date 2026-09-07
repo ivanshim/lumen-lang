@@ -333,11 +333,26 @@ impl<'a> Cursor<'a> {
                 s.push(c);
                 self.step();
             }
-        } else if lang.point.is_some() && self.look(0) == lang.point && self.look(1).map_or(false, |c| c.is_ascii_digit()) {
-            s.push(self.step());
-            while let Some(c) = self.look(0).filter(char::is_ascii_digit) {
-                s.push(c);
-                self.step();
+        } else {
+            if lang.point.is_some() && self.look(0) == lang.point && self.look(1).map_or(false, |c| c.is_ascii_digit()) {
+                s.push(self.step());
+                while let Some(c) = self.look(0).filter(char::is_ascii_digit) {
+                    s.push(c);
+                    self.step();
+                }
+            }
+            // A decimal exponent: the letter, a sign perhaps, digits.
+            let letter = self.look(0).filter(|c| lang.exponent_letters.contains(c));
+            let signed = matches!(self.look(1), Some('+') | Some('-'));
+            let digits_at = if signed { 2 } else { 1 };
+            if letter.is_some() && self.look(digits_at).map_or(false, |c| c.is_ascii_digit()) {
+                for _ in 0..digits_at {
+                    s.push(self.step());
+                }
+                while let Some(c) = self.look(0).filter(char::is_ascii_digit) {
+                    s.push(c);
+                    self.step();
+                }
             }
         }
         self.push(Shape::Numeral, s, 0, line, col);

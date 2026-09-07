@@ -496,6 +496,13 @@ impl<'a> Engine<'a> {
                 }
                 Value::Null
             }
+            Builtin::Define => return Err(format!("{}() needs a quoted name as its first argument", name)),
+            Builtin::Dump => {
+                for v in args.iter() {
+                    println!("{}", dumped(v, 0));
+                }
+                Value::Null
+            }
             Builtin::Span => return Err(format!("{}() spells a range, which belongs in a for loop", name)),
             Builtin::MakeReal => {
                 if args.is_empty() || args.len() > 2 {
@@ -670,4 +677,27 @@ pub fn sort_value(kind: Sort) -> Value {
 
 pub fn places_default() -> Value {
     Value::Small(arith::DEFAULT_PLACES as i64)
+}
+
+/// A value with its kind, as PHP's var_dump shows it: a number as
+/// `int(n)` or `float(x)`, text with its byte length, an array one
+/// entry per line, nested arrays indented two more.
+fn dumped(v: &Value, depth: usize) -> String {
+    let pad = "  ".repeat(depth);
+    match v {
+        Value::Small(_) | Value::Huge(_) => format!("int({})", v.plain()),
+        Value::Real(_) | Value::Frac(_) => format!("float({})", v.plain()),
+        Value::Text(s) => format!("string({}) \"{}\"", s.len(), s),
+        Value::Flag(b) => format!("bool({})", b),
+        Value::Array(items) => {
+            let mut out = format!("array({}) {{\n", items.len());
+            for (i, item) in items.iter().enumerate() {
+                out.push_str(&format!("{pad}  [{i}]=>\n{pad}  {}\n", dumped(item, depth + 1)));
+            }
+            out.push_str(&pad);
+            out.push('}');
+            out
+        }
+        _ => "NULL".to_string(),
+    }
 }

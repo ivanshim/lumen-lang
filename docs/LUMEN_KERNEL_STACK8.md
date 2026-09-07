@@ -93,7 +93,15 @@ promotion on the tree.
 
 Being a full kernel, it also reads the `ext.` labels a definition may add
 beyond the 132 core labels (see `langs/README.md`): an epilogue marker,
-`echo`, bracketless builtin calls, `++`/`--`, and interpolating strings,
-which the scanner turns into a bracketed concatenation before the compiler
-sees them. The reference kernels skip those labels, so the reference
+`echo`, bracketless builtin calls, `++`/`--`, interpolating strings
+(which the scanner turns into a bracketed concatenation before the
+compiler sees them), the three-part `for` (its test at the bottom like a
+while loop, `continue` landing on the step), `switch` (each case a test
+that skips to the next test, each section falling into the next over
+that test), the ternary as a conditional jump inside an expression,
+`static` (a hidden global, its setting assembled in the unit around the
+function), `global`, `define`/`const` (a store to the global at build
+time), `var_dump`, compound assignment, `break n`, hoisted top-level
+functions (their instrs lifted to the front of the unit) and exponent
+literals. The reference kernels skip those labels, so the reference
 suites under `tests/` run on this kernel and microcode7 only.

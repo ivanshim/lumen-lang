@@ -112,7 +112,9 @@
     ],
     [
       "==",
-      "!="
+      "!=",
+      "===",
+      "!=="
     ],
     [
       "<",
@@ -166,10 +168,12 @@
     "**"
   ],
   "op.eq": [
-    "=="
+    "==",
+    "==="
   ],
   "op.ne": [
-    "!="
+    "!=",
+    "!=="
   ],
   "op.lt": [
     "<"
@@ -331,5 +335,50 @@
   ],
   "ext.lexical.interpolating_quotes": [
     "\""
-  ]
+  ],
+  "ext.stmt.for.c": [
+    "for"
+  ],
+  "ext.op.assign.compound": true,
+  "ext.stmt.static": [
+    "static"
+  ],
+  "ext.stmt.global": [
+    "global"
+  ],
+  "ext.stmt.const": [
+    "const"
+  ],
+  "ext.builtin.define": [
+    "define"
+  ],
+  "ext.builtin.var_dump": [
+    "var_dump"
+  ],
+  "ext.stmt.switch": [
+    "switch"
+  ],
+  "ext.stmt.case": [
+    "case"
+  ],
+  "ext.stmt.default": [
+    "default"
+  ],
+  "ext.stmt.case.mark": [
+    ":"
+  ],
+  "ext.op.ternary": [
+    "?",
+    ":"
+  ],
+  "ext.block.lone_statement": true,
+  "ext.stmt.function.hoisted": true,
+  "ext.lexical.number.exponent": [
+    "e",
+    "E"
+  ],
+  "ext.op.plus": [
+    "+"
+  ],
+  "ext.stmt.break.levels": true
 }

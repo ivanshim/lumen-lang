@@ -92,6 +92,15 @@ Being a full kernel, it also reads the `ext.` labels a definition may add
 beyond the 132 core labels (see `langs/README.md`): an epilogue marker,
 `echo`, bracketless builtin calls, `++`/`--` (a statement folds into a
 `Bump`; `x++` in an expression keeps the old value aside in a hidden
-binding), and interpolating strings, which the scanner turns into a
-bracketed concatenation. The reference kernels skip those labels, so the
-reference suites under `tests/` run on this kernel and stack8 only.
+binding), interpolating strings (which the scanner turns into a
+bracketed concatenation), the three-part `for` (a `Cycle` with a step),
+`switch` (the value and a start index in hidden bindings: the first
+matching case, else the default's; every section from there on runs
+inside a one-pass `Cycle`, so `break` leaves it), the ternary (a
+`Choose`), `static` (a hidden global, its setting gathered while the
+body is read and run where the function is defined), `global`,
+`define`/`const`, `var_dump`, compound assignment, `break n` (an escape
+carrying its count down through the cycles), hoisted top-level
+functions and exponent literals. The reference kernels skip those
+labels, so the reference suites under `tests/` run on this kernel and
+stack8 only.

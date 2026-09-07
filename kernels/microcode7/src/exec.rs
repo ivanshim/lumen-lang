@@ -24,8 +24,10 @@ use crate::data::{Env, Kind, Value, Names};
 pub enum Escape {
     Error(String),
     Yield(Value),
-    Leave,
-    Resume,
+    /// break, out of so many loops.
+    Leave(usize),
+    /// continue, the next pass of the loop so many levels out.
+    Resume(usize),
 }
 
 impl From<String> for Escape {
@@ -97,7 +99,7 @@ impl<'a> Machine<'a> {
     pub fn run_main(&mut self, body: &Form) -> Result<(), String> {
         let top = self.outermost.clone();
         match self.value_of(body, &top) {
-            Ok(_) | Err(Escape::Yield(_)) | Err(Escape::Leave) | Err(Escape::Resume) => Ok(()),
+            Ok(_) | Err(Escape::Yield(_)) | Err(Escape::Leave(_)) | Err(Escape::Resume(_)) => Ok(()),
             Err(Escape::Error(e)) => Err(e),
         }
     }
@@ -199,8 +201,10 @@ impl<'a> Machine<'a> {
                         break;
                     }
                     match self.value_of(body, frame) {
-                        Ok(_) | Err(Escape::Resume) => {}
-                        Err(Escape::Leave) => break,
+                        Ok(_) | Err(Escape::Resume(1)) => {}
+                        Err(Escape::Leave(1)) => break,
+                        Err(Escape::Leave(n)) => return Err(Escape::Leave(n - 1)),
+                        Err(Escape::Resume(n)) => return Err(Escape::Resume(n - 1)),
                         Err(other) => return Err(other),
                     }
                     if let Some(step) = step {
@@ -253,8 +257,16 @@ impl<'a> Machine<'a> {
                     };
                     Err(Escape::Yield(v))
                 }
-                Prim::Leave => Err(Escape::Leave),
-                Prim::Resume => Err(Escape::Resume),
+                Prim::Leave | Prim::Resume => {
+                    let levels = match args.first() {
+                        Some(a) => match self.value_of(a, frame)? {
+                            Value::Small(n) if n >= 1 => n as usize,
+                            _ => return Err("The number of loops to leave must be a positive integer".to_string().into()),
+                        },
+                        None => 1,
+                    };
+                    Err(if *op == Prim::Leave { Escape::Leave(levels) } else { Escape::Resume(levels) })
+                }
                 Prim::Append | Prim::Replace => {
                     let Some(Form::Read(slot)) = args.first() else {
                         return Err(format!("First argument to {}() must be an array variable name", name).into());
@@ -418,8 +430,10 @@ impl<'a> Machine<'a> {
                     frame = f;
                 }
                 Err(Escape::Yield(v)) if caught & 1 != 0 => break v,
-                Err(Escape::Leave) if caught & 2 != 0 => break Value::Nil,
-                Err(Escape::Resume) if caught & 4 != 0 => break Value::Nil,
+                Err(Escape::Leave(1)) if caught & 2 != 0 => break Value::Nil,
+                Err(Escape::Resume(1)) if caught & 4 != 0 => break Value::Nil,
+                Err(Escape::Leave(n)) if caught & 2 != 0 => return Err(Escape::Leave(n - 1)),
+                Err(Escape::Resume(n)) if caught & 4 != 0 => return Err(Escape::Resume(n - 1)),
                 Err(e) => return Err(e),
             }
         };
@@ -506,6 +520,13 @@ impl<'a> Machine<'a> {
                 let w = self.wording();
                 let text: String = v.iter().map(|x| x.render(w)).collect();
                 print!("{}", text);
+                Value::Nil
+            }
+            Prim::Define => return Err(format!("{}() needs a quoted name as its first argument", name)),
+            Prim::Dump => {
+                for x in v {
+                    println!("{}", with_kind(x, 0));
+                }
                 Value::Nil
             }
             Prim::Span => return Err(format!("{}() spells a range, which belongs in a for loop", name)),
@@ -686,5 +707,23 @@ fn as_index(v: &Value) -> Result<usize, String> {
         Value::Small(i) => usize::try_from(*i).map_err(|_| "Array index out of bounds".to_string()),
         Value::Huge(n) => n.to_usize().ok_or_else(|| "Array index out of bounds".to_string()),
         _ => Err("Array index must be a number".to_string()),
+    }
+}
+
+/// A value shown with its kind the way PHP's var_dump does: numbers as
+/// `int(n)` and `float(x)`, text with its length in bytes, a vector
+/// one entry per line, each nested level two spaces further in.
+fn with_kind(v: &Value, level: usize) -> String {
+    let lead = "  ".repeat(level);
+    match v {
+        Value::Small(_) | Value::Huge(_) => format!("int({})", v.bare()),
+        Value::Frac(_) => format!("float({})", v.bare()),
+        Value::Text(s) => format!("string({}) \"{}\"", s.len(), s),
+        Value::Flag(b) => format!("bool({})", b),
+        Value::Vector(items) => {
+            let entries: Vec<String> = items.iter().enumerate().map(|(i, x)| format!("{lead}  [{i}]=>\n{lead}  {}\n", with_kind(x, level + 1))).collect();
+            format!("array({}) {{\n{}{lead}}}", items.len(), entries.concat())
+        }
+        _ => "NULL".to_string(),
     }
 }
