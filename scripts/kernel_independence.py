@@ -21,6 +21,7 @@ KERNELS = {
     "stack26": (ROOT / "kernels/stack26/src", "lumen_stack26"),
     "microcode11": (ROOT / "kernels/microcode11/src", "lumen_microcode11"),
     "microcode4": (ROOT / "kernels/microcode4/src", "lumen_microcode4"),
+    "stack5": (ROOT / "kernels/stack5/src", "lumen_stack5"),
 }
 MIN_RUN = 12
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # lumen-lang test script: runs every example on the selected kernels.
-# Usage: ./test.sh [--lang all|<language>] [--kernel stream35|microcode10|stack26|microcode11|microcode4] [--omit file1 file2 ...]
+# Usage: ./test.sh [--lang all|<language>] [--kernel stream35|microcode10|stack26|microcode11|microcode4|stack5] [--omit file1 file2 ...]
 #        ./test.sh <file>
 # Languages built into the binary are picked by file extension; languages in
 # langs/extras/ are passed to the binary as `--lang <definition file>`, so
@@ -38,7 +38,7 @@ show_help() {
     echo ""
     echo -e "${BLUE}ARGUMENTS:${NC}"
     echo "  <language>              all, ${LANGUAGES[*]}"
-    echo "  <kernel>                stream35, microcode10, stack26, microcode11 or microcode4"
+    echo "  <kernel>                stream35, microcode10, stack26, microcode11, microcode4 or stack5"
     echo ""
     echo -e "${BLUE}EXAMPLES:${NC}"
     echo "  ./test.sh --lang all                        # Test everything on every kernel"
@@ -70,7 +70,7 @@ while [[ $# -gt 0 ]]; do
         --kernel)
             KERNEL_FILTER="$2"
             case "$KERNEL_FILTER" in
-                stream35|microcode10|stack26|microcode11|microcode4) shift 2 ;;
+                stream35|microcode10|stack26|microcode11|microcode4|stack5) shift 2 ;;
                 *) echo -e "${RED}Invalid kernel: $KERNEL_FILTER${NC}"; exit 1 ;;
             esac ;;
         --omit)
@@ -101,7 +101,7 @@ declare -A RESULTS
 declare -a FAILED_LIST
 declare -a TESTED_LANGUAGES
 for lang in "${LANGUAGES[@]}"; do
-    for kernel in stream35 microcode10 stack26 microcode11 microcode4; do
+    for kernel in stream35 microcode10 stack26 microcode11 microcode4 stack5; do
         RESULTS["${lang}:${kernel}:passed"]=0; RESULTS["${lang}:${kernel}:failed"]=0; RESULTS["${lang}:${kernel}:timeout"]=0
     done
 done
@@ -145,7 +145,7 @@ run_test() {
     fi
 }
 
-if [ -z "$KERNEL_FILTER" ]; then test_kernels=(stream35 microcode10 stack26 microcode11 microcode4); else test_kernels=("$KERNEL_FILTER"); fi
+if [ -z "$KERNEL_FILTER" ]; then test_kernels=(stream35 microcode10 stack26 microcode11 microcode4 stack5); else test_kernels=("$KERNEL_FILTER"); fi
 
 if [ -n "$SINGLE_FILE" ]; then
     title="Single File Test: $(basename "$SINGLE_FILE")"
