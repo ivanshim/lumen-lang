@@ -378,6 +378,12 @@ only. The extension labels so far, all from PHP:
   about: the asking is a glance, which has nothing to say about what
   is not there. It is the companion of `ext.builtin.unset`, and takes
   what that takes.
+- `ext.op.index.makes`: whether writing into a place makes what is
+  needed to hold it. A name holding nothing holds an empty array as far
+  as the write is concerned, and so does each place along the way that
+  is not there yet, so `$x[0][1] = 'deep'` builds what it needs and
+  says nothing about what was not there. It is the writing counterpart
+  of `ext.op.index.absent`, which says how a place not there reads.
 - `ext.builtin.eval`: builtins taking a piece of the language written
   out as text, reading it as the run's own language and running it
   where the call stands. The text is read with whatever a program of
@@ -765,6 +771,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.increment` | - | - | - | - | - | - | - | `++` | - | - |
 | `ext.op.index.absent` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.index.append` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.op.index.makes` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.index.plain_keys` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.instanceof` | - | - | - | - | - | - | - | `instanceof` | - | - |
 | `ext.op.member` | - | - | - | - | - | - | - | `->` | - | - |

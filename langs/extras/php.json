@@ -421,6 +421,7 @@
     "array"
   ],
   "ext.op.index.append": true,
+  "ext.op.index.makes": true,
   "ext.builtin.print_r": [
     "print_r"
   ],

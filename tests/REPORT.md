@@ -19,12 +19,12 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 32, differs 48, error 34, skipped 0 | pass 32, differs 48, error 34, skipped 0 |
 | `php/func` | 14 | pass 7, differs 3, error 4, skipped 0 | pass 7, differs 3, error 4, skipped 0 |
-| `php/lang` | 213 | pass 62, differs 57, error 92, skipped 2 | pass 62, differs 57, error 92, skipped 2 |
+| `php/lang` | 213 | pass 63, differs 57, error 91, skipped 2 | pass 63, differs 57, error 91, skipped 2 |
 | `php/lang/constants` | 2 | pass 1, differs 1, error 0, skipped 0 | pass 1, differs 1, error 0, skipped 0 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 3, error 0, skipped 0 | pass 3, differs 3, error 0, skipped 0 |
 | `php/lang/operators` | 64 | pass 21, differs 28, error 15, skipped 0 | pass 21, differs 28, error 15, skipped 0 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 127, differs 148, error 145, skipped 2 | pass 127, differs 148, error 145, skipped 2 |
+| all | 422 | pass 128, differs 148, error 144, skipped 2 | pass 128, differs 148, error 144, skipped 2 |
 
 | Reason | Tests |
 |---|---|
@@ -35,11 +35,10 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Cannot coerce array to number in <file> | 5 |
 | Unexpected token: , | 4 |
 | Unexpected token: -> | 4 |
-| Fatal error: Uncaught Error: push() requires an array in <file> | 4 |
+| Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
 | Unexpected token: : | 3 |
 | Unexpected token: ) | 3 |
-| Fatal error: Uncaught Error: put() requires an array in <file> | 3 |
 | Fatal error: Uncaught Error: Undefined variable: current in <file> | 3 |
 | Fatal error: Uncaught Error: Cannot index non-array value in <file> | 3 |
 | Only a name or a place in an array can be forgotten | 3 |
@@ -52,6 +51,7 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: ob_get_contents in <file> | 2 |
 | Expected ')' after the foreach names, got '[' | 2 |
 | Unexpected token: } | 2 |
+| Fatal error: Uncaught Error: Only a class can be made into an object in <file> | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Undefined variable: StdClass in <file> | 2 |
 | Fatal error: Uncaught Error: Array index 2 out of bounds (length: 1) in <file> | 2 |
@@ -451,9 +451,9 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/engine_assignExecutionOrder_004.phpt` | error | error | Unexpected token: , |
 | `php/lang/engine_assignExecutionOrder_005.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_006.phpt` | pass | pass |  |
-| `php/lang/engine_assignExecutionOrder_007.phpt` | error | error | Fatal error: Uncaught Error: put() requires an array in <file> |
+| `php/lang/engine_assignExecutionOrder_007.phpt` | error | error | Fatal error: Uncaught Error: Only a class can be made into an object in <file> |
 | `php/lang/engine_assignExecutionOrder_008.phpt` | error | error | Unexpected character '$' |
-| `php/lang/engine_assignExecutionOrder_009.phpt` | error | error | Fatal error: Uncaught Error: put() requires an array in <file> |
+| `php/lang/engine_assignExecutionOrder_009.phpt` | pass | pass |  |
 | `php/lang/error_2_exception_001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/execution_order.phpt` | differs | differs | ran, printed something else |
 | `php/lang/foreachLoop.001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: current in <file> |
@@ -465,10 +465,10 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/foreachLoop.009.phpt` | error | error | Fatal error: Uncaught Error: Array index 2 out of bounds (length: 1) in <file> |
 | `php/lang/foreachLoop.010.phpt` | error | error | Unexpected token: & |
 | `php/lang/foreachLoop.011.phpt` | differs | differs | ran, printed something else |
-| `php/lang/foreachLoop.012.phpt` | error | error | Fatal error: Uncaught Error: push() requires an array in <file> |
-| `php/lang/foreachLoop.013.phpt` | error | error | Fatal error: Uncaught Error: push() requires an array in <file> |
-| `php/lang/foreachLoop.014.phpt` | error | error | Fatal error: Uncaught Error: push() requires an array in <file> |
-| `php/lang/foreachLoop.015.phpt` | error | error | Fatal error: Uncaught Error: push() requires an array in <file> |
+| `php/lang/foreachLoop.012.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
+| `php/lang/foreachLoop.013.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
+| `php/lang/foreachLoop.014.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
+| `php/lang/foreachLoop.015.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
 | `php/lang/foreachLoop.016.phpt` | error | error | Unexpected character '$' |
 | `php/lang/foreachLoop.017.phpt` | pass | pass |  |
 | `php/lang/foreachLoopIterator.001.phpt` | error | error | Expected ']' after array index, got '++' |

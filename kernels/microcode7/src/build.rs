@@ -516,6 +516,15 @@ impl<'a> Builder<'a> {
         self.address_to_write(&name)
     }
 
+    /// The name of an array being written into, addressed as the write
+    /// it is: a name first met on the left of a write belongs to the
+    /// scope it is written in, and every later reading of it must find
+    /// the same cell.
+    fn read_to_write(&mut self, name: &str) -> Form {
+        let slot = self.address_to_write(name);
+        Form::Read(slot)
+    }
+
     fn read(&mut self, name: &str) -> Form {
         // The word a language uses for the line it is written on stands
         // for that line, which is known while the form is built.
@@ -1795,7 +1804,13 @@ impl<'a> Builder<'a> {
                 let mut in_cells = Vec::new();
                 self.gensyms += 1;
                 let root = format!("#in{}", self.gensyms);
-                let start = self.read(&name);
+                // Where a write makes the places it needs, the name it
+                // starts from has nothing to say about being empty.
+                let start = self.read_to_write(&name);
+                let start = match self.table.flag("ext.op.index.makes") {
+                    true => Form::Muted(Box::new(start)),
+                    false => start,
+                };
                 steps.push(self.write(&root, start));
                 in_cells.push(root);
                 for i in 0..deep {
@@ -1875,7 +1890,7 @@ impl<'a> Builder<'a> {
             // a[] = v appends.
             Form::Apply(Callee::Prim(Prim::AtEnd, _), mut args) if args.len() == 1 => match args.pop().unwrap() {
                 Form::Read(slot) => {
-                    let target = self.read(&slot.ident);
+                    let target = self.read_to_write(&slot.ident);
                     prim_call(Prim::Append, vec![target, value])
                 }
                 _ => return Err("Invalid assignment target".to_string()),
@@ -1884,7 +1899,7 @@ impl<'a> Builder<'a> {
                 let index = args.pop().unwrap();
                 match args.pop().unwrap() {
                     Form::Read(slot) => {
-                        let target = self.read(&slot.ident);
+                        let target = self.read_to_write(&slot.ident);
                         prim_call(Prim::Replace, vec![target, index, value])
                     }
                     _ => return Err("Invalid assignment target".to_string()),

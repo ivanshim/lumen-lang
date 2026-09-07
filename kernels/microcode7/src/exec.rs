@@ -97,6 +97,10 @@ pub struct Machine<'a> {
     /// How many pieces now being found asked to be quiet. Counted, not
     /// flagged, because a quiet piece may hold another.
     quieted: usize,
+    /// Whether writing into a place makes what is needed to hold it: an
+    /// array where a name holds nothing, and one at each place along the
+    /// way that is not there yet.
+    builds_places: bool,
     /// What each call still running was handed, the innermost last, and
     /// what the call about to start is to be handed.
     handed: Vec<Vec<Value>>,
@@ -133,6 +137,7 @@ impl<'a> Machine<'a> {
             started: None,
             written_in: String::new(),
             quieted: 0,
+            builds_places: table.flag("ext.op.index.makes"),
             complaint_words: COMPLAINT_LABELS
                 .iter()
                 .filter_map(|(kind, key)| table.single(key).map(|word| (*kind, word.to_string())))
@@ -427,6 +432,10 @@ impl<'a> Machine<'a> {
         }
         match slot.fallback {
             Some(g) if !matches!(self.outermost.cells.borrow()[g], Value::Unset) => Ok((self.outermost.clone(), g)),
+            // Where a language makes a place on writing into it, a name
+            // holding nothing is where the write goes, and the array it
+            // needs is made there.
+            _ if self.builds_places => Ok((f.clone(), slot.at)),
             _ => Err(format!("Undefined variable '{}'", slot.ident)),
         }
     }
@@ -780,11 +789,11 @@ impl<'a> Machine<'a> {
                     };
                     if let Some(cell) = shared {
                         let mut held = cell.borrow_mut();
-                        written_into(&mut held, key, value, &slot.ident)?;
+                        written_into(&mut held, key, value, &slot.ident, self.builds_places)?;
                         return Ok(Value::Nil);
                     }
                     let mut slots = f.cells.borrow_mut();
-                    written_into(&mut slots[i], key, value, &slot.ident)?;
+                    written_into(&mut slots[i], key, value, &slot.ident, self.builds_places)?;
                     Ok(Value::Nil)
                 }
                 op => {
@@ -1363,6 +1372,7 @@ impl<'a> Machine<'a> {
             Prim::Standing => Value::Flag(v.iter().all(|x| !matches!(x, Value::Nil | Value::Unset))),
             // Reaching in makes the place where nothing is there yet,
             // which is what a write into it asks for.
+            Prim::Inward if !self.builds_places => self.element(&v[0], &v[1])?,
             Prim::Inward => {
                 self.quieted += 1;
                 let reached = self.element(&v[0], &v[1]).unwrap_or(Value::Nil);
@@ -1848,7 +1858,10 @@ fn over_lines(v: &Value, along: usize) -> String {
 /// end when no key is given. A list written where it already reaches
 /// stays a list; any other key turns it into a map, its places becoming
 /// the keys.
-fn written_into(held: &mut Value, key: Option<Value>, value: Value, ident: &str) -> Result<(), String> {
+fn written_into(held: &mut Value, key: Option<Value>, value: Value, ident: &str, builds: bool) -> Result<(), String> {
+    if builds && matches!(held, Value::Nil | Value::Unset) {
+        *held = Value::Vector(Rc::new(Vec::new()));
+    }
     let stays = match (&*held, &key) {
         (Value::Vector(items), Some(k)) => as_index(k).map_or(false, |at| at < items.len()),
         (Value::Vector(_), None) => true,

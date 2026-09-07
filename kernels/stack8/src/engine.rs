@@ -292,6 +292,12 @@ impl<'a> Engine<'a> {
         if let Value::Bond(shared) = &self.world[slot.far] {
             return Ok(shared.borrow().clone());
         }
+        // Where a language makes a place on writing into it, a name
+        // that holds nothing holds an empty array as far as the write
+        // is concerned, and nothing is said about it.
+        if slot.moving && self.lang.makes_places && matches!(self.world[slot.far], Value::Blank | Value::Null) {
+            return Ok(Value::Array(std::rc::Rc::new(Vec::new())));
+        }
         // A language that has a word for a warning does not stop for a
         // binding never written: it says so and reads nothing there.
         if matches!(self.world[slot.far], Value::Blank) && self.warns_about(&slot.ident) {
@@ -321,6 +327,14 @@ impl<'a> Engine<'a> {
                 frame[s] = Value::Bond(shared.clone());
                 return Ok(shared);
             }
+        }
+        // A name a unit of its own has a place for belongs to that unit,
+        // so where nothing has been written to it anywhere the cell is
+        // made in the unit's own place and not the outermost one.
+        if let Some(&s) = slot.near.first() {
+            let shared = Rc::new(RefCell::new(Value::Null));
+            frame[s] = Value::Bond(shared.clone());
+            return Ok(shared);
         }
         if let Value::Bond(shared) = &self.world[slot.far] {
             return Ok(shared.clone());
@@ -1068,7 +1082,7 @@ impl<'a> Engine<'a> {
             Action::At => self.element(a, b)?,
             // Reaching inside makes the place on the way where nothing
             // is there yet, which is what a write to it means.
-            Action::Nested => {
+            Action::Nested if self.lang.makes_places => {
                 self.hushed.set(self.hushed.get() + 1);
                 let found = self.element(a, b).unwrap_or(Value::Null);
                 self.hushed.set(self.hushed.get() - 1);
@@ -1077,6 +1091,7 @@ impl<'a> Engine<'a> {
                     held => held,
                 }
             }
+            Action::Nested => self.element(a, b)?,
             // Looking has nothing to say about what is not there.
             Action::Peek => {
                 self.hushed.set(self.hushed.get() + 1);
@@ -1613,6 +1628,12 @@ impl<'a> Engine<'a> {
                 arity(2)?;
                 let target = args.pop().expect("the array");
                 let v = args.pop().expect("the value");
+                // A language that makes a place on writing into it finds
+                // an array where nothing at all was there.
+                let target = match target {
+                    Value::Null | Value::Blank if self.lang.makes_places => Value::Array(Rc::new(Vec::new())),
+                    held => held,
+                };
                 match target {
                     Value::Array(mut items) => {
                         Rc::make_mut(&mut items).push(v);
@@ -1632,6 +1653,12 @@ impl<'a> Engine<'a> {
                 let target = args.pop().expect("the array");
                 let v = args.pop().expect("the value");
                 let at = self.key(&args.pop().expect("the key"));
+                // A language that makes a place on writing into it finds
+                // an array where nothing at all was there.
+                let target = match target {
+                    Value::Null | Value::Blank if self.lang.makes_places => Value::Array(std::rc::Rc::new(Vec::new())),
+                    held => held,
+                };
                 match target {
                     // A list written at a place it already holds stays a list.
                     Value::Array(mut items) if as_index(&at).map_or(false, |i| i < items.len()) => {

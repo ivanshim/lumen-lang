@@ -216,6 +216,10 @@ pub struct Lang {
     /// A sign that leaves its operand as it is.
     pub plus_words: Vec<String>,
     pub hush_words: Vec<String>,
+    /// Whether writing into a place makes what is needed to hold it:
+    /// an array where a name holds nothing, and one at each place along
+    /// the way that is not there yet.
+    pub makes_places: bool,
     /// `break n` and `continue n` leave n loops.
     pub break_levels: bool,
     /// The source is text with code between the prologue and the
@@ -332,7 +336,7 @@ w ext.system.source.file | w ext.system.source.directory | w ext.system.source.l
 w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.complaint.deprecated | w ext.system.complaint.fatal
 w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove
-w ext.builtin.eval | w ext.builtin.include | w ext.op.hush | w ext.builtin.isset
+w ext.builtin.eval | w ext.builtin.include | w ext.op.hush | w ext.builtin.isset | b ext.op.index.makes
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 ";
@@ -938,6 +942,7 @@ impl Lang {
             exponent_letters: r.letters("ext.lexical.number.exponent")?,
             plus_words: r.strings("ext.op.plus")?,
             hush_words: hushes,
+            makes_places: r.flag("ext.op.index.makes")?,
             break_levels: r.flag("ext.stmt.break.levels")?,
             template: r.flag("ext.lexical.template")?,
             append_index: r.flag("ext.op.index.append")?,

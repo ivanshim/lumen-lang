@@ -434,6 +434,22 @@ impl<'a> Compiler<'a> {
         self.put(Instr::Read(slot));
     }
 
+    /// The name of an array about to be written into, addressed as the
+    /// write it is: a name first met on the left of a write belongs to
+    /// the unit it is written in, and every later reading of it must
+    /// find the same cell.
+    fn read_to_rewrite(&mut self, name: &str) {
+        let mut slot = self.cell_to_write(name);
+        slot.moving = true;
+        self.put(Instr::Read(slot));
+    }
+
+    /// The store after such a load, addressed the same way.
+    fn rewritten(&mut self, name: &str) {
+        let slot = self.cell_to_write(name);
+        self.put(Instr::Write(slot));
+    }
+
     fn write(&mut self, name: &str) {
         let slot = self.cell_to_write(name);
         self.put(Instr::Write(slot));
@@ -1984,7 +2000,7 @@ impl<'a> Compiler<'a> {
                 // the one the write itself lands in.
                 let deep = match appending { true => keys.len(), false => keys.len() - 1 };
                 let inner: Vec<String> = (0..=deep).map(|_| self.gensym("within")).collect();
-                self.read(&name);
+                self.read_to_rewrite(&name);
                 self.write(&inner[0]);
                 for i in 0..deep {
                     self.read(&inner[i]);
@@ -2078,9 +2094,9 @@ impl<'a> Compiler<'a> {
                 // a[] = v appends.
                 let name = slot.ident.to_string();
                 self.value_written(keep)?;
-                self.read_taking(&name);
+                self.read_to_rewrite(&name);
                 self.act(Action::Builtin(Builtin::Append, Rc::from("push")), 2);
-                self.restore(&name);
+                self.rewritten(&name);
                 Ok(())
             }
             [Instr::Read(slot), index @ .., Instr::Act(Action::At, 2)] if !slot.moving => {
@@ -2089,9 +2105,9 @@ impl<'a> Compiler<'a> {
                     self.put(w);
                 }
                 self.value_written(keep)?;
-                self.read_taking(&name);
+                self.read_to_rewrite(&name);
                 self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
-                self.restore(&name);
+                self.rewritten(&name);
                 Ok(())
             }
             _ => Err(format!("Invalid assignment target before '{}'", assign)),
