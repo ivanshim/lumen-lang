@@ -1392,6 +1392,8 @@ impl<'a> Compiler<'a> {
         self.piece().instrs[guard] = Instr::Guard(here);
         let group = lang.grouping.clone().ok_or_else(|| "A catch needs syntax.group".to_string())?;
         let mut clauses = 0;
+        // A clause may stand on a line of its own, after the body it follows.
+        self.skip_seps();
         while self.on_keyword(&lang.catch_words) {
             self.take();
             self.want_sign(&group.open, "after catch")?;
@@ -1416,6 +1418,7 @@ impl<'a> Compiler<'a> {
             done.push(self.leap());
             self.land(past);
             clauses += 1;
+            self.skip_seps();
         }
         if last.is_some() {
             self.piece().lasts.pop();
@@ -1822,13 +1825,42 @@ impl<'a> Compiler<'a> {
     /// An assignment, an indexed assignment, or an expression statement.
     fn assign_or_expr(&mut self) -> Res<()> {
         let from = self.mark();
-        self.expr(0)?;
-        let compound = self.lang.compound.get(&self.look().lexeme).filter(|_| self.look().shape == Shape::Sign).cloned();
-        if !self.on_assign() && compound.is_none() {
+        self.expr_at(0, false)?;
+        if !self.on_writing() {
             self.piece().result_touched = true;
             self.write(RESULT_CELL);
             return Ok(());
         }
+        self.assignment(from, None)
+    }
+
+    /// Whether a sign that writes stands here: the assignment sign, or
+    /// one of an operator and the assignment sign run together.
+    fn on_writing(&self) -> bool {
+        let compound = self.lang.compound.contains_key(&self.look().lexeme) && self.look().shape == Shape::Sign;
+        self.on_assign() || compound
+    }
+
+    /// The value written by an assignment. Where the assignment is
+    /// itself an expression, the value is kept in a cell of its own so
+    /// that it can be read again once the writing is done.
+    fn value_written(&mut self, keep: Option<&str>) -> Res<()> {
+        self.expr(0)?;
+        self.kept(keep);
+        Ok(())
+    }
+
+    fn kept(&mut self, keep: Option<&str>) {
+        if let Some(cell) = keep {
+            self.write(cell);
+            self.read(cell);
+        }
+    }
+
+    /// Turn the load of a target, already assembled from `from`, into a
+    /// store of what follows the assignment sign.
+    fn assignment(&mut self, from: usize, keep: Option<&str>) -> Res<()> {
+        let compound = self.lang.compound.get(&self.look().lexeme).filter(|_| self.look().shape == Shape::Sign).cloned();
         let assign = self.take().lexeme;
         // The target came out as a load; turn it into a store.
         let target: Vec<Instr> = self.piece().instrs.drain(from..).collect();
@@ -1846,6 +1878,10 @@ impl<'a> Compiler<'a> {
                 self.put(Instr::Bond(shared));
                 let held = self.cell_to_write(&name);
                 self.put(Instr::Fasten(held));
+                if keep.is_some() {
+                    self.read(&name);
+                    self.kept(keep);
+                }
                 Ok(())
             }
             [Instr::Read(slot)] if !slot.moving => {
@@ -1855,8 +1891,9 @@ impl<'a> Compiler<'a> {
                     self.read(&name);
                     self.expr(0)?;
                     self.act(op, 2);
+                    self.kept(keep);
                 } else {
-                    self.expr(0)?;
+                    self.value_written(keep)?;
                 }
                 self.write(&name);
                 Ok(())
@@ -1868,7 +1905,7 @@ impl<'a> Compiler<'a> {
                 for w in relocated(rest, 0) {
                     self.put(w);
                 }
-                self.expr(0)?;
+                self.value_written(keep)?;
                 self.act(Action::Plant(member), 2);
                 Ok(())
             }
@@ -1877,7 +1914,7 @@ impl<'a> Compiler<'a> {
                 for w in relocated(rest, 0) {
                     self.put(w);
                 }
-                self.expr(0)?;
+                self.value_written(keep)?;
                 self.act(Action::Sow(member), 2);
                 Ok(())
             }
@@ -1896,7 +1933,7 @@ impl<'a> Compiler<'a> {
                         self.put(w);
                     }
                 }
-                self.expr(0)?;
+                self.value_written(keep)?;
                 self.read(&name);
                 self.act(Action::Grab(member.clone()), 1);
                 let native = if appending { Builtin::Append } else { Builtin::Replace };
@@ -1908,7 +1945,7 @@ impl<'a> Compiler<'a> {
             [Instr::Read(slot), Instr::Act(Action::AtEnd, 1)] if !slot.moving => {
                 // a[] = v appends.
                 let name = slot.ident.to_string();
-                self.expr(0)?;
+                self.value_written(keep)?;
                 self.read_taking(&name);
                 self.act(Action::Builtin(Builtin::Append, Rc::from("push")), 2);
                 self.restore(&name);
@@ -1919,7 +1956,7 @@ impl<'a> Compiler<'a> {
                 for w in relocated(index.to_vec(), -1) {
                     self.put(w);
                 }
-                self.expr(0)?;
+                self.value_written(keep)?;
                 self.read_taking(&name);
                 self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
                 self.restore(&name);
@@ -1932,9 +1969,23 @@ impl<'a> Compiler<'a> {
     // ---------- expressions ----------
 
     fn expr(&mut self, floor: u32) -> Res<()> {
+        self.expr_at(floor, true)
+    }
+
+    /// An expression. Where a language counts an assignment as one, a
+    /// target followed by a sign that writes is read as an assignment
+    /// whose value is what was written — but not where the assignment
+    /// is the whole statement, which is read as a statement.
+    fn expr_at(&mut self, floor: u32, may_write: bool) -> Res<()> {
         let lang = self.lang;
         let from = self.mark();
         self.prefix()?;
+        if floor == 0 && may_write && lang.assign_gives_value && self.on_writing() {
+            let keep = self.gensym("written");
+            self.assignment(from, Some(&keep))?;
+            self.read(&keep);
+            return Ok(());
+        }
         loop {
             let t = self.look();
             if !matches!(t.shape, Shape::Sign | Shape::Instr) {

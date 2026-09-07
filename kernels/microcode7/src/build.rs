@@ -826,6 +826,8 @@ impl<'a> Builder<'a> {
         let open = table.single("syntax.group.open").ok_or_else(|| "A catch needs syntax.group".to_string())?.to_string();
         let close = table.single("syntax.group.close").unwrap().to_string();
         let mut clauses = Vec::new();
+        // A clause may stand on a line of its own, after what it follows.
+        self.skip_line_ends();
         while self.key("ext.stmt.catch") {
             self.advance();
             self.need_sign(&open, "after catch")?;
@@ -844,6 +846,7 @@ impl<'a> Builder<'a> {
             self.need_sign(&close, "after the class caught")?;
             let body = self.body()?;
             clauses.push(Clause { classes, held, body });
+            self.skip_line_ends();
         }
         let last = match self.key("ext.stmt.finally") {
             true => {
@@ -1610,45 +1613,77 @@ impl<'a> Builder<'a> {
     }
 
     fn write_or_expr(&mut self) -> Res<Form> {
-        let expr = self.expr(0)?;
-        let compound = if self.look().shape == Shape::Sign { self.table.compound.get(&self.look().lexeme).copied() } else { None };
-        if !self.on_assign() && compound.is_none() {
+        let expr = self.expr_at(0, false)?;
+        if !self.on_writing() {
             return Ok(expr);
         }
+        self.written(expr, false)
+    }
+
+    /// Whether a sign that writes stands here: the assignment sign, or
+    /// an operator run together with it.
+    fn on_writing(&self) -> bool {
+        let compound = self.look().shape == Shape::Sign && self.table.compound.contains_key(&self.look().lexeme);
+        self.on_assign() || compound
+    }
+
+    /// A write of what follows the sign into the target already read.
+    /// Where the write is itself an expression, what was written is kept
+    /// in a cell of its own and given back once the writing is done.
+    fn written(&mut self, expr: Form, gives_back: bool) -> Res<Form> {
+        let compound = if self.look().shape == Shape::Sign { self.table.compound.get(&self.look().lexeme).copied() } else { None };
+        let plain = compound.is_none();
         let assign = self.advance();
         // `b = &a`: b is tied to a's cell rather than given a copy.
-        if self.table.single("ext.op.reference").map_or(false, |m| self.sign(m)) && compound.is_none() {
+        if self.table.single("ext.op.reference").map_or(false, |m| self.sign(m)) && plain {
             if let Form::Read(slot) = &expr {
                 let held = slot.ident.to_string();
                 self.advance();
                 let source = self.need_word("as the name to share a cell with")?;
                 let shared = self.address_to_write(&source);
                 let tied = self.address_to_write(&held);
-                return Ok(Form::Tie(tied, Box::new(Form::Share(shared))));
+                let tie = Form::Tie(tied, Box::new(Form::Share(shared)));
+                return Ok(match gives_back {
+                    true => sequence(vec![tie, self.read(&held)]),
+                    false => tie,
+                });
             }
         }
-        let value = self.expr(0)?;
-        match expr {
+        let mut value = self.expr(0)?;
+        let keep = (gives_back && plain).then(|| {
+            self.gensyms += 1;
+            format!("#written{}", self.gensyms)
+        });
+        if let Some(cell) = &keep {
+            let stored = self.write(cell, value);
+            let back = self.read(cell);
+            value = sequence(vec![stored, back]);
+        }
+        let made = match expr {
             // x op= e is x = x op e.
             Form::Read(slot) => match compound {
                 Some(op) => {
                     let current = self.read(&slot.ident);
                     let combined = prim_call(op, vec![current, value]);
-                    Ok(self.write(&slot.ident, combined))
+                    let stored = self.write(&slot.ident, combined);
+                    match gives_back {
+                        true => sequence(vec![stored, self.read(&slot.ident)]),
+                        false => stored,
+                    }
                 }
-                None => Ok(self.write(&slot.ident, value)),
+                None => self.write(&slot.ident, value),
             },
-            _ if compound.is_some() => Err(format!("'{}' needs a plain variable on its left", assign.lexeme)),
+            _ if compound.is_some() => return Err(format!("'{}' needs a plain variable on its left", assign.lexeme)),
             // A read of a member becomes a write of it.
             Form::Apply(Callee::Prim(Prim::Of, _), mut args) if args.len() == 2 => {
                 let named = args.pop().unwrap();
                 let thing = args.pop().unwrap();
-                Ok(prim_call(Prim::Onto, vec![thing, named, value]))
+                prim_call(Prim::Onto, vec![thing, named, value])
             }
             Form::Apply(Callee::Prim(Prim::Within, _), mut args) if args.len() == 2 => {
                 let named = args.pop().unwrap();
                 let class = args.pop().unwrap();
-                Ok(prim_call(Prim::Into, vec![class, named, value]))
+                prim_call(Prim::Into, vec![class, named, value])
             }
             // `t->a[i] = v` and `t->a[] = v`: the property's array is
             // rewritten and the property written back.
@@ -1668,35 +1703,50 @@ impl<'a> Builder<'a> {
                     None => prim_call(Prim::Added, vec![held, value]),
                 };
                 let target = self.read(&ident);
-                Ok(prim_call(Prim::Onto, vec![target, constant(Value::text(&named)), written]))
+                prim_call(Prim::Onto, vec![target, constant(Value::text(&named)), written])
             }
             // a[] = v appends.
             Form::Apply(Callee::Prim(Prim::AtEnd, _), mut args) if args.len() == 1 => match args.pop().unwrap() {
                 Form::Read(slot) => {
                     let target = self.read(&slot.ident);
-                    Ok(prim_call(Prim::Append, vec![target, value]))
+                    prim_call(Prim::Append, vec![target, value])
                 }
-                _ => Err("Invalid assignment target".to_string()),
+                _ => return Err("Invalid assignment target".to_string()),
             },
             Form::Apply(Callee::Prim(Prim::At, _), mut args) if args.len() == 2 => {
                 let index = args.pop().unwrap();
                 match args.pop().unwrap() {
                     Form::Read(slot) => {
                         let target = self.read(&slot.ident);
-                        Ok(prim_call(Prim::Replace, vec![target, index, value]))
+                        prim_call(Prim::Replace, vec![target, index, value])
                     }
-                    _ => Err("Invalid assignment target".to_string()),
+                    _ => return Err("Invalid assignment target".to_string()),
                 }
             }
-            _ => Err(format!("Invalid assignment target before '{}'", assign.lexeme)),
-        }
+            _ => return Err(format!("Invalid assignment target before '{}'", assign.lexeme)),
+        };
+        Ok(match keep {
+            Some(cell) => sequence(vec![made, self.read(&cell)]),
+            None => made,
+        })
     }
 
     // ---------- expressions
 
     fn expr(&mut self, floor: u32) -> Res<Form> {
+        self.expr_at(floor, true)
+    }
+
+    /// An expression. Where a language counts a write as one, a target
+    /// followed by a sign that writes is read as a write whose value is
+    /// what was written — but not where the write is the whole
+    /// statement, which is read as a statement.
+    fn expr_at(&mut self, floor: u32, may_write: bool) -> Res<Form> {
         let table = self.table;
         let mut left = self.monadic_expr()?;
+        if floor == 0 && may_write && table.flag("ext.op.assign.value") && self.on_writing() {
+            return self.written(left, true);
+        }
         loop {
             let t = self.look();
             if t.shape != Shape::Sign && t.shape != Shape::Bare {

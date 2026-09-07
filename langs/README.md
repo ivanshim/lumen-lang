@@ -317,6 +317,13 @@ only. The extension labels so far, all from PHP:
 - `ext.op.compare`: which of two values comes first, as -1, 0 or 1
   (`<=>`). It takes its tier from `op.precedence` like any operator; a
   kernel that does not read the label reads past its tier too.
+- `ext.op.assign.value`: a switch; an assignment counts as an
+  expression, and its value is what was written, so `$a = $b = 5` writes
+  5 to both and `f($x = 1)` writes 1 and hands it over. An assignment
+  written as a whole statement is still read as a statement. What is
+  written is worked out once and kept in a cell of its own, so a target
+  that is a place in an array or a property of a thing gives back the
+  same value it was given.
 - `ext.system.kind.spelled`: a switch; `builtin.typeof` answers with the
   name a kind goes by rather than a value standing for the kind, and the
   `system.kind.*` names are then not bound to anything. PHP's `gettype`
@@ -633,6 +640,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.number.exponent` | - | - | - | - | - | - | - | `e` `E` | - | - |
 | `ext.lexical.template` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.assign.compound` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.op.assign.value` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.bit.and` | - | - | - | - | - | - | - | `&` | - | - |
 | `ext.op.bit.left` | - | - | - | - | - | - | - | `<<` | - | - |
 | `ext.op.bit.not` | - | - | - | - | - | - | - | `~` | - | - |
