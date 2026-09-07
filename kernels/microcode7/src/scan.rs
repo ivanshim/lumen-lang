@@ -87,6 +87,7 @@ pub fn scan(source: &str, table: &Table) -> Result<Vec<Token>, String> {
     let point = table.letter("lexical.number.decimal_point");
     let base = table.letter("lexical.number.base_marker");
     let expo = table.letter("lexical.number.exponent_marker");
+    let powers = table.letters("ext.lexical.number.exponent");
     let hex: Option<(char, char)> = table.single("lexical.number.hex_prefix").and_then(|p| {
         let mut it = p.chars();
         Some((it.next()?, it.next()?))
@@ -206,10 +207,20 @@ pub fn scan(source: &str, table: &Table) -> Result<Vec<Token>, String> {
                         break;
                     }
                 }
-            } else if point.is_some() && at(k) == point && at(k + 1).map_or(false, |x| x.is_ascii_digit()) {
-                k += 1;
-                while k < src.len() && src[k].is_ascii_digit() {
+            } else {
+                if point.is_some() && at(k) == point && at(k + 1).map_or(false, |x| x.is_ascii_digit()) {
                     k += 1;
+                    while k < src.len() && src[k].is_ascii_digit() {
+                        k += 1;
+                    }
+                }
+                // 1e9, 2.5E-3: a power of ten after the letter.
+                let sign_len = usize::from(matches!(at(k + 1), Some('+') | Some('-')));
+                if at(k).map_or(false, |c| powers.contains(&c)) && at(k + 1 + sign_len).map_or(false, |x| x.is_ascii_digit()) {
+                    k += 1 + sign_len;
+                    while k < src.len() && src[k].is_ascii_digit() {
+                        k += 1;
+                    }
                 }
             }
             tokens.push(tok(Shape::Numeral, src[pos..k].iter().collect(), row));

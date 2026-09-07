@@ -37,6 +37,10 @@ pub enum Prim {
     Out,
     /// Each argument's text in turn, nothing between, no line end.
     Tell,
+    /// A named global constant, bound when built (ext.builtin.define).
+    Define,
+    /// Each argument with its kind, as PHP's var_dump (ext.builtin.var_dump).
+    Dump,
     MakeReal,
     Places,
     AsText,

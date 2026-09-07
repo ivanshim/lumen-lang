@@ -501,12 +501,15 @@ def walk(node):
 
 
 def called_names(nodes):
-    names = set()
+    """The names called, each once, in the order they are first called:
+    the report names the first unwritable callee, so the order must hold
+    from run to run."""
+    names = {}
     for n in nodes:
         for m in walk(n):
             if m.kind == "Call":
-                names.add(m.name)
-    return names
+                names.setdefault(m.name)
+    return list(names)
 
 
 def free_names(nodes):

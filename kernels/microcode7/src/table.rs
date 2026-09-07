@@ -40,6 +40,8 @@ pub struct Table {
     pub monadic: HashMap<String, Infix>,
     pub precedence: HashMap<String, u32>,
     pub prims: HashMap<String, Prim>,
+    /// `x op= e` for each binary operator (ext.op.assign.compound).
+    pub compound: HashMap<String, Prim>,
     pub keywords: HashSet<String>,
     pub signs: Vec<String>,
 }
@@ -79,7 +81,10 @@ system.kind.array:L system.kind.null:L \
 /// (or off). The reference kernels skip them; this one reads them.
 const EXT_TAGS: &str = "\
 ext.lexical.epilogue:L ext.builtin.echo:L ext.syntax.call.bare:B ext.op.increment:L ext.op.decrement:L \
-ext.lexical.interpolating_quotes:L \
+ext.lexical.interpolating_quotes:L ext.stmt.for.c:L ext.op.assign.compound:B ext.stmt.static:L ext.stmt.global:L \
+ext.stmt.const:L ext.builtin.define:L ext.builtin.var_dump:L ext.stmt.switch:L ext.stmt.case:L \
+ext.stmt.default:L ext.stmt.case.mark:L ext.op.ternary:L ext.block.lone_statement:B ext.stmt.function.hoisted:B \
+ext.lexical.number.exponent:L ext.op.plus:L ext.stmt.break.levels:B \
 ";
 
 fn tag_shapes(table: &'static str) -> Vec<(&'static str, char)> {
@@ -109,13 +114,14 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 22] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 24] = [
     ("builtin.emit", Prim::Echo), ("builtin.print", Prim::Say), ("builtin.write", Prim::Out), ("builtin.len", Prim::Length),
     ("builtin.char_at", Prim::CharAtIndex), ("builtin.ord", Prim::CodeOf), ("builtin.chr", Prim::CharOf), ("builtin.typeof", Prim::SortOf),
     ("builtin.error", Prim::Raise), ("builtin.extern", Prim::External), ("builtin.range", Prim::Span), ("builtin.real", Prim::MakeReal),
     ("builtin.precision", Prim::Places), ("builtin.to_string", Prim::AsText), ("builtin.to_int", Prim::AsInt),
     ("builtin.to_real", Prim::AsReal), ("builtin.num", Prim::Numer), ("builtin.den", Prim::Denom), ("builtin.push", Prim::Append),
     ("builtin.get", Prim::Fetch), ("builtin.put", Prim::Replace), ("ext.builtin.echo", Prim::Tell),
+    ("ext.builtin.define", Prim::Define), ("ext.builtin.var_dump", Prim::Dump),
 ];
 
 const BINARY_LABELS: [(&str, Prim); 16] = [
@@ -181,6 +187,7 @@ impl Table {
             monadic: HashMap::new(),
             precedence: HashMap::new(),
             prims: HashMap::new(),
+            compound: HashMap::new(),
             keywords: HashSet::new(),
             signs: Vec::new(),
         };
@@ -278,7 +285,8 @@ impl Table {
             }
         }
         let singles = ["lexical.string_quotes", "lexical.raw_quotes", "lexical.string_escapes", "lexical.name_quote",
-            "lexical.number.decimal_point", "lexical.number.base_marker", "lexical.number.exponent_marker", "identifier.variable_prefix"];
+            "lexical.number.decimal_point", "lexical.number.base_marker", "lexical.number.exponent_marker", "identifier.variable_prefix",
+            "ext.lexical.number.exponent", "ext.lexical.interpolating_quotes"];
         for key in singles {
             if let Some(w) = self.strings(key).iter().find(|w| w.chars().count() != 1) {
                 return Err(format!("label '{key}' takes single characters, got '{w}'"));
@@ -410,6 +418,26 @@ impl Table {
                 }
             }
         }
+        if self.flag("ext.op.assign.compound") {
+            // An operator directly followed by the assignment sign, where
+            // that is not itself an operator (`<=`) and the operator does
+            // not end in the sign (`==`, so `===` stays an operator).
+            for assign in self.strings("stmt.assign").to_vec() {
+                for (lex, op) in &self.dyadic {
+                    let spelled = format!("{lex}{assign}");
+                    if !lex.ends_with(assign.as_str()) && !self.dyadic.contains_key(&spelled) && !self.monadic.contains_key(&spelled) {
+                        self.compound.insert(spelled, op.prim);
+                    }
+                }
+            }
+        }
+        match self.strings("ext.op.ternary").len() {
+            0 | 2 => {}
+            _ => return Err("ext.op.ternary takes exactly two signs, the question and the mark".to_string()),
+        }
+        if self.has_any("ext.stmt.switch") && (!self.has_any("ext.stmt.case") || !self.has_any("ext.stmt.case.mark")) {
+            return Err("ext.stmt.switch needs ext.stmt.case and ext.stmt.case.mark".to_string());
+        }
         for label in ["op.range", "op.pipe"] {
             for lex in self.strings(label).to_vec() {
                 let tier = place(&lex, false).ok_or_else(|| format!("'{lex}' ({label}) does not appear in op.precedence"))?;
@@ -438,14 +466,15 @@ impl Table {
                 }
             }
         }
-        let mut all: Vec<String> = self.dyadic.keys().chain(self.monadic.keys()).chain(self.precedence.keys()).cloned().collect();
+        let mut all: Vec<String> = self.dyadic.keys().chain(self.monadic.keys()).chain(self.precedence.keys()).chain(self.compound.keys()).cloned().collect();
         let symbol_labels = ["syntax.group.open", "syntax.group.close", "syntax.call.open", "syntax.call.separator", "syntax.call.close",
             "syntax.call.label", "syntax.array.open", "syntax.array.separator", "syntax.array.close", "op.index.open", "op.index.close",
             "block.intro", "stmt.assign", "stmt.terminator", "stmt.let.annotation", "stmt.function.returns", "stack.dup", "stack.drop",
             "stack.swap", "stack.over", "stack.rot", "stack.eval", "stack.program.open", "stack.program.close", "stmt.let",
             "stmt.let.mutable", "stmt.if", "stmt.elif", "stmt.else", "stmt.while", "stmt.until", "stmt.for", "stmt.for.in",
             "stmt.return", "stmt.break", "stmt.continue", "stmt.function", "stmt.pass", "literal.true", "literal.false", "literal.null",
-            "ext.op.increment", "ext.op.decrement"];
+            "ext.op.increment", "ext.op.decrement", "ext.stmt.case.mark", "ext.op.ternary", "ext.stmt.for.c", "ext.stmt.static",
+            "ext.stmt.global", "ext.stmt.const", "ext.stmt.switch", "ext.stmt.case", "ext.stmt.default", "ext.op.plus"];
         for key in symbol_labels {
             all.extend(self.strings(key).iter().cloned());
         }

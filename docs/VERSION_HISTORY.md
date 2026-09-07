@@ -129,6 +129,25 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   runs both full kernels and scores each suite directory on each; the
   PHP suites go from 0 to 18 passing (11 of `tests/php/lang`), the same
   on both kernels.
+- **More of PHP's statements and operators as extension labels**:
+  `ext.stmt.for.c` (`for (init; test; step)`), `ext.op.assign.compound`
+  (`+=`, `.=` and the rest, derived from the operator table),
+  `ext.stmt.static` and `ext.stmt.global` (a hidden global behind a
+  static name, set where the function is defined), `ext.stmt.const` and
+  `ext.builtin.define` (globals read as bare words), `ext.builtin.var_dump`
+  (PHP's format, arrays nested), `ext.stmt.switch` with `case`, `default`
+  and the case mark (fall-through, a default anywhere, a loop to
+  `break`), `ext.op.ternary`, `ext.block.lone_statement` (a statement as
+  a body), `ext.stmt.function.hoisted` (top-level functions bound
+  first), `ext.lexical.number.exponent` (`1e9`), `ext.op.plus` and
+  `ext.stmt.break.levels` (`break 2`). PHP's `===` and `!==` join `op.eq`
+  and `op.ne`. stack8 assembles each with jumps and the peephole's
+  `Bump`; microcode7 with `Cycle`, `Choose` and a start index for the
+  switch. `tests/php/lang` goes from 11 to 17 passing, alike on both;
+  what remains is mostly references, classes and PHP's arrays as maps.
+  `scripts/port_examples.py` now reports the first unwritable callee in
+  source order, so `docs/LIBRARY_PORTS.md` no longer changes between
+  runs.
 - **Notation and block style are separate labels; RPLumen is indented**:
   a new label `syntax.notation` (`infix` or `postfix`) says how a
   language is read, and `block.style` is free to be `indentation`,

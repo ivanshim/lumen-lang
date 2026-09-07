@@ -33,6 +33,8 @@ struct Layer {
     formals: Vec<String>,
     formal_slots: Vec<usize>,
     rpn: bool,
+    /// Names bound to a global (by `global`, the same name; by `static`, a hidden one).
+    aliases: Vec<(String, String)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -61,6 +63,8 @@ pub struct Builder<'a> {
     pub presumed: HashMap<String, Signature>,
     pub seen: HashMap<String, Signature>,
     strict: bool,
+    /// Settings of hidden globals for `static` names, run where the function is defined.
+    statics: Vec<Form>,
 }
 
 pub struct Built {
@@ -78,8 +82,8 @@ enum Mode {
 }
 
 pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool) -> Res<Built> {
-    let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false };
-    let mut r = Builder { table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict };
+    let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
+    let mut r = Builder { table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new() };
     let body = if table.rpn {
         let (mut stmts, rest) = r.rpn_body(&[], Mode::Body)?;
         if !r.exhausted() {
@@ -88,13 +92,23 @@ pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMa
         stmts.extend(rest.into_iter().filter(|n| !inert(n)));
         sequence(stmts)
     } else {
+        // A top-level function may be bound ahead of everything else, so a
+        // call written above it finds it (ext.stmt.function.hoisted).
         let mut stmts = Vec::new();
+        let mut ahead = Vec::new();
         r.skip_line_ends();
         while !r.exhausted() {
-            stmts.push(r.stmt()?);
+            let defines = table.flag("ext.stmt.function.hoisted") && r.key("stmt.function");
+            let stmt = r.stmt()?;
+            if defines {
+                ahead.push(stmt);
+            } else {
+                stmts.push(stmt);
+            }
             r.skip_line_ends();
         }
-        sequence(stmts)
+        ahead.extend(stmts);
+        sequence(ahead)
     };
     let top = r.layers.pop().unwrap();
     let program = Routine { ident: "<program>".into(), formals: Vec::new(), formal_slots: Vec::new(), idents: top.idents.clone(), frameless: false, traps: Traps::Naught, body };
@@ -150,7 +164,7 @@ fn inert(node: &Form) -> bool {
             _ => true,
         }),
         Form::Apply(Callee::Prim(op, _), args) => {
-            !matches!(op, Prim::Echo | Prim::Say | Prim::Out | Prim::Tell | Prim::Raise | Prim::External | Prim::Append | Prim::Replace | Prim::Yield | Prim::Leave | Prim::Resume | Prim::Choose | Prim::Both | Prim::Either | Prim::Seq)
+            !matches!(op, Prim::Echo | Prim::Say | Prim::Out | Prim::Tell | Prim::Dump | Prim::Define | Prim::Raise | Prim::External | Prim::Append | Prim::Replace | Prim::Yield | Prim::Leave | Prim::Resume | Prim::Choose | Prim::Both | Prim::Either | Prim::Seq)
                 && args.iter().all(inert)
         }
         _ => false,
@@ -269,7 +283,25 @@ impl<'a> Builder<'a> {
 
     /// The binding a read reaches: the nearest owner that has the name,
     /// stopping at a function; else the global.
+    /// The global address of a name, from wherever the reader stands.
+    fn global_address(&mut self, name: &str) -> Address {
+        let up = self.layers[1..].iter().filter(|s| s.holds != Holds::Nothing).count();
+        let at = self.global_at(name);
+        Address { ident: Rc::from(name), up, at, fallback: None }
+    }
+
+    /// The global a name stands for in the function around, if a
+    /// `global` or `static` statement bound it.
+    fn aliased(&mut self, name: &str) -> Option<Address> {
+        let owner = self.layers.iter().rev().find(|s| s.holds == Holds::Every)?;
+        let target = owner.aliases.iter().rev().find(|(n, _)| n == name)?.1.clone();
+        Some(self.global_address(&target))
+    }
+
     fn address_to_read(&mut self, name: &str) -> Address {
+        if let Some(slot) = self.aliased(name) {
+            return slot;
+        }
         let frameless = |holds: Holds| holds == Holds::Nothing;
         let mut depth = 0;
         let mut found: Option<(usize, usize, usize)> = None;
@@ -299,6 +331,9 @@ impl<'a> Builder<'a> {
     /// The binding a write reaches: the nearest owner; a function or the
     /// top level makes the name if it has none, a block makes its own.
     fn address_to_write(&mut self, name: &str) -> Address {
+        if let Some(slot) = self.aliased(name) {
+            return slot;
+        }
         let depth = 0;
         let last = self.layers.len() - 1;
         for i in (0..=last).rev() {
@@ -347,7 +382,7 @@ impl<'a> Builder<'a> {
     /// A program value: its body reduced in a scope of its own.
     fn routine(&mut self, name: &str, holds: Holds, catches: Traps, params: Vec<String>, body: impl FnOnce(&mut Self) -> Res<Form>) -> Res<Form> {
         let param_slots = (0..params.len()).collect();
-        self.layers.push(Layer { holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false });
+        self.layers.push(Layer { holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new() });
         let body = body(self)?;
         let scope = self.layers.pop().unwrap();
         Ok(constant(Value::Routine(Rc::new(Routine { ident: name.to_string(), formals: params, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, traps: catches, body }))))
@@ -470,7 +505,12 @@ impl<'a> Builder<'a> {
             }
             Blocks::Bracketed => {
                 let opens = self.table.strings("block.open");
-                let k = opens.iter().position(|o| self.lexeme_of(o)).ok_or_else(|| format!("Expected '{}' to open a block, got '{}'", opens[0], self.look().lexeme))?;
+                let Some(k) = opens.iter().position(|o| self.lexeme_of(o)) else {
+                    if self.table.flag("ext.block.lone_statement") {
+                        return self.stmt();
+                    }
+                    return Err(format!("Expected '{}' to open a block, got '{}'", opens[0], self.look().lexeme));
+                };
                 self.advance();
                 let close = self.table.strings("block.close")[k].clone();
                 let body = self.stmts_until(std::slice::from_ref(&close))?;
@@ -546,11 +586,13 @@ impl<'a> Builder<'a> {
             }
             if self.key("stmt.break") {
                 self.advance();
-                return Ok(prim_call(Prim::Leave, Vec::new()));
+                let levels = self.loop_levels()?;
+                return Ok(prim_call(Prim::Leave, levels));
             }
             if self.key("stmt.continue") {
                 self.advance();
-                return Ok(prim_call(Prim::Resume, Vec::new()));
+                let levels = self.loop_levels()?;
+                return Ok(prim_call(Prim::Resume, levels));
             }
             if self.key("stmt.function") {
                 self.advance();
@@ -561,12 +603,197 @@ impl<'a> Builder<'a> {
                 self.advance();
                 return Ok(constant(Value::Nil));
             }
+            if self.key("ext.stmt.for.c") {
+                return self.three_part_for();
+            }
+            if self.key("ext.stmt.switch") {
+                return self.switch_stmt();
+            }
+            if self.key("ext.stmt.global") {
+                return self.global_names();
+            }
+            if self.key("ext.stmt.static") {
+                return self.static_names();
+            }
+            if self.key("ext.stmt.const") {
+                self.advance();
+                let name = self.need_word("after the constant keyword")?;
+                self.need_assign("after the constant name")?;
+                let value = self.expr(0)?;
+                let slot = self.global_address(&name);
+                return Ok(Form::Write(slot, Box::new(value)));
+            }
         }
         if self.table.blocks == Blocks::Bracketed && self.on_any("block.open") {
             // A bare block: a program owning what it first binds, run at once.
             let program = self.routine("<block>", Holds::Fresh, Traps::Naught, Vec::new(), |r| r.body())?;
             return Ok(invoke(program, Vec::new()));
         }
+        self.plain_stmt()
+    }
+
+    /// The names after `global`, or `static` with their settings, up to
+    /// the end of the statement, separated as call arguments are.
+    fn listed_names(&mut self, what: &str, mut each: impl FnMut(&mut Self, String) -> Res<()>) -> Res<Form> {
+        self.advance();
+        let sep = self.table.single("syntax.call.separator").map(str::to_string);
+        loop {
+            let name = self.need_word(what)?;
+            each(self, name)?;
+            match &sep {
+                Some(s) if self.sign(s) => self.advance(),
+                _ => return Ok(constant(Value::Nil)),
+            };
+        }
+    }
+
+    /// `global a, b;`: the names mean the globals inside this function.
+    fn global_names(&mut self) -> Res<Form> {
+        self.listed_names("after the global keyword", |r, name| {
+            let owner = r.layers.iter_mut().rev().find(|s| s.holds == Holds::Every).expect("the top layer");
+            owner.aliases.push((name.clone(), name));
+            Ok(())
+        })
+    }
+
+    /// `static x = e;`: x means a hidden global, set where the function
+    /// is defined, so it keeps its value between calls. The setting is
+    /// read outside the function's layer, where it will run.
+    fn static_names(&mut self) -> Res<Form> {
+        if self.layers.len() < 2 {
+            return Err("static belongs inside a function".to_string());
+        }
+        self.listed_names("after the static keyword", |r, name| {
+            r.gensyms += 1;
+            let hidden = format!("#static{}", r.gensyms);
+            let inner = r.layers.pop().expect("the function's layer");
+            let value = if r.on_assign() {
+                r.advance();
+                r.expr(0)
+            } else {
+                Ok(constant(Value::Nil))
+            };
+            let slot = r.global_address(&hidden);
+            r.layers.push(inner);
+            let value = value?;
+            r.statics.push(Form::Write(slot, Box::new(value)));
+            let owner = r.layers.iter_mut().rev().find(|s| s.holds == Holds::Every).expect("the function's layer");
+            owner.aliases.push((name, hidden));
+            Ok(())
+        })
+    }
+
+    /// Statements separated as call arguments are, up to a closing sign.
+    fn clauses(&mut self, close: &str) -> Res<Form> {
+        let sep = self.table.single("syntax.call.separator").map(str::to_string);
+        let mut items = Vec::new();
+        while !self.lexeme_of(close) && !self.exhausted() {
+            items.push(self.plain_stmt()?);
+            match &sep {
+                Some(s) if self.sign(s) => self.advance(),
+                _ => break,
+            };
+        }
+        Ok(sequence(items))
+    }
+
+    /// `for (init; test; step) body`: the init, then a cycle whose step
+    /// runs after each pass, `continue` included. An empty test is true.
+    fn three_part_for(&mut self) -> Res<Form> {
+        let table = self.table;
+        self.advance();
+        let open = table.single("syntax.group.open").ok_or_else(|| "A for loop needs syntax.group".to_string())?;
+        let close = table.single("syntax.group.close").unwrap();
+        let end = table.single("stmt.terminator").ok_or_else(|| "A for loop needs stmt.terminator".to_string())?.to_string();
+        self.need_sign(open, "after for")?;
+        let init = self.clauses(&end)?;
+        self.need_sign(&end, "after the for loop's start")?;
+        let test = if self.sign(&end) { constant(Value::Flag(true)) } else { self.expr(0)? };
+        self.need_sign(&end, "after the for loop's test")?;
+        let step = self.clauses(close)?;
+        self.need_sign(close, "after the for clauses")?;
+        let body = self.body_limb(Traps::Naught)?;
+        let looped = Form::Cycle { test: Box::new(test), body: Box::new(body), step: Some(Box::new(step)), after: false };
+        Ok(sequence(vec![init, looped]))
+    }
+
+    /// `switch (v) { case a: ... default: ... }`. The first case equal to
+    /// the value gives a starting section (the default's, wherever it
+    /// stands, when none is); every section from there on runs, since a
+    /// section falls into the next unless it breaks. The whole is a
+    /// one-pass cycle so that `break` and `continue` leave it.
+    fn switch_stmt(&mut self) -> Res<Form> {
+        let table = self.table;
+        self.advance();
+        let open = table.single("syntax.group.open").ok_or_else(|| "A switch needs syntax.group".to_string())?;
+        self.need_sign(open, "after switch")?;
+        let subject = self.expr(0)?;
+        self.need_sign(table.single("syntax.group.close").unwrap(), "after the switch value")?;
+        let held = self.gensym("switch");
+        let held_name = held.ident.to_string();
+        let keep = Form::Write(held, Box::new(subject));
+        let start = self.gensym("start");
+        let start_name = start.ident.to_string();
+        self.skip_lead_word();
+        self.skip_line_ends();
+        let opens = table.strings("block.open");
+        let k = opens.iter().position(|o| self.lexeme_of(o)).ok_or_else(|| format!("Expected '{}' to open the switch, got '{}'", opens[0], self.look().lexeme))?;
+        self.advance();
+        let close = table.strings("block.close")[k].clone();
+        let mut stops = vec![close.clone()];
+        stops.extend(table.strings("ext.stmt.case").iter().cloned());
+        stops.extend(table.strings("ext.stmt.default").iter().cloned());
+        // (test for the section, or None for the default; its body)
+        let mut sections: Vec<(Option<Form>, Form)> = Vec::new();
+        self.skip_line_ends();
+        while !self.lexeme_of(&close) && !self.exhausted() {
+            let word = self.need_word("as case or default")?;
+            let is_case = table.spells("ext.stmt.case", &word);
+            if !is_case && !table.spells("ext.stmt.default", &word) {
+                return Err(format!("Expected a case in the switch, got '{}'", word));
+            }
+            let test = if is_case {
+                let value = self.expr(0)?;
+                let held = self.read(&held_name);
+                Some(prim_call(Prim::Eq, vec![held, value]))
+            } else {
+                None
+            };
+            if !(self.on_any("ext.stmt.case.mark") || self.on_stmt_end()) {
+                return Err(format!("Expected '{}' after the case, got '{}'", table.single("ext.stmt.case.mark").unwrap(), self.look().lexeme));
+            }
+            self.advance();
+            let body = self.limb(Traps::Naught, |r| r.stmts_until(&stops))?;
+            sections.push((test, body));
+        }
+        self.need_lexeme(&close)?;
+        // start = the first section whose test holds, else the default's
+        // index, else one past the end.
+        let none = sections.len() as i64;
+        let fallback = sections.iter().position(|(t, _)| t.is_none()).map_or(none, |i| i as i64);
+        let mut choice = constant(Value::Small(fallback));
+        let mut bodies = Vec::new();
+        for (i, (test, body)) in sections.into_iter().enumerate().rev() {
+            if let Some(test) = test {
+                choice = self.choose(test, constant(Value::Small(i as i64)), choice);
+            }
+            bodies.push((i, body));
+        }
+        bodies.reverse();
+        let mut run = Vec::new();
+        for (i, body) in bodies {
+            let from = self.read(&start_name);
+            let reached = prim_call(Prim::Le, vec![from, constant(Value::Small(i as i64))]);
+            let skip = constant(Value::Nil);
+            run.push(self.choose(reached, body, skip));
+        }
+        let pass = Form::Cycle { test: Box::new(constant(Value::Flag(true))), body: Box::new(sequence(run)), step: None, after: true };
+        Ok(sequence(vec![keep, Form::Write(start, Box::new(choice)), pass]))
+    }
+
+    /// A statement without a keyword: a step, a bare call, an
+    /// assignment or an expression.
+    fn plain_stmt(&mut self) -> Res<Form> {
         // `x++;` / `++x;`: as a statement only the stepping counts.
         let (here, next) = (self.look().clone(), self.glance(1).clone());
         if let (Some(by), Shape::Bare) = (self.step_by(&here), next.shape) {
@@ -581,12 +808,31 @@ impl<'a> Builder<'a> {
             }
         }
         if self.table.flag("ext.syntax.call.bare") && here.shape == Shape::Bare {
+            // A builtin with no bracket after it; echo always, since a
+            // bracket after echo opens a group, not its arguments.
             let op = self.table.prims.get(&here.lexeme).copied();
-            if op.is_some() && !matches!(op, Some(Prim::Append | Prim::Replace)) {
+            let bracketed = self.table.single("syntax.call.open").map_or(false, |o| next.shape == Shape::Sign && next.lexeme == o);
+            let bare = match op {
+                Some(Prim::Tell) => true,
+                Some(Prim::Append | Prim::Replace | Prim::Define) | None => false,
+                Some(_) => !bracketed,
+            };
+            if bare {
                 return self.unbracketed_call(&here.lexeme);
             }
         }
         self.write_or_expr()
+    }
+
+    /// The number after break or continue, when the definition allows
+    /// one (ext.stmt.break.levels): how many loops to leave.
+    fn loop_levels(&mut self) -> Res<Vec<Form>> {
+        if self.table.flag("ext.stmt.break.levels") && self.look().shape == Shape::Numeral {
+            let n = self.advance().lexeme;
+            let count = n.parse::<i64>().ok().filter(|n| *n >= 1).ok_or_else(|| format!("'{}' is not a number of loops to leave", n))?;
+            return Ok(vec![constant(Value::Small(count))]);
+        }
+        Ok(Vec::new())
     }
 
     /// +1 for an increment sign, -1 for a decrement sign (ext.op.*).
@@ -794,6 +1040,7 @@ impl<'a> Builder<'a> {
             self.need_word("as a return type")?;
         }
         let declared = self.look().shape == Shape::Sign && table.spells("stmt.terminator", &self.look().lexeme);
+        let statics_before = self.statics.len();
         let program = self.routine(&name, Holds::Every, Traps::Yields, params, |r| {
             let mut items = Vec::new();
             if declared {
@@ -809,18 +1056,30 @@ impl<'a> Builder<'a> {
             items.push(r.body()?);
             Ok(sequence(items))
         })?;
-        Ok(self.write(&name, program))
+        let mut items: Vec<Form> = self.statics.drain(statics_before..).collect();
+        items.push(self.write(&name, program));
+        Ok(sequence(items))
     }
 
     fn write_or_expr(&mut self) -> Res<Form> {
         let expr = self.expr(0)?;
-        if !self.on_assign() {
+        let compound = if self.look().shape == Shape::Sign { self.table.compound.get(&self.look().lexeme).copied() } else { None };
+        if !self.on_assign() && compound.is_none() {
             return Ok(expr);
         }
         let assign = self.advance();
         let value = self.expr(0)?;
         match expr {
-            Form::Read(slot) => Ok(self.write(&slot.ident, value)),
+            // x op= e is x = x op e.
+            Form::Read(slot) => match compound {
+                Some(op) => {
+                    let current = self.read(&slot.ident);
+                    let combined = prim_call(op, vec![current, value]);
+                    Ok(self.write(&slot.ident, combined))
+                }
+                None => Ok(self.write(&slot.ident, value)),
+            },
+            _ if compound.is_some() => Err(format!("'{}' needs a plain variable on its left", assign.lexeme)),
             Form::Apply(Callee::Prim(Prim::At, _), mut args) if args.len() == 2 => {
                 let index = args.pop().unwrap();
                 match args.pop().unwrap() {
@@ -862,7 +1121,19 @@ impl<'a> Builder<'a> {
                 left = self.named_call(&name, args)?;
                 continue;
             }
-            let Some(op) = table.dyadic.get(&text).copied() else { break };
+            let Some(op) = table.dyadic.get(&text).copied() else {
+                // test ? a : b, at the bottom of an expression.
+                let signs = table.strings("ext.op.ternary");
+                if floor == 0 && signs.first().map_or(false, |q| self.sign(q)) {
+                    self.advance();
+                    let then = self.limb(Traps::Naught, |r| r.expr(0))?;
+                    self.need_sign(&signs[1], "between the arms of the conditional")?;
+                    let otherwise = self.limb(Traps::Naught, |r| r.expr(0))?;
+                    left = self.choose(left, then, otherwise);
+                    continue;
+                }
+                break;
+            };
             if op.level < floor {
                 break;
             }
@@ -899,6 +1170,12 @@ impl<'a> Builder<'a> {
                 let operand = self.expr(op.level)?;
                 return Ok(prim_call(op.prim, vec![operand]));
             }
+            if t.shape == Shape::Sign && table.spells("ext.op.plus", &t.lexeme) {
+                // A plus sign leaves its operand as it is, bound like a negation.
+                self.advance();
+                let tier = table.monadic.values().map(|m| m.level).max().unwrap_or(0);
+                return self.expr(tier);
+            }
         }
         let node = match t.shape {
             Shape::Numeral => {
@@ -919,8 +1196,18 @@ impl<'a> Builder<'a> {
                     constant(Value::Nil)
                 } else if table.single("syntax.call.open").map_or(false, |o| self.sign(o)) {
                     self.advance();
-                    let args = self.args("syntax.call.close", "syntax.call.separator")?;
-                    self.named_call(&t.lexeme, args)?
+                    let mut args = self.args("syntax.call.close", "syntax.call.separator")?;
+                    if table.prims.get(&t.lexeme) == Some(&Prim::Define) {
+                        // define("NAME", v) binds the global NAME here; its value is true.
+                        let (Some(Form::Const(Value::Text(name))), 2) = (args.first(), args.len()) else {
+                            return Err(format!("{}() needs a quoted name and a value", t.lexeme));
+                        };
+                        let slot = self.global_address(&name.to_string());
+                        let value = args.pop().unwrap();
+                        sequence(vec![Form::Write(slot, Box::new(value)), constant(Value::Flag(true))])
+                    } else {
+                        self.named_call(&t.lexeme, args)?
+                    }
                 } else if let Some(by) = self.step_by(&self.look().clone()) {
                     // x++ is the value before the step, kept aside.
                     self.advance();
@@ -1405,7 +1692,7 @@ impl<'a> Builder<'a> {
             let close = table.strings("stack.program.close")[k].clone();
             self.gensyms += 1;
             let name = format!("<program{}>", self.gensyms);
-            self.layers.push(Layer { holds: Holds::Every, idents: Vec::new(), formals: Vec::new(), formal_slots: Vec::new(), rpn: true });
+            self.layers.push(Layer { holds: Holds::Every, idents: Vec::new(), formals: Vec::new(), formal_slots: Vec::new(), rpn: true, aliases: Vec::new() });
             let (mut s, left) = self.rpn_block(std::slice::from_ref(&close), Mode::Quoted)?;
             self.need_lexeme(&close)?;
             if let Some(v) = left {
@@ -1506,7 +1793,8 @@ impl<'a> Builder<'a> {
             let (takes, leaves) = match op {
                 Prim::Append | Prim::Replace => return Err(format!("'{}' needs a quoted name before it", w)),
                 Prim::External | Prim::Span => return Err(format!("'{}' has no postfix form", w)),
-                Prim::Echo | Prim::Say | Prim::Out | Prim::Tell | Prim::Raise => (1, false),
+                Prim::Echo | Prim::Say | Prim::Out | Prim::Tell | Prim::Dump | Prim::Raise => (1, false),
+                Prim::Define => return Err(format!("'{}' has no postfix form", w)),
                 Prim::CharAtIndex | Prim::Fetch | Prim::MakeReal => (2, true),
                 _ => (1, true),
             };
@@ -1570,6 +1858,21 @@ pub fn numeral(text: &str, table: &Table) -> Res<Value> {
     if let Some(mark) = table.letter("lexical.number.base_marker").filter(|m| text.contains(*m)) {
         let (num, den) = radix_number(text, mark, point, table.letter("lexical.number.exponent_marker"))?;
         return Ok(if den == BigInt::from(1) { Value::from_big(num) } else { math::make_number(num, den, Some(digit_run(text))) });
+    }
+    // 1e9: the number before the letter times a power of ten, as a real.
+    let powers = table.letters("ext.lexical.number.exponent");
+    if let Some(at) = text.find(|c| powers.contains(&c)) {
+        let (before, power) = (&text[..at], &text[at + 1..]);
+        let power: i32 = power.parse().map_err(|_| format!("Invalid number: {}", text))?;
+        let (above, beneath) = match numeral(before, table)? {
+            Value::Frac(e) => (e.above.clone(), e.beneath.clone()),
+            Value::Small(n) => (BigInt::from(n), BigInt::from(1)),
+            Value::Huge(n) => ((*n).clone(), BigInt::from(1)),
+            _ => return Err(format!("Invalid number: {}", text)),
+        };
+        let ten = BigInt::from(10).pow(power.unsigned_abs());
+        let (above, beneath) = if power < 0 { (above, beneath * ten) } else { (above * ten, beneath) };
+        return Ok(math::make_number(above, beneath, Some(digit_run(before))));
     }
     if let Some(p) = point {
         if let Some(dot) = text.find(p) {
