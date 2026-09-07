@@ -306,9 +306,7 @@
   "builtin.typeof": [
     "gettype"
   ],
-  "builtin.error": [
-    "exit"
-  ],
+  "builtin.error": [],
   "builtin.extern": [],
   "builtin.range": [
     "range"
@@ -422,6 +420,10 @@
   ],
   "ext.op.index.append": true,
   "ext.op.index.makes": true,
+  "ext.builtin.exit": [
+    "exit",
+    "die"
+  ],
   "ext.system.untrue.text": [
     "0"
   ],

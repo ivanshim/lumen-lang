@@ -7,7 +7,7 @@ definition has no spelling for. The library functions an example uses come
 from the language's mirror of the library (`langs/lib_<language>/`,
 `docs/LIBRARY_PORTS.md`); one the mirror lacks is ported into the file.
 
-Lumen has 87 examples; python carries 58, rplumen carries 60, rust carries 36, c carries 23, javascript carries 46, pascal carries 29, php carries 50, ruby carries 48, swift carries 28.
+Lumen has 87 examples; python carries 58, rplumen carries 60, rust carries 36, c carries 23, javascript carries 46, pascal carries 29, php carries 49, ruby carries 48, swift carries 28.
 
 | Example | python | rplumen | rust | c | javascript | pascal | php | ruby | swift |
 |---|---|---|---|---|---|---|---|---|---|
@@ -83,13 +83,13 @@ Lumen has 87 examples; python carries 58, rplumen carries 60, rust carries 36, c
 | `factorial.lm` | no `ARGS` | no `ARGS` | no `num` | no `num` | no `ARGS` | no `num` | no `ARGS` | no `ARGS` | no `ARGS` |
 | `fibonacci_iterative.lm` | no `ARGS` | no `ARGS` | no `num` | C has no spelling here for a variable holding a str | no `ARGS` | no `char_at` | no `ARGS` | no `ARGS` | no `char_at` |
 | `fibonacci_recursive.lm` | no `ARGS` | no `ARGS` | no `num` | C has no spelling here for a variable holding a str | no `ARGS` | no `char_at` | no `ARGS` | no `ARGS` | no `char_at` |
-| `libraries/test_base_basic.lm` | no `num` | no `REAL_DEFAULT_PRECISION` | no `real` | no `real` | no `kind` | no `real` | no `//` | no `kind` | no `kind` |
+| `libraries/test_base_basic.lm` | no `num` | no `REAL_DEFAULT_PRECISION` | no `real` | no `real` | no `kind` | no `real` | no `error` | no `kind` | no `kind` |
 | `libraries/test_base_comprehensive.lm` | no `INTEGER` | no `INTEGER` | no `kind` | C has no spelling here for a variable holding a str | no `kind` | no type word for a array | no `INTEGER` | no `kind` | no `kind` |
 | `libraries/test_base_minimal.lm` | yes | yes | no `char_at` | C has no spelling here for a variable holding a str | no `//` | no `char_at` | no `//` | yes | no `char_at` |
 | `libraries/test_base_roundtrip.lm` | no `INTEGER` | no `INTEGER` | no `kind` | C has no spelling here for a variable holding a str | no `kind` | no `char_at` | no `INTEGER` | no `kind` | no `kind` |
 | `libraries/test_char_classification.lm` | yes | yes | no `ord` | C has no spelling here for a variable holding a str | no `ord` | no type word for a array | yes | yes | no `ord` |
 | `libraries/test_char_utilities.lm` | no `NULL` | no `NULL` | no `kind` | C has no spelling here for a variable holding a str | no `kind` | no type word for a array | no `NULL` | no `kind` | no `kind` |
-| `libraries/test_string_comprehensive.lm` | yes | yes | no `ord` | C has no spelling here for a variable holding a str | no `ord` | no type word for a array | yes | no `/` | no `ord` |
+| `libraries/test_string_comprehensive.lm` | yes | yes | no `ord` | C has no spelling here for a variable holding a str | no `ord` | no type word for a array | no `error` | no `/` | no `ord` |
 | `libraries/test_string_to_value.lm` | no `INTEGER` | no `INTEGER` | no `kind` | C has no spelling here for a variable holding a str | no `kind` | no `char_at` | no `INTEGER` | no `kind` | no `kind` |
 | `libraries/test_string_transform.lm` | yes | yes | no `char_at` | C has no spelling here for a variable holding a str | no `ord` | no type word for a array | yes | yes | no `char_at` |
 | `libraries/test_string_validation.lm` | yes | yes | no `ord` | C has no spelling here for a variable holding a str | no `ord` | no type word for a array | yes | yes | no `ord` |

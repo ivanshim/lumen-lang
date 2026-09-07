@@ -144,6 +144,9 @@ pub enum Builtin {
     Pack,
     /// A value laid out over lines, PHP's print_r (ext.builtin.print_r).
     Layout,
+    /// Say the run is over where it stands (ext.builtin.exit). Text is
+    /// written out first; a number is not.
+    Leave,
     /// Take a binding, or a place in an array, away (ext.builtin.unset).
     Erase,
     /// Whether each of those bindings, or places in an array, holds

@@ -61,6 +61,9 @@ pub enum Fault {
     /// The run is over and no guard may take it back: a limit the
     /// language set on the run itself was passed.
     Stopped(String),
+    /// The program said the run was over. Nothing went wrong and nothing
+    /// is told; whatever was to be written was written before this.
+    Finished,
 }
 
 impl From<String> for Fault {
@@ -89,6 +92,7 @@ impl Fault {
             }
             Fault::Thrown(v) => format!("Uncaught {}", v.display(sp)),
             Fault::Stopped(told) => told,
+            Fault::Finished => String::new(),
         }
     }
 }
@@ -187,6 +191,8 @@ impl<'a> Engine<'a> {
         let Some((_, word)) = self.lang.complaint_words.iter().find(|(k, _)| *k == Complaint::Fatal) else { return };
         let sp = self.wording();
         let raised = match fault {
+            // A run the program itself ended is not told at all.
+            Fault::Finished => return,
             // A limit passed is told plainly, since nothing was raised.
             Fault::Stopped(told) => {
                 println!("\n{}: {} in {} on line {}", word, told, self.source, self.line);
@@ -1027,6 +1033,14 @@ impl<'a> Engine<'a> {
                     return Err("Stack underflow".to_string().into());
                 }
                 let at = self.data.len() - argc;
+                // A language may say the run is over where it stands.
+                // Text given is written out first; a number is not.
+                if let Builtin::Leave = builtin {
+                    if let Some(Value::Text(said)) = self.data.get(at) {
+                        print!("{}", said);
+                    }
+                    return Err(Fault::Finished);
+                }
                 let mut args = std::mem::take(&mut self.buffer);
                 args.clear();
                 args.extend(self.data.drain(at..));
@@ -1696,6 +1710,7 @@ impl<'a> Engine<'a> {
                     None => return Err(format!("{}() argument {} is not a valid Unicode code point", name, code)),
                 }
             }
+            Builtin::Leave => return Err("the run is over".to_string()),
             Builtin::Raise => {
                 arity(1)?;
                 return match &args[0] {

@@ -57,6 +57,9 @@ pub enum Prim {
     Glance,
     /// Whether every one of these is something other than nothing.
     Standing,
+    /// Say the run is over where it stands (ext.builtin.exit). Text
+    /// given is written out first; a number is not.
+    Quit,
     /// What an array holds at that place, an empty array where it holds
     /// nothing there: how a write reaches into a place that is not there
     /// yet, making it on the way in.

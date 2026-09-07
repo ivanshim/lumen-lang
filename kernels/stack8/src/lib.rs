@@ -129,6 +129,10 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     // A value raised and never caught is a fault like any other, told
     // in the language's own words.
     if let Err(fault) = machine.invoke(&program, Vec::new()) {
+        // A run the program itself said was over came out right.
+        if matches!(fault, engine::Fault::Finished) {
+            return Ok(());
+        }
         machine.ended_uncaught(&fault);
         return Err(fault.told(&machine.names()));
     }

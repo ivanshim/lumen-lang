@@ -43,6 +43,9 @@ pub enum Escape {
     /// The run is over and no clause may take it back: a limit the
     /// language set on the run itself was passed.
     Stopped(String),
+    /// The program said the run was over. Nothing went amiss and nothing
+    /// is told; whatever was to be written was written already.
+    Done,
     Yield(Value),
     /// A value raised for a clause to take.
     Thrown(Value),
@@ -414,6 +417,7 @@ impl<'a> Machine<'a> {
             Err(Escape::Error(told)) => Err(told),
             Err(Escape::Yield(answer)) => Ok(answer),
             Err(other) => Err(match other {
+                Escape::Done => return Ok(Value::Nil),
                 Escape::Stopped(told) => told,
                 Escape::Thrown(raised) => format!("Uncaught {}", raised.bare()),
                 _ => "A run of source ended oddly".to_string(),
@@ -424,7 +428,8 @@ impl<'a> Machine<'a> {
     pub fn run_main(&mut self, body: &Form) -> Result<(), String> {
         let top = self.outermost.clone();
         match self.value_of(body, &top) {
-            Ok(_) | Err(Escape::Yield(_)) | Err(Escape::Leave(_)) | Err(Escape::Resume(_)) => Ok(()),
+            // A run the program itself said was over came out right.
+            Ok(_) | Err(Escape::Done) | Err(Escape::Yield(_)) | Err(Escape::Leave(_)) | Err(Escape::Resume(_)) => Ok(()),
             // A value nobody took is a fault, told the way PHP tells it.
             Err(Escape::Thrown(Value::Thing(thing))) => {
                 let told = thing.holds.borrow().iter().find(|(k, _)| k == "message").map(|(_, x)| x.bare());
@@ -899,6 +904,15 @@ impl<'a> Machine<'a> {
                     let mut slots = f.cells.borrow_mut();
                     written_into(&mut slots[i], key, value, &slot.ident, self.builds_places)?;
                     Ok(Value::Nil)
+                }
+                // A language may say the run is over where it stands.
+                // Text given is written out first; a number is not.
+                Prim::Quit => {
+                    let values = self.value_list(args, frame)?;
+                    if let Some(Value::Text(said)) = values.first() {
+                        print!("{}", said);
+                    }
+                    Err(Escape::Done)
                 }
                 op => {
                     let values = self.value_list(args, frame)?;
@@ -1709,6 +1723,9 @@ impl<'a> Machine<'a> {
                     None => return Err(format!("{}() argument {} is not a valid Unicode code point", name, code)),
                 }
             }
+            // Saying the run is over is done where the call is made,
+            // since it is not a value to be worked out.
+            Prim::Quit => return Err("the run is over".to_string()),
             Prim::Raise => {
                 n(1)?;
                 return match &v[0] {

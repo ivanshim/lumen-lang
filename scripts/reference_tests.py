@@ -168,8 +168,14 @@ def run_phpt(path, kernel):
     s = phpt_sections(path.read_text(encoding="utf-8", errors="replace"))
     if "FILE" not in s:
         return "skipped", "no --FILE-- section"
-    if "SKIPIF" in s and re.search(r"extension_loaded|PHP_OS|getenv|zend\.", s["SKIPIF"]):
-        pass  # run anyway: the kernels have no extensions to check; the test shows what is missing
+    # run-tests.php runs a test's SKIPIF section and passes the test over
+    # when it prints a line beginning with "skip". A section the kernel
+    # cannot run says nothing either way, and the test runs, since a test
+    # that shows what is missing is worth more than one passed over.
+    if "SKIPIF" in s:
+        code, out, err = run(kernel, ["--lang", "langs/extras/php.json"], s["SKIPIF"], ".skip.php", beside=path)
+        if code == 0 and out.strip().lower().startswith("skip"):
+            return "skipped", out.strip()[:80]
     expected = s.get("EXPECT", s.get("EXPECTF", s.get("EXPECTREGEX")))
     if expected is None:
         return "skipped", "no --EXPECT-- section"

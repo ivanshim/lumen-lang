@@ -17,22 +17,23 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 32, differs 48, error 34, skipped 0 | pass 32, differs 48, error 34, skipped 0 |
+| `php/basic` | 114 | pass 32, differs 44, error 28, skipped 10 | pass 32, differs 44, error 28, skipped 10 |
 | `php/func` | 14 | pass 7, differs 3, error 4, skipped 0 | pass 7, differs 3, error 4, skipped 0 |
-| `php/lang` | 213 | pass 63, differs 57, error 91, skipped 2 | pass 63, differs 57, error 91, skipped 2 |
-| `php/lang/constants` | 2 | pass 1, differs 1, error 0, skipped 0 | pass 1, differs 1, error 0, skipped 0 |
-| `php/lang/integer_literals` | 6 | pass 3, differs 3, error 0, skipped 0 | pass 3, differs 3, error 0, skipped 0 |
-| `php/lang/operators` | 64 | pass 26, differs 27, error 11, skipped 0 | pass 26, differs 27, error 11, skipped 0 |
+| `php/lang` | 213 | pass 62, differs 57, error 89, skipped 5 | pass 62, differs 57, error 89, skipped 5 |
+| `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
+| `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
+| `php/lang/operators` | 64 | pass 26, differs 21, error 11, skipped 6 | pass 26, differs 21, error 11, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 133, differs 147, error 140, skipped 2 | pass 133, differs 147, error 140, skipped 2 |
+| all | 422 | pass 132, differs 133, error 132, skipped 25 | pass 132, differs 133, error 132, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 147 |
+| ran, printed something else | 133 |
+| skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | Unexpected character '$' | 6 |
+| skip Windows only test | 5 |
 | Unexpected token: & | 5 |
-| Unexpected token: , | 4 |
 | Unexpected token: -> | 4 |
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
@@ -40,8 +41,9 @@ is listed, since the full kernels are meant to behave alike.
 | Unexpected token: ) | 3 |
 | Fatal error: Uncaught Error: Undefined variable: current in <file> | 3 |
 | Fatal error: Uncaught Error: Cannot index non-array value in <file> | 3 |
+| Unexpected token: , | 3 |
 | Only a name or a place in an array can be forgotten | 3 |
-| Unexpected token: . | 2 |
+| skip php-cgi not available | 2 |
 | Expected an expression | 2 |
 | Unexpected token: { | 2 |
 | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> | 2 |
@@ -66,8 +68,6 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: PHP_BINARY in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: ENT_HTML5 in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> | 1 |
-| Expected identifier as the property name, got '{' | 1 |
-| Fatal error: Uncaught Error: Undefined variable: PHP_BUILD_DATE in <file> | 1 |
 
 ### Reserved words: 47 of 68 spelled
 
@@ -228,7 +228,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/030.phpt` | pass | pass |  |
 | `php/basic/031.phpt` | pass | pass |  |
 | `php/basic/032.phpt` | differs | differs | ran, printed something else |
-| `php/basic/GHSA-9pqp-7h25-4f32.phpt` | error | error | Unexpected token: . |
+| `php/basic/GHSA-9pqp-7h25-4f32.phpt` | skipped | skipped | skip php-cgi not available |
 | `php/basic/array_key_exists_null_deprecation.phpt` | differs | differs | ran, printed something else |
 | `php/basic/array_null_offset_deprecation.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug20539.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: session_id in <file> |
@@ -248,7 +248,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/bug79699.phpt` | pass | pass |  |
 | `php/basic/bug80384.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
 | `php/basic/build_date.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: PHP_BUILD_DATE in <file> |
-| `php/basic/consistent_float_string_casts.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: string in <file> |
+| `php/basic/consistent_float_string_casts.phpt` | skipped | skipped | skip locale needed for this test is not supported on this platform |
 | `php/basic/enable_post_data_reading_01.phpt` | differs | differs | ran, printed something else |
 | `php/basic/enable_post_data_reading_02.phpt` | differs | differs | ran, printed something else |
 | `php/basic/enable_post_data_reading_03.phpt` | differs | differs | ran, printed something else |
@@ -259,7 +259,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/encoding.phpt` | differs | differs | ran, printed something else |
 | `php/basic/errorlog_permission.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: umask in <file> |
 | `php/basic/gh15905.phpt` | pass | pass |  |
-| `php/basic/gh16998.phpt` | error | error | Unexpected token: . |
+| `php/basic/gh16998.phpt` | skipped | skipped | skip php-cgi not available |
 | `php/basic/gh17951_ini_parse_1.phpt` | differs | differs | ran, printed something else |
 | `php/basic/gh17951_ini_parse_2.phpt` | differs | differs | ran, printed something else |
 | `php/basic/gh17951_ini_parse_3.phpt` | differs | differs | ran, printed something else |
@@ -273,7 +273,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/gh17951_runtime_change_6.phpt` | differs | differs | ran, printed something else |
 | `php/basic/gh20858.phpt` | differs | differs | ran, printed something else |
 | `php/basic/gh20964.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
-| `php/basic/gh7896.phpt` | differs | differs | ran, printed something else |
+| `php/basic/gh7896.phpt` | skipped | skipped | skip for Windows only |
 | `php/basic/header_register_callback.phpt` | error | error | Unexpected token: { |
 | `php/basic/header_register_callback_after_output.phpt` | error | error | Unexpected token: { |
 | `php/basic/header_register_callback_trampoline.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> |
@@ -283,7 +283,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/ini_parse_quantity_warnings.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ini_parse_quantity in <file> |
 | `php/basic/precision.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: join in <file> |
 | `php/basic/req44164.phpt` | pass | pass |  |
-| `php/basic/req60524-win.phpt` | differs | differs | ran, printed something else |
+| `php/basic/req60524-win.phpt` | skipped | skipped | skip Run only on Windows |
 | `php/basic/req60524.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_anonymous_upload.phpt` | pass | pass |  |
 | `php/basic/rfc1867_array_upload.phpt` | pass | pass |  |
@@ -302,13 +302,13 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/rfc1867_post_max_filesize.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_post_max_size.phpt` | differs | differs | ran, printed something else |
 | `php/basic/timeout_variation_0.phpt` | error | error | Fatal error: Maximum execution time of 1 second exceeded in <file> |
-| `php/basic/timeout_variation_1.phpt` | differs | differs | ran, printed something else |
-| `php/basic/timeout_variation_10.phpt` | differs | differs | ran, printed something else |
-| `php/basic/timeout_variation_2.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: array_map in <file> |
-| `php/basic/timeout_variation_4.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: call_user_func in <file> |
+| `php/basic/timeout_variation_1.phpt` | skipped | skipped | skip Windows only test |
+| `php/basic/timeout_variation_10.phpt` | skipped | skipped | skip Windows only test |
+| `php/basic/timeout_variation_2.phpt` | skipped | skipped | skip Windows only test |
+| `php/basic/timeout_variation_4.phpt` | skipped | skipped | skip Windows only test |
 | `php/basic/timeout_variation_7.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: INF in <file> |
 | `php/basic/timeout_variation_8.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: InfiniteIterator in <file> |
-| `php/basic/timeout_variation_9.phpt` | error | error | Fatal error: Uncaught Error: exit() argument must be a string in <file> |
+| `php/basic/timeout_variation_9.phpt` | skipped | skipped | skip Windows only test |
 | `php/func/001.phpt` | pass | pass |  |
 | `php/func/002.phpt` | pass | pass |  |
 | `php/func/003.phpt` | pass | pass |  |
@@ -354,7 +354,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/030.phpt` | error | error | Unexpected token: & |
 | `php/lang/032.phpt` | pass | pass |  |
 | `php/lang/033.phpt` | error | error | Unexpected token: : |
-| `php/lang/034.phpt` | error | error | Unexpected token: , |
+| `php/lang/034.phpt` | skipped | skipped | skip Can't find german locale |
 | `php/lang/035.phpt` | pass | pass |  |
 | `php/lang/036.phpt` | differs | differs | ran, printed something else |
 | `php/lang/037.phpt` | pass | pass |  |
@@ -419,14 +419,14 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug29893.phpt` | error | error | '-=' needs a plain variable on its left |
 | `php/lang/bug29944.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug30578.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug30638.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: localeconv in <file> |
+| `php/lang/bug30638.phpt` | skipped | skipped | skip setlocale() failed |
 | `php/lang/bug30726.phpt` | error | error | Unexpected token: , |
 | `php/lang/bug30862.phpt` | pass | pass |  |
 | `php/lang/bug32828.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug32924.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug35176.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug35382.phpt` | skipped | skipped | no --FILE-- section |
-| `php/lang/bug38579.phpt` | pass | pass |  |
+| `php/lang/bug38579.phpt` | skipped | skipped | skip only for Windows |
 | `php/lang/bug43958.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: include in <file> |
 | `php/lang/bug44654.phpt` | pass | pass |  |
 | `php/lang/bug44827.phpt` | differs | differs | ran, printed something else |
@@ -442,7 +442,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/comments2.phpt` | skipped | skipped | no --FILE-- section |
 | `php/lang/compare_objects_basic1.phpt` | pass | pass |  |
 | `php/lang/compare_objects_basic2.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: DateTime in <file> |
-| `php/lang/constants/PHP_INT_32bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/constants/PHP_INT_32bit.phpt` | skipped | skipped | skip this test is for 32-bit platforms only |
 | `php/lang/constants/PHP_INT_64bit.phpt` | pass | pass |  |
 | `php/lang/empty_variation.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: empty in <file> |
 | `php/lang/engine_assignExecutionOrder_001.phpt` | error | error | Unexpected character '$' |
@@ -502,11 +502,11 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/include_variation1.phpt` | differs | differs | ran, printed something else |
 | `php/lang/include_variation2.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: test in <file> |
 | `php/lang/include_variation3.phpt` | differs | differs | ran, printed something else |
-| `php/lang/integer_literals/binary_32bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/integer_literals/binary_32bit.phpt` | skipped | skipped | skip this test is for 32bit platform only |
 | `php/lang/integer_literals/binary_64bit.phpt` | pass | pass |  |
-| `php/lang/integer_literals/hexadecimal_32bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/integer_literals/hexadecimal_32bit.phpt` | skipped | skipped | skip this test is for 32bit platform only |
 | `php/lang/integer_literals/hexadecimal_64bit.phpt` | pass | pass |  |
-| `php/lang/integer_literals/octal_32bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/integer_literals/octal_32bit.phpt` | skipped | skipped | skip this test is for 32bit platform only |
 | `php/lang/integer_literals/octal_64bit.phpt` | pass | pass |  |
 | `php/lang/invalid_octal.phpt` | error | error | Invalid number: 08 |
 | `php/lang/operators/add_basiclong_64bit.phpt` | pass | pass |  |
@@ -537,29 +537,29 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/negate_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/negate_variationStr.phpt` | error | error | Fatal error: Uncaught Error: Cannot negate non-numeric value in <file> |
 | `php/lang/operators/operator_equals_basic.phpt` | pass | pass |  |
-| `php/lang/operators/operator_equals_variation.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_equals_variation.phpt` | skipped | skipped | skip this test is for 32bit platform only |
 | `php/lang/operators/operator_equals_variation_64bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/operator_gt_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_gt_or_equal_basic.phpt` | pass | pass |  |
-| `php/lang/operators/operator_gt_or_equal_variation.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_gt_or_equal_variation.phpt` | skipped | skipped | skip this test is for 32bit platform only |
 | `php/lang/operators/operator_gt_or_equal_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_gt_variation.phpt` | pass | pass |  |
 | `php/lang/operators/operator_gt_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_identical_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_identical_recusion-01.phpt` | error | error | Unexpected token: & |
-| `php/lang/operators/operator_identical_variation.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_identical_variation.phpt` | skipped | skipped | skip this test is for 32bit platform only |
 | `php/lang/operators/operator_identical_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_lt_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_lt_or_equal_basic.phpt` | pass | pass |  |
-| `php/lang/operators/operator_lt_or_equal_variation.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_lt_or_equal_variation.phpt` | skipped | skipped | skip this test is for 32bit platform only |
 | `php/lang/operators/operator_lt_or_equal_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_lt_variation.phpt` | pass | pass |  |
 | `php/lang/operators/operator_lt_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_notequals_basic.phpt` | error | error | Unexpected token: > |
-| `php/lang/operators/operator_notequals_variation.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_notequals_variation.phpt` | skipped | skipped | skip this test is for 32bit platform only |
 | `php/lang/operators/operator_notequals_variation_64bit.phpt` | error | error | Unexpected token: > |
 | `php/lang/operators/operator_notidentical_basic.phpt` | pass | pass |  |
-| `php/lang/operators/operator_notidentical_variation.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_notidentical_variation.phpt` | skipped | skipped | skip this test is for 32bit platform only |
 | `php/lang/operators/operator_notidentical_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_spaceship_basic.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/overloaded_property_ref.phpt` | error | error | Unexpected token: -> |
