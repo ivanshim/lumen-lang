@@ -1,5 +1,5 @@
 [workspace]
-members = ["kernels/stream35", "kernels/microcode10", "kernels/stack26", "kernels/microcode11", "kernels/microcode4", "kernels/stack5"]
+members = ["kernels/stream35", "kernels/microcode10", "kernels/stack26", "kernels/microcode11", "kernels/microcode4", "kernels/stack5", "lab/stacklab", "lab/microlab"]
 
 [package]
 name = "lumen-lang"

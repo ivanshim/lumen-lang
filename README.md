@@ -63,7 +63,7 @@ the file extension, which each definition in `langs/` declares for itself,
 and Lumen is the default. Arguments after the file are passed to the
 program.
 
-## Five kernels, one host
+## Six kernels, one host
 
 ```
 src/main.rs            the host: arguments, language detection, the embedded
@@ -245,6 +245,16 @@ errors, a check that the ported examples match what
 `scripts/port_examples.py` writes, and the whole suite on every push.
 `TEST_QUIET=1` prints program output only for failures.
 
+## The kernel lab
+
+`lab/` holds two specimens, copies of the floor kernels stack5 and
+microcode4 patched cycle by cycle for speed and measured after each with
+`scripts/bench.sh` over the programs in `bench/`. They are experiments,
+not kernels: exempt from the independence check, not wired into the host.
+[docs/KERNEL_LAB.md](docs/KERNEL_LAB.md) records every cycle, the
+predictions and the results: nine words run the bare loop 6.5 times faster
+than five, and a tree of eight forms ties the stack machines on it.
+
 ## Documentation
 
 - [docs/LUMEN_KERNEL_STREAM35.md](docs/LUMEN_KERNEL_STREAM35.md) — the stream35 kernel's charter
@@ -253,6 +263,7 @@ errors, a check that the ported examples match what
 - [docs/LUMEN_KERNEL_MICROCODE11.md](docs/LUMEN_KERNEL_MICROCODE11.md) — the microcode11 kernel: the tree kept and written back out
 - [docs/LUMEN_KERNEL_MICROCODE4.md](docs/LUMEN_KERNEL_MICROCODE4.md) — the microcode4 kernel: four primitive forms
 - [docs/LUMEN_KERNEL_STACK5.md](docs/LUMEN_KERNEL_STACK5.md) — the stack5 kernel: five words and the shapes made of them
+- [docs/KERNEL_LAB.md](docs/KERNEL_LAB.md) — the kernel lab: evolving both kernel shapes for speed, cycle by cycle
 - [langs/README.md](langs/README.md) — the definition format, every label, and the languages side by side
 - [docs/LUMEN_LANGUAGE_DESIGN.md](docs/LUMEN_LANGUAGE_DESIGN.md) — design principles
 - [docs/LUMEN_COMPACT_REFERENCE.md](docs/LUMEN_COMPACT_REFERENCE.md) — Lumen quick reference

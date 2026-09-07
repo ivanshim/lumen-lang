@@ -31,6 +31,12 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   definition is loaded at run time. PHP moved there, and Ruby, Pascal, C,
   JavaScript and Swift are added with examples; all nine languages run on
   both kernels.
+- **The kernel lab**: `lab/stacklab` and `lab/microlab` are copies of
+  stack5 and microcode4 evolved for speed over eight cycles, measured by
+  `scripts/bench.sh` on the six programs under `bench/`; `docs/KERNEL_LAB.md`
+  records each cycle. Nine words run the bare loop 6.5 times faster than
+  five; a tree of eight forms, once its argument vectors are gone, ties
+  the stack machines on the bare loop and beats microcode11 twice over.
 - **Notation and block style are separate labels; RPLumen is indented**:
   a new label `syntax.notation` (`infix` or `postfix`) says how a
   language is read, and `block.style` is free to be `indentation`,

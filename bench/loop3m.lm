@@ -1,0 +1,5 @@
+# The bare loop, ten times longer: dispatch cost above the noise.
+i = 0
+while i < 3000000
+    i = i + 1
+print(i)
