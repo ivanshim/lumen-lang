@@ -3,12 +3,12 @@
 # markdown table. Release binaries. Usage: scripts/bench.sh [N] [kernel...]
 cd "$(dirname "$0")/.." || exit 1
 N=${1:-5}; shift
-KERNELS=${*:-"microcode10 stack26 microcode11 microcode4 stack5 microlab stacklab"}
+KERNELS=${*:-"microcode10 stack26 microcode11 microcode4 microcode4a microlab stack5 stack5a stacklab"}
 cargo build --release --quiet 2>/dev/null || { echo "build failed"; exit 1; }
 TIMEFORMAT=%R
 run() {  # kernel file
     case "$1" in
-        stacklab|microlab) ./target/release/lumen-$1 "$2" ;;
+        stacklab|microlab|stack5a|microcode4a) ./target/release/lumen-$1 "$2" ;;
         *) ./target/release/lumen-lang --kernel "$1" "$2" ;;
     esac
 }
