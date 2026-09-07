@@ -2088,12 +2088,14 @@ fn bits_of(v: &Value) -> Res<i64> {
         other => other.clone(),
     };
     if let Value::Huge(n) = &whole {
-        return Ok(n.to_i64().unwrap_or(0));
+        return Ok(n.to_i64().unwrap_or(i64::MIN));
     }
     match arith::Exact::from_value(&whole) {
         // Dividing whole numbers cuts towards nothing, which is what
-        // dropping what lies past the point comes to.
-        Some(exact) => Ok((&exact.p / &exact.q).to_i64().unwrap_or(0)),
+        // dropping what lies past the point comes to. A number too wide
+        // to be held in the bits at all comes to the lowest of them,
+        // which is what a machine holding numbers to a width gives.
+        Some(exact) => Ok((&exact.p / &exact.q).to_i64().unwrap_or(i64::MIN)),
         None => Err("Working on bits needs a whole number".to_string()),
     }
 }

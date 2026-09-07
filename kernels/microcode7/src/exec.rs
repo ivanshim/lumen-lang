@@ -2100,7 +2100,7 @@ fn sixty_four(v: &Value) -> Result<i64, String> {
         Value::Small(n) => return Ok(*n),
         Value::Flag(yes) => return Ok(i64::from(*yes)),
         Value::Nil | Value::Unset => return Ok(0),
-        Value::Huge(n) => return Ok(n.to_i64().unwrap_or(0)),
+        Value::Huge(n) => return Ok(n.to_i64().unwrap_or(i64::MIN)),
         Value::Text(_) => match number_spelled_in(v) {
             Some(n) => n,
             None => return Ok(0),
@@ -2109,8 +2109,10 @@ fn sixty_four(v: &Value) -> Result<i64, String> {
     };
     match math::ratio_of(&number) {
         // Dividing whole numbers cuts towards nothing, which is what
-        // dropping what lies past the point comes to.
-        Some(r) => Ok((&r.above / &r.beneath).to_i64().unwrap_or(0)),
+        // dropping what lies past the point comes to. A number too wide
+        // for the bits at all comes to the lowest of them, as it does on
+        // a machine that holds numbers to a width.
+        Some(r) => Ok((&r.above / &r.beneath).to_i64().unwrap_or(i64::MIN)),
         None => Err("Working on bits needs a whole number".to_string()),
     }
 }
