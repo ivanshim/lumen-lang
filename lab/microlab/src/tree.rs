@@ -98,9 +98,28 @@ pub enum Node {
     If { test: Box<Node>, then: Box<Node>, otherwise: Box<Node> },
     /// Cycle 3: an operation of two operands, evaluated without a vector
     /// of arguments.
-    Binary { op: Op, name: Rc<str>, a: Box<Node>, b: Box<Node> },
+    Binary { op: Op, name: Rc<str>, a: Operand, b: Operand },
     /// Cycle 4: `x = x + k`, the binding stepped in place.
     Step { slot: Slot, by: i64 },
+}
+
+/// Cycle 6: an operand of a binary operation that is a binding or a
+/// constant is read directly, without a visit to a node.
+#[derive(Debug)]
+pub enum Operand {
+    Node(Box<Node>),
+    Slot(Slot),
+    Lit(Value),
+}
+
+impl Operand {
+    pub fn of(node: Node) -> Operand {
+        match node {
+            Node::Load(slot) => Operand::Slot(slot),
+            Node::Literal(v) if !matches!(v, Value::Code(_)) => Operand::Lit(v),
+            other => Operand::Node(Box::new(other)),
+        }
+    }
 }
 
 /// What a program stops when it is raised inside: a function stops a

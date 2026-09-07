@@ -252,8 +252,8 @@ microcode4 patched cycle by cycle for speed and measured after each with
 `scripts/bench.sh` over the programs in `bench/`. They are experiments,
 not kernels: exempt from the independence check, not wired into the host.
 [docs/KERNEL_LAB.md](docs/KERNEL_LAB.md) records every cycle, the
-predictions and the results: nine words run the bare loop 6.5 times faster
-than five, and a tree of eight forms ties the stack machines on it.
+predictions and the results: fourteen words run the bare loop 7.5 times
+faster than five, and a tree of eight forms beats the stack floors on it.
 
 ## Documentation
 

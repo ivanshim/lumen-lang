@@ -21,21 +21,21 @@ the specimen's name would be its primitive count if it were promoted.
 
 ## Results
 
-Best of five, release build, seconds.
+Best of seven, release build, seconds, after every cycle below.
 
-| Program | stack5 | stacklab | microcode4 | microcode11 | microlab |
-|---|---|---|---|---|---|
-| loop | 0.061 | 0.031 | 0.235 | 0.159 | 0.067 |
-| loop3m | 0.267 | 0.040 | 1.321 | 0.677 | 0.248 |
-| fib | 0.032 | 0.023 | 0.074 | 0.055 | 0.040 |
-| sieve | 0.018 | 0.015 | 0.040 | 0.025 | 0.018 |
-| strings | 0.037 | 0.036 | 0.047 | 0.040 | 0.039 |
-| pi | 0.785 | 0.795 | 0.803 | 0.817 | 0.833 |
+| Program | microcode10 | stack26 | microcode11 | microcode4 | stack5 | microlab (8 forms) | stacklab (14 words) |
+|---|---|---|---|---|---|---|---|
+| loop | 0.267 | 0.065 | 0.150 | 0.225 | 0.060 | 0.065 | 0.028 |
+| loop3m | 0.682 | 0.287 | 0.663 | 1.250 | 0.251 | 0.216 | 0.034 |
+| fib | 0.071 | 0.030 | 0.051 | 0.075 | 0.033 | 0.036 | 0.018 |
+| sieve | 0.803 | 0.017 | 0.024 | 0.038 | 0.016 | 0.019 | 0.013 |
+| strings | 0.046 | 0.037 | 0.040 | 0.045 | 0.036 | 0.040 | 0.034 |
+| pi | 0.741 | 0.775 | 0.786 | 0.792 | 0.774 | 0.761 | 0.756 |
 
 Every specimen printed the same as stack5 on all 256 examples in the
 embedded languages after every cycle.
 
-## The stack lineage: stack5 to stacklab (9 words)
+## The stack lineage: stack5 to stacklab (14 words)
 
 | Cycle | Change | loop | loop3m | fib | Decision |
 |---|---|---|---|---|---|
@@ -44,16 +44,22 @@ embedded languages after every cycle.
 | 2 | `Arith op a b`: a binary operation whose operands are bindings, constants or the top of the stack, read in place; the same fast path for machine integers | 0.030 | 0.054 | 0.024 | keep |
 | 3 | `Jump to` for `Lit false; Unless`, and an `Arith` followed by a store folds the store into the word | 0.030 | 0.041 | 0.023 | keep |
 | 4 | a call moves its arguments from the stack into the frame directly, one allocation instead of two | 0.031 | 0.036 | 0.023 | keep, no measurable gain |
+| 5 | `Call slot n` for `Load f; Apply call`; and a function whose value only ever comes from a `return` drops its result slot and the two words that set it up | 0.032 | 0.031 | 0.017 | keep |
+| 6 | loops tested at the bottom: `When to` (jump when true) and `WhenLess a b to`, one jump per pass instead of two | 0.032 | 0.031 | 0.017 | keep, small |
+| 7 | indexing fused into `Arith`; `PutAt slot` and `PushTo slot` write the array in place with no take and no store; a builtin call's arguments go through one reused buffer instead of a fresh vector | 0.026 | 0.033 | 0.018 | keep |
 
 Cycle 2 first came out at 0.102 on `loop3m`, slower than cycle 1,
 because the operands were fetched by cloning; reading them by reference
 put it back. A clone of a small integer is a match over every variant
 of the value type, and on a loop that does nothing else it is the loop.
 
-The bare loop ends at three words per iteration: `UnlessLess`, `Incr`,
-`Jump`, and runs 6.5 times faster than stack5. The arithmetic loop halved.
-The call path did not move: fib's cost is elsewhere (the frame, the
-result slot, the trampoline on return), and would be the next cycle.
+The bare loop ends at two words per iteration, `Incr` and `WhenLess`,
+and runs 7.5 times faster than stack5. The arithmetic loop is 2.2 times
+faster, fib 1.8, sieve 1.2. Cycle 4 moved nothing and cycle 5 moved fib
+by a third: the call's cost was the two words of result-slot prologue
+and the load of the callee, not the allocation. Strings and pi never
+moved and never will from here: one is bound by copying text, the other
+by big-integer arithmetic.
 
 ## The tree lineage: microcode4 to microlab (8 forms)
 
@@ -64,6 +70,8 @@ result slot, the trampoline on return), and would be the next cycle.
 | 2 | `If` form: the arms are nodes in the same frame, not program values; `and`/`or` read their right side in place | 0.187 | 0.757 | 0.069 | keep, small |
 | 3 | `Binary` form: an operation of two operands evaluated without a vector of arguments, with a fast path for machine integers | 0.073 | 0.313 | 0.041 | keep |
 | 4 | `Step` form: `x = x + k` steps the binding in place | 0.067 | 0.248 | 0.040 | keep |
+| 5 | a call's arguments are evaluated straight into the callee's frame, and a tail call carries a built frame, no vector between | 0.068 | 0.237 | 0.038 | keep, small |
+| 6 | a `Binary` operand that is a binding or a constant is read directly, without visiting a node | 0.061 | 0.219 | 0.036 | keep |
 
 Cycle 3 is the finding of the experiment. The four-form tree spent its
 time not in the tree walk but in the two heap allocations every `a + b`
@@ -71,20 +79,23 @@ made, one for the argument vector and one freed after. Removing them
 took the tree from 1.6 times slower than microcode11 to twice as fast,
 and by cycle 4 an eight-form tree runs the bare loop as fast as the
 five-word and twenty-six-word stack machines. That was predicted not to
-happen.
+happen. Cycles 5 and 6 found the floor of the shape: what is left is the
+recursion itself, one `eval` with a large match per node, a borrowed
+cell per binding read, and a result wide enough to carry a signal. None
+of that is a form, and none of it can go while the tree is walked.
 
 ## Predictions against results
 
 - Predicted: the stack lineage ends around eight or nine words, two to
-  three times faster than stack5 on loops. Result: nine words, 2 to 6.5
-  times faster. Right in shape, short in size.
+  three times faster than stack5 on loops. Result: fourteen words, 2 to
+  7.5 times faster. Right in shape, short in size.
 - Predicted: the tree finds its knee at six forms, on par with
   microcode11. Result: the knee was the argument vector, not a form; at
   seven forms the tree is twice as fast as microcode11.
 - Predicted: no tree beats the stack machine. Result: a tree of eight
-  forms ties the stack floors on the bare loop and is within 10 percent
-  on the arithmetic loop. The evolved stack machine is still 2 to 6
-  times ahead of it, so the flat list wins, by less than expected.
+  forms beats the stack floors on the bare loop and ties them on the
+  arithmetic loop. The evolved stack machine is still 2 to 6 times ahead
+  of it, so the flat list wins, by less than expected.
 - Not predicted: cloning a value is a cost worth a whole cycle.
 
 ## What the numbers say about primitives
@@ -95,13 +106,22 @@ clones, and the number of dispatches per source construct. A primitive
 earns its place by removing one of those, and a primitive that only
 renames a shape, like stack26's twenty-one extra words, earns nothing.
 
+## Where the lineages stopped, and why
+
+Thirteen cycles. The stack line stopped when the bare loop was two words
+and the arithmetic loop was one word per operator: there is no dispatch
+left to remove without fusing whole statements, which is a compiler, not
+a stack machine. The tree line stopped when every allocation and every
+avoidable node visit on the hot path was gone; the rest is the walk. The
+two shapes at their floors differ by 2 times on arithmetic and calls and
+6 times on a bare loop, and that gap is the price of a tree.
+
 ## Next cycles, if there are any
 
-- Stack: the call path (frame reuse, no result slot for a function that
-  always returns), and a bottom-tested loop that fuses the compare and
-  the jump back.
-- Tree: frames without `RefCell`, and a `Call` form for calls by name
-  whose arguments go straight into the new frame.
+- Stack: a `Value` whose text can grow in place, for the strings
+  benchmark; nothing else on the hot paths is left.
+- Tree: frames without `RefCell`, and a narrower result type; both are
+  executor plumbing rather than forms, and each is worth perhaps a tenth.
 - Promotion: a survivor becomes a kernel by being rewritten in its own
   words under `kernels/`, numbered by its count, and held to the
   independence check like the rest. Until then the specimens stay in

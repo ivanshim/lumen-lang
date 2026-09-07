@@ -110,6 +110,18 @@ pub enum Word {
     Arith { op: Op, a: Arg, b: Arg, into: Option<Slot> },
     /// Cycle 3: `Lit false; Unless to` as one word.
     Jump(usize),
+    /// Cycle 5: `Load f; Apply call` as one word: the program in a binding
+    /// called on the top `argc` of the stack.
+    Call { slot: Slot, argc: usize },
+    /// Cycle 6: pop; when the value is true, continue at the index. Loops
+    /// test at their bottom with it.
+    When(usize),
+    /// Cycle 6: `Load a; b; Apply lt; When to` as one word.
+    WhenLess { a: Arg, b: Arg, to: usize },
+    /// Cycle 7: pop a value and an index, write the element of the named
+    /// array in place; and pop a value, append it.
+    PutAt(Slot),
+    PushTo(Slot),
     /// Push a binding's value.
     Load(Slot),
     /// Pop into a binding.

@@ -63,6 +63,9 @@ struct Unit {
     blocks: Vec<Vec<usize>>,
     loops: Vec<Loop>,
     exits: Vec<usize>,
+    /// Whether an expression statement stored into the result slot; a
+    /// function without one needs neither the slot nor its prologue.
+    result_used: bool,
     words: Vec<Word>,
 }
 
@@ -101,6 +104,7 @@ pub fn assemble(toks: &[Tok], def: &Def, table: &mut Table) -> Outcome<Rc<Progra
         blocks: Vec::new(),
         loops: Vec::new(),
         exits: Vec::new(),
+        result_used: false,
         words: Vec::new(),
     };
     let mut a = Assembler { def, toks, at: 0, table, units: vec![top], serial: 0 };
@@ -256,10 +260,6 @@ impl<'a> Assembler<'a> {
         self.unless()
     }
 
-    fn jump_to(&mut self, target: usize) {
-        self.lit(Value::Bool(false));
-        self.emit(Word::Unless(target));
-    }
 
     fn patch(&mut self, at: usize) {
         let here = self.here();
@@ -414,6 +414,7 @@ impl<'a> Assembler<'a> {
             blocks: Vec::new(),
             loops: Vec::new(),
             exits: Vec::new(),
+            result_used: false,
             words: Vec::new(),
         });
         if yields {
@@ -421,7 +422,11 @@ impl<'a> Assembler<'a> {
             self.store(RESULT);
         }
         body(self)?;
-        if yields {
+        // Cycle 5: a function whose value only ever comes from a return
+        // drops the result slot: its prologue goes, and a fall off the
+        // end leaves nothing, which the machine reads as null.
+        let used = self.unit().result_used;
+        if yields && used {
             self.load(RESULT);
         }
         let end = self.here();
@@ -429,7 +434,8 @@ impl<'a> Assembler<'a> {
             self.unit().words[at] = Word::Unless(end);
         }
         let unit = self.units.pop().expect("the unit");
-        Ok(Rc::new(Program { name: unit.name, params, names: unit.names, yields, words: fuse(unit.words) }))
+        let words = if yields && !used { shifted(unit.words.into_iter().skip(2).collect(), -2) } else { unit.words };
+        Ok(Rc::new(Program { name: unit.name, params, names: unit.names, yields, words: fuse(words) }))
     }
 
     // ---------- statements ----------
@@ -659,16 +665,28 @@ impl<'a> Assembler<'a> {
         Ok(())
     }
 
+    /// Cycle 6: tested at the bottom, one jump per pass instead of two.
     fn while_loop(&mut self) -> Outcome<()> {
         self.next();
-        let top = self.here();
+        let cond_at = self.at;
+        // Skip the condition's tokens for now: parse it once, discard.
+        let mark = self.here();
         self.expression(0)?;
-        let out = self.unless();
-        self.open_loop(Some(top));
+        let body_at = self.at;
+        self.unit().words.truncate(mark);
+        let to_test = self.jump();
+        let top = self.here();
+        self.open_loop(None);
+        self.at = body_at;
         self.block()?;
-        self.jump_to(top);
-        self.patch(out);
-        self.close_loop(top);
+        let after = self.at;
+        let test = self.here();
+        self.patch(to_test);
+        self.at = cond_at;
+        self.expression(0)?;
+        self.at = after;
+        self.emit(Word::When(top));
+        self.close_loop(test);
         Ok(())
     }
 
@@ -732,11 +750,8 @@ impl<'a> Assembler<'a> {
 
     /// The loop itself, the variable holding the start and the bound stored.
     fn counted_loop(&mut self, var: &str, bound: &str, postfix: bool) -> Outcome<()> {
+        let to_test = self.jump();
         let top = self.here();
-        self.load(var);
-        self.load(bound);
-        self.apply(Op::Lt, 2);
-        let out = self.unless();
         self.open_loop(None);
         if postfix {
             self.postfix_block()?;
@@ -748,8 +763,11 @@ impl<'a> Assembler<'a> {
         self.lit(Value::Int(1));
         self.apply(Op::Add, 2);
         self.store(var);
-        self.jump_to(top);
-        self.patch(out);
+        self.patch(to_test);
+        self.load(var);
+        self.load(bound);
+        self.apply(Op::Lt, 2);
+        self.emit(Word::When(top));
         self.close_loop(again);
         Ok(())
     }
@@ -826,6 +844,7 @@ impl<'a> Assembler<'a> {
         let from = self.here();
         self.expression(0)?;
         if !self.at_assign() {
+            self.unit().result_used = true;
             self.store(RESULT);
             return Ok(());
         }
@@ -1308,14 +1327,24 @@ impl<'a> Assembler<'a> {
             return Ok(());
         }
         if Def::has(&def.whiles, word) {
-            let top = self.here();
+            let cond_at = self.at;
+            let mark = self.here();
             self.postfix_condition()?;
-            let out = self.unless();
-            self.open_loop(Some(top));
+            let body_at = self.at;
+            self.unit().words.truncate(mark);
+            let to_test = self.jump();
+            let top = self.here();
+            self.open_loop(None);
+            self.at = body_at;
             self.postfix_block()?;
-            self.jump_to(top);
-            self.patch(out);
-            self.close_loop(top);
+            let after = self.at;
+            let test = self.here();
+            self.patch(to_test);
+            self.at = cond_at;
+            self.postfix_condition()?;
+            self.at = after;
+            self.emit(Word::When(top));
+            self.close_loop(test);
             return Ok(());
         }
         if Def::has(&def.untils, word) {
@@ -1421,7 +1450,7 @@ fn as_arg(w: &Word) -> Option<Arg> {
 fn fuse(words: Vec<Word>) -> Vec<Word> {
     let mut targets = vec![false; words.len() + 1];
     for w in &words {
-        if let Word::Unless(t) = w {
+        if let Word::Unless(t) | Word::When(t) = w {
             targets[*t] = true;
         }
     }
@@ -1429,11 +1458,14 @@ fn fuse(words: Vec<Word>) -> Vec<Word> {
     let mut map = vec![0usize; words.len() + 1];
     let mut i = 0;
     while i < words.len() {
-        let arithmetic = |op: &Op| matches!(op, Op::Add | Op::Sub | Op::Mul | Op::Div | Op::RealDiv | Op::Quot | Op::Rem | Op::Pow | Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge | Op::Concat);
+        let arithmetic = |op: &Op| matches!(op, Op::Add | Op::Sub | Op::Mul | Op::Div | Op::RealDiv | Op::Quot | Op::Rem | Op::Pow | Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge | Op::Concat | Op::Index);
         let mut group = if i + 3 < words.len() && !targets[i + 1..i + 4].iter().any(|&t| t) {
             match (&words[i], &words[i + 1], &words[i + 2], &words[i + 3]) {
                 (Word::Load(a), b, Word::Apply(Op::Lt, 2), Word::Unless(to)) if !a.take => {
                     as_arg(b).map(|b| Word::UnlessLess { a: Arg::Slot(a.clone()), b, to: *to })
+                }
+                (Word::Load(a), b, Word::Apply(Op::Lt, 2), Word::When(to)) if !a.take => {
+                    as_arg(b).map(|b| Word::WhenLess { a: Arg::Slot(a.clone()), b, to: *to })
                 }
                 (Word::Load(a), Word::Lit(k @ Value::Int(_)), Word::Apply(Op::Add, 2), Word::Store(s)) if same_slot(a, s) => {
                     Some(Word::Incr { slot: s.clone(), by: k.clone() })
@@ -1444,6 +1476,15 @@ fn fuse(words: Vec<Word>) -> Vec<Word> {
             None
         };
         let mut width = 4;
+        if group.is_none() && i + 2 < words.len() && !targets[i + 1..i + 3].iter().any(|&t| t) {
+            // The array taken, rewritten and put back: one word on the slot.
+            if let (Word::Load(a), Word::Apply(Op::Native(native @ (Native::Put | Native::Push), _), _), Word::Store(s)) = (&words[i], &words[i + 1], &words[i + 2]) {
+                if a.take && a.name == s.name && a.locals == s.locals && a.global == s.global {
+                    group = Some(if *native == Native::Put { Word::PutAt(a.clone()) } else { Word::PushTo(a.clone()) });
+                    width = 3;
+                }
+            }
+        }
         if group.is_none() && i + 2 < words.len() && !targets[i + 1..i + 3].iter().any(|&t| t) {
             if let (Some(a), Some(b), Word::Apply(op, 2)) = (as_arg(&words[i]), as_arg(&words[i + 1]), &words[i + 2]) {
                 if arithmetic(op) {
@@ -1461,9 +1502,16 @@ fn fuse(words: Vec<Word>) -> Vec<Word> {
             }
         }
         if group.is_none() && i + 1 < words.len() && !targets[i + 1] {
-            if let (Word::Lit(Value::Bool(false)), Word::Unless(to)) = (&words[i], &words[i + 1]) {
-                group = Some(Word::Jump(*to));
-                width = 2;
+            match (&words[i], &words[i + 1]) {
+                (Word::Lit(Value::Bool(false)), Word::Unless(to)) => {
+                    group = Some(Word::Jump(*to));
+                    width = 2;
+                }
+                (Word::Load(f), Word::Apply(Op::Call(_), n)) if !f.take => {
+                    group = Some(Word::Call { slot: f.clone(), argc: *n - 1 });
+                    width = 2;
+                }
+                _ => {}
             }
         }
         // An arithmetic result stored at once: the store folds into the word.
@@ -1493,8 +1541,8 @@ fn fuse(words: Vec<Word>) -> Vec<Word> {
     map[words.len()] = out.len();
     for w in out.iter_mut() {
         match w {
-            Word::Unless(t) | Word::Jump(t) => *t = map[*t],
-            Word::UnlessLess { to, .. } => *to = map[*to],
+            Word::Unless(t) | Word::Jump(t) | Word::When(t) => *t = map[*t],
+            Word::UnlessLess { to, .. } | Word::WhenLess { to, .. } => *to = map[*to],
             _ => {}
         }
     }
@@ -1507,6 +1555,7 @@ fn shifted(words: Vec<Word>, delta: i64) -> Vec<Word> {
         .into_iter()
         .map(|w| match w {
             Word::Unless(t) => Word::Unless((t as i64 + delta) as usize),
+            Word::When(t) => Word::When((t as i64 + delta) as usize),
             other => other,
         })
         .collect()
