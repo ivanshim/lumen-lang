@@ -163,6 +163,12 @@ pub enum Instr {
     Skip(usize),
     /// Whether the call left the frame's slot without a value.
     Missing(usize),
+    /// Make this binding a shared cell if it is not one already, and
+    /// push that cell, so another name can be fastened to it.
+    Bond(Cell),
+    /// Pop a shared cell and put it in this binding, so the two names
+    /// stand for one cell from here on.
+    Fasten(Cell),
     /// From here to the matching Unguard, a raised value is caught: the
     /// stack goes back to its depth here, the value is pushed, and the
     /// run goes on at the index.

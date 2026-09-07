@@ -148,6 +148,20 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   `scripts/port_examples.py` now reports the first unwritable callee in
   source order, so `docs/LIBRARY_PORTS.md` no longer changes between
   runs.
+- **References, and PHP's own library written in PHP**: `ext.op.reference`
+  makes one name stand for another's cell. `$b = &$a` ties two names to
+  one cell; a parameter written `&$x` is given the caller's cell, so what
+  the program writes the caller sees. Which parameters are written that
+  way is read from the tokens before anything is compiled, since a call
+  must know before working out its arguments and a program may be called
+  above where it is written. stack8 holds a shared cell as a value a
+  binding stands for, read and written through by the two places that
+  reach bindings; microcode7 does the same in its fetch and store. A
+  parameter may also carry a type before its name, and the type may be
+  marked as taking nothing (`?int $x`). PHP's constants, its type tests
+  and the part of its library PHP can express are now written in PHP
+  under `langs/lib_php/native/`. `tests/php/lang` holds 30 passing with
+  the reference wall gone; `tests/php/basic` drops from 107 errors to 94.
 - **Objects, classes and exceptions in the full kernels**: `ext.stmt.class`
   and its family (`extends`, `new`, `$this`, `__construct`, member
   modifiers, class-kept members, `parent`, `self`), `ext.op.member`

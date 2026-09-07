@@ -121,6 +121,9 @@ impl<'a> Machine<'a> {
     fn fetch(&self, slot: &Address, frame: &Rc<Env>) -> Result<Value, String> {
         let f = ascend(frame, slot.up);
         let v = f.cells.borrow()[slot.at].clone();
+        if let Value::Shared(cell) = v {
+            return Ok(cell.borrow().clone());
+        }
         if !matches!(v, Value::Unset) {
             return Ok(v);
         }
@@ -138,8 +141,32 @@ impl<'a> Machine<'a> {
         if Rc::ptr_eq(f, &self.outermost) && Some(slot.at) == self.args_cell {
             return Err(format!("Cannot reassign {} (system-provided immutable value)", slot.ident));
         }
-        f.cells.borrow_mut()[slot.at] = value;
+        // A name standing for a shared cell writes inside it.
+        let shared = match &f.cells.borrow()[slot.at] {
+            Value::Shared(cell) => Some(cell.clone()),
+            _ => None,
+        };
+        match shared {
+            Some(cell) => *cell.borrow_mut() = value,
+            None => f.cells.borrow_mut()[slot.at] = value,
+        }
         Ok(())
+    }
+
+    /// The shared cell a name stands for, made from what it holds when
+    /// it does not stand for one yet.
+    fn shared_cell(&self, slot: &Address, frame: &Rc<Env>) -> Rc<RefCell<Value>> {
+        let f = ascend(frame, slot.up);
+        let held = f.cells.borrow()[slot.at].clone();
+        if let Value::Shared(cell) = held {
+            return cell;
+        }
+        let cell = Rc::new(RefCell::new(match held {
+            Value::Unset => Value::Nil,
+            other => other,
+        }));
+        f.cells.borrow_mut()[slot.at] = Value::Shared(cell.clone());
+        cell
     }
 
     /// The frame and index an array lives in, for writing it in place.
@@ -209,6 +236,13 @@ impl<'a> Machine<'a> {
                     Some(v) => Ok(v),
                     None => Ok(self.prim(*op, name, &[av, bv])?),
                 }
+            }
+            Form::Share(slot) => Ok(Value::Shared(self.shared_cell(slot, frame))),
+            Form::Tie(slot, source) => {
+                let cell = self.value_of(source, frame)?;
+                let f = ascend(frame, slot.up);
+                f.cells.borrow_mut()[slot.at] = cell;
+                Ok(Value::Nil)
             }
             Form::Missing(slot) => {
                 let f = ascend(frame, slot.up);
@@ -419,36 +453,21 @@ impl<'a> Machine<'a> {
                         return Err(format!("{}() expects {} arguments, got {}", name, want + 1, values.len() + 1).into());
                     }
                     let (f, i) = self.locate(slot, frame)?;
-                    let mut slots = f.cells.borrow_mut();
                     let mut values = values;
                     let value = values.pop().unwrap();
                     let key = values.pop();
-                    // A list written at a place it already holds stays a
-                    // list; any other key turns it into a map, its places
-                    // becoming the keys.
-                    let stays = match (&slots[i], &key) {
-                        (Value::Vector(items), Some(k)) => as_index(k).map_or(false, |at| at < items.len()),
-                        (Value::Vector(_), None) => true,
-                        _ => false,
+                    // Through the shared cell when the name stands for one.
+                    let shared = match &f.cells.borrow()[i] {
+                        Value::Shared(cell) => Some(cell.clone()),
+                        _ => None,
                     };
-                    if let (Value::Vector(items), true) = (&mut slots[i], stays) {
-                        let items = Rc::make_mut(items);
-                        match key {
-                            Some(k) => items[as_index(&k)?] = value,
-                            None => items.push(value),
-                        }
+                    if let Some(cell) = shared {
+                        let mut held = cell.borrow_mut();
+                        written_into(&mut held, key, value, &slot.ident)?;
                         return Ok(Value::Nil);
                     }
-                    if let Value::Vector(items) = &slots[i] {
-                        let spread = items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect();
-                        slots[i] = Value::Dict(Rc::new(spread));
-                    }
-                    let Value::Dict(entries) = &mut slots[i] else {
-                        return Err(format!("Variable '{}' is not an array", slot.ident).into());
-                    };
-                    let entries = Rc::make_mut(entries);
-                    let key = key.unwrap_or_else(|| Value::Small(after_keys(entries)));
-                    set_key(entries, key, value);
+                    let mut slots = f.cells.borrow_mut();
+                    written_into(&mut slots[i], key, value, &slot.ident)?;
                     Ok(Value::Nil)
                 }
                 op => {
@@ -1116,4 +1135,35 @@ fn over_lines(v: &Value, along: usize) -> String {
     }
     out.push_str(&format!("{lead})\n"));
     out
+}
+
+/// Write a value into an array held in a binding: at a key, or at the
+/// end when no key is given. A list written where it already reaches
+/// stays a list; any other key turns it into a map, its places becoming
+/// the keys.
+fn written_into(held: &mut Value, key: Option<Value>, value: Value, ident: &str) -> Result<(), String> {
+    let stays = match (&*held, &key) {
+        (Value::Vector(items), Some(k)) => as_index(k).map_or(false, |at| at < items.len()),
+        (Value::Vector(_), None) => true,
+        _ => false,
+    };
+    if let (Value::Vector(items), true) = (&mut *held, stays) {
+        let items = Rc::make_mut(items);
+        match key {
+            Some(k) => items[as_index(&k)?] = value,
+            None => items.push(value),
+        }
+        return Ok(());
+    }
+    if let Value::Vector(items) = &*held {
+        let spread = items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect();
+        *held = Value::Dict(Rc::new(spread));
+    }
+    let Value::Dict(entries) = held else {
+        return Err(format!("Variable '{}' is not an array", ident));
+    };
+    let entries = Rc::make_mut(entries);
+    let key = key.unwrap_or_else(|| Value::Small(after_keys(entries)));
+    set_key(entries, key, value);
+    Ok(())
 }

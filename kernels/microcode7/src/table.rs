@@ -88,7 +88,7 @@ ext.lexical.number.exponent:L ext.op.plus:L ext.stmt.break.levels:B ext.builtin.
 ext.stmt.function.returns:L ext.stmt.class:L ext.stmt.class.extends:L ext.stmt.class.new:L ext.stmt.class.this:L \
 ext.stmt.class.constructor:L ext.stmt.class.modifier:L ext.stmt.class.shared:L ext.op.member:L ext.op.scope:L \
 ext.op.instanceof:L ext.stmt.class.parent:L ext.stmt.class.self:L ext.lexical.name_lead:L ext.stmt.try:L \
-ext.stmt.catch:L ext.stmt.finally:L ext.stmt.throw:L ext.stmt.catch.separator:L \
+ext.stmt.catch:L ext.stmt.finally:L ext.stmt.throw:L ext.stmt.catch.separator:L ext.op.reference:L \
 ";
 
 fn tag_shapes(table: &'static str) -> Vec<(&'static str, char)> {
@@ -490,7 +490,7 @@ impl Table {
             "ext.stmt.function.returns", "ext.op.member", "ext.op.scope", "ext.stmt.class", "ext.stmt.class.extends",
             "ext.stmt.class.new", "ext.stmt.class.modifier", "ext.stmt.class.shared", "ext.op.instanceof",
             "ext.stmt.class.parent", "ext.stmt.class.self", "ext.stmt.try", "ext.stmt.catch", "ext.stmt.finally",
-            "ext.stmt.throw", "ext.stmt.catch.separator"];
+            "ext.stmt.throw", "ext.stmt.catch.separator", "ext.op.reference"];
         for key in symbol_labels {
             all.extend(self.strings(key).iter().cloned());
         }

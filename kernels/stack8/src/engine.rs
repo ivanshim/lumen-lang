@@ -121,9 +121,15 @@ impl<'a> Engine<'a> {
     /// taking load moves the value out and leaves a hole.
     fn load_cell(&mut self, slot: &Cell, frame: &mut [Value]) -> Res<Value> {
         for &s in &slot.near {
+            if let Value::Bond(shared) = &frame[s] {
+                return Ok(shared.borrow().clone());
+            }
             if !matches!(frame[s], Value::Blank) {
                 return Ok(if slot.moving { std::mem::replace(&mut frame[s], Value::Gap) } else { frame[s].clone() });
             }
+        }
+        if let Value::Bond(shared) = &self.world[slot.far] {
+            return Ok(shared.borrow().clone());
         }
         let g = &mut self.world[slot.far];
         match g {
@@ -132,6 +138,57 @@ impl<'a> Engine<'a> {
             _ if slot.moving => Ok(std::mem::replace(g, Value::Gap)),
             v => Ok(v.clone()),
         }
+    }
+
+    /// The shared cell a binding stands for, made from what it holds if
+    /// it is not shared already.
+    fn share_cell(&mut self, slot: &Cell, frame: &mut [Value]) -> Res<Rc<RefCell<Value>>> {
+        for &s in &slot.near {
+            if let Value::Bond(shared) = &frame[s] {
+                return Ok(shared.clone());
+            }
+            if !matches!(frame[s], Value::Blank) {
+                let held = std::mem::replace(&mut frame[s], Value::Null);
+                let shared = Rc::new(RefCell::new(held));
+                frame[s] = Value::Bond(shared.clone());
+                return Ok(shared);
+            }
+        }
+        if let Value::Bond(shared) = &self.world[slot.far] {
+            return Ok(shared.clone());
+        }
+        // A name nothing was ever written to becomes a shared cell
+        // holding nothing, as a write to it would have made it.
+        let held = match std::mem::replace(&mut self.world[slot.far], Value::Null) {
+            Value::Blank => Value::Null,
+            other => other,
+        };
+        let shared = Rc::new(RefCell::new(held));
+        self.world[slot.far] = Value::Bond(shared.clone());
+        Ok(shared)
+    }
+
+    /// Put a value straight into a binding's own place, past any shared
+    /// cell it holds: how a name is fastened to another's cell.
+    fn put_cell(&mut self, slot: &Cell, frame: &mut [Value], v: Value) {
+        match slot.near.first() {
+            Some(&s) => frame[s] = v,
+            None => self.world[slot.far] = v,
+        }
+    }
+
+    /// Whether a binding stands for a shared cell, which cannot be read
+    /// in place because what it holds lives elsewhere.
+    fn shares_cell(&self, slot: &Cell, frame: &[Value]) -> bool {
+        for &s in &slot.near {
+            if matches!(frame[s], Value::Bond(_)) {
+                return true;
+            }
+            if !matches!(frame[s], Value::Blank) {
+                return false;
+            }
+        }
+        matches!(self.world[slot.far], Value::Bond(_))
     }
 
     /// The cell a binding lives in, for reading in place.
@@ -150,15 +207,19 @@ impl<'a> Engine<'a> {
     /// Two both read in place: a binding by reference, a constant
     /// from the word, a data value from the ones already popped.
     fn both<'f>(&'f self, a: &'f Operand, b: &'f Operand, at: &'f Option<Value>, bt: &'f Option<Value>, frame: &'f [Value]) -> Res<(&'f Value, &'f Value)> {
-        let av: &Value = match a {
-            Operand::Top => at.as_ref().expect("popped"),
-            Operand::Const(v) => v,
-            Operand::Cell(s) => self.peek_cell(s, frame)?,
+        // A value worked out beforehand stands for the operand: what was
+        // popped for a stack operand, or what a shared cell holds.
+        let av: &Value = match (at, a) {
+            (Some(v), _) => v,
+            (None, Operand::Const(v)) => v,
+            (None, Operand::Cell(s)) => self.peek_cell(s, frame)?,
+            (None, Operand::Top) => return Err("Stack underflow".to_string()),
         };
-        let bv: &Value = match b {
-            Operand::Top => bt.as_ref().expect("popped"),
-            Operand::Const(v) => v,
-            Operand::Cell(s) => self.peek_cell(s, frame)?,
+        let bv: &Value = match (bt, b) {
+            (Some(v), _) => v,
+            (None, Operand::Const(v)) => v,
+            (None, Operand::Cell(s)) => self.peek_cell(s, frame)?,
+            (None, Operand::Top) => return Err("Stack underflow".to_string()),
         };
         Ok((av, bv))
     }
@@ -179,10 +240,18 @@ impl<'a> Engine<'a> {
     /// else the first local, or the global when there is none.
     fn store_cell(&mut self, slot: &Cell, frame: &mut [Value], v: Value) -> Res<()> {
         for &s in &slot.near {
+            if let Value::Bond(shared) = &frame[s] {
+                *shared.borrow_mut() = v;
+                return Ok(());
+            }
             if matches!(frame[s], Value::Gap) {
                 frame[s] = v;
                 return Ok(());
             }
+        }
+        if let Value::Bond(shared) = &self.world[slot.far] {
+            *shared.borrow_mut() = v;
+            return Ok(());
         }
         if matches!(self.world[slot.far], Value::Gap) {
             self.world[slot.far] = v;
@@ -290,6 +359,18 @@ impl<'a> Engine<'a> {
                 Instr::Unguard => {
                     guards.pop();
                 }
+                Instr::Bond(slot) => {
+                    // The binding becomes a shared cell, so that another
+                    // name fastened to it sees the same writes.
+                    let shared = self.share_cell(slot, frame)?;
+                    self.data.push(Value::Bond(shared));
+                }
+                Instr::Fasten(slot) => {
+                    let Value::Bond(shared) = self.drop_top()? else {
+                        return Err("Only a shared cell can be fastened to a name".into());
+                    };
+                    self.put_cell(slot, frame, Value::Bond(shared));
+                }
                 Instr::Missing(slot) => {
                     let empty = matches!(frame[*slot], Value::Blank);
                     self.data.push(Value::Flag(empty));
@@ -348,6 +429,15 @@ impl<'a> Engine<'a> {
                     self.data.push(r);
                 }
                 Instr::Bump { slot, by } => {
+                    // A shared cell holds its value elsewhere, so it is
+                    // read and written the long way.
+                    if self.shares_cell(slot, frame) {
+                        let held = self.load_cell(slot, frame)?;
+                        let sum = self.dyadic(&Action::Add, &held, by)?;
+                        self.store_cell(slot, frame, sum)?;
+                        pc += 1;
+                        continue;
+                    }
                     let cell = self.peek_cell_mut(slot, frame)?;
                     let fast = match (&*cell, by) {
                         (Value::Small(x), Value::Small(k)) => x.checked_add(*k),
@@ -603,6 +693,16 @@ impl<'a> Engine<'a> {
     // ---------- operations ----------
 
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        // An operand read in place may be a shared cell; what it holds is
+        // what the operation works on.
+        if let Value::Bond(shared) = a {
+            let held = shared.borrow().clone();
+            return self.dyadic(op, &held, b);
+        }
+        if let Value::Bond(shared) = b {
+            let held = shared.borrow().clone();
+            return self.dyadic(op, a, &held);
+        }
         let sp = self.wording();
         let joined = || Value::text(&format!("{}{}", a.display(&sp), b.display(&sp)));
         Ok(match op {

@@ -152,6 +152,11 @@ pub enum Form {
     Attempt { body: Box<Form>, clauses: Vec<Clause>, last: Option<Box<Form>> },
     /// Whether the call left this binding without a value.
     Missing(Address),
+    /// The binding's own cell, made shareable if it is not already, so
+    /// another name can be tied to it.
+    Share(Address),
+    /// Tie a name to a shared cell, past whatever it held before.
+    Tie(Address, Box<Form>),
 }
 
 /// One catch: the classes it takes, where it holds what it caught, and

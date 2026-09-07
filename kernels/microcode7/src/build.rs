@@ -57,6 +57,9 @@ pub struct Builder<'a> {
     /// The class being read and what it is built on: what `self` and
     /// `parent` mean inside a method.
     within: Option<(String, Option<String>)>,
+    /// Which parameters of each program take a name's own cell instead
+    /// of a copy, read from the tokens before anything is built.
+    shared_args: HashMap<String, Vec<bool>>,
     table: &'a Table,
     forks: Vec<Fork>,
     tokens: &'a [Token],
@@ -86,7 +89,8 @@ enum Mode {
 
 pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool) -> Res<Built> {
     let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
-    let mut r = Builder { within: None, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new() };
+    let shared_args = shared_parameters(tokens, table);
+    let mut r = Builder { within: None, shared_args, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new() };
     let body = if table.rpn {
         let (mut stmts, rest) = r.rpn_body(&[], Mode::Body)?;
         if !r.exhausted() {
@@ -116,6 +120,65 @@ pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMa
     let top = r.layers.pop().unwrap();
     let program = Routine { ident: "<program>".into(), least: 0, formals: Vec::new(), formal_slots: Vec::new(), idents: top.idents.clone(), frameless: false, traps: Traps::Naught, body };
     Ok(Built { program: Rc::new(program), globals: top.idents, seen: r.seen })
+}
+
+/// Which parameters of each program are written with the reference sign.
+/// A call must know before it works out its arguments, and a program may
+/// be called above where it is written, so the tokens are read first.
+fn shared_parameters(tokens: &[Token], table: &Table) -> HashMap<String, Vec<bool>> {
+    let mut found = HashMap::new();
+    let (Some(mark), Some(open)) = (table.single("ext.op.reference"), table.single("syntax.call.open")) else { return found };
+    let close = table.single("syntax.call.close").unwrap_or(")");
+    let sep = table.single("syntax.call.separator");
+    let is = |t: &Token, text: &str| t.shape == Shape::Sign && t.lexeme == text;
+    let mut i = 0;
+    while i + 2 < tokens.len() {
+        let word = &tokens[i];
+        if word.shape != Shape::Bare || !table.spells("stmt.function", &word.lexeme) {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 1;
+        if is(&tokens[j], mark) {
+            j += 1;
+        }
+        if tokens[j].shape != Shape::Bare || !is(&tokens[j + 1], open) {
+            i += 1;
+            continue;
+        }
+        let name = tokens[j].lexeme.clone();
+        j += 2;
+        let (mut marks, mut shares, mut any, mut defaulting, mut depth) = (Vec::new(), false, false, false, 1usize);
+        while j < tokens.len() {
+            let p = &tokens[j];
+            if is(p, open) {
+                depth += 1;
+            } else if is(p, close) {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            } else if depth == 1 {
+                any = true;
+                if sep.map_or(false, |s| is(p, s)) {
+                    marks.push(shares);
+                    shares = false;
+                    defaulting = false;
+                } else if p.shape == Shape::Sign && table.spells("stmt.assign", &p.lexeme) {
+                    defaulting = true;
+                } else if !defaulting && is(p, mark) {
+                    shares = true;
+                }
+            }
+            j += 1;
+        }
+        if any {
+            marks.push(shares);
+        }
+        found.insert(name, marks);
+        i = j;
+    }
+    found
 }
 
 // ---------- node builders
@@ -600,6 +663,7 @@ impl<'a> Builder<'a> {
             }
             if self.key("stmt.function") {
                 self.advance();
+                self.skip_reference();
                 let name = self.need_word("after the function keyword")?;
                 return self.func(name);
             }
@@ -796,6 +860,7 @@ impl<'a> Builder<'a> {
                 constants.push((member, self.expr(0)?));
             } else if self.key("stmt.function") {
                 self.advance();
+                self.skip_reference();
                 let member = self.need_word("as the method name")?;
                 let program = self.method(&member)?;
                 methods.push((member, program));
@@ -868,6 +933,7 @@ impl<'a> Builder<'a> {
             && (table.spells("stmt.function.returns", &self.look().lexeme) || table.spells("ext.stmt.function.returns", &self.look().lexeme))
         {
             self.advance();
+            self.skip_nothing_mark();
             self.need_word("as a return type")?;
         }
         let program = self.routine(name, Holds::Every, Traps::Yields, params, least, |r| {
@@ -1278,6 +1344,7 @@ impl<'a> Builder<'a> {
         // again inside the program, where its names mean what they should.
         let mut spares: Vec<(usize, usize)> = Vec::new();
         while !self.sign(&close) && !self.exhausted() {
+            self.skip_reference();
             if typed {
                 let t = self.need_word("as a parameter type")?;
                 if !table.spells("stmt.let", &t) {
@@ -1287,6 +1354,12 @@ impl<'a> Builder<'a> {
                     params.push(self.advance().lexeme);
                 }
             } else {
+                // A type may stand before the name, and may be marked as
+                // taking nothing as well: `?int $x`.
+                self.skip_nothing_mark();
+                if self.look().shape == Shape::Bare && self.glance(1).shape == Shape::Bare {
+                    self.advance();
+                }
                 params.push(self.need_word("as a parameter name")?);
                 if self.look().shape == Shape::Sign && table.spells("stmt.let.annotation", &self.look().lexeme) {
                     self.advance();
@@ -1312,6 +1385,23 @@ impl<'a> Builder<'a> {
         }
         self.need_sign(&close, "after parameters")?;
         Ok((params, spares))
+    }
+
+    /// Step over the sign saying a type takes nothing as well: `?int`.
+    fn skip_nothing_mark(&mut self) {
+        let marks = self.table.strings("ext.op.ternary");
+        let marked = marks.first().map_or(false, |q| self.sign(q));
+        if marked && self.glance(1).shape == Shape::Bare {
+            self.advance();
+        }
+    }
+
+    /// Step over the sign saying a name shares a cell: where it stands
+    /// was read before anything was built.
+    fn skip_reference(&mut self) {
+        if self.table.single("ext.op.reference").map_or(false, |m| self.sign(m)) {
+            self.advance();
+        }
     }
 
     /// What a program does first when some of its parameters carry a
@@ -1345,6 +1435,7 @@ impl<'a> Builder<'a> {
         };
         if returns_here(self) {
             self.advance();
+            self.skip_nothing_mark();
             self.need_word("as a return type")?;
         }
         let declared = self.look().shape == Shape::Sign && table.spells("stmt.terminator", &self.look().lexeme);
@@ -1376,6 +1467,17 @@ impl<'a> Builder<'a> {
             return Ok(expr);
         }
         let assign = self.advance();
+        // `b = &a`: b is tied to a's cell rather than given a copy.
+        if self.table.single("ext.op.reference").map_or(false, |m| self.sign(m)) && compound.is_none() {
+            if let Form::Read(slot) = &expr {
+                let held = slot.ident.to_string();
+                self.advance();
+                let source = self.need_word("as the name to share a cell with")?;
+                let shared = self.address_to_write(&source);
+                let tied = self.address_to_write(&held);
+                return Ok(Form::Tie(tied, Box::new(Form::Share(shared))));
+            }
+        }
         let value = self.expr(0)?;
         match expr {
             // x op= e is x = x op e.
@@ -1568,7 +1670,7 @@ impl<'a> Builder<'a> {
                         let items = self.elements("syntax.call.close", "syntax.call.separator")?;
                         return self.subscript(prim_call(Prim::MakeArray, items));
                     }
-                    let mut args = self.args("syntax.call.close", "syntax.call.separator")?;
+                    let mut args = self.arguments_of(&t.lexeme, "syntax.call.close", "syntax.call.separator")?;
                     if table.prims.get(&t.lexeme) == Some(&Prim::Define) {
                         // define("NAME", v) binds the global NAME here; its value is true.
                         let (Some(Form::Const(Value::Text(name))), 2) = (args.first(), args.len()) else {
@@ -1665,7 +1767,7 @@ impl<'a> Builder<'a> {
             given.push(constant(Value::text(&bare)));
             if calling {
                 self.advance();
-                given.extend(self.args("syntax.call.close", "syntax.call.separator")?);
+                given.extend(self.arguments_of(&bare, "syntax.call.close", "syntax.call.separator")?);
             }
             node = match (owning, calling) {
                 (false, false) => prim_call(Prim::Of, given),
@@ -1715,6 +1817,42 @@ impl<'a> Builder<'a> {
                 }
                 _ => item,
             });
+            if let Some(s) = &sep {
+                if self.sign(s) {
+                    self.advance();
+                }
+            }
+        }
+        self.advance();
+        Ok(items)
+    }
+
+    /// The arguments of a call by name: where the program said the
+    /// reference sign, the name's own cell goes rather than a copy of
+    /// what it holds, so the caller sees what the program writes.
+    fn arguments_of(&mut self, called: &str, close_key: &str, sep_key: &str) -> Res<Vec<Form>> {
+        let shared = self.shared_args.get(called).cloned().unwrap_or_default();
+        if !shared.iter().any(|x| *x) {
+            return self.args(close_key, sep_key);
+        }
+        let close = self.table.single(close_key).unwrap().to_string();
+        let sep = self.table.single(sep_key).map(str::to_string);
+        let mut items = Vec::new();
+        while !self.sign(&close) {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", close));
+            }
+            let next = self.glance(1);
+            let lone = self.look().shape == Shape::Bare
+                && next.shape == Shape::Sign
+                && (next.lexeme == close || sep.as_ref().map_or(false, |s| next.lexeme == *s));
+            if shared.get(items.len()).copied().unwrap_or(false) && lone {
+                let name = self.advance().lexeme;
+                let slot = self.address_to_write(&name);
+                items.push(Form::Share(slot));
+            } else {
+                items.push(self.expr(0)?);
+            }
             if let Some(s) = &sep {
                 if self.sign(s) {
                     self.advance();

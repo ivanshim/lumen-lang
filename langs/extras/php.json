@@ -321,13 +321,25 @@
   "system.memoization": [],
   "system.real_default_precision": [],
   "system.entry": [],
-  "system.kind.integer": [],
+  "system.kind.integer": [
+    "integer"
+  ],
   "system.kind.rational": [],
-  "system.kind.real": [],
-  "system.kind.string": [],
-  "system.kind.boolean": [],
-  "system.kind.array": [],
-  "system.kind.null": [],
+  "system.kind.real": [
+    "double"
+  ],
+  "system.kind.string": [
+    "string"
+  ],
+  "system.kind.boolean": [
+    "boolean"
+  ],
+  "system.kind.array": [
+    "array"
+  ],
+  "system.kind.null": [
+    "NULL"
+  ],
   "ext.lexical.epilogue": [
     "?>"
   ],
@@ -458,5 +470,8 @@
   ],
   "ext.stmt.catch.separator": [
     "|"
+  ],
+  "ext.op.reference": [
+    "&"
   ]
 }

@@ -180,6 +180,8 @@ pub struct Lang {
     pub throw_words: Vec<String>,
     /// Between the classes one catch takes.
     pub catch_between: Option<String>,
+    /// The sign that makes one name stand for another's cell.
+    pub reference_mark: Option<String>,
 }
 
 /// Every tag with its shape: w a word list, s a string, b a switch,
@@ -236,7 +238,7 @@ w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ex
 w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.modifier | w ext.stmt.class.shared
 w ext.op.member | w ext.op.scope | w ext.op.instanceof | w ext.stmt.class.parent
 w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.try | w ext.stmt.catch
-w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator
+w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -782,6 +784,7 @@ impl Lang {
             finally_words: r.strings("ext.stmt.finally")?,
             throw_words: r.strings("ext.stmt.throw")?,
             catch_between: r.head("ext.stmt.catch.separator")?,
+            reference_mark: r.head("ext.op.reference")?,
         };
         if !lang.try_words.is_empty() && lang.catch_words.is_empty() {
             return Err("ext.stmt.try needs ext.stmt.catch".to_string());
@@ -851,7 +854,7 @@ impl Lang {
         if let Some(mark) = &self.pair_mark {
             place(mark);
         }
-        for mark in [&self.member_mark, &self.scope_mark, &self.catch_between].into_iter().flatten() {
+        for mark in [&self.member_mark, &self.scope_mark, &self.catch_between, &self.reference_mark].into_iter().flatten() {
             place(mark);
         }
         for pair in [&self.grouping, &self.calling, &self.array_brackets, &self.map_brackets, &self.index_brackets].into_iter().flatten() {

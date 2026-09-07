@@ -63,6 +63,9 @@ pub enum Value {
     Array(Rc<Vec<Value>>),
     /// Keys and their values, in the order they were put there.
     Map(Rc<Vec<(Value, Value)>>),
+    /// A cell two or more names share: a write through any of them is a
+    /// write all of them see. Never a value a program can hold itself.
+    Bond(Rc<RefCell<Value>>),
     Class(Rc<Class>),
     Object(Rc<Instance>),
     /// A key and a value written together (`k => v`), waiting to be
@@ -109,6 +112,7 @@ impl Value {
             Value::Text(_) => Sort::Text,
             Value::Flag(_) => Sort::Boolean,
             Value::Array(_) | Value::Map(_) => Sort::Array,
+            Value::Bond(shared) => return shared.borrow().sort(),
             Value::Class(_) | Value::Object(_) => return None,
             Value::Null | Value::SortOf(_) => Sort::Null,
             _ => return None,
@@ -124,6 +128,7 @@ impl Value {
             Value::Text(s) => !s.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
             Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::SortOf(_) => true,
+            Value::Bond(shared) => shared.borrow().is_true(),
             Value::Class(_) | Value::Object(_) => true,
         }
     }
@@ -141,6 +146,7 @@ impl Value {
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
             Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
+            Value::Bond(shared) => shared.borrow().as_big(),
             Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
         }
@@ -211,6 +217,7 @@ impl Value {
             }
             Value::Tie(pair) => format!("{} => {}", pair.0.plain(), pair.1.plain()),
             Value::Routine(p) => format!("<function({})>", p.formals.join(", ")),
+            Value::Bond(shared) => shared.borrow().plain(),
             Value::Class(c) => format!("<class {}>", c.name),
             Value::Object(o) => format!("<object {}>", o.class.name),
             Value::SortOf(k) => k.tag().to_string(),
@@ -252,6 +259,7 @@ impl Value {
             Value::Object(o) => {
                 let _ = write!(into, "o{:p}", Rc::as_ptr(o));
             }
+            Value::Bond(shared) => shared.borrow().memo_key(into),
             Value::Class(c) => {
                 let _ = write!(into, "c{}", c.name);
             }

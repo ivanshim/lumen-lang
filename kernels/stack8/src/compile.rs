@@ -92,6 +92,9 @@ pub struct Compiler<'a> {
     /// The class being read, and what it stands on: what `self` and
     /// `parent` mean inside a method.
     within: Option<(String, Option<String>)>,
+    /// Which parameters of each program take a name's own cell rather
+    /// than a copy of what it holds, found before anything is read.
+    shared_args: HashMap<String, Vec<bool>>,
 }
 
 type Res<T> = Result<T, String>;
@@ -125,7 +128,8 @@ pub fn compile(tokens: &[Token], lang: &Lang, table: &mut Registry) -> Res<Rc<Ro
         result_touched: false,
         instrs: Vec::new(),
     };
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None };
+    let shared_args = shared_parameters(tokens, lang);
+    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args };
     if lang.rpn {
         a.rpn_body(&[], Span::Block)?;
         if !a.exhausted() {
@@ -620,6 +624,7 @@ impl<'a> Compiler<'a> {
             }
             if Lang::spells(&lang.function_words, &w) {
                 self.take();
+                self.skip_reference();
                 let name = self.want_name("after the function keyword")?;
                 return self.function(name);
             }
@@ -1465,6 +1470,7 @@ impl<'a> Compiler<'a> {
                 constants.push((member, self.member_value()?));
             } else if self.on_keyword(&lang.function_words) {
                 self.take();
+                self.skip_reference();
                 let member = self.want_name("as the method name")?;
                 methods.push((member.clone(), self.method(&member)?));
             } else {
@@ -1543,6 +1549,7 @@ impl<'a> Compiler<'a> {
         let spares: Vec<(usize, usize)> = spares.into_iter().map(|(at, from)| (at + 1, from)).collect();
         if self.look().shape == Shape::Sign && Lang::spells(&lang.return_marks, &self.look().lexeme) {
             self.take();
+            self.skip_nothing_mark();
             self.want_name("as a return type")?;
         }
         self.routine(name, formals, least, true, |a| {
@@ -1559,6 +1566,7 @@ impl<'a> Compiler<'a> {
         // again inside the program, where its names mean what they should.
         let mut spares: Vec<(usize, usize)> = Vec::new();
         while !self.at_symbol(&call.close) && !self.exhausted() {
+            self.skip_reference();
             if lang.types_first {
                 let type_word = self.want_name("as a parameter type")?;
                 if !Lang::spells(&lang.let_words, &type_word) {
@@ -1568,6 +1576,14 @@ impl<'a> Compiler<'a> {
                     formals.push(self.take().lexeme);
                 }
             } else {
+                // A type may stand before the name, and may be marked as
+                // taking nothing as well: `?int $x`.
+                if lang.ternary.as_ref().map_or(false, |(q, _)| self.at_symbol(q)) && self.look_ahead(1).shape == Shape::Instr {
+                    self.take();
+                }
+                if self.look().shape == Shape::Instr && self.look_ahead(1).shape == Shape::Instr {
+                    self.take();
+                }
                 formals.push(self.want_name("as a parameter name")?);
                 if self.look().shape == Shape::Sign && Lang::spells(&lang.type_marks, &self.look().lexeme) {
                     self.take();
@@ -1593,6 +1609,22 @@ impl<'a> Compiler<'a> {
         }
         self.want_sign(&call.close, "after parameters")?;
         Ok((formals, spares))
+    }
+
+    /// Step over the sign saying a type takes nothing as well: `?int`.
+    fn skip_nothing_mark(&mut self) {
+        let marked = self.lang.ternary.as_ref().map_or(false, |(q, _)| self.at_symbol(q));
+        if marked && self.look_ahead(1).shape == Shape::Instr {
+            self.take();
+        }
+    }
+
+    /// Step over the sign that says a name shares a cell; where it
+    /// stands is already known from the reading done before compiling.
+    fn skip_reference(&mut self) {
+        if self.lang.reference_mark.as_ref().map_or(false, |m| self.at_symbol(m)) {
+            self.take();
+        }
     }
 
     /// The instrs a program begins with when some of its parameters
@@ -1621,6 +1653,7 @@ impl<'a> Compiler<'a> {
         let given = formals.clone();
         if self.look().shape == Shape::Sign && Lang::spells(&lang.return_marks, &self.look().lexeme) {
             self.take();
+            self.skip_nothing_mark();
             self.want_name("as a return type")?;
         }
         let declarations = self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme);
@@ -1657,6 +1690,21 @@ impl<'a> Compiler<'a> {
         // The target came out as a load; turn it into a store.
         let target: Vec<Instr> = self.piece().instrs.drain(from..).collect();
         match target.as_slice() {
+            // `b = &a`: b is fastened to a's cell, not given a copy.
+            [Instr::Read(slot)]
+                if !slot.moving
+                    && compound.is_none()
+                    && self.lang.reference_mark.as_ref().map_or(false, |m| self.at_symbol(m)) =>
+            {
+                let name = slot.ident.to_string();
+                self.take();
+                let source = self.want_name("as the name to share a cell with")?;
+                let shared = self.cell_to_write(&source);
+                self.put(Instr::Bond(shared));
+                let held = self.cell_to_write(&name);
+                self.put(Instr::Fasten(held));
+                Ok(())
+            }
             [Instr::Read(slot)] if !slot.moving => {
                 let name = slot.ident.to_string();
                 if let Some(op) = compound {
@@ -1941,7 +1989,7 @@ impl<'a> Compiler<'a> {
                                 self.write_global(&name);
                                 self.constant(Value::Flag(true));
                             } else {
-                                let argc = self.arguments(&call)?;
+                                let argc = self.arguments_of(&tok.lexeme, &call)?;
                                 self.call(&tok.lexeme, argc)?;
                             }
                         }
@@ -2023,7 +2071,7 @@ impl<'a> Compiler<'a> {
                 match call {
                     Some(call) => {
                         self.take();
-                        let argc = self.arguments(&call)?;
+                        let argc = self.arguments_of(&named, &call)?;
                         self.act(Action::Send(Rc::from(named.as_str())), argc + 1);
                     }
                     None => self.act(Action::Grab(Rc::from(named.as_str())), 1),
@@ -2048,7 +2096,7 @@ impl<'a> Compiler<'a> {
                     for w in relocated(named_class, at as i64 - from as i64) {
                         self.put(w);
                     }
-                    let argc = self.arguments(&call)?;
+                    let argc = self.arguments_of(&named, &call)?;
                     self.act(Action::Summon(Rc::from(named.as_str())), argc + 2);
                 }
                 None => {
@@ -2098,6 +2146,40 @@ impl<'a> Compiler<'a> {
                     self.expr(0)?;
                     self.act(Action::Tie, 2);
                 }
+            }
+            count += 1;
+            if let Some(sep) = &pair.between {
+                if self.at_symbol(sep) {
+                    self.take();
+                }
+            }
+        }
+        self.take();
+        Ok(count)
+    }
+
+    /// The arguments of a call by name: a parameter written with the
+    /// reference sign is given the name's own cell, so what the program
+    /// writes to it the caller sees.
+    fn arguments_of(&mut self, called: &str, pair: &Brackets) -> Res<usize> {
+        let shared = self.shared_args.get(called).cloned().unwrap_or_default();
+        if !shared.iter().any(|x| *x) {
+            return self.arguments(pair);
+        }
+        let mut count = 0;
+        while !self.at_symbol(&pair.close) {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", pair.close));
+            }
+            let lone = self.look().shape == Shape::Instr
+                && (self.look_ahead(1).is_lexeme(Shape::Sign, &pair.close)
+                    || pair.between.as_ref().map_or(false, |s| self.look_ahead(1).is_lexeme(Shape::Sign, s)));
+            if shared.get(count).copied().unwrap_or(false) && lone {
+                let name = self.take().lexeme;
+                let cell = self.cell_to_write(&name);
+                self.put(Instr::Bond(cell));
+            } else {
+                self.expr(0)?;
             }
             count += 1;
             if let Some(sep) = &pair.between {
@@ -2586,6 +2668,63 @@ fn peephole(instrs: Vec<Instr>) -> Vec<Instr> {
 }
 
 /// Words moved by `delta`, their jump targets moved with them.
+/// Which parameters of each program are written with the reference sign,
+/// found by reading the tokens before anything is compiled: a call has to
+/// know before it works out its arguments, and a program may be called
+/// above where it is written.
+fn shared_parameters(tokens: &[Token], lang: &Lang) -> HashMap<String, Vec<bool>> {
+    let mut found = HashMap::new();
+    let (Some(mark), Some(call)) = (&lang.reference_mark, &lang.calling) else { return found };
+    let sign = |t: &Token, text: &str| t.is_lexeme(Shape::Sign, text);
+    let mut i = 0;
+    while i + 2 < tokens.len() {
+        let t = &tokens[i];
+        if t.shape != Shape::Instr || !Lang::spells(&lang.function_words, &t.lexeme) {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 1;
+        if sign(&tokens[j], mark) {
+            j += 1;
+        }
+        if tokens[j].shape != Shape::Instr || !sign(&tokens[j + 1], &call.open) {
+            i += 1;
+            continue;
+        }
+        let name = tokens[j].lexeme.clone();
+        j += 2;
+        let (mut marks, mut shared, mut anything, mut defaulting, mut depth) = (Vec::new(), false, false, false, 1usize);
+        while j < tokens.len() {
+            let p = &tokens[j];
+            if sign(p, &call.open) {
+                depth += 1;
+            } else if sign(p, &call.close) {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            } else if depth == 1 {
+                anything = true;
+                if call.between.as_ref().map_or(false, |s| sign(p, s)) {
+                    marks.push(shared);
+                    (shared, defaulting) = (false, false);
+                } else if p.shape == Shape::Sign && Lang::spells(&lang.assign_words, &p.lexeme) {
+                    defaulting = true;
+                } else if !defaulting && sign(p, mark) {
+                    shared = true;
+                }
+            }
+            j += 1;
+        }
+        if anything {
+            marks.push(shared);
+        }
+        found.insert(name, marks);
+        i = j;
+    }
+    found
+}
+
 fn relocated(instrs: Vec<Instr>, delta: i64) -> Vec<Instr> {
     instrs
         .into_iter()
