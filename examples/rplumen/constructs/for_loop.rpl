@@ -3,6 +3,4 @@
     i write
     i 9 < if
         ", " write
-    end
-next
 "" print

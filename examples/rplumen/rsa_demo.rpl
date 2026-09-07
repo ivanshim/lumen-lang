@@ -2,22 +2,19 @@
 « 'm' = 'exp' = 'base' =
     1 'result' =
     base m % 'base' =
-    while exp 0 > repeat
+    while exp 0 >
         exp 2 % 1 == if
             result base * m % 'result' =
-        end
         exp 2 // 'exp' =
         base base * m % 'base' =
-    end
     result return
 » 'mod_pow' =
 
 « 'b' = 'a' =
-    while b 0 != repeat
+    while b 0 !=
         b 't' =
         a b % 'b' =
         t 'a' =
-    end
     a return
 » 'gcd' =
 
@@ -30,7 +27,6 @@
         r 2 get 'x' =
         r 1 get a b // r 2 get * - 'y' =
         [ g x y ] return
-    end
     null return
 » 'extended_gcd' =
 
@@ -44,27 +40,21 @@
         "mod_inverse: inverse does not exist (gcd(a, m) != 1)" error return
     else
         r 1 get m % m + m % return
-    end
     null return
 » 'mod_inverse' =
 
 « 'n' =
     n 2 < if
         false return
-    end
     n 2 == if
         true return
-    end
     n 2 % 0 == if
         false return
-    end
     3 'i' =
-    while i i * n <= repeat
+    while i i * n <=
         n i % 0 == if
             false return
-        end
         i 2 + 'i' =
-    end
     true return
 » 'is_prime' =
 
@@ -80,13 +70,10 @@ p print
 q print
 p is_prime not if
     "p must be prime" error
-end
 q is_prime not if
     "q must be prime" error
-end
 p q == if
     "p and q must be distinct" error
-end
 "" print
 p q * 'n' =
 "Computed n = p * q = " write
@@ -99,12 +86,14 @@ phi print
 17 'e' =
 "Selected public exponent e = " write
 e print
-e 1 <= if true else e phi >= end if
+e 1 <= if
+    true
+else
+    e phi >=
+if
     "e must satisfy 1 < e < phi(n)" error
-end
 e phi is_coprime not if
     "e must be coprime to phi(n)" error
-end
 "Verified gcd(e, phi(n)) = " write
 e phi gcd print
 "" print
@@ -116,7 +105,6 @@ d e * phi % 'verification' =
 verification print
 verification 1 != if
     "Private key computation failed: d * e mod phi(n) must equal 1" error
-end
 "" print
 "=== Generated Keys ===" print
 "Public key:  (e, n) = (" write
@@ -135,9 +123,12 @@ n write
 42 'm' =
 "Original message m = " write
 m print
-m 0 < if true else m n >= end if
+m 0 < if
+    true
+else
+    m n >=
+if
     "Message must be in range 0 to n-1" error
-end
 m e n mod_pow 'cipher' =
 "Encrypted cipher c = m^e mod n = " write
 cipher print
@@ -148,16 +139,18 @@ decrypted m == if
     "SUCCESS: Decryption successful: m' = m" print
 else
     "Decryption failed" error
-end
 "" print
 "=== Digital Signature ===" print
 "" print
 100 'message_to_sign' =
 "Message to sign = " write
 message_to_sign print
-message_to_sign 0 < if true else message_to_sign n >= end if
+message_to_sign 0 < if
+    true
+else
+    message_to_sign n >=
+if
     "Message to sign must be in range 0 to n-1" error
-end
 message_to_sign d n mod_pow 'signature' =
 "Digital signature s = m^d mod n = " write
 signature print
@@ -168,7 +161,6 @@ verified_message message_to_sign == if
     "SUCCESS: Signature verification successful" print
 else
     "Signature verification failed" error
-end
 "" print
 "=== Summary ===" print
 "" print

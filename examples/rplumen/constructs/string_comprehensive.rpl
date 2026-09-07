@@ -5,10 +5,8 @@ a print
 b print
 a "alpha" == if
     "a is alpha" print
-end
 a b != if
     "a and b are different" print
-end
 10 'x' =
 "number" 'y' =
 x print

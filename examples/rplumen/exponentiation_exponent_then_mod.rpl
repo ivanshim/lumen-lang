@@ -2,13 +2,11 @@
 « 'm' = 'exp' = 'base' =
     1 'result' =
     base m % 'base' =
-    while exp 0 > repeat
+    while exp 0 >
         exp 2 % 1 == if
             result base * m % 'result' =
-        end
         exp 2 // 'exp' =
         base base * m % 'base' =
-    end
     result return
 » 'mod_pow' =
 
@@ -29,10 +27,9 @@ iterations print
 "Running mod_pow..." print
 0 'result' =
 0 'i' =
-while i iterations < repeat
+while i iterations <
     base exp mod mod_pow 'result' =
     i 1 + 'i' =
-end
 "Result: " write
 result print
 "Done!" print

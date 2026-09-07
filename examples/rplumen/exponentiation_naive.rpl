@@ -16,16 +16,14 @@ iterations print
 "Running naive exponentiation..." print
 0 'result' =
 0 'i' =
-while i iterations < repeat
+while i iterations <
     1 'result' =
     0 'j' =
-    while j exp < repeat
+    while j exp <
         result base * 'result' =
         j 1 + 'j' =
-    end
     result mod % 'result' =
     i 1 + 'i' =
-end
 "Result: " write
 result print
 "Done!" print

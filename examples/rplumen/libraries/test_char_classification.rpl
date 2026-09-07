@@ -5,16 +5,35 @@
 
 « 'c' =
     c ord 'o' =
-    o "0" ord >= if o "9" ord <= else false end return
+    o "0" ord >= if
+        o "9" ord <=
+    else
+        false
+    return
 » 'is_digit' =
 
 « 'c' =
     c ord 'o' =
-    o "A" ord >= if o "Z" ord <= else false end if true else o "a" ord >= if o "z" ord <= else false end end return
+    o "A" ord >= if
+        o "Z" ord <=
+    else
+        false
+    if
+        true
+    else
+        o "a" ord >= if
+            o "z" ord <=
+        else
+            false
+    return
 » 'is_alpha' =
 
 « 'c' =
-    c is_alpha if true else c is_digit end return
+    c is_alpha if
+        true
+    else
+        c is_digit
+    return
 » 'is_alnum' =
 
 "=== Character Classification ===" print
@@ -45,14 +64,21 @@
 "" print
 "=== Practical Example: Username Validation ===" print
 « 'c' =
-    c is_alnum if true else c "_" == end if true else c "-" == end return
+    c is_alnum if
+        true
+    else
+        c "_" ==
+    if
+        true
+    else
+        c "-" ==
+    return
 » 'is_valid_username_char' =
 
 [ "a" "Z" "5" "_" "-" "!" "@" ] 'test_chars' =
 0 'i' =
-while i test_chars len < repeat
+while i test_chars len <
     test_chars i get 'c' =
     c is_valid_username_char 'valid' =
     "  '" c . "' is valid username char: " . valid to_string . print
     i 1 + 'i' =
-end

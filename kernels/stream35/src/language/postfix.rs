@@ -21,7 +21,8 @@ use crate::language::expressions::arithmetic::{self, Arith};
 use crate::language::expressions::comparison::{self, Cmp};
 use crate::language::expressions::variable::{call_builtin, call_user_function};
 use crate::language::statements::functions::define_function;
-use crate::language::structure::structural::{consume_separators, expect_close, parse_body, EOF};
+use crate::language::definition::BlockStyle;
+use crate::language::structure::structural::{consume_separators, expect_close, DEDENT, EOF, INDENT, NEWLINE};
 use crate::language::values::{as_bool, as_number, LumenArray, LumenBool, LumenNull, LumenNumber};
 
 // --------------------
@@ -396,6 +397,118 @@ fn expect_lexeme(parser: &mut Parser, lexeme: &str) -> LumenResult<()> {
     }
 }
 
+/// What a run of words is part of, which says where it ends besides the
+/// stop words: a block ends at its dedent and refuses a deeper indent, a
+/// program value runs to its bracket with indentation passing, a line ends
+/// at the line end.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Run {
+    Block,
+    Program,
+    Line,
+}
+
+/// Words up to one of `stops` (not consumed) or the end.
+fn words(parser: &mut Parser, registry: &Registry, stops: &[String], run: Run) -> LumenResult<Body> {
+    let mut body = Vec::new();
+    loop {
+        if run == Run::Line {
+            loop {
+                parser.skip_tokens();
+                if def().is("stmt.terminator", &parser.peek().lexeme) {
+                    parser.advance();
+                } else {
+                    break;
+                }
+            }
+        } else {
+            consume_separators(parser);
+        }
+        let lexeme = parser.peek().lexeme.clone();
+        if lexeme == EOF || stops.iter().any(|s| *s == lexeme) {
+            return Ok(body);
+        }
+        match (lexeme.as_str(), run) {
+            (NEWLINE, Run::Line) | (DEDENT, Run::Block | Run::Line) | (INDENT, Run::Line) => return Ok(body),
+            (INDENT | DEDENT, Run::Program) => {
+                parser.advance();
+                continue;
+            }
+            (INDENT, Run::Block) => return Err(err_at(parser, "Unexpected indentation")),
+            _ => {}
+        }
+        let stmt = registry
+            .find_stmt(parser)
+            .ok_or_else(|| err_at(parser, "Unknown word"))?
+            .parse(parser, registry)?;
+        body.push(stmt);
+    }
+}
+
+/// The body a control word governs, in the block style: indented lines,
+/// a bracketed run, or the words up to a closer.
+fn governed(parser: &mut Parser, registry: &Registry) -> LumenResult<Body> {
+    let d = def();
+    match d.block_style {
+        BlockStyle::Indentation => {
+            consume_separators(parser);
+            if parser.peek().lexeme != INDENT {
+                return Err(err_at(parser, "Expected an indented block"));
+            }
+            parser.advance();
+            let body = words(parser, registry, &[], Run::Block)?;
+            if parser.peek().lexeme != DEDENT {
+                return Err(err_at(parser, "Expected the end of an indented block"));
+            }
+            parser.advance();
+            Ok(body)
+        }
+        BlockStyle::Braces => {
+            parser.skip_tokens();
+            let opens = d.list("block.open");
+            let i = opens
+                .iter()
+                .position(|o| *o == parser.peek().lexeme)
+                .ok_or_else(|| err_at(parser, &format!("Expected '{}' to open a block", opens[0])))?;
+            parser.advance();
+            let close = d.list("block.close")[i].clone();
+            let body = words(parser, registry, std::slice::from_ref(&close), Run::Block)?;
+            expect_lexeme(parser, &close)?;
+            Ok(body)
+        }
+        BlockStyle::Keyword => {
+            let body = words(parser, registry, d.list("block.close"), Run::Block)?;
+            expect_close(parser)?;
+            Ok(body)
+        }
+    }
+}
+
+/// A loop's condition, run again each pass: the words up to where the
+/// body begins, the line end, the block opener or the intro word by style.
+fn condition(parser: &mut Parser, registry: &Registry) -> LumenResult<Body> {
+    let d = def();
+    match d.block_style {
+        BlockStyle::Indentation => words(parser, registry, &[], Run::Line),
+        BlockStyle::Braces => words(parser, registry, d.list("block.open"), Run::Block),
+        BlockStyle::Keyword => {
+            let test = words(parser, registry, d.list("block.intro"), Run::Block)?;
+            expect_intro(parser)?;
+            Ok(test)
+        }
+    }
+}
+
+/// Whether an else word follows past line ends; if so, step onto it.
+fn take_else(parser: &mut Parser) -> bool {
+    consume_separators(parser);
+    if def().is("stmt.else", &parser.peek().lexeme) {
+        parser.advance();
+        return true;
+    }
+    false
+}
+
 impl WordHandler {
     /// A quoted name and the word that takes it.
     fn named(&self, parser: &mut Parser, registry: &Registry, quote: char) -> LumenResult<Box<dyn StmtNode>> {
@@ -415,8 +528,7 @@ impl WordHandler {
             return Ok(Box::new(Word::Assign(name)));
         }
         if d.is("stmt.for", &word) {
-            let body = parse_body(parser, registry, d.list("block.close"))?;
-            expect_close(parser)?;
+            let body = governed(parser, registry)?;
             return Ok(Box::new(Word::For { var: name, body }));
         }
         if d.is("builtin.push", &word) {
@@ -432,32 +544,36 @@ impl WordHandler {
         let d = def();
         let closes = d.list("block.close");
 
-        // Control words: the condition is the top of the stack.
+        // Control words: the condition is the top of the stack; the body
+        // is the block after the word. In the keyword style one closer
+        // ends both arms of an if.
         if d.is("stmt.if", &word) {
-            let mut stops = closes.to_vec();
-            stops.extend(d.list("stmt.else").iter().cloned());
-            let then = parse_body(parser, registry, &stops)?;
-            let otherwise = if d.is("stmt.else", &parser.peek().lexeme) {
-                parser.advance();
-                Some(parse_body(parser, registry, closes)?)
-            } else {
-                None
-            };
-            expect_close(parser)?;
+            if d.block_style == BlockStyle::Keyword {
+                let mut stops = closes.to_vec();
+                stops.extend(d.list("stmt.else").iter().cloned());
+                let then = words(parser, registry, &stops, Run::Block)?;
+                let otherwise = if d.is("stmt.else", &parser.peek().lexeme) {
+                    parser.advance();
+                    Some(words(parser, registry, closes, Run::Block)?)
+                } else {
+                    None
+                };
+                expect_close(parser)?;
+                return Ok(Box::new(Word::If { then, otherwise }));
+            }
+            let then = governed(parser, registry)?;
+            let otherwise = if take_else(parser) { Some(governed(parser, registry)?) } else { None };
             return Ok(Box::new(Word::If { then, otherwise }));
         }
         if d.is("stmt.while", &word) {
-            let condition = parse_body(parser, registry, d.list("block.intro"))?;
-            expect_intro(parser)?;
-            let body = parse_body(parser, registry, closes)?;
-            expect_close(parser)?;
+            let condition = condition(parser, registry)?;
+            let body = governed(parser, registry)?;
             return Ok(Box::new(Word::While { condition, body }));
         }
         if d.is("stmt.until", &word) {
-            let body = parse_body(parser, registry, d.list("block.intro"))?;
-            expect_intro(parser)?;
-            let condition = parse_body(parser, registry, closes)?;
-            expect_close(parser)?;
+            // Head first as in Lumen; the condition is tested after the body.
+            let condition = condition(parser, registry)?;
+            let body = governed(parser, registry)?;
             return Ok(Box::new(Word::DoUntil { body, condition }));
         }
         if d.is("stmt.return", &word) {
@@ -476,7 +592,7 @@ impl WordHandler {
         // A program value: its body is a function of no parameters.
         if let Some(i) = d.list("stack.program.open").iter().position(|o| *o == word) {
             let close = &d.list("stack.program.close")[i];
-            let body = parse_body(parser, registry, std::slice::from_ref(close))?;
+            let body = words(parser, registry, std::slice::from_ref(close), Run::Program)?;
             expect_lexeme(parser, close)?;
             let name = PROGRAMS.with(|n| {
                 n.set(n.get() + 1);
@@ -489,7 +605,7 @@ impl WordHandler {
         // An array literal gathers what its body pushes.
         if d.is("syntax.array.open", &word) {
             let close = d.first("syntax.array.close");
-            let body = parse_body(parser, registry, std::slice::from_ref(&close.to_string()))?;
+            let body = words(parser, registry, std::slice::from_ref(&close.to_string()), Run::Block)?;
             expect_lexeme(parser, close)?;
             return Ok(Box::new(Word::Array(body)));
         }

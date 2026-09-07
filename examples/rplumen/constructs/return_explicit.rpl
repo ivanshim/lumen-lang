@@ -2,24 +2,20 @@
 « 'x' =
     x 0 < if
         x neg return
-    end
     x return
 » 'absolute' =
 
 « 'b' = 'a' =
     b 0 == if
         null return
-    end
     a b / return
 » 'safe_divide' =
 
 « 'c' = 'b' = 'a' =
     a 2 % 0 == if
         a return
-    end
     b 2 % 0 == if
         b return
-    end
     c return
 » 'find_first_even' =
 

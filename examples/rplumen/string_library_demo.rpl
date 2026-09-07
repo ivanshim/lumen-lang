@@ -2,10 +2,9 @@
 « 'to_end' = 'from_start' = 's' =
     from_start 'index' =
     "" 'out' =
-    while index to_end < repeat
+    while index to_end <
         out s index char_at . 'out' =
         index 1 + 'index' =
-    end
     out return
 » 'substring' =
 
@@ -18,20 +17,27 @@
 » 'substring_start' =
 
 « 'prefix' = 's' =
-    prefix len s len <= if s 0 prefix len substring prefix == else false end return
+    prefix len s len <= if
+        s 0 prefix len substring prefix ==
+    else
+        false
+    return
 » 'starts_with' =
 
 « 'suffix' = 's' =
-    suffix len s len <= if s s len suffix len - s len substring suffix == else false end return
+    suffix len s len <= if
+        s s len suffix len - s len substring suffix ==
+    else
+        false
+    return
 » 'ends_with' =
 
 « 'repetitions' = 's' =
     "" 'out' =
     0 'i' =
-    while i repetitions < repeat
+    while i repetitions <
         out s . 'out' =
         i 1 + 'i' =
-    end
     out return
 » 'repeat_string' =
 
@@ -39,25 +45,21 @@
     "" 'out' =
     arr len 'n' =
     0 'i' =
-    while i n < repeat
+    while i n <
         i 0 > if
             out separator . 'out' =
-        end
         out arr i get . 'out' =
         i 1 + 'i' =
-    end
     out return
 » 'join_strings' =
 
 « 'needle' = 's' =
     needle len 'n' =
     0 'i' =
-    while i n + s len <= repeat
+    while i n + s len <=
         s i i n + substring needle == if
             i return
-        end
         i 1 + 'i' =
-    end
     1 neg return
 » 'index_of' =
 

@@ -18,7 +18,6 @@ a b == if
     "real_default(2) == 2: true" print
 else
     "real_default(2) == 2: false" print
-end
 "Test 6: value_to_string(real_default)" print
 22 7 / to_real 'r' =
 r print

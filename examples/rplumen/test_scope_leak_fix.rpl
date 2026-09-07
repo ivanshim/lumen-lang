@@ -1,9 +1,8 @@
 # Ported from examples/lumen/test_scope_leak_fix.lm by scripts/port_examples.py; edit the Lumen original, not this file.
 «
     0 'i' =
-    while i 3 < repeat
+    while i 3 <
         i 1 + 'i' =
-    end
     i return
 » 'count_to_three' =
 

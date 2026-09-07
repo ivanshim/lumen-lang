@@ -2,36 +2,31 @@
 « 'b' = 'a' =
     [ ] 'out' =
     0 'i' =
-    while i a len < repeat
+    while i a len <
         a i get 'out' push
         i 1 + 'i' =
-    end
     0 'i' =
-    while i b len < repeat
+    while i b len <
         b i get 'out' push
         i 1 + 'i' =
-    end
     out return
 » 'array_concat' =
 
 « 'stop' = 'start' = 'a' =
     [ ] 'out' =
     start 'i' =
-    while i stop < repeat
+    while i stop <
         a i get 'out' push
         i 1 + 'i' =
-    end
     out return
 » 'array_slice' =
 
 « 'x' = 'a' =
     0 'i' =
-    while i a len < repeat
+    while i a len <
         a i get x == if
             i return
-        end
         i 1 + 'i' =
-    end
     1 neg return
 » 'array_index_of' =
 
@@ -42,10 +37,9 @@
 « 'a' =
     [ ] 'out' =
     a len 'i' =
-    while i 0 > repeat
+    while i 0 >
         i 1 - 'i' =
         a i get 'out' push
-    end
     out return
 » 'array_reverse' =
 

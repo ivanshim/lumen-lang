@@ -31,6 +31,17 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   definition is loaded at run time. PHP moved there, and Ruby, Pascal, C,
   JavaScript and Swift are added with examples; all nine languages run on
   both kernels.
+- **Notation and block style are separate labels; RPLumen is indented**:
+  a new label `syntax.notation` (`infix` or `postfix`) says how a
+  language is read, and `block.style` is free to be `indentation`,
+  `braces` or `keyword` for either. RPLumen now uses Lumen's four-space
+  indentation: `cond if`, `else`, `start end 'i' for`, `while cond` and
+  `until cond` govern the indented lines after them, and `end`, `next`,
+  `repeat` and `do` are gone. A program value `« ... »` may span lines
+  with its body indented. All six kernels read the new form, the porter
+  writes it (a short-circuit `and`/`or` becomes an indented branch inside
+  the expression), and microcode11's emitter writes it back. A postfix
+  language with keyword or brace blocks still works on every kernel.
 - **One scoping rule on every kernel**: a function sees its own
   bindings and the program's, never its caller's and never an enclosing
   function's. stream35 and microcode10 kept one scope stack for the

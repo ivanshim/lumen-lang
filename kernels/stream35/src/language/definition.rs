@@ -25,8 +25,6 @@ pub enum BlockStyle {
     Braces,
     /// No opener; the body runs to a closing word, and an `if` chain shares one.
     Keyword,
-    /// Words act on one stack; control words delimit bodies (RPL).
-    Postfix,
 }
 
 /// Every label a definition must carry. The reader rejects a file that
@@ -39,7 +37,7 @@ const LABELS: &[&str] = &[
     "lexical.number.decimal_point", "lexical.number.base_marker", "lexical.number.exponent_marker",
     "lexical.number.hex_prefix", "lexical.keywords_case_insensitive",
     "identifier.unicode", "identifier.variable_prefix", "identifier.case_insensitive",
-    "block.style", "block.open", "block.close", "block.intro", "block.indent_size", "stmt.terminator",
+    "block.style", "block.open", "block.close", "block.intro", "block.indent_size", "stmt.terminator", "syntax.notation",
     "syntax.group.open", "syntax.group.close",
     "syntax.call.open", "syntax.call.separator", "syntax.call.close", "syntax.call.label",
     "syntax.array.open", "syntax.array.separator", "syntax.array.close",
@@ -94,6 +92,8 @@ pub struct Definition {
     /// (Pascal) when the body does not return one explicitly.
     pub result_by_name: bool,
     pub block_style: BlockStyle,
+    /// Reverse Polish: words acting on one stack, no expressions or statement forms.
+    pub postfix: bool,
     pub indent_size: usize,
     /// Every reserved word, computed once: the parser asks on every token.
     reserved: Vec<String>,
@@ -164,6 +164,7 @@ impl Definition {
             index_strings: false,
             result_by_name: false,
             block_style: BlockStyle::Indentation,
+            postfix: false,
             indent_size: 4,
             reserved: Vec::new(),
         };
@@ -206,8 +207,14 @@ impl Definition {
                         "indentation" => BlockStyle::Indentation,
                         "braces" => BlockStyle::Braces,
                         "keyword" => BlockStyle::Keyword,
-                        "postfix" => BlockStyle::Postfix,
-                        other => return Err(format!("block.style must be 'indentation', 'braces', 'keyword' or 'postfix', got '{other}'")),
+                        other => return Err(format!("block.style must be 'indentation', 'braces' or 'keyword', got '{other}'")),
+                    };
+                }
+                ("syntax.notation", Json::String(notation)) => {
+                    definition.postfix = match notation.as_str() {
+                        "infix" => false,
+                        "postfix" => true,
+                        other => return Err(format!("syntax.notation must be 'infix' or 'postfix', got '{other}'")),
                     };
                 }
                 ("block.indent_size", Json::Number(n)) => {
@@ -235,7 +242,7 @@ impl Definition {
         let paired = match definition.block_style {
             BlockStyle::Indentation => opens == 0 && closes == 0,
             BlockStyle::Braces => opens > 0 && opens == closes,
-            BlockStyle::Keyword | BlockStyle::Postfix => opens == 0 && closes > 0,
+            BlockStyle::Keyword => opens == 0 && closes > 0,
         };
         if !paired {
             return Err("block.open and block.close do not fit block.style".to_string());

@@ -14,7 +14,6 @@ pub enum Style {
     Indented,
     Braced,
     Keyword,
-    Postfix,
 }
 
 #[derive(Clone, Debug)]
@@ -55,6 +54,8 @@ pub struct Def {
     pub reserved: HashSet<String>,
 
     pub style: Style,
+    /// Reverse Polish: words acting on one stack, no expressions.
+    pub postfix: bool,
     pub indent: usize,
     pub openers: Vec<String>,
     pub closers: Vec<String>,
@@ -125,7 +126,7 @@ w lexical.name_quote | w lexical.number.decimal_point | w lexical.number.base_ma
 w lexical.number.exponent_marker | w lexical.number.hex_prefix | b lexical.keywords_case_insensitive
 b identifier.unicode | w identifier.variable_prefix | b identifier.case_insensitive
 s block.style | w block.open | w block.close | w block.intro | n block.indent_size
-w stmt.terminator
+w stmt.terminator | s syntax.notation
 w syntax.group.open | w syntax.group.close
 w syntax.call.open | w syntax.call.separator | w syntax.call.close | w syntax.call.label
 w syntax.array.open | w syntax.array.separator | w syntax.array.close
@@ -347,10 +348,12 @@ impl Def {
             "indentation" => Style::Indented,
             "braces" => Style::Braced,
             "keyword" => Style::Keyword,
-            "postfix" => Style::Postfix,
-            other => {
-                return Err(format!("block.style must be 'indentation', 'braces', 'keyword' or 'postfix', got '{other}'"))
-            }
+            other => return Err(format!("block.style must be 'indentation', 'braces' or 'keyword', got '{other}'")),
+        };
+        let postfix = match r.text("syntax.notation")?.as_str() {
+            "infix" => false,
+            "postfix" => true,
+            other => return Err(format!("syntax.notation must be 'infix' or 'postfix', got '{other}'")),
         };
         let openers = r.list("block.open")?;
         let closers = r.list("block.close")?;
@@ -372,14 +375,13 @@ impl Def {
                 }
                 size.unwrap_or(4)
             }
-            _ => {
+            Style::Keyword => {
                 if !openers.is_empty() || closers.is_empty() {
-                    return Err("keyword and postfix blocks take no block.open and need block.close".to_string());
+                    return Err("keyword blocks take no block.open and need block.close".to_string());
                 }
                 size.unwrap_or(4)
             }
         };
-        let postfix = style == Style::Postfix;
         let call = r.pair("syntax.call.open", "syntax.call.close", Some("syntax.call.separator"))?;
         let call_labels = r.list("syntax.call.label")?;
         if !call_labels.is_empty() && call.is_none() {
@@ -494,7 +496,7 @@ impl Def {
         .map(|label| r.list(label))
         .collect::<Result<Vec<_>, _>>()?;
         if !postfix && stack_lists.iter().any(|l| !l.is_empty()) {
-            return Err("the stack.* labels need block.style 'postfix'".to_string());
+            return Err("the stack.* labels need syntax.notation 'postfix'".to_string());
         }
         if stack_lists[6].len() != stack_lists[7].len() {
             return Err("stack.program.open and .close must pair up position by position".to_string());
@@ -572,6 +574,7 @@ impl Def {
             symbols: Vec::new(),
             reserved: HashSet::new(),
             style,
+            postfix,
             indent,
             openers,
             closers,

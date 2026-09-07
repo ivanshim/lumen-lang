@@ -31,7 +31,7 @@ const SCHEMA: &[(&str, Shape)] = &[
     ("lexical.keywords_case_insensitive", Flag),
     ("identifier.unicode", Flag), ("identifier.variable_prefix", Words), ("identifier.case_insensitive", Flag),
     ("block.style", Text), ("block.open", Words), ("block.close", Words), ("block.intro", Words), ("block.indent_size", Count),
-    ("stmt.terminator", Words),
+    ("stmt.terminator", Words), ("syntax.notation", Text),
     ("syntax.group.open", Words), ("syntax.group.close", Words),
     ("syntax.call.open", Words), ("syntax.call.separator", Words), ("syntax.call.close", Words), ("syntax.call.label", Words),
     ("syntax.array.open", Words), ("syntax.array.separator", Words), ("syntax.array.close", Words),
@@ -94,7 +94,6 @@ pub enum Style {
     Indent,
     Brace,
     Keyword,
-    Postfix,
 }
 
 #[derive(Debug)]
@@ -117,6 +116,8 @@ pub struct Operator {
 pub struct Spec {
     pub name: String,
     pub style: Style,
+    /// Reverse Polish: words over one stack, no expressions.
+    pub postfix: bool,
     items: HashMap<&'static str, Item>,
     /// `$library`: the label a library function provides, by function name.
     pub library: HashMap<String, String>,
@@ -217,6 +218,7 @@ impl Spec {
         let mut spec = Spec {
             name: String::new(),
             style: Style::Indent,
+            postfix: false,
             items,
             library,
             infix: HashMap::new(),
@@ -355,25 +357,29 @@ impl Spec {
             Some("indentation") => Style::Indent,
             Some("braces") => Style::Brace,
             Some("keyword") => Style::Keyword,
-            Some("postfix") => Style::Postfix,
-            other => return Err(format!("block.style must be 'indentation', 'braces', 'keyword' or 'postfix', got '{}'", other.unwrap_or(""))),
+            other => return Err(format!("block.style must be 'indentation', 'braces' or 'keyword', got '{}'", other.unwrap_or(""))),
+        };
+        self.postfix = match self.text("syntax.notation") {
+            Some("infix") => false,
+            Some("postfix") => true,
+            other => return Err(format!("syntax.notation must be 'infix' or 'postfix', got '{}'", other.unwrap_or(""))),
         };
         let (opens, closes) = (self.words("block.open").len(), self.words("block.close").len());
         let shaped = match self.style {
             Style::Indent => opens == 0 && closes == 0 && self.count("block.indent_size").map_or(false, |n| n > 0),
             Style::Brace => opens > 0 && opens == closes,
-            Style::Keyword | Style::Postfix => opens == 0 && closes > 0,
+            Style::Keyword => opens == 0 && closes > 0,
         };
         if !shaped {
             return Err("block.open, block.close and block.indent_size do not fit block.style".to_string());
         }
-        let postfix = self.style == Style::Postfix;
+        let postfix = self.postfix;
         if postfix && !self.tiers().is_empty() {
             return Err("a postfix language takes no op.precedence".to_string());
         }
         if !postfix && ["stack.dup", "stack.drop", "stack.swap", "stack.over", "stack.rot", "stack.eval",
                         "stack.program.open", "stack.program.close"].iter().any(|l| self.has(l)) {
-            return Err("the stack.* labels need block.style 'postfix'".to_string());
+            return Err("the stack.* labels need syntax.notation 'postfix'".to_string());
         }
         if self.words("stack.program.open").len() != self.words("stack.program.close").len() {
             return Err("stack.program.open and .close must pair up position by position".to_string());
@@ -436,7 +442,7 @@ impl Spec {
     // ---- derived tables
 
     fn derive(&mut self) -> Result<(), String> {
-        let postfix = self.style == Style::Postfix;
+        let postfix = self.postfix;
         let tiers = self.tiers().to_vec();
         let tier_of = |lex: &str, last: bool| -> Option<u32> {
             if postfix {

@@ -5,5 +5,4 @@ x print
 true if
     20 'x' =
     x print
-end
 x print

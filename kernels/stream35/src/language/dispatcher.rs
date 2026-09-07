@@ -5,7 +5,7 @@
 // words only as whole words. Handlers are registered in priority order.
 
 use crate::kernel::registry::TokenDefinition;
-use super::definition::{def, BlockStyle};
+use super::definition::def;
 use super::registry::Registry;
 
 use super::expressions;
@@ -33,7 +33,7 @@ pub fn register_all(registry: &mut Registry) {
 
     // A postfix language has no expressions or statement forms: every
     // word acts on the stack, and only the literals are shared.
-    if def().block_style == BlockStyle::Postfix {
+    if def().postfix {
         expressions::literals::register(registry);
         postfix::register(registry);
         return;

@@ -6,11 +6,9 @@
 "" print
 "Numbers: " write
 1 'i' =
-while i 5 <= repeat
+while i 5 <=
     i write
     i 5 < if
         ", " write
-    end
     i 1 + 'i' =
-end
 "" print

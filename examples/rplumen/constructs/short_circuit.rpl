@@ -15,30 +15,52 @@
 
 "Test: Short-Circuit Evaluation" print
 "false and is_even(10):" print
-false if 10 is_even else false end 'result' =
+false if
+    10 is_even
+else
+    false
+'result' =
 result print
 "true and is_even(10):" print
-true if 10 is_even else false end 'result' =
+true if
+    10 is_even
+else
+    false
+'result' =
 result print
 "true or is_positive(5):" print
-true if true else 5 is_positive end 'result' =
+true if
+    true
+else
+    5 is_positive
+'result' =
 result print
 "false or is_positive(5):" print
-false if true else 5 is_positive end 'result' =
+false if
+    true
+else
+    5 is_positive
+'result' =
 result print
 "Testing division by zero avoidance:" print
 0 'x' =
-x 0 != if 10 x / 5 > else false end if
+x 0 != if
+    10 x / 5 >
+else
+    false
+if
     "Result is greater than 5" print
 else
     "x is zero or result is not greater than 5" print
-end
 « 'value' =
-    value null != if value 10 > else false end if
+    value null != if
+        value 10 >
+    else
+        false
+    if
         "Value is not null and greater than 10" print
     else
         "Value is null or not greater than 10" print
-    end
     null return
 » 'safe_check' =
 

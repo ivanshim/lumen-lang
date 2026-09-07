@@ -1374,11 +1374,40 @@ class Emitter:
 
 class PostfixEmitter(Emitter):
     """A postfix target (RPLumen): expressions in post-order, one value per
-    call, control words around bodies, quoted names for the words that
-    take one. Precedence, declarations and call brackets do not arise."""
+    call, indented bodies after the control words as in Lumen, quoted names
+    for the words that take one. Precedence, declarations and call brackets
+    do not arise. An expression that needs a branch (`and`, `or`) is
+    written over several lines, a tab per level of relative indentation,
+    which `lines` turns into the target's indentation."""
 
     # Builtins that consume their arguments and yield nothing.
     CONSUMERS = ("print", "write", "emit", "error", "push")
+
+    def __init__(self, definition):
+        super().__init__(definition)
+        if self.style != "indentation":
+            raise Skip("a postfix target with a block style other than indentation")
+
+    def lines(self, depth, text):
+        """`text`, possibly several lines, at `depth`: each line's leading
+        tabs are levels of indentation relative to the statement."""
+        out = []
+        for line in text.split("\n"):
+            line = line.lstrip(" ")
+            if not line:
+                continue
+            levels = len(line) - len(line.lstrip("\t"))
+            out.append(self.indent(depth + levels) + line.lstrip("\t"))
+        return out
+
+    @staticmethod
+    def nested(text):
+        """`text` one level deeper, as a block's body."""
+        return "\t" + text.rstrip("\n").replace("\n", "\n\t") + "\n"
+
+    def branch(self, cond, then_text, else_text):
+        """An if/else that leaves one value on the stack."""
+        return f"{cond} {self.w('stmt.if')}\n{self.nested(then_text)}{self.w('stmt.else')}\n{self.nested(else_text)}"
 
     def check_globals(self, prog, lib_globals, lib_fns):
         # Bindings are looked up through every open frame, as in Lumen.
@@ -1416,6 +1445,8 @@ class PostfixEmitter(Emitter):
             return self.expr(e.expr, scope)
         if e.kind == "Array":
             items = " ".join(self.expr(i, scope)[0] for i in e.items)
+            if "\n" in items:
+                raise Skip("a branch inside an array literal")
             return f"{self.w('syntax.array.open', 'array literal')} {items} {self.w('syntax.array.close')}".replace("  ", " "), None
         if e.kind == "Index":
             target, _ = self.expr(e.target, scope)
@@ -1432,10 +1463,9 @@ class PostfixEmitter(Emitter):
             if e.op in ("and", "or"):
                 # Short-circuit as a branch: the right side runs only when
                 # the left side leaves the answer open.
-                if_, else_, end = self.w("stmt.if"), self.w("stmt.else"), self.w("block.close")
                 if e.op == "and":
-                    return f"{left} {if_} {right} {else_} {self.w('literal.false')} {end}", None
-                return f"{left} {if_} {self.w('literal.true')} {else_} {right} {end}", None
+                    return self.branch(left, right, self.w("literal.false")), None
+                return self.branch(left, self.w("literal.true"), right), None
             op = e.op
             if op == "." and not self.has("op.concat"):
                 op = "+"
@@ -1482,46 +1512,45 @@ class PostfixEmitter(Emitter):
             e = s.expr
             text, _ = self.expr(e, scope)
             consumed = e.kind == "Call" and e.name in self.CONSUMERS
-            return [ind + text + ("" if consumed else f" {self.w('stack.drop')}")]
+            return self.lines(depth, text + ("" if consumed else f" {self.w('stack.drop')}"))
         if k in ("Assign", "Let"):
             value = self.w("literal.null") if s.expr is None else self.expr(s.expr, scope)[0]
-            return [ind + f"{value} {self.quoted(s.name)} {self.w('stmt.assign')}"]
+            return self.lines(depth, f"{value} {self.quoted(s.name)} {self.w('stmt.assign')}")
         if k == "IndexAssign":
             if s.target.kind != "Var":
                 raise Skip("indexed assignment to an expression")
             index, _ = self.expr(s.index, scope)
             value, _ = self.expr(s.expr, scope)
-            return [ind + f"{index} {value} {self.quoted(s.target.name)} {self.w('builtin.put', 'indexed assignment')}"]
+            return self.lines(depth, f"{index} {value} {self.quoted(s.target.name)} {self.w('builtin.put', 'indexed assignment')}")
         if k == "Memo":
             raise Skip("no memoization switch")
         if k == "Return":
             # Every function leaves exactly one value; a bare return leaves null.
             value = self.w("literal.null") if s.expr is None else self.expr(s.expr, scope)[0]
-            return [ind + f"{value} {self.w('stmt.return')}"]
+            return self.lines(depth, f"{value} {self.w('stmt.return')}")
         if k == "Break":
             return [ind + self.w("stmt.break")]
         if k == "Continue":
             return [ind + self.w("stmt.continue")]
         if k == "If":
             cond, _ = self.expr(s.cond, scope)
-            lines = [ind + f"{cond} {self.w('stmt.if')}"] + self.statements(s.body, scope, depth + 1)
+            lines = self.lines(depth, f"{cond} {self.w('stmt.if')}") + self.statements(s.body, scope, depth + 1)
             if s.orelse:
                 lines.append(ind + self.w("stmt.else"))
                 lines.extend(self.statements(s.orelse, scope, depth + 1))
-            return lines + [ind + self.w("block.close")]
-        if k == "While":
+            return lines
+        if k in ("While", "Until"):
+            # The condition is the rest of the head's line, run each pass.
             cond, _ = self.expr(s.cond, scope)
-            head = f"{self.w('stmt.while')} {cond} {self.d['block.intro'][0]}"
-            return [ind + head] + self.statements(s.body, scope, depth + 1) + [ind + self.w("block.close")]
-        if k == "Until":
-            cond, _ = self.expr(s.cond, scope)
-            body = self.statements(s.body, scope, depth + 1)
-            return [ind + self.w("stmt.until")] + body + [ind + f"{self.d['block.intro'][1]} {cond} {self.w('block.close')}"]
+            if "\n" in cond:
+                raise Skip("a branch in a loop condition")
+            head = f"{self.w('stmt.while' if k == 'While' else 'stmt.until')} {cond}"
+            return [ind + head] + self.statements(s.body, scope, depth + 1)
         if k == "For":
             start, _ = self.expr(s.start, scope)
             end, _ = self.expr(s.end, scope)
             head = f"{start} {end} {self.quoted(s.var)} {self.w('stmt.for')}"
-            return [ind + head] + self.statements(s.body, scope, depth + 1) + [ind + self.d["block.close"][1]]
+            return self.lines(depth, head) + self.statements(s.body, scope, depth + 1)
         if k == "Fn":
             return self.function(s, scope, depth)
         raise Skip(f"unexpected statement {k}")
@@ -1706,7 +1735,7 @@ def main():
         for ex in examples:
             rel = ex.relative_to(LUMEN_EXAMPLES).with_suffix(f".{ext}")
             try:
-                emitter = PostfixEmitter(d) if d["block.style"] == "postfix" else Emitter(d)
+                emitter = PostfixEmitter(d) if d["syntax.notation"] == "postfix" else Emitter(d)
                 text = port_one(emitter, ex, lib, constants)
             except Skip as why:
                 results[(ex, lang)] = str(why)

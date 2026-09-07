@@ -6,19 +6,18 @@
 8 'x' =
 x 2 * print
 
-# Control words take their condition from the top of the stack.
+# Control words take their condition from the top of the stack; a body is
+# the indented lines after the word, as in Lumen.
 x 10 < if
     "x is small" print
 else
     "x is large" print
-end
 
-# Loops: while cond repeat body end, and do body until cond end.
+# Loops: while cond and until cond take their condition from the rest of the line.
 0 'i' =
-while i 3 < repeat
+while i 3 <
     i print
     i 1 + 'i' =
-end
 
 # The derived operators and the rest of the floor.
 true false or print
