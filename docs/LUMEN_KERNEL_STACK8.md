@@ -92,7 +92,7 @@ program under `examples/`; all 498 print the same. microcode7 is the same
 promotion on the tree.
 
 Being a full kernel, it also reads the `ext.` labels a definition may add
-beyond the 132 core labels (see `langs/README.md`): an epilogue marker,
+beyond the 133 core labels (see `langs/README.md`): an epilogue marker,
 `echo`, bracketless builtin calls, `++`/`--`, interpolating strings
 (which the scanner turns into a bracketed concatenation before the
 compiler sees them), the three-part `for` (its test at the bottom like a

@@ -99,6 +99,7 @@
   "literal.null": [
     "null"
   ],
+  "literal.null.silent": true,
   "op.precedence": [
     [
       "or"
@@ -473,5 +474,27 @@
   ],
   "ext.op.reference": [
     "&"
-  ]
+  ],
+  "ext.system.request.query": [
+    "$_GET"
+  ],
+  "ext.system.request.form": [
+    "$_POST"
+  ],
+  "ext.system.request.cookies": [
+    "$_COOKIE"
+  ],
+  "ext.system.request.server": [
+    "$_SERVER"
+  ],
+  "ext.system.request.env": [
+    "$_ENV"
+  ],
+  "ext.system.request.files": [
+    "$_FILES"
+  ],
+  "ext.system.request.all": [
+    "$_REQUEST"
+  ],
+  "ext.op.index.absent": true
 }

@@ -102,7 +102,8 @@ impl<'a> Engine<'a> {
 
     fn wording(&self) -> Wording<'a> {
         let word = |list: &'a [String], fallback: &'a str| list.first().map_or(fallback, String::as_str);
-        Wording { true_word: word(&self.lang.true_words, "true"), false_word: word(&self.lang.false_words, "false"), null_word: word(&self.lang.null_words, "null") }
+        let nothing = if self.lang.null_silent { "" } else { word(&self.lang.null_words, "null") };
+        Wording { true_word: word(&self.lang.true_words, "true"), false_word: word(&self.lang.false_words, "false"), null_word: nothing }
     }
 
     fn drop_top(&mut self) -> Res<Value> {
@@ -758,15 +759,25 @@ impl<'a> Engine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value) -> Res<Value> {
+        // A language may say that a place an array does not hold reads as
+        // nothing rather than stopping the program.
+        let absent = |told: String| if self.lang.absent_index { Ok(Value::Null) } else { Err(told) };
         if let Value::Map(pairs) = target {
             let found = pairs.iter().find(|(k, _)| k.equals(at));
-            return found.map(|(_, v)| v.clone()).ok_or_else(|| format!("Undefined array key {}", at.plain()));
+            return match found {
+                Some((_, v)) => Ok(v.clone()),
+                None => absent(format!("Undefined array key {}", at.plain())),
+            };
         }
-        let i = as_index(at)?;
+        let i = match as_index(at) {
+            Ok(i) => i,
+            Err(told) => return absent(told),
+        };
         match target {
-            Value::Array(items) => {
-                items.get(i).cloned().ok_or_else(|| format!("Array index {} out of bounds (length: {})", i, items.len()))
-            }
+            Value::Array(items) => match items.get(i) {
+                Some(v) => Ok(v.clone()),
+                None => absent(format!("Array index {} out of bounds (length: {})", i, items.len())),
+            },
             Value::Text(s) if self.lang.text_indexable => s
                 .chars()
                 .nth(i)

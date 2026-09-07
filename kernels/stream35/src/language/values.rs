@@ -409,7 +409,12 @@ impl RuntimeValue for LumenNull {
     }
 
     fn as_display_string(&self) -> String {
-        crate::language::definition::def().word_or("literal.null", "null").to_string()
+        // Some languages show nothing as no text at all.
+        let def = crate::language::definition::def();
+        match def.nothing_silent {
+            true => String::new(),
+            false => def.word_or("literal.null", "null").to_string(),
+        }
     }
 
     fn eq_value(&self, other: &dyn RuntimeValue) -> Result<bool, String> {

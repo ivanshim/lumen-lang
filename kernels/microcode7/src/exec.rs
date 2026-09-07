@@ -95,7 +95,12 @@ impl<'a> Machine<'a> {
         Names {
             truth: self.table.single("literal.true").unwrap_or("true"),
             falsity: self.table.single("literal.false").unwrap_or("false"),
-            nil: self.table.single("literal.null").unwrap_or("null"),
+            // A language may show nothing as no text at all, as PHP does,
+            // rather than as the word a program writes for it.
+            nil: match self.table.flag("literal.null.silent") {
+                true => "",
+                false => self.table.single("literal.null").unwrap_or("null"),
+            },
         }
     }
 
@@ -994,13 +999,25 @@ impl<'a> Machine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value) -> Result<Value, String> {
+        // A language may say that a place an array does not hold reads as
+        // nothing rather than stopping the program.
+        let missing = |told: String| if self.table.flag("ext.op.index.absent") { Ok(Value::Nil) } else { Err(told) };
         if let Value::Dict(entries) = target {
             let found = entries.iter().find(|(k, _)| k.equals(at));
-            return found.map(|(_, v)| v.clone()).ok_or_else(|| format!("Undefined array key {}", at.bare()));
+            return match found {
+                Some((_, v)) => Ok(v.clone()),
+                None => missing(format!("Undefined array key {}", at.bare())),
+            };
         }
-        let i = as_index(at)?;
+        let i = match as_index(at) {
+            Ok(i) => i,
+            Err(told) => return missing(told),
+        };
         match target {
-            Value::Vector(l) => l.get(i).cloned().ok_or_else(|| format!("Array index {} out of bounds (length: {})", i, l.len())),
+            Value::Vector(l) => match l.get(i) {
+                Some(v) => Ok(v.clone()),
+                None => missing(format!("Array index {} out of bounds (length: {})", i, l.len())),
+            },
             Value::Text(s) if self.table.flag("op.index.strings") => s
                 .chars()
                 .nth(i)

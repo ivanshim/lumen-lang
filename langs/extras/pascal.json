@@ -2,16 +2,32 @@
   "$comment": "Pascal: begin/end blocks after then and do, := assignment with = as equality, div and mod, var declarations with a type and no value, a bare begin..end. main block, case-insensitive keywords and identifiers, curly-brace and paren-star comments. Loaded at run time from langs/extras/. A function is declared with its typed parameters and result type, then its var section, then a begin..end block, and returns by assigning to its own name or with exit(value); a procedure is a function without a result. Counted for loops are omitted because their shape differs from the kernel's; everything listed is Pascal.",
   "format_version": 1,
   "language": "pascal",
-  "extensions": ["pas"],
-  "lexical.comment_line": ["//"],
-  "lexical.comment_block.open": ["{", "(*"],
-  "lexical.comment_block.close": ["}", "*)"],
-  "lexical.string_quotes": ["'"],
-  "lexical.raw_quotes": ["'"],
+  "extensions": [
+    "pas"
+  ],
+  "lexical.comment_line": [
+    "//"
+  ],
+  "lexical.comment_block.open": [
+    "{",
+    "(*"
+  ],
+  "lexical.comment_block.close": [
+    "}",
+    "*)"
+  ],
+  "lexical.string_quotes": [
+    "'"
+  ],
+  "lexical.raw_quotes": [
+    "'"
+  ],
   "lexical.string_escapes": [],
   "lexical.prologue": [],
   "lexical.name_quote": [],
-  "lexical.number.decimal_point": ["."],
+  "lexical.number.decimal_point": [
+    "."
+  ],
   "lexical.number.base_marker": [],
   "lexical.number.exponent_marker": [],
   "lexical.number.hex_prefix": [],
@@ -20,17 +36,37 @@
   "identifier.variable_prefix": [],
   "identifier.case_insensitive": true,
   "block.style": "braces",
-  "block.open": ["begin"],
-  "block.close": ["end"],
-  "block.intro": ["then", "do"],
+  "block.open": [
+    "begin"
+  ],
+  "block.close": [
+    "end"
+  ],
+  "block.intro": [
+    "then",
+    "do"
+  ],
   "block.indent_size": null,
-  "stmt.terminator": [";", "."],
+  "stmt.terminator": [
+    ";",
+    "."
+  ],
   "syntax.notation": "infix",
-  "syntax.group.open": ["("],
-  "syntax.group.close": [")"],
-  "syntax.call.open": ["("],
-  "syntax.call.separator": [","],
-  "syntax.call.close": [")"],
+  "syntax.group.open": [
+    "("
+  ],
+  "syntax.group.close": [
+    ")"
+  ],
+  "syntax.call.open": [
+    "("
+  ],
+  "syntax.call.separator": [
+    ","
+  ],
+  "syntax.call.close": [
+    ")"
+  ],
   "syntax.call.label": [],
   "syntax.array.open": [],
   "syntax.array.separator": [],
@@ -39,60 +75,146 @@
   "syntax.map.separator": [],
   "syntax.map.pair": [],
   "syntax.map.close": [],
-  "literal.true": ["true"],
-  "literal.false": ["false"],
-  "literal.null": ["nil"],
+  "literal.true": [
+    "true"
+  ],
+  "literal.false": [
+    "false"
+  ],
+  "literal.null": [
+    "nil"
+  ],
+  "literal.null.silent": false,
   "op.precedence": [
-    ["=", "<>", "<", ">", "<=", ">="],
-    ["+", "-", "or"],
-    ["*", "/", "div", "mod", "and"],
-    ["-", "not"]
+    [
+      "=",
+      "<>",
+      "<",
+      ">",
+      "<=",
+      ">="
+    ],
+    [
+      "+",
+      "-",
+      "or"
+    ],
+    [
+      "*",
+      "/",
+      "div",
+      "mod",
+      "and"
+    ],
+    [
+      "-",
+      "not"
+    ]
   ],
   "op.right_associative": [],
-  "op.add": ["+"],
-  "op.sub": ["-"],
-  "op.mul": ["*"],
-  "op.div": ["/"],
+  "op.add": [
+    "+"
+  ],
+  "op.sub": [
+    "-"
+  ],
+  "op.mul": [
+    "*"
+  ],
+  "op.div": [
+    "/"
+  ],
   "op.div.result": "real",
-  "op.quot": ["div"],
-  "op.rem": ["mod"],
+  "op.quot": [
+    "div"
+  ],
+  "op.rem": [
+    "mod"
+  ],
   "op.pow": [],
-  "op.eq": ["="],
-  "op.ne": ["<>"],
-  "op.lt": ["<"],
-  "op.le": ["<="],
-  "op.gt": [">"],
-  "op.ge": [">="],
-  "op.and": ["and"],
-  "op.or": ["or"],
-  "op.not": ["not"],
-  "op.negate": ["-"],
+  "op.eq": [
+    "="
+  ],
+  "op.ne": [
+    "<>"
+  ],
+  "op.lt": [
+    "<"
+  ],
+  "op.le": [
+    "<="
+  ],
+  "op.gt": [
+    ">"
+  ],
+  "op.ge": [
+    ">="
+  ],
+  "op.and": [
+    "and"
+  ],
+  "op.or": [
+    "or"
+  ],
+  "op.not": [
+    "not"
+  ],
+  "op.negate": [
+    "-"
+  ],
   "op.concat": [],
   "op.range": [],
-  "op.index.open": ["["],
-  "op.index.close": ["]"],
+  "op.index.open": [
+    "["
+  ],
+  "op.index.close": [
+    "]"
+  ],
   "op.index.strings": false,
   "op.pipe": [],
-  "stmt.assign": [":="],
-  "stmt.let": ["var"],
+  "stmt.assign": [
+    ":="
+  ],
+  "stmt.let": [
+    "var"
+  ],
   "stmt.let.mutable": [],
-  "stmt.let.annotation": [":"],
+  "stmt.let.annotation": [
+    ":"
+  ],
   "stmt.let.type_first": false,
-  "stmt.if": ["if"],
+  "stmt.if": [
+    "if"
+  ],
   "stmt.elif": [],
-  "stmt.else": ["else"],
-  "stmt.while": ["while"],
+  "stmt.else": [
+    "else"
+  ],
+  "stmt.while": [
+    "while"
+  ],
   "stmt.until": [],
   "stmt.for": [],
   "stmt.for.in": [],
   "stmt.foreach": [],
   "stmt.foreach.as": [],
   "stmt.foreach.pair": [],
-  "stmt.return": ["exit"],
-  "stmt.break": ["break"],
-  "stmt.continue": ["continue"],
-  "stmt.function": ["function", "procedure"],
-  "stmt.function.returns": [":"],
+  "stmt.return": [
+    "exit"
+  ],
+  "stmt.break": [
+    "break"
+  ],
+  "stmt.continue": [
+    "continue"
+  ],
+  "stmt.function": [
+    "function",
+    "procedure"
+  ],
+  "stmt.function.returns": [
+    ":"
+  ],
   "stmt.function.result_by_name": true,
   "stmt.pass": [],
   "stmt.emit": [],
@@ -105,13 +227,23 @@
   "stack.program.open": [],
   "stack.program.close": [],
   "builtin.emit": [],
-  "builtin.print": ["writeln"],
-  "builtin.write": ["write"],
+  "builtin.print": [
+    "writeln"
+  ],
+  "builtin.write": [
+    "write"
+  ],
   "builtin.print.placeholder": [],
-  "builtin.len": ["length"],
+  "builtin.len": [
+    "length"
+  ],
   "builtin.char_at": [],
-  "builtin.ord": ["ord"],
-  "builtin.chr": ["chr"],
+  "builtin.ord": [
+    "ord"
+  ],
+  "builtin.chr": [
+    "chr"
+  ],
   "builtin.typeof": [],
   "builtin.error": [],
   "builtin.extern": [],

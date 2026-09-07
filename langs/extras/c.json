@@ -2,35 +2,71 @@
   "$comment": "C: brace blocks, type-first declarations where a type word introduces a binding or, before a parameter list, a function; puts and printf with percent placeholders; main as the entry point. Loaded at run time from langs/extras/. Lines beginning with # (preprocessor directives) are dropped like comments. Pointers, casts, char literals, ++ and the three-clause for are omitted because the kernel has no counterpart; everything listed is C.",
   "format_version": 1,
   "language": "c",
-  "extensions": ["c"],
-  "lexical.comment_line": ["//", "#"],
-  "lexical.comment_block.open": ["/*"],
-  "lexical.comment_block.close": ["*/"],
-  "lexical.string_quotes": ["\""],
+  "extensions": [
+    "c"
+  ],
+  "lexical.comment_line": [
+    "//",
+    "#"
+  ],
+  "lexical.comment_block.open": [
+    "/*"
+  ],
+  "lexical.comment_block.close": [
+    "*/"
+  ],
+  "lexical.string_quotes": [
+    "\""
+  ],
   "lexical.raw_quotes": [],
-  "lexical.string_escapes": ["n", "t", "\\", "\""],
+  "lexical.string_escapes": [
+    "n",
+    "t",
+    "\\",
+    "\""
+  ],
   "lexical.prologue": [],
   "lexical.name_quote": [],
-  "lexical.number.decimal_point": ["."],
+  "lexical.number.decimal_point": [
+    "."
+  ],
   "lexical.number.base_marker": [],
   "lexical.number.exponent_marker": [],
-  "lexical.number.hex_prefix": ["0x"],
+  "lexical.number.hex_prefix": [
+    "0x"
+  ],
   "lexical.keywords_case_insensitive": false,
   "identifier.unicode": true,
   "identifier.variable_prefix": [],
   "identifier.case_insensitive": false,
   "block.style": "braces",
-  "block.open": ["{"],
-  "block.close": ["}"],
+  "block.open": [
+    "{"
+  ],
+  "block.close": [
+    "}"
+  ],
   "block.intro": [],
   "block.indent_size": null,
-  "stmt.terminator": [";"],
+  "stmt.terminator": [
+    ";"
+  ],
   "syntax.notation": "infix",
-  "syntax.group.open": ["("],
-  "syntax.group.close": [")"],
-  "syntax.call.open": ["("],
-  "syntax.call.separator": [","],
-  "syntax.call.close": [")"],
+  "syntax.group.open": [
+    "("
+  ],
+  "syntax.group.close": [
+    ")"
+  ],
+  "syntax.call.open": [
+    "("
+  ],
+  "syntax.call.separator": [
+    ","
+  ],
+  "syntax.call.close": [
+    ")"
+  ],
   "syntax.call.label": [],
   "syntax.array.open": [],
   "syntax.array.separator": [],
@@ -39,61 +75,145 @@
   "syntax.map.separator": [],
   "syntax.map.pair": [],
   "syntax.map.close": [],
-  "literal.true": ["true"],
-  "literal.false": ["false"],
-  "literal.null": ["NULL"],
+  "literal.true": [
+    "true"
+  ],
+  "literal.false": [
+    "false"
+  ],
+  "literal.null": [
+    "NULL"
+  ],
+  "literal.null.silent": false,
   "op.precedence": [
-    ["||"],
-    ["&&"],
-    ["==", "!="],
-    ["<", ">", "<=", ">="],
-    ["+", "-"],
-    ["*", "/", "%"],
-    ["!", "-"]
+    [
+      "||"
+    ],
+    [
+      "&&"
+    ],
+    [
+      "==",
+      "!="
+    ],
+    [
+      "<",
+      ">",
+      "<=",
+      ">="
+    ],
+    [
+      "+",
+      "-"
+    ],
+    [
+      "*",
+      "/",
+      "%"
+    ],
+    [
+      "!",
+      "-"
+    ]
   ],
   "op.right_associative": [],
-  "op.add": ["+"],
-  "op.sub": ["-"],
-  "op.mul": ["*"],
+  "op.add": [
+    "+"
+  ],
+  "op.sub": [
+    "-"
+  ],
+  "op.mul": [
+    "*"
+  ],
   "op.div": [],
   "op.div.result": null,
-  "op.quot": ["/"],
-  "op.rem": ["%"],
+  "op.quot": [
+    "/"
+  ],
+  "op.rem": [
+    "%"
+  ],
   "op.pow": [],
-  "op.eq": ["=="],
-  "op.ne": ["!="],
-  "op.lt": ["<"],
-  "op.le": ["<="],
-  "op.gt": [">"],
-  "op.ge": [">="],
-  "op.and": ["&&"],
-  "op.or": ["||"],
-  "op.not": ["!"],
-  "op.negate": ["-"],
+  "op.eq": [
+    "=="
+  ],
+  "op.ne": [
+    "!="
+  ],
+  "op.lt": [
+    "<"
+  ],
+  "op.le": [
+    "<="
+  ],
+  "op.gt": [
+    ">"
+  ],
+  "op.ge": [
+    ">="
+  ],
+  "op.and": [
+    "&&"
+  ],
+  "op.or": [
+    "||"
+  ],
+  "op.not": [
+    "!"
+  ],
+  "op.negate": [
+    "-"
+  ],
   "op.concat": [],
   "op.range": [],
-  "op.index.open": ["["],
-  "op.index.close": ["]"],
+  "op.index.open": [
+    "["
+  ],
+  "op.index.close": [
+    "]"
+  ],
   "op.index.strings": false,
   "op.pipe": [],
-  "stmt.assign": ["="],
-  "stmt.let": ["int", "long", "double", "float", "bool", "void"],
+  "stmt.assign": [
+    "="
+  ],
+  "stmt.let": [
+    "int",
+    "long",
+    "double",
+    "float",
+    "bool",
+    "void"
+  ],
   "stmt.let.mutable": [],
   "stmt.let.annotation": [],
   "stmt.let.type_first": true,
-  "stmt.if": ["if"],
+  "stmt.if": [
+    "if"
+  ],
   "stmt.elif": [],
-  "stmt.else": ["else"],
-  "stmt.while": ["while"],
+  "stmt.else": [
+    "else"
+  ],
+  "stmt.while": [
+    "while"
+  ],
   "stmt.until": [],
   "stmt.for": [],
   "stmt.for.in": [],
   "stmt.foreach": [],
   "stmt.foreach.as": [],
   "stmt.foreach.pair": [],
-  "stmt.return": ["return"],
-  "stmt.break": ["break"],
-  "stmt.continue": ["continue"],
+  "stmt.return": [
+    "return"
+  ],
+  "stmt.break": [
+    "break"
+  ],
+  "stmt.continue": [
+    "continue"
+  ],
   "stmt.function": [],
   "stmt.function.returns": [],
   "stmt.function.result_by_name": false,
@@ -108,10 +228,23 @@
   "stack.program.open": [],
   "stack.program.close": [],
   "builtin.emit": [],
-  "builtin.print": ["puts"],
-  "builtin.write": ["printf"],
-  "builtin.print.placeholder": ["%d", "%ld", "%f", "%lf", "%s", "%c"],
-  "builtin.len": ["strlen"],
+  "builtin.print": [
+    "puts"
+  ],
+  "builtin.write": [
+    "printf"
+  ],
+  "builtin.print.placeholder": [
+    "%d",
+    "%ld",
+    "%f",
+    "%lf",
+    "%s",
+    "%c"
+  ],
+  "builtin.len": [
+    "strlen"
+  ],
   "builtin.char_at": [],
   "builtin.ord": [],
   "builtin.chr": [],
@@ -132,7 +265,9 @@
   "system.args": [],
   "system.memoization": [],
   "system.real_default_precision": [],
-  "system.entry": ["main"],
+  "system.entry": [
+    "main"
+  ],
   "system.kind.integer": [],
   "system.kind.rational": [],
   "system.kind.real": [],

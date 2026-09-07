@@ -39,27 +39,27 @@ pub fn language_of(definition: &str) -> Result<String, String> {
 }
 
 /// Run `source` as the embedded language `language`.
-pub fn run(language: &str, source: &str, program_args: &[String]) -> Result<(), String> {
+pub fn run(language: &str, source: &str, program_args: &[String], request: &[(String, String, String)]) -> Result<(), String> {
     for text in BUILT_IN {
         if lang::identify(text)?.0 == language {
             let lang = Lang::parse(text).map_err(|e| format!("Error: definition of '{language}': {e}"))?;
-            return go(&lang, source, program_args);
+            return go(&lang, source, program_args, request);
         }
     }
     Err(format!("Error: Unknown language '{}'", language))
 }
 
 /// Run `source` under a definition given as JSON text.
-pub fn run_definition(definition: &str, source: &str, program_args: &[String]) -> Result<(), String> {
+pub fn run_definition(definition: &str, source: &str, program_args: &[String], request: &[(String, String, String)]) -> Result<(), String> {
     let lang = Lang::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
-    go(&lang, source, program_args)
+    go(&lang, source, program_args, request)
 }
 
-fn go(lang: &Lang, source: &str, program_args: &[String]) -> Result<(), String> {
-    go_inner(lang, source, program_args).map_err(|e| format!("{}: {}", lang.banner, e))
+fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String)]) -> Result<(), String> {
+    go_inner(lang, source, program_args, request).map_err(|e| format!("{}: {}", lang.banner, e))
 }
 
-fn go_inner(lang: &Lang, source: &str, program_args: &[String]) -> Result<(), String> {
+fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String)]) -> Result<(), String> {
     let tokens = layout::layout(lex::lex(source, lang)?, lang)?;
     let mut registry = compile::Registry::default();
     // The system names are globals whether or not the program mentions them.
@@ -70,11 +70,32 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String]) -> Result<(), St
     for (name, _) in &lang.sort_bindings {
         registry.slot(name);
     }
+    for (_, name) in &lang.request_bindings {
+        registry.slot(name);
+    }
     let program = compile::compile(&tokens, lang, &mut registry)?;
 
     let mut machine = engine::Engine::new(lang, registry.idents.clone());
     if let Some(name) = &lang.args_binding {
         machine.define(name, Value::text(&program_args.join(" ")));
+    }
+    // Every part of the request is a map of what it carries, under the
+    // name the definition gives it; the one for all of them holds what
+    // the query, the form and the cookies carry together.
+    for (group, name) in &lang.request_bindings {
+        let wanted: Vec<&str> = match group.as_str() {
+            "ALL" => vec!["GET", "POST", "COOKIE"],
+            other => vec![other],
+        };
+        let mut carried: Vec<(Value, Value)> = Vec::new();
+        for (_, key, value) in request.iter().filter(|(from, _, _)| wanted.contains(&from.as_str())) {
+            let key = Value::text(key);
+            match carried.iter_mut().find(|(k, _)| k.equals(&key)) {
+                Some(place) => place.1 = Value::text(value),
+                None => carried.push((key, Value::text(value))),
+            }
+        }
+        machine.define(name, Value::Map(std::rc::Rc::new(carried)));
     }
     for (name, kind) in &lang.sort_bindings {
         machine.define(name, engine::sort_value(*kind));

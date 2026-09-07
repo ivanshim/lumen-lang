@@ -58,7 +58,7 @@ syntax.group.open:L syntax.group.close:L \
 syntax.call.open:L syntax.call.separator:L syntax.call.close:L syntax.call.label:L \
 syntax.array.open:L syntax.array.separator:L syntax.array.close:L \
 syntax.map.open:L syntax.map.separator:L syntax.map.pair:L syntax.map.close:L \
-literal.true:L literal.false:L literal.null:L \
+literal.true:L literal.false:L literal.null:L literal.null.silent:B \
 op.precedence:T op.right_associative:L \
 op.add:L op.sub:L op.mul:L op.div:L op.div.result:O op.quot:L op.rem:L op.pow:L \
 op.eq:L op.ne:L op.lt:L op.le:L op.gt:L op.ge:L \

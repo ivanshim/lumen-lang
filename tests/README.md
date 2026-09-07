@@ -21,9 +21,11 @@ the definition or a kernel does not know, which the report records.
 The suites run on the two full kernels, stack8 and microcode7, which are
 the ones that implement the `ext.` labels the languages need beyond the
 core (see `langs/README.md`); the report scores each suite directory on
-each kernel and lists any test the two disagree on. `php/basic` is largely out of reach by its nature: most of it tests
-PHP's web behaviour, reading `$_POST`, `$_FILES`, `$_COOKIE` and
-`$_SERVER`, which a kernel run from a command line has nothing to put in.
+each kernel and lists any test the two disagree on. Much of `php/basic` tests PHP's web behaviour, reading `$_POST`,
+`$_COOKIE` and `$_SERVER`. The runner gives each test the request its
+`--GET--`, `--POST--`, `--COOKIE--` and `--ENV--` sections describe, the
+way a web server would, so those tests run here as they run there. What
+is still out of reach there is uploads, which nothing fills in yet.
 The suites are not part of `test.sh`: they measure distance, they do not gate. Run them with
 
 ```bash

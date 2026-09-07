@@ -148,6 +148,26 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   `scripts/port_examples.py` now reports the first unwritable callee in
   source order, so `docs/LIBRARY_PORTS.md` no longer changes between
   runs.
+- **The web**: a program can answer web requests. The host gathers a
+  request the way a web server has always handed one to a program — the
+  parts of it in the environment, the body on the input — and hands the
+  named values to the kernel, which binds them under whatever the
+  definition calls them: `ext.system.request.query`, `.form`,
+  `.cookies`, `.server`, `.env`, `.all` and `.files`, which PHP calls
+  `$_GET`, `$_POST`, `$_COOKIE`, `$_SERVER`, `$_ENV`, `$_REQUEST` and
+  `$_FILES`. `lumen-lang --serve 8080 site.php` answers requests on that
+  address by running the program once for each, so a served run is an
+  ordinary run; a program may write headers before a blank line, as CGI
+  has always let it. Run without `--serve`, the same program reads
+  whatever request the environment holds, so it works behind any web
+  server that speaks CGI. Two labels come with it: `ext.op.index.absent`
+  (reading a place an array does not hold gives nothing rather than
+  stopping) and the core label `literal.null.silent` (nothing shows as
+  no text at all), which every kernel reads, so the core is 133 labels.
+  `scripts/reference_tests.py` gives each test the request its `--GET--`,
+  `--POST--`, `--COOKIE--` and `--ENV--` sections describe.
+  `tests/php/basic` goes from 7 passing and 94 errors to 13 passing and
+  53; PHP altogether holds 45 passing on both kernels.
 - **References, and PHP's own library written in PHP**: `ext.op.reference`
   makes one name stand for another's cell. `$b = &$a` ties two names to
   one cell; a parameter written `&$x` is given the caller's cell, so what

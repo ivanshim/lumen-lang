@@ -2,101 +2,240 @@
   "$comment": "Rust: brace blocks, let bindings, integer division with a slash, no power operator, a main function as the entry point. println! and friends are builtin names ending in an operator character; v.len(), v.push(x) and x.to_string() are method calls, the pipe spelled with a dot.",
   "format_version": 1,
   "language": "rust",
-  "extensions": ["rs"],
-  "lexical.comment_line": ["//"],
-  "lexical.comment_block.open": ["/*"],
-  "lexical.comment_block.close": ["*/"],
-  "lexical.string_quotes": ["\""],
+  "extensions": [
+    "rs"
+  ],
+  "lexical.comment_line": [
+    "//"
+  ],
+  "lexical.comment_block.open": [
+    "/*"
+  ],
+  "lexical.comment_block.close": [
+    "*/"
+  ],
+  "lexical.string_quotes": [
+    "\""
+  ],
   "lexical.raw_quotes": [],
-  "lexical.string_escapes": ["n", "t", "\\", "\""],
+  "lexical.string_escapes": [
+    "n",
+    "t",
+    "\\",
+    "\""
+  ],
   "lexical.prologue": [],
   "lexical.name_quote": [],
-  "lexical.number.decimal_point": ["."],
+  "lexical.number.decimal_point": [
+    "."
+  ],
   "lexical.number.base_marker": [],
   "lexical.number.exponent_marker": [],
-  "lexical.number.hex_prefix": ["0x"],
+  "lexical.number.hex_prefix": [
+    "0x"
+  ],
   "lexical.keywords_case_insensitive": false,
   "identifier.unicode": true,
   "identifier.variable_prefix": [],
   "identifier.case_insensitive": false,
   "block.style": "braces",
-  "block.open": ["{"],
-  "block.close": ["}"],
+  "block.open": [
+    "{"
+  ],
+  "block.close": [
+    "}"
+  ],
   "block.intro": [],
   "block.indent_size": null,
-  "stmt.terminator": [";"],
+  "stmt.terminator": [
+    ";"
+  ],
   "syntax.notation": "infix",
-  "syntax.group.open": ["("],
-  "syntax.group.close": [")"],
-  "syntax.call.open": ["("],
-  "syntax.call.separator": [","],
-  "syntax.call.close": [")"],
+  "syntax.group.open": [
+    "("
+  ],
+  "syntax.group.close": [
+    ")"
+  ],
+  "syntax.call.open": [
+    "("
+  ],
+  "syntax.call.separator": [
+    ","
+  ],
+  "syntax.call.close": [
+    ")"
+  ],
   "syntax.call.label": [],
-  "syntax.array.open": ["["],
-  "syntax.array.separator": [","],
-  "syntax.array.close": ["]"],
+  "syntax.array.open": [
+    "["
+  ],
+  "syntax.array.separator": [
+    ","
+  ],
+  "syntax.array.close": [
+    "]"
+  ],
   "syntax.map.open": [],
   "syntax.map.separator": [],
   "syntax.map.pair": [],
   "syntax.map.close": [],
-  "literal.true": ["true"],
-  "literal.false": ["false"],
-  "literal.null": ["None"],
+  "literal.true": [
+    "true"
+  ],
+  "literal.false": [
+    "false"
+  ],
+  "literal.null": [
+    "None"
+  ],
+  "literal.null.silent": false,
   "op.precedence": [
-    [".."],
-    ["||"],
-    ["&&"],
-    ["==", "!=", "<", ">", "<=", ">="],
-    ["+", "-"],
-    ["*", "/", "%"],
-    ["-", "!"],
-    ["."]
+    [
+      ".."
+    ],
+    [
+      "||"
+    ],
+    [
+      "&&"
+    ],
+    [
+      "==",
+      "!=",
+      "<",
+      ">",
+      "<=",
+      ">="
+    ],
+    [
+      "+",
+      "-"
+    ],
+    [
+      "*",
+      "/",
+      "%"
+    ],
+    [
+      "-",
+      "!"
+    ],
+    [
+      "."
+    ]
   ],
   "op.right_associative": [],
-  "op.add": ["+"],
-  "op.sub": ["-"],
-  "op.mul": ["*"],
+  "op.add": [
+    "+"
+  ],
+  "op.sub": [
+    "-"
+  ],
+  "op.mul": [
+    "*"
+  ],
   "op.div": [],
   "op.div.result": null,
-  "op.quot": ["/"],
-  "op.rem": ["%"],
+  "op.quot": [
+    "/"
+  ],
+  "op.rem": [
+    "%"
+  ],
   "op.pow": [],
-  "op.eq": ["=="],
-  "op.ne": ["!="],
-  "op.lt": ["<"],
-  "op.le": ["<="],
-  "op.gt": [">"],
-  "op.ge": [">="],
-  "op.and": ["&&"],
-  "op.or": ["||"],
-  "op.not": ["!"],
-  "op.negate": ["-"],
+  "op.eq": [
+    "=="
+  ],
+  "op.ne": [
+    "!="
+  ],
+  "op.lt": [
+    "<"
+  ],
+  "op.le": [
+    "<="
+  ],
+  "op.gt": [
+    ">"
+  ],
+  "op.ge": [
+    ">="
+  ],
+  "op.and": [
+    "&&"
+  ],
+  "op.or": [
+    "||"
+  ],
+  "op.not": [
+    "!"
+  ],
+  "op.negate": [
+    "-"
+  ],
   "op.concat": [],
-  "op.range": [".."],
-  "op.index.open": ["["],
-  "op.index.close": ["]"],
+  "op.range": [
+    ".."
+  ],
+  "op.index.open": [
+    "["
+  ],
+  "op.index.close": [
+    "]"
+  ],
   "op.index.strings": false,
-  "op.pipe": ["."],
-  "stmt.assign": ["="],
-  "stmt.let": ["let"],
-  "stmt.let.mutable": ["mut"],
-  "stmt.let.annotation": [":"],
+  "op.pipe": [
+    "."
+  ],
+  "stmt.assign": [
+    "="
+  ],
+  "stmt.let": [
+    "let"
+  ],
+  "stmt.let.mutable": [
+    "mut"
+  ],
+  "stmt.let.annotation": [
+    ":"
+  ],
   "stmt.let.type_first": false,
-  "stmt.if": ["if"],
+  "stmt.if": [
+    "if"
+  ],
   "stmt.elif": [],
-  "stmt.else": ["else"],
-  "stmt.while": ["while"],
+  "stmt.else": [
+    "else"
+  ],
+  "stmt.while": [
+    "while"
+  ],
   "stmt.until": [],
-  "stmt.for": ["for"],
-  "stmt.for.in": ["in"],
+  "stmt.for": [
+    "for"
+  ],
+  "stmt.for.in": [
+    "in"
+  ],
   "stmt.foreach": [],
   "stmt.foreach.as": [],
   "stmt.foreach.pair": [],
-  "stmt.return": ["return"],
-  "stmt.break": ["break"],
-  "stmt.continue": ["continue"],
-  "stmt.function": ["fn"],
-  "stmt.function.returns": ["->"],
+  "stmt.return": [
+    "return"
+  ],
+  "stmt.break": [
+    "break"
+  ],
+  "stmt.continue": [
+    "continue"
+  ],
+  "stmt.function": [
+    "fn"
+  ],
+  "stmt.function.returns": [
+    "->"
+  ],
   "stmt.function.result_by_name": false,
   "stmt.pass": [],
   "stmt.emit": [],
@@ -109,31 +248,47 @@
   "stack.program.open": [],
   "stack.program.close": [],
   "builtin.emit": [],
-  "builtin.print": ["println!"],
-  "builtin.write": ["print!"],
-  "builtin.print.placeholder": ["{}"],
-  "builtin.len": ["len"],
+  "builtin.print": [
+    "println!"
+  ],
+  "builtin.write": [
+    "print!"
+  ],
+  "builtin.print.placeholder": [
+    "{}"
+  ],
+  "builtin.len": [
+    "len"
+  ],
   "builtin.char_at": [],
   "builtin.ord": [],
   "builtin.chr": [],
   "builtin.typeof": [],
-  "builtin.error": ["panic!"],
+  "builtin.error": [
+    "panic!"
+  ],
   "builtin.extern": [],
   "builtin.range": [],
   "builtin.real": [],
   "builtin.num": [],
   "builtin.den": [],
-  "builtin.push": ["push"],
+  "builtin.push": [
+    "push"
+  ],
   "builtin.get": [],
   "builtin.put": [],
   "builtin.precision": [],
-  "builtin.to_string": ["to_string"],
+  "builtin.to_string": [
+    "to_string"
+  ],
   "builtin.to_int": [],
   "builtin.to_real": [],
   "system.args": [],
   "system.memoization": [],
   "system.real_default_precision": [],
-  "system.entry": ["main"],
+  "system.entry": [
+    "main"
+  ],
   "system.kind.integer": [],
   "system.kind.rational": [],
   "system.kind.real": [],

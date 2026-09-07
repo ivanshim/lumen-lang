@@ -2,102 +2,241 @@
   "$comment": "Swift: brace blocks with no parentheses around conditions, let and var bindings with colon annotations, func with -> return types and labelled arguments at call sites, half-open ranges with ..<, nil, method calls (arr.append(x), s.count) as the pipe spelled with a dot. Loaded at run time from langs/extras/. Optionals, closures, string interpolation and the count property are omitted because the kernel has no counterpart; everything listed is Swift.",
   "format_version": 1,
   "language": "swift",
-  "extensions": ["swift"],
-  "lexical.comment_line": ["//"],
-  "lexical.comment_block.open": ["/*"],
-  "lexical.comment_block.close": ["*/"],
-  "lexical.string_quotes": ["\""],
+  "extensions": [
+    "swift"
+  ],
+  "lexical.comment_line": [
+    "//"
+  ],
+  "lexical.comment_block.open": [
+    "/*"
+  ],
+  "lexical.comment_block.close": [
+    "*/"
+  ],
+  "lexical.string_quotes": [
+    "\""
+  ],
   "lexical.raw_quotes": [],
-  "lexical.string_escapes": ["n", "t", "\\", "\""],
+  "lexical.string_escapes": [
+    "n",
+    "t",
+    "\\",
+    "\""
+  ],
   "lexical.prologue": [],
   "lexical.name_quote": [],
-  "lexical.number.decimal_point": ["."],
+  "lexical.number.decimal_point": [
+    "."
+  ],
   "lexical.number.base_marker": [],
   "lexical.number.exponent_marker": [],
-  "lexical.number.hex_prefix": ["0x"],
+  "lexical.number.hex_prefix": [
+    "0x"
+  ],
   "lexical.keywords_case_insensitive": false,
   "identifier.unicode": true,
   "identifier.variable_prefix": [],
   "identifier.case_insensitive": false,
   "block.style": "braces",
-  "block.open": ["{"],
-  "block.close": ["}"],
+  "block.open": [
+    "{"
+  ],
+  "block.close": [
+    "}"
+  ],
   "block.intro": [],
   "block.indent_size": null,
   "stmt.terminator": [],
   "syntax.notation": "infix",
-  "syntax.group.open": ["("],
-  "syntax.group.close": [")"],
-  "syntax.call.open": ["("],
-  "syntax.call.separator": [","],
-  "syntax.call.close": [")"],
-  "syntax.call.label": [":"],
-  "syntax.array.open": ["["],
-  "syntax.array.separator": [","],
-  "syntax.array.close": ["]"],
+  "syntax.group.open": [
+    "("
+  ],
+  "syntax.group.close": [
+    ")"
+  ],
+  "syntax.call.open": [
+    "("
+  ],
+  "syntax.call.separator": [
+    ","
+  ],
+  "syntax.call.close": [
+    ")"
+  ],
+  "syntax.call.label": [
+    ":"
+  ],
+  "syntax.array.open": [
+    "["
+  ],
+  "syntax.array.separator": [
+    ","
+  ],
+  "syntax.array.close": [
+    "]"
+  ],
   "syntax.map.open": [],
   "syntax.map.separator": [],
   "syntax.map.pair": [],
   "syntax.map.close": [],
-  "literal.true": ["true"],
-  "literal.false": ["false"],
-  "literal.null": ["nil"],
+  "literal.true": [
+    "true"
+  ],
+  "literal.false": [
+    "false"
+  ],
+  "literal.null": [
+    "nil"
+  ],
+  "literal.null.silent": false,
   "op.precedence": [
-    ["||"],
-    ["&&"],
-    ["==", "!="],
-    ["<", ">", "<=", ">="],
-    ["..<"],
-    ["+", "-"],
-    ["*", "/", "%"],
-    ["!", "-"],
-    ["."]
+    [
+      "||"
+    ],
+    [
+      "&&"
+    ],
+    [
+      "==",
+      "!="
+    ],
+    [
+      "<",
+      ">",
+      "<=",
+      ">="
+    ],
+    [
+      "..<"
+    ],
+    [
+      "+",
+      "-"
+    ],
+    [
+      "*",
+      "/",
+      "%"
+    ],
+    [
+      "!",
+      "-"
+    ],
+    [
+      "."
+    ]
   ],
   "op.right_associative": [],
-  "op.add": ["+"],
-  "op.sub": ["-"],
-  "op.mul": ["*"],
+  "op.add": [
+    "+"
+  ],
+  "op.sub": [
+    "-"
+  ],
+  "op.mul": [
+    "*"
+  ],
   "op.div": [],
   "op.div.result": null,
-  "op.quot": ["/"],
-  "op.rem": ["%"],
+  "op.quot": [
+    "/"
+  ],
+  "op.rem": [
+    "%"
+  ],
   "op.pow": [],
-  "op.eq": ["=="],
-  "op.ne": ["!="],
-  "op.lt": ["<"],
-  "op.le": ["<="],
-  "op.gt": [">"],
-  "op.ge": [">="],
-  "op.and": ["&&"],
-  "op.or": ["||"],
-  "op.not": ["!"],
-  "op.negate": ["-"],
+  "op.eq": [
+    "=="
+  ],
+  "op.ne": [
+    "!="
+  ],
+  "op.lt": [
+    "<"
+  ],
+  "op.le": [
+    "<="
+  ],
+  "op.gt": [
+    ">"
+  ],
+  "op.ge": [
+    ">="
+  ],
+  "op.and": [
+    "&&"
+  ],
+  "op.or": [
+    "||"
+  ],
+  "op.not": [
+    "!"
+  ],
+  "op.negate": [
+    "-"
+  ],
   "op.concat": [],
-  "op.range": ["..<"],
-  "op.index.open": ["["],
-  "op.index.close": ["]"],
+  "op.range": [
+    "..<"
+  ],
+  "op.index.open": [
+    "["
+  ],
+  "op.index.close": [
+    "]"
+  ],
   "op.index.strings": false,
-  "op.pipe": ["."],
-  "stmt.assign": ["="],
-  "stmt.let": ["let", "var"],
+  "op.pipe": [
+    "."
+  ],
+  "stmt.assign": [
+    "="
+  ],
+  "stmt.let": [
+    "let",
+    "var"
+  ],
   "stmt.let.mutable": [],
-  "stmt.let.annotation": [":"],
+  "stmt.let.annotation": [
+    ":"
+  ],
   "stmt.let.type_first": false,
-  "stmt.if": ["if"],
+  "stmt.if": [
+    "if"
+  ],
   "stmt.elif": [],
-  "stmt.else": ["else"],
-  "stmt.while": ["while"],
+  "stmt.else": [
+    "else"
+  ],
+  "stmt.while": [
+    "while"
+  ],
   "stmt.until": [],
-  "stmt.for": ["for"],
-  "stmt.for.in": ["in"],
+  "stmt.for": [
+    "for"
+  ],
+  "stmt.for.in": [
+    "in"
+  ],
   "stmt.foreach": [],
   "stmt.foreach.as": [],
   "stmt.foreach.pair": [],
-  "stmt.return": ["return"],
-  "stmt.break": ["break"],
-  "stmt.continue": ["continue"],
-  "stmt.function": ["func"],
-  "stmt.function.returns": ["->"],
+  "stmt.return": [
+    "return"
+  ],
+  "stmt.break": [
+    "break"
+  ],
+  "stmt.continue": [
+    "continue"
+  ],
+  "stmt.function": [
+    "func"
+  ],
+  "stmt.function.returns": [
+    "->"
+  ],
   "stmt.function.result_by_name": false,
   "stmt.pass": [],
   "stmt.emit": [],
@@ -110,27 +249,41 @@
   "stack.program.open": [],
   "stack.program.close": [],
   "builtin.emit": [],
-  "builtin.print": ["print"],
+  "builtin.print": [
+    "print"
+  ],
   "builtin.write": [],
   "builtin.print.placeholder": [],
-  "builtin.len": ["count"],
+  "builtin.len": [
+    "count"
+  ],
   "builtin.char_at": [],
   "builtin.ord": [],
   "builtin.chr": [],
   "builtin.typeof": [],
-  "builtin.error": ["fatalError"],
+  "builtin.error": [
+    "fatalError"
+  ],
   "builtin.extern": [],
   "builtin.range": [],
   "builtin.real": [],
   "builtin.num": [],
   "builtin.den": [],
-  "builtin.push": ["append"],
+  "builtin.push": [
+    "append"
+  ],
   "builtin.get": [],
   "builtin.put": [],
   "builtin.precision": [],
-  "builtin.to_string": ["String"],
-  "builtin.to_int": ["Int"],
-  "builtin.to_real": ["Double"],
+  "builtin.to_string": [
+    "String"
+  ],
+  "builtin.to_int": [
+    "Int"
+  ],
+  "builtin.to_real": [
+    "Double"
+  ],
   "system.args": [],
   "system.memoization": [],
   "system.real_default_precision": [],

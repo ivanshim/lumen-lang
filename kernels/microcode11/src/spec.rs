@@ -36,7 +36,7 @@ const SCHEMA: &[(&str, Shape)] = &[
     ("syntax.call.open", Words), ("syntax.call.separator", Words), ("syntax.call.close", Words), ("syntax.call.label", Words),
     ("syntax.array.open", Words), ("syntax.array.separator", Words), ("syntax.array.close", Words),
     ("syntax.map.open", Words), ("syntax.map.separator", Words), ("syntax.map.pair", Words), ("syntax.map.close", Words),
-    ("literal.true", Words), ("literal.false", Words), ("literal.null", Words),
+    ("literal.true", Words), ("literal.false", Words), ("literal.null", Words), ("literal.null.silent", Flag),
     ("op.precedence", Tiers), ("op.right_associative", Words),
     ("op.add", Words), ("op.sub", Words), ("op.mul", Words), ("op.div", Words), ("op.div.result", TextOrNull),
     ("op.quot", Words), ("op.rem", Words), ("op.pow", Words),

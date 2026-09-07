@@ -74,6 +74,9 @@ pub struct Lang {
     pub true_words: Vec<String>,
     pub false_words: Vec<String>,
     pub null_words: Vec<String>,
+    /// Nothing is shown as no text at all, rather than as the word a
+    /// program writes for it: how PHP shows it.
+    pub null_silent: bool,
     pub dyadic: HashMap<String, Operator>,
     pub monadic: HashMap<String, Operator>,
     pub pipe_words: Vec<String>,
@@ -182,6 +185,12 @@ pub struct Lang {
     pub catch_between: Option<String>,
     /// The sign that makes one name stand for another's cell.
     pub reference_mark: Option<String>,
+    /// Reading a place an array does not hold gives nothing, rather
+    /// than stopping the program.
+    pub absent_index: bool,
+    /// What the language calls the parts of a web request: the name for
+    /// each group the host gathers, and one for all of them together.
+    pub request_bindings: Vec<(String, String)>,
 }
 
 /// Every tag with its shape: w a word list, s a string, b a switch,
@@ -199,7 +208,7 @@ w stmt.terminator | s syntax.notation | w syntax.group.open | w syntax.group.clo
 w syntax.call.open | w syntax.call.separator | w syntax.call.close | w syntax.call.label
 w syntax.array.open | w syntax.array.separator | w syntax.array.close | w syntax.map.open
 w syntax.map.separator | w syntax.map.pair | w syntax.map.close | w literal.true
-w literal.false | w literal.null | t op.precedence | w op.right_associative
+w literal.false | w literal.null | b literal.null.silent | t op.precedence | w op.right_associative
 w op.add | w op.sub | w op.mul | w op.div
 o op.div.result | w op.quot | w op.rem | w op.pow
 w op.eq | w op.ne | w op.lt | w op.le
@@ -239,6 +248,8 @@ w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.modifier
 w ext.op.member | w ext.op.scope | w ext.op.instanceof | w ext.stmt.class.parent
 w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.try | w ext.stmt.catch
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
+w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
+w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | b ext.op.index.absent
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -698,6 +709,7 @@ impl Lang {
             true_words: r.strings("literal.true")?,
             false_words: r.strings("literal.false")?,
             null_words: r.strings("literal.null")?,
+            null_silent: r.flag("literal.null.silent")?,
             dyadic: binary,
             monadic: unary,
             pipe_words: pipes,
@@ -785,6 +797,22 @@ impl Lang {
             throw_words: r.strings("ext.stmt.throw")?,
             catch_between: r.head("ext.stmt.catch.separator")?,
             reference_mark: r.head("ext.op.reference")?,
+            absent_index: r.flag("ext.op.index.absent")?,
+            request_bindings: {
+                let groups = [
+                    ("GET", "ext.system.request.query"), ("POST", "ext.system.request.form"),
+                    ("COOKIE", "ext.system.request.cookies"), ("SERVER", "ext.system.request.server"),
+                    ("ENV", "ext.system.request.env"), ("FILES", "ext.system.request.files"),
+                    ("ALL", "ext.system.request.all"),
+                ];
+                let mut named = Vec::new();
+                for (group, tag) in groups {
+                    if let Some(name) = r.head(tag)? {
+                        named.push((group.to_string(), name));
+                    }
+                }
+                named
+            },
         };
         if !lang.try_words.is_empty() && lang.catch_words.is_empty() {
             return Err("ext.stmt.try needs ext.stmt.catch".to_string());

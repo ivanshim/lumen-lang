@@ -17,26 +17,24 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 7, differs 13, error 94, skipped 0 | pass 7, differs 13, error 94, skipped 0 |
+| `php/basic` | 114 | pass 13, differs 48, error 53, skipped 0 | pass 13, differs 48, error 53, skipped 0 |
 | `php/func` | 14 | pass 2, differs 2, error 10, skipped 0 | pass 2, differs 2, error 10, skipped 0 |
-| `php/lang` | 213 | pass 30, differs 18, error 163, skipped 2 | pass 30, differs 18, error 163, skipped 2 |
+| `php/lang` | 213 | pass 30, differs 20, error 161, skipped 2 | pass 30, differs 20, error 161, skipped 2 |
 | `php/lang/constants` | 2 | pass 1, differs 1, error 0, skipped 0 | pass 1, differs 1, error 0, skipped 0 |
 | `php/lang/integer_literals` | 6 | pass 0, differs 0, error 6, skipped 0 | pass 0, differs 0, error 6, skipped 0 |
 | `php/lang/operators` | 64 | pass 0, differs 21, error 43, skipped 0 | pass 0, differs 21, error 43, skipped 0 |
 | `php/lang/string` | 9 | pass 1, differs 7, error 1, skipped 0 | pass 1, differs 7, error 1, skipped 0 |
-| all | 422 | pass 41, differs 62, error 317, skipped 2 | pass 41, differs 62, error 317, skipped 2 |
+| all | 422 | pass 47, differs 99, error 274, skipped 2 | pass 47, differs 99, error 274, skipped 2 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 62 |
-| Undefined variable: $_FILES | 23 |
+| ran, printed something else | 99 |
 | Unexpected token: ? | 20 |
-| Undefined variable: $_POST | 19 |
 | Unexpected token: < | 12 |
+| } | 8 |
 | Unexpected token: & | 8 |
 | Expected identifier as the foreach value, got '&' | 8 |
 | Cannot coerce '<number>' to number | 8 |
-| Undefined variable: $_SERVER | 7 |
 | Undefined variable: eval | 7 |
 | Expected '{' to open the class, got 'implements' | 7 |
 | Unexpected character '$' | 6 |
@@ -45,10 +43,11 @@ is listed, since the full kernels are meant to behave alike.
 | static belongs inside a function | 5 |
 | Undefined variable: include | 5 |
 | Expected '{' to open the class, got ' | 5 |
-| Undefined variable: $_COOKIE | 4 |
 | Unexpected token: , | 4 |
 | Unexpected token: \| | 3 |
+| Cannot reassign $argv (system-provided immutable value) | 3 |
 | Unexpected character '@' | 3 |
+| Undefined variable: getenv | 3 |
 | Undefined variable: ob_start | 3 |
 | Undefined variable: var_export | 3 |
 | Unexpected token: : | 3 |
@@ -59,7 +58,6 @@ is listed, since the full kernels are meant to behave alike.
 | --- testing: '<number>' --- | 3 |
 | Unexpected token: -> | 3 |
 | Unexpected token: . | 2 |
-| Undefined variable: getenv | 2 |
 | Expected an expression | 2 |
 | Undefined variable: __DIR__ | 2 |
 | Unexpected token: { | 2 |
@@ -68,6 +66,8 @@ is listed, since the full kernels are meant to behave alike.
 | Expected ')' after the foreach names, got '[' | 2 |
 | Unexpected token: } | 2 |
 | Undefined variable: trigger_error | 2 |
+| Undefined variable: stdClass | 2 |
+| no --FILE-- section | 2 |
 
 ### Reserved words: 38 of 68 spelled
 
@@ -196,63 +196,63 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | Test | stack8 | microcode7 | Reason (stack8) |
 |---|---|---|---|
 | `php/basic/001.phpt` | pass | pass |  |
-| `php/basic/002.phpt` | error | error | Undefined variable: $_POST |
-| `php/basic/003.phpt` | error | error | Undefined variable: $_POST |
-| `php/basic/004.phpt` | error | error | Undefined variable: $_POST |
-| `php/basic/005.phpt` | error | error | Undefined variable: $_POST |
+| `php/basic/002.phpt` | pass | pass |  |
+| `php/basic/003.phpt` | pass | pass |  |
+| `php/basic/004.phpt` | pass | pass |  |
+| `php/basic/005.phpt` | pass | pass |  |
 | `php/basic/006.phpt` | pass | pass |  |
 | `php/basic/007.phpt` | pass | pass |  |
 | `php/basic/008.phpt` | pass | pass |  |
 | `php/basic/009.phpt` | pass | pass |  |
 | `php/basic/010.phpt` | error | error | Unexpected token: \| |
-| `php/basic/011.phpt` | error | error | Undefined variable: $_SERVER |
-| `php/basic/011_empty_query.phpt` | error | error | Undefined variable: $_SERVER |
-| `php/basic/011_register_argc_argv_disabled.phpt` | error | error | Undefined variable: $_SERVER |
-| `php/basic/011_windows.phpt` | error | error | Undefined variable: $_SERVER |
-| `php/basic/012.phpt` | error | error | Undefined variable: $_SERVER |
+| `php/basic/011.phpt` | error | error | Cannot reassign $argv (system-provided immutable value) |
+| `php/basic/011_empty_query.phpt` | differs | differs | ran, printed something else |
+| `php/basic/011_register_argc_argv_disabled.phpt` | differs | differs | ran, printed something else |
+| `php/basic/011_windows.phpt` | error | error | Cannot reassign $argv (system-provided immutable value) |
+| `php/basic/012.phpt` | error | error | Cannot reassign $argv (system-provided immutable value) |
 | `php/basic/012_register_argc_argv_disabled.phpt` | error | error | Undefined variable: $argc |
-| `php/basic/013.phpt` | error | error | Undefined variable: $_POST |
-| `php/basic/014.phpt` | error | error | Undefined variable: $_POST |
-| `php/basic/015.phpt` | error | error | Undefined variable: $_POST |
-| `php/basic/016.phpt` | error | error | Undefined variable: $_POST |
-| `php/basic/017.phpt` | error | error | Undefined variable: $_POST |
-| `php/basic/018.phpt` | error | error | Undefined variable: $_POST |
-| `php/basic/019.phpt` | error | error | Undefined variable: $_POST |
-| `php/basic/020.phpt` | error | error | Undefined variable: $_POST |
-| `php/basic/021.phpt` | error | error | Undefined variable: $_FILES |
-| `php/basic/022.phpt` | error | error | Undefined variable: $_COOKIE |
-| `php/basic/023.phpt` | error | error | Undefined variable: $_COOKIE |
-| `php/basic/025.phpt` | error | error | Undefined variable: $_POST |
-| `php/basic/028.phpt` | error | error | Undefined variable: $_POST |
-| `php/basic/029.phpt` | error | error | Undefined variable: $_FILES |
-| `php/basic/030.phpt` | error | error | Undefined variable: $_POST |
-| `php/basic/031.phpt` | error | error | Undefined variable: $_POST |
-| `php/basic/032.phpt` | error | error | Undefined variable: $_POST |
+| `php/basic/013.phpt` | differs | differs | ran, printed something else |
+| `php/basic/014.phpt` | differs | differs | ran, printed something else |
+| `php/basic/015.phpt` | differs | differs | ran, printed something else |
+| `php/basic/016.phpt` | differs | differs | ran, printed something else |
+| `php/basic/017.phpt` | differs | differs | ran, printed something else |
+| `php/basic/018.phpt` | differs | differs | ran, printed something else |
+| `php/basic/019.phpt` | differs | differs | ran, printed something else |
+| `php/basic/020.phpt` | differs | differs | ran, printed something else |
+| `php/basic/021.phpt` | differs | differs | ran, printed something else |
+| `php/basic/022.phpt` | differs | differs | ran, printed something else |
+| `php/basic/023.phpt` | differs | differs | ran, printed something else |
+| `php/basic/025.phpt` | error | error | Undefined variable: $HTTP_RAW_POST_DATA |
+| `php/basic/028.phpt` | differs | differs | ran, printed something else |
+| `php/basic/029.phpt` | differs | differs | ran, printed something else |
+| `php/basic/030.phpt` | differs | differs | ran, printed something else |
+| `php/basic/031.phpt` | differs | differs | ran, printed something else |
+| `php/basic/032.phpt` | differs | differs | ran, printed something else |
 | `php/basic/GHSA-9pqp-7h25-4f32.phpt` | error | error | Unexpected token: . |
 | `php/basic/array_key_exists_null_deprecation.phpt` | differs | differs | ran, printed something else |
-| `php/basic/array_null_offset_deprecation.phpt` | error | error | Undefined array key null |
+| `php/basic/array_null_offset_deprecation.phpt` | error | error | baz |
 | `php/basic/bug20539.phpt` | error | error | Unexpected character '@' |
-| `php/basic/bug29971.phpt` | error | error | Undefined variable: $_ENV |
+| `php/basic/bug29971.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug31875.phpt` | error | error | Undefined variable: get_defined_functions |
 | `php/basic/bug45986.phpt` | error | error | Undefined variable: rename |
-| `php/basic/bug53180.phpt` | error | error | Undefined variable: $_POST |
+| `php/basic/bug53180.phpt` | pass | pass |  |
 | `php/basic/bug54514.phpt` | error | error | Undefined variable: getenv |
-| `php/basic/bug55500.phpt` | error | error | Undefined variable: $_FILES |
-| `php/basic/bug61000.phpt` | error | error | Undefined variable: $_GET |
+| `php/basic/bug55500.phpt` | differs | differs | ran, printed something else |
+| `php/basic/bug61000.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug67198.phpt` | error | error | Expected an expression |
 | `php/basic/bug67988.phpt` | error | error | bool(false) |
 | `php/basic/bug71273.phpt` | error | error | Undefined variable: getenv |
 | `php/basic/bug73969.phpt` | error | error | static belongs inside a function |
-| `php/basic/bug78236.phpt` | error | error | Undefined variable: $_POST |
-| `php/basic/bug78929.phpt` | error | error | Undefined variable: $_COOKIE |
-| `php/basic/bug79699.phpt` | error | error | Undefined variable: $_COOKIE |
+| `php/basic/bug78236.phpt` | differs | differs | ran, printed something else |
+| `php/basic/bug78929.phpt` | differs | differs | ran, printed something else |
+| `php/basic/bug79699.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug80384.phpt` | error | error | Undefined variable: __DIR__ |
 | `php/basic/build_date.phpt` | error | error | Undefined variable: PHP_BUILD_DATE |
 | `php/basic/consistent_float_string_casts.phpt` | error | error | Undefined variable: LC_ALL |
-| `php/basic/enable_post_data_reading_01.phpt` | error | error | Undefined variable: $_FILES |
-| `php/basic/enable_post_data_reading_02.phpt` | error | error | Undefined variable: $_FILES |
-| `php/basic/enable_post_data_reading_03.phpt` | error | error | Undefined variable: $_FILES |
-| `php/basic/enable_post_data_reading_04.phpt` | error | error | Undefined variable: $_FILES |
+| `php/basic/enable_post_data_reading_01.phpt` | error | error | } |
+| `php/basic/enable_post_data_reading_02.phpt` | error | error | } |
+| `php/basic/enable_post_data_reading_03.phpt` | error | error | } |
+| `php/basic/enable_post_data_reading_04.phpt` | error | error | } |
 | `php/basic/enable_post_data_reading_05.phpt` | error | error | Unexpected token: ? |
 | `php/basic/enable_post_data_reading_06.phpt` | error | error | Unexpected token: ? |
 | `php/basic/enable_post_data_reading_07.phpt` | error | error | Unexpected token: ? |
@@ -273,7 +273,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/gh17951_runtime_change_6.phpt` | differs | differs | ran, printed something else |
 | `php/basic/gh20858.phpt` | error | error | Undefined variable: phpversion |
 | `php/basic/gh20964.phpt` | error | error | Undefined variable: fopen |
-| `php/basic/gh7896.phpt` | error | error | Undefined variable: $_SERVER |
+| `php/basic/gh7896.phpt` | error | error | Undefined variable: getenv |
 | `php/basic/header_register_callback.phpt` | error | error | Unexpected token: { |
 | `php/basic/header_register_callback_after_output.phpt` | error | error | Unexpected token: { |
 | `php/basic/header_register_callback_trampoline.phpt` | error | error | Undefined variable: header_register_callback |
@@ -285,22 +285,22 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/req44164.phpt` | error | error | Undefined variable: header |
 | `php/basic/req60524-win.phpt` | error | error | Undefined variable: sys_get_temp_dir |
 | `php/basic/req60524.phpt` | error | error | Undefined variable: sys_get_temp_dir |
-| `php/basic/rfc1867_anonymous_upload.phpt` | error | error | Undefined variable: $_FILES |
-| `php/basic/rfc1867_array_upload.phpt` | error | error | Undefined variable: $_FILES |
-| `php/basic/rfc1867_boundary_1.phpt` | error | error | Undefined variable: $_FILES |
-| `php/basic/rfc1867_boundary_2.phpt` | error | error | Undefined variable: $_FILES |
-| `php/basic/rfc1867_empty_upload.phpt` | error | error | Undefined variable: $_FILES |
-| `php/basic/rfc1867_file_upload_disabled.phpt` | error | error | Undefined variable: $_FILES |
-| `php/basic/rfc1867_garbled_mime_headers.phpt` | error | error | Undefined variable: $_FILES |
-| `php/basic/rfc1867_invalid_boundary.phpt` | error | error | Undefined variable: $_FILES |
-| `php/basic/rfc1867_malicious_input.phpt` | error | error | Undefined variable: $_FILES |
-| `php/basic/rfc1867_max_file_size.phpt` | error | error | Undefined variable: $_FILES |
-| `php/basic/rfc1867_max_file_uploads_empty_files.phpt` | error | error | Undefined variable: $_FILES |
-| `php/basic/rfc1867_missing_boundary.phpt` | error | error | Undefined variable: $_FILES |
-| `php/basic/rfc1867_missing_boundary_2.phpt` | error | error | Undefined variable: $_FILES |
-| `php/basic/rfc1867_multiple_webkitdirectory.phpt` | error | error | Undefined variable: $_FILES |
-| `php/basic/rfc1867_post_max_filesize.phpt` | error | error | Undefined variable: $_FILES |
-| `php/basic/rfc1867_post_max_size.phpt` | error | error | Undefined variable: $_FILES |
+| `php/basic/rfc1867_anonymous_upload.phpt` | differs | differs | ran, printed something else |
+| `php/basic/rfc1867_array_upload.phpt` | differs | differs | ran, printed something else |
+| `php/basic/rfc1867_boundary_1.phpt` | differs | differs | ran, printed something else |
+| `php/basic/rfc1867_boundary_2.phpt` | differs | differs | ran, printed something else |
+| `php/basic/rfc1867_empty_upload.phpt` | error | error | } |
+| `php/basic/rfc1867_file_upload_disabled.phpt` | differs | differs | ran, printed something else |
+| `php/basic/rfc1867_garbled_mime_headers.phpt` | differs | differs | ran, printed something else |
+| `php/basic/rfc1867_invalid_boundary.phpt` | differs | differs | ran, printed something else |
+| `php/basic/rfc1867_malicious_input.phpt` | pass | pass |  |
+| `php/basic/rfc1867_max_file_size.phpt` | error | error | } |
+| `php/basic/rfc1867_max_file_uploads_empty_files.phpt` | error | error | } |
+| `php/basic/rfc1867_missing_boundary.phpt` | differs | differs | ran, printed something else |
+| `php/basic/rfc1867_missing_boundary_2.phpt` | differs | differs | ran, printed something else |
+| `php/basic/rfc1867_multiple_webkitdirectory.phpt` | differs | differs | ran, printed something else |
+| `php/basic/rfc1867_post_max_filesize.phpt` | error | error | } |
+| `php/basic/rfc1867_post_max_size.phpt` | differs | differs | ran, printed something else |
 | `php/basic/timeout_variation_0.phpt` | error | error | Unexpected token: ? |
 | `php/basic/timeout_variation_1.phpt` | error | error | Unexpected token: ? |
 | `php/basic/timeout_variation_10.phpt` | error | error | Unexpected token: ? |
@@ -399,9 +399,9 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug24652.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug24658.phpt` | error | error | NULL |
 | `php/lang/bug24783.phpt` | error | error | 8: |
-| `php/lang/bug24908.phpt` | error | error | Undefined variable: $_SERVER |
+| `php/lang/bug24908.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug24951.phpt` | error | error | Expected ')' to close a group, got '&' |
-| `php/lang/bug25145.phpt` | error | error | Undefined variable: $_REQUEST |
+| `php/lang/bug25145.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug25547.phpt` | error | error | Cannot coerce array to number |
 | `php/lang/bug25652.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug25922.phpt` | error | error | Undefined variable: $data |

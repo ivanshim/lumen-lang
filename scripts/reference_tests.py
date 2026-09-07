@@ -20,6 +20,7 @@ microcode7, and the report shows them side by side.
 """
 import json
 import re
+import os
 import subprocess
 import sys
 import tempfile
@@ -55,12 +56,15 @@ def spelled(definition):
     return words
 
 
-def run(kernel, args, source, suffix):
+def run(kernel, args, source, suffix, request=None):
     with tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False, encoding="utf-8") as f:
         f.write(source)
         path = f.name
+    setting = {**os.environ, **(request or {}).get("env", {})}
+    body = (request or {}).get("body", "")
     try:
-        p = subprocess.run([str(BINARY), "--kernel", kernel] + args + [path], capture_output=True, text=True, timeout=TIMEOUT, errors="replace")
+        p = subprocess.run([str(BINARY), "--kernel", kernel] + args + [path], input=body, capture_output=True,
+                           text=True, timeout=TIMEOUT, errors="replace", env=setting)
         return p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
         return 124, "", "timeout"
@@ -122,6 +126,34 @@ def expectf_pattern(expected):
     return "".join(out)
 
 
+def web_request(sections):
+    """The request a .phpt describes: its --GET--, --POST--, --COOKIE-- and
+    --ENV-- sections, given the way a web server gives one."""
+    env = {"REQUEST_METHOD": "GET", "QUERY_STRING": sections.get("GET", "").strip()}
+    for line in sections.get("ENV", "").splitlines():
+        name, _, value = line.partition("=")
+        if name.strip():
+            env[name.strip()] = value.strip()
+    cookie = sections.get("COOKIE", "").strip()
+    if cookie:
+        env["HTTP_COOKIE"] = cookie
+    body = sections.get("POST", "").strip()
+    if "POST_RAW" in sections:
+        raw = sections["POST_RAW"]
+        first, _, rest = raw.partition("\n")
+        if first.lower().startswith("content-type:"):
+            env["CONTENT_TYPE"] = first.split(":", 1)[1].strip()
+            body = rest
+        else:
+            body = raw
+        env["REQUEST_METHOD"] = "POST"
+    elif body:
+        env["REQUEST_METHOD"] = "POST"
+        env["CONTENT_TYPE"] = "application/x-www-form-urlencoded"
+    env["CONTENT_LENGTH"] = str(len(body))
+    return {"env": env, "body": body}
+
+
 def run_phpt(path, kernel):
     s = phpt_sections(path.read_text(encoding="utf-8", errors="replace"))
     if "FILE" not in s:
@@ -131,7 +163,7 @@ def run_phpt(path, kernel):
     expected = s.get("EXPECT", s.get("EXPECTF", s.get("EXPECTREGEX")))
     if expected is None:
         return "skipped", "no --EXPECT-- section"
-    code, out, err = run(kernel, ["--lang", "langs/extras/php.json"], s["FILE"], ".php")
+    code, out, err = run(kernel, ["--lang", "langs/extras/php.json"], s["FILE"], ".php", web_request(s))
     got = out.rstrip()
     want = expected.rstrip()
     if code == 0:
