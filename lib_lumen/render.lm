@@ -2,7 +2,7 @@
 # The mechanical renderers: each kind of value as text. Written against the
 # kernel primitives (num, den, int, frac, precision, len, char_at) so that
 # the kernel itself renders nothing for Lumen; print and write in output.lm
-# go through value_to_string and emit.
+# go through to_string and emit.
 
 decimal_digits = "0123456789"
 
@@ -34,14 +34,14 @@ fn real_to_string(x)
     negative = x < 0
     if negative
         x = -x
-    head = int_to_string(int(x))
+    head = int_to_string(to_int(x))
     room = sig - len(head)
     f = frac(x)
     has_fraction = f != 0
     tail = ""
     while room > 0 and f != 0
         f = f * 10
-        tail = tail . char_at(decimal_digits, int(f))
+        tail = tail . char_at(decimal_digits, to_int(f))
         f = frac(f)
         room = room - 1
     text = head
@@ -61,13 +61,13 @@ fn bool_to_string(b)
 fn null_to_string(x)
     "null"
 
-# ARRAY -> "[a, b, c]", each element rendered by value_to_string
+# ARRAY -> "[a, b, c]", each element rendered by to_string
 fn array_to_string(a)
     text = "["
     i = 0
     while i < len(a)
         if i > 0
             text = text . ", "
-        text = text . value_to_string(a[i])
+        text = text . to_string(a[i])
         i = i + 1
     text . "]"

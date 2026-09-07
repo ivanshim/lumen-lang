@@ -1,4 +1,4 @@
-# value_to_string.lm
+# to_string.lm
 # String conversion and formatting utilities for all value types
 # Includes type introspection, canonical string representation, and base conversion
 
@@ -54,7 +54,7 @@ fn kind_to_string(k)
     error("kind_to_string: expected KIND meta-value")
 
 # Convert any value to its canonical string representation
-fn value_to_string(x)
+fn to_string(x)
     if is_kind(x)
         return kind_to_string(x)
     if is_int(x)
@@ -71,7 +71,7 @@ fn value_to_string(x)
         return array_to_string(x)
     if is_null(x)
         return null_to_string(x)
-    error("value_to_string: unsupported value")
+    error("to_string: unsupported value")
 
 # ------------------------------------------------------------
 # Base conversion utilities
@@ -132,7 +132,7 @@ fn rational_to_base_string(r, radix)
 
 # Base conversion for reals with specified fractional precision.
 fn real_to_base_string(value, radix, precision)
-    i = int(value)
+    i = to_int(value)
     f = frac(value)
 
     int_part = integer_to_base_string(i, radix)
@@ -154,11 +154,11 @@ fn frac_to_base_string(f, radix, limit)
     count = 0
 
     while count < limit
-        if f == real_default(0)
+        if f == to_real(0)
             return result
 
-        f = f * real_default(radix)
-        digit = int(f)
+        f = f * to_real(radix)
+        digit = to_int(f)
         result = result . char_at(alphabet, digit)
         f = frac(f)
         count = count + 1

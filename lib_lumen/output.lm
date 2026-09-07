@@ -1,6 +1,6 @@
-# Convert x to a string with value_to_string(x) and emit without a newline
+# Convert x to a string with to_string(x) and emit without a newline
 fn write(x)
-    emit(value_to_string(x))
+    emit(to_string(x))
 
 # Write x followed by a newline
 fn print(x)

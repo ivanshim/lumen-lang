@@ -27,39 +27,39 @@ print(den(r3))
 
 print("")
 
-# Test 2: int() and frac() extract parts
-print("Test 2: int() and frac() on REAL")
+# Test 2: to_int() and frac() extract parts
+print("Test 2: to_int() and frac() on REAL")
 x1 = 3.14159
 print(x1)
 write("int = ")
-print(int(x1))
+print(to_int(x1))
 write("frac = ")
 print(frac(x1))
 
 x2 = 10.5
 print(x2)
 write("int = ")
-print(int(x2))
+print(to_int(x2))
 write("frac = ")
 print(frac(x2))
 
 x3 = 0.125
 print(x3)
 write("int = ")
-print(int(x3))
+print(to_int(x3))
 write("frac = ")
 print(frac(x3))
 
 print("")
 
-# Test 3: Verify int(x) + frac(x) == x
-print("Test 3: Verify int(x) + frac(x) == x")
+# Test 3: Verify to_int(x) + frac(x) == x
+print("Test 3: Verify to_int(x) + frac(x) == x")
 x = 2.718
 print(x)
-i = int(x)
+i = to_int(x)
 f = frac(x)
-sum = real_default(i) + f
-write("real_default(int(x)) + frac(x) = ")
+sum = to_real(i) + f
+write("to_real(to_int(x)) + frac(x) = ")
 print(sum)
 
 print("")
@@ -82,14 +82,14 @@ print("Test 5: Edge cases")
 # Zero integer part
 x = 0.5
 write("x=0.5: int=")
-print(int(x))
+print(to_int(x))
 write("frac=")
 print(frac(x))
 
 # Zero fractional part
 x = 5.0
 write("x=5.0: int=")
-print(int(x))
+print(to_int(x))
 write("frac=")
 print(frac(x))
 
@@ -115,7 +115,7 @@ x = 16@A.8
 write("16@A.8 = ")
 print(x)
 write("int = ")
-print(int(x))
+print(to_int(x))
 write("frac = ")
 print(frac(x))
 
@@ -137,8 +137,8 @@ print(kind_to_string(kind(num(1/2))))
 write("kind(den(1/2)) = ")
 print(kind_to_string(kind(den(1/2))))
 
-write("kind(int(3.14)) = ")
-print(kind_to_string(kind(int(3.14))))
+write("kind(to_int(3.14)) = ")
+print(kind_to_string(kind(to_int(3.14))))
 
 write("kind(frac(3.14)) = ")
 print(kind_to_string(kind(frac(3.14))))
@@ -148,19 +148,19 @@ print("")
 # Test 8: Multiple decompositions
 print("Test 8: Multiple decompositions")
 x = 123.456
-i1 = int(x)
+i1 = to_int(x)
 f1 = frac(x)
 write("x = ")
 print(x)
-write("int(x) = ")
+write("to_int(x) = ")
 print(i1)
 write("frac(x) = ")
 print(f1)
 
 # Decompose the fractional part again (should give 0 + frac)
-i2 = int(f1)
+i2 = to_int(f1)
 f2 = frac(f1)
-write("int(frac(x)) = ")
+write("to_int(frac(x)) = ")
 print(i2)
 write("frac(frac(x)) = ")
 print(f2)

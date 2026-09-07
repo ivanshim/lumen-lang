@@ -55,6 +55,17 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   host's default. The first designs of each shape, stack26 and
   microcode10, are removed along with the lab specimens; six kernels
   remain: stream35, microcode11, microcode4, microcode7, stack5, stack8.
+- **The conversions take the labels' names**: Lumen's library functions
+  `value_to_string`, `int` and `real_default` are now `to_string`,
+  `to_int` and `to_real`, the one-name conversions the labels
+  `builtin.to_string`, `builtin.to_int` and `builtin.to_real` describe
+  and the other languages spell as `str`, `intval`, `to_s`, `Int` and so
+  on. The kernels are untouched: Lumen's definition still gives the three
+  no builtin, and `$library` maps each label to the library function of
+  the same name. `lib_lumen/value_to_string.lm` is `lib_lumen/to_string.lm`;
+  `real(x, places)` stays the explicit builtin. Every program prints
+  what it printed, apart from six examples whose test labels name the
+  functions; the ports regenerate.
 - **Notation and block style are separate labels; RPLumen is indented**:
   a new label `syntax.notation` (`infix` or `postfix`) says how a
   language is read, and `block.style` is free to be `indentation`,

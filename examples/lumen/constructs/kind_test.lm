@@ -32,8 +32,8 @@ print(kind_to_string(kind(3.14)))
 write("kind(16@FF.8) = ")
 print(kind_to_string(kind(16@FF.8)))
 
-write("kind(real_default(5)) = ")
-print(kind_to_string(kind(real_default(5))))
+write("kind(to_real(5)) = ")
+print(kind_to_string(kind(to_real(5))))
 
 print("")
 

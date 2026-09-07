@@ -4,7 +4,7 @@
 # Iterative approach: efficient, handles large indices quickly
 fib_index = 5000
 if ARGS != ""
-    fib_index = int(ARGS)
+    fib_index = to_int(ARGS)
 
 a = 0
 b = 1
@@ -19,5 +19,5 @@ while count < fib_index
 write("Fibonacci number at index ")
 write(fib_index)
 write(": ")
-result_string = value_to_string(a)
+result_string = to_string(a)
 print(substring_start(result_string, 100))

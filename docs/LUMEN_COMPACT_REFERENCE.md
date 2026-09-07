@@ -116,10 +116,10 @@ Exponentiation is an expression-level operation and is never part of numeric lit
 - `rational_to_string(x)` — `[library]` RATIONAL to "numerator/denominator".
 - `real_to_string(x)` — `[library]` REAL to decimal text to its own significant digits, read with `precision(x)`.
 - `bool_to_string(x)` — `[library]` BOOLEAN to `true` or `false`.
-- `array_to_string(x)` — `[library]` ARRAY to "[a, b, c]", each element through `value_to_string`.
+- `array_to_string(x)` — `[library]` ARRAY to "[a, b, c]", each element through `to_string`.
 - `null_to_string(x)` — `[library]` NULL to `null`.
 
-**Library** (lib_lumen/value_to_string.lm)
+**Library** (lib_lumen/to_string.lm)
 - `is_int(x)` — `[library]` Returns `true` if `x` has INTEGER kind.
 - `is_rational(x)` — `[library]` Returns `true` if `x` has RATIONAL kind.
 - `is_real(x)` — `[library]` Returns `true` if `x` has REAL kind.
@@ -129,7 +129,7 @@ Exponentiation is an expression-level operation and is never part of numeric lit
 - `is_null(x)` — `[library]` Returns `true` if `x` has NULL kind.
 - `is_kind(x)` — `[library]` Returns `true` if `x` is a KIND meta-value.
 - `kind_to_string(k)` — `[library]` Convert a KIND meta-value to its canonical uppercase string representation ("INTEGER", "REAL", etc.).
-- `value_to_string(x)` — `[library]` Convert any value to its canonical string representation.
+- `to_string(x)` — `[library]` Convert any value to its canonical string representation.
 - `numeric_to_base_string(value, radix)` — `[library]` Convert integer/rational/real to a string in the given base (2..36).
 - `integer_to_base_string(n, radix)` — `[library]` Base conversion for integers.
 - `rational_to_base_string(r, radix)` — `[library]` Base conversion for rationals (numerator/denominator).
@@ -155,9 +155,9 @@ Exponentiation is an expression-level operation and is never part of numeric lit
 - `real(x, precision)` — `[kernel]` Convert integer/rational/real to a real value with the requested significant-digit precision.
 
 **Library** (lib_lumen/numeric.lm)
-- `real_default(x)` — `[library]` Convert numeric value to real using `REAL_DEFAULT_PRECISION`.
-- `int(x)` — `[library]` Integer part of any number, truncated toward zero: `num(x) // den(x)`.
-- `frac(x)` — `[library]` Fractional part of any number, at its own precision: `x - int(x)`.
+- `to_real(x)` — `[library]` Convert numeric value to real using `REAL_DEFAULT_PRECISION`.
+- `to_int(x)` — `[library]` Integer part of any number, truncated toward zero: `num(x) // den(x)`.
+- `frac(x)` — `[library]` Fractional part of any number, at its own precision: `x - to_int(x)`.
 
 ---
 
@@ -167,7 +167,7 @@ Exponentiation is an expression-level operation and is never part of numeric lit
 - `emit(string)` — `[kernel]` Write a raw string to stdout; requires a string input and returns `null`.
 
 **Library** (lib_lumen/output.lm)
-- `write(x)` — `[library]` Convert `x` to a string with `value_to_string(x)` and emit without a newline.
+- `write(x)` — `[library]` Convert `x` to a string with `to_string(x)` and emit without a newline.
 - `print(x)` — `[library]` Write `x` followed by a newline.
 
 ---
