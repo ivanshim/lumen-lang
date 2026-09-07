@@ -365,6 +365,12 @@ only. The extension labels so far, all from PHP:
   run only by spelling these, and only the full kernels read them. What
   cannot be done answers false rather than stopping the run, which is
   what a language spelling them expects.
+- `ext.op.hush`: a mark written before a piece of a program, keeping
+  quiet whatever that piece has to say about itself while its value is
+  found. The value is the one the piece would have come to anyway; only
+  the complaints go unsaid, and a raised value still rises, since it is
+  not something said but something that happened. One hushed piece may
+  hold another, and the quiet lasts exactly as far as the piece does.
 - `ext.builtin.eval`: builtins taking a piece of the language written
   out as text, reading it as the run's own language and running it
   where the call stands. The text is read with whatever a program of
@@ -702,7 +708,7 @@ Operator precedence, lowest tier first. Unary operators sit in their own tier.
 - **c (extra)**: `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `!` `-`
 - **javascript (extra)**: `||` < `&&` < `===` `!==` `==` `!=` < `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `!` `-` < `**` < `.`
 - **pascal (extra)**: `=` `<>` `<` `>` `<=` `>=` < `+` `-` `or` < `*` `/` `div` `mod` `and` < `-` `not`
-- **php (extra)**: `or` < `and` < `||` < `&&` < `|` < `^` < `&` < `==` `!=` `===` `!==` < `<` `>` `<=` `>=` `<=>` < `.` < `<<` `>>` < `+` `-` < `*` `/` `%` < `!` `~` < `-` < `**`
+- **php (extra)**: `or` < `and` < `||` < `&&` < `|` < `^` < `&` < `==` `!=` `===` `!==` < `<` `>` `<=` `>=` `<=>` < `.` < `<<` `>>` < `+` `-` < `*` `/` `%` < `!` `~` `@` < `-` < `**`
 - **ruby (extra)**: `or` < `and` < `not` < `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `...` < `+` `-` < `*` `/` `%` < `-` < `!` < `**` < `.`
 - **swift (extra)**: `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `..<` < `+` `-` < `*` `/` `%` < `!` `-` < `.`
 
@@ -746,6 +752,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.bit.xor` | - | - | - | - | - | - | - | `^` | - | - |
 | `ext.op.compare` | - | - | - | - | - | - | - | `<=>` | - | - |
 | `ext.op.decrement` | - | - | - | - | - | - | - | `--` | - | - |
+| `ext.op.hush` | - | - | - | - | - | - | - | `@` | - | - |
 | `ext.op.identical` | - | - | - | - | - | - | - | `===` | - | - |
 | `ext.op.increment` | - | - | - | - | - | - | - | `++` | - | - |
 | `ext.op.index.absent` | - | - | - | - | - | - | - | `true` | - | - |

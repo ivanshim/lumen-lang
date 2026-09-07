@@ -2176,6 +2176,16 @@ impl<'a> Compiler<'a> {
                 self.act(infix.action, 1);
                 return Ok(());
             }
+            if Lang::spells(&lang.hush_words, &tok.lexeme) {
+                // Whatever the piece under the mark has to say about
+                // itself is kept quiet; its value stands as it would.
+                let tier = lang.precedence.get(&tok.lexeme).copied().unwrap_or(0);
+                self.take();
+                self.put(Instr::Hush(true));
+                self.expr(tier)?;
+                self.put(Instr::Hush(false));
+                return Ok(());
+            }
             if tok.shape == Shape::Sign && Lang::spells(&lang.plus_words, &tok.lexeme) {
                 // A plus sign leaves its operand alone, bound as tightly as a negation.
                 self.take();

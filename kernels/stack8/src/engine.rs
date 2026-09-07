@@ -44,6 +44,10 @@ pub struct Engine<'a> {
     /// nought is no limit at all.
     limit: std::cell::Cell<usize>,
     began: std::cell::Cell<Option<std::time::Instant>>,
+    /// How many pieces of the program now being found asked for quiet.
+    /// Counted rather than flagged, since one hushed piece may hold
+    /// another.
+    hushed: std::cell::Cell<usize>,
     args_cell: Option<usize>,
     memo_cell: Option<usize>,
 }
@@ -110,6 +114,7 @@ impl<'a> Engine<'a> {
             hurled_at: std::cell::Cell::new(0),
             limit: std::cell::Cell::new(0),
             began: std::cell::Cell::new(None),
+            hushed: std::cell::Cell::new(0),
             args_cell: find(&lang.args_binding),
             memo_cell: find(&lang.memo_binding),
             registry,
@@ -154,6 +159,9 @@ impl<'a> Engine<'a> {
     /// Tell a complaint the way this language tells one, and go on. A
     /// language with no word for the kind says nothing at all.
     fn complain(&self, kind: Complaint, message: &str) {
+        if self.hushed.get() > 0 {
+            return;
+        }
         let Some((_, word)) = self.lang.complaint_words.iter().find(|(k, _)| *k == kind) else { return };
         println!("\n{}: {} in {} on line {}", word, message, self.source, self.line);
     }
@@ -216,12 +224,13 @@ impl<'a> Engine<'a> {
     /// Offer a fault of the kernel's own to the innermost guard as a
     /// raised value. Nothing where the language names no class for one,
     /// or where no guard is watching.
-    fn offer_to_guard(&mut self, told: &str, guards: &mut Vec<(usize, usize)>) -> Option<usize> {
+    fn offer_to_guard(&mut self, told: &str, guards: &mut Vec<(usize, usize, usize)>) -> Option<usize> {
         if guards.is_empty() {
             return None;
         }
         let made = self.as_fault(told)?;
-        let (catch, depth) = guards.pop().expect("a guard was watching");
+        let (catch, depth, quiet) = guards.pop().expect("a guard was watching");
+        self.hushed.set(quiet);
         self.data.truncate(depth);
         self.data.push(made);
         Some(catch)
@@ -524,11 +533,23 @@ impl<'a> Engine<'a> {
 
     fn run_instrs(&mut self, program: &Rc<Routine>, frame: &mut [Value]) -> Flow<()> {
         let instrs = &program.instrs;
+        // A raised value leaves the marks that end a quiet piece unrun,
+        // so how much quiet stood when the piece began is what stands
+        // again once it has gone.
+        let quiet = self.hushed.get();
+        let outcome = self.run_body(frame, instrs);
+        if outcome.is_err() {
+            self.hushed.set(quiet);
+        }
+        outcome
+    }
+
+    fn run_body(&mut self, frame: &mut [Value], instrs: &[crate::code::Instr]) -> Flow<()> {
         let mut pc = 0;
         let mut counted = 0u32;
-        // Where a raised value is caught, and how deep the stack was
-        // when the guard was set.
-        let mut guards: Vec<(usize, usize)> = Vec::new();
+        // Where a raised value is caught, how deep the stack was when
+        // the guard was set, and how much quiet was asked for then.
+        let mut guards: Vec<(usize, usize, usize)> = Vec::new();
         while pc < instrs.len() {
             counted = counted.wrapping_add(1);
             if counted % 4096 == 0 {
@@ -566,14 +587,15 @@ impl<'a> Engine<'a> {
                             other => other,
                         };
                         let Fault::Thrown(raised) = fault else { return Err(fault) };
-                        let Some((catch, depth)) = guards.pop() else { return Err(Fault::Thrown(raised)) };
+                        let Some((catch, depth, quiet)) = guards.pop() else { return Err(Fault::Thrown(raised)) };
+                        self.hushed.set(quiet);
                         self.data.truncate(depth);
                         self.data.push(raised);
                         pc = catch;
                         continue;
                     }
                 }
-                Instr::Guard(catch) => guards.push((*catch, self.data.len())),
+                Instr::Guard(catch) => guards.push((*catch, self.data.len(), self.hushed.get())),
                 Instr::Unguard => {
                     guards.pop();
                 }
@@ -621,6 +643,13 @@ impl<'a> Engine<'a> {
                     self.data.push(Value::Flag(empty));
                 }
                 Instr::Line(row) => self.line = *row,
+                Instr::Hush(quiet) => {
+                    let deep = self.hushed.get();
+                    self.hushed.set(match quiet {
+                        true => deep + 1,
+                        false => deep.saturating_sub(1),
+                    });
+                }
                 Instr::Skip(to) => {
                     if !self.drop_top()?.is_true() {
                         pc = *to;

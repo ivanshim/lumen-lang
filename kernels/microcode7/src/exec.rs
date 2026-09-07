@@ -94,6 +94,9 @@ pub struct Machine<'a> {
     /// nought is no limit at all.
     allowed: usize,
     started: Option<std::time::Instant>,
+    /// How many pieces now being found asked to be quiet. Counted, not
+    /// flagged, because a quiet piece may hold another.
+    quieted: usize,
     /// What each call still running was handed, the innermost last, and
     /// what the call about to start is to be handed.
     handed: Vec<Vec<Value>>,
@@ -129,6 +132,7 @@ impl<'a> Machine<'a> {
             allowed: 0,
             started: None,
             written_in: String::new(),
+            quieted: 0,
             complaint_words: COMPLAINT_LABELS
                 .iter()
                 .filter_map(|(kind, key)| table.single(key).map(|word| (*kind, word.to_string())))
@@ -148,6 +152,9 @@ impl<'a> Machine<'a> {
     /// Say a complaint of this kind in the language's own word for it
     /// and carry on. A language with no word for the kind says nothing.
     fn grumble(&self, kind: &str, about: &str) {
+        if self.quieted > 0 {
+            return;
+        }
         let Some((_, word)) = self.complaint_words.iter().find(|(k, _)| *k == kind) else { return };
         println!("\n{}: {} in {} on line {}", word, about, self.written_in, self.row);
     }
@@ -486,6 +493,12 @@ impl<'a> Machine<'a> {
                 let f = ascend(frame, slot.up);
                 f.cells.borrow_mut()[slot.at] = cell;
                 Ok(Value::Nil)
+            }
+            Form::Muted(inner) => {
+                self.quieted += 1;
+                let found = self.value_of(inner, frame);
+                self.quieted -= 1;
+                return found;
             }
             Form::ShareItem(slot, place) => {
                 let at = self.value_of(place, frame)?;

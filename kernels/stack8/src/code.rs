@@ -210,6 +210,10 @@ pub enum Instr {
     /// Which line of the source the instrs after this one came from,
     /// so that a complaint can say where it happened.
     Line(u32),
+    /// Start keeping complaints quiet, or stop: how a language that
+    /// lets a program hush what one piece of it has to say about
+    /// itself says where the quiet begins and ends.
+    Hush(bool),
     /// Make this binding a shared cell if it is not one already, and
     /// push that cell, so another name can be fastened to it.
     Bond(Cell),

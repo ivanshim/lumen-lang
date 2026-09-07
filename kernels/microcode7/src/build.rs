@@ -1862,6 +1862,14 @@ impl<'a> Builder<'a> {
                 let operand = self.expr(op.level)?;
                 return Ok(prim_call(op.prim, vec![operand]));
             }
+            if table.spells("ext.op.hush", &t.lexeme) {
+                // What the piece under the mark has to say about itself
+                // goes unsaid; the value it comes to is unchanged.
+                let tier = table.precedence.get(&t.lexeme).copied().unwrap_or(0);
+                self.advance();
+                let quiet = self.expr(tier)?;
+                return Ok(Form::Muted(Box::new(quiet)));
+            }
             if t.shape == Shape::Sign && table.spells("ext.op.plus", &t.lexeme) {
                 // A plus sign leaves its operand as it is, bound like a negation.
                 self.advance();

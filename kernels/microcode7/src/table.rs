@@ -99,7 +99,7 @@ ext.op.bit.left:L ext.op.bit.right:L ext.op.identical:L ext.op.not_identical:L e
 ext.builtin.args.count:L ext.builtin.args.at:L ext.op.assign.value:B ext.op.index.plain_keys:B \
 ext.system.source.file:L ext.system.source.directory:L ext.system.source.line:L \
 ext.system.complaint.warning:L ext.system.complaint.notice:L ext.system.complaint.deprecated:L ext.system.complaint.fatal:L ext.system.fault.class:L ext.builtin.time_limit:L ext.system.kind.brief:L ext.builtin.file.read:L ext.builtin.file.write:L \
-ext.builtin.file.exists:L ext.builtin.file.remove:L ext.builtin.eval:L ext.builtin.include:L \
+ext.builtin.file.exists:L ext.builtin.file.remove:L ext.builtin.eval:L ext.builtin.include:L ext.op.hush:L \
 ext.lexical.number.binary_prefix:L ext.lexical.number.octal_prefix:L ext.lexical.number.octal_lead:B \
 ext.lexical.number.separator:L ext.system.integer.bits:N ext.system.real.bits:N ext.system.real.digits:N \
 ";
@@ -477,7 +477,7 @@ impl Table {
         if self.has_any("stmt.foreach.pair") && !self.has_any("syntax.map.pair") {
             return Err("stmt.foreach.pair needs syntax.map.pair".to_string());
         }
-        for label in ["op.range", "op.pipe"] {
+        for label in ["op.range", "op.pipe", "ext.op.hush"] {
             for lex in self.strings(label).to_vec() {
                 let tier = place(&lex, false).ok_or_else(|| format!("'{lex}' ({label}) does not appear in op.precedence"))?;
                 self.precedence.insert(lex, tier);
@@ -519,7 +519,7 @@ impl Table {
             "ext.stmt.class.new", "ext.stmt.class.modifier", "ext.stmt.class.shared", "ext.op.instanceof",
             "ext.stmt.class.parent", "ext.stmt.class.self", "ext.stmt.class.interface", "ext.stmt.class.implements",
             "ext.stmt.try", "ext.stmt.catch", "ext.stmt.finally",
-            "ext.stmt.throw", "ext.stmt.catch.separator", "ext.op.reference", "ext.op.otherwise"];
+            "ext.stmt.throw", "ext.stmt.catch.separator", "ext.op.reference", "ext.op.otherwise", "ext.op.hush"];
         for key in symbol_labels {
             all.extend(self.strings(key).iter().cloned());
         }

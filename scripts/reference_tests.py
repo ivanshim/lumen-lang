@@ -179,6 +179,11 @@ def run_phpt(path, kernel):
     # trim is what the reference expects.
     got = out.strip()
     want = expected.strip()
+    # run-tests.php runs a test's CLEAN section afterwards, to take away
+    # whatever the test left beside itself. What it prints is nobody's
+    # business and whether it worked changes nothing.
+    if "CLEAN" in s:
+        run(kernel, ["--lang", "langs/extras/php.json"], s["CLEAN"], ".clean.php", beside=path)
     if code == 0:
         ok = (got == want) if "EXPECT" in s else (re.fullmatch(expectf_pattern(want) if "EXPECTF" in s else want, got, re.S) is not None)
         if ok:

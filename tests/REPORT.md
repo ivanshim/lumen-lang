@@ -34,17 +34,16 @@ is listed, since the full kernels are meant to behave alike.
 | Unexpected token: & | 5 |
 | Fatal error: Uncaught Error: Cannot coerce array to number in <file> | 5 |
 | Unexpected token: , | 4 |
+| Unexpected token: -> | 4 |
 | Fatal error: Uncaught Error: Stack underflow in <file> | 4 |
 | Fatal error: Uncaught Error: push() requires an array in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
 | Fatal error: Uncaught Error: Undefined variable: isset in <file> | 3 |
-| Unexpected character '@' | 3 |
 | Unexpected token: : | 3 |
 | Unexpected token: ) | 3 |
 | Fatal error: Uncaught Error: Undefined variable: current in <file> | 3 |
 | Fatal error: Uncaught Error: Cannot index non-array value in <file> | 3 |
 | Only a name or a place in an array can be forgotten | 3 |
-| Unexpected token: -> | 3 |
 | Unexpected token: . | 2 |
 | Expected an expression | 2 |
 | Unexpected token: { | 2 |
@@ -63,6 +62,7 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Division by zero in <file> | 2 |
 | Unexpected token: > | 2 |
 | Unexpected token: :: | 2 |
+| Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: rename in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: PHP_BINARY in <file> | 1 |
@@ -231,7 +231,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/GHSA-9pqp-7h25-4f32.phpt` | error | error | Unexpected token: . |
 | `php/basic/array_key_exists_null_deprecation.phpt` | differs | differs | ran, printed something else |
 | `php/basic/array_null_offset_deprecation.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: isset in <file> |
-| `php/basic/bug20539.phpt` | error | error | Unexpected character '@' |
+| `php/basic/bug20539.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: session_id in <file> |
 | `php/basic/bug29971.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug31875.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> |
 | `php/basic/bug45986.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: rename in <file> |
@@ -373,7 +373,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bison1.phpt` | pass | pass |  |
 | `php/lang/bug18872.phpt` | pass | pass |  |
 | `php/lang/bug19566.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_declared_classes in <file> |
-| `php/lang/bug19943.phpt` | error | error | Unexpected character '@' |
+| `php/lang/bug19943.phpt` | error | error | Invalid assignment target before '=' |
 | `php/lang/bug20175.phpt` | error | error | Unexpected token: ) |
 | `php/lang/bug21094.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug21600.phpt` | error | error | Unexpected token: & |
@@ -382,7 +382,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug21849.phpt` | pass | pass |  |
 | `php/lang/bug21961.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> |
 | `php/lang/bug22231.phpt` | error | error | Unexpected token: & |
-| `php/lang/bug22510.phpt` | error | error | Unexpected character '@' |
+| `php/lang/bug22510.phpt` | error | error | Unexpected token: -> |
 | `php/lang/bug22592.phpt` | error | error | Fatal error: Uncaught Error: put() requires an array in <file> |
 | `php/lang/bug23279.phpt` | error | error | thrown in <file> |
 | `php/lang/bug23384.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: Foo in <file> |

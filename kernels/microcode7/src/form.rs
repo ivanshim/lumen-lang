@@ -209,6 +209,10 @@ pub enum Form {
     ShareItem(Address, Box<Form>),
     /// Leave this binding as though nothing were ever written to it.
     Forget(Address),
+    /// Find this value with whatever it has to say about itself kept
+    /// quiet: how a language that lets a program silence one piece of
+    /// itself says which piece.
+    Muted(Box<Form>),
 }
 
 /// One catch: the classes it takes, where it holds what it caught, and

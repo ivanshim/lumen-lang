@@ -215,6 +215,7 @@ pub struct Lang {
     pub exponent_letters: Vec<char>,
     /// A sign that leaves its operand as it is.
     pub plus_words: Vec<String>,
+    pub hush_words: Vec<String>,
     /// `break n` and `continue n` leave n loops.
     pub break_levels: bool,
     /// The source is text with code between the prologue and the
@@ -331,7 +332,7 @@ w ext.system.source.file | w ext.system.source.directory | w ext.system.source.l
 w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.complaint.deprecated | w ext.system.complaint.fatal
 w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove
-w ext.builtin.eval | w ext.builtin.include
+w ext.builtin.eval | w ext.builtin.include | w ext.op.hush
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 ";
@@ -650,8 +651,9 @@ impl Lang {
         }
         let ranges = r.strings("op.range")?;
         let pipes = r.strings("op.pipe")?;
+        let hushes = r.strings("ext.op.hush")?;
         let mut syntax_tiers = HashMap::new();
-        for (tag, list) in [("op.range", &ranges), ("op.pipe", &pipes)] {
+        for (tag, list) in [("op.range", &ranges), ("op.pipe", &pipes), ("ext.op.hush", &hushes)] {
             for lex in list {
                 let tier = tier_of(lex, false).ok_or_else(|| format!("'{lex}' ({tag}) does not appear in op.precedence"))?;
                 syntax_tiers.insert(lex.clone(), tier);
@@ -935,6 +937,7 @@ impl Lang {
             hoisted: r.flag("ext.stmt.function.hoisted")?,
             exponent_letters: r.letters("ext.lexical.number.exponent")?,
             plus_words: r.strings("ext.op.plus")?,
+            hush_words: hushes,
             break_levels: r.flag("ext.stmt.break.levels")?,
             template: r.flag("ext.lexical.template")?,
             append_index: r.flag("ext.op.index.append")?,
