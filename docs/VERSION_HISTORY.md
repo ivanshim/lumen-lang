@@ -148,6 +148,18 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   `scripts/port_examples.py` now reports the first unwritable callee in
   source order, so `docs/LIBRARY_PORTS.md` no longer changes between
   runs.
+- **A request may point inside a value**: a name in a query string, a
+  form or a cookie may say where its value goes, the way a form writes
+  it: `a[b][c]`, `a[]` for the next place, and a step of digits for a
+  whole-number place, so `a[]` and `a[0]` are one place. A bracket runs
+  to the first close after it, and a name whose brackets never close is
+  a name like any other. The host works a name into its steps and hands
+  them over; each kernel makes the maps along the way. A body written in
+  parts is cut at its boundary, a part naming a file is written out
+  where the program can read it, and `ext.system.request.files` carries
+  what PHP's `$_FILES` carries. A cookie's name is taken as it stands,
+  since it is not escaped the way a form's is. `tests/php/basic` goes
+  from 13 passing to 25.
 - **Pages, classes of method names, and more of PHP**:
   `ext.lexical.template` makes a source text with code in it: what lies
   between the prologue and the epilogue is code and the rest is written

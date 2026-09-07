@@ -16,9 +16,19 @@ use std::net::{TcpListener, TcpStream};
 use std::process::{Command, Stdio};
 
 /// Every part of the request, each named by the group it belongs to and
-/// the key within it: ("GET", "name", "value"). The kernels group them
-/// by the first of the three.
-pub type Request = Vec<(String, String, String)>;
+/// where within it the value goes: ("GET", "name", "value"). The kernels
+/// group them by the first of the three.
+///
+/// A name may point inside a value, the way a form does it: `a[b]` names
+/// the place b inside a, and `a[]` the next place in a. The steps of
+/// such a name are given apart, joined by the unit separator, so a
+/// kernel has only to split them.
+/// A part carries text unless it is marked as a number, which a file's
+/// size and its error are.
+pub type Request = Vec<(String, String, String, bool)>;
+
+/// The mark between the steps of a name that points inside a value.
+const BETWEEN_STEPS: char = '\u{1f}';
 
 /// The environment variables a request is made of, in the order a
 /// program is likeliest to want them.
@@ -34,39 +44,115 @@ pub fn gathered() -> Request {
     let mut request = Request::new();
     let query = env::var("QUERY_STRING").unwrap_or_default();
     for (key, value) in fields(&query) {
-        request.push(("GET".to_string(), key, value));
+        request.push(("GET".to_string(), key, value, false));
     }
-    let posted = form_body();
+    let (posted, sent) = body_given();
     for (key, value) in &posted {
-        request.push(("POST".to_string(), key.clone(), value.clone()));
+        request.push(("POST".to_string(), key.clone(), value.clone(), false));
+    }
+    for (key, value, counted) in &sent {
+        request.push(("FILES".to_string(), key.clone(), value.clone(), *counted));
     }
     let cookies = env::var("HTTP_COOKIE").unwrap_or_default();
-    for (key, value) in pairs(&cookies, ';') {
-        request.push(("COOKIE".to_string(), key, value));
+    for (key, value) in crumbs(&cookies) {
+        request.push(("COOKIE".to_string(), key, value, false));
     }
     for name in CGI_VARS {
         if let Ok(value) = env::var(name) {
-            request.push(("SERVER".to_string(), name.to_string(), value));
+            request.push(("SERVER".to_string(), name.to_string(), value, false));
         }
     }
     for (name, value) in env::vars() {
-        request.push(("ENV".to_string(), name, value));
+        request.push(("ENV".to_string(), name, value, false));
     }
     request
 }
 
-/// The body as a form, when the request says it is one.
-fn form_body() -> Vec<(String, String)> {
+/// What the body carries: the fields of a form, and the files sent with
+/// it. A body written as one piece is read as a form; a body written in
+/// parts is cut at its boundary, and a part naming a file is written out
+/// where the program can read it.
+fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>) {
     let kind = env::var("CONTENT_TYPE").unwrap_or_default();
-    if !kind.starts_with("application/x-www-form-urlencoded") {
-        return Vec::new();
+    let plain = kind.starts_with("application/x-www-form-urlencoded");
+    let boundary = kind.split(';').map(str::trim).find_map(|part| part.strip_prefix("boundary=")).map(str::to_string);
+    if !plain && boundary.is_none() {
+        return (Vec::new(), Vec::new());
     }
     let length: usize = env::var("CONTENT_LENGTH").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
     let mut body = vec![0u8; length];
     if std::io::stdin().read_exact(&mut body).is_err() {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
-    fields(&String::from_utf8_lossy(&body))
+    match boundary {
+        Some(mark) => in_parts(&body, mark.trim_matches('"')),
+        None => (fields(&String::from_utf8_lossy(&body)), Vec::new()),
+    }
+}
+
+/// A body written in parts: each part says what it is called, and a part
+/// that names a file is written out to a place of its own, which the
+/// program is told about the way PHP tells it.
+fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String, String, bool)>) {
+    let (mut posted, mut sent) = (Vec::new(), Vec::new());
+    let mark = format!("--{}", boundary);
+    let mut rest: &[u8] = body;
+    while let Some(at) = find_bytes(rest, mark.as_bytes()) {
+        let after = &rest[at + mark.len()..];
+        if after.starts_with(b"--") {
+            break;
+        }
+        let after = after.strip_prefix(b"\r\n").or_else(|| after.strip_prefix(b"\n")).unwrap_or(after);
+        let end = find_bytes(after, mark.as_bytes()).unwrap_or(after.len());
+        let piece = &after[..end];
+        let head_end = find_bytes(piece, b"\r\n\r\n").map(|p| (p, 4)).or_else(|| find_bytes(piece, b"\n\n").map(|p| (p, 2)));
+        rest = &after[end.min(after.len())..];
+        let Some((head_end, gap)) = head_end else { continue };
+        let head = String::from_utf8_lossy(&piece[..head_end]).into_owned();
+        let mut content = &piece[head_end + gap..];
+        for tail in [b"\r\n".as_slice(), b"\n".as_slice()] {
+            if content.ends_with(tail) {
+                content = &content[..content.len() - tail.len()];
+            }
+        }
+        let named = |what: &str| -> Option<String> {
+            let at = head.find(&format!("{}=\"", what))? + what.len() + 2;
+            let rest = &head[at..];
+            Some(rest[..rest.find('"')?].to_string())
+        };
+        let Some(name) = named("name") else { continue };
+        let kind = head
+            .lines()
+            .find_map(|line| line.to_ascii_lowercase().starts_with("content-type:").then(|| line[13..].trim().to_string()))
+            .unwrap_or_else(|| "text/plain".to_string());
+        match named("filename") {
+            None => posted.push((steps_of(&name), String::from_utf8_lossy(content).into_owned())),
+            Some(filename) => {
+                // The file is written out, since a program is given the
+                // place it lies in rather than what it holds.
+                let held = env::temp_dir().join(format!("lumenup{}{}", std::process::id(), sent.len()));
+                let written = std::fs::write(&held, content).is_ok();
+                let place = held.to_string_lossy().into_owned();
+                let steps = steps_of(&name);
+                let apart = '\u{1f}';
+                for (what, value, counted) in [
+                    ("name", filename.clone(), false),
+                    ("full_path", filename, false),
+                    ("type", kind.clone(), false),
+                    ("tmp_name", if written { place } else { String::new() }, false),
+                    ("error", if written { "0".to_string() } else { "1".to_string() }, true),
+                    ("size", content.len().to_string(), true),
+                ] {
+                    sent.push((format!("{}{}{}", steps, apart, what), value, counted));
+                }
+            }
+        }
+    }
+    (posted, sent)
+}
+
+fn find_bytes(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    hay.windows(needle.len()).position(|w| w == needle)
 }
 
 /// `a=1&b=2` as pairs, each part unescaped.
@@ -79,8 +165,51 @@ fn pairs(text: &str, between: char) -> Vec<(String, String)> {
         .map(str::trim)
         .filter(|part| !part.is_empty())
         .map(|part| match part.split_once('=') {
-            Some((key, value)) => (unescaped(key), unescaped(value)),
-            None => (unescaped(part), String::new()),
+            Some((key, value)) => (steps_of(&unescaped(key)), unescaped(value)),
+            None => (steps_of(&unescaped(part)), String::new()),
+        })
+        .collect()
+}
+
+/// The steps of a name that points inside a value: `a[b][c]` names a,
+/// then b, then c, and `a[]` names a and then the next place in it. A
+/// bracket runs to the first close after it, so `a[b[]]` names a and
+/// `b[`. A name whose brackets never close is a name like any other.
+/// The first step is the one a form gives, so a dot or a space in it
+/// becomes an underscore, as PHP has always made it.
+fn steps_of(name: &str) -> String {
+    let (head, mut rest) = match name.split_once('[') {
+        Some((head, rest)) => (head, rest),
+        None => (name, ""),
+    };
+    let mut steps = vec![head.replace(['.', ' '], "_")];
+    loop {
+        match rest.split_once(']') {
+            Some((step, tail)) => {
+                steps.push(step.to_string());
+                rest = match tail.strip_prefix('[') {
+                    Some(more) => more,
+                    None => break,
+                };
+            }
+            None => {
+                // Brackets that never close are part of the name itself.
+                return name.replace(['.', ' '], "_");
+            }
+        }
+    }
+    steps.join(&BETWEEN_STEPS.to_string())
+}
+
+/// The cookies a request carries. A cookie's name is written plainly,
+/// not escaped the way a form's is, so it is taken as it stands.
+fn crumbs(text: &str) -> Vec<(String, String)> {
+    text.split(';')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(|part| match part.split_once('=') {
+            Some((key, value)) => (steps_of(key), unescaped(value)),
+            None => (steps_of(part), String::new()),
         })
         .collect()
 }

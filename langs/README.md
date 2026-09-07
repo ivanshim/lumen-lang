@@ -350,8 +350,17 @@ whatever the definition calls them:
   the environment (`$_SERVER`, `$_ENV`).
 - `ext.system.request.all`: the query, the form and the cookies together
   (`$_REQUEST`).
-- `ext.system.request.files`: what was uploaded; nothing is put there
-  yet.
+- `ext.system.request.files`: what was sent as a file. Each carries its
+  name, the name it was given on the sending side, its kind, the place
+  it was written to, whether anything went wrong, and its size.
+
+A name in a request may point inside a value, the way a form writes it:
+`a[b]` names the place b inside a, `a[]` the next place in a, and a step
+of digits a whole-number place, so `a[]` and `a[0]` are one place. The
+host works the name into its steps and the kernel makes the maps along
+the way. A body written in parts (`multipart/form-data`) is cut at its
+boundary: a part naming a file is written out where the program can read
+it, and the rest are fields like any other.
 
 `lumen-lang --serve 8080 site.php` answers requests on that address by
 running the program once for each, which is the same run with the

@@ -17,18 +17,18 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 13, differs 48, error 53, skipped 0 | pass 13, differs 48, error 53, skipped 0 |
+| `php/basic` | 114 | pass 25, differs 36, error 53, skipped 0 | pass 25, differs 36, error 53, skipped 0 |
 | `php/func` | 14 | pass 2, differs 2, error 10, skipped 0 | pass 2, differs 2, error 10, skipped 0 |
-| `php/lang` | 213 | pass 33, differs 24, error 154, skipped 2 | pass 33, differs 24, error 154, skipped 2 |
+| `php/lang` | 213 | pass 34, differs 23, error 154, skipped 2 | pass 34, differs 23, error 154, skipped 2 |
 | `php/lang/constants` | 2 | pass 1, differs 1, error 0, skipped 0 | pass 1, differs 1, error 0, skipped 0 |
 | `php/lang/integer_literals` | 6 | pass 0, differs 0, error 6, skipped 0 | pass 0, differs 0, error 6, skipped 0 |
 | `php/lang/operators` | 64 | pass 0, differs 22, error 42, skipped 0 | pass 0, differs 22, error 42, skipped 0 |
 | `php/lang/string` | 9 | pass 1, differs 7, error 1, skipped 0 | pass 1, differs 7, error 1, skipped 0 |
-| all | 422 | pass 50, differs 104, error 266, skipped 2 | pass 50, differs 104, error 266, skipped 2 |
+| all | 422 | pass 63, differs 91, error 266, skipped 2 | pass 63, differs 91, error 266, skipped 2 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 104 |
+| ran, printed something else | 91 |
 | } | 8 |
 | Unexpected token: & | 8 |
 | Undefined variable: set_time_limit | 8 |
@@ -211,22 +211,22 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/011_windows.phpt` | error | error | Cannot reassign $argv (system-provided immutable value) |
 | `php/basic/012.phpt` | error | error | Cannot reassign $argv (system-provided immutable value) |
 | `php/basic/012_register_argc_argv_disabled.phpt` | error | error | Undefined variable: $argc |
-| `php/basic/013.phpt` | differs | differs | ran, printed something else |
-| `php/basic/014.phpt` | differs | differs | ran, printed something else |
-| `php/basic/015.phpt` | differs | differs | ran, printed something else |
-| `php/basic/016.phpt` | differs | differs | ran, printed something else |
-| `php/basic/017.phpt` | differs | differs | ran, printed something else |
-| `php/basic/018.phpt` | differs | differs | ran, printed something else |
-| `php/basic/019.phpt` | differs | differs | ran, printed something else |
-| `php/basic/020.phpt` | differs | differs | ran, printed something else |
-| `php/basic/021.phpt` | differs | differs | ran, printed something else |
+| `php/basic/013.phpt` | pass | pass |  |
+| `php/basic/014.phpt` | pass | pass |  |
+| `php/basic/015.phpt` | pass | pass |  |
+| `php/basic/016.phpt` | pass | pass |  |
+| `php/basic/017.phpt` | pass | pass |  |
+| `php/basic/018.phpt` | pass | pass |  |
+| `php/basic/019.phpt` | pass | pass |  |
+| `php/basic/020.phpt` | pass | pass |  |
+| `php/basic/021.phpt` | pass | pass |  |
 | `php/basic/022.phpt` | differs | differs | ran, printed something else |
 | `php/basic/023.phpt` | differs | differs | ran, printed something else |
 | `php/basic/025.phpt` | error | error | Undefined variable: $HTTP_RAW_POST_DATA |
 | `php/basic/028.phpt` | differs | differs | ran, printed something else |
 | `php/basic/029.phpt` | differs | differs | ran, printed something else |
-| `php/basic/030.phpt` | differs | differs | ran, printed something else |
-| `php/basic/031.phpt` | differs | differs | ran, printed something else |
+| `php/basic/030.phpt` | pass | pass |  |
+| `php/basic/031.phpt` | pass | pass |  |
 | `php/basic/032.phpt` | differs | differs | ran, printed something else |
 | `php/basic/GHSA-9pqp-7h25-4f32.phpt` | error | error | Unexpected token: . |
 | `php/basic/array_key_exists_null_deprecation.phpt` | differs | differs | ran, printed something else |
@@ -245,7 +245,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/bug73969.phpt` | error | error | static belongs inside a function |
 | `php/basic/bug78236.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug78929.phpt` | differs | differs | ran, printed something else |
-| `php/basic/bug79699.phpt` | differs | differs | ran, printed something else |
+| `php/basic/bug79699.phpt` | pass | pass |  |
 | `php/basic/bug80384.phpt` | error | error | Undefined variable: __DIR__ |
 | `php/basic/build_date.phpt` | error | error | Undefined variable: PHP_BUILD_DATE |
 | `php/basic/consistent_float_string_casts.phpt` | error | error | Undefined variable: LC_ALL |
@@ -287,13 +287,13 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/req60524.phpt` | error | error | Undefined variable: sys_get_temp_dir |
 | `php/basic/rfc1867_anonymous_upload.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_array_upload.phpt` | differs | differs | ran, printed something else |
-| `php/basic/rfc1867_boundary_1.phpt` | differs | differs | ran, printed something else |
+| `php/basic/rfc1867_boundary_1.phpt` | pass | pass |  |
 | `php/basic/rfc1867_boundary_2.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_empty_upload.phpt` | error | error | } |
 | `php/basic/rfc1867_file_upload_disabled.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_garbled_mime_headers.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_invalid_boundary.phpt` | differs | differs | ran, printed something else |
-| `php/basic/rfc1867_malicious_input.phpt` | pass | pass |  |
+| `php/basic/rfc1867_malicious_input.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_max_file_size.phpt` | error | error | } |
 | `php/basic/rfc1867_max_file_uploads_empty_files.phpt` | error | error | } |
 | `php/basic/rfc1867_missing_boundary.phpt` | differs | differs | ran, printed something else |
@@ -401,7 +401,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug24783.phpt` | error | error | 8: |
 | `php/lang/bug24908.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug24951.phpt` | error | error | Expected ')' to close a group, got '&' |
-| `php/lang/bug25145.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug25145.phpt` | pass | pass |  |
 | `php/lang/bug25547.phpt` | error | error | Cannot coerce array to number |
 | `php/lang/bug25652.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug25922.phpt` | error | error | Undefined variable: $data |
