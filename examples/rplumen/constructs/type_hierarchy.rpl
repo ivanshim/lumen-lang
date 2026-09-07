@@ -1,18 +1,4 @@
 # Ported from examples/lumen/constructs/type_hierarchy.lm by scripts/port_examples.py; edit the Lumen original, not this file.
-« 'decimals' = 'x' =
-    1 'scale' =
-    0 'i' =
-    while i decimals <
-        scale 10 * 'scale' =
-        i 1 + 'i' =
-    x scale * 'y' =
-    y 0 >= if
-        y 2 * 1 + 2 // 'r' =
-    else
-        y 2 * 1 - 2 // 'r' =
-    r scale / return
-» 'round' =
-
 "=== TYPE HIERARCHY TESTS: Integer subset of Rational subset of Real ===" print
 "\n" write
 "=== SECTION 1: ADDITION ===" print

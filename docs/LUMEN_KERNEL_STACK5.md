@@ -112,7 +112,7 @@ integer fast path; together worth about 1.2 times on loops.
 ## Relationship to the other kernels
 
 The kernels never import each other; `scripts/kernel_independence.py`
-checks every pair. `scripts/kernel_diff.sh` compares this kernel with the
+checks every pair. The test suite compares this kernel with the
 others on every program under `examples/`; all 498 print the same.
 microcode4 is the same exercise on the tree: four forms there, five words
 here, and the one extra is the conditional jump, which a flat list needs

@@ -1,23 +1,5 @@
 <?php
 // Ported from examples/lumen/libraries/test_char_classification.lm by scripts/port_examples.py; edit the Lumen original, not this file.
-function is_ascii($c) {
-    return ord($c) < 128;
-}
-
-function is_digit($c) {
-    $o = ord($c);
-    return $o >= ord("0") && $o <= ord("9");
-}
-
-function is_alpha($c) {
-    $o = ord($c);
-    return ($o >= ord("A") && $o <= ord("Z")) || ($o >= ord("a") && $o <= ord("z"));
-}
-
-function is_alnum($c) {
-    return is_alpha($c) || is_digit($c);
-}
-
 print("=== Character Classification ===\n");
 print("\n");
 print("ASCII characters:\n");

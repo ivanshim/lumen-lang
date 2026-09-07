@@ -30,6 +30,66 @@ mod embedded_files {
 /// The prelude manifest: a list of `include "path"` lines.
 const PRELUDE_MANIFEST: &str = include_str!("../lib_lumen/prelude.lm");
 
+/// The Lumen library as every other language spells it (`lib_<language>/`,
+/// written by scripts/port_examples.py), prepended to programs in that
+/// language as `lib_lumen/` is to Lumen programs.
+mod mirrors {
+    pub mod python { include!("../lib_python/prelude.rs"); }
+    pub mod rplumen { include!("../lib_rplumen/prelude.rs"); }
+    pub mod rust { include!("../lib_rust/prelude.rs"); }
+    pub mod c { include!("../lib_c/prelude.rs"); }
+    pub mod javascript { include!("../lib_javascript/prelude.rs"); }
+    pub mod pascal { include!("../lib_pascal/prelude.rs"); }
+    pub mod php { include!("../lib_php/prelude.rs"); }
+    pub mod ruby { include!("../lib_ruby/prelude.rs"); }
+    pub mod swift { include!("../lib_swift/prelude.rs"); }
+}
+
+/// A language's mirror of the library: its prologue and its files.
+fn mirror_for(language: &str) -> Option<(&'static str, &'static [(&'static str, &'static str)])> {
+    Some(match language {
+        "python" => (mirrors::python::PROLOGUE, mirrors::python::FILES),
+        "rplumen" => (mirrors::rplumen::PROLOGUE, mirrors::rplumen::FILES),
+        "rust" => (mirrors::rust::PROLOGUE, mirrors::rust::FILES),
+        "c" => (mirrors::c::PROLOGUE, mirrors::c::FILES),
+        "javascript" => (mirrors::javascript::PROLOGUE, mirrors::javascript::FILES),
+        "pascal" => (mirrors::pascal::PROLOGUE, mirrors::pascal::FILES),
+        "php" => (mirrors::php::PROLOGUE, mirrors::php::FILES),
+        "ruby" => (mirrors::ruby::PROLOGUE, mirrors::ruby::FILES),
+        "swift" => (mirrors::swift::PROLOGUE, mirrors::swift::FILES),
+        _ => return None,
+    })
+}
+
+/// A program on top of its language's library: the Lumen library for a
+/// Lumen program, the language's mirror of it for any other. A program
+/// that opens with the language's prologue (Python's `import sys`) keeps
+/// it first, since the kernels drop a prologue only at the start.
+fn with_library(language: &str, source: String) -> String {
+    if env::var_os("LUMEN_BARE").is_some() {
+        return source;
+    }
+    if language == DEFAULT_LANGUAGE {
+        let prelude = expand_includes(PRELUDE_MANIFEST).unwrap_or_else(|e| {
+            eprintln!("Include error: {}", e);
+            process::exit(1);
+        });
+        return format!("{}\n{}", prelude, source);
+    }
+    let Some((prologue, files)) = mirror_for(language) else { return source };
+    if files.is_empty() {
+        return source;
+    }
+    let library = files.iter().map(|(_, text)| *text).collect::<Vec<_>>().join("\n");
+    let lead = source.len() - source.trim_start().len();
+    if !prologue.is_empty() && !source[..lead].contains('\n') && source[lead..].starts_with(prologue) {
+        let cut = lead + prologue.len();
+        format!("{}\n{}\n{}", &source[..cut], library, &source[cut..])
+    } else {
+        format!("{}\n{}", library, source)
+    }
+}
+
 /// Where a language comes from.
 enum Language {
     /// An embedded definition, by name.
@@ -65,16 +125,8 @@ fn main() {
         process::exit(1);
     });
 
-    // Lumen programs run on top of the embedded standard library.
-    let source = if inv.language.name() == DEFAULT_LANGUAGE {
-        let prelude = expand_includes(PRELUDE_MANIFEST).unwrap_or_else(|e| {
-            eprintln!("Include error: {}", e);
-            process::exit(1);
-        });
-        format!("{}\n{}", prelude, source)
-    } else {
-        source
-    };
+    // Every program runs on top of its language's library.
+    let source = with_library(inv.language.name(), source);
 
     if let Some(target) = &inv.emit {
         if inv.kernel != "microcode11" {

@@ -1,17 +1,4 @@
 // Ported from examples/lumen/exponentiation_exponent_then_mod.lm by scripts/port_examples.py; edit the Lumen original, not this file.
-long mod_pow(long base, long exp, long m) {
-    long result = 1;
-    base = base % m;
-    while (exp > 0) {
-        if (exp % 2 == 1) {
-            result = (result * base) % m;
-        }
-        exp = exp / 2;
-        base = (base * base) % m;
-    }
-    return result;
-}
-
 int main(void) {
     long base = 7;
     long exp = 100;

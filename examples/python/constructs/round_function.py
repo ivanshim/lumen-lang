@@ -1,18 +1,5 @@
 import sys
 # Ported from examples/lumen/constructs/round_function.lm by scripts/port_examples.py; edit the Lumen original, not this file.
-def round(x, decimals):
-    scale = 1
-    i = 0
-    while i < decimals:
-        scale = scale * 10
-        i = i + 1
-    y = x * scale
-    if y >= 0:
-        r = (y * 2 + 1) // 2
-    else:
-        r = (y * 2 - 1) // 2
-    return r / scale
-
 sys.stdout.write("Positive number tests:")
 sys.stdout.write("round(1.235, 2) = ")
 print(round(1.235, 2))

@@ -1,11 +1,4 @@
 # Ported from examples/lumen/constructs/string_operations.lm by scripts/port_examples.py; edit the Lumen original, not this file.
-def char_at_or_null(s, index)
-    if index < 0 || index >= s.length then
-        return nil
-    end
-    return s[index]
-end
-
 puts("=== String Operations Test ===")
 str1 = "Hello"
 str2 = " World"

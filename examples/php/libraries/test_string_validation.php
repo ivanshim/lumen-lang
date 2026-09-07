@@ -1,24 +1,5 @@
 <?php
 // Ported from examples/lumen/libraries/test_string_validation.lm by scripts/port_examples.py; edit the Lumen original, not this file.
-function is_alpha($c) {
-    $o = ord($c);
-    return ($o >= ord("A") && $o <= ord("Z")) || ($o >= ord("a") && $o <= ord("z"));
-}
-
-function is_alpha_string($s) {
-    if (count($s) == 0) {
-        return false;
-    }
-    $i = 0;
-    while ($i < count($s)) {
-        if (!is_alpha($s[$i])) {
-            return false;
-        }
-        $i = $i + 1;
-    }
-    return true;
-}
-
 print("=== String Content Validation ===\n");
 print("\n");
 print("Alphabetic string validation:\n");

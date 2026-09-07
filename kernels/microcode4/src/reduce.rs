@@ -50,8 +50,19 @@ pub struct Arity {
     pub leaves: bool,
 }
 
+/// The arms of a postfix `if` being read: the parameters the enclosing
+/// program had when the branch began, and how many of those added since
+/// the current arm has consumed. Both arms start from the same stack, so
+/// the else arm reuses what the then arm took before adding any more.
+struct Arms {
+    scope: usize,
+    base: usize,
+    used: usize,
+}
+
 pub struct Reducer<'a> {
     spec: &'a Spec,
+    arms: Vec<Arms>,
     toks: &'a [Tok],
     at: usize,
     scopes: Vec<Scope>,
@@ -77,7 +88,7 @@ enum Run {
 
 pub fn reduce(toks: &[Tok], spec: &Spec, seeded: &[String], assumed: HashMap<String, Arity>, strict: bool) -> Out<Reduced> {
     let top = Scope { owns: Owns::All, names: seeded.to_vec(), params: Vec::new(), param_slots: Vec::new(), postfix: false };
-    let mut r = Reducer { spec, toks, at: 0, scopes: vec![top], hidden: 0, assumed, found: HashMap::new(), strict };
+    let mut r = Reducer { spec, arms: Vec::new(), toks, at: 0, scopes: vec![top], hidden: 0, assumed, found: HashMap::new(), strict };
     let body = if spec.postfix {
         let (mut stmts, rest) = r.postfix_body(&[], Run::Block)?;
         if !r.done() {
@@ -982,11 +993,53 @@ impl<'a> Reducer<'a> {
             return if self.strict { Err("Stack underflow".to_string()) } else { Ok(lit(Value::Null)) };
         };
         let scope = &mut self.scopes[i];
+        if let Some(arms) = self.arms.last_mut().filter(|a| a.scope == i) {
+            if arms.base + arms.used < scope.params.len() {
+                let name = scope.params[arms.base + arms.used].clone();
+                arms.used += 1;
+                return Ok(self.load(&name));
+            }
+            arms.used += 1;
+        }
         let name = format!("p{}", scope.params.len() + 1);
         scope.params.push(name.clone());
         scope.names.push(name.clone());
         scope.param_slots.push(scope.names.len() - 1);
         Ok(self.load(&name))
+    }
+
+    /// Whether the program being read binds the word itself, as a
+    /// parameter or a name assigned so far: a load then, not a call of
+    /// whatever program the file binds under that name elsewhere.
+    fn bound_here(&self, w: &str) -> bool {
+        match self.scopes.iter().rposition(|s| s.postfix) {
+            Some(i) => self.scopes[i].names.iter().any(|n| n == w),
+            None => false,
+        }
+    }
+
+    /// The arms of a postfix `if` begin: what the enclosing program takes
+    /// from here on is shared between them.
+    fn open_arms(&mut self) {
+        if let Some(i) = self.scopes.iter().rposition(|s| s.postfix) {
+            self.arms.push(Arms { scope: i, base: self.scopes[i].params.len(), used: 0 });
+        }
+    }
+
+    /// The else arm begins: it takes the same values the then arm took.
+    fn other_arm(&mut self) {
+        if let Some(arms) = self.arms.last_mut() {
+            arms.used = 0;
+        }
+    }
+
+    /// The arms end; an enclosing branch has consumed everything added.
+    fn close_arms(&mut self) {
+        if let Some(done) = self.arms.pop() {
+            if let Some(outer) = self.arms.last_mut().filter(|a| a.scope == done.scope) {
+                outer.used = self.scopes[done.scope].params.len() - outer.base;
+            }
+        }
     }
 
     fn spill(&mut self, stmts: &mut Vec<Node>, stack: &mut Vec<Node>) {
@@ -1122,6 +1175,10 @@ impl<'a> Reducer<'a> {
                 let arity = Arity { takes: p.params.len(), leaves: leaves_value(&p.body) };
                 self.found.insert(name.to_string(), arity);
                 self.assumed.insert(name.to_string(), arity);
+            } else if !self.scopes.iter().any(|s| s.postfix) {
+                // A top-level name rebound to a value is no longer a program
+                // to the words after it.
+                self.assumed.remove(name);
             }
             let node = self.assign(name, value);
             stmts.push(node);
@@ -1180,6 +1237,7 @@ impl<'a> Reducer<'a> {
             // Each arm is read inside its own program; what it leaves is its value.
             let mut then_left = false;
             let mut then_returns = false;
+            self.open_arms();
             let then = self.arm(Catch::Nothing, |r| {
                 let (mut s, left) = if keyword { r.postfix_block(&stops, Run::Block)? } else { r.governed()? };
                 then_returns = matches!(s.last(), Some(Node::Call(Target::Op(Op::Return | Op::Break | Op::Continue, _), _)));
@@ -1190,6 +1248,7 @@ impl<'a> Reducer<'a> {
             let mut else_left = false;
             let mut else_returns = false;
             let has_else = if keyword { self.at_any("stmt.else") && { self.next(); true } } else { self.take_else() };
+            self.other_arm();
             let otherwise = if has_else {
                 self.arm(Catch::Nothing, |r| {
                     let (mut s, left) = if keyword { r.postfix_block(&closers, Run::Block)? } else { r.governed()? };
@@ -1201,6 +1260,7 @@ impl<'a> Reducer<'a> {
             } else {
                 self.arm(Catch::Nothing, |_| Ok(lit(Value::Null)))?
             };
+            self.close_arms();
             if keyword {
                 self.want_closer()?;
             }
@@ -1401,7 +1461,7 @@ impl<'a> Reducer<'a> {
         if t.kind != Tk::Word {
             return Err(format!("Unexpected '{}'", w));
         }
-        if let Some(arity) = self.assumed.get(w).copied() {
+        if let Some(arity) = self.assumed.get(w).copied().filter(|_| !self.bound_here(w)) {
             let mut args = Vec::new();
             for _ in 0..arity.takes {
                 args.push(self.pop(stack)?);

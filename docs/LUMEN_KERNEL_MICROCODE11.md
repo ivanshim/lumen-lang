@@ -81,6 +81,17 @@ with the line. The arities of programs called before they are defined
 (recursion) are found by reading the file leniently until the assumed
 arities equal the found ones, then once more strictly.
 
+Three rules keep that reading honest with a whole library in front of a
+program. The arms of an `if` start from one stack, so a value the else
+arm pops from beneath the arm is the same implicit parameter the then
+arm popped, not a further one (a recursive program's arity had doubled
+every pass otherwise). A program's own binding, a parameter or a name it
+has assigned, shadows a program of the same name elsewhere in the file:
+inside a routine that sets `e`, `e` is that value, not Euler's constant.
+And a top-level rebinding of a program's name to a value ends the name's
+life as a program for the words after it. microcode4 and microcode7 read
+by the same rules, each in its own code.
+
 A node with an effect (a call) that is still on the symbolic stack when a
 statement is emitted is moved into a hidden slot first, so effects happen
 in the order the stack machine would produce them.

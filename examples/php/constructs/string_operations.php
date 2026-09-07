@@ -1,12 +1,5 @@
 <?php
 // Ported from examples/lumen/constructs/string_operations.lm by scripts/port_examples.py; edit the Lumen original, not this file.
-function char_at_or_null($s, $index) {
-    if ($index < 0 || $index >= count($s)) {
-        return null;
-    }
-    return $s[$index];
-}
-
 print("=== String Operations Test ===\n");
 $str1 = "Hello";
 $str2 = " World";

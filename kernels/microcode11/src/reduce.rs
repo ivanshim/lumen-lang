@@ -60,7 +60,18 @@ pub struct Arity {
     pub leaves: bool,
 }
 
+/// A postfix `if` in progress: how many parameters its program had when
+/// the branch began, and how many added since the arm being read has
+/// used. The arms share the stack they start from, so the second reuses
+/// the parameters the first added before adding more.
+struct Branching {
+    frame: usize,
+    before: usize,
+    used: usize,
+}
+
 pub struct Reducer<'a> {
+    branching: Vec<Branching>,
     spec: &'a Spec,
     toks: &'a [Token],
     at: usize,
@@ -87,6 +98,7 @@ enum Run {
 
 pub fn reduce(tokens: &[Token], spec: &Spec, globals: &mut Globals, arities: HashMap<String, Arity>, strict: bool) -> Outcome<(Rc<Program>, HashMap<String, Arity>)> {
     let mut r = Reducer {
+        branching: Vec::new(),
         spec,
         toks: tokens,
         at: 0,
@@ -967,12 +979,21 @@ impl<'a> Reducer<'a> {
         if let Some(node) = stack.pop() {
             return Ok(node);
         }
-        let frame = self.frames.last_mut().expect("frame");
+        let here = self.frames.len() - 1;
+        let frame = &mut self.frames[here];
         if !frame.postfix_program {
             if self.strict {
                 return Err(format!("Stack underflow (line {})", line));
             }
             return Ok(Self::literal(line, Value::Nothing));
+        }
+        if let Some(b) = self.branching.last_mut().filter(|b| b.frame == here) {
+            if b.before + b.used < frame.params.len() {
+                let name = frame.params[b.before + b.used].clone();
+                b.used += 1;
+                return Ok(self.load(line, &name));
+            }
+            b.used += 1;
         }
         let name = format!("p{}", frame.params.len() + 1);
         frame.params.push(name.clone());
@@ -980,6 +1001,38 @@ impl<'a> Reducer<'a> {
         frame.block_owned.push(false);
         frame.param_slots.push(frame.slot_names.len() - 1);
         Ok(self.load(line, &name))
+    }
+
+    /// Whether the postfix program being read has bound the word, as a
+    /// parameter or by assignment so far, so that it shadows any program
+    /// the file binds under the same name.
+    fn names_itself(&self, word: &str) -> bool {
+        let frame = self.frames.last().expect("frame");
+        frame.postfix_program && frame.slot_names.iter().any(|n| n == word)
+    }
+
+    /// A postfix `if` begins: its arms share what the program takes from here.
+    fn branch_open(&mut self) {
+        let here = self.frames.len() - 1;
+        if self.frames[here].postfix_program {
+            self.branching.push(Branching { frame: here, before: self.frames[here].params.len(), used: 0 });
+        }
+    }
+
+    /// The else arm begins on the same values the then arm used.
+    fn branch_else(&mut self) {
+        if let Some(b) = self.branching.last_mut() {
+            b.used = 0;
+        }
+    }
+
+    /// The `if` ends; a branch around it has used all that was added within.
+    fn branch_close(&mut self) {
+        if let Some(done) = self.branching.pop() {
+            if let Some(outer) = self.branching.last_mut().filter(|b| b.frame == done.frame) {
+                outer.used = self.frames[done.frame].params.len() - outer.before;
+            }
+        }
     }
 
     /// Move every node with an effect off the stack into a hidden slot, so
@@ -1049,6 +1102,10 @@ impl<'a> Reducer<'a> {
                 let arity = Arity { takes: p.params.len(), leaves: leaves_value(&p.body) };
                 self.found.insert(name.to_string(), arity);
                 self.arities.insert(name.to_string(), arity);
+            } else if !self.frames.iter().any(|f| f.postfix_program) {
+                // The top level rebinding a program's name to a value: the
+                // words that follow read a value under it.
+                self.arities.remove(name);
             }
             let node = self.assign(line, name, value);
             stmts.push(node);
@@ -1108,6 +1165,7 @@ impl<'a> Reducer<'a> {
             // In the keyword style one closer ends both arms; otherwise
             // each arm is a governed block of its own.
             let keyword = spec.style == Style::Keyword;
+            self.branch_open();
             let (then, then_left) = if keyword {
                 let mut stops = closers.clone();
                 stops.extend(spec.words("stmt.else").iter().cloned());
@@ -1116,12 +1174,14 @@ impl<'a> Reducer<'a> {
                 self.governed()?
             };
             let has_else = if keyword { self.at_label("stmt.else") && { self.take(); true } } else { self.take_else() };
+            self.branch_else();
             let (otherwise, else_left) = if has_else {
                 let (body, left) = if keyword { self.postfix_block(&closers, Run::Block)? } else { self.governed()? };
                 (Some(body), left)
             } else {
                 (None, None)
             };
+            self.branch_close();
             if keyword {
                 self.need_closer()?;
             }
@@ -1333,8 +1393,9 @@ impl<'a> Reducer<'a> {
         if tok.kind != Kind::Word {
             return Err(format!("Unexpected '{}'", word));
         }
-        // A bare word: a call to the program known under it, else a load.
-        if let Some(arity) = self.arities.get(word).copied() {
+        // A bare word: a call to the program known under it, unless the
+        // program being read binds the word itself; else a load.
+        if let Some(arity) = self.arities.get(word).copied().filter(|_| !self.names_itself(word)) {
             let mut args = Vec::new();
             for _ in 0..arity.takes {
                 args.push(self.pop(line, stack)?);

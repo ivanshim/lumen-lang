@@ -1,15 +1,4 @@
 # Ported from examples/lumen/exponentiation_exponent_then_mod.lm by scripts/port_examples.py; edit the Lumen original, not this file.
-« 'm' = 'exp' = 'base' =
-    1 'result' =
-    base m % 'base' =
-    while exp 0 >
-        exp 2 % 1 == if
-            result base * m % 'result' =
-        exp 2 // 'exp' =
-        base base * m % 'base' =
-    result return
-» 'mod_pow' =
-
 7 'base' =
 100 'exp' =
 1000000007 'mod' =

@@ -1,13 +1,17 @@
 #!/bin/bash
 
-# lumen-lang test script: runs every example on the selected kernels.
+# lumen-lang test script: runs every example on the selected kernels, and
+# requires every kernel to print what the first one (stream35) printed.
 # Usage: ./test.sh [--lang all|<language>] [--kernel stream35|microcode11|microcode4|microcode7|stack5|stack8] [--omit file1 file2 ...]
 #        ./test.sh <file>
 # Languages built into the binary are picked by file extension; languages in
 # langs/extras/ are passed to the binary as `--lang <definition file>`, so
 # every run of the suite exercises reading a definition at run time.
 # If --lang is not specified, tests Lumen. If --kernel is not specified,
-# tests every kernel. TEST_QUIET=1 prints program output only for failures.
+# tests every kernel, each program on stream35 first and the others must
+# print the same. TEST_QUIET=1 prints program output only for failures.
+# The release binary is used: the debug one is ten times slower on the
+# heavy programs.
 
 LANGUAGES=(lumen rplumen python rust php ruby pascal c javascript swift)
 declare -A DIRS=(
@@ -92,11 +96,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo -e "${BLUE}Building lumen-lang...${NC}"
-if ! cargo build --quiet 2>/dev/null; then echo -e "${RED}Build failed!${NC}"; exit 1; fi
+if ! cargo build --release --quiet 2>/dev/null; then echo -e "${RED}Build failed!${NC}"; exit 1; fi
 echo -e "${BLUE}Built successfully${NC}\n"
 
-BINARY="./target/debug/lumen-lang"
-TOTAL_TESTS=0; PASSED_TESTS=0; FAILED_TESTS=0; TIMEOUT_TESTS=0
+BINARY="./target/release/lumen-lang"
+TOTAL_TESTS=0; PASSED_TESTS=0; FAILED_TESTS=0; TIMEOUT_TESTS=0; DIFFER_TESTS=0
+# What the first kernel printed for the program being tested; the others must match it.
+REF_OUTPUT=""; REF_KERNEL=""
 declare -A RESULTS
 declare -a FAILED_LIST
 declare -a TESTED_LANGUAGES
@@ -113,7 +119,7 @@ should_omit() {
 }
 
 run_test() {
-    local file="$1" kernel="$2" language="$3"
+    local file="$1" kernel="$2" language="$3" first="$4"
     local filename; filename=$(basename "$file")
     echo -e "${CYAN}  → ${filename} (${kernel})${NC}"
     TOTAL_TESTS=$((TOTAL_TESTS + 1))
@@ -127,11 +133,25 @@ run_test() {
     local time_display
     if [ $elapsed_ms -lt 1000 ]; then time_display="${elapsed_ms}ms"; else time_display=$(printf "%d.%03d" $((elapsed_ms / 1000)) $((elapsed_ms % 1000)))s; fi
 
+    # The first kernel sets what the program prints; every other must agree,
+    # whether the program succeeds or fails.
+    local differs=0
+    if [ "$first" = 1 ]; then
+        REF_OUTPUT="$output"; REF_KERNEL="$kernel"
+    elif [ "$output" != "$REF_OUTPUT" ]; then
+        differs=1
+    fi
+
     if [ -n "$output" ] && { [ -z "$TEST_QUIET" ] || [ $exit_code -ne 0 ]; }; then
         echo "$output" | sed 's/^/    /'
     fi
 
-    if [ $exit_code -eq 0 ]; then
+    if [ $differs -eq 1 ]; then
+        echo -e "    ${RED}✗ DIFFERS${NC} from $REF_KERNEL (${time_display})"
+        diff <(echo "$output") <(echo "$REF_OUTPUT") | head -8 | sed 's/^/      /'
+        DIFFER_TESTS=$((DIFFER_TESTS + 1)); FAILED_TESTS=$((FAILED_TESTS + 1))
+        RESULTS["${language}:${kernel}:failed"]=$((RESULTS["${language}:${kernel}:failed"] + 1)); FAILED_LIST+=("${language} | ${kernel} | ${filename} (differs from ${REF_KERNEL})")
+    elif [ $exit_code -eq 0 ]; then
         echo -e "    ${GREEN}✓ PASS${NC} (${time_display})"
         PASSED_TESTS=$((PASSED_TESTS + 1)); RESULTS["${language}:${kernel}:passed"]=$((RESULTS["${language}:${kernel}:passed"] + 1))
     elif [ $exit_code -eq 124 ]; then
@@ -166,7 +186,8 @@ echo ""
 
 if [ -n "$SINGLE_FILE" ]; then
     echo -e "${YELLOW}Testing: $(basename "$SINGLE_FILE")${NC}"
-    for kernel in "${test_kernels[@]}"; do run_test "$SINGLE_FILE" "$kernel" "$language"; done
+    first=1
+    for kernel in "${test_kernels[@]}"; do run_test "$SINGLE_FILE" "$kernel" "$language" "$first"; first=0; done
     echo ""
     TESTED_LANGUAGES+=("$language")
 else
@@ -175,7 +196,8 @@ else
         # Every file of the language's extension under its directory, subdirectories included.
         while IFS= read -r file; do
             should_omit "$file" && continue
-            for kernel in "${test_kernels[@]}"; do run_test "$file" "$kernel" "$lang"; done
+            first=1
+            for kernel in "${test_kernels[@]}"; do run_test "$file" "$kernel" "$lang" "$first"; first=0; done
         done < <(find ${DIRS[$lang]} -type f -name "*.${EXT[$lang]}" | sort)
         echo ""
         TESTED_LANGUAGES+=("$lang")
@@ -206,7 +228,7 @@ echo "  Overall Summary"
 echo "=========================================="
 echo "Total tests:   $TOTAL_TESTS"
 echo -e "Passed:        ${GREEN}$PASSED_TESTS${NC}"
-echo -e "Failed:        ${RED}$FAILED_TESTS${NC} (includes $TIMEOUT_TESTS timeouts)"
+echo -e "Failed:        ${RED}$FAILED_TESTS${NC} (includes $TIMEOUT_TESTS timeouts and $DIFFER_TESTS kernels printing differently)"
 echo ""
 
 if [ $FAILED_TESTS -gt 0 ]; then

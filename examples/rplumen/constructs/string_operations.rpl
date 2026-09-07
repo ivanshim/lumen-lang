@@ -1,14 +1,4 @@
 # Ported from examples/lumen/constructs/string_operations.lm by scripts/port_examples.py; edit the Lumen original, not this file.
-« 'index' = 's' =
-    index 0 < if
-        true
-    else
-        index s len >=
-    if
-        null return
-    s index char_at return
-» 'char_at_or_null' =
-
 "=== String Operations Test ===" print
 "Hello" 'str1' =
 " World" 'str2' =
