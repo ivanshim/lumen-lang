@@ -4,13 +4,14 @@
 // operands from cells by reference and never touch the stack for them.
 
 use std::collections::HashMap;
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use num_traits::ToPrimitive;
 
 use crate::lang::Lang;
 use crate::arith::{self, Operation};
-use crate::value::{Sort, Wording, Value};
+use crate::value::{Class, Instance, Sort, Wording, Value};
 use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr};
 
 pub struct Engine<'a> {
@@ -26,6 +27,44 @@ pub struct Engine<'a> {
 }
 
 type Res<T> = Result<T, String>;
+/// What stops a run: a fault of the kernel's own words, or a value the
+/// program raised for a catch to take.
+pub enum Fault {
+    Note(String),
+    Thrown(Value),
+}
+
+impl From<String> for Fault {
+    fn from(note: String) -> Fault {
+        Fault::Note(note)
+    }
+}
+
+impl From<&str> for Fault {
+    fn from(note: &str) -> Fault {
+        Fault::Note(note.to_string())
+    }
+}
+
+impl Fault {
+    /// The words to show when nothing caught it.
+    pub fn told(self, sp: &Wording) -> String {
+        match self {
+            Fault::Note(note) => note,
+            Fault::Thrown(Value::Object(o)) => {
+                let told = o.fields.borrow().iter().find(|(n, _)| n == "message").map(|(_, v)| v.plain());
+                match told {
+                    Some(told) => format!("Uncaught {}: {}", o.class.name, told),
+                    None => format!("Uncaught {}", o.class.name),
+                }
+            }
+            Fault::Thrown(v) => format!("Uncaught {}", v.display(sp)),
+        }
+    }
+}
+
+/// A run that a raised value may stop.
+type Flow<T> = Result<T, Fault>;
 
 impl<'a> Engine<'a> {
     pub fn new(lang: &'a Lang, idents: Vec<String>) -> Engine<'a> {
@@ -54,6 +93,11 @@ impl<'a> Engine<'a> {
             Value::Blank => None,
             v => Some(v),
         }
+    }
+
+    /// The language's words for the literals, for telling a fault.
+    pub fn names(&self) -> Wording<'a> {
+        self.wording()
     }
 
     fn wording(&self) -> Wording<'a> {
@@ -160,7 +204,7 @@ impl<'a> Engine<'a> {
     /// returned or the last expression statement's, or what it assigned to
     /// its own name where the language says so, is pushed; a postfix
     /// program leaves what it pushed.
-    pub fn invoke(&mut self, program: &Rc<Routine>, args: Vec<Value>) -> Res<()> {
+    pub fn invoke(&mut self, program: &Rc<Routine>, args: Vec<Value>) -> Flow<()> {
         let n = args.len();
         self.data.extend(args);
         self.invoke_top(program, n)
@@ -168,12 +212,13 @@ impl<'a> Engine<'a> {
 
     /// A call whose arguments are the top `n` of the data stack: they move
     /// straight into the frame, one allocation instead of two.
-    pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Res<()> {
-        if program.formals.len() != n {
-            return Err(format!("Function {} expects {} arguments, got {}", program.ident, program.formals.len(), n));
+    pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
+        if n > program.formals.len() || n < program.least {
+            let wanted = program.formals.len();
+            return Err(format!("Function {} expects {} arguments, got {}", program.ident, wanted, n).into());
         }
         if self.data.len() < n {
-            return Err("Stack underflow".to_string());
+            return Err("Stack underflow".to_string().into());
         }
         let at = self.data.len() - n;
         let memoized = program.returns_value && self.memo_cell.map_or(false, |s| matches!(self.world[s], Value::Flag(true)));
@@ -214,9 +259,12 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
-    fn run_instrs(&mut self, program: &Rc<Routine>, frame: &mut [Value]) -> Res<()> {
+    fn run_instrs(&mut self, program: &Rc<Routine>, frame: &mut [Value]) -> Flow<()> {
         let instrs = &program.instrs;
         let mut pc = 0;
+        // Where a raised value is caught, and how deep the stack was
+        // when the guard was set.
+        let mut guards: Vec<(usize, usize)> = Vec::new();
         while pc < instrs.len() {
             match &instrs[pc] {
                 Instr::Const(v) => self.data.push(v.clone()),
@@ -228,7 +276,24 @@ impl<'a> Engine<'a> {
                     let v = self.drop_top()?;
                     self.store_cell(slot, frame, v)?;
                 }
-                Instr::Act(op, argc) => self.perform(op, *argc)?,
+                Instr::Act(op, argc) => {
+                    if let Err(fault) = self.perform(op, *argc) {
+                        let Fault::Thrown(raised) = fault else { return Err(fault) };
+                        let Some((catch, depth)) = guards.pop() else { return Err(Fault::Thrown(raised)) };
+                        self.data.truncate(depth);
+                        self.data.push(raised);
+                        pc = catch;
+                        continue;
+                    }
+                }
+                Instr::Guard(catch) => guards.push((*catch, self.data.len())),
+                Instr::Unguard => {
+                    guards.pop();
+                }
+                Instr::Missing(slot) => {
+                    let empty = matches!(frame[*slot], Value::Blank);
+                    self.data.push(Value::Flag(empty));
+                }
                 Instr::Skip(to) => {
                     if !self.drop_top()?.is_true() {
                         pc = *to;
@@ -303,7 +368,7 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
-    fn perform(&mut self, op: &Action, argc: usize) -> Res<()> {
+    fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
         let result = match op {
             Action::Not => Value::Flag(!self.drop_top()?.is_true()),
             Action::AsBool => Value::Flag(self.drop_top()?.is_true()),
@@ -312,20 +377,20 @@ impl<'a> Engine<'a> {
                 let v = self.drop_top()?;
                 match arith::calculate(Operation::Minus, &Value::Small(0), &v) {
                     Some(r) => r?,
-                    None => return Err("Cannot negate non-numeric value".to_string()),
+                    None => return Err("Cannot negate non-numeric value".to_string().into()),
                 }
             }
             Action::Invoke(name) => {
                 let callee = self.drop_top()?;
                 return match callee {
                     Value::Routine(p) => self.invoke_top(&p, argc - 1),
-                    _ => Err(format!("'{}' is not a function", name)),
+                    _ => Err(format!("'{}' is not a function", name).into()),
                 };
             }
             Action::Evaluate => {
                 return match self.drop_top()? {
                     Value::Routine(p) => self.invoke(&p, Vec::new()),
-                    _ => Err("eval needs a program".to_string()),
+                    _ => Err("eval needs a program".to_string().into()),
                 };
             }
             Action::Execute => {
@@ -353,20 +418,159 @@ impl<'a> Engine<'a> {
                     Value::Array(items) => match items.get(at) {
                         Some(v) if !key => v.clone(),
                         Some(_) => Value::Small(at as i64),
-                        None => return Err(format!("Array index {} out of bounds (length: {})", at, items.len())),
+                        None => return Err(format!("Array index {} out of bounds (length: {})", at, items.len()).into()),
                     },
                     Value::Map(pairs) => match pairs.get(at) {
                         Some((k, v)) => if key { k.clone() } else { v.clone() },
-                        None => return Err(format!("Array index {} out of bounds (length: {})", at, pairs.len())),
+                        None => return Err(format!("Array index {} out of bounds (length: {})", at, pairs.len()).into()),
                     },
-                    _ => return Err("Cannot walk a value that is not an array".to_string()),
+                    _ => return Err("Cannot walk a value that is not an array".to_string().into()),
                 }
             }
-            Action::AtEnd => return Err("An empty index belongs on the left of an assignment".to_string()),
+            Action::AtEnd => return Err("An empty index belongs on the left of an assignment".to_string().into()),
+            Action::Forge(plan) => {
+                // What was pushed: the class to stand on, then a value for
+                // every property, every value of the class's own, and
+                // every constant, in the order the plan names them.
+                let mut given = self.drop_many(argc)?.into_iter();
+                let base = match plan.extends {
+                    false => None,
+                    true => match given.next() {
+                        Some(Value::Class(c)) => Some(c),
+                        Some(v) => return Err(format!("Class {} cannot stand on {}", plan.name, v.plain()).into()),
+                        None => return Err("Stack underflow".to_string().into()),
+                    },
+                };
+                let mut take = |names: &[String]| -> Vec<(String, Value)> {
+                    names.iter().map(|n| (n.clone(), given.next().unwrap_or(Value::Null))).collect()
+                };
+                Value::Class(Rc::new(Class {
+                    name: plan.name.clone(),
+                    base,
+                    fields: take(&plan.field_names),
+                    methods: plan.methods.clone(),
+                    shared: RefCell::new(take(&plan.shared_names)),
+                    constants: take(&plan.constant_names),
+                }))
+            }
+            Action::Make => {
+                let mut args = self.drop_many(argc)?;
+                let Value::Class(class) = args.remove(0) else {
+                    return Err("Only a class can be made into an object".to_string().into());
+                };
+                let object = Rc::new(Instance { class: class.clone(), fields: RefCell::new(class.all_fields()) });
+                let maker = self.lang.constructor.as_deref().and_then(|m| class.method(m)).cloned();
+                match maker {
+                    Some(maker) => {
+                        let mut all = vec![Value::Object(object.clone())];
+                        all.extend(args);
+                        self.invoke(&maker, all)?;
+                        // What the maker leaves is not the object.
+                        self.drop_top()?;
+                    }
+                    None if !args.is_empty() => {
+                        return Err(format!("Class {} takes no arguments when it is made", class.name).into());
+                    }
+                    None => {}
+                }
+                Value::Object(object)
+            }
+            Action::Grab(name) => match self.drop_top()? {
+                Value::Object(o) => {
+                    let found = o.fields.borrow().iter().find(|(n, _)| n == name.as_ref()).map(|(_, v)| v.clone());
+                    found.ok_or_else(|| format!("Undefined property: {}::${}", o.class.name, name))?
+                }
+                v => return Err(format!("Cannot read property '{}' of {}", name, v.plain()).into()),
+            },
+            Action::Plant(name) => {
+                let mut pair = self.drop_many(2)?;
+                let value = pair.pop().expect("the value");
+                match pair.pop().expect("the object") {
+                    Value::Object(o) => {
+                        let mut fields = o.fields.borrow_mut();
+                        match fields.iter_mut().find(|(n, _)| n == name.as_ref()) {
+                            Some(place) => place.1 = value,
+                            None => fields.push((name.to_string(), value)),
+                        }
+                        Value::Null
+                    }
+                    v => return Err(format!("Cannot write property '{}' of {}", name, v.plain()).into()),
+                }
+            }
+            Action::Send(name) => {
+                let mut args = self.drop_many(argc)?;
+                let Value::Object(o) = args.remove(0) else {
+                    return Err(format!("Cannot call method '{}' on a value that is not an object", name).into());
+                };
+                let method = o.class.method(&name).cloned();
+                let method = method.ok_or_else(|| format!("Call to undefined method {}::{}()", o.class.name, name))?;
+                let mut all = vec![Value::Object(o)];
+                all.extend(args);
+                return self.invoke(&method, all);
+            }
+            Action::Reach(name) => match self.drop_top()? {
+                Value::Class(c) => match c.constant(&name) {
+                    Some(v) => v.clone(),
+                    None => match c.holder(&name) {
+                        Some(holder) => {
+                            let found = holder.shared.borrow().iter().find(|(n, _)| n == name.as_ref()).map(|(_, v)| v.clone());
+                            found.expect("the holder has it")
+                        }
+                        None => return Err(format!("Undefined constant {}::{}", c.name, name).into()),
+                    },
+                },
+                v => return Err(format!("Cannot reach '{}' in {}", name, v.plain()).into()),
+            },
+            Action::Sow(name) => {
+                let mut pair = self.drop_many(2)?;
+                let value = pair.pop().expect("the value");
+                match pair.pop().expect("the class") {
+                    Value::Class(c) => {
+                        let holder = c.holder(&name).unwrap_or(&c);
+                        let mut shared = holder.shared.borrow_mut();
+                        match shared.iter_mut().find(|(n, _)| n == name.as_ref()) {
+                            Some(place) => place.1 = value,
+                            None => shared.push((name.to_string(), value)),
+                        }
+                        Value::Null
+                    }
+                    v => return Err(format!("Cannot write '{}' in {}", name, v.plain()).into()),
+                }
+            }
+            Action::Summon(name) => {
+                let mut args = self.drop_many(argc)?;
+                let this = args.remove(0);
+                let Value::Class(class) = args.remove(0) else {
+                    return Err(format!("Cannot call '{}' on a value that is not a class", name).into());
+                };
+                let method = class.method(&name).cloned();
+                let method = method.ok_or_else(|| format!("Call to undefined method {}::{}()", class.name, name))?;
+                let mut all = vec![this];
+                all.extend(args);
+                return self.invoke(&method, all);
+            }
+            Action::Kindred(name) => match self.drop_top()? {
+                Value::Object(o) => Value::Flag(o.class.descends_from(&name)),
+                _ => Value::Flag(false),
+            },
+            Action::Twin => {
+                let top = self.data.last().cloned().ok_or("Stack underflow")?;
+                top
+            }
+            Action::Matches(names) => match self.drop_top()? {
+                Value::Object(o) => Value::Flag(names.iter().any(|n| o.class.descends_from(n))),
+                _ => Value::Flag(false),
+            },
+            Action::Hurl => return Err(Fault::Thrown(self.drop_top()?)),
+            Action::Titled => match self.drop_top()? {
+                Value::Object(o) => Value::text(&o.class.name),
+                Value::Class(c) => Value::text(&c.name),
+                v => return Err(format!("{} has no class name", v.plain()).into()),
+            },
             Action::Extent => match self.drop_top()? {
                 Value::Array(items) => Value::Small(items.len() as i64),
                 Value::Map(pairs) => Value::Small(pairs.len() as i64),
-                _ => return Err("Cannot walk a value that is not an array".to_string()),
+                _ => return Err("Cannot walk a value that is not an array".to_string().into()),
             },
             Action::Collect => {
                 let mark = self.data.iter().rposition(|v| matches!(v, Value::Fence)).ok_or("Stack underflow")?;
@@ -376,7 +580,7 @@ impl<'a> Engine<'a> {
             }
             Action::Builtin(builtin, name) => {
                 if self.data.len() < argc {
-                    return Err("Stack underflow".to_string());
+                    return Err("Stack underflow".to_string().into());
                 }
                 let at = self.data.len() - argc;
                 let mut args = std::mem::take(&mut self.buffer);

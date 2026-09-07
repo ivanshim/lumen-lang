@@ -1799,6 +1799,10 @@ def write_mirror(lang, d, files, reasons):
     for old in out.iterdir():
         if old.is_file():
             old.unlink()
+    # A language may carry hand-written source of its own under native/,
+    # for what it has and Lumen has not: PHP's exception classes. The
+    # porter never writes there; it only puts those files first.
+    native = sorted(q.name for q in (out / "native").glob(f"*.{ext}")) if (out / "native").is_dir() else []
     comment = d["lexical.comment_line"][0] if d["lexical.comment_line"] else None
     written = []
     for name in LIB_FILES:
@@ -1815,7 +1819,8 @@ def write_mirror(lang, d, files, reasons):
         target.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
         written.append(target.name)
     prologue = d["lexical.prologue"][0] if d["lexical.prologue"] else ""
-    entries = "".join(f'    ("langs/lib_{lang}/{n}", include_str!("{n}")),\n' for n in written)
+    entries = "".join(f'    ("langs/lib_{lang}/native/{n}", include_str!("native/{n}")),\n' for n in native)
+    entries += "".join(f'    ("langs/lib_{lang}/{n}", include_str!("{n}")),\n' for n in written)
     (out / "prelude.rs").write_text(
         "// Build-time packaging artifact, written by scripts/port_examples.py: the\n"
         f"// Lumen library as {lang} spells it, embedded in the host and prepended to\n"

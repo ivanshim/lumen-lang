@@ -153,6 +153,33 @@ pub struct Lang {
     pub append_index: bool,
     /// `for v in a` walks what a holds when a is not a range.
     pub for_collections: bool,
+
+    /// Classes and their objects.
+    pub class_words: Vec<String>,
+    pub extends_words: Vec<String>,
+    pub new_words: Vec<String>,
+    /// The name a method knows its own object by.
+    pub this_word: Option<String>,
+    /// The method run when an object is made.
+    pub constructor: Option<String>,
+    /// Words that may stand before a member and say nothing this kernel reads.
+    pub modifier_words: Vec<String>,
+    /// The modifier marking a member the class keeps for itself.
+    pub shared_words: Vec<String>,
+    /// `object->member`, and `class::member`.
+    pub member_mark: Option<String>,
+    pub scope_mark: Option<String>,
+    pub instanceof_words: Vec<String>,
+    pub parent_words: Vec<String>,
+    pub self_words: Vec<String>,
+    /// Signs a name may be led by, which say nothing: PHP's `\Error`.
+    pub name_leads: Vec<char>,
+    pub try_words: Vec<String>,
+    pub catch_words: Vec<String>,
+    pub finally_words: Vec<String>,
+    pub throw_words: Vec<String>,
+    /// Between the classes one catch takes.
+    pub catch_between: Option<String>,
 }
 
 /// Every tag with its shape: w a word list, s a string, b a switch,
@@ -205,7 +232,11 @@ w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.defaul
 w ext.stmt.case.mark | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted
 w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
-w ext.stmt.function.returns
+w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
+w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.modifier | w ext.stmt.class.shared
+w ext.op.member | w ext.op.scope | w ext.op.instanceof | w ext.stmt.class.parent
+w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.try | w ext.stmt.catch
+w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -733,7 +764,31 @@ impl Lang {
             break_levels: r.flag("ext.stmt.break.levels")?,
             append_index: r.flag("ext.op.index.append")?,
             for_collections: r.flag("ext.stmt.for.collection")?,
+            class_words: r.strings("ext.stmt.class")?,
+            extends_words: r.strings("ext.stmt.class.extends")?,
+            new_words: r.strings("ext.stmt.class.new")?,
+            this_word: r.head("ext.stmt.class.this")?,
+            constructor: r.head("ext.stmt.class.constructor")?,
+            modifier_words: r.strings("ext.stmt.class.modifier")?,
+            shared_words: r.strings("ext.stmt.class.shared")?,
+            member_mark: r.head("ext.op.member")?,
+            scope_mark: r.head("ext.op.scope")?,
+            instanceof_words: r.strings("ext.op.instanceof")?,
+            parent_words: r.strings("ext.stmt.class.parent")?,
+            self_words: r.strings("ext.stmt.class.self")?,
+            name_leads: r.letters("ext.lexical.name_lead")?,
+            try_words: r.strings("ext.stmt.try")?,
+            catch_words: r.strings("ext.stmt.catch")?,
+            finally_words: r.strings("ext.stmt.finally")?,
+            throw_words: r.strings("ext.stmt.throw")?,
+            catch_between: r.head("ext.stmt.catch.separator")?,
         };
+        if !lang.try_words.is_empty() && lang.catch_words.is_empty() {
+            return Err("ext.stmt.try needs ext.stmt.catch".to_string());
+        }
+        if !lang.class_words.is_empty() && (lang.member_mark.is_none() || lang.new_words.is_empty()) {
+            return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
+        }
         if !lang.foreach_words.is_empty() && lang.foreach_as_words.is_empty() {
             return Err("stmt.foreach needs stmt.foreach.as".to_string());
         }
@@ -796,6 +851,9 @@ impl Lang {
         if let Some(mark) = &self.pair_mark {
             place(mark);
         }
+        for mark in [&self.member_mark, &self.scope_mark, &self.catch_between].into_iter().flatten() {
+            place(mark);
+        }
         for pair in [&self.grouping, &self.calling, &self.array_brackets, &self.map_brackets, &self.index_brackets].into_iter().flatten() {
             place(&pair.open);
             place(&pair.close);
@@ -820,6 +878,9 @@ impl Lang {
             &self.in_words, &self.return_words, &self.break_words, &self.continue_words, &self.function_words, &self.pass_words, &self.true_words,
             &self.false_words, &self.null_words, &self.c_for_words, &self.static_words, &self.global_words, &self.const_words,
             &self.switch_words, &self.case_words, &self.default_words, &self.foreach_words, &self.foreach_as_words,
+            &self.class_words, &self.extends_words, &self.new_words, &self.modifier_words, &self.shared_words,
+            &self.instanceof_words, &self.parent_words, &self.self_words, &self.try_words, &self.catch_words,
+            &self.finally_words, &self.throw_words,
         ];
         for word in keywords.into_iter().flatten() {
             if !name_like(word, unicode, prefix) {

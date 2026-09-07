@@ -280,11 +280,51 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.print_r`: a builtin writing a value over lines, as PHP's
   `print_r` does: a scalar on its own, an array as `Array` and its places
   in brackets, each array within eight spaces further along.
+- `ext.stmt.class` and its family: `ext.stmt.class.extends`,
+  `ext.stmt.class.new`, `ext.stmt.class.this` (the name a method knows
+  its own object by), `ext.stmt.class.constructor` (the method run when
+  an object is made), `ext.stmt.class.modifier` (words before a member
+  that this kernel reads past: `public`, `final`), `ext.stmt.class.shared`
+  (the modifier for a member the class keeps rather than its objects),
+  `ext.stmt.class.parent` and `ext.stmt.class.self`. A class is a value
+  bound to its name, so `new C`, `C::CONST` and `catch (C $e)` are
+  ordinary reads of it. Objects are handles: naming one twice names one
+  object.
+- `ext.op.member` and `ext.op.scope`: `object->member` and
+  `class::member`, each reading a property, a constant or a method, and
+  `class::class` giving the class's name.
+- `ext.op.instanceof`: whether a value is an object of a class or of one
+  beneath it.
+- `ext.stmt.try`, `ext.stmt.catch`, `ext.stmt.finally`, `ext.stmt.throw`
+  and `ext.stmt.catch.separator`: a body watched for a raised value, the
+  first clause whose class takes it holding it, and a last part that runs
+  however the body ended, a return through it included. What no clause
+  takes is raised again.
+- `ext.lexical.name_lead`: signs a name may be led by that say nothing,
+  PHP's `\TypeError`.
 - `ext.stmt.function.returns`: the mark before a return type, read beside
   the core `stmt.function.returns`. PHP says it here because the porter
   writes a type for every function it ports and PHP has no word for a
   rational: filling the core label would drop from the ported examples
   every function that returns one.
+
+## A parameter's own value
+
+A parameter may be given a value for calls that leave it out
+(`function f($a, $b = 2)`), in every language whose definition spells
+assignment. It is not a label of its own: it falls out of the parameter
+list. The value is read again inside the program, where its names mean
+what they mean there, and written only when the call left that parameter
+out.
+
+## Hand-written source in a mirror
+
+`langs/lib_<language>/native/` holds source the porter never writes:
+what a language has and Lumen has not. PHP's exception classes live
+there, written in PHP, so that no kernel carries PHP's class names.
+Those files use the extension labels, so the host gives them only to the
+kernels that read them; the reference kernels get the ported library
+alone.
 
 ## What a kernel does not implement
 
@@ -483,18 +523,34 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.var_dump` | - | - | - | - | - | - | - | `var_dump` | - | - |
 | `ext.lexical.epilogue` | - | - | - | - | - | - | - | `?>` | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | - | - | - | `"` | - | - |
+| `ext.lexical.name_lead` | - | - | - | - | - | - | - | `\` | - | - |
 | `ext.lexical.number.exponent` | - | - | - | - | - | - | - | `e` `E` | - | - |
 | `ext.op.assign.compound` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.decrement` | - | - | - | - | - | - | - | `--` | - | - |
 | `ext.op.increment` | - | - | - | - | - | - | - | `++` | - | - |
 | `ext.op.index.append` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.op.instanceof` | - | - | - | - | - | - | - | `instanceof` | - | - |
+| `ext.op.member` | - | - | - | - | - | - | - | `->` | - | - |
 | `ext.op.plus` | - | - | - | - | - | - | - | `+` | - | - |
+| `ext.op.scope` | - | - | - | - | - | - | - | `::` | - | - |
 | `ext.op.ternary` | - | - | - | - | - | - | - | `?` `:` | - | - |
 | `ext.stmt.break.levels` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.stmt.case` | - | - | - | - | - | - | - | `case` | - | - |
 | `ext.stmt.case.mark` | - | - | - | - | - | - | - | `:` | - | - |
+| `ext.stmt.catch` | - | - | - | - | - | - | - | `catch` | - | - |
+| `ext.stmt.catch.separator` | - | - | - | - | - | - | - | `\|` | - | - |
+| `ext.stmt.class` | - | - | - | - | - | - | - | `class` | - | - |
+| `ext.stmt.class.constructor` | - | - | - | - | - | - | - | `__construct` | - | - |
+| `ext.stmt.class.extends` | - | - | - | - | - | - | - | `extends` | - | - |
+| `ext.stmt.class.modifier` | - | - | - | - | - | - | - | `public` `private` `protected` `final` `abstract` `readonly` `var` | - | - |
+| `ext.stmt.class.new` | - | - | - | - | - | - | - | `new` | - | - |
+| `ext.stmt.class.parent` | - | - | - | - | - | - | - | `parent` | - | - |
+| `ext.stmt.class.self` | - | - | - | - | - | - | - | `self` | - | - |
+| `ext.stmt.class.shared` | - | - | - | - | - | - | - | `static` | - | - |
+| `ext.stmt.class.this` | - | - | - | - | - | - | - | `$this` | - | - |
 | `ext.stmt.const` | - | - | - | - | - | - | - | `const` | - | - |
 | `ext.stmt.default` | - | - | - | - | - | - | - | `default` | - | - |
+| `ext.stmt.finally` | - | - | - | - | - | - | - | `finally` | - | - |
 | `ext.stmt.for.c` | - | - | - | - | - | - | - | `for` | - | - |
 | `ext.stmt.for.collection` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.function.hoisted` | - | - | - | - | - | - | - | `true` | - | - |
@@ -502,5 +558,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.global` | - | - | - | - | - | - | - | `global` | - | - |
 | `ext.stmt.static` | - | - | - | - | - | - | - | `static` | - | - |
 | `ext.stmt.switch` | - | - | - | - | - | - | - | `switch` | - | - |
+| `ext.stmt.throw` | - | - | - | - | - | - | - | `throw` | - | - |
+| `ext.stmt.try` | - | - | - | - | - | - | - | `try` | - | - |
 | `ext.syntax.call.bare` | - | - | - | - | - | - | - | `true` | - | - |
 <!-- table:end -->

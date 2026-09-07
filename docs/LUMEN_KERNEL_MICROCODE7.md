@@ -105,6 +105,12 @@ functions and exponent literals. The reference kernels skip those
 labels, so the reference suites under `tests/` run on this kernel and
 stack8 only.
 
+Classes are values here too: `Form::Class` builds one from a plan and the
+values written for its members, and `Form::Attempt` holds a body, its
+clauses and its last part. Because a return, a break and a raised value
+are all escapes in this kernel, the last part runs on the way out of any
+of them without being written twice.
+
 It also holds a map: `Value::Dict`, keys with their values in the order
 they were written, beside the plain vector. A literal gathers couples
 into a dict and everything else into a vector, so a list stays a list;

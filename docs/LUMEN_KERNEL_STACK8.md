@@ -106,6 +106,15 @@ functions (their instrs lifted to the front of the unit) and exponent
 literals. The reference kernels skip those labels, so the reference
 suites under `tests/` run on this kernel and microcode7 only.
 
+Classes are values here too: a class declaration forges one from a plan
+the compiler builds and binds it to its name, so `new C` and `C::X` are
+reads. Methods are ordinary programs whose first parameter is the object.
+A raised value travels as a fault the run loop catches: `Guard` marks
+where a catch stands and how deep the stack was, `Unguard` takes the mark
+away, and an `Act` that raises unwinds to the nearest guard. A last part
+is written twice, once for each way out, and a return inside a try writes
+its value aside, runs the last parts, and only then leaves.
+
 It also holds a map, which the reference kernels do not: `Value::Map`, an
 ordered list of keys with their values, beside the plain array. A literal
 gathers ties into a map and everything else into an array, so a list

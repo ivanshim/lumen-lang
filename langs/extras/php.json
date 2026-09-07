@@ -398,5 +398,65 @@
   ],
   "ext.stmt.function.returns": [
     ":"
+  ],
+  "ext.stmt.class": [
+    "class"
+  ],
+  "ext.stmt.class.extends": [
+    "extends"
+  ],
+  "ext.stmt.class.new": [
+    "new"
+  ],
+  "ext.stmt.class.this": [
+    "$this"
+  ],
+  "ext.stmt.class.constructor": [
+    "__construct"
+  ],
+  "ext.stmt.class.modifier": [
+    "public",
+    "private",
+    "protected",
+    "final",
+    "abstract",
+    "readonly",
+    "var"
+  ],
+  "ext.stmt.class.shared": [
+    "static"
+  ],
+  "ext.op.member": [
+    "->"
+  ],
+  "ext.op.scope": [
+    "::"
+  ],
+  "ext.op.instanceof": [
+    "instanceof"
+  ],
+  "ext.stmt.class.parent": [
+    "parent"
+  ],
+  "ext.stmt.class.self": [
+    "self"
+  ],
+  "ext.lexical.name_lead": [
+    "\\"
+  ],
+  "ext.stmt.try": [
+    "try"
+  ],
+  "ext.stmt.catch": [
+    "catch"
+  ],
+  "ext.stmt.finally": [
+    "finally"
+  ],
+  "ext.stmt.throw": [
+    "throw"
+  ],
+  "ext.stmt.catch.separator": [
+    "|"
   ]
 }

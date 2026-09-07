@@ -457,6 +457,10 @@ impl<'a> Cursor<'a> {
                 self.number();
             } else if lang.quote_for_names == Some(c) {
                 self.quoted_name(c)?;
+            } else if lang.name_leads.contains(&c) && self.look(1).map_or(false, |n| lang.begins_name(n)) {
+                // A sign standing before a name, saying nothing: PHP's `\Error`.
+                self.step();
+                self.word(false);
             } else if lang.begins_name(c) {
                 self.word(false);
             } else if lang.sigil == Some(c) && self.look(1).map_or(false, |n| lang.begins_name(n)) {

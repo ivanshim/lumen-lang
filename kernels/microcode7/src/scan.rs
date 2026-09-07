@@ -247,13 +247,15 @@ pub fn scan(source: &str, table: &Table) -> Result<Vec<Token>, String> {
             pos = k;
             continue;
         }
+        // A sign written before a name and saying nothing: PHP's `\Error`.
+        let led = table.letters("ext.lexical.name_lead").contains(&c) && src.get(pos + 1).map_or(false, |n| table.begins_name(*n));
         let prefixed = prefix == Some(c) && src.get(pos + 1).map_or(false, |n| table.begins_name(*n));
-        if table.begins_name(c) || prefixed {
-            let mut k = if prefixed { pos + 1 } else { pos };
+        if table.begins_name(c) || prefixed || led {
+            let mut k = if prefixed || led { pos + 1 } else { pos };
             while k < src.len() && table.extends_name(src[k]) {
                 k += 1;
             }
-            let mut s: String = src[pos..k].iter().collect();
+            let mut s: String = src[if led { pos + 1 } else { pos }..k].iter().collect();
             let mut longest = 0;
             for name in table.prims.keys() {
                 if name.len() > s.len() && name.starts_with(s.as_str()) {

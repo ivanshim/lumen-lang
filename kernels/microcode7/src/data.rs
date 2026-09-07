@@ -68,6 +68,8 @@ pub enum Value {
     /// A key written together with its value (`k => v`), until a
     /// literal takes it in.
     Couple(Rc<(Value, Value)>),
+    Blueprint(Rc<Blueprint>),
+    Thing(Rc<Thing>),
     /// A program not yet bound to a frame: only inside the tree.
     Routine(Rc<Routine>),
     /// A program bound to the frame it was made in.
@@ -109,7 +111,8 @@ impl Value {
             Value::Flag(_) => Kind::Truth,
             Value::Vector(_) | Value::Dict(_) => Kind::Vector,
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
-            Value::Couple(_) | Value::Routine(_) | Value::Bound(..) | Value::Unset => return None,
+            Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
+            Value::Routine(_) | Value::Bound(..) | Value::Unset => return None,
         })
     }
 
@@ -135,6 +138,7 @@ impl Value {
             Value::Nil | Value::Unset => BigInt::zero(),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
             Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
+            Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::KindOf(_) => return Err("Cannot coerce kind meta-value to number".to_string()),
         })
@@ -153,6 +157,10 @@ impl Value {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
             }
             (Value::Couple(a), Value::Couple(b)) => a.0.equals(&b.0) && a.1.equals(&b.1),
+            // One object is itself and nothing else; two classes are one
+            // when they carry the same name.
+            (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
+            (Value::Blueprint(a), Value::Blueprint(b)) => a.name == b.name,
             (Value::Bound(a, _), Value::Bound(b, _)) => Rc::ptr_eq(a, b),
             (Value::KindOf(a), Value::KindOf(b)) => a == b,
             _ => false,
@@ -190,6 +198,8 @@ impl Value {
             }
             Value::Couple(e) => format!("{} => {}", e.0.bare(), e.1.bare()),
             Value::Routine(p) | Value::Bound(p, _) => format!("<function({})>", p.formals.join(", ")),
+            Value::Blueprint(b) => format!("<class {}>", b.name),
+            Value::Thing(t) => format!("<object {}>", t.of.name),
             Value::KindOf(s) => s.tag().to_string(),
         }
     }
@@ -217,6 +227,8 @@ impl Value {
                 out.push(')');
             }
             Value::Bound(p, _) => out.push_str(&format!("f{:p}", Rc::as_ptr(p))),
+            Value::Thing(t) => out.push_str(&format!("t{:p}", Rc::as_ptr(t))),
+            Value::Blueprint(b) => out.push_str(&format!("b{}", b.name)),
             other => out.push_str(&other.bare()),
         }
         out.push('|');
@@ -245,4 +257,67 @@ pub fn decimal_string(above: &BigInt, beneath: &BigInt, places: usize) -> String
         room -= 1;
     }
     out
+}
+
+/// A class: its name, what it is built on, the properties a thing of it
+/// starts with, the programs it answers to, its constants, and the
+/// values it keeps for itself rather than for its things.
+#[derive(Debug)]
+pub struct Blueprint {
+    pub name: String,
+    pub under: Option<Rc<Blueprint>>,
+    pub fields: Vec<(String, Value)>,
+    pub methods: Vec<(String, Rc<Routine>)>,
+    pub constants: Vec<(String, Value)>,
+    pub shared: RefCell<Vec<(String, Value)>>,
+}
+
+impl Blueprint {
+    pub fn program(&self, name: &str) -> Option<&Rc<Routine>> {
+        match self.methods.iter().find(|(n, _)| n == name) {
+            Some((_, p)) => Some(p),
+            None => self.under.as_ref().and_then(|u| u.program(name)),
+        }
+    }
+
+    pub fn constant(&self, name: &str) -> Option<&Value> {
+        match self.constants.iter().find(|(n, _)| n == name) {
+            Some((_, v)) => Some(v),
+            None => self.under.as_ref().and_then(|u| u.constant(name)),
+        }
+    }
+
+    /// The class along the line that keeps a value of that name.
+    pub fn keeper(&self, name: &str) -> Option<&Blueprint> {
+        if self.shared.borrow().iter().any(|(n, _)| n == name) {
+            return Some(self);
+        }
+        self.under.as_ref().and_then(|u| u.keeper(name))
+    }
+
+    pub fn built_on(&self, name: &str) -> bool {
+        self.name == name || self.under.as_ref().map_or(false, |u| u.built_on(name))
+    }
+
+    /// Every property a thing of this class starts with, what it is
+    /// built on first, so this class has the last word.
+    pub fn every_field(&self) -> Vec<(String, Value)> {
+        let mut all = self.under.as_ref().map_or_else(Vec::new, |u| u.every_field());
+        for (name, value) in &self.fields {
+            match all.iter_mut().find(|(n, _)| n == name) {
+                Some(place) => place.1 = value.clone(),
+                None => all.push((name.clone(), value.clone())),
+            }
+        }
+        all
+    }
+}
+
+/// One thing: the class it was made from and what it holds. Naming a
+/// thing twice names one thing, so a write through either name shows in
+/// both.
+#[derive(Debug)]
+pub struct Thing {
+    pub of: Rc<Blueprint>,
+    pub holds: RefCell<Vec<(String, Value)>>,
 }

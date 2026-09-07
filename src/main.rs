@@ -65,7 +65,11 @@ fn mirror_for(language: &str) -> Option<(&'static str, &'static [(&'static str, 
 /// Lumen program, the language's mirror of it for any other. A program
 /// that opens with the language's prologue (Python's `import sys`) keeps
 /// it first, since the kernels drop a prologue only at the start.
-fn with_library(language: &str, source: String) -> String {
+/// The kernels that read the ext.* labels, and so the only ones a
+/// mirror's hand-written native source can run on.
+const FULL_KERNELS: [&str; 2] = ["stack8", "microcode7"];
+
+fn with_library(kernel: &str, language: &str, source: String) -> String {
     if env::var_os("LUMEN_BARE").is_some() {
         return source;
     }
@@ -77,6 +81,11 @@ fn with_library(language: &str, source: String) -> String {
         return format!("{}\n{}", prelude, source);
     }
     let Some((prologue, files)) = mirror_for(language) else { return source };
+    // A mirror may carry hand-written source of the language's own under
+    // native/, spelling what only the full kernels read; the others are
+    // given the ported library alone.
+    let full = FULL_KERNELS.contains(&kernel);
+    let files: Vec<_> = files.iter().filter(|(path, _)| full || !path.contains("/native/")).collect();
     if files.is_empty() {
         return source;
     }
@@ -126,7 +135,7 @@ fn main() {
     });
 
     // Every program runs on top of its language's library.
-    let source = with_library(inv.language.name(), source);
+    let source = with_library(&inv.kernel, inv.language.name(), source);
 
     if let Some(target) = &inv.emit {
         if inv.kernel != "microcode11" {

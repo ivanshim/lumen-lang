@@ -82,13 +82,15 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String]) -> Result<(), St
     if let Some(name) = &lang.precision_binding {
         machine.define(name, engine::places_default());
     }
-    machine.invoke(&program, Vec::new())?;
+    // A value raised and never caught is a fault like any other, told
+    // in the language's own words.
+    machine.invoke(&program, Vec::new()).map_err(|f| f.told(&machine.names()))?;
 
     // A language with an entry function (Rust's `main`) runs it once the
     // program body has defined it.
     if let Some(entry) = &lang.entry_binding {
         if let Some(Value::Routine(main)) = machine.lookup(entry).cloned() {
-            machine.invoke(&main, Vec::new())?;
+            machine.invoke(&main, Vec::new()).map_err(|f| f.told(&machine.names()))?;
         }
     }
     Ok(())

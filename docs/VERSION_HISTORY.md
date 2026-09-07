@@ -148,6 +148,24 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   `scripts/port_examples.py` now reports the first unwritable callee in
   source order, so `docs/LIBRARY_PORTS.md` no longer changes between
   runs.
+- **Objects, classes and exceptions in the full kernels**: `ext.stmt.class`
+  and its family (`extends`, `new`, `$this`, `__construct`, member
+  modifiers, class-kept members, `parent`, `self`), `ext.op.member`
+  (`->`), `ext.op.scope` (`::`, reaching constants, kept values, methods
+  and `::class`), `ext.op.instanceof`, and `ext.stmt.try` with `catch`,
+  `finally`, `throw` and a separator for the classes one clause takes.
+  A class is a value bound to its name, so making an object, reaching a
+  constant and catching a class are all ordinary reads; objects are
+  handles, so naming one twice names one object. A parameter may carry a
+  value of its own for calls that leave it out, read again inside the
+  program where its names mean what they should. PHP's exception classes
+  are written in PHP under `langs/lib_php/native/`, which the porter
+  leaves alone and the host gives only to the kernels that read the
+  extension labels, so no kernel carries PHP's class names.
+  stack8 catches a raised value with guard marks in its run loop and
+  writes a last part twice; microcode7 makes it one more escape beside
+  return and break, so its last part is written once. `tests/php/lang`
+  goes from 22 to 29 passing, the same on both.
 - **Maps, and a kernel reads past what it cannot do**: the full kernels
   hold an ordered map of keys and values beside the plain array, so PHP's
   associative arrays and Python's dictionaries run: `syntax.map.pair`
