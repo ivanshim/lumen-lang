@@ -17,6 +17,8 @@ pub struct Machine<'a> {
     globals: Vec<Value>,
     names: Vec<String>,
     stack: Vec<Value>,
+    /// The arguments of a builtin call, one buffer reused for every call.
+    scratch: Vec<Value>,
     cache: HashMap<String, Value>,
     args_slot: Option<usize>,
     memo_slot: Option<usize>,
@@ -31,6 +33,7 @@ impl<'a> Machine<'a> {
             def,
             globals: vec![Value::Empty; names.len()],
             stack: Vec::new(),
+            scratch: Vec::new(),
             cache: HashMap::new(),
             args_slot: find(&def.args_name),
             memo_slot: find(&def.memo_name),
@@ -116,25 +119,37 @@ impl<'a> Machine<'a> {
     /// its own name where the language says so, is pushed; a postfix
     /// program leaves what it pushed.
     pub fn call(&mut self, program: &Rc<Program>, args: Vec<Value>) -> Outcome<()> {
-        if program.params.len() != args.len() {
-            return Err(format!("Function {} expects {} arguments, got {}", program.name, program.params.len(), args.len()));
+        let n = args.len();
+        self.stack.extend(args);
+        self.call_from_stack(program, n)
+    }
+
+    /// A call whose arguments are the top `n` of the stack: they move
+    /// straight into the frame, one allocation instead of two.
+    fn call_from_stack(&mut self, program: &Rc<Program>, n: usize) -> Outcome<()> {
+        if program.params.len() != n {
+            return Err(format!("Function {} expects {} arguments, got {}", program.name, program.params.len(), n));
         }
+        if self.stack.len() < n {
+            return Err("Stack underflow".to_string());
+        }
+        let at = self.stack.len() - n;
         let memoized = program.yields && self.memo_slot.map_or(false, |s| matches!(self.globals[s], Value::Bool(true)));
         let key = memoized.then(|| {
             let mut key = format!("{}(", program.name);
-            for a in &args {
+            for a in &self.stack[at..] {
                 a.key(&mut key);
             }
             key
         });
         if let Some(hit) = key.as_ref().and_then(|k| self.cache.get(k)) {
+            self.stack.truncate(at);
             self.stack.push(hit.clone());
             return Ok(());
         }
-        let mut frame = vec![Value::Empty; program.names.len()];
-        for (s, a) in args.into_iter().enumerate() {
-            frame[s] = a;
-        }
+        let mut frame: Vec<Value> = Vec::with_capacity(program.names.len());
+        frame.extend(self.stack.drain(at..));
+        frame.resize(program.names.len(), Value::Empty);
         let base = self.stack.len();
         self.execute(program, &mut frame)?;
         if !program.yields {
@@ -198,9 +213,8 @@ impl<'a> Machine<'a> {
             }
             Op::Call(name) => {
                 let callee = self.pop()?;
-                let args = self.pop_many(argc - 1)?;
                 return match callee {
-                    Value::Program(p) => self.call(&p, args),
+                    Value::Program(p) => self.call_from_stack(&p, argc - 1),
                     _ => Err(format!("'{}' is not a function", name)),
                 };
             }
@@ -227,13 +241,42 @@ impl<'a> Machine<'a> {
                 Value::list(items)
             }
             Op::Native(native, name) => {
-                let args = self.pop_many(argc)?;
-                self.native(*native, name, args)?
+                // The arguments move into the reused buffer, not a new list.
+                if self.stack.len() < argc {
+                    return Err("Stack underflow".to_string());
+                }
+                let at = self.stack.len() - argc;
+                let mut args = std::mem::take(&mut self.scratch);
+                args.clear();
+                args.extend(self.stack.drain(at..));
+                let result = self.native(*native, name, &mut args);
+                self.scratch = args;
+                result?
             }
             binary => {
                 let b = self.pop()?;
                 let a = self.pop()?;
-                self.binary(binary, &a, &b)?
+                // Two machine integers, the common case, done in place;
+                // anything else, or an overflow, takes the general path.
+                let fast = match (&a, &b) {
+                    (Value::Int(x), Value::Int(y)) => match binary {
+                        Op::Add => x.checked_add(*y).map(Value::Int),
+                        Op::Sub => x.checked_sub(*y).map(Value::Int),
+                        Op::Mul => x.checked_mul(*y).map(Value::Int),
+                        Op::Lt => Some(Value::Bool(x < y)),
+                        Op::Le => Some(Value::Bool(x <= y)),
+                        Op::Gt => Some(Value::Bool(x > y)),
+                        Op::Ge => Some(Value::Bool(x >= y)),
+                        Op::Eq => Some(Value::Bool(x == y)),
+                        Op::Ne => Some(Value::Bool(x != y)),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                match fast {
+                    Some(v) => v,
+                    None => self.binary(binary, &a, &b)?,
+                }
             }
         };
         self.stack.push(result);
@@ -340,7 +383,7 @@ impl<'a> Machine<'a> {
         values.iter().map(|v| v.show(&sp)).collect::<Vec<_>>().join(" ")
     }
 
-    fn native(&mut self, native: Native, name: &str, mut args: Vec<Value>) -> Outcome<Value> {
+    fn native(&mut self, native: Native, name: &str, args: &mut Vec<Value>) -> Outcome<Value> {
         let sp = self.spelling();
         let arity = |n: usize| -> Outcome<()> {
             if args.len() == n {
@@ -356,11 +399,11 @@ impl<'a> Machine<'a> {
                 Value::Null
             }
             Native::Print => {
-                println!("{}", self.text_of(&args));
+                println!("{}", self.text_of(args));
                 Value::Null
             }
             Native::Write => {
-                print!("{}", self.text_of(&args));
+                print!("{}", self.text_of(args));
                 Value::Null
             }
             Native::Range => return Err(format!("{}() spells a range, which belongs in a for loop", name)),
@@ -487,7 +530,7 @@ impl<'a> Machine<'a> {
                 list[i] = v;
                 Value::List(items)
             }
-            Native::Extern => self.extern_call(name, &args)?,
+            Native::Extern => self.extern_call(name, args)?,
         })
     }
 

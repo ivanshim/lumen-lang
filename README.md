@@ -254,10 +254,11 @@ not kernels: exempt from the independence check, not wired into the host.
 [docs/KERNEL_LAB.md](docs/KERNEL_LAB.md) records every cycle, the
 predictions and the results: fourteen words run the bare loop 7.5 times
 faster than five, and a tree of eight forms beats the stack floors on it.
-Two more specimens, `lab/stack5a` and `lab/microcode4a`, are the floor
-kernels with the lab's count-neutral improvements and nothing else, to
-measure what the primitives bought: on the stack machine nearly all of
-it, on the tree about half.
+A second experiment measured the floor kernels with the lab's
+count-neutral improvements and nothing else, to see what the primitives
+bought: on the stack machine nearly all of it, on the tree about half.
+Those improvements are now folded into stack5 and microcode4, their
+counts unchanged.
 
 ## Documentation
 

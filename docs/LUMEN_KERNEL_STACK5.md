@@ -21,12 +21,12 @@ marker or a function; every spelling comes from a definition in `langs/`.
 |---|---|
 | a jump | `Lit false; Unless to` |
 | `if c A else B` | `c; Unless else; A; Lit false; Unless end; else: B; end:` |
-| `while c body` | `top: c; Unless out; body; Lit false; Unless top; out:` |
+| `while c body` | `Lit false; Unless test; top: body; test: not c; Unless top`: tested at the bottom, one jump per pass; `not c` is the comparison flipped to its complement (`Apply ge` for `Apply lt`), or `c; Apply not` |
 | `until c body` | `top: body; c; Unless top` |
-| `for v in a..b body` | `a; Store v; b; Store #end; top: Load v; Load #end; Apply lt; Unless out; body; Load v; Lit 1; Apply add; Store v; Lit false; Unless top; out:` |
+| `for v in a..b body` | `a; Store v; b; Store #end; Lit false; Unless test; top: body; Load v; Lit 1; Apply add; Store v; test: Load v; Load #end; Apply ge; Unless top` |
 | `break`, `continue` | jumps to the loop's exit and to its step |
 | `f(a, b)` | `a; b; Load f; Apply call, 3`: the program is the last argument |
-| a function's result | `Lit null; Store #result` first; `Store #result` after each expression statement; `Load #result` last; `return v` is `v` and a jump to the end |
+| a function's result | `Lit null; Store #result` first; `Store #result` after each expression statement; `Load #result` last; `return v` is `v` and a jump to the end. A function whose value only ever comes from a return has no result slot: falling off its end leaves nothing, which the machine reads as null |
 | `a and b` | `a; Store #t; Load #t; Unless skip; b; Store #t; skip: Load #t; Apply truth` |
 | `a or b` | the same with `Apply not` before the `Unless` |
 | `-x`, `not x`, `a + b`, `x[i]` | `Apply neg`, `Apply not`, `Apply add`, `Apply index` |
@@ -61,7 +61,7 @@ program ever sees a hole. It is a flag on `Load`, not a sixth word.
 | Scan | `scan.rs` | text to tokens |
 | Shape | `shape.rs` | indentation to block tokens; line ends inside brackets dropped |
 | Assemble | `assemble.rs` | tokens to the five words, in one pass; names to slots |
-| Run | `machine.rs` | one loop, five match arms, one stack |
+| Run | `machine.rs` | one loop, five match arms, one stack; a call moves its arguments from the stack straight into the frame, a builtin's arguments into one reused buffer; two machine integers under an operator are computed in place |
 
 Supporting: `words.rs` (the five words, the operations, the program),
 `language.rs` (the definition as data), `values.rs`, `numbers.rs`.
@@ -103,7 +103,11 @@ The extra dispatches cost nothing measurable: five words run as fast as
 twenty-six, and a little faster on the Lumen loops, where a smaller
 dispatch and a result slot in place of a result register make up for the
 two-word jumps. The twenty-one words stack26 has beyond these five buy it
-no speed; they are spellings.
+no speed; they are spellings. The kernel lab (`docs/KERNEL_LAB.md`)
+later folded its count-neutral findings back in, still five words:
+bottom-tested loops, the result slot dropped where only a return sets
+it, one buffer for builtin arguments, one allocation per call, and an
+integer fast path; together worth about 1.2 times on loops.
 
 ## Relationship to the other kernels
 

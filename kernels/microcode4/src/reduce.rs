@@ -95,7 +95,7 @@ pub fn reduce(toks: &[Tok], spec: &Spec, seeded: &[String], assumed: HashMap<Str
         seq(stmts)
     };
     let top = r.scopes.pop().unwrap();
-    let program = Program { name: "<program>".into(), params: Vec::new(), param_slots: Vec::new(), names: top.names.clone(), catches: Catch::Nothing, body };
+    let program = Program { name: "<program>".into(), params: Vec::new(), param_slots: Vec::new(), names: top.names.clone(), frameless: false, catches: Catch::Nothing, body };
     Ok(Reduced { program: Rc::new(program), global_names: top.names, found: r.found })
 }
 
@@ -257,37 +257,43 @@ impl<'a> Reducer<'a> {
     /// stopping at a function; else the global.
     fn read_slot(&mut self, name: &str) -> Slot {
         let mut depth = 0;
-        let mut found: Option<(usize, usize)> = None;
+        let mut found: Option<(usize, usize, usize)> = None;
         for (i, scope) in self.scopes.iter().enumerate().rev() {
             if let Some(index) = scope.names.iter().rposition(|n| n == name).filter(|_| scope.owns != Owns::None) {
-                found = Some((depth, index));
+                found = Some((i, depth, index));
                 break;
             }
             if scope.owns == Owns::All && i != 0 {
                 break;
             }
-            depth += 1;
+            // A scope that owns no names makes no frame when it runs.
+            if scope.owns != Owns::None {
+                depth += 1;
+            }
         }
         let global = self.global_index(name);
         match found {
-            Some((depth, index)) if depth < self.scopes.len() - 1 => Slot { name: Rc::from(name), depth, index, global: Some(global) },
-            Some((depth, index)) => Slot { name: Rc::from(name), depth, index, global: None },
-            None => Slot { name: Rc::from(name), depth: self.scopes.len() - 1, index: global, global: None },
+            Some((i, depth, index)) if i != 0 => Slot { name: Rc::from(name), depth, index, global: Some(global) },
+            Some((_, depth, index)) => Slot { name: Rc::from(name), depth, index, global: None },
+            None => {
+                let depth = self.scopes[1..].iter().filter(|s| s.owns != Owns::None).count();
+                Slot { name: Rc::from(name), depth, index: global, global: None }
+            }
         }
     }
 
-    /// The binding a write reaches: the nearest owner; a function or the
-    /// top level makes the name if it has none, a block makes its own.
+    /// The binding a write reaches: the nearest owner, which is always
+    /// the running frame since scopes that own nothing make no frame; a
+    /// function or the top level makes the name if it has none, a block
+    /// makes its own.
     fn write_slot(&mut self, name: &str) -> Slot {
-        let mut depth = 0;
+        let depth = 0;
         let last = self.scopes.len() - 1;
         for i in (0..=last).rev() {
             let scope = &mut self.scopes[i];
             match scope.owns {
-                Owns::None => {
-                    depth += 1;
-                    continue;
-                }
+                // Makes no frame when it runs.
+                Owns::None => continue,
                 Owns::New | Owns::All => {
                     let index = match scope.names.iter().rposition(|n| n == name) {
                         Some(i) => i,
@@ -323,7 +329,7 @@ impl<'a> Reducer<'a> {
         self.scopes.push(Scope { owns, names: params.clone(), params: Vec::new(), param_slots, postfix: false });
         let body = body(self)?;
         let scope = self.scopes.pop().unwrap();
-        Ok(lit(Value::Code(Rc::new(Program { name: name.to_string(), params, param_slots: scope.param_slots, names: scope.names, catches, body }))))
+        Ok(lit(Value::Code(Rc::new(Program { name: name.to_string(), params, param_slots: scope.param_slots, names: scope.names, frameless: owns == Owns::None, catches, body }))))
     }
 
     /// A branch arm or a loop body: a program that owns no names.
@@ -1284,7 +1290,7 @@ impl<'a> Reducer<'a> {
             let mut param_slots = scope.param_slots;
             params.reverse();
             param_slots.reverse();
-            let program = Program { name, params, param_slots, names: scope.names, catches: Catch::Return, body: seq(s) };
+            let program = Program { name, params, param_slots, names: scope.names, frameless: false, catches: Catch::Return, body: seq(s) };
             stack.push(lit(Value::Code(Rc::new(program))));
             return Ok(());
         }

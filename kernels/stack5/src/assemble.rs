@@ -5,10 +5,13 @@
 //
 // With five words, every construct is a shape:
 //   a jump            Lit false; Unless target
-//   a loop            top: test; Unless exit; body; Lit false; Unless top
+//   a loop            Lit false; Unless test; top: body; test: not-cond; Unless top
+//                     (tested at the bottom; a comparison is flipped to its
+//                     complement, anything else gets a Not)
 //   a call            args; Load f; Apply Call
 //   a result          Store #result after each expression statement,
-//                     Load #result at the end; return jumps to the end
+//                     Load #result at the end; return jumps to the end;
+//                     a function that only ever returns has no slot
 //   a and b           a; Store #t; Load #t; Unless skip; b; Store #t;
 //                     skip: Load #t; Apply Truth
 //   arr[i] = v        i; v; Load arr taking; Apply put; Store arr
@@ -63,6 +66,9 @@ struct Unit {
     blocks: Vec<Vec<usize>>,
     loops: Vec<Loop>,
     exits: Vec<usize>,
+    /// Whether any expression statement stored the result slot; a
+    /// function whose value only ever comes from a return drops the slot.
+    result_used: bool,
     words: Vec<Word>,
 }
 
@@ -101,6 +107,7 @@ pub fn assemble(toks: &[Tok], def: &Def, table: &mut Table) -> Outcome<Rc<Progra
         blocks: Vec::new(),
         loops: Vec::new(),
         exits: Vec::new(),
+        result_used: false,
         words: Vec::new(),
     };
     let mut a = Assembler { def, toks, at: 0, table, units: vec![top], serial: 0 };
@@ -256,9 +263,23 @@ impl<'a> Assembler<'a> {
         self.unless()
     }
 
-    fn jump_to(&mut self, target: usize) {
-        self.lit(Value::Bool(false));
-        self.emit(Word::Unless(target));
+    /// Turn the condition just assembled into its negation, so an Unless
+    /// on it jumps when the condition holds: a comparison is flipped to
+    /// its complement, anything else gets a Not.
+    fn negate_test(&mut self) {
+        let flipped = match self.unit().words.last() {
+            Some(Word::Apply(Op::Lt, 2)) => Some(Op::Ge),
+            Some(Word::Apply(Op::Ge, 2)) => Some(Op::Lt),
+            Some(Word::Apply(Op::Gt, 2)) => Some(Op::Le),
+            Some(Word::Apply(Op::Le, 2)) => Some(Op::Gt),
+            Some(Word::Apply(Op::Eq, 2)) => Some(Op::Ne),
+            Some(Word::Apply(Op::Ne, 2)) => Some(Op::Eq),
+            _ => None,
+        };
+        match flipped {
+            Some(op) => *self.unit().words.last_mut().expect("a word") = Word::Apply(op, 2),
+            None => self.apply(Op::Not, 1),
+        }
     }
 
     fn patch(&mut self, at: usize) {
@@ -414,6 +435,7 @@ impl<'a> Assembler<'a> {
             blocks: Vec::new(),
             loops: Vec::new(),
             exits: Vec::new(),
+            result_used: false,
             words: Vec::new(),
         });
         if yields {
@@ -421,7 +443,11 @@ impl<'a> Assembler<'a> {
             self.store(RESULT);
         }
         body(self)?;
-        if yields {
+        // A function whose value only ever comes from a return drops the
+        // result slot: its prologue goes, and a fall off the end leaves
+        // nothing, which the machine reads as null.
+        let used = self.unit().result_used;
+        if yields && used {
             self.load(RESULT);
         }
         let end = self.here();
@@ -429,7 +455,8 @@ impl<'a> Assembler<'a> {
             self.unit().words[at] = Word::Unless(end);
         }
         let unit = self.units.pop().expect("the unit");
-        Ok(Rc::new(Program { name: unit.name, params, names: unit.names, yields, words: unit.words }))
+        let words = if yields && !used { shifted(unit.words.into_iter().skip(2).collect(), -2) } else { unit.words };
+        Ok(Rc::new(Program { name: unit.name, params, names: unit.names, yields, words }))
     }
 
     // ---------- statements ----------
@@ -659,16 +686,30 @@ impl<'a> Assembler<'a> {
         Ok(())
     }
 
+    /// `while c block`, tested at the bottom: one jump per pass instead of
+    /// two. The condition is read once to find the body, discarded, and
+    /// read again after it.
     fn while_loop(&mut self) -> Outcome<()> {
         self.next();
-        let top = self.here();
+        let cond_at = self.at;
+        let mark = self.here();
         self.expression(0)?;
-        let out = self.unless();
-        self.open_loop(Some(top));
+        let body_at = self.at;
+        self.unit().words.truncate(mark);
+        let to_test = self.jump();
+        let top = self.here();
+        self.open_loop(None);
+        self.at = body_at;
         self.block()?;
-        self.jump_to(top);
-        self.patch(out);
-        self.close_loop(top);
+        let after = self.at;
+        let test = self.here();
+        self.patch(to_test);
+        self.at = cond_at;
+        self.expression(0)?;
+        self.at = after;
+        self.negate_test();
+        self.emit(Word::Unless(top));
+        self.close_loop(test);
         Ok(())
     }
 
@@ -731,12 +772,11 @@ impl<'a> Assembler<'a> {
     }
 
     /// The loop itself, the variable holding the start and the bound stored.
+    /// The loop itself, tested at the bottom: `var >= bound` is false
+    /// exactly when `var < bound` holds, so the Unless goes back up.
     fn counted_loop(&mut self, var: &str, bound: &str, postfix: bool) -> Outcome<()> {
+        let to_test = self.jump();
         let top = self.here();
-        self.load(var);
-        self.load(bound);
-        self.apply(Op::Lt, 2);
-        let out = self.unless();
         self.open_loop(None);
         if postfix {
             self.postfix_block()?;
@@ -748,8 +788,11 @@ impl<'a> Assembler<'a> {
         self.lit(Value::Int(1));
         self.apply(Op::Add, 2);
         self.store(var);
-        self.jump_to(top);
-        self.patch(out);
+        self.patch(to_test);
+        self.load(var);
+        self.load(bound);
+        self.apply(Op::Ge, 2);
+        self.emit(Word::Unless(top));
         self.close_loop(again);
         Ok(())
     }
@@ -826,6 +869,7 @@ impl<'a> Assembler<'a> {
         let from = self.here();
         self.expression(0)?;
         if !self.at_assign() {
+            self.unit().result_used = true;
             self.store(RESULT);
             return Ok(());
         }
@@ -1308,14 +1352,27 @@ impl<'a> Assembler<'a> {
             return Ok(());
         }
         if Def::has(&def.whiles, word) {
-            let top = self.here();
+            // Tested at the bottom: the condition read once to find the
+            // body, discarded, and read again after it.
+            let cond_at = self.at;
+            let mark = self.here();
             self.postfix_condition()?;
-            let out = self.unless();
-            self.open_loop(Some(top));
+            let body_at = self.at;
+            self.unit().words.truncate(mark);
+            let to_test = self.jump();
+            let top = self.here();
+            self.open_loop(None);
+            self.at = body_at;
             self.postfix_block()?;
-            self.jump_to(top);
-            self.patch(out);
-            self.close_loop(top);
+            let after = self.at;
+            let test = self.here();
+            self.patch(to_test);
+            self.at = cond_at;
+            self.postfix_condition()?;
+            self.at = after;
+            self.negate_test();
+            self.emit(Word::Unless(top));
+            self.close_loop(test);
             return Ok(());
         }
         if Def::has(&def.untils, word) {
