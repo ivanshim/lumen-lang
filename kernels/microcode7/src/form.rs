@@ -50,6 +50,11 @@ pub enum Prim {
     Otherwise,
     /// Give an array back without the place named (ext.builtin.unset).
     Erase,
+    /// Whether two values are one and the same, which asks more than
+    /// being equal: they must also be of one kind, so 1 and 1.0 are
+    /// equal without being the same.
+    Selfsame,
+    Unlike,
     /// The bits of a value, sixty-four of them, sign and all: both set,
     /// either set, one alone set, all turned over, and moved up or down.
     /// Two pieces of text take their bits letter by letter instead.

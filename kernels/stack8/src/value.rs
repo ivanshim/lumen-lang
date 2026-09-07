@@ -177,6 +177,38 @@ impl Value {
         }
     }
 
+    /// Whether two values are the very same. Equal is not enough: they
+    /// must be of one kind, so a whole number and a real that stand for
+    /// the same amount are equal but not the same. An array is the same
+    /// as another when it holds the same keys in the same order, each
+    /// with a value that is itself the same.
+    pub fn identical(&self, other: &Value) -> bool {
+        if let Value::Bond(shared) = self {
+            let held = shared.borrow().clone();
+            return held.identical(other);
+        }
+        if let Value::Bond(shared) = other {
+            let held = shared.borrow().clone();
+            return self.identical(&held);
+        }
+        match (self, other) {
+            (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.identical(y)),
+            (Value::Map(a), Value::Map(b)) => {
+                a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.identical(k) && x.identical(y))
+            }
+            // An array written with keys and one written without are of
+            // one kind, so the keys themselves decide.
+            (Value::Array(a), Value::Map(b)) | (Value::Map(b), Value::Array(a)) => {
+                a.len() == b.len()
+                    && a.iter().zip(b.iter()).enumerate().all(|(at, (x, (k, y)))| k.equals(&Value::Small(at as i64)) && x.identical(y))
+            }
+            _ => match (self.sort(), other.sort()) {
+                (Some(one), Some(two)) => one == two && self.equals(other),
+                _ => self.equals(other),
+            },
+        }
+    }
+
     /// What print shows: the language's words for the literals, the
     /// machine's own form for the rest.
     pub fn display(&self, sp: &Wording) -> String {

@@ -746,6 +746,8 @@ impl<'a> Engine<'a> {
             Action::Or => Value::Flag(a.is_true() || b.is_true()),
             Action::Eq => Value::Flag(a.equals(b)),
             Action::Ne => Value::Flag(!a.equals(b)),
+            Action::Same => Value::Flag(a.identical(b)),
+            Action::Unsame => Value::Flag(!a.identical(b)),
             Action::Join => joined(),
             Action::At => self.element(a, b)?,
             Action::Rank => match crate::arith::order_values(a, b) {

@@ -22,13 +22,13 @@ is listed, since the full kernels are meant to behave alike.
 | `php/lang` | 213 | pass 34, differs 26, error 151, skipped 2 | pass 34, differs 26, error 151, skipped 2 |
 | `php/lang/constants` | 2 | pass 1, differs 1, error 0, skipped 0 | pass 1, differs 1, error 0, skipped 0 |
 | `php/lang/integer_literals` | 6 | pass 0, differs 0, error 6, skipped 0 | pass 0, differs 0, error 6, skipped 0 |
-| `php/lang/operators` | 64 | pass 9, differs 28, error 27, skipped 0 | pass 9, differs 28, error 27, skipped 0 |
+| `php/lang/operators` | 64 | pass 13, differs 24, error 27, skipped 0 | pass 13, differs 24, error 27, skipped 0 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 78, differs 102, error 240, skipped 2 | pass 78, differs 102, error 240, skipped 2 |
+| all | 422 | pass 82, differs 98, error 240, skipped 2 | pass 82, differs 98, error 240, skipped 2 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 102 |
+| ran, printed something else | 98 |
 | } | 8 |
 | Undefined variable: eval | 7 |
 | Unexpected character '$' | 6 |
@@ -545,10 +545,10 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/operator_gt_or_equal_variation_64bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/operator_gt_variation.phpt` | pass | pass |  |
 | `php/lang/operators/operator_gt_variation_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/operator_identical_basic.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_identical_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_identical_recusion-01.phpt` | error | error | Unexpected token: & |
 | `php/lang/operators/operator_identical_variation.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/operator_identical_variation_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_identical_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_lt_basic.phpt` | error | error | Cannot coerce 'true' to number |
 | `php/lang/operators/operator_lt_or_equal_basic.phpt` | error | error | Cannot coerce 'true' to number |
 | `php/lang/operators/operator_lt_or_equal_variation.phpt` | differs | differs | ran, printed something else |
@@ -558,9 +558,9 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/operator_notequals_basic.phpt` | error | error | Unexpected token: > |
 | `php/lang/operators/operator_notequals_variation.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/operator_notequals_variation_64bit.phpt` | error | error | Unexpected token: > |
-| `php/lang/operators/operator_notidentical_basic.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_notidentical_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_notidentical_variation.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/operator_notidentical_variation_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_notidentical_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_spaceship_basic.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/overloaded_property_ref.phpt` | error | error | Unexpected token: -> |
 | `php/lang/operators/postdec_basiclong_64bit.phpt` | differs | differs | ran, printed something else |

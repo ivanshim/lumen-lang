@@ -95,7 +95,7 @@ ext.system.request.query:L ext.system.request.form:L ext.system.request.cookies:
 ext.system.request.env:L ext.system.request.files:L ext.system.request.all:L ext.op.index.absent:B \
 ext.stmt.class.interface:L ext.stmt.class.implements:L ext.op.compare:L ext.builtin.unset:L ext.lexical.template:B \
 ext.op.otherwise:L ext.op.bit.and:L ext.op.bit.or:L ext.op.bit.xor:L ext.op.bit.not:L \
-ext.op.bit.left:L ext.op.bit.right:L \
+ext.op.bit.left:L ext.op.bit.right:L ext.op.identical:L ext.op.not_identical:L \
 ";
 
 fn tag_shapes(table: &'static str) -> Vec<(&'static str, char)> {
@@ -138,12 +138,13 @@ pub const BUILTIN_LABELS: [(&str, Prim); 27] = [
     ("ext.builtin.print_r", Prim::Portray), ("ext.builtin.unset", Prim::Erase),
 ];
 
-const BINARY_LABELS: [(&str, Prim); 22] = [
+const BINARY_LABELS: [(&str, Prim); 24] = [
     ("op.add", Prim::Plus), ("op.sub", Prim::Minus), ("op.mul", Prim::Times), ("op.div", Prim::Over), ("op.quot", Prim::IntDiv),
     ("op.rem", Prim::Mod), ("op.pow", Prim::Power), ("op.eq", Prim::Eq), ("op.ne", Prim::Ne), ("op.lt", Prim::Lt), ("op.le", Prim::Le),
     ("op.gt", Prim::Gt), ("op.ge", Prim::Ge), ("op.and", Prim::Both), ("op.or", Prim::Either), ("op.concat", Prim::Join),
     ("ext.op.compare", Prim::Rank), ("ext.op.bit.and", Prim::BitsBoth), ("ext.op.bit.or", Prim::BitsEither),
     ("ext.op.bit.xor", Prim::BitsOne), ("ext.op.bit.left", Prim::BitsUp), ("ext.op.bit.right", Prim::BitsDown),
+    ("ext.op.identical", Prim::Selfsame), ("ext.op.not_identical", Prim::Unlike),
 ];
 
 fn top_object(text: &str) -> Result<serde_json::Map<String, Json>, String> {

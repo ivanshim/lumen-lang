@@ -913,6 +913,8 @@ impl<'a> Machine<'a> {
             },
             Prim::Eq => Value::Flag(v[0].equals(&v[1])),
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
+            Prim::Selfsame => Value::Flag(v[0].selfsame(&v[1])),
+            Prim::Unlike => Value::Flag(!v[0].selfsame(&v[1])),
             Prim::Join => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),
             Prim::At => self.element(&v[0], &v[1])?,
             // Adding text joins it only where the language has no
