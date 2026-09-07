@@ -34,12 +34,14 @@ impl<'a> Parser<'a> {
     /// Get diagnostic line/column position of current token.
     /// DIAGNOSTIC ONLY - derived from source; not used by parsing logic.
     pub fn position(&self) -> (usize, usize) {
-        let t = self.toks.get(self.i).unwrap();
+        let t = &self.toks[self.i.min(self.toks.len() - 1)];
         (t.line, t.col)
     }
 
+    /// The current token; past the end, the last one (the end marker), so
+    /// an unfinished construct reads the end and reports it, never panics.
     pub fn peek(&self) -> &Token {
-        &self.toks[self.i].tok
+        &self.toks[self.i.min(self.toks.len() - 1)].tok
     }
 
     pub fn peek_n(&self, n: usize) -> Option<&Token> {
@@ -47,8 +49,10 @@ impl<'a> Parser<'a> {
     }
 
     pub fn advance(&mut self) -> Token {
-        let t = self.toks[self.i].tok.clone();
-        self.i += 1;
+        let t = self.toks[self.i.min(self.toks.len() - 1)].tok.clone();
+        if self.i < self.toks.len() {
+            self.i += 1;
+        }
         t
     }
 }
