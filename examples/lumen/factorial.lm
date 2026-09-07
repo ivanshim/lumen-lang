@@ -4,7 +4,7 @@
 # Limitation: Microcode kernel stack overflow limits n to ~60
 n = 50
 if ARGS != ""
-    n = int(ARGS)
+    n = to_int(ARGS)
 
 write("Factorial of ")
 write(n)

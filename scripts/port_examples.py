@@ -443,7 +443,7 @@ def parse(source):
 
 # ---------------------------------------------------------------- library
 
-LIB_FILES = ["render.lm", "value_to_string.lm", "string_to_value.lm", "numeric.lm", "array.lm", "string.lm", "string_ord_chr.lm",
+LIB_FILES = ["render.lm", "to_string.lm", "string_to_value.lm", "numeric.lm", "array.lm", "string.lm", "string_ord_chr.lm",
              "factorial.lm", "round.lm", "e_integer.lm", "pi_machin.lm", "modular_arithmetic.lm",
              "primes.lm", "number_theory.lm", "constants_1024.lm", "constants.lm", "constants_default.lm"]
 
@@ -456,7 +456,7 @@ KERNEL_BUILTINS = {
 POLYMORPHIC = {"int_to_string": "builtin.to_string", "real_to_string": "builtin.to_string",
                "rational_to_string": "builtin.to_string", "bool_to_string": "builtin.to_string",
                "null_to_string": "builtin.to_string", "array_to_string": "builtin.to_string",
-               "value_to_string": "builtin.to_string", "real_default": "builtin.to_real", "int": "builtin.to_int"}
+               "to_string": "builtin.to_string", "to_real": "builtin.to_real", "to_int": "builtin.to_int"}
 SYSTEM_NAMES = {"ARGS", "MEMOIZATION", "REAL_DEFAULT_PRECISION", "INTEGER", "RATIONAL", "REAL",
                 "STRING", "BOOLEAN", "ARRAY", "NULL"}
 
@@ -633,8 +633,8 @@ class Kinds:
                         params[i] = k
                 return self.fn_returns.get(e.name, UNKNOWN)
             return {"len": INT, "ord": INT, "chr": STR, "char_at": STR, "int_to_string": STR,
-                    "real_to_string": STR, "kind_to_string": STR, "value_to_string": STR, "int": INT,
-                    "frac": REAL, "real": REAL, "real_default": REAL, "num": INT, "den": INT,
+                    "real_to_string": STR, "kind_to_string": STR, "to_string": STR, "to_int": INT,
+                    "frac": REAL, "real": REAL, "to_real": REAL, "num": INT, "den": INT,
                     "range": ARRAY}.get(e.name, UNKNOWN)
         return UNKNOWN
 

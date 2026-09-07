@@ -7,8 +7,8 @@
 # Reference: https://downloads.reactivemicro.com/Users/Grant_Stockley/Apple%202%20Woz%20e%20Calc%201981.pdf
 significant_figures = 500
 if ARGS != ""
-    significant_figures = int(ARGS)
+    significant_figures = to_int(ARGS)
 
 result = e_integer(significant_figures)
-result_string = value_to_string(result)
+result_string = to_string(result)
 print(substring_start(result_string, 100))

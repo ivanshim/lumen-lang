@@ -4,7 +4,7 @@
 # Limitation: Stream kernel timeout limits fib_index to ~1000 due to interpretation overhead
 fib_index = 1000
 if ARGS != ""
-    fib_index = int(ARGS)
+    fib_index = to_int(ARGS)
 
 MEMOIZATION = true
 
@@ -23,5 +23,5 @@ while i <= fib_index
 write("Fibonacci number at index ")
 write(fib_index)
 write(": ")
-result_string = value_to_string(result)
+result_string = to_string(result)
 print(substring_start(result_string, 100))

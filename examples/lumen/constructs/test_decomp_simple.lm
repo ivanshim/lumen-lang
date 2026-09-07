@@ -14,13 +14,13 @@ print(den(r))
 
 print("")
 
-# Test int() and frac()
-print("Test int() and frac()")
+# Test to_int() and frac()
+print("Test to_int() and frac()")
 x = 3.14
 write("x = 3.14 = ")
 print(x)
-write("int(x) = ")
-print(int(x))
+write("to_int(x) = ")
+print(to_int(x))
 write("frac(x) = ")
 print(frac(x))
 
@@ -34,8 +34,8 @@ print(kind_to_string(kind(num(22/7))))
 write("kind(den(22/7)) = ")
 print(kind_to_string(kind(den(22/7))))
 
-write("kind(int(3.14)) = ")
-print(kind_to_string(kind(int(3.14))))
+write("kind(to_int(3.14)) = ")
+print(kind_to_string(kind(to_int(3.14))))
 
 write("kind(frac(3.14)) = ")
 print(kind_to_string(kind(frac(3.14))))
