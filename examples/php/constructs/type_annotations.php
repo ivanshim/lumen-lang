@@ -20,7 +20,7 @@ function add($a, $b) {
 print("add(5, 3):\n");
 print(add(5, 3) . "\n");
 function greet($name) {
-    return "Hello, " + $name;
+    return "Hello, " . $name;
 }
 
 print("greet(\"Alice\"):\n");

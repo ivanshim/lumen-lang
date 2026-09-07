@@ -159,3 +159,47 @@ function is_double($value) { return is_float($value); }
 function is_numeric($value) { return is_int($value) || is_float($value); }
 function is_object($value) { return false; }
 function is_callable($value) { return false; }
+
+// What a run from a command line has nothing to answer with, and the
+// few library functions that only need what is already here.
+function set_time_limit($seconds) { return true; }
+function sys_get_temp_dir() { return "/tmp"; }
+function header($line, $replace = true, $code = 0) { return null; }
+function headers_sent() { return false; }
+function headers_list() { return array(); }
+function ob_start($handler = null) { return true; }
+function ob_get_clean() { return ""; }
+function ob_end_clean() { return true; }
+function ob_get_level() { return 0; }
+function flush() { return null; }
+function usleep($micro) { return null; }
+function sleep($seconds) { return 0; }
+
+function getenv($name = null) {
+    if ($name === null) { return $_ENV; }
+    if (array_key_exists($name, $_ENV)) { return $_ENV[$name]; }
+    return false;
+}
+
+// A file sent with a request is written where the program can read it,
+// under a name this host gives it.
+function is_uploaded_file($path) {
+    return is_string($path) && has_substring($path, "lumenup");
+}
+
+function move_uploaded_file($from, $to) { return is_uploaded_file($from); }
+
+function strtoupper($text) { return string_to_upper($text); }
+function strtolower($text) { return string_to_lower($text); }
+function str_contains($haystack, $needle) { return has_substring($haystack, $needle); }
+function str_starts_with($haystack, $needle) { return starts_with($haystack, $needle); }
+function str_ends_with($haystack, $needle) { return ends_with($haystack, $needle); }
+function strrev($text) { return reverse_characters($text); }
+function ucfirst($text) { return capitalize_first_word($text); }
+function ucwords($text) { return capitalize_words($text); }
+function ltrim($text) { return trim_start($text); }
+function rtrim($text) { return trim_end($text); }
+function abs($n) { if ($n < 0) { return 0 - $n; } return $n; }
+function max($a, $b) { if ($a > $b) { return $a; } return $b; }
+function min($a, $b) { if ($a < $b) { return $a; } return $b; }
+function intdiv($a, $b) { return intval($a / $b); }

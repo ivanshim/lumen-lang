@@ -23,7 +23,7 @@ print("add(5, 3):")
 print(add(5, 3))
 
 fn greet(name)
-    "Hello, " + name
+    "Hello, " . name
 
 print("greet(\"Alice\"):")
 print(greet("Alice"))

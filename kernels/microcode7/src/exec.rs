@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 use std::cell::RefCell;
+use num_bigint::BigInt;
 use std::rc::Rc;
 
 use num_traits::ToPrimitive;
@@ -853,7 +854,26 @@ impl<'a> Machine<'a> {
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
             Prim::Join => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),
             Prim::At => self.element(&v[0], &v[1])?,
-            Prim::Plus if matches!(v[0], Value::Text(_)) || matches!(v[1], Value::Text(_)) => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),
+            // Adding text joins it only where the language has no
+            // operator of its own for joining; where it has one, adding
+            // is arithmetic.
+            Prim::Plus
+                if !self.table.has_any("op.concat") && (matches!(v[0], Value::Text(_)) || matches!(v[1], Value::Text(_))) =>
+            {
+                Value::text(&format!("{}{}", v[0].render(w), v[1].render(w)))
+            }
+            // Text that spells a number is worked with as that number,
+            // fractions included, so long as one side spells one.
+            Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power
+            | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge
+                if number_spelled_in(&v[0]).is_some() || number_spelled_in(&v[1]).is_some() =>
+            {
+                let pair = [
+                    number_spelled_in(&v[0]).unwrap_or_else(|| v[0].clone()),
+                    number_spelled_in(&v[1]).unwrap_or_else(|| v[1].clone()),
+                ];
+                return self.prim(op, name, &pair);
+            }
             Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power => {
                 let sum = match op {
                     Prim::Plus => Calc::Plus,
@@ -1270,4 +1290,30 @@ fn shared_item(held: &mut Value, at: &Value) -> Result<Rc<RefCell<Value>>, Strin
     let cell = Rc::new(RefCell::new(std::mem::replace(place, Value::Nil)));
     *place = Value::Shared(cell.clone());
     Ok(cell)
+}
+
+/// The number a piece of text spells, whole or fractional, with room for
+/// a sign and for space around it; anything that is not such text spells
+/// no number at all.
+fn number_spelled_in(v: &Value) -> Option<Value> {
+    let Value::Text(s) = v else { return None };
+    let text = s.trim();
+    let (sign, digits) = match text.strip_prefix('-') {
+        Some(rest) => (-1, rest),
+        None => (1, text.strip_prefix('+').unwrap_or(text)),
+    };
+    if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        return None;
+    }
+    let Some((before, after)) = digits.split_once('.') else {
+        return digits.parse::<BigInt>().ok().map(|n| Value::from_big(n * sign));
+    };
+    if after.is_empty() {
+        return before.parse::<BigInt>().ok().map(|n| Value::from_big(n * sign));
+    }
+    let scale = BigInt::from(10).pow(after.len() as u32);
+    let above: BigInt = if before.is_empty() { BigInt::from(0) } else { before.parse().ok()? };
+    let below: BigInt = after.parse().ok()?;
+    let digits_told = (before.len() + after.len()).max(15);
+    Some(math::make_number((above * &scale + below) * sign, scale, Some(digits_told)))
 }

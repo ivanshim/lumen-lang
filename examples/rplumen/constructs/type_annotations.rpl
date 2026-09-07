@@ -19,7 +19,7 @@ empty print
 "add(5, 3):" print
 5 3 add print
 « 'name' =
-    "Hello, " name + return
+    "Hello, " name . return
 » 'greet' =
 
 "greet(\"Alice\"):" print

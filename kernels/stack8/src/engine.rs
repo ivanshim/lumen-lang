@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::cell::RefCell;
+use num_bigint::BigInt;
 use std::rc::Rc;
 
 use num_traits::ToPrimitive;
@@ -746,7 +747,33 @@ impl<'a> Engine<'a> {
                     _ => 0,
                 }),
             },
-            Action::Add if matches!(a, Value::Text(_)) || matches!(b, Value::Text(_)) => joined(),
+            // Adding text joins it only where the language has no
+            // operator of its own for joining; where it has one, adding
+            // is arithmetic and the text stands for a number.
+            Action::Add if self.lang.concat.is_none() && (matches!(a, Value::Text(_)) || matches!(b, Value::Text(_))) => joined(),
+            // Text that spells a number is worked with as that number,
+            // fractions included, rather than only as a whole one.
+            _ if matches!(a, Value::Text(_)) || matches!(b, Value::Text(_)) => {
+                let spelled = |v: &Value| match v {
+                    Value::Text(s) => number_spelled(s),
+                    _ => None,
+                };
+                match (spelled(a), spelled(b)) {
+                    (None, None) => return self.dyadic_numbers(op, a, b),
+                    (x, y) => {
+                        let (x, y) = (x.unwrap_or_else(|| a.clone()), y.unwrap_or_else(|| b.clone()));
+                        return self.dyadic_numbers(op, &x, &y);
+                    }
+                }
+            }
+            _ => return self.dyadic_numbers(op, a, b),
+        })
+    }
+
+    /// The arithmetic itself, both values already numbers as far as they
+    /// can be made so.
+    fn dyadic_numbers(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        Ok(match op {
             Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv | Action::Mod | Action::Power => {
                 let calc = match op {
                     Action::Add => Operation::Plus,
@@ -787,7 +814,7 @@ impl<'a> Engine<'a> {
                     _ => !below(a, b)?,
                 })
             }
-            other => unreachable!("{other:?} is not dyadic"),
+            other => return Err(format!("{:?} is not a two-value operation", other)),
         })
     }
 
@@ -1245,4 +1272,31 @@ fn shared_item(held: &mut Value, at: &Value) -> Res<Rc<RefCell<Value>>> {
     let shared = Rc::new(RefCell::new(std::mem::replace(place, Value::Null)));
     *place = Value::Bond(shared.clone());
     Ok(shared)
+}
+
+/// The number a piece of text spells, whole or fractional, with room
+/// for a sign and for space around it. Anything else is not a number.
+fn number_spelled(s: &str) -> Option<Value> {
+    let text = s.trim();
+    let (sign, digits) = match text.strip_prefix('-') {
+        Some(rest) => (-1, rest),
+        None => (1, text.strip_prefix('+').unwrap_or(text)),
+    };
+    if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        return None;
+    }
+    let whole = match digits.split_once('.') {
+        None => return digits.parse::<BigInt>().ok().map(|n| Value::of_big(n * sign)),
+        Some((whole, fraction)) if fraction.chars().all(|c| c.is_ascii_digit()) => (whole, fraction),
+        Some(_) => return None,
+    };
+    let (before, after) = whole;
+    if after.is_empty() {
+        return before.parse::<BigInt>().ok().map(|n| Value::of_big(n * sign));
+    }
+    let scale = BigInt::from(10).pow(after.len() as u32);
+    let above: BigInt = if before.is_empty() { BigInt::from(0) } else { before.parse().ok()? };
+    let below: BigInt = after.parse().ok()?;
+    let places = (before.len() + after.len()).max(15);
+    Some(arith::shape_number((above * &scale + below) * sign, scale, Some(places)))
 }

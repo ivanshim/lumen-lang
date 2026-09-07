@@ -9,7 +9,7 @@ function add($a, $b) {
 }
 
 function greet($name) {
-    return "Hello, " + $name;
+    return "Hello, " . $name;
 }
 
 print("Test: Basic Functions\n");
