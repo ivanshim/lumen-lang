@@ -71,6 +71,8 @@ pub struct Builder<'a> {
     strict: bool,
     /// Settings of hidden globals for `static` names, run where the function is defined.
     statics: Vec<Form>,
+    /// The parameters of the method just read that name properties too.
+    also_property: Vec<String>,
 }
 
 pub struct Built {
@@ -90,7 +92,7 @@ enum Mode {
 pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool) -> Res<Built> {
     let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let shared_args = shared_parameters(tokens, table);
-    let mut r = Builder { within: None, shared_args, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new() };
+    let mut r = Builder { within: None, shared_args, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new() };
     let body = if table.rpn {
         let (mut stmts, rest) = r.rpn_body(&[], Mode::Body)?;
         if !r.exhausted() {
@@ -291,6 +293,17 @@ impl<'a> Builder<'a> {
     fn on_stmt_end(&self) -> bool {
         let t = self.look();
         t.shape == Shape::LineEnd || (t.shape == Shape::Sign && self.table.spells("stmt.terminator", &t.lexeme))
+    }
+
+    /// Whether a block opens here, past any line ends before it, so
+    /// that a body written on the line after a name is still a body.
+    fn block_opens_ahead(&self) -> bool {
+        let mut ahead = 0;
+        while self.glance(ahead).shape == Shape::LineEnd {
+            ahead += 1;
+        }
+        let t = self.glance(ahead);
+        t.shape == Shape::Sign && self.table.strings("block.open").iter().any(|o| *o == t.lexeme)
     }
 
     fn skip_line_ends(&mut self) {
@@ -910,27 +923,45 @@ impl<'a> Builder<'a> {
                 let member = self.need_word("as the method name")?;
                 let program = self.method(&member)?;
                 methods.push((member, program));
+                // A parameter of the maker that names a property makes
+                // the class carry that property too.
+                for named in std::mem::take(&mut self.also_property) {
+                    let bare = match table.letter("identifier.variable_prefix") {
+                        Some(sigil) => named.trim_start_matches(sigil).to_string(),
+                        None => named,
+                    };
+                    fields.push((bare, constant(Value::Nil)));
+                }
             } else {
                 // A property, perhaps with a type word before its name.
                 if self.look().shape == Shape::Bare && self.glance(1).shape == Shape::Bare {
                     self.advance();
                 }
-                let member = self.need_word("as the property name")?;
-                let bare = match table.letter("identifier.variable_prefix") {
-                    Some(sigil) => member.trim_start_matches(sigil).to_string(),
-                    None => member.clone(),
-                };
-                let value = match self.on_assign() {
-                    true => {
-                        self.advance();
-                        self.expr(0)?
+                // One declaration may name several properties, written
+                // apart the way a call's arguments are.
+                let apart = table.single("syntax.call.separator").map(str::to_string);
+                loop {
+                    let member = self.need_word("as the property name")?;
+                    let bare = match table.letter("identifier.variable_prefix") {
+                        Some(sigil) => member.trim_start_matches(sigil).to_string(),
+                        None => member.clone(),
+                    };
+                    let value = match self.on_assign() {
+                        true => {
+                            self.advance();
+                            self.expr(0)?
+                        }
+                        false => constant(Value::Nil),
+                    };
+                    if kept {
+                        shared.push((bare, value));
+                    } else {
+                        fields.push((bare, value));
                     }
-                    false => constant(Value::Nil),
-                };
-                if kept {
-                    shared.push((bare, value));
-                } else {
-                    fields.push((bare, value));
+                    match &apart {
+                        Some(sep) if self.sign(sep) => self.advance(),
+                        _ => break,
+                    };
                 }
             }
             self.skip_line_ends();
@@ -972,8 +1003,8 @@ impl<'a> Builder<'a> {
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
         self.need_sign(open, "after method name")?;
         let this = table.single("ext.stmt.class.this").ok_or_else(|| "A class needs ext.stmt.class.this".to_string())?.to_string();
-        let mut params = vec![this];
-        let (given, spares) = self.parameters()?;
+        let mut params = vec![this.clone()];
+        let (given, spares, also_property) = self.parameters()?;
         params.extend(given);
         // The thing it is for is always given, so every place moves by one.
         let least = params.len() - spares.len();
@@ -987,16 +1018,31 @@ impl<'a> Builder<'a> {
             self.need_word("as a return type")?;
         }
         // A method may be named and not written out, in a class of
-        // method names only; it answers with nothing.
-        if self.on_stmt_end() {
+        // method names only; it answers with nothing. A body on the line
+        // after the name is still a body.
+        if self.on_stmt_end() && !self.block_opens_ahead() {
             let named = self.routine(name, Holds::Every, Traps::Yields, params, least, |_| Ok(constant(Value::Nil)))?;
             return match named {
                 Form::Const(Value::Routine(p)) => Ok(p),
                 _ => Err("A method must be a program".to_string()),
             };
         }
+        let named = also_property.clone();
+        self.also_property = also_property;
+        let sigil = table.letter("identifier.variable_prefix");
         let program = self.routine(name, Holds::Every, Traps::Yields, params, least, |r| {
             let mut items = r.spare_values(spares, &formals)?;
+            // What a parameter that names a property was handed is put
+            // into the thing before the body runs.
+            for member in &named {
+                let bare = match sigil {
+                    Some(mark) => member.trim_start_matches(mark).to_string(),
+                    None => member.clone(),
+                };
+                let thing = r.read(&this);
+                let held = r.read(member);
+                items.push(prim_call(Prim::Onto, vec![thing, constant(Value::text(&bare)), held]));
+            }
             items.push(r.body()?);
             Ok(sequence(items))
         })?;
@@ -1427,7 +1473,7 @@ impl<'a> Builder<'a> {
 
 
     /// The parameters of a function or a method, up to the closing bracket.
-    fn parameters(&mut self) -> Res<(Vec<String>, Vec<(usize, usize)>)> {
+    fn parameters(&mut self) -> Res<(Vec<String>, Vec<(usize, usize)>, Vec<String>)> {
         let table = self.table;
         let close = table.single("syntax.call.close").unwrap().to_string();
         let typed = table.flag("stmt.let.type_first");
@@ -1435,8 +1481,16 @@ impl<'a> Builder<'a> {
         // Which parameter, and where its own value stands: it is read
         // again inside the program, where its names mean what they should.
         let mut spares: Vec<(usize, usize)> = Vec::new();
+        // A parameter with a class modifier before it names a property
+        // of the thing as well, which the maker fills in.
+        let mut also_property: Vec<String> = Vec::new();
         while !self.sign(&close) && !self.exhausted() {
             self.skip_reference();
+            let mut for_the_thing = false;
+            while self.look().shape == Shape::Bare && self.key("ext.stmt.class.modifier") {
+                self.advance();
+                for_the_thing = true;
+            }
             if typed {
                 let t = self.need_word("as a parameter type")?;
                 if !table.spells("stmt.let", &t) {
@@ -1458,6 +1512,9 @@ impl<'a> Builder<'a> {
                     self.need_word("as a type name")?;
                 }
             }
+            if for_the_thing {
+                also_property.push(params.last().expect("the parameter just read").clone());
+            }
             // A parameter may carry a value of its own for calls that
             // leave it out.
             if self.on_assign() {
@@ -1476,7 +1533,7 @@ impl<'a> Builder<'a> {
             }
         }
         self.need_sign(&close, "after parameters")?;
-        Ok((params, spares))
+        Ok((params, spares, also_property))
     }
 
     /// Step over the sign saying a type takes nothing as well: `?int`.
@@ -1518,7 +1575,7 @@ impl<'a> Builder<'a> {
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
         self.need_sign(open, "after function name")?;
         let typed = table.flag("stmt.let.type_first");
-        let (params, spares) = self.parameters()?;
+        let (params, spares, _) = self.parameters()?;
         let least = params.len() - spares.len();
         let formals = params.clone();
         let returns_here = |b: &Self| {

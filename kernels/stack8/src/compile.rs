@@ -95,6 +95,8 @@ pub struct Compiler<'a> {
     /// Which parameters of each program take a name's own cell rather
     /// than a copy of what it holds, found before anything is read.
     shared_args: HashMap<String, Vec<bool>>,
+    /// The parameters of the method just read that name properties too.
+    promoted: Vec<String>,
 }
 
 type Res<T> = Result<T, String>;
@@ -129,7 +131,7 @@ pub fn compile(tokens: &[Token], lang: &Lang, table: &mut Registry) -> Res<Rc<Ro
         instrs: Vec::new(),
     };
     let shared_args = shared_parameters(tokens, lang);
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args };
+    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, promoted: Vec::new() };
     if lang.rpn {
         a.rpn_body(&[], Span::Block)?;
         if !a.exhausted() {
@@ -200,6 +202,17 @@ impl<'a> Compiler<'a> {
     fn at_lexeme(&self, text: &str) -> bool {
         let t = self.look();
         matches!(t.shape, Shape::Sign | Shape::Instr) && t.lexeme == text
+    }
+
+    /// Whether a block opens here, past any line ends before it: a
+    /// method may be written with its body on the line after its name.
+    fn block_ahead(&self) -> bool {
+        let mut ahead = 0;
+        while self.look_ahead(ahead).shape == Shape::LineEnd {
+            ahead += 1;
+        }
+        let t = self.look_ahead(ahead);
+        t.shape == Shape::Sign && self.lang.block_opens.iter().any(|o| *o == t.lexeme)
     }
 
     fn on_any(&self, list: &[String]) -> bool {
@@ -1550,24 +1563,39 @@ impl<'a> Compiler<'a> {
                 self.skip_reference();
                 let member = self.want_name("as the method name")?;
                 methods.push((member.clone(), self.method(&member)?));
+                // A parameter of the maker that names a property makes
+                // the class carry that property too.
+                for named in std::mem::take(&mut self.promoted) {
+                    let bare = lang.sigil.map_or(named.clone(), |s| named.trim_start_matches(s).to_string());
+                    fields.push((bare, vec![Instr::Const(Value::Null)]));
+                }
             } else {
                 // A property, perhaps with a type word before its name.
+                // One declaration may name several, written apart the
+                // way a call's arguments are.
                 if self.look().shape == Shape::Instr && self.look_ahead(1).shape == Shape::Instr {
                     self.take();
                 }
-                let member = self.want_name("as the property name")?;
-                let bare = lang.sigil.map_or(member.clone(), |s| member.trim_start_matches(s).to_string());
-                let value = match self.on_assign() {
-                    true => {
-                        self.take();
-                        self.member_value()?
+                let apart = lang.calling.as_ref().and_then(|c| c.between.clone());
+                loop {
+                    let member = self.want_name("as the property name")?;
+                    let bare = lang.sigil.map_or(member.clone(), |s| member.trim_start_matches(s).to_string());
+                    let value = match self.on_assign() {
+                        true => {
+                            self.take();
+                            self.member_value()?
+                        }
+                        false => vec![Instr::Const(Value::Null)],
+                    };
+                    if own {
+                        shared.push((bare, value));
+                    } else {
+                        fields.push((bare, value));
                     }
-                    false => vec![Instr::Const(Value::Null)],
-                };
-                if own {
-                    shared.push((bare, value));
-                } else {
-                    fields.push((bare, value));
+                    match &apart {
+                        Some(sep) if self.at_symbol(sep) => self.take(),
+                        _ => break,
+                    };
                 }
             }
             self.skip_seps();
@@ -1621,8 +1649,9 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
         self.want_sign(&call.open, "after method name")?;
-        let mut formals = vec![lang.this_word.clone().ok_or_else(|| "A class needs ext.stmt.class.this".to_string())?];
-        let (params, spares) = self.parameters(&call)?;
+        let this = lang.this_word.clone().ok_or_else(|| "A class needs ext.stmt.class.this".to_string())?;
+        let mut formals = vec![this.clone()];
+        let (params, spares, promoted) = self.parameters(&call)?;
         formals.extend(params);
         // The object it is for is always given, so the count is one more.
         let least = formals.len() - spares.len();
@@ -1634,8 +1663,9 @@ impl<'a> Compiler<'a> {
             self.want_name("as a return type")?;
         }
         // A method may be named and not written out, in a class of
-        // method names only; it answers with nothing.
-        if self.on_sep() {
+        // method names only; it answers with nothing. A body on the line
+        // after the name is still a body.
+        if self.on_sep() && !self.block_ahead() {
             return self.routine(name, formals, least, true, |a| {
                 a.constant(Value::Null);
                 a.piece().result_touched = true;
@@ -1643,21 +1673,40 @@ impl<'a> Compiler<'a> {
                 Ok(())
             });
         }
+        let named = promoted.clone();
+        self.promoted = promoted;
         self.routine(name, formals, least, true, |a| {
             a.spare_values(&spares, &given)?;
+            // What a parameter that names a property was given is
+            // written into the object before anything else runs.
+            for member in &named {
+                let bare = a.lang.sigil.map_or(member.clone(), |s| member.trim_start_matches(s).to_string());
+                a.read(&this);
+                a.read(member);
+                a.act(Action::Plant(Rc::from(bare.as_str())), 2);
+                a.discard();
+            }
             a.body()
         })
     }
 
     /// The parameters of a function or a method, up to the closing bracket.
-    fn parameters(&mut self, call: &Brackets) -> Res<(Vec<String>, Vec<(usize, usize)>)> {
+    /// A parameter with a class modifier before it names a property as
+    /// well, which the maker writes what it was given into.
+    fn parameters(&mut self, call: &Brackets) -> Res<(Vec<String>, Vec<(usize, usize)>, Vec<String>)> {
         let lang = self.lang;
         let mut formals = Vec::new();
         // Which parameter, and where its own value is written: it is read
         // again inside the program, where its names mean what they should.
         let mut spares: Vec<(usize, usize)> = Vec::new();
+        let mut promoted: Vec<String> = Vec::new();
         while !self.at_symbol(&call.close) && !self.exhausted() {
             self.skip_reference();
+            let mut names_property = false;
+            while self.look().shape == Shape::Instr && Lang::spells(&lang.modifier_words, &self.look().lexeme) {
+                self.take();
+                names_property = true;
+            }
             if lang.types_first {
                 let type_word = self.want_name("as a parameter type")?;
                 if !Lang::spells(&lang.let_words, &type_word) {
@@ -1681,6 +1730,9 @@ impl<'a> Compiler<'a> {
                     self.want_name("as a type name")?;
                 }
             }
+            if names_property {
+                promoted.push(formals.last().expect("the parameter just read").clone());
+            }
             // A parameter may carry a value of its own for calls that
             // leave it out.
             if self.on_assign() {
@@ -1699,7 +1751,7 @@ impl<'a> Compiler<'a> {
             }
         }
         self.want_sign(&call.close, "after parameters")?;
-        Ok((formals, spares))
+        Ok((formals, spares, promoted))
     }
 
     /// Step over the sign saying a type takes nothing as well: `?int`.
@@ -1739,7 +1791,7 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
         self.want_sign(&call.open, "after function name")?;
-        let (formals, spares) = self.parameters(&call)?;
+        let (formals, spares, _) = self.parameters(&call)?;
         let least = formals.len() - spares.len();
         let given = formals.clone();
         if self.look().shape == Shape::Sign && Lang::spells(&lang.return_marks, &self.look().lexeme) {

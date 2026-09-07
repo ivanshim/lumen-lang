@@ -19,17 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 31, differs 38, error 45, skipped 0 | pass 31, differs 38, error 45, skipped 0 |
 | `php/func` | 14 | pass 5, differs 3, error 6, skipped 0 | pass 5, differs 3, error 6, skipped 0 |
-| `php/lang` | 213 | pass 40, differs 33, error 138, skipped 2 | pass 40, differs 33, error 138, skipped 2 |
+| `php/lang` | 213 | pass 43, differs 36, error 132, skipped 2 | pass 43, differs 36, error 132, skipped 2 |
 | `php/lang/constants` | 2 | pass 1, differs 1, error 0, skipped 0 | pass 1, differs 1, error 0, skipped 0 |
 | `php/lang/integer_literals` | 6 | pass 0, differs 0, error 6, skipped 0 | pass 0, differs 0, error 6, skipped 0 |
 | `php/lang/operators` | 64 | pass 13, differs 24, error 27, skipped 0 | pass 13, differs 24, error 27, skipped 0 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 91, differs 107, error 222, skipped 2 | pass 91, differs 107, error 222, skipped 2 |
+| all | 422 | pass 94, differs 110, error 216, skipped 2 | pass 94, differs 110, error 216, skipped 2 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 107 |
-| Expected identifier as the property name, got '{' | 10 |
+| ran, printed something else | 110 |
 | } | 10 |
 | Undefined variable: eval | 7 |
 | Undefined variable: include | 7 |
@@ -45,6 +44,7 @@ is listed, since the full kernels are meant to behave alike.
 | Test | 3 |
 | Unexpected token: : | 3 |
 | Expected ')' to close a group, got '=' | 3 |
+| A try needs a catch or a last part | 3 |
 | Unexpected token: ) | 3 |
 | Undefined variable: require_once | 3 |
 | Undefined variable: StdClass | 3 |
@@ -57,6 +57,7 @@ is listed, since the full kernels are meant to behave alike.
 | timeout | 2 |
 | Expected ')' after the foreach names, got '[' | 2 |
 | Unexpected token: } | 2 |
+| Undefined variable: stdClass | 2 |
 | no --FILE-- section | 2 |
 | Expected ']' after array index, got '++' | 2 |
 | Unexpected token: ++ | 2 |
@@ -67,7 +68,6 @@ is listed, since the full kernels are meant to behave alike.
 | Unexpected token: > | 2 |
 | Unexpected token: :: | 2 |
 | Undefined variable: $argc | 1 |
-| Undefined variable: $HTTP_RAW_POST_DATA | 1 |
 
 ### Reserved words: 41 of 68 spelled
 
@@ -355,11 +355,11 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/032.phpt` | pass | pass |  |
 | `php/lang/033.phpt` | error | error | Unexpected token: : |
 | `php/lang/034.phpt` | error | error | Unexpected token: , |
-| `php/lang/035.phpt` | error | error | Expected identifier as the property name, got '{' |
-| `php/lang/036.phpt` | error | error | Expected identifier as the property name, got '{' |
-| `php/lang/037.phpt` | error | error | Expected identifier as the property name, got '{' |
-| `php/lang/038.phpt` | error | error | Expected identifier as the property name, got '{' |
-| `php/lang/039.phpt` | error | error | Expected identifier as the property name, got '{' |
+| `php/lang/035.phpt` | pass | pass |  |
+| `php/lang/036.phpt` | differs | differs | ran, printed something else |
+| `php/lang/037.phpt` | pass | pass |  |
+| `php/lang/038.phpt` | error | error | A try needs a catch or a last part |
+| `php/lang/039.phpt` | error | error | A try needs a catch or a last part |
 | `php/lang/040.phpt` | error | error | Expected ')' after the foreach names, got '[' |
 | `php/lang/041.phpt` | error | error | Cannot reach 'b' in A |
 | `php/lang/042.phpt` | error | error | Cannot reach 'B' in A |
@@ -380,7 +380,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug21669.phpt` | error | error | Only a class can be made into an object |
 | `php/lang/bug21820.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug21849.phpt` | pass | pass |  |
-| `php/lang/bug21961.phpt` | error | error | Expected identifier as the property name, got ',' |
+| `php/lang/bug21961.phpt` | error | error | Undefined variable: get_parent_class |
 | `php/lang/bug22231.phpt` | error | error | Unexpected token: & |
 | `php/lang/bug22510.phpt` | error | error | Unexpected character '@' |
 | `php/lang/bug22592.phpt` | error | error | Unexpected token: = |
@@ -393,7 +393,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug24054.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug24396.phpt` | error | error | Unexpected character '$' |
 | `php/lang/bug24436.phpt` | error | error | Undefined property: test::$test |
-| `php/lang/bug24499.phpt` | error | error | Expected identifier as the property name, got '{' |
+| `php/lang/bug24499.phpt` | error | error | Undefined variable: stdClass |
 | `php/lang/bug24573.phpt` | error | error | Undefined variable: debug_backtrace |
 | `php/lang/bug24640.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug24652.phpt` | differs | differs | ran, printed something else |
@@ -405,20 +405,20 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug25547.phpt` | error | error | Cannot coerce array to number |
 | `php/lang/bug25652.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug25922.phpt` | error | error | Undefined variable: $data |
-| `php/lang/bug26182.phpt` | error | error | Expected identifier as the property name, got '{' |
+| `php/lang/bug26182.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug26696.phpt` | pass | pass |  |
 | `php/lang/bug26866.phpt` | error | error | A try needs a catch or a last part |
 | `php/lang/bug26869.phpt` | error | error | } |
 | `php/lang/bug27354.phpt` | error | error | int(0) |
 | `php/lang/bug27439.phpt` | error | error | Unexpected token: } |
 | `php/lang/bug27443.phpt` | error | error | Undefined variable: defined |
-| `php/lang/bug27535.phpt` | error | error | Expected identifier as the property name, got '{' |
+| `php/lang/bug27535.phpt` | pass | pass |  |
 | `php/lang/bug28213.phpt` | error | error | Undefined variable: include |
 | `php/lang/bug28800.phpt` | error | error | Cannot coerce 'into' to number |
 | `php/lang/bug29566.phpt` | error | error | Cannot walk a value that is not an array |
 | `php/lang/bug29893.phpt` | error | error | '-=' needs a plain variable on its left |
 | `php/lang/bug29944.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug30578.phpt` | error | error | Expected identifier as the property name, got '{' |
+| `php/lang/bug30578.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug30638.phpt` | error | error | Undefined variable: localeconv |
 | `php/lang/bug30726.phpt` | error | error | Unexpected token: , |
 | `php/lang/bug30862.phpt` | differs | differs | ran, printed something else |
