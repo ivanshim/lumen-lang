@@ -66,6 +66,29 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   `real(x, places)` stays the explicit builtin. Every program prints
   what it printed, apart from six examples whose test labels name the
   functions; the ports regenerate.
+- **The library in every language**: `scripts/port_examples.py` now
+  writes every function of `lib_lumen/` that a language can spell into
+  `lib_<language>/`, file for file, with a `prelude.rs` the host embeds;
+  the host prepends a language's mirror to every program in that
+  language as it prepends `lib_lumen/` to Lumen programs, after the
+  language's prologue where a program opens with one. A port no longer
+  carries the library functions it calls (the ports lost two thousand
+  lines), and `docs/LIBRARY_PORTS.md` says for each of the 136 functions
+  and nine languages whether the mirror has it, which construct stands
+  in the way, or which builtin the language uses instead: Python carries
+  70, RPLumen 98, Ruby 67, PHP 47, JavaScript 28, Pascal 25, Swift 18,
+  Rust 17, C 12. A mirror costs a program 1 to 8 milliseconds to read on
+  the fast kernels; `LUMEN_BARE=1` runs without it. The RPLumen mirror
+  exposed three faults in how the tree kernels read postfix programs by
+  name, fixed in microcode11, microcode4 and microcode7 alike: the arms
+  of an `if` start from one stack, so the else arm reuses the implicit
+  parameters the then arm took instead of adding its own (a recursive
+  program's arity had doubled every pass); a program's own binding
+  shadows a program of the same name elsewhere in the file (a local `e`
+  is a value, not Euler's constant); and a top-level rebinding of a
+  program's name to a value ends the name's life as a program for the
+  words after it. All 2988 tests pass, the six kernels print the same
+  for all 498 programs, and the emitter round-trip is unchanged.
 - **Notation and block style are separate labels; RPLumen is indented**:
   a new label `syntax.notation` (`infix` or `postfix`) says how a
   language is read, and `block.style` is free to be `indentation`,

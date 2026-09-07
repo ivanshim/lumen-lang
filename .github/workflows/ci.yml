@@ -21,10 +21,10 @@ jobs:
           test "${PIPESTATUS[0]}" -eq 0
         env:
           RUSTFLAGS: -D warnings
-      - name: Ported examples are current
+      - name: Ported examples and library mirrors are current
         run: |
           python3 scripts/port_examples.py
-          git diff --exit-code --stat -- examples
+          git diff --exit-code --stat -- examples lib_* docs/LIBRARY_PORTS.md
       - name: Test all languages on every kernel
         run: |
           TEST_QUIET=1 ./test.sh --lang all 2>&1 | tee test.log

@@ -67,8 +67,11 @@ only names what its language spells; the floor is the same for all.
    `$comment` explains, and `$library` maps a label the language leaves
    empty to the library function that provides it (Lumen's `print`),
    which the table shows as `(library: print)`. The microcode11 emitter
-   reads `$library` when it writes a program in another language, to
-   turn a library function into the target's builtin and back.
+   and the porter read `$library` when they write a program or the
+   library in another language, to turn a library function into the
+   target's builtin and back; a function the target spells with a
+   builtin is left out of the target's mirror of the library
+   (`lib_<language>/`, `docs/LIBRARY_PORTS.md`).
 6. A lexeme may appear under at most one label per parsing position. `-`
    under both `op.sub` (infix) and `op.negate` (prefix) is allowed; the same
    string under two infix labels is an error.

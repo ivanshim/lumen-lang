@@ -1,17 +1,4 @@
 # Ported from examples/lumen/exponentiation_exponent_then_mod.lm by scripts/port_examples.py; edit the Lumen original, not this file.
-def mod_pow(base, exp, m)
-    result = 1
-    base = base % m
-    while exp > 0 do
-        if exp % 2 == 1 then
-            result = (result * base) % m
-        end
-        exp = exp / 2
-        base = (base * base) % m
-    end
-    return result
-end
-
 base = 7
 exp = 100
 mod = 1000000007

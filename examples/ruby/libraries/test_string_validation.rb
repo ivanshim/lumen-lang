@@ -1,23 +1,4 @@
 # Ported from examples/lumen/libraries/test_string_validation.lm by scripts/port_examples.py; edit the Lumen original, not this file.
-def is_alpha(c)
-    o = c.ord
-    return (o >= "A".ord && o <= "Z".ord) || (o >= "a".ord && o <= "z".ord)
-end
-
-def is_alpha_string(s)
-    if s.length == 0 then
-        return false
-    end
-    i = 0
-    while i < s.length do
-        if !is_alpha(s[i]) then
-            return false
-        end
-        i = i + 1
-    end
-    return true
-end
-
 puts("=== String Content Validation ===")
 puts("")
 puts("Alphabetic string validation:")

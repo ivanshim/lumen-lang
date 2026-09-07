@@ -1,11 +1,4 @@
 // Ported from examples/lumen/constructs/string_operations.lm by scripts/port_examples.py; edit the Lumen original, not this file.
-function char_at_or_null(s, index) {
-    if (index < 0 || index >= s.length) {
-        return null;
-    }
-    return s.charAt(index);
-}
-
 console.log("=== String Operations Test ===");
 const str1 = "Hello";
 const str2 = " World";

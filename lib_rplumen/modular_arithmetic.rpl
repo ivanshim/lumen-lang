@@ -1,0 +1,16 @@
+# The Lumen library file lib_lumen/modular_arithmetic.lm, ported by scripts/port_examples.py; edit the Lumen original, not this file.
+
+« 'm' = 'b' = 'a' =
+    a b * m % return
+» 'mod_mult' =
+
+« 'm' = 'exp' = 'base' =
+    1 'result' =
+    base m % 'base' =
+    while exp 0 >
+        exp 2 % 1 == if
+            result base * m % 'result' =
+        exp 2 // 'exp' =
+        base base * m % 'base' =
+    result return
+» 'mod_pow' =

@@ -1,17 +1,4 @@
 // Ported from examples/lumen/exponentiation_exponent_then_mod.lm by scripts/port_examples.py; edit the Lumen original, not this file.
-fn mod_pow(base: i64, exp: i64, m: i64) -> i64 {
-    let mut result = 1;
-    base = base % m;
-    while exp > 0 {
-        if exp % 2 == 1 {
-            result = (result * base) % m;
-        }
-        exp = exp / 2;
-        base = (base * base) % m;
-    }
-    return result;
-}
-
 fn main() {
     let base = 7;
     let exp = 100;

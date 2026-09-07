@@ -1,56 +1,5 @@
 import sys
 # Ported from examples/lumen/rsa_demo.lm by scripts/port_examples.py; edit the Lumen original, not this file.
-def mod_pow(base, exp, m):
-    result = 1
-    base = base % m
-    while exp > 0:
-        if exp % 2 == 1:
-            result = (result * base) % m
-        exp = exp // 2
-        base = (base * base) % m
-    return result
-
-def gcd(a, b):
-    while b != 0:
-        t = b
-        b = a % b
-        a = t
-    return a
-
-def extended_gcd(a, b):
-    if b == 0:
-        return [a, 1, 0]
-    else:
-        r = extended_gcd(b, a % b)
-        g = r[0]
-        x = r[2]
-        y = r[1] - (a // b) * r[2]
-        return [g, x, y]
-
-def is_coprime(a, b):
-    return gcd(a, b) == 1
-
-def mod_inverse(a, m):
-    r = extended_gcd(a, m)
-    if r[0] != 1:
-        return sys.exit("mod_inverse: inverse does not exist (gcd(a, m) != 1)")
-    else:
-        return (r[1] % m + m) % m
-
-def is_prime(n):
-    if n < 2:
-        return False
-    if n == 2:
-        return True
-    if n % 2 == 0:
-        return False
-    i = 3
-    while i * i <= n:
-        if n % i == 0:
-            return False
-        i = i + 2
-    return True
-
 print("=== RSA Cryptography Demonstration ===")
 print("")
 print("Step 1: Key Generation")

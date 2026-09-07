@@ -80,6 +80,9 @@ langs/                 language definitions as JSON, one file per language,
                        build time; langs/extras/ holds definitions read from
                        disk at run time with --lang <path>
 lib_lumen/             the Lumen standard library, written in Lumen
+lib_<language>/        the same library as each other language spells it,
+                       written by the porter from lib_lumen/ and prepended
+                       to every program in that language
 examples/              programs for every language
 ```
 
@@ -205,13 +208,24 @@ with `--lang <path>`, which is also how a definition of your own is run.
 
 Every Lumen example is also written in every other language whose
 definition spells what it needs: `scripts/port_examples.py` reads
-`examples/lumen/`, ports each program (with the library functions it
-calls) into `examples/<language>/` under the same relative path, and
-writes [examples/PORTS.md](examples/PORTS.md), which says for each example
-and language either that the port exists or which construct the language
-has no spelling for. Those ports, the hand-written examples and the Lumen
-suite all run on every kernel, and `scripts/kernel_diff.sh` checks that
-the six kernels print the same for every one of them.
+`examples/lumen/`, ports each program into `examples/<language>/` under
+the same relative path, and writes [examples/PORTS.md](examples/PORTS.md),
+which says for each example and language either that the port exists or
+which construct the language has no spelling for. Those ports, the
+hand-written examples and the Lumen suite all run on every kernel, and
+`scripts/kernel_diff.sh` checks that the six kernels print the same for
+every one of them.
+
+The library goes with them. The same porter writes every function of
+`lib_lumen/` that a language can spell into `lib_<language>/`, file for
+file, and the host prepends that mirror to every program in the language,
+as it prepends `lib_lumen/` to every Lumen program; so a Python or Pascal
+program calls `gcd` or `substring` as a Lumen program does, and a port
+carries no library code of its own. [docs/LIBRARY_PORTS.md](docs/LIBRARY_PORTS.md)
+says for each function and language whether the mirror has it, or which
+construct stands in the way, or which builtin the language spells it
+with instead. A mirror costs a program a few milliseconds to read;
+`LUMEN_BARE=1` runs a program without its library.
 
 Lumen is the reference language: integers, exact rationals and reals of
 configurable precision, strings, arrays, functions, `for`/`while`/`until`

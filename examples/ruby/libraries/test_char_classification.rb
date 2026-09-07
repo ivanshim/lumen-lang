@@ -1,22 +1,4 @@
 # Ported from examples/lumen/libraries/test_char_classification.lm by scripts/port_examples.py; edit the Lumen original, not this file.
-def is_ascii(c)
-    return c.ord < 128
-end
-
-def is_digit(c)
-    o = c.ord
-    return o >= "0".ord && o <= "9".ord
-end
-
-def is_alpha(c)
-    o = c.ord
-    return (o >= "A".ord && o <= "Z".ord) || (o >= "a".ord && o <= "z".ord)
-end
-
-def is_alnum(c)
-    return is_alpha(c) || is_digit(c)
-end
-
 puts("=== Character Classification ===")
 puts("")
 puts("ASCII characters:")

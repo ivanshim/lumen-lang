@@ -41,8 +41,19 @@ pub struct Signature {
     pub yields: bool,
 }
 
+/// A postfix branch under construction: the formals its routine had when
+/// the branch opened and how many added since the arm being read has
+/// consumed. The two arms see one stack, so the second reuses the
+/// formals the first took before it takes any of its own.
+struct Fork {
+    layer: usize,
+    from: usize,
+    taken: usize,
+}
+
 pub struct Builder<'a> {
     table: &'a Table,
+    forks: Vec<Fork>,
     tokens: &'a [Token],
     pos: usize,
     layers: Vec<Layer>,
@@ -68,7 +79,7 @@ enum Mode {
 
 pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool) -> Res<Built> {
     let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false };
-    let mut r = Builder { table, tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict };
+    let mut r = Builder { table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict };
     let body = if table.rpn {
         let (mut stmts, rest) = r.rpn_body(&[], Mode::Body)?;
         if !r.exhausted() {
@@ -978,11 +989,52 @@ impl<'a> Builder<'a> {
             return if self.strict { Err("Stack underflow".to_string()) } else { Ok(constant(Value::Nil)) };
         };
         let scope = &mut self.layers[i];
+        if let Some(fork) = self.forks.last_mut().filter(|f| f.layer == i) {
+            if fork.from + fork.taken < scope.formals.len() {
+                let name = scope.formals[fork.from + fork.taken].clone();
+                fork.taken += 1;
+                return Ok(self.read(&name));
+            }
+            fork.taken += 1;
+        }
         let name = format!("p{}", scope.formals.len() + 1);
         scope.formals.push(name.clone());
         scope.idents.push(name.clone());
         scope.formal_slots.push(scope.idents.len() - 1);
         Ok(self.read(&name))
+    }
+
+    /// Whether a bare word names a binding of the routine being read, a
+    /// formal or a name assigned in it so far: then it is a value, not a
+    /// call, whatever routine the file binds under that name elsewhere.
+    fn shadowed(&self, w: &str) -> bool {
+        match self.layers.iter().rposition(|l| l.rpn) {
+            Some(i) => self.layers[i].idents.iter().any(|n| n == w),
+            None => false,
+        }
+    }
+
+    /// A postfix branch opens: from here the arms share what the routine takes.
+    fn fork(&mut self) {
+        if let Some(i) = self.layers.iter().rposition(|s| s.rpn) {
+            self.forks.push(Fork { layer: i, from: self.layers[i].formals.len(), taken: 0 });
+        }
+    }
+
+    /// The second arm starts over on the values the first arm took.
+    fn refork(&mut self) {
+        if let Some(fork) = self.forks.last_mut() {
+            fork.taken = 0;
+        }
+    }
+
+    /// The branch closes; a branch around it has consumed all that was added.
+    fn join(&mut self) {
+        if let Some(done) = self.forks.pop() {
+            if let Some(outer) = self.forks.last_mut().filter(|f| f.layer == done.layer) {
+                outer.taken = self.layers[done.layer].formals.len() - outer.from;
+            }
+        }
     }
 
     fn flush(&mut self, stmts: &mut Vec<Form>, stack: &mut Vec<Form>) {
@@ -1118,6 +1170,10 @@ impl<'a> Builder<'a> {
                 let arity = Signature { arity: p.formals.len(), yields: yields_value(&p.body) };
                 self.seen.insert(name.to_string(), arity);
                 self.presumed.insert(name.to_string(), arity);
+            } else if !self.layers.iter().any(|l| l.rpn) {
+                // Rebound at the top level to something else: from here on
+                // the name is a value, whatever routine it named before.
+                self.presumed.remove(name);
             }
             let node = self.write(name, value);
             stmts.push(node);
@@ -1176,6 +1232,7 @@ impl<'a> Builder<'a> {
             // Each arm is read inside its own program; what it leaves is its value.
             let mut then_left = false;
             let mut then_returns = false;
+            self.fork();
             let then = self.limb(Traps::Naught, |r| {
                 let (mut s, left) = if keyword { r.rpn_block(&stops, Mode::Body)? } else { r.ruled()? };
                 then_returns = matches!(s.last(), Some(Form::Apply(Callee::Prim(Prim::Yield | Prim::Leave | Prim::Resume, _), _)));
@@ -1186,6 +1243,7 @@ impl<'a> Builder<'a> {
             let mut else_left = false;
             let mut else_returns = false;
             let has_else = if keyword { self.on_any("stmt.else") && { self.advance(); true } } else { self.grab_else() };
+            self.refork();
             let otherwise = if has_else {
                 self.limb(Traps::Naught, |r| {
                     let (mut s, left) = if keyword { r.rpn_block(&closers, Mode::Body)? } else { r.ruled()? };
@@ -1197,6 +1255,7 @@ impl<'a> Builder<'a> {
             } else {
                 self.limb(Traps::Naught, |_| Ok(constant(Value::Nil)))?
             };
+            self.join();
             if keyword {
                 self.need_closer()?;
             }
@@ -1397,7 +1456,7 @@ impl<'a> Builder<'a> {
         if t.shape != Shape::Bare {
             return Err(format!("Unexpected '{}'", w));
         }
-        if let Some(arity) = self.presumed.get(w).copied() {
+        if let Some(arity) = self.presumed.get(w).copied().filter(|_| !self.shadowed(w)) {
             let mut args = Vec::new();
             for _ in 0..arity.arity {
                 args.push(self.drop_top(stack)?);

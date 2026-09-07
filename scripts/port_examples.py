@@ -6,7 +6,14 @@ lib_lumen/*.lm, parses them, and writes each example in the spelling of
 every other definition in langs/ and langs/extras/, mirroring the Lumen
 directory layout: examples/lumen/constructs/x.lm becomes
 examples/python/constructs/x.py. The library functions an example calls
-are ported along with it, so the output is self-contained.
+are ported along with it when the language's library mirror lacks them.
+
+The library itself is ported the same way: every function of lib_lumen/
+the language can spell is written into lib_<language>/, file for file,
+with a prelude.rs the host embeds and prepends to every program in that
+language, as it prepends lib_lumen/ to every Lumen program. A function
+the language cannot spell, or that calls one it cannot, is left out and
+the reason recorded in docs/LIBRARY_PORTS.md.
 
 An example is written for a language only when the language's definition
 spells every construct the example (and its library functions) needs; the
@@ -33,8 +40,10 @@ LUMEN_EXAMPLES = ROOT / "examples" / "lumen"
 LIB = ROOT / "lib_lumen"
 LANGS = ROOT / "langs"
 REPORT = ROOT / "examples" / "PORTS.md"
+LIBRARY_REPORT = ROOT / "docs" / "LIBRARY_PORTS.md"
 
 HEADER = "Ported from {source} by scripts/port_examples.py; edit the Lumen original, not this file."
+LIBRARY_HEADER = "The Lumen library file {source}, ported by scripts/port_examples.py; edit the Lumen original, not this file."
 
 
 class Skip(Exception):
@@ -473,6 +482,7 @@ def load_library():
             constants[g.name] = g
         for s in prog.body:
             if s.kind == "Fn":
+                s.file = name
                 fns[s.name] = (s, globals_)
     return fns, constants
 
@@ -507,10 +517,12 @@ def free_names(nodes):
     return names
 
 
-def library_closure(program, lib, constants, replaced):
+def library_closure(program, lib, constants, replaced, mirrored=frozenset()):
     """The library functions the program needs, in definition order, with
     the library constants the program or those functions read. A function
-    in `replaced` is spelled by a builtin of the target and is not ported."""
+    in `replaced` is spelled by a builtin of the target and is not ported;
+    one in `mirrored` is in the target's library mirror and is returned
+    separately, for the kinds it lends the program, not to be written."""
     defined = {s.name for s in program.body if s.kind == "Fn"}
     needed = []
     seen = set()
@@ -528,10 +540,49 @@ def library_closure(program, lib, constants, replaced):
                 pending.append(callee)
     order = {name: i for i, name in enumerate(lib)}
     needed.sort(key=lambda f: order[f.name])
+    own = [f for f in needed if f.name not in mirrored]
+    lent = [f for f in needed if f.name in mirrored]
     assigned = {s.name for s in walk(Node("B", body=program.body)) if s.kind in ("Assign", "Let")}
-    free = free_names(program.body + needed)
+    free = free_names(program.body + own)
     globals_ = [g for name, g in constants.items() if name in free and name not in assigned]
-    return globals_, needed
+    return globals_, own, lent
+
+
+def port_library(emitter, lib, constants):
+    """Every library function the target can spell, ported one by one, as
+    `{file: [(name, lines)]}` in library order, with `{name: reason}` for
+    the rest. A function the target spells with a builtin of its own is
+    not written; one that calls a function that cannot be written cannot
+    be written either, and says so."""
+    replaced = {name for name, label in POLYMORPHIC.items() if emitter.has(label)}
+    all_fns = [fn for fn, _ in lib.values()]
+    reasons = {name: f"spelled by the builtin `{emitter.d[POLYMORPHIC[name]][0]}`" for name in replaced if name in lib}
+    ported = {}
+    emitter.prepare_library(all_fns, list(constants.values()))
+    for name, (fn, _) in lib.items():
+        if name in reasons:
+            continue
+        try:
+            ported[name] = emitter.library_function(fn)
+        except Skip as why:
+            reasons[name] = str(why)
+    # A function that calls an unwritable one is unwritable too.
+    changed = True
+    while changed:
+        changed = False
+        for name in list(ported):
+            fn, _ = lib[name]
+            for callee in called_names([fn]):
+                if callee in reasons and callee not in replaced and callee != name:
+                    reasons[name] = f"calls `{callee}`: {reasons[callee]}"
+                    del ported[name]
+                    changed = True
+                    break
+    files = {}
+    for name, (fn, _) in lib.items():
+        if name in ported:
+            files.setdefault(fn.file, []).append((name, ported[name]))
+    return files, reasons
 
 
 # ---------------------------------------------------------------- kinds
@@ -926,9 +977,22 @@ class Emitter:
         return builtin + self.arguments(args, scope)
 
     # ---- statements
-    def program(self, prog, lib_globals, lib_fns, source_path):
-        scope = Scope(prog.body, lib_fns)
-        self.kinds = Kinds(lib_globals + lib_fns + prog.body)
+    def prepare_library(self, all_fns, constants):
+        """Kinds and constant inlining for the whole library, before its
+        functions are ported one by one. Constants are inlined into the
+        functions that read them in every language, so a mirror is
+        functions only and prepends to any program."""
+        self.kinds = Kinds(constants + all_fns)
+        self.library_scope = Scope([], all_fns)
+        self.check_globals(Node("Program", body=[]), constants, all_fns, force_inline=True)
+
+    def library_function(self, fn):
+        """One library function in the target, its lines."""
+        return self.statement(fn, self.library_scope, 0)
+
+    def program(self, prog, lib_globals, lib_fns, source_path, lent=()):
+        scope = Scope(prog.body, lib_fns + list(lent))
+        self.kinds = Kinds(lib_globals + lib_fns + list(lent) + prog.body)
         self.check_globals(prog, lib_globals, lib_fns)
         lines = []
         comment = self.d["lexical.comment_line"]
@@ -964,13 +1028,13 @@ class Emitter:
                 text = prologue + "\n" + text
         return text
 
-    def check_globals(self, prog, lib_globals, lib_fns):
+    def check_globals(self, prog, lib_globals, lib_fns, force_inline=False):
         """A function reading a program-level variable needs the language to
         share top-level names with functions; Python, JavaScript, Swift and
         Pascal do. Elsewhere a library constant is inlined into the function
         that reads it, and an example's own variable is a reason to skip."""
         self.inline = {}
-        if self.name in ("python", "javascript", "swift", "pascal"):
+        if self.name in ("python", "javascript", "swift", "pascal") and not force_inline:
             return
         constants = {g.name: g for g in lib_globals}
         # A program-level name assigned once, to a literal, is a constant too.
@@ -1409,12 +1473,15 @@ class PostfixEmitter(Emitter):
         """An if/else that leaves one value on the stack."""
         return f"{cond} {self.w('stmt.if')}\n{self.nested(then_text)}{self.w('stmt.else')}\n{self.nested(else_text)}"
 
-    def check_globals(self, prog, lib_globals, lib_fns):
-        # Bindings are looked up through every open frame, as in Lumen.
+    def check_globals(self, prog, lib_globals, lib_fns, force_inline=False):
+        # Bindings are looked up through every open frame, as in Lumen; a
+        # library constant is inlined into the functions of a mirror only.
         self.inline = {}
+        if force_inline:
+            Emitter.check_globals(self, prog, lib_globals, lib_fns, force_inline=True)
 
-    def program(self, prog, lib_globals, lib_fns, source_path):
-        scope = Scope(prog.body, lib_fns)
+    def program(self, prog, lib_globals, lib_fns, source_path, lent=()):
+        scope = Scope(prog.body, lib_fns + list(lent))
         self.check_globals(prog, lib_globals, lib_fns)
         lines = [f"{self.w('lexical.comment_line')} {HEADER.format(source=source_path)}"]
         for s in lib_globals + lib_fns + prog.body:
@@ -1708,15 +1775,67 @@ def definitions():
     return defs
 
 
-def port_one(emitter, source_path, lib, constants):
+def port_one(emitter, source_path, lib, constants, mirrored=frozenset()):
     try:
         prog = parse(source_path.read_text(encoding="utf-8"))
     except SyntaxError as e:
         raise SyntaxError(f"{source_path}: {e}") from None
     replaced = {name for name, label in POLYMORPHIC.items() if emitter.has(label)}
-    lib_globals, lib_fns = library_closure(prog, lib, constants, replaced)
+    lib_globals, lib_fns, lent = library_closure(prog, lib, constants, replaced, mirrored)
     rel = source_path.relative_to(ROOT)
-    return emitter.program(prog, lib_globals, lib_fns, str(rel))
+    return emitter.program(prog, lib_globals, lib_fns, str(rel), lent)
+
+
+def write_mirror(lang, d, files, reasons):
+    """lib_<language>/: one file per library file with the functions the
+    language can spell, and a prelude.rs the host embeds."""
+    ext = d["extensions"][0]
+    out = ROOT / f"lib_{lang}"
+    out.mkdir(exist_ok=True)
+    for old in out.iterdir():
+        if old.is_file():
+            old.unlink()
+    comment = d["lexical.comment_line"][0] if d["lexical.comment_line"] else None
+    written = []
+    for name in LIB_FILES:
+        if name not in files:
+            continue
+        target = out / (Path(name).stem + f".{ext}")
+        lines = []
+        if comment:
+            lines.append(f"{comment} {LIBRARY_HEADER.format(source='lib_lumen/' + name)}")
+            lines.append("")
+        for fn_name, fn_lines in files[name]:
+            lines.extend(fn_lines)
+            lines.append("")
+        target.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
+        written.append(target.name)
+    prologue = d["lexical.prologue"][0] if d["lexical.prologue"] else ""
+    entries = "".join(f'    ("lib_{lang}/{n}", include_str!("{n}")),\n' for n in written)
+    (out / "prelude.rs").write_text(
+        "// Build-time packaging artifact, written by scripts/port_examples.py: the\n"
+        f"// Lumen library as {lang} spells it, embedded in the host and prepended to\n"
+        f"// every {lang} program. Not library code; edit lib_lumen/ instead.\n\n"
+        f"pub static PROLOGUE: &str = {json.dumps(prologue)};\n\n"
+        f"pub static FILES: &[(&str, &str)] = &[\n{entries}];\n", encoding="utf-8")
+
+
+def write_library_report(lib, defs, coverage):
+    langs = list(defs)
+    lines = ["# The Lumen library in every language", "",
+             "Generated by `scripts/port_examples.py` from `lib_lumen/`. A cell says `yes`",
+             "when the function is written in that language under `lib_<language>/`, in",
+             "the file of the same name, or says why not: the construct the language's",
+             "definition has no spelling for, the function it calls that cannot be",
+             "written, or the builtin the language spells the function with instead.",
+             "The host prepends a language's mirror to every program in that language.", ""]
+    counts = {l: sum(1 for name in lib if coverage[l].get(name) is None) for l in langs}
+    lines.append(f"Lumen has {len(lib)} library functions; " + ", ".join(f"{l} carries {counts[l]}" for l in langs) + ".")
+    lines += ["", "| Function | File | " + " | ".join(langs) + " |", "|---|---|" + "---|" * len(langs)]
+    for name, (fn, _) in lib.items():
+        cells = ["yes" if coverage[l].get(name) is None else coverage[l][name] for l in langs]
+        lines.append(f"| `{name}` | `{fn.file}` | " + " | ".join(cells) + " |")
+    LIBRARY_REPORT.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def main():
@@ -1725,6 +1844,15 @@ def main():
     examples = sorted(LUMEN_EXAMPLES.rglob("*.lm"))
     results = {}  # (example, language) -> None or reason
     written = {name: 0 for name in defs}
+    coverage = {}
+    mirrored = {}
+    for lang, d in defs.items():
+        emitter = PostfixEmitter(d) if d["syntax.notation"] == "postfix" else Emitter(d)
+        files, reasons = port_library(emitter, lib, constants)
+        write_mirror(lang, d, files, reasons)
+        coverage[lang] = reasons
+        mirrored[lang] = frozenset(name for names in files.values() for name, _ in names)
+    write_library_report(lib, defs, coverage)
     for lang, d in defs.items():
         ext = d["extensions"][0]
         out_root = ROOT / "examples" / lang
@@ -1736,7 +1864,7 @@ def main():
             rel = ex.relative_to(LUMEN_EXAMPLES).with_suffix(f".{ext}")
             try:
                 emitter = PostfixEmitter(d) if d["syntax.notation"] == "postfix" else Emitter(d)
-                text = port_one(emitter, ex, lib, constants)
+                text = port_one(emitter, ex, lib, constants, mirrored[lang])
             except Skip as why:
                 results[(ex, lang)] = str(why)
                 continue
@@ -1748,6 +1876,7 @@ def main():
     write_report(examples, defs, results, written)
     total = sum(written.values())
     print(f"ported {total} programs: " + ", ".join(f"{k} {v}" for k, v in written.items()))
+    print(f"library: {len(lib)} functions; " + ", ".join(f"{l} {len(mirrored[l])}" for l in defs))
     return 0
 
 
@@ -1757,8 +1886,9 @@ def write_report(examples, defs, results, written):
              "Generated by `scripts/port_examples.py` from `examples/lumen/`. A cell says",
              "`yes` when the example is written in that language under `examples/<language>/`,",
              "in the same relative path, or names the first construct the language's",
-             "definition has no spelling for. The library functions an example uses are",
-             "ported into the file with it.", "",
+             "definition has no spelling for. The library functions an example uses come",
+             "from the language's mirror of the library (`lib_<language>/`,",
+             "`docs/LIBRARY_PORTS.md`); one the mirror lacks is ported into the file.", "",
              f"Lumen has {len(examples)} examples; " + ", ".join(f"{l} carries {written[l]}" for l in langs) + ".", "",
              "| Example | " + " | ".join(langs) + " |",
              "|---|" + "---|" * len(langs)]
