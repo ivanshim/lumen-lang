@@ -56,10 +56,17 @@ def spelled(definition):
     return words
 
 
-def run(kernel, args, source, suffix, request=None):
-    with tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False, encoding="utf-8") as f:
-        f.write(source)
-        path = f.name
+def run(kernel, args, source, suffix, request=None, beside=None):
+    # php-src's run-tests.php writes the program next to the .phpt it came
+    # from, so a test naming a file beside itself finds it. Where a test
+    # says where it belongs, put it there; otherwise anywhere will do.
+    if beside is not None and not beside.with_suffix(suffix).exists():
+        path = str(beside.with_suffix(suffix))
+        Path(path).write_text(source, encoding="utf-8")
+    else:
+        with tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False, encoding="utf-8") as f:
+            f.write(source)
+            path = f.name
     setting = {**os.environ, **(request or {}).get("env", {})}
     body = (request or {}).get("body", "")
     try:
@@ -166,7 +173,7 @@ def run_phpt(path, kernel):
     expected = s.get("EXPECT", s.get("EXPECTF", s.get("EXPECTREGEX")))
     if expected is None:
         return "skipped", "no --EXPECT-- section"
-    code, out, err = run(kernel, ["--lang", "langs/extras/php.json"], s["FILE"], ".php", web_request(s))
+    code, out, err = run(kernel, ["--lang", "langs/extras/php.json"], s["FILE"], ".php", web_request(s), beside=path)
     # php-src's own run-tests.php trims both ends before comparing, and
     # a complaint is written with a blank line before it, so the same
     # trim is what the reference expects.

@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 32, differs 47, error 35, skipped 0 | pass 32, differs 47, error 35, skipped 0 |
 | `php/func` | 14 | pass 6, differs 3, error 5, skipped 0 | pass 6, differs 3, error 5, skipped 0 |
-| `php/lang` | 213 | pass 58, differs 58, error 95, skipped 2 | pass 58, differs 58, error 95, skipped 2 |
+| `php/lang` | 213 | pass 59, differs 57, error 95, skipped 2 | pass 59, differs 57, error 95, skipped 2 |
 | `php/lang/constants` | 2 | pass 1, differs 1, error 0, skipped 0 | pass 1, differs 1, error 0, skipped 0 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 3, error 0, skipped 0 | pass 3, differs 3, error 0, skipped 0 |
 | `php/lang/operators` | 64 | pass 15, differs 34, error 15, skipped 0 | pass 15, differs 34, error 15, skipped 0 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 116, differs 154, error 150, skipped 2 | pass 116, differs 154, error 150, skipped 2 |
+| all | 422 | pass 117, differs 153, error 150, skipped 2 | pass 117, differs 153, error 150, skipped 2 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 154 |
+| ran, printed something else | 153 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | Unexpected character '$' | 6 |
 | Unexpected token: & | 5 |
@@ -426,7 +426,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug32924.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug35176.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug35382.phpt` | skipped | skipped | no --FILE-- section |
-| `php/lang/bug38579.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug38579.phpt` | pass | pass |  |
 | `php/lang/bug43958.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: include in <file> |
 | `php/lang/bug44654.phpt` | pass | pass |  |
 | `php/lang/bug44827.phpt` | differs | differs | ran, printed something else |
