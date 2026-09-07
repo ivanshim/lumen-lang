@@ -17,18 +17,18 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 27, differs 40, error 47, skipped 0 | pass 27, differs 40, error 47, skipped 0 |
+| `php/basic` | 114 | pass 31, differs 36, error 47, skipped 0 | pass 31, differs 36, error 47, skipped 0 |
 | `php/func` | 14 | pass 2, differs 3, error 9, skipped 0 | pass 2, differs 3, error 9, skipped 0 |
 | `php/lang` | 213 | pass 34, differs 26, error 151, skipped 2 | pass 34, differs 26, error 151, skipped 2 |
 | `php/lang/constants` | 2 | pass 1, differs 1, error 0, skipped 0 | pass 1, differs 1, error 0, skipped 0 |
 | `php/lang/integer_literals` | 6 | pass 0, differs 0, error 6, skipped 0 | pass 0, differs 0, error 6, skipped 0 |
 | `php/lang/operators` | 64 | pass 9, differs 28, error 27, skipped 0 | pass 9, differs 28, error 27, skipped 0 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 74, differs 106, error 240, skipped 2 | pass 74, differs 106, error 240, skipped 2 |
+| all | 422 | pass 78, differs 102, error 240, skipped 2 | pass 78, differs 102, error 240, skipped 2 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 106 |
+| ran, printed something else | 102 |
 | } | 8 |
 | Undefined variable: eval | 7 |
 | Unexpected character '$' | 6 |
@@ -221,9 +221,9 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/020.phpt` | pass | pass |  |
 | `php/basic/021.phpt` | pass | pass |  |
 | `php/basic/022.phpt` | differs | differs | ran, printed something else |
-| `php/basic/023.phpt` | differs | differs | ran, printed something else |
+| `php/basic/023.phpt` | pass | pass |  |
 | `php/basic/025.phpt` | error | error | Undefined variable: $HTTP_RAW_POST_DATA |
-| `php/basic/028.phpt` | differs | differs | ran, printed something else |
+| `php/basic/028.phpt` | pass | pass |  |
 | `php/basic/029.phpt` | differs | differs | ran, printed something else |
 | `php/basic/030.phpt` | pass | pass |  |
 | `php/basic/031.phpt` | pass | pass |  |
@@ -285,8 +285,8 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/req44164.phpt` | pass | pass |  |
 | `php/basic/req60524-win.phpt` | differs | differs | ran, printed something else |
 | `php/basic/req60524.phpt` | differs | differs | ran, printed something else |
-| `php/basic/rfc1867_anonymous_upload.phpt` | differs | differs | ran, printed something else |
-| `php/basic/rfc1867_array_upload.phpt` | differs | differs | ran, printed something else |
+| `php/basic/rfc1867_anonymous_upload.phpt` | pass | pass |  |
+| `php/basic/rfc1867_array_upload.phpt` | pass | pass |  |
 | `php/basic/rfc1867_boundary_1.phpt` | pass | pass |  |
 | `php/basic/rfc1867_boundary_2.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_empty_upload.phpt` | error | error | } |

@@ -95,6 +95,7 @@ fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>) {
 /// program is told about the way PHP tells it.
 fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String, String, bool)>) {
     let (mut posted, mut sent) = (Vec::new(), Vec::new());
+    let mut files = 0usize;
     let mark = format!("--{}", boundary);
     let mut rest: &[u8] = body;
     while let Some(at) = find_bytes(rest, mark.as_bytes()) {
@@ -115,26 +116,31 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
                 content = &content[..content.len() - tail.len()];
             }
         }
-        let named = |what: &str| -> Option<String> {
-            let at = head.find(&format!("{}=\"", what))? + what.len() + 2;
-            let rest = &head[at..];
-            Some(rest[..rest.find('"')?].to_string())
-        };
-        let Some(name) = named("name") else { continue };
+        let named = |what: &str| -> Option<String> { attribute(&head, what) };
         let kind = head
             .lines()
             .find_map(|line| line.to_ascii_lowercase().starts_with("content-type:").then(|| line[13..].trim().to_string()))
             .unwrap_or_else(|| "text/plain".to_string());
-        match named("filename") {
-            None => posted.push((steps_of(&name), String::from_utf8_lossy(content).into_owned())),
-            Some(filename) => {
+        match (named("name"), named("filename")) {
+            (None, None) => continue,
+            (Some(name), None) => posted.push((steps_of(&name), String::from_utf8_lossy(content).into_owned())),
+            (given, Some(filename)) => {
                 // The file is written out, since a program is given the
                 // place it lies in rather than what it holds.
-                let held = env::temp_dir().join(format!("lumenup{}{}", std::process::id(), sent.len()));
+                let held = env::temp_dir().join(format!("lumenup{}{}", std::process::id(), files));
                 let written = std::fs::write(&held, content).is_ok();
                 let place = held.to_string_lossy().into_owned();
-                let steps = steps_of(&name);
-                let apart = '\u{1f}';
+                // A part that says nothing of its name is kept by its
+                // turn among the files.
+                let steps = given.map_or_else(|| files.to_string(), |name| steps_of(&name));
+                files += 1;
+                // The six things said of a file are named under the
+                // first step of its name, and any deeper steps follow
+                // them: `f[2]` becomes f, name, 2, not f, 2, name.
+                let (first, deeper) = match steps.split_once(BETWEEN_STEPS) {
+                    Some((first, deeper)) => (first, Some(deeper)),
+                    None => (steps.as_str(), None),
+                };
                 for (what, value, counted) in [
                     ("name", filename.clone(), false),
                     ("full_path", filename, false),
@@ -143,12 +149,56 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
                     ("error", if written { "0".to_string() } else { "1".to_string() }, true),
                     ("size", content.len().to_string(), true),
                 ] {
-                    sent.push((format!("{}{}{}", steps, apart, what), value, counted));
+                    let path = match deeper {
+                        Some(rest) => format!("{first}{BETWEEN_STEPS}{what}{BETWEEN_STEPS}{rest}"),
+                        None => format!("{first}{BETWEEN_STEPS}{what}"),
+                    };
+                    sent.push((path, value, counted));
                 }
             }
         }
     }
     (posted, sent)
+}
+
+/// What a head line calls something: `name=x`, `name='x'` or `name="x"`,
+/// written after a semicolon like every other thing such a line says.
+/// Within a value a backslash standing before the mark that closes it,
+/// or before another backslash, is the mark itself; anywhere else a
+/// backslash stands for itself, which is how the web has always read
+/// these and what a program sending odd names counts on.
+fn attribute(head: &str, what: &str) -> Option<String> {
+    for line in head.lines() {
+        for part in line.split(';').skip(1) {
+            let Some(rest) = part.trim_start().strip_prefix(what) else { continue };
+            let Some(rest) = rest.trim_start().strip_prefix('=') else { continue };
+            let rest = rest.trim_start();
+            let (closing, body) = match rest.chars().next() {
+                Some(q) if q == '"' || q == '\'' => (Some(q), &rest[q.len_utf8()..]),
+                _ => (None, rest),
+            };
+            let mut out = String::new();
+            let mut letters = body.chars().peekable();
+            while let Some(letter) = letters.next() {
+                if Some(letter) == closing {
+                    return Some(out);
+                }
+                if closing.is_none() && (letter == ' ' || letter == '\t') {
+                    return Some(out);
+                }
+                if letter == '\\' {
+                    let next = letters.peek().copied();
+                    if next == Some('\\') || (closing.is_some() && next == closing) {
+                        out.push(letters.next().expect("a letter was there to see"));
+                        continue;
+                    }
+                }
+                out.push(letter);
+            }
+            return Some(out);
+        }
+    }
+    None
 }
 
 fn find_bytes(hay: &[u8], needle: &[u8]) -> Option<usize> {
@@ -202,16 +252,26 @@ fn steps_of(name: &str) -> String {
 }
 
 /// The cookies a request carries. A cookie's name is written plainly,
-/// not escaped the way a form's is, so it is taken as it stands.
+/// not escaped the way a form's is, so it is taken as it stands; only
+/// the space before it is dropped, and what follows the `=` is kept to
+/// the last letter, trailing spaces and all. Where a name comes twice
+/// the first one stands: a cookie is not written over by a later one.
 fn crumbs(text: &str) -> Vec<(String, String)> {
-    text.split(';')
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .map(|part| match part.split_once('=') {
-            Some((key, value)) => (steps_of(key), unescaped(value)),
+    let mut found: Vec<(String, String)> = Vec::new();
+    for part in text.split(';') {
+        let part = part.trim_start_matches([' ', '\t']);
+        if part.is_empty() {
+            continue;
+        }
+        let (name, value) = match part.split_once('=') {
+            Some((name, value)) => (steps_of(name), unescaped(value)),
             None => (steps_of(part), String::new()),
-        })
-        .collect()
+        };
+        if !found.iter().any(|(had, _)| *had == name) {
+            found.push((name, value));
+        }
+    }
+    found
 }
 
 /// A part of a URL as the text it stands for: `%41` is `A`, and a plus
