@@ -408,7 +408,7 @@ impl<'a> Machine<'a> {
                 let mut args = std::mem::take(&mut self.scratch);
                 args.clear();
                 args.extend(self.stack.drain(at..));
-                let result = self.native(*native, name, &args);
+                let result = self.native(*native, name, &mut args);
                 self.scratch = args;
                 result?
             }
@@ -522,7 +522,7 @@ impl<'a> Machine<'a> {
         values.iter().map(|v| v.show(&sp)).collect::<Vec<_>>().join(" ")
     }
 
-    fn native(&mut self, native: Native, name: &str, args: &[Value]) -> Outcome<Value> {
+    fn native(&mut self, native: Native, name: &str, args: &mut Vec<Value>) -> Outcome<Value> {
         let sp = self.spelling();
         let arity = |n: usize| -> Outcome<()> {
             if args.len() == n {
@@ -648,25 +648,25 @@ impl<'a> Machine<'a> {
             }
             Native::Push => {
                 arity(2)?;
-                let Value::List(items) = &args[1] else {
+                let Some(Value::List(mut items)) = args.pop() else {
                     return Err(format!("{}() requires an array", name));
                 };
-                let mut items = items.clone();
-                Rc::make_mut(&mut items).push(args[0].clone());
+                let v = args.pop().expect("the value");
+                Rc::make_mut(&mut items).push(v);
                 Value::List(items)
             }
             Native::Put => {
                 arity(3)?;
-                let Value::List(items) = &args[2] else {
+                let Some(Value::List(mut items)) = args.pop() else {
                     return Err(format!("{}() requires an array", name));
                 };
-                let mut items = items.clone();
+                let v = args.pop().expect("the value");
                 let i = position(&args[0])?;
                 let list = Rc::make_mut(&mut items);
                 if i >= list.len() {
                     return Err(format!("Array index {} out of bounds (length: {})", i, list.len()));
                 }
-                list[i] = args[1].clone();
+                list[i] = v;
                 Value::List(items)
             }
             Native::Extern => self.extern_call(name, &args)?,

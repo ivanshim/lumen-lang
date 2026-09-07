@@ -261,6 +261,16 @@ impl<'a> Assembler<'a> {
     }
 
 
+    /// A jump back to the loop's top when the test just assembled holds.
+    fn jump_back(&mut self, top: usize) {
+        if off("When") {
+            self.apply(Op::Not, 1);
+            self.emit(Word::Unless(top));
+        } else {
+            self.emit(Word::When(top));
+        }
+    }
+
     fn patch(&mut self, at: usize) {
         let here = self.here();
         self.unit().words[at] = Word::Unless(here);
@@ -685,7 +695,7 @@ impl<'a> Assembler<'a> {
         self.at = cond_at;
         self.expression(0)?;
         self.at = after;
-        self.emit(Word::When(top));
+        self.jump_back(top);
         self.close_loop(test);
         Ok(())
     }
@@ -767,7 +777,7 @@ impl<'a> Assembler<'a> {
         self.load(var);
         self.load(bound);
         self.apply(Op::Lt, 2);
-        self.emit(Word::When(top));
+        self.jump_back(top);
         self.close_loop(again);
         Ok(())
     }
@@ -1343,7 +1353,7 @@ impl<'a> Assembler<'a> {
             self.at = cond_at;
             self.postfix_condition()?;
             self.at = after;
-            self.emit(Word::When(top));
+            self.jump_back(top);
             self.close_loop(test);
             return Ok(());
         }
@@ -1432,6 +1442,12 @@ impl<'a> Assembler<'a> {
     }
 }
 
+
+/// Ablation switch for the lab: `LAB_OFF=Step,If` turns forms or words off.
+fn off(what: &str) -> bool {
+    std::env::var("LAB_OFF").map_or(false, |v| v.split(',').any(|w| w == what))
+}
+
 fn same_slot(a: &Slot, b: &Slot) -> bool {
     a.name == b.name && a.locals == b.locals && a.global == b.global && !a.take && !b.take
 }
@@ -1461,13 +1477,13 @@ fn fuse(words: Vec<Word>) -> Vec<Word> {
         let arithmetic = |op: &Op| matches!(op, Op::Add | Op::Sub | Op::Mul | Op::Div | Op::RealDiv | Op::Quot | Op::Rem | Op::Pow | Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge | Op::Concat | Op::Index);
         let mut group = if i + 3 < words.len() && !targets[i + 1..i + 4].iter().any(|&t| t) {
             match (&words[i], &words[i + 1], &words[i + 2], &words[i + 3]) {
-                (Word::Load(a), b, Word::Apply(Op::Lt, 2), Word::Unless(to)) if !a.take => {
+                (Word::Load(a), b, Word::Apply(Op::Lt, 2), Word::Unless(to)) if !a.take && !off("UnlessLess") => {
                     as_arg(b).map(|b| Word::UnlessLess { a: Arg::Slot(a.clone()), b, to: *to })
                 }
-                (Word::Load(a), b, Word::Apply(Op::Lt, 2), Word::When(to)) if !a.take => {
+                (Word::Load(a), b, Word::Apply(Op::Lt, 2), Word::When(to)) if !a.take && !off("WhenLess") => {
                     as_arg(b).map(|b| Word::WhenLess { a: Arg::Slot(a.clone()), b, to: *to })
                 }
-                (Word::Load(a), Word::Lit(k @ Value::Int(_)), Word::Apply(Op::Add, 2), Word::Store(s)) if same_slot(a, s) => {
+                (Word::Load(a), Word::Lit(k @ Value::Int(_)), Word::Apply(Op::Add, 2), Word::Store(s)) if same_slot(a, s) && !off("Incr") => {
                     Some(Word::Incr { slot: s.clone(), by: k.clone() })
                 }
                 _ => None,
@@ -1479,7 +1495,7 @@ fn fuse(words: Vec<Word>) -> Vec<Word> {
         if group.is_none() && i + 2 < words.len() && !targets[i + 1..i + 3].iter().any(|&t| t) {
             // The array taken, rewritten and put back: one word on the slot.
             if let (Word::Load(a), Word::Apply(Op::Native(native @ (Native::Put | Native::Push), _), _), Word::Store(s)) = (&words[i], &words[i + 1], &words[i + 2]) {
-                if a.take && a.name == s.name && a.locals == s.locals && a.global == s.global {
+                if a.take && a.name == s.name && a.locals == s.locals && a.global == s.global && !off("Put") {
                     group = Some(if *native == Native::Put { Word::PutAt(a.clone()) } else { Word::PushTo(a.clone()) });
                     width = 3;
                 }
@@ -1487,7 +1503,7 @@ fn fuse(words: Vec<Word>) -> Vec<Word> {
         }
         if group.is_none() && i + 2 < words.len() && !targets[i + 1..i + 3].iter().any(|&t| t) {
             if let (Some(a), Some(b), Word::Apply(op, 2)) = (as_arg(&words[i]), as_arg(&words[i + 1]), &words[i + 2]) {
-                if arithmetic(op) {
+                if arithmetic(op) && !off("Arith") {
                     group = Some(Word::Arith { op: op.clone(), a, b, into: None });
                     width = 3;
                 }
@@ -1495,7 +1511,7 @@ fn fuse(words: Vec<Word>) -> Vec<Word> {
         }
         if group.is_none() && i + 1 < words.len() && !targets[i + 1] {
             if let (Some(b), Word::Apply(op, 2)) = (as_arg(&words[i]), &words[i + 1]) {
-                if arithmetic(op) {
+                if arithmetic(op) && !off("Arith") {
                     group = Some(Word::Arith { op: op.clone(), a: Arg::Top, b, into: None });
                     width = 2;
                 }
@@ -1503,11 +1519,11 @@ fn fuse(words: Vec<Word>) -> Vec<Word> {
         }
         if group.is_none() && i + 1 < words.len() && !targets[i + 1] {
             match (&words[i], &words[i + 1]) {
-                (Word::Lit(Value::Bool(false)), Word::Unless(to)) => {
+                (Word::Lit(Value::Bool(false)), Word::Unless(to)) if !off("Jump") => {
                     group = Some(Word::Jump(*to));
                     width = 2;
                 }
-                (Word::Load(f), Word::Apply(Op::Call(_), n)) if !f.take => {
+                (Word::Load(f), Word::Apply(Op::Call(_), n)) if !f.take && !off("Call") => {
                     group = Some(Word::Call { slot: f.clone(), argc: *n - 1 });
                     width = 2;
                 }
@@ -1517,7 +1533,7 @@ fn fuse(words: Vec<Word>) -> Vec<Word> {
         // An arithmetic result stored at once: the store folds into the word.
         if let Some(Word::Arith { into, .. }) = &mut group {
             if let Some(Word::Store(s)) = words.get(i + width) {
-                if !s.take && !targets[i + width] {
+                if !s.take && !targets[i + width] && !off("Into") {
                     *into = Some(s.clone());
                     width += 1;
                 }

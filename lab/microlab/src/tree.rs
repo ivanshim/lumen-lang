@@ -139,6 +139,8 @@ pub struct Program {
     pub params: Vec<String>,
     pub param_slots: Vec<usize>,
     pub names: Vec<String>,
+    /// Owns no names: runs in the frame it closed over, making none.
+    pub frameless: bool,
     pub catches: Catch,
     pub body: Node,
 }

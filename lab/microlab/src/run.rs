@@ -49,10 +49,10 @@ pub struct Runner<'a> {
     memo_slot: Option<usize>,
 }
 
-fn up(frame: &Rc<Frame>, depth: usize) -> Rc<Frame> {
-    let mut f = frame.clone();
+fn up(frame: &Rc<Frame>, depth: usize) -> &Rc<Frame> {
+    let mut f = frame;
     for _ in 0..depth {
-        f = f.parent.clone().expect("a frame above");
+        f = f.parent.as_ref().expect("a frame above");
     }
     f
 }
@@ -119,7 +119,7 @@ impl<'a> Runner<'a> {
 
     fn write(&self, slot: &Slot, frame: &Rc<Frame>, value: Value) -> Result<(), String> {
         let f = up(frame, slot.depth);
-        if Rc::ptr_eq(&f, &self.top) && Some(slot.index) == self.args_slot {
+        if Rc::ptr_eq(f, &self.top) && Some(slot.index) == self.args_slot {
             return Err(format!("Cannot reassign {} (system-provided immutable value)", slot.name));
         }
         f.slots.borrow_mut()[slot.index] = value;
@@ -130,7 +130,7 @@ impl<'a> Runner<'a> {
     fn cell(&self, slot: &Slot, frame: &Rc<Frame>) -> Result<(Rc<Frame>, usize), String> {
         let f = up(frame, slot.depth);
         if !matches!(f.slots.borrow()[slot.index], Value::Empty) {
-            return Ok((f, slot.index));
+            return Ok((f.clone(), slot.index));
         }
         match slot.global {
             Some(g) if !matches!(self.top.slots.borrow()[g], Value::Empty) => Ok((self.top.clone(), g)),
@@ -235,7 +235,10 @@ impl<'a> Runner<'a> {
                     }
                     Ok(last)
                 }
-                Op::If => Err("an if is a form now, not a call".to_string().into()),
+                Op::If => {
+                    let (p, env) = self.choose(args, frame)?;
+                    self.call(p, env, Vec::new())
+                }
                 Op::And | Op::Or => {
                     let left = self.eval(&args[0], frame)?.truth();
                     if (*op == Op::And && !left) || (*op == Op::Or && left) {
@@ -330,6 +333,11 @@ impl<'a> Runner<'a> {
                 let chosen = if self.eval(test, frame)?.truth() { then } else { otherwise };
                 self.step(chosen, frame)
             }
+            Node::Call(Target::Op(Op::If, _), args) => {
+                let (p, env) = self.choose(args, frame)?;
+                let callee = self.frame_for(&p, env, &[], frame)?;
+                Ok(Step::Tail(p, callee))
+            }
             other => Ok(Step::Done(self.eval(other, frame)?)),
         }
     }
@@ -339,9 +347,18 @@ impl<'a> Runner<'a> {
     /// replaced programs caught is still caught.
     /// Cycle 5: the callee's frame, its arguments evaluated straight into
     /// their slots, with no vector between.
+    fn choose(&mut self, args: &[Node], frame: &Rc<Frame>) -> R<(Rc<Program>, Rc<Frame>)> {
+        let test = self.eval(&args[0], frame)?.truth();
+        self.closure(&args[if test { 1 } else { 2 }], frame)
+    }
+
     fn frame_for(&mut self, program: &Rc<Program>, env: Rc<Frame>, args: &[Node], caller: &Rc<Frame>) -> R<Rc<Frame>> {
         if args.len() != program.params.len() {
+            self.values(args, caller)?;
             return Err(format!("Function {} expects {} arguments, got {}", program.name, program.params.len(), args.len()).into());
+        }
+        if program.frameless {
+            return Ok(env);
         }
         let frame = Frame::new(program.names.len(), Some(env));
         for (i, a) in program.param_slots.iter().zip(args) {
@@ -355,13 +372,18 @@ impl<'a> Runner<'a> {
         if args.len() != program.params.len() {
             return Err(format!("Function {} expects {} arguments, got {}", program.name, program.params.len(), args.len()).into());
         }
-        let frame = Frame::new(program.names.len(), Some(env));
-        {
-            let mut slots = frame.slots.borrow_mut();
-            for (i, a) in program.param_slots.iter().zip(args) {
-                slots[*i] = a;
+        let frame = if program.frameless {
+            env
+        } else {
+            let frame = Frame::new(program.names.len(), Some(env));
+            {
+                let mut slots = frame.slots.borrow_mut();
+                for (i, a) in program.param_slots.iter().zip(args) {
+                    slots[*i] = a;
+                }
             }
-        }
+            frame
+        };
         self.enter(program, frame)
     }
 

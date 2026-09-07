@@ -95,11 +95,17 @@ pub fn reduce(toks: &[Tok], spec: &Spec, seeded: &[String], assumed: HashMap<Str
         seq(stmts)
     };
     let top = r.scopes.pop().unwrap();
-    let program = Program { name: "<program>".into(), params: Vec::new(), param_slots: Vec::new(), names: top.names.clone(), catches: Catch::Nothing, body };
+    let program = Program { name: "<program>".into(), params: Vec::new(), param_slots: Vec::new(), names: top.names.clone(), frameless: false, catches: Catch::Nothing, body };
     Ok(Reduced { program: Rc::new(program), global_names: top.names, found: r.found })
 }
 
 // ---------- node builders
+
+
+/// Ablation switch for the lab: `LAB_OFF=Step,If` turns forms or words off.
+fn off(what: &str) -> bool {
+    std::env::var("LAB_OFF").map_or(false, |v| v.split(',').any(|w| w == what))
+}
 
 fn lit(v: Value) -> Node {
     Node::Literal(v)
@@ -118,7 +124,7 @@ fn call(op: Op, args: Vec<Node>) -> Node {
     };
     let two = matches!(op, Op::Add | Op::Sub | Op::Mul | Op::Div | Op::DivReal | Op::Quot | Op::Rem | Op::Pow
         | Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge | Op::Concat);
-    if two && args.len() == 2 {
+    if two && args.len() == 2 && !off("Binary") {
         let mut it = args.into_iter();
         let (a, b) = (it.next().unwrap(), it.next().unwrap());
         return Node::Binary { op, name: Rc::from(name), a: Operand::of(a), b: Operand::of(b) };
@@ -264,23 +270,29 @@ impl<'a> Reducer<'a> {
     /// The binding a read reaches: the nearest owner that has the name,
     /// stopping at a function; else the global.
     fn read_slot(&mut self, name: &str) -> Slot {
+        let frameless = |owns: Owns| owns == Owns::None && !off("Frameless");
         let mut depth = 0;
-        let mut found: Option<(usize, usize)> = None;
+        let mut found: Option<(usize, usize, usize)> = None;
         for (i, scope) in self.scopes.iter().enumerate().rev() {
             if let Some(index) = scope.names.iter().rposition(|n| n == name).filter(|_| scope.owns != Owns::None) {
-                found = Some((depth, index));
+                found = Some((i, depth, index));
                 break;
             }
             if scope.owns == Owns::All && i != 0 {
                 break;
             }
-            depth += 1;
+            if !frameless(scope.owns) {
+                depth += 1;
+            }
         }
         let global = self.global_index(name);
         match found {
-            Some((depth, index)) if depth < self.scopes.len() - 1 => Slot { name: Rc::from(name), depth, index, global: Some(global) },
-            Some((depth, index)) => Slot { name: Rc::from(name), depth, index, global: None },
-            None => Slot { name: Rc::from(name), depth: self.scopes.len() - 1, index: global, global: None },
+            Some((i, depth, index)) if i != 0 => Slot { name: Rc::from(name), depth, index, global: Some(global) },
+            Some((_, depth, index)) => Slot { name: Rc::from(name), depth, index, global: None },
+            None => {
+                let depth = self.scopes[1..].iter().filter(|s| !frameless(s.owns)).count();
+                Slot { name: Rc::from(name), depth, index: global, global: None }
+            }
         }
     }
 
@@ -293,7 +305,9 @@ impl<'a> Reducer<'a> {
             let scope = &mut self.scopes[i];
             match scope.owns {
                 Owns::None => {
-                    depth += 1;
+                    if off("Frameless") {
+                        depth += 1;
+                    }
                     continue;
                 }
                 Owns::New | Owns::All => {
@@ -324,7 +338,7 @@ impl<'a> Reducer<'a> {
     fn assign(&mut self, name: &str, value: Node) -> Node {
         let slot = self.write_slot(name);
         // Cycle 4: `x = x + k` steps the binding in place.
-        if let Node::Binary { op: Op::Add, a, b, .. } = &value {
+        if let (Node::Binary { op: Op::Add, a, b, .. }, false) = (&value, off("Step")) {
             if let (Operand::Slot(read), Operand::Lit(Value::Int(k))) = (a, b) {
                 if read.name == slot.name && read.depth == slot.depth && read.index == slot.index && read.global == slot.global {
                     return Node::Step { slot, by: *k };
@@ -340,7 +354,7 @@ impl<'a> Reducer<'a> {
         self.scopes.push(Scope { owns, names: params.clone(), params: Vec::new(), param_slots, postfix: false });
         let body = body(self)?;
         let scope = self.scopes.pop().unwrap();
-        Ok(lit(Value::Code(Rc::new(Program { name: name.to_string(), params, param_slots: scope.param_slots, names: scope.names, catches, body }))))
+        Ok(lit(Value::Code(Rc::new(Program { name: name.to_string(), params, param_slots: scope.param_slots, names: scope.names, frameless: owns == Owns::None && !off("Frameless"), catches, body }))))
     }
 
     /// A branch arm or a loop body: a program that owns no names.
@@ -354,6 +368,12 @@ impl<'a> Reducer<'a> {
     }
 
     fn branch(&mut self, test: Node, then: Node, otherwise: Node) -> Node {
+        if off("If") {
+            // The microcode4 shape: arms as program values, one called.
+            let then = self.program("<arm>", Owns::None, Catch::Nothing, Vec::new(), |_| Ok(then)).expect("an arm");
+            let otherwise = self.program("<arm>", Owns::None, Catch::Nothing, Vec::new(), |_| Ok(otherwise)).expect("an arm");
+            return call(Op::If, vec![test, then, otherwise]);
+        }
         Node::If { test: Box::new(test), then: Box::new(then), otherwise: Box::new(otherwise) }
     }
 
@@ -366,6 +386,29 @@ impl<'a> Reducer<'a> {
         B: FnOnce(&mut Self) -> Out<Node>,
         S: FnOnce(&mut Self) -> Out<Node>,
     {
+        if off("Loop") {
+            // The microcode4 shape: a program that calls itself.
+            let slot = self.hidden("loop");
+            let name = slot.name.to_string();
+            let name2 = name.clone();
+            let program = self.program("<loop>", Owns::None, Catch::Break, Vec::new(), |r| {
+                let test = test(r)?;
+                let again = r.arm(Catch::Nothing, |r| {
+                    let body = r.arm(Catch::Continue, body)?;
+                    let mut items = vec![run(body, Vec::new())];
+                    if let Some(step) = step {
+                        items.push(step(r)?);
+                    }
+                    let again = r.read_slot(&name2);
+                    items.push(run(Node::Load(again), Vec::new()));
+                    Ok(seq(items))
+                })?;
+                let stop = r.arm(Catch::Nothing, |_| Ok(lit(Value::Null)))?;
+                Ok(r.branch(test, again, stop))
+            })?;
+            let start = self.read_slot(&name);
+            return Ok(seq(vec![Node::Assign(slot, Box::new(program)), run(Node::Load(start), Vec::new())]));
+        }
         let test = test(self)?;
         let body = body(self)?;
         let step = match step {
@@ -381,6 +424,23 @@ impl<'a> Reducer<'a> {
         B: FnOnce(&mut Self) -> Out<Node>,
         T: FnOnce(&mut Self) -> Out<Node>,
     {
+        if off("Loop") {
+            let slot = self.hidden("loop");
+            let name = slot.name.to_string();
+            let name2 = name.clone();
+            let program = self.program("<loop>", Owns::None, Catch::Break, Vec::new(), |r| {
+                let test = test(r)?;
+                let body = r.arm(Catch::Continue, body)?;
+                let stop = r.arm(Catch::Nothing, |_| Ok(lit(Value::Null)))?;
+                let again = r.arm(Catch::Nothing, |r| {
+                    let again = r.read_slot(&name2);
+                    Ok(run(Node::Load(again), Vec::new()))
+                })?;
+                Ok(seq(vec![run(body, Vec::new()), r.branch(test, stop, again)]))
+            })?;
+            let start = self.read_slot(&name);
+            return Ok(seq(vec![Node::Assign(slot, Box::new(program)), run(Node::Load(start), Vec::new())]));
+        }
         // Read in source order: the test is written before the body.
         let test = test(self)?;
         let body = body(self)?;
@@ -1281,7 +1341,7 @@ impl<'a> Reducer<'a> {
             let mut param_slots = scope.param_slots;
             params.reverse();
             param_slots.reverse();
-            let program = Program { name, params, param_slots, names: scope.names, catches: Catch::Return, body: seq(s) };
+            let program = Program { name, params, param_slots, names: scope.names, frameless: false, catches: Catch::Return, body: seq(s) };
             stack.push(lit(Value::Code(Rc::new(program))));
             return Ok(());
         }

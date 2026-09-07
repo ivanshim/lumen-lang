@@ -173,6 +173,62 @@ speed, because only a word can keep an operand off the stack. For a
 tree, half the speed was there for the taking under four forms, and the
 other half needed a loop and a conditional that are forms of their own.
 
+## Ablation: which primitives earned their place
+
+Before promotion, each added word and form was switched off on its own
+(`LAB_OFF=Incr`, `LAB_OFF=Loop`, and so on: the specimen falls back to
+the shape it had before that primitive) and the four programs the
+primitives touch were timed, best of five. Both specimens first got the
+count-neutral improvements they lacked: microlab the frameless arms and
+the borrowed frame walk, stacklab a builtin that takes its arguments
+without copying the array (its `Put` had been copying, which made the
+array words look worth 130 times; they are worth 14 percent).
+
+| stacklab without | loop | loop3m | fib | sieve |
+|---|---|---|---|---|
+| (nothing) | 0.032 | 0.038 | 0.021 | 0.014 |
+| Incr | 0.036 | 0.061 | 0.022 | 0.014 |
+| Arith | 0.052 | 0.038 | 0.027 | 0.019 |
+| the store folded into Arith | 0.032 | 0.037 | 0.021 | 0.014 |
+| UnlessLess | 0.032 | 0.038 | 0.024 | 0.015 |
+| WhenLess | 0.037 | 0.061 | 0.021 | 0.015 |
+| Jump | 0.032 | 0.037 | 0.023 | 0.014 |
+| When | 0.039 | 0.089 | 0.021 | 0.014 |
+| Call | 0.032 | 0.037 | 0.024 | 0.014 |
+| PutAt, PushTo | 0.032 | 0.041 | 0.021 | 0.016 |
+
+| microlab without | loop | loop3m | fib | sieve |
+|---|---|---|---|---|
+| (nothing) | 0.068 | 0.240 | 0.043 | 0.024 |
+| Step | 0.075 | 0.308 | 0.043 | 0.024 |
+| Binary | 0.221 | 0.900 | 0.082 | 0.033 |
+| If | 0.068 | 0.238 | 0.046 | 0.024 |
+| Loop | 0.086 | 0.437 | 0.042 | 0.027 |
+
+What earned a place: on the stack, `Arith` (1.6 times on arithmetic,
+1.3 on calls and arrays), `Incr` (1.6 on the bare loop) and a
+compare-and-jump (1.6 on the bare loop). On the tree, `Binary` (3.7 on
+the bare loop, 2 on calls), `Loop` (1.8 on the bare loop) and `Step`
+(1.3 on the bare loop).
+
+What did not: `Jump` and the store folded into `Arith` measured
+nothing. `When` measured 2.3 times, but only because stacklab jumps back
+on a true test with `Not; Unless` when it has no `When`; stack5's fold
+flips the comparison instead (`Ge` for `Lt`), which costs nothing, so a
+jump-on-true is not needed and `UnlessLess` and `WhenLess` collapse into
+one compare-and-jump on any comparison. `Call`, `PutAt` and `PushTo` are
+each worth 14 percent on the one program that uses them; a word that
+earns under a fifth on its best program is not worth a word. On the
+tree, `If` measured 7 percent on calls and nothing on loops: with
+frameless arms, choosing a program value and running it costs about what
+choosing a node does.
+
+So the promoted counts are eight words (`Lit`, `Load`, `Store`, `Apply`,
+`Unless`, `Arith`, `Incr`, `UnlessCmp`) and seven forms (`Literal`,
+`Load`, `Assign`, `Call`, `Loop`, `Binary`, `Step`): stack8 and
+microcode7. The forecast of eight or nine words was right; the tree
+kept one form more than the six forecast.
+
 ## Where the lineages stopped, and why
 
 Thirteen cycles. The stack line stopped when the bare loop was two words
