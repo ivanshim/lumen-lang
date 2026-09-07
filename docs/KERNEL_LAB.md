@@ -3,10 +3,11 @@
 An experiment in evolving the two kernel shapes for speed. Each lineage
 is one mutable specimen under `lab/`, a copy of its floor kernel that is
 patched cycle by cycle and measured after each: `lab/stacklab` descends
-from stack5, `lab/microlab` from microcode4. Two controls sit beside
-them, `lab/stack5a` and `lab/microcode4a`, the floor kernels with the
-lab's count-neutral improvements and their counts unchanged, measured in
-the section on equal engineering below. The specimens are not held
+from stack5, `lab/microlab` from microcode4. A second experiment,
+in the section on equal engineering below, measured the floor kernels
+with the lab's count-neutral improvements and their counts unchanged,
+and those improvements are now folded into stack5 and microcode4. The
+specimens are not held
 to `scripts/kernel_independence.py` against their ancestors; they are
 specimens, not kernels. The measurements are the product.
 
@@ -117,12 +118,13 @@ next section: the answer differs by shape.
 stack5 and microcode4 stay the minimalist references. The question after
 thirteen cycles was how much of each survivor's speed came from its new
 primitives and how much from improvements the lab made alongside them
-that never touched the count. To answer it, `lab/stack5a` and
-`lab/microcode4a` are the references with every count-neutral
-improvement woven in and nothing else: stack5a still has the five words,
-microcode4a the four forms.
+that never touched the count. To answer it, two controls, stack5a and
+microcode4a, were the references with every count-neutral improvement
+woven in and nothing else: stack5a still had the five words, microcode4a
+the four forms. Once measured, the improvements were folded into stack5
+and microcode4 themselves, and the controls were removed.
 
-What stack5a has that stack5 does not: a function whose value only ever
+What stack5a had that stack5 did not: a function whose value only ever
 comes from a return drops its result slot; `while` and counted loops are
 tested at the bottom, one jump per pass instead of two, the condition
 flipped to its complement (`Ge` for `Lt`, a `Not` otherwise) so the
@@ -132,7 +134,7 @@ the stack straight into the frame, one allocation instead of two; and
 two machine integers under an operator are computed in place ahead of
 the general arithmetic.
 
-What microcode4a has that microcode4 does not: a branch arm or loop body,
+What microcode4a had that microcode4 did not: a branch arm or loop body,
 a program that owns no names, runs in the frame it closed over and makes
 none; an operator's arguments land in a fixed buffer of three, not a
 list; a call evaluates its arguments straight into the callee's slots;

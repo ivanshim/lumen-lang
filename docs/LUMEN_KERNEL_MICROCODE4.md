@@ -53,8 +53,11 @@ form; each is how a form behaves.
   program around them, at a depth the reducer computed. The reducer
   keeps one scope per program: functions and bare blocks own names;
   arms and loop bodies own none and resolve into the program around them.
-  A binding is addressed as (frames up, slot); an empty slot falls
-  through to the global of the same name, as in the other kernels.
+  A program that owns no names makes no frame either: it runs in the
+  frame it closed over, and the reducer counts depth over frame-making
+  scopes only. A binding is addressed as (frames up, slot); an empty
+  slot falls through to the global of the same name, as in the other
+  kernels.
 - **Tail calls.** The executor runs a program body in tail position:
   `last` hands its last argument on, `if` hands the chosen arm on, and a
   call of a program value in that position replaces the running program
@@ -68,19 +71,29 @@ form; each is how a form behaves.
 
 ## Cost
 
-Every `if` makes two closures and calls one; every loop iteration makes
-three frames. Against the second design, which walks its nine forms
-directly, that is about 1.6 times the time on an arithmetic loop and
-about the same everywhere else, and still twice as fast as
-microcode10, because the value model is the fast one: unboxed
-machine integers, reference-counted arrays copied on write.
+Every `if` makes two closures and calls one; every loop iteration calls
+three programs, none of which makes a frame. A call evaluates its
+arguments straight into the callee's slots, an operator's into a fixed
+buffer of three, and two machine integers under an operator are computed
+in place: the kernel lab's count-neutral findings, folded back in and
+worth about 2 times on loops and calls (`docs/KERNEL_LAB.md`). Before
+the fold, against the second design, which walks its nine forms
+directly, this design took about 1.6 times the time on an arithmetic
+loop; after it, four forms are ahead of nine on loops and calls and
+level everywhere else, and well ahead of microcode10, because the value
+model is the fast one: unboxed machine integers, reference-counted
+arrays copied on write.
 
-| Program | microcode10 | stack26 | microcode11 | microcode4 |
-|---|---|---|---|---|
-| 300k loop, Lumen | 0.37s | 0.09s | 0.19s | 0.30s |
-| same loop, RPLumen | 1.01s | 0.08s | 0.19s | 0.29s |
-| sieve | 1.04s | 0.02s | 0.03s | 0.05s |
-| pi_machin | 0.96s | 0.96s | 0.96s | 0.97s |
+Best of five, release build, seconds, after the fold:
+
+| Program | microcode10 | stack26 | microcode11 | microcode4 | stack5 |
+|---|---|---|---|---|---|
+| loop | 0.309 | 0.072 | 0.187 | 0.127 | 0.055 |
+| loop3m | 0.774 | 0.301 | 0.785 | 0.592 | 0.224 |
+| fib | 0.090 | 0.034 | 0.068 | 0.048 | 0.032 |
+| sieve | 1.089 | 0.019 | 0.029 | 0.029 | 0.020 |
+| strings | 0.052 | 0.039 | 0.046 | 0.047 | 0.040 |
+| pi | 0.862 | 0.850 | 0.864 | 0.861 | 0.856 |
 
 What is lost against the second design is legibility and the emitter:
 the tree no longer says "this is a loop", it says "this program calls

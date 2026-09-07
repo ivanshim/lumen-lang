@@ -36,7 +36,8 @@ type R<T = Value> = Result<T, Signal>;
 
 enum Step {
     Done(Value),
-    Tail(Rc<Program>, Rc<Frame>, Vec<Value>),
+    /// The program to run next, its frame already built.
+    Tail(Rc<Program>, Rc<Frame>),
 }
 
 pub struct Runner<'a> {
@@ -48,10 +49,11 @@ pub struct Runner<'a> {
     memo_slot: Option<usize>,
 }
 
-fn up(frame: &Rc<Frame>, depth: usize) -> Rc<Frame> {
-    let mut f = frame.clone();
+/// The frame `depth` levels up, reached without taking a share of any.
+fn up(frame: &Rc<Frame>, depth: usize) -> &Rc<Frame> {
+    let mut f = frame;
     for _ in 0..depth {
-        f = f.parent.clone().expect("a frame above");
+        f = f.parent.as_ref().expect("a frame above");
     }
     f
 }
@@ -118,7 +120,7 @@ impl<'a> Runner<'a> {
 
     fn write(&self, slot: &Slot, frame: &Rc<Frame>, value: Value) -> Result<(), String> {
         let f = up(frame, slot.depth);
-        if Rc::ptr_eq(&f, &self.top) && Some(slot.index) == self.args_slot {
+        if Rc::ptr_eq(f, &self.top) && Some(slot.index) == self.args_slot {
             return Err(format!("Cannot reassign {} (system-provided immutable value)", slot.name));
         }
         f.slots.borrow_mut()[slot.index] = value;
@@ -129,7 +131,7 @@ impl<'a> Runner<'a> {
     fn cell(&self, slot: &Slot, frame: &Rc<Frame>) -> Result<(Rc<Frame>, usize), String> {
         let f = up(frame, slot.depth);
         if !matches!(f.slots.borrow()[slot.index], Value::Empty) {
-            return Ok((f, slot.index));
+            return Ok((f.clone(), slot.index));
         }
         match slot.global {
             Some(g) if !matches!(self.top.slots.borrow()[g], Value::Empty) => Ok((self.top.clone(), g)),
@@ -151,8 +153,8 @@ impl<'a> Runner<'a> {
             }
             Node::Call(Target::Program(target), args) => {
                 let (p, env) = self.closure(target, frame)?;
-                let values = self.values(args, frame)?;
-                self.call(p, env, values)
+                let callee = self.frame_for(&p, env, args, frame)?;
+                self.enter(p, callee)
             }
             Node::Call(Target::Op(op, name), args) => match op {
                 Op::Last => {
@@ -192,10 +194,18 @@ impl<'a> Runner<'a> {
                     let Some(Node::Load(slot)) = args.first() else {
                         return Err(format!("First argument to {}() must be an array variable name", name).into());
                     };
-                    let values = self.values(&args[1..], frame)?;
+                    // The value and index land in a fixed pair, not a list.
+                    let rest = &args[1..];
+                    if rest.len() > 2 {
+                        self.values(rest, frame)?;
+                    }
+                    let mut pair = [Value::Null, Value::Null];
+                    for (slot, a) in pair.iter_mut().zip(rest) {
+                        *slot = self.eval(a, frame)?;
+                    }
                     let want = if *op == Op::Push { 1 } else { 2 };
-                    if values.len() != want {
-                        return Err(format!("{}() expects {} arguments, got {}", name, want + 1, values.len() + 1).into());
+                    if rest.len() != want {
+                        return Err(format!("{}() expects {} arguments, got {}", name, want + 1, rest.len() + 1).into());
                     }
                     let (f, i) = self.cell(slot, frame)?;
                     let mut slots = f.slots.borrow_mut();
@@ -203,12 +213,12 @@ impl<'a> Runner<'a> {
                         return Err(format!("Variable '{}' is not an array", slot.name).into());
                     };
                     let items = Rc::make_mut(items);
-                    let mut values = values;
+                    let [first, second] = pair;
                     if want == 1 {
-                        items.push(values.pop().unwrap());
+                        items.push(first);
                     } else {
-                        let v = values.pop().unwrap();
-                        let at = index(&values.pop().unwrap())?;
+                        let v = second;
+                        let at = index(&first)?;
                         if at >= items.len() {
                             return Err(format!("Array index {} out of bounds (length: {})", at, items.len()).into());
                         }
@@ -217,6 +227,34 @@ impl<'a> Runner<'a> {
                     Ok(Value::Null)
                 }
                 op => {
+                    // Up to three arguments land in a fixed buffer, so an
+                    // arithmetic step allocates nothing.
+                    if args.len() <= 3 {
+                        let mut few = [Value::Null, Value::Null, Value::Null];
+                        for (slot, a) in few.iter_mut().zip(args) {
+                            *slot = self.eval(a, frame)?;
+                        }
+                        // Two machine integers, the common case, done in
+                        // place; anything else takes the general path.
+                        if let (2, Value::Int(x), Value::Int(y)) = (args.len(), &few[0], &few[1]) {
+                            let fast = match op {
+                                Op::Add => x.checked_add(*y).map(Value::Int),
+                                Op::Sub => x.checked_sub(*y).map(Value::Int),
+                                Op::Mul => x.checked_mul(*y).map(Value::Int),
+                                Op::Lt => Some(Value::Bool(x < y)),
+                                Op::Le => Some(Value::Bool(x <= y)),
+                                Op::Gt => Some(Value::Bool(x > y)),
+                                Op::Ge => Some(Value::Bool(x >= y)),
+                                Op::Eq => Some(Value::Bool(x == y)),
+                                Op::Ne => Some(Value::Bool(x != y)),
+                                _ => None,
+                            };
+                            if let Some(v) = fast {
+                                return Ok(v);
+                            }
+                        }
+                        return Ok(self.operate(*op, name, &few[..args.len()])?);
+                    }
                     let values = self.values(args, frame)?;
                     Ok(self.operate(*op, name, &values)?)
                 }
@@ -253,8 +291,8 @@ impl<'a> Runner<'a> {
         match node {
             Node::Call(Target::Program(target), args) => {
                 let (p, env) = self.closure(target, frame)?;
-                let values = self.values(args, frame)?;
-                Ok(Step::Tail(p, env, values))
+                let callee = self.frame_for(&p, env, args, frame)?;
+                Ok(Step::Tail(p, callee))
             }
             Node::Call(Target::Op(Op::Last, _), args) if !args.is_empty() => {
                 for a in &args[..args.len() - 1] {
@@ -264,31 +302,40 @@ impl<'a> Runner<'a> {
             }
             Node::Call(Target::Op(Op::If, _), args) => {
                 let (p, env) = self.choose(args, frame)?;
-                Ok(Step::Tail(p, env, Vec::new()))
+                let callee = self.frame_for(&p, env, &[], frame)?;
+                Ok(Step::Tail(p, callee))
             }
             other => Ok(Step::Done(self.eval(other, frame)?)),
         }
     }
 
-    /// Run a program: a frame under the closure's, the parameters bound,
-    /// the body stepped. A tail call replaces the program; what the
-    /// replaced programs caught is still caught.
-    pub fn call(&mut self, program: Rc<Program>, env: Rc<Frame>, args: Vec<Value>) -> R {
-        let memo = program.catches == Catch::Return && self.memo_slot.map_or(false, |i| matches!(self.top.slots.borrow()[i], Value::Bool(true)));
-        let key = memo.then(|| {
-            let mut k = format!("{}(", program.name);
-            args.iter().for_each(|a| a.cache_key(&mut k));
-            k
-        });
-        if let Some(hit) = key.as_ref().and_then(|k| self.cache.get(k)) {
-            return Ok(hit.clone());
+    /// The callee's frame: a frame under the closure's with the arguments
+    /// evaluated straight into their slots, no list between; or, for a
+    /// program that owns no names, the closure's frame itself.
+    fn frame_for(&mut self, program: &Rc<Program>, env: Rc<Frame>, args: &[Node], caller: &Rc<Frame>) -> R<Rc<Frame>> {
+        if args.len() != program.params.len() {
+            self.values(args, caller)?;
+            return Err(format!("Function {} expects {} arguments, got {}", program.name, program.params.len(), args.len()).into());
         }
-        let (mut program, mut env, mut args) = (program, env, args);
-        let mut caught: u8 = 0;
-        let result = loop {
-            if args.len() != program.params.len() {
-                return Err(format!("Function {} expects {} arguments, got {}", program.name, program.params.len(), args.len()).into());
-            }
+        if program.frameless {
+            return Ok(env);
+        }
+        let frame = Frame::new(program.names.len(), Some(env));
+        for (i, a) in program.param_slots.iter().zip(args) {
+            let v = self.eval(a, caller)?;
+            frame.slots.borrow_mut()[*i] = v;
+        }
+        Ok(frame)
+    }
+
+    /// Run a program on values already computed.
+    pub fn call(&mut self, program: Rc<Program>, env: Rc<Frame>, args: Vec<Value>) -> R {
+        if args.len() != program.params.len() {
+            return Err(format!("Function {} expects {} arguments, got {}", program.name, program.params.len(), args.len()).into());
+        }
+        let frame = if program.frameless {
+            env
+        } else {
             let frame = Frame::new(program.names.len(), Some(env));
             {
                 let mut slots = frame.slots.borrow_mut();
@@ -296,6 +343,28 @@ impl<'a> Runner<'a> {
                     slots[*i] = a;
                 }
             }
+            frame
+        };
+        self.enter(program, frame)
+    }
+
+    /// Run a program in its frame, the body stepped. A tail call replaces
+    /// the program and the frame; what the replaced programs caught is
+    /// still caught.
+    fn enter(&mut self, program: Rc<Program>, frame: Rc<Frame>) -> R {
+        let memo = program.catches == Catch::Return && self.memo_slot.map_or(false, |i| matches!(self.top.slots.borrow()[i], Value::Bool(true)));
+        let key = memo.then(|| {
+            let mut k = format!("{}(", program.name);
+            let slots = frame.slots.borrow();
+            program.param_slots.iter().for_each(|i| slots[*i].cache_key(&mut k));
+            k
+        });
+        if let Some(hit) = key.as_ref().and_then(|k| self.cache.get(k)) {
+            return Ok(hit.clone());
+        }
+        let (mut program, mut frame) = (program, frame);
+        let mut caught: u8 = 0;
+        let result = loop {
             caught |= match program.catches {
                 Catch::Nothing => 0,
                 Catch::Return => 1,
@@ -315,10 +384,9 @@ impl<'a> Runner<'a> {
                     }
                     break v;
                 }
-                Ok(Step::Tail(p, e, a)) => {
+                Ok(Step::Tail(p, f)) => {
                     program = p;
-                    env = e;
-                    args = a;
+                    frame = f;
                 }
                 Err(Signal::Return(v)) if caught & 1 != 0 => break v,
                 Err(Signal::Break) if caught & 2 != 0 => break Value::Null,
