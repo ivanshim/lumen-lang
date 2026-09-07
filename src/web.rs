@@ -132,10 +132,14 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
             (None, None) => continue,
             (Some(name), None) => posted.push((steps_of(&name), String::from_utf8_lossy(content).into_owned())),
             (given, Some(filename)) => {
+                // A part naming no file at all sent none: it is counted
+                // among the files, and everything said of it is empty
+                // but for the word that says none came.
+                let none_sent = filename.is_empty();
                 // The file is written out, since a program is given the
                 // place it lies in rather than what it holds.
                 let held = env::temp_dir().join(format!("lumenup{}{}", std::process::id(), files));
-                let written = std::fs::write(&held, content).is_ok();
+                let written = !none_sent && std::fs::write(&held, content).is_ok();
                 let place = held.to_string_lossy().into_owned();
                 // A part that says nothing of its name is kept by its
                 // turn among the files.
@@ -148,13 +152,25 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
                     Some((first, deeper)) => (first, Some(deeper)),
                     None => (steps.as_str(), None),
                 };
+                // What a file is called is the last step of what was
+                // sent: a browser handing over a whole directory names
+                // each file by its way in, and only the whole path
+                // keeps that.
+                let called = filename.rsplit(['/', '\\']).next().unwrap_or(&filename).to_string();
+                let nothing = String::new();
                 for (what, value, counted) in [
-                    ("name", filename.clone(), false),
+                    ("name", called, false),
                     ("full_path", filename, false),
-                    ("type", kind.clone(), false),
-                    ("tmp_name", if written { place } else { String::new() }, false),
-                    ("error", if written { "0".to_string() } else { "1".to_string() }, true),
-                    ("size", content.len().to_string(), true),
+                    ("type", if none_sent { nothing.clone() } else { kind.clone() }, false),
+                    ("tmp_name", if written { place } else { nothing.clone() }, false),
+                    // 0: it came. 4: none was sent. 1: it came and could
+                    // not be put anywhere.
+                    ("error", match (none_sent, written) {
+                        (true, _) => "4".to_string(),
+                        (_, true) => "0".to_string(),
+                        _ => "1".to_string(),
+                    }, true),
+                    ("size", if none_sent { "0".to_string() } else { content.len().to_string() }, true),
                 ] {
                     let path = match deeper {
                         Some(rest) => format!("{first}{BETWEEN_STEPS}{what}{BETWEEN_STEPS}{rest}"),
