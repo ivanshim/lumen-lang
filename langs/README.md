@@ -365,6 +365,17 @@ only. The extension labels so far, all from PHP:
   run only by spelling these, and only the full kernels read them. What
   cannot be done answers false rather than stopping the run, which is
   what a language spelling them expects.
+- `ext.builtin.eval`: builtins taking a piece of the language written
+  out as text, reading it as the run's own language and running it
+  where the call stands. The text is read with whatever a program of
+  that language opens with, since a program written out is a program;
+  what it leaves behind is what the call gives back, and a name it
+  writes is a name the rest of the run can read.
+- `ext.builtin.include`: builtins naming a file whose text is read and
+  run in the same way, as though it had been written where the call
+  stands. A file that cannot be read answers false rather than stopping
+  the run. The text is read as a whole program of the language, opening
+  as one, so a file spelling its own opening needs no second one.
 - `ext.builtin.time_limit`: a builtin saying how long the run may take
   from here, counted in seconds, with nought taking the limit away. A
   run that passes it is stopped and told with the word for the end of a
@@ -706,10 +717,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.array` | - | - | - | - | - | - | - | `array` | - | - |
 | `ext.builtin.define` | - | - | - | - | - | - | - | `define` | - | - |
 | `ext.builtin.echo` | - | - | - | - | - | - | - | `echo` | - | - |
+| `ext.builtin.eval` | - | - | - | - | - | - | - | `eval` | - | - |
 | `ext.builtin.file.exists` | - | - | - | - | - | - | - | `file_exists` | - | - |
 | `ext.builtin.file.read` | - | - | - | - | - | - | - | `file_get_contents` | - | - |
 | `ext.builtin.file.remove` | - | - | - | - | - | - | - | `unlink` | - | - |
 | `ext.builtin.file.write` | - | - | - | - | - | - | - | `file_put_contents` | - | - |
+| `ext.builtin.include` | - | - | - | - | - | - | - | `include` `include_once` `require` `require_once` | - | - |
 | `ext.builtin.print_r` | - | - | - | - | - | - | - | `print_r` | - | - |
 | `ext.builtin.time_limit` | - | - | - | - | - | - | - | `set_time_limit` | - | - |
 | `ext.builtin.unset` | - | - | - | - | - | - | - | `unset` | - | - |

@@ -85,7 +85,7 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
         .unwrap_or(0);
     let program = compile::compile(&tokens, lang, &mut registry, before)?;
 
-    let mut machine = engine::Engine::new(lang, registry.idents.clone());
+    let mut machine = engine::Engine::new(lang, registry);
     if let Some(name) = &lang.args_binding {
         machine.define(name, Value::text(&program_args.join(" ")));
     }

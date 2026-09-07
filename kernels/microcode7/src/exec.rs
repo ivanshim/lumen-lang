@@ -282,6 +282,32 @@ impl<'a> Machine<'a> {
         println!("Stack trace:\n#0 {{main}}\n  thrown in {} on line {}", self.written_in, self.raised_on);
     }
 
+    /// Build source against the globals this run already has and run it
+    /// where it stands, giving back what it answered with.
+    fn run_source(&mut self, source: &str) -> Result<Value, String> {
+        let tokens = crate::scan::scan(source, self.table)?;
+        let tokens = crate::indent::indent(tokens, self.table)?;
+        let built = crate::build::build(&tokens, self.table, &self.idents, HashMap::new(), true, 0)?;
+        self.idents = built.globals;
+        // Names the new source brought with it want room to stand in.
+        self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
+        let top = self.outermost.clone();
+        match self.value_of(&built.program.body, &top) {
+            Ok(answer) => Ok(match answer {
+                // Nothing answered is a plain yes, as such a language says.
+                Value::Nil | Value::Unset => Value::Small(1),
+                other => other,
+            }),
+            Err(Escape::Error(told)) => Err(told),
+            Err(Escape::Yield(answer)) => Ok(answer),
+            Err(other) => Err(match other {
+                Escape::Stopped(told) => told,
+                Escape::Thrown(raised) => format!("Uncaught {}", raised.bare()),
+                _ => "A run of source ended oddly".to_string(),
+            }),
+        }
+    }
+
     pub fn run_main(&mut self, body: &Form) -> Result<(), String> {
         let top = self.outermost.clone();
         match self.value_of(body, &top) {
@@ -1106,6 +1132,28 @@ impl<'a> Machine<'a> {
                 }
             }
             Prim::Gather => return Err(format!("{}() is a literal, not a call", name)),
+            // Source read while the program runs, built against the
+            // globals it already has and run where it stands. A file
+            // that cannot be read answers false, as such a language says.
+            Prim::Weigh | Prim::Bring => {
+                n(1)?;
+                let w = self.wording();
+                let given = v[0].render(w);
+                let source = match op {
+                    // Text handed over to be run is code already; a file
+                    // is text with code marked out inside it, so only
+                    // the first wants the mark that opens code.
+                    Prim::Weigh => match self.table.single("lexical.prologue") {
+                        Some(open) => format!("{}\n{}", open, given),
+                        None => given,
+                    },
+                    _ => match std::fs::read(&given) {
+                        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                        Err(_) => return Ok(Value::Flag(false)),
+                    },
+                };
+                return self.run_source(&source);
+            }
             // Reaching outside the run, which only a language that
             // spells these labels does at all. What cannot be done
             // answers false rather than stopping the run.

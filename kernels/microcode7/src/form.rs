@@ -50,6 +50,13 @@ pub enum Prim {
     Otherwise,
     /// Give an array back without the place named (ext.builtin.unset).
     Erase,
+    /// Source read while the program runs: the text itself
+    /// (ext.builtin.eval), or the text a file holds
+    /// (ext.builtin.include). It is built against the globals the run
+    /// already has and run where it stands, and what it answers with is
+    /// what it gives back.
+    Weigh,
+    Bring,
     /// What a file holds, all at once; what to put into one; whether a
     /// file is there; and taking one away (ext.builtin.file.*). A
     /// language reaches outside its run only by spelling these.

@@ -139,6 +139,12 @@ pub enum Builtin {
     Erase,
     /// Each argument with its kind, PHP's var_dump (ext.builtin.var_dump).
     Dump,
+    /// Source read while the program runs: the text itself
+    /// (ext.builtin.eval), or the text a file holds
+    /// (ext.builtin.include). It is assembled against the same globals
+    /// and run where it stands, and what it gives back is its answer.
+    Eval,
+    Include,
     /// What a file holds, all of it at once; what to write into one;
     /// whether a file is there at all; and taking one away
     /// (ext.builtin.file.*). Only a language that spells these reaches

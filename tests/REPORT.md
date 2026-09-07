@@ -18,20 +18,18 @@ is listed, since the full kernels are meant to behave alike.
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
 | `php/basic` | 114 | pass 32, differs 47, error 35, skipped 0 | pass 32, differs 47, error 35, skipped 0 |
-| `php/func` | 14 | pass 5, differs 3, error 6, skipped 0 | pass 5, differs 3, error 6, skipped 0 |
-| `php/lang` | 213 | pass 54, differs 49, error 108, skipped 2 | pass 54, differs 49, error 108, skipped 2 |
+| `php/func` | 14 | pass 6, differs 3, error 5, skipped 0 | pass 6, differs 3, error 5, skipped 0 |
+| `php/lang` | 213 | pass 58, differs 58, error 95, skipped 2 | pass 58, differs 58, error 95, skipped 2 |
 | `php/lang/constants` | 2 | pass 1, differs 1, error 0, skipped 0 | pass 1, differs 1, error 0, skipped 0 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 3, error 0, skipped 0 | pass 3, differs 3, error 0, skipped 0 |
 | `php/lang/operators` | 64 | pass 15, differs 34, error 15, skipped 0 | pass 15, differs 34, error 15, skipped 0 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 111, differs 145, error 164, skipped 2 | pass 111, differs 145, error 164, skipped 2 |
+| all | 422 | pass 116, differs 154, error 150, skipped 2 | pass 116, differs 154, error 150, skipped 2 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 145 |
-| Fatal error: Uncaught Error: Undefined variable: include in <file> | 9 |
+| ran, printed something else | 154 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
-| Fatal error: Uncaught Error: Undefined variable: eval in <file> | 7 |
 | Unexpected character '$' | 6 |
 | Unexpected token: & | 5 |
 | Fatal error: Uncaught Error: Cannot coerce array to number in <file> | 5 |
@@ -45,7 +43,6 @@ is listed, since the full kernels are meant to behave alike.
 | Unexpected token: ) | 3 |
 | Fatal error: Uncaught Error: Undefined variable: current in <file> | 3 |
 | Fatal error: Uncaught Error: Cannot index non-array value in <file> | 3 |
-| Fatal error: Uncaught Error: Undefined variable: require_once in <file> | 3 |
 | Only a name or a place in an array can be forgotten | 3 |
 | Unexpected token: -> | 3 |
 | Unexpected token: . | 2 |
@@ -57,7 +54,6 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: ob_get_contents in <file> | 2 |
 | Expected ')' after the foreach names, got '[' | 2 |
 | Unexpected token: } | 2 |
-| Fatal error: Uncaught Error: Undefined variable: include_once in <file> | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Undefined variable: StdClass in <file> | 2 |
 | Fatal error: Uncaught Error: Array index 2 out of bounds (length: 1) in <file> | 2 |
@@ -68,12 +64,16 @@ is listed, since the full kernels are meant to behave alike.
 | Unexpected token: > | 2 |
 | Unexpected token: :: | 2 |
 | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: rename in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: PHP_BINARY in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: ENT_HTML5 in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> | 1 |
 
-### Reserved words: 41 of 68 spelled
+### Reserved words: 46 of 68 spelled
 
-Spelled: `abstract`, `and`, `array`, `as`, `break`, `case`, `catch`, `class`, `const`, `continue`, `default`, `echo`, `else`, `elseif`, `exit`, `extends`, `final`, `finally`, `for`, `foreach`, `function`, `global`, `if`, `implements`, `instanceof`, `interface`, `new`, `or`, `print`, `private`, `protected`, `public`, `readonly`, `return`, `static`, `switch`, `throw`, `try`, `unset`, `var`, `while`
+Spelled: `abstract`, `and`, `array`, `as`, `break`, `case`, `catch`, `class`, `const`, `continue`, `default`, `echo`, `else`, `elseif`, `eval`, `exit`, `extends`, `final`, `finally`, `for`, `foreach`, `function`, `global`, `if`, `implements`, `include`, `include_once`, `instanceof`, `interface`, `new`, `or`, `print`, `private`, `protected`, `public`, `readonly`, `require`, `require_once`, `return`, `static`, `switch`, `throw`, `try`, `unset`, `var`, `while`
 
-Not spelled: `callable`, `clone`, `declare`, `do`, `empty`, `enddeclare`, `endfor`, `endforeach`, `endif`, `endswitch`, `endwhile`, `eval`, `fn`, `goto`, `include`, `include_once`, `insteadof`, `isset`, `list`, `match`, `namespace`, `require`, `require_once`, `trait`, `use`, `xor`, `yield`
+Not spelled: `callable`, `clone`, `declare`, `do`, `empty`, `enddeclare`, `endfor`, `endforeach`, `endif`, `endswitch`, `endwhile`, `fn`, `goto`, `insteadof`, `isset`, `list`, `match`, `namespace`, `trait`, `use`, `xor`, `yield`
 
 ### Most-called functions in the suite, and whether the definition spells them
 
@@ -319,7 +319,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/func/007.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ini_restore in <file> |
 | `php/func/008.phpt` | pass | pass |  |
 | `php/func/009.phpt` | pass | pass |  |
-| `php/func/010.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: include in <file> |
+| `php/func/010.phpt` | pass | pass |  |
 | `php/func/011.phpt` | differs | differs | ran, printed something else |
 | `php/func/bug64523.phpt` | differs | differs | ran, printed something else |
 | `php/func/ini_alter.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ini_alter in <file> |
@@ -335,17 +335,17 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/010.phpt` | pass | pass |  |
 | `php/lang/011.phpt` | pass | pass |  |
 | `php/lang/012.phpt` | pass | pass |  |
-| `php/lang/013.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: eval in <file> |
-| `php/lang/014.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: eval in <file> |
-| `php/lang/015.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: include in <file> |
-| `php/lang/016.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: include in <file> |
+| `php/lang/013.phpt` | pass | pass |  |
+| `php/lang/014.phpt` | pass | pass |  |
+| `php/lang/015.phpt` | differs | differs | ran, printed something else |
+| `php/lang/016.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: MyFunc in <file> |
 | `php/lang/017.phpt` | pass | pass |  |
-| `php/lang/018.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: eval in <file> |
-| `php/lang/019.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: eval in <file> |
+| `php/lang/018.phpt` | pass | pass |  |
+| `php/lang/019.phpt` | error | error | Fatal error: Uncaught Error: Unexpected token: ; in <file> |
 | `php/lang/020.phpt` | pass | pass |  |
 | `php/lang/021.phpt` | pass | pass |  |
 | `php/lang/022.phpt` | pass | pass |  |
-| `php/lang/023.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: include in <file> |
+| `php/lang/023.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: mktime in <file> |
 | `php/lang/024.phpt` | error | error | Unexpected character '$' |
 | `php/lang/025.phpt` | pass | pass |  |
 | `php/lang/026.phpt` | pass | pass |  |
@@ -413,7 +413,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug27439.phpt` | error | error | Unexpected token: } |
 | `php/lang/bug27443.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: defined in <file> |
 | `php/lang/bug27535.phpt` | pass | pass |  |
-| `php/lang/bug28213.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: include in <file> |
+| `php/lang/bug28213.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug28800.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug29566.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug29893.phpt` | error | error | '-=' needs a plain variable on its left |
@@ -423,17 +423,17 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug30726.phpt` | error | error | Unexpected token: , |
 | `php/lang/bug30862.phpt` | pass | pass |  |
 | `php/lang/bug32828.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug32924.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: include_once in <file> |
-| `php/lang/bug35176.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: require_once in <file> |
+| `php/lang/bug32924.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug35176.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug35382.phpt` | skipped | skipped | no --FILE-- section |
-| `php/lang/bug38579.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: include_once in <file> |
+| `php/lang/bug38579.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug43958.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: include in <file> |
 | `php/lang/bug44654.phpt` | pass | pass |  |
 | `php/lang/bug44827.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug45392.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug55754.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: current in <file> |
-| `php/lang/bug71897.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: eval in <file> |
-| `php/lang/bug73172.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: include in <file> |
+| `php/lang/bug71897.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug73172.phpt` | pass | pass |  |
 | `php/lang/bug73329.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: float in <file> |
 | `php/lang/bug7515.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ob_get_contents in <file> |
 | `php/lang/catchable_error_001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: StdClass in <file> |
@@ -499,9 +499,9 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/func_num_args.002.phpt` | pass | pass |  |
 | `php/lang/func_num_args.003.phpt` | differs | differs | ran, printed something else |
 | `php/lang/func_num_args.004.phpt` | pass | pass |  |
-| `php/lang/include_variation1.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: include in <file> |
-| `php/lang/include_variation2.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: require_once in <file> |
-| `php/lang/include_variation3.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: require_once in <file> |
+| `php/lang/include_variation1.phpt` | differs | differs | ran, printed something else |
+| `php/lang/include_variation2.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: test in <file> |
+| `php/lang/include_variation3.phpt` | differs | differs | ran, printed something else |
 | `php/lang/integer_literals/binary_32bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/integer_literals/binary_64bit.phpt` | pass | pass |  |
 | `php/lang/integer_literals/hexadecimal_32bit.phpt` | differs | differs | ran, printed something else |
@@ -599,7 +599,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/static_basic_001.phpt` | pass | pass |  |
 | `php/lang/static_basic_002.phpt` | differs | differs | ran, printed something else |
 | `php/lang/static_variation_001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: g1 in <file> |
-| `php/lang/static_variation_002.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: eval in <file> |
+| `php/lang/static_variation_002.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: cfg in <file> |
 | `php/lang/string/unicode_escape.phpt` | differs | differs | ran, printed something else |
 | `php/lang/string/unicode_escape_empty.phpt` | differs | differs | ran, printed something else |
 | `php/lang/string/unicode_escape_incomplete.phpt` | differs | differs | ran, printed something else |
@@ -610,9 +610,9 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/string/unicode_escape_surrogates.phpt` | differs | differs | ran, printed something else |
 | `php/lang/string/unicode_escape_whitespace.phpt` | differs | differs | ran, printed something else |
 | `php/lang/string_decimals_001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: int in <file> |
-| `php/lang/syntax_errors.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: eval in <file> |
+| `php/lang/syntax_errors.phpt` | error | error | Fatal error: Uncaught Error: Expected ')' to close a group, got ';' in <file> |
 | `php/lang/this_assignment.phpt` | pass | pass |  |
-| `php/lang/throw_variation_001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: include in <file> |
+| `php/lang/throw_variation_001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/type_hints_001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/type_hints_002.phpt` | differs | differs | ran, printed something else |
 | `php/lang/type_hints_003.phpt` | differs | differs | ran, printed something else |

@@ -624,5 +624,14 @@
   ],
   "ext.builtin.file.remove": [
     "unlink"
+  ],
+  "ext.builtin.eval": [
+    "eval"
+  ],
+  "ext.builtin.include": [
+    "include",
+    "include_once",
+    "require",
+    "require_once"
   ]
 }

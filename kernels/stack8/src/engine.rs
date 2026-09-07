@@ -18,7 +18,9 @@ use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr};
 pub struct Engine<'a> {
     lang: &'a Lang,
     world: Vec<Value>,
-    idents: Vec<String>,
+    /// The names of the globals, kept whole so that source read while
+    /// the program runs can be assembled against the same ones.
+    registry: crate::compile::Registry,
     data: Vec<Value>,
     memo: HashMap<String, Value>,
     /// The arguments of a builtin call, one buffer reused across calls.
@@ -91,7 +93,8 @@ impl Fault {
 type Flow<T> = Result<T, Fault>;
 
 impl<'a> Engine<'a> {
-    pub fn new(lang: &'a Lang, idents: Vec<String>) -> Engine<'a> {
+    pub fn new(lang: &'a Lang, registry: crate::compile::Registry) -> Engine<'a> {
+        let idents = &registry.idents;
         let find = |wanted: &Option<String>| wanted.as_ref().and_then(|w| idents.iter().position(|n| n == w));
         Engine {
             lang,
@@ -109,8 +112,28 @@ impl<'a> Engine<'a> {
             began: std::cell::Cell::new(None),
             args_cell: find(&lang.args_binding),
             memo_cell: find(&lang.memo_binding),
-            idents,
+            registry,
         }
+    }
+
+    /// Assemble source against the globals this run already has and run
+    /// it where it stands, giving back whatever it answered with.
+    fn run_source(&mut self, source: &str) -> Res<Value> {
+        let tokens = crate::layout::layout(crate::lex::lex(source, self.lang)?, self.lang)?;
+        let program = crate::compile::compile(&tokens, self.lang, &mut self.registry, 0)?;
+        // Names the new source brought with it want room in the world.
+        self.world.resize(self.registry.idents.len(), Value::Blank);
+        let base = self.data.len();
+        match self.invoke(&program, Vec::new()) {
+            Ok(()) => {}
+            Err(Fault::Note(told)) => return Err(told),
+            Err(other) => return Err(other.told(&self.names())),
+        }
+        // What it left behind is its answer; nothing left is a plain yes.
+        Ok(match self.data.len() > base {
+            true => self.drop_top()?,
+            false => Value::Small(1),
+        })
     }
 
     /// Where the program is written, which a complaint names.
@@ -205,13 +228,13 @@ impl<'a> Engine<'a> {
     }
 
     pub fn define(&mut self, name: &str, v: Value) {
-        if let Some(i) = self.idents.iter().position(|n| n == name) {
+        if let Some(i) = self.registry.idents.iter().position(|n| n == name) {
             self.world[i] = v;
         }
     }
 
     pub fn lookup(&self, name: &str) -> Option<&Value> {
-        let i = self.idents.iter().position(|n| n == name)?;
+        let i = self.registry.idents.iter().position(|n| n == name)?;
         match &self.world[i] {
             Value::Blank => None,
             v => Some(v),
@@ -1321,6 +1344,29 @@ impl<'a> Engine<'a> {
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
                 print!("{}", s);
                 Value::Null
+            }
+            // Source read while the program runs, assembled against
+            // the same globals and run where it stands. A file that
+            // cannot be read gives false back, as such a language says.
+            Builtin::Eval | Builtin::Include => {
+                arity(1)?;
+                let sp = self.wording();
+                let given = args[0].display(&sp);
+                let source = match builtin {
+                    // Text given to be run is code already, where a
+                    // file is text with code marked out inside it, so
+                    // the mark that opens code is put before the one
+                    // and not the other.
+                    Builtin::Eval => match &self.lang.prologue {
+                        Some(open) => format!("{}\n{}", open, given),
+                        None => given,
+                    },
+                    _ => match std::fs::read(&given) {
+                        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                        Err(_) => return Ok(Value::Flag(false)),
+                    },
+                };
+                return self.run_source(&source);
             }
             // Reaching outside the run: only a language that spells
             // these labels can, and what cannot be done gives false
