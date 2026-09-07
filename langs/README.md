@@ -804,6 +804,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.kind.brief` | - | - | - | - | - | - | - | `int` `-` `float` `string` `bool` `array` `null` | - | - |
 | `ext.system.kind.spelled` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.system.real.bits` | - | - | - | - | - | - | - | `64` | - | - |
+| `ext.system.real.digits` | - | - | - | - | - | - | - | `14` | - | - |
 | `ext.system.request.all` | - | - | - | - | - | - | - | `$_REQUEST` | - | - |
 | `ext.system.request.cookies` | - | - | - | - | - | - | - | `$_COOKIE` | - | - |
 | `ext.system.request.env` | - | - | - | - | - | - | - | `$_ENV` | - | - |

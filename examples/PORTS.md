@@ -7,7 +7,7 @@ definition has no spelling for. The library functions an example uses come
 from the language's mirror of the library (`langs/lib_<language>/`,
 `docs/LIBRARY_PORTS.md`); one the mirror lacks is ported into the file.
 
-Lumen has 87 examples; python carries 58, rplumen carries 60, rust carries 35, c carries 22, javascript carries 46, pascal carries 29, php carries 50, ruby carries 47, swift carries 27.
+Lumen has 87 examples; python carries 58, rplumen carries 60, rust carries 36, c carries 23, javascript carries 46, pascal carries 29, php carries 50, ruby carries 48, swift carries 28.
 
 | Example | python | rplumen | rust | c | javascript | pascal | php | ruby | swift |
 |---|---|---|---|---|---|---|---|---|---|
@@ -74,7 +74,7 @@ Lumen has 87 examples; python carries 58, rplumen carries 60, rust carries 35, c
 | `constructs/test_decomp_simple.lm` | no `INTEGER` | no `INTEGER` | no `INTEGER` | C has no spelling here for a variable holding a str | no `INTEGER` | no `INTEGER` | no `INTEGER` | no `INTEGER` | no `INTEGER` |
 | `constructs/type_annotations.lm` | yes | yes | no type word for a null | C has no spelling here for a variable holding a str | yes | no type word for a null | yes | yes | no type word for a null |
 | `constructs/type_hierarchy.lm` | yes | yes | no `real` | C has no spelling here for a variable holding a str | no `//` | no `char_at` | no `//` | no `/` | no `/` |
-| `constructs/unicode_identifiers.lm` | yes | yes | no `/` | no `/` | yes | yes | yes | no `/` | no `/` |
+| `constructs/unicode_identifiers.lm` | yes | yes | yes | yes | yes | yes | yes | yes | yes |
 | `constructs/until_loop.lm` | yes | yes | yes | yes | yes | yes | yes | yes | no `write` |
 | `constructs/write_function.lm` | yes | yes | yes | yes | yes | yes | yes | yes | no `write` |
 | `e_integer.lm` | no `real` | no `ARGS` | no `num` | C has no spelling here for a variable holding a str | no `//` | no `char_at` | no `//` | no `/` | no `char_at` |

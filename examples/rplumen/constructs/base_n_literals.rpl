@@ -47,8 +47,8 @@
 "2@1000 * 2@10 = " write
 8 2 * print
 "" print
-"16@10 / 2@11 = " write
-16 3 / 'result' =
+"16@14 / 2@1000 = " write
+20 8 / 'result' =
 result print
 "" print
 "16@FF > 16@FE: " write

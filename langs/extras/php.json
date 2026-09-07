@@ -597,6 +597,7 @@
   ],
   "ext.system.integer.bits": 64,
   "ext.system.real.bits": 64,
+  "ext.system.real.digits": 14,
   "ext.system.complaint.fatal": [
     "Fatal error"
   ],

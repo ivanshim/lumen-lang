@@ -2,7 +2,7 @@
 # character classes: a word starts with a letter or underscore and continues
 # with letters, digits and underscores, from all of Unicode.
 café = 3
-π = 22 / 7
+π = 3.14159
 数 = café * 2
 
 fn größe(x)

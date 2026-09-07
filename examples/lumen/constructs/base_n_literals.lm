@@ -87,8 +87,11 @@ print(2@1000 * 2@10)
 print("")
 
 # Test 9: Division (integer / integer = rational)
-write("16@10 / 2@11 = ")
-result = 16@10 / 2@11
+# The divisor divides into a value with a short exact fraction, so that
+# the answer is written the same way in a language whose reals are kept
+# to fourteen figures as in one that keeps more.
+write("16@14 / 2@1000 = ")
+result = 16@14 / 2@1000
 print(result)
 
 print("")

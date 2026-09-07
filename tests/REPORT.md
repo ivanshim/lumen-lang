@@ -22,13 +22,13 @@ is listed, since the full kernels are meant to behave alike.
 | `php/lang` | 213 | pass 59, differs 57, error 95, skipped 2 | pass 59, differs 57, error 95, skipped 2 |
 | `php/lang/constants` | 2 | pass 1, differs 1, error 0, skipped 0 | pass 1, differs 1, error 0, skipped 0 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 3, error 0, skipped 0 | pass 3, differs 3, error 0, skipped 0 |
-| `php/lang/operators` | 64 | pass 15, differs 34, error 15, skipped 0 | pass 15, differs 34, error 15, skipped 0 |
+| `php/lang/operators` | 64 | pass 21, differs 28, error 15, skipped 0 | pass 21, differs 28, error 15, skipped 0 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 117, differs 153, error 150, skipped 2 | pass 117, differs 153, error 150, skipped 2 |
+| all | 422 | pass 123, differs 147, error 150, skipped 2 | pass 123, differs 147, error 150, skipped 2 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 153 |
+| ran, printed something else | 147 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | Unexpected character '$' | 6 |
 | Unexpected token: & | 5 |
@@ -509,7 +509,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/integer_literals/octal_32bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/integer_literals/octal_64bit.phpt` | pass | pass |  |
 | `php/lang/invalid_octal.phpt` | error | error | Invalid number: 08 |
-| `php/lang/operators/add_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/add_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/add_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/bitwiseAnd_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/bitwiseAnd_variationStr.phpt` | pass | pass |  |
@@ -563,15 +563,15 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/operator_notidentical_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_spaceship_basic.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/overloaded_property_ref.phpt` | error | error | Unexpected token: -> |
-| `php/lang/operators/postdec_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/postdec_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/postdec_variationStr.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/postinc_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/postinc_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/postinc_variationStr.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/predec_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/predec_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/predec_variationStr.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/preinc_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/preinc_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/preinc_variationStr.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/subtract_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/subtract_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/subtract_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/passByReference_001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/passByReference_002.phpt` | differs | differs | ran, printed something else |

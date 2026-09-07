@@ -48,8 +48,8 @@ print(0x10 + 0x20)
 sys.stdout.write("2@1000 * 2@10 = ")
 print(8 * 2)
 print("")
-sys.stdout.write("16@10 / 2@11 = ")
-result = 0x10 / 3
+sys.stdout.write("16@14 / 2@1000 = ")
+result = 0x14 / 8
 print(result)
 print("")
 sys.stdout.write("16@FF > 16@FE: ")
