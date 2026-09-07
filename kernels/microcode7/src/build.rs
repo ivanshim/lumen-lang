@@ -99,7 +99,7 @@ pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMa
     let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let shared_args = shared_parameters(tokens, table);
     let mut r = Builder { within: None, shared_args, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before,
-        tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated"]
+        tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
     let body = if table.rpn {
@@ -628,8 +628,11 @@ impl<'a> Builder<'a> {
     fn stmt(&mut self) -> Res<Form> {
         // A language that says where a complaint happened wants each
         // statement to carry the line it was written on.
-        if self.tells_place {
-            let row = (self.look().row).saturating_sub(self.before);
+        // Only the program's own lines are carried: what stands ahead of
+        // it is the library, and a complaint from within that names the
+        // line of the program that was running, as PHP names it.
+        if self.tells_place && self.look().row > self.before {
+            let row = self.look().row - self.before;
             let made = self.plain_or_kind()?;
             return Ok(Form::OnLine(row, Box::new(made)));
         }

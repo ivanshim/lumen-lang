@@ -24,10 +24,11 @@ use crate::form::{Input, Traps, Form, Prim, Routine, Address, Callee};
 use crate::data::{Blueprint, Thing, Env, Kind, Value, Names};
 
 /// The label under which a language spells each kind of complaint.
-pub const COMPLAINT_LABELS: [(&str, &str); 3] = [
+pub const COMPLAINT_LABELS: [(&str, &str); 4] = [
     ("warning", "ext.system.complaint.warning"),
     ("notice", "ext.system.complaint.notice"),
     ("deprecated", "ext.system.complaint.deprecated"),
+    ("fatal", "ext.system.complaint.fatal"),
 ];
 
 /// The label under which a language spells each kind of value.
@@ -79,8 +80,10 @@ pub struct Machine<'a> {
     /// How many things have been made, so each carries its own turn.
     made: usize,
     /// The line of the source now running and the file it is written
-    /// in, which a complaint names.
+    /// in, which a complaint names, and the line the last value raised
+    /// was raised on.
     row: u32,
+    raised_on: u32,
     written_in: String,
     /// The words this language has for the kinds of complaint.
     complaint_words: Vec<(&'static str, String)>,
@@ -115,6 +118,7 @@ impl<'a> Machine<'a> {
             pending: Vec::new(),
             made: 0,
             row: 0,
+            raised_on: 0,
             written_in: String::new(),
             complaint_words: COMPLAINT_LABELS
                 .iter()
@@ -207,6 +211,15 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// How a run ended, told the way a language with a word for the end
+    /// of one tells it: what stopped it, where, and how the run stood.
+    /// Nothing is written where a language has no word for it.
+    fn end_of_run(&self, said: &str) {
+        let Some((_, word)) = self.complaint_words.iter().find(|(k, _)| *k == "fatal") else { return };
+        println!("\n{}: {} in {}:{}", word, said, self.written_in, self.raised_on);
+        println!("Stack trace:\n#0 {{main}}\n  thrown in {} on line {}", self.written_in, self.raised_on);
+    }
+
     pub fn run_main(&mut self, body: &Form) -> Result<(), String> {
         let top = self.outermost.clone();
         match self.value_of(body, &top) {
@@ -214,12 +227,18 @@ impl<'a> Machine<'a> {
             // A value nobody took is a fault, told the way PHP tells it.
             Err(Escape::Thrown(Value::Thing(thing))) => {
                 let told = thing.holds.borrow().iter().find(|(k, _)| k == "message").map(|(_, x)| x.bare());
-                Err(match told {
+                let said = match told.filter(|m| !m.is_empty()) {
                     Some(told) => format!("Uncaught {}: {}", thing.of.name, told),
                     None => format!("Uncaught {}", thing.of.name),
-                })
+                };
+                self.end_of_run(&said);
+                Err(said)
             }
-            Err(Escape::Thrown(v)) => Err(format!("Uncaught {}", v.bare())),
+            Err(Escape::Thrown(v)) => {
+                let said = format!("Uncaught {}", v.bare());
+                self.end_of_run(&said);
+                Err(said)
+            }
             Err(Escape::Error(e)) => Err(e),
         }
     }
@@ -547,6 +566,7 @@ impl<'a> Machine<'a> {
                 Prim::Hurl => {
                     let values = self.value_list(args, frame)?;
                     let raised = values.into_iter().next().ok_or_else(|| format!("{}() needs a value to raise", name))?;
+                    self.raised_on = self.row;
                     Err(Escape::Thrown(raised))
                 }
                 Prim::Spawn => {

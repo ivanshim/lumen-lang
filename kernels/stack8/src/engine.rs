@@ -35,6 +35,9 @@ pub struct Engine<'a> {
     /// Nothing at all, to hand back where a binding never written is
     /// read in place and the language only complains about it.
     nothing: Value,
+    /// The line the last value raised was raised on, which a language
+    /// that tells where a run ended names.
+    hurled_at: std::cell::Cell<u32>,
     args_cell: Option<usize>,
     memo_cell: Option<usize>,
 }
@@ -93,6 +96,7 @@ impl<'a> Engine<'a> {
             line: 0,
             source: String::new(),
             nothing: Value::Null,
+            hurled_at: std::cell::Cell::new(0),
             args_cell: find(&lang.args_binding),
             memo_cell: find(&lang.memo_binding),
             idents,
@@ -119,6 +123,29 @@ impl<'a> Engine<'a> {
     fn complain(&self, kind: Complaint, message: &str) {
         let Some((_, word)) = self.lang.complaint_words.iter().find(|(k, _)| *k == kind) else { return };
         println!("\n{}: {} in {} on line {}", word, message, self.source, self.line);
+    }
+
+    /// A value raised and never caught, told the way a language that
+    /// has a word for the end of a run tells it: what was raised, where
+    /// it was raised, and how the run stood when it was. Nothing is
+    /// written where a language has no word for it.
+    pub fn ended_uncaught(&self, fault: &Fault) {
+        let Some((_, word)) = self.lang.complaint_words.iter().find(|(k, _)| *k == Complaint::Fatal) else { return };
+        let Fault::Thrown(raised) = fault else { return };
+        let sp = self.wording();
+        let said = match raised {
+            Value::Object(o) => {
+                let told = o.fields.borrow().iter().find(|(n, _)| n == "message").map(|(_, v)| v.plain());
+                match told.filter(|m| !m.is_empty()) {
+                    Some(told) => format!("Uncaught {}: {}", o.class.name, told),
+                    None => format!("Uncaught {}", o.class.name),
+                }
+            }
+            v => format!("Uncaught {}", v.display(&sp)),
+        };
+        let at = self.hurled_at.get();
+        println!("\n{}: {} in {}:{}", word, said, self.source, at);
+        println!("Stack trace:\n#0 {{main}}\n  thrown in {} on line {}", self.source, at);
     }
 
     pub fn define(&mut self, name: &str, v: Value) {
@@ -775,7 +802,10 @@ impl<'a> Engine<'a> {
                 Value::Object(o) => Value::Flag(names.iter().any(|n| o.class.descends_from(n))),
                 _ => Value::Flag(false),
             },
-            Action::Hurl => return Err(Fault::Thrown(self.drop_top()?)),
+            Action::Hurl => {
+                self.hurled_at.set(self.line);
+                return Err(Fault::Thrown(self.drop_top()?));
+            }
             Action::Titled => match self.drop_top()? {
                 Value::Object(o) => Value::text(&o.class.name),
                 Value::Class(c) => Value::text(&c.name),

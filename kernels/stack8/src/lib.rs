@@ -128,7 +128,10 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     }
     // A value raised and never caught is a fault like any other, told
     // in the language's own words.
-    machine.invoke(&program, Vec::new()).map_err(|f| f.told(&machine.names()))?;
+    if let Err(fault) = machine.invoke(&program, Vec::new()) {
+        machine.ended_uncaught(&fault);
+        return Err(fault.told(&machine.names()));
+    }
 
     // A language with an entry function (Rust's `main`) runs it once the
     // program body has defined it.

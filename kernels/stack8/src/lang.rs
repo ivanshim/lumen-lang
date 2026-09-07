@@ -36,6 +36,7 @@ pub enum Complaint {
     Warning,
     Notice,
     Deprecated,
+    Fatal,
 }
 
 pub struct Lang {
@@ -319,7 +320,7 @@ w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext
 w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at | b ext.op.assign.value | b ext.op.index.plain_keys
 w ext.system.source.file | w ext.system.source.directory | w ext.system.source.line
-w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.complaint.deprecated
+w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.complaint.deprecated | w ext.system.complaint.fatal
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 ";
@@ -758,7 +759,7 @@ impl Lang {
 
         // A language with a word for any kind of complaint says where
         // the complaint happened, so the lines are worth marking.
-        let tells_complaints = ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated"]
+        let tells_complaints = ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .into_iter()
             .try_fold(false, |found, tag| Ok::<bool, String>(found || r.head(tag)?.is_some()))?;
 
@@ -869,6 +870,7 @@ impl Lang {
                     (Complaint::Warning, "ext.system.complaint.warning"),
                     (Complaint::Notice, "ext.system.complaint.notice"),
                     (Complaint::Deprecated, "ext.system.complaint.deprecated"),
+                    (Complaint::Fatal, "ext.system.complaint.fatal"),
                 ];
                 let mut found = Vec::new();
                 for (kind, tag) in named {

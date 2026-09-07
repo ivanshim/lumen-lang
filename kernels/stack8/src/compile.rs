@@ -621,8 +621,11 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         // A language that tells where a complaint happened needs to
         // know which line is running, so each statement says so.
-        if lang.tells_place {
-            let row = (self.look().row as u32).saturating_sub(self.before);
+        // Only the program's own lines are marked: what stands before it
+        // is the library, and a complaint from inside that names the
+        // line of the program that was running, as PHP names it.
+        if lang.tells_place && self.look().row as u32 > self.before {
+            let row = self.look().row as u32 - self.before;
             if self.piece().line != row {
                 self.piece().line = row;
                 self.put(Instr::Line(row));
