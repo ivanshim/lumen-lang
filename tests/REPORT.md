@@ -17,18 +17,18 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 32, differs 44, error 28, skipped 10 | pass 32, differs 44, error 28, skipped 10 |
+| `php/basic` | 114 | pass 34, differs 42, error 28, skipped 10 | pass 34, differs 42, error 28, skipped 10 |
 | `php/func` | 14 | pass 7, differs 3, error 4, skipped 0 | pass 7, differs 3, error 4, skipped 0 |
 | `php/lang` | 213 | pass 62, differs 57, error 89, skipped 5 | pass 62, differs 57, error 89, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 29, differs 18, error 11, skipped 6 | pass 29, differs 18, error 11, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 135, differs 130, error 132, skipped 25 | pass 135, differs 130, error 132, skipped 25 |
+| all | 422 | pass 137, differs 128, error 132, skipped 25 | pass 137, differs 128, error 132, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 130 |
+| ran, printed something else | 128 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | Unexpected character '$' | 6 |
@@ -227,7 +227,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/029.phpt` | differs | differs | ran, printed something else |
 | `php/basic/030.phpt` | pass | pass |  |
 | `php/basic/031.phpt` | pass | pass |  |
-| `php/basic/032.phpt` | differs | differs | ran, printed something else |
+| `php/basic/032.phpt` | pass | pass |  |
 | `php/basic/GHSA-9pqp-7h25-4f32.phpt` | skipped | skipped | skip php-cgi not available |
 | `php/basic/array_key_exists_null_deprecation.phpt` | differs | differs | ran, printed something else |
 | `php/basic/array_null_offset_deprecation.phpt` | differs | differs | ran, printed something else |
@@ -288,7 +288,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/rfc1867_anonymous_upload.phpt` | pass | pass |  |
 | `php/basic/rfc1867_array_upload.phpt` | pass | pass |  |
 | `php/basic/rfc1867_boundary_1.phpt` | pass | pass |  |
-| `php/basic/rfc1867_boundary_2.phpt` | differs | differs | ran, printed something else |
+| `php/basic/rfc1867_boundary_2.phpt` | pass | pass |  |
 | `php/basic/rfc1867_empty_upload.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_file_upload_disabled.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_garbled_mime_headers.phpt` | differs | differs | ran, printed something else |

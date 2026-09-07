@@ -75,7 +75,14 @@ pub fn gathered() -> Request {
 fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>) {
     let kind = env::var("CONTENT_TYPE").unwrap_or_default();
     let plain = kind.starts_with("application/x-www-form-urlencoded");
-    let boundary = kind.split(';').map(str::trim).find_map(|part| part.strip_prefix("boundary=")).map(str::to_string);
+    // What a part is cut at runs from `boundary=` to the first comma, as
+    // a web server reads it: what follows the comma says something else
+    // about the body and is none of the boundary.
+    let boundary = kind
+        .split(';')
+        .map(str::trim)
+        .find_map(|part| part.strip_prefix("boundary="))
+        .map(|mark| mark.split(',').next().unwrap_or(mark).trim().to_string());
     if !plain && boundary.is_none() {
         return (Vec::new(), Vec::new());
     }
