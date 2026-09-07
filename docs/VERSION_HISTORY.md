@@ -37,7 +37,12 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   `docs/KERNEL_LAB.md` records each cycle. Fourteen words run the bare
   loop 7.5 times faster than five; a tree of eight forms, once its
   argument vectors are gone, beats the stack floors on the bare loop and
-  microcode11 twice over.
+  microcode11 twice over. `lab/stack5a` and `lab/microcode4a` are the
+  floor kernels with the lab's count-neutral improvements woven in and
+  their counts unchanged, to measure what the primitives bought: on the
+  stack machine the engineering is worth 1.2 times and the words the
+  rest, since only a word keeps an operand off the stack; on the tree
+  the engineering is worth 2 times and the forms the other 2.
 - **Notation and block style are separate labels; RPLumen is indented**:
   a new label `syntax.notation` (`infix` or `postfix`) says how a
   language is read, and `block.style` is free to be `indentation`,

@@ -193,3 +193,5 @@ lumen-lang/
   lab/                             the kernel lab's specimens, not kernels: exempt from the independence check
     lab/stacklab/                    stack5 evolved: fourteen words
     lab/microlab/                    microcode4 evolved: eight forms
+    lab/stack5a/                     stack5 with the lab's count-neutral improvements, still five words
+    lab/microcode4a/                 microcode4 with the lab's count-neutral improvements, still four forms

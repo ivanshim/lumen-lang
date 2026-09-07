@@ -3,7 +3,10 @@
 An experiment in evolving the two kernel shapes for speed. Each lineage
 is one mutable specimen under `lab/`, a copy of its floor kernel that is
 patched cycle by cycle and measured after each: `lab/stacklab` descends
-from stack5, `lab/microlab` from microcode4. The specimens are not held
+from stack5, `lab/microlab` from microcode4. Two controls sit beside
+them, `lab/stack5a` and `lab/microcode4a`, the floor kernels with the
+lab's count-neutral improvements and their counts unchanged, measured in
+the section on equal engineering below. The specimens are not held
 to `scripts/kernel_independence.py` against their ancestors; they are
 specimens, not kernels. The measurements are the product.
 
@@ -105,6 +108,68 @@ the hot path (the argument vector, the closures, the frames), value
 clones, and the number of dispatches per source construct. A primitive
 earns its place by removing one of those, and a primitive that only
 renames a shape, like stack26's twenty-one extra words, earns nothing.
+How much of each survivor's speed the primitives bought, and how much
+the engineering around them would have bought alone, is measured in the
+next section: the answer differs by shape.
+
+## The references at equal engineering
+
+stack5 and microcode4 stay the minimalist references. The question after
+thirteen cycles was how much of each survivor's speed came from its new
+primitives and how much from improvements the lab made alongside them
+that never touched the count. To answer it, `lab/stack5a` and
+`lab/microcode4a` are the references with every count-neutral
+improvement woven in and nothing else: stack5a still has the five words,
+microcode4a the four forms.
+
+What stack5a has that stack5 does not: a function whose value only ever
+comes from a return drops its result slot; `while` and counted loops are
+tested at the bottom, one jump per pass instead of two, the condition
+flipped to its complement (`Ge` for `Lt`, a `Not` otherwise) so the
+existing `Unless` jumps back up; a builtin's arguments move into one
+reused buffer instead of a fresh list; a call moves its arguments from
+the stack straight into the frame, one allocation instead of two; and
+two machine integers under an operator are computed in place ahead of
+the general arithmetic.
+
+What microcode4a has that microcode4 does not: a branch arm or loop body,
+a program that owns no names, runs in the frame it closed over and makes
+none; an operator's arguments land in a fixed buffer of three, not a
+list; a call evaluates its arguments straight into the callee's slots;
+the walk up the frames borrows instead of taking a share of each; and
+the same integer fast path.
+
+Best of seven, release build, seconds:
+
+| Program | stack5 | stack5a | stacklab | microcode4 | microcode4a | microlab |
+|---|---|---|---|---|---|---|
+| loop | 0.063 | 0.054 | 0.030 | 0.246 | 0.119 | 0.068 |
+| loop3m | 0.262 | 0.213 | 0.035 | 1.344 | 0.538 | 0.242 |
+| fib | 0.032 | 0.029 | 0.019 | 0.077 | 0.041 | 0.036 |
+| sieve | 0.018 | 0.017 | 0.014 | 0.038 | 0.023 | 0.020 |
+| strings | 0.036 | 0.035 | 0.036 | 0.044 | 0.037 | 0.038 |
+| pi | 0.821 | 0.787 | 0.755 | 0.799 | 0.788 | 0.769 |
+
+Both variants printed the same as stack5 on all 256 examples.
+
+The two shapes answer differently. On the stack machine the engineering
+is worth 1.1 to 1.2 times and the words are worth the rest: 6 times on
+the bare loop, 1.8 on the arithmetic loop, 1.5 on calls. Measured before
+the integer fast path went in, the allocation and jump work alone was
+worth 3 percent. The reason is that the five-word machine's cost is
+stack traffic, every operand pushed and popped, and no engineering
+around five words removes that; stacklab's operands that read a slot
+directly do, and that is a word. On the tree the split is even: the
+engineering is worth 1.9 to 2.5 times (the frames for arms and loop
+bodies, the argument lists, the frame shares, the fast path), and the
+forms are worth 1.15 on calls and arrays and 1.75 to 2.2 on loops. The
+earlier attribution of microlab's whole gain to its forms was wrong by
+about half; stacklab's stands.
+
+So the corrected reading: for a stack machine, the primitives are the
+speed, because only a word can keep an operand off the stack. For a
+tree, half the speed was there for the taking under four forms, and the
+other half needed a loop and a conditional that are forms of their own.
 
 ## Where the lineages stopped, and why
 
