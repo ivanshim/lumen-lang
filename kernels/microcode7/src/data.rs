@@ -52,6 +52,10 @@ pub struct Ratio {
     pub above: BigInt,
     pub beneath: BigInt,
     pub places: Option<usize>,
+    /// A nought that came of working with something under nought holds
+    /// on to the minus: a real of a width has two noughts, and a
+    /// language holding reals to a width writes each its own way.
+    pub under: bool,
 }
 
 #[derive(Clone)]
@@ -220,6 +224,8 @@ impl Value {
                 format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.render(w), v.render(w))).collect::<Vec<_>>().join(", "))
             }
             Value::Couple(e) => format!("{} => {}", e.0.render(w), e.1.render(w)),
+            // A nought under nought is written so, at any width.
+            Value::Frac(e) if e.under && num_traits::Zero::is_zero(&e.above) => "-0".to_string(),
             // A language whose reals are numbers of bits writes one to
             // its own count of figures.
             Value::Frac(e) if w.real_figures.is_some() => figured(nearest_binary(&e.above, &e.beneath), w.real_figures),

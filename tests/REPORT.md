@@ -22,13 +22,13 @@ is listed, since the full kernels are meant to behave alike.
 | `php/lang` | 213 | pass 62, differs 57, error 89, skipped 5 | pass 62, differs 57, error 89, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
-| `php/lang/operators` | 64 | pass 29, differs 22, error 7, skipped 6 | pass 29, differs 22, error 7, skipped 6 |
+| `php/lang/operators` | 64 | pass 30, differs 21, error 7, skipped 6 | pass 30, differs 21, error 7, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 142, differs 127, error 128, skipped 25 | pass 142, differs 127, error 128, skipped 25 |
+| all | 422 | pass 143, differs 126, error 128, skipped 25 | pass 143, differs 126, error 128, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 127 |
+| ran, printed something else | 126 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | Unexpected character '$' | 6 |
@@ -531,7 +531,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/divide_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/modulus_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/modulus_variationStr.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/multiply_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/multiply_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/multiply_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/nan-comparison-false.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: NAN in <file> |
 | `php/lang/operators/negate_basiclong_64bit.phpt` | differs | differs | ran, printed something else |

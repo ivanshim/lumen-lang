@@ -46,9 +46,15 @@ impl Exact {
 /// A value from p/q: reduced; an integer when it divides out and nothing
 /// was real; a real at the given precision otherwise.
 pub fn shape_number(p: BigInt, q: BigInt, places: Option<usize>) -> Value {
+    shape_signed(p, q, places, false)
+}
+
+/// The same, told besides whether a nought came of working with a
+/// number below nought, which a real of a width keeps.
+pub fn shape_signed(p: BigInt, q: BigInt, places: Option<usize>, below: bool) -> Value {
     if p.is_zero() {
         return match places {
-            Some(places) => Value::Real(Rc::new(Real { p, q: BigInt::one(), places })),
+            Some(places) => Value::Real(Rc::new(Real { p, q: BigInt::one(), places, below })),
             None => Value::Small(0),
         };
     }
@@ -56,7 +62,7 @@ pub fn shape_number(p: BigInt, q: BigInt, places: Option<usize>) -> Value {
     let g = p.gcd(&q);
     let (p, q) = if g.is_one() { (p, q) } else { (&p / &g, &q / &g) };
     match places {
-        Some(places) => Value::Real(Rc::new(Real { p, q, places })),
+        Some(places) => Value::Real(Rc::new(Real { p, q, places, below: false })),
         None if q.is_one() => Value::of_big(p),
         None => Value::Frac(Rc::new(Frac { p, q })),
     }
@@ -113,12 +119,15 @@ fn precise(calc: Operation, a: &Exact, b: &Exact) -> Result<Value, String> {
     if matches!(calc, Operation::Over | Operation::OverReal | Operation::Floor) && b.p.is_zero() {
         return Err("Division by zero".to_string());
     }
+    // Multiplying or dividing a nought by a number below nought leaves
+    // the nought below nought, which a real of a width writes apart.
+    let opposed = a.p.is_negative() != b.p.is_negative();
     Ok(match calc {
         Operation::Plus => shape_number(cross(1), &a.q * &b.q, places),
         Operation::Minus => shape_number(cross(-1), &a.q * &b.q, places),
-        Operation::Times => shape_number(&a.p * &b.p, &a.q * &b.q, places),
-        Operation::Over => shape_number(&a.p * &b.q, &a.q * &b.p, places),
-        Operation::OverReal => shape_number(&a.p * &b.q, &a.q * &b.p, Some(places.unwrap_or(DEFAULT_PLACES))),
+        Operation::Times => shape_signed(&a.p * &b.p, &a.q * &b.q, places, opposed),
+        Operation::Over => shape_signed(&a.p * &b.q, &a.q * &b.p, places, opposed),
+        Operation::OverReal => shape_signed(&a.p * &b.q, &a.q * &b.p, Some(places.unwrap_or(DEFAULT_PLACES)), opposed),
         Operation::Floor => shape_number((&a.p * &b.q) / (&b.p * &a.q), BigInt::one(), places),
         Operation::Remainder => {
             // a - b * (a // b)

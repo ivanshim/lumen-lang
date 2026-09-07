@@ -808,9 +808,16 @@ impl<'a> Engine<'a> {
             Action::Negate => {
                 // 0 - x, so a real keeps its precision.
                 let v = self.drop_top()?;
-                match arith::calculate(Operation::Minus, &Value::Small(0), &v) {
+                let turned = match arith::calculate(Operation::Minus, &Value::Small(0), &v) {
                     Some(r) => r?,
                     None => return Err("Cannot negate non-numeric value".to_string().into()),
+                };
+                // A nought turned about is the other nought.
+                match (&v, &turned) {
+                    (Value::Real(was), Value::Real(now)) if num_traits::Zero::is_zero(&now.p) => {
+                        arith::shape_signed(now.p.clone(), now.q.clone(), Some(now.places), !was.below)
+                    }
+                    _ => turned,
                 }
             }
             Action::Invoke(name) => {
@@ -1277,13 +1284,14 @@ impl<'a> Engine<'a> {
             return v;
         }
         let places = self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES);
-        let (p, q) = match &v {
-            Value::Real(r) => (r.p.clone(), r.q.clone()),
-            Value::Frac(r) => (r.p.clone(), r.q.clone()),
+        let (p, q, below) = match &v {
+            Value::Real(r) => (r.p.clone(), r.q.clone(), r.below),
+            Value::Frac(r) => (r.p.clone(), r.q.clone(), false),
             _ => return v,
         };
         match crate::value::from_binary(crate::value::as_binary(&p, &q)) {
-            Some((p, q)) => arith::shape_number(p, q, Some(places)),
+            // A nought below nought keeps its minus at any width.
+            Some((p, q)) => arith::shape_signed(p, q, Some(places), below),
             // Beyond every number of that width, and so left as it is.
             None => v,
         }
@@ -1906,6 +1914,8 @@ fn dumped(v: &Value, depth: usize, binary_reals: bool) -> String {
         Value::Small(_) | Value::Huge(_) => format!("int({})", v.plain()),
         // Shown with its kind, a binary real is written in the fewest
         // digits that read back as the same number.
+        // A nought below nought is written as such, whatever the width.
+        Value::Real(r) if r.below && num_traits::Zero::is_zero(&r.p) => "float(-0)".to_string(),
         Value::Real(r) if binary_reals => format!("float({})", crate::value::binary_string(crate::value::as_binary(&r.p, &r.q), None)),
         Value::Real(_) | Value::Frac(_) => format!("float({})", v.plain()),
         Value::Text(s) => format!("string({}) \"{}\"", s.len(), s),

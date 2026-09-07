@@ -316,7 +316,8 @@ impl<'a> Machine<'a> {
         }
         let Value::Frac(e) = &v else { return v };
         match crate::data::binary_worth(crate::data::nearest_binary(&e.above, &e.beneath)) {
-            Some((above, beneath)) => math::make_number(above, beneath, Some(self.real_figures())),
+            // A nought under nought holds its minus at any width.
+            Some((above, beneath)) => math::made_number(above, beneath, Some(self.real_figures()), e.under),
             // Past every number of that width, and so left as it is.
             None => v,
         }
@@ -1460,10 +1461,19 @@ impl<'a> Machine<'a> {
                     bits.checked_shr(far).unwrap_or(if bits < 0 { -1 } else { 0 })
                 })
             }
-            Prim::Negate => match math::compute(Calc::Minus, &Value::Small(0), &v[0]) {
-                Some(r) => r?,
-                None => return Err("Cannot negate non-numeric value".to_string()),
-            },
+            Prim::Negate => {
+                let turned = match math::compute(Calc::Minus, &Value::Small(0), &v[0]) {
+                    Some(r) => r?,
+                    None => return Err("Cannot negate non-numeric value".to_string()),
+                };
+                // A nought turned about is the other nought.
+                match (&v[0], &turned) {
+                    (Value::Frac(was), Value::Frac(now)) if num_traits::Zero::is_zero(&now.above) => {
+                        math::made_number(now.above.clone(), now.beneath.clone(), now.places, !was.under)
+                    }
+                    _ => turned,
+                }
+            }
             // Which of two comes first is asked just as loosely, so an
             // array, a flag, nothing and text spelling no number are
             // each set against the other the way such a language sets
@@ -1903,6 +1913,8 @@ fn with_kind(v: &Value, level: usize, binary_reals: bool) -> String {
         Value::Small(_) | Value::Huge(_) => format!("int({})", v.bare()),
         // Shown with its kind, a binary real is written in the fewest
         // figures that read back as the same number.
+        // A nought under nought is written so, at any width.
+        Value::Frac(e) if e.under && num_traits::Zero::is_zero(&e.above) => "float(-0)".to_string(),
         Value::Frac(e) if binary_reals => format!("float({})", crate::data::figured(crate::data::nearest_binary(&e.above, &e.beneath), None)),
         Value::Frac(_) => format!("float({})", v.bare()),
         Value::Text(s) => format!("string({}) \"{}\"", s.len(), s),

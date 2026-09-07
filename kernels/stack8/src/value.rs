@@ -49,6 +49,10 @@ pub struct Real {
     pub p: BigInt,
     pub q: BigInt,
     pub places: usize,
+    /// A nought that came of working with a number below nought keeps
+    /// the minus, since a real of a width has two noughts and a language
+    /// holding reals to a width writes them apart.
+    pub below: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -231,6 +235,7 @@ impl Value {
             Value::Tie(pair) => format!("{} => {}", pair.0.display(sp), pair.1.display(sp)),
             // A language whose reals are binary numbers writes one out
             // to its own count of significant figures.
+            Value::Real(r) if r.below && r.p.is_zero() => "-0".to_string(),
             Value::Real(r) if sp.real_digits.is_some() => binary_string(as_binary(&r.p, &r.q), sp.real_digits),
             other => other.plain(),
         }
