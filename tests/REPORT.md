@@ -19,17 +19,17 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 31, differs 38, error 45, skipped 0 | pass 31, differs 38, error 45, skipped 0 |
 | `php/func` | 14 | pass 5, differs 3, error 6, skipped 0 | pass 5, differs 3, error 6, skipped 0 |
-| `php/lang` | 213 | pass 46, differs 36, error 129, skipped 2 | pass 46, differs 36, error 129, skipped 2 |
+| `php/lang` | 213 | pass 48, differs 35, error 128, skipped 2 | pass 48, differs 35, error 128, skipped 2 |
 | `php/lang/constants` | 2 | pass 1, differs 1, error 0, skipped 0 | pass 1, differs 1, error 0, skipped 0 |
 | `php/lang/integer_literals` | 6 | pass 0, differs 0, error 6, skipped 0 | pass 0, differs 0, error 6, skipped 0 |
 | `php/lang/operators` | 64 | pass 13, differs 24, error 27, skipped 0 | pass 13, differs 24, error 27, skipped 0 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 97, differs 110, error 213, skipped 2 | pass 97, differs 110, error 213, skipped 2 |
+| all | 422 | pass 99, differs 109, error 212, skipped 2 | pass 99, differs 109, error 212, skipped 2 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 110 |
-| } | 10 |
+| ran, printed something else | 109 |
+| } | 12 |
 | Undefined variable: eval | 7 |
 | Undefined variable: include | 7 |
 | Unexpected character '$' | 6 |
@@ -56,7 +56,6 @@ is listed, since the full kernels are meant to behave alike.
 | Expected ')' after the foreach names, got '[' | 2 |
 | Unexpected token: } | 2 |
 | Undefined variable: current | 2 |
-| Undefined variable: stdClass | 2 |
 | no --FILE-- section | 2 |
 | i1 | 2 |
 | Expected ']' after array index, got '++' | 2 |
@@ -68,6 +67,7 @@ is listed, since the full kernels are meant to behave alike.
 | Unexpected token: > | 2 |
 | Unexpected token: :: | 2 |
 | Undefined variable: $argc | 1 |
+| Undefined variable: $HTTP_RAW_POST_DATA | 1 |
 
 ### Reserved words: 41 of 68 spelled
 
@@ -393,11 +393,11 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug24054.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug24396.phpt` | error | error | Unexpected character '$' |
 | `php/lang/bug24436.phpt` | error | error | Undefined property: test::$test |
-| `php/lang/bug24499.phpt` | error | error | Undefined variable: stdClass |
+| `php/lang/bug24499.phpt` | pass | pass |  |
 | `php/lang/bug24573.phpt` | error | error | Undefined variable: debug_backtrace |
 | `php/lang/bug24640.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug24652.phpt` | pass | pass |  |
-| `php/lang/bug24658.phpt` | error | error | NULL |
+| `php/lang/bug24658.phpt` | error | error | } |
 | `php/lang/bug24783.phpt` | error | error | 8: |
 | `php/lang/bug24908.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug24951.phpt` | error | error | Hello from t1 1 Hello from t1 2 |
@@ -405,7 +405,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug25547.phpt` | error | error | Cannot coerce array to number |
 | `php/lang/bug25652.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug25922.phpt` | error | error | Undefined variable: $data |
-| `php/lang/bug26182.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug26182.phpt` | pass | pass |  |
 | `php/lang/bug26696.phpt` | pass | pass |  |
 | `php/lang/bug26866.phpt` | error | error | Undefined property: foo::$bar |
 | `php/lang/bug26869.phpt` | error | error | } |
@@ -435,7 +435,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug71897.phpt` | error | error | Undefined variable: eval |
 | `php/lang/bug73172.phpt` | error | error | Undefined variable: include |
 | `php/lang/bug73329.phpt` | error | error | Undefined variable: float |
-| `php/lang/bug7515.phpt` | error | error | Undefined variable: stdClass |
+| `php/lang/bug7515.phpt` | error | error | } |
 | `php/lang/catchable_error_001.phpt` | error | error | Undefined variable: StdClass |
 | `php/lang/catchable_error_002.phpt` | error | error | Undefined variable: StdClass |
 | `php/lang/comments.phpt` | pass | pass |  |

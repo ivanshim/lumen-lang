@@ -365,4 +365,7 @@ impl Blueprint {
 pub struct Thing {
     pub of: Rc<Blueprint>,
     pub holds: RefCell<Vec<(String, Value)>>,
+    /// Which thing this is by the turn it was made in, counting from
+    /// one, for a language that names them when showing them.
+    pub turn: usize,
 }

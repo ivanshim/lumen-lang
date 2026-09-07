@@ -26,6 +26,8 @@ pub struct Engine<'a> {
     /// What each call still running was given, the innermost last. Kept
     /// only where the language can read it.
     given: Vec<Vec<Value>>,
+    /// How many objects have been made, so that each carries its turn.
+    made: usize,
     args_cell: Option<usize>,
     memo_cell: Option<usize>,
 }
@@ -80,6 +82,7 @@ impl<'a> Engine<'a> {
             memo: HashMap::new(),
             buffer: Vec::new(),
             given: Vec::new(),
+            made: 0,
             args_cell: find(&lang.args_binding),
             memo_cell: find(&lang.memo_binding),
             idents,
@@ -605,7 +608,8 @@ impl<'a> Engine<'a> {
                 let Value::Class(class) = args.remove(0) else {
                     return Err("Only a class can be made into an object".to_string().into());
                 };
-                let object = Rc::new(Instance { class: class.clone(), fields: RefCell::new(class.all_fields()) });
+                self.made += 1;
+                let object = Rc::new(Instance { class: class.clone(), fields: RefCell::new(class.all_fields()), mark: self.made });
                 let maker = self.lang.constructor.as_deref().and_then(|m| class.method(m)).cloned();
                 match maker {
                     Some(maker) => {
@@ -1323,6 +1327,16 @@ fn dumped(v: &Value, depth: usize) -> String {
             out.push('}');
             out
         }
+        Value::Object(thing) => {
+            let held = thing.fields.borrow();
+            let mut out = format!("object({})#{} ({}) {{\n", thing.class.name, thing.mark, held.len());
+            for (member, item) in held.iter() {
+                out.push_str(&format!("{pad}  [\"{member}\"]=>\n{pad}  {}\n", dumped(item, depth + 1)));
+            }
+            out.push_str(&pad);
+            out.push('}');
+            out
+        }
         _ => "NULL".to_string(),
     }
 }
@@ -1376,13 +1390,18 @@ fn put_key(pairs: &mut Vec<(Value, Value)>, key: Value, value: Value) {
 /// array as `Array` and its places in brackets, each nested array set
 /// eight spaces further in and followed by a blank line.
 fn laid_out(v: &Value, indent: usize) -> String {
-    let pairs: Vec<(String, &Value)> = match v {
-        Value::Array(items) => items.iter().enumerate().map(|(i, x)| (i.to_string(), x)).collect(),
-        Value::Map(entries) => entries.iter().map(|(k, x)| (k.plain(), x)).collect(),
+    let held;
+    let (what, pairs): (String, Vec<(String, &Value)>) = match v {
+        Value::Array(items) => ("Array".to_string(), items.iter().enumerate().map(|(i, x)| (i.to_string(), x)).collect()),
+        Value::Map(entries) => ("Array".to_string(), entries.iter().map(|(k, x)| (k.plain(), x)).collect()),
+        Value::Object(thing) => {
+            held = thing.fields.borrow();
+            (format!("{} Object", thing.class.name), held.iter().map(|(k, x)| (k.clone(), x)).collect())
+        }
         other => return other.plain(),
     };
     let pad = " ".repeat(indent);
-    let mut out = format!("Array\n{pad}(\n");
+    let mut out = format!("{what}\n{pad}(\n");
     for (key, item) in pairs {
         // What an array lays out ends its own line, so the newline
         // here is the gap PHP leaves after it; for a scalar it ends the line.

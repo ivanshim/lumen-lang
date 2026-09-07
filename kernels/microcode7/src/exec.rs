@@ -69,6 +69,8 @@ pub struct Machine<'a> {
     /// whether being equal is the looser question.
     plain_keys: bool,
     loose_equals: bool,
+    /// How many things have been made, so each carries its own turn.
+    made: usize,
     /// What each call still running was handed, the innermost last, and
     /// what the call about to start is to be handed.
     handed: Vec<Vec<Value>>,
@@ -98,6 +100,7 @@ impl<'a> Machine<'a> {
                 .any(|label| table.single(label).is_some()),
             handed: Vec::new(),
             pending: Vec::new(),
+            made: 0,
             plain_keys: table.flag("ext.op.index.plain_keys"),
             // A language with a word for being the very same means
             // something looser by being equal.
@@ -467,7 +470,8 @@ impl<'a> Machine<'a> {
                     let Value::Blueprint(class) = values.remove(0) else {
                         return Err("Only a class can be made into a thing".to_string().into());
                     };
-                    let thing = Rc::new(Thing { of: class.clone(), holds: RefCell::new(class.every_field()) });
+                    self.made += 1;
+                    let thing = Rc::new(Thing { of: class.clone(), holds: RefCell::new(class.every_field()), turn: self.made });
                     let maker = self.table.single("ext.stmt.class.constructor").and_then(|m| class.program(m)).cloned();
                     match maker {
                         Some(maker) => {
@@ -1366,6 +1370,14 @@ fn with_kind(v: &Value, level: usize) -> String {
                 .collect();
             format!("array({}) {{\n{}{lead}}}", entries.len(), shown.concat())
         }
+        Value::Thing(thing) => {
+            let held = thing.holds.borrow();
+            let shown: Vec<String> = held
+                .iter()
+                .map(|(member, x)| format!("{lead}  [\"{member}\"]=>\n{lead}  {}\n", with_kind(x, level + 1)))
+                .collect();
+            format!("object({})#{} ({}) {{\n{}{lead}}}", thing.of.name, thing.turn, held.len(), shown.concat())
+        }
         _ => "NULL".to_string(),
     }
 }
@@ -1418,13 +1430,18 @@ fn set_key(entries: &mut Vec<(Value, Value)>, key: Value, value: Value) {
 /// own, an array as the word `Array` with its places in brackets, every
 /// array within set eight spaces further along and followed by a gap.
 fn over_lines(v: &Value, along: usize) -> String {
-    let places: Vec<(String, &Value)> = match v {
-        Value::Vector(items) => items.iter().enumerate().map(|(at, x)| (at.to_string(), x)).collect(),
-        Value::Dict(entries) => entries.iter().map(|(k, x)| (k.bare(), x)).collect(),
+    let held;
+    let (called, places): (String, Vec<(String, &Value)>) = match v {
+        Value::Vector(items) => ("Array".to_string(), items.iter().enumerate().map(|(at, x)| (at.to_string(), x)).collect()),
+        Value::Dict(entries) => ("Array".to_string(), entries.iter().map(|(k, x)| (k.bare(), x)).collect()),
+        Value::Thing(thing) => {
+            held = thing.holds.borrow();
+            (format!("{} Object", thing.of.name), held.iter().map(|(k, x)| (k.clone(), x)).collect())
+        }
         other => return other.bare(),
     };
     let lead = " ".repeat(along);
-    let mut out = format!("Array\n{lead}(\n");
+    let mut out = format!("{called}\n{lead}(\n");
     for (key, item) in places {
         // An array within ends its own line, so this newline is the gap
         // that follows it; after a scalar it is the end of the line.

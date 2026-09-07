@@ -395,4 +395,7 @@ impl Class {
 pub struct Instance {
     pub class: Rc<Class>,
     pub fields: RefCell<Vec<(String, Value)>>,
+    /// Which object this is by the order it was made, counting from
+    /// one: what a language that names objects when showing them shows.
+    pub mark: usize,
 }

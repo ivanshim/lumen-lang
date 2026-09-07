@@ -47,3 +47,7 @@ class OverflowException extends RuntimeException {}
 class UnderflowException extends RuntimeException {}
 class UnexpectedValueException extends RuntimeException {}
 class JsonException extends Exception {}
+
+// The class a program makes a plain thing of, with whatever properties
+// it writes into it and nothing of its own.
+class stdClass {}
