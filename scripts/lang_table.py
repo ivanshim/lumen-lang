@@ -49,7 +49,10 @@ def main() -> int:
     extras = sorted((LANGS / "extras").glob("*.json"))
     langs = {p.stem: json.loads(p.read_text(encoding="utf-8")) for p in built_in}
     langs.update({f"{p.stem} (extra)": json.loads(p.read_text(encoding="utf-8")) for p in extras})
-    orders = {name: [k for k in data if not k.startswith("$")] for name, data in langs.items()}
+    # Core labels must agree in name and order; ext.* labels are optional
+    # extensions a definition may add, read by the full kernels only.
+    orders = {name: [k for k in data if not k.startswith("$") and not k.startswith("ext.")] for name, data in langs.items()}
+    extensions = sorted({k for data in langs.values() for k in data if k.startswith("ext.")})
     reference = next(iter(orders.values()))
     for name, order in orders.items():
         if order != reference:
@@ -69,13 +72,18 @@ def main() -> int:
     lines.append("")
     for n in names:
         lines.append(f"- **{n}**: {tiers(langs[n]['op.precedence'])}")
+    if extensions:
+        lines += ["", "Extension labels, optional and read by the full kernels only (absent means empty or false):", "",
+                  "| Label | " + " | ".join(names) + " |", "|---|" + "---|" * len(names)]
+        for key in extensions:
+            lines.append("| " + code(key) + " | " + " | ".join(cell(langs[n][key]) if key in langs[n] else "-" for n in names) + " |")
     table = "\n".join(lines)
 
     text = README.read_text(encoding="utf-8")
     head, _, rest = text.partition(START)
     _, _, tail = rest.partition(END)
     README.write_text(f"{head}{START}\n{table}\n{END}{tail}", encoding="utf-8")
-    print(f"language table: {len(names)} languages, {len(reference)} labels")
+    print(f"language table: {len(names)} languages, {len(reference)} labels, {len(extensions)} extension labels")
     return 0
 
 

@@ -175,7 +175,8 @@ impl Definition {
             }
         }
         for key in map.keys() {
-            if !key.starts_with('$') && !LABELS.contains(&key.as_str()) {
+            // Keys under $ are notes; ext.* labels extend the core and are left to the full kernels.
+            if !key.starts_with('$') && !key.starts_with("ext.") && !LABELS.contains(&key.as_str()) {
                 return Err(format!("unknown label '{key}'"));
             }
         }

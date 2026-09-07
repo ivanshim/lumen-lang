@@ -47,6 +47,17 @@ fn drop_prologue<'a>(source: &'a str, lang: &Lang) -> &'a str {
     }
 }
 
+/// A closing marker at the very end (ext.lexical.epilogue) is dropped.
+fn drop_epilogue<'a>(source: &'a str, lang: &Lang) -> &'a str {
+    let body = source.trim_end();
+    for word in &lang.epilogue {
+        if let Some(kept) = body.strip_suffix(word.as_str()) {
+            return kept;
+        }
+    }
+    source
+}
+
 fn drop_comments(source: &str, lang: &Lang) -> String {
     if lang.line_comments.is_empty() && lang.block_comments.is_empty() {
         return source.to_string();
@@ -157,13 +168,22 @@ impl<'a> Cursor<'a> {
         let (line, col) = (self.row, self.column);
         self.step();
         let raw = self.lang.raw_quotes.contains(&quote);
+        let woven = self.lang.interpolating.contains(&quote);
         let mut s = String::new();
+        // Char positions in s that came escaped: text, never code.
+        let mut shielded: Vec<usize> = Vec::new();
         loop {
             let Some(c) = self.look(0) else { return Err(format!("Unterminated {} string", quote)) };
             if c == '\\' {
                 if let Some(next) = self.look(1) {
                     self.step();
                     self.step();
+                    if woven && Some(next) == self.lang.sigil {
+                        // An escaped sigil is just the sigil.
+                        shielded.push(s.chars().count());
+                        s.push(next);
+                        continue;
+                    }
                     if next == '\\' || next == quote || (!raw && self.lang.escape_letters.contains(&next)) {
                         s.push(match next {
                             'n' => '\n',
@@ -185,7 +205,97 @@ impl<'a> Cursor<'a> {
             }
             s.push(c);
         }
+        if woven {
+            return self.woven(s, &shielded, line, col);
+        }
         self.push(Shape::Quote, s, 0, line, col);
+        Ok(())
+    }
+
+    /// A string that weaves values in (ext.lexical.interpolating_quotes):
+    /// `$name`, `$name[i]` and `{$expr}` inside it become code, and the
+    /// whole becomes a bracketed concatenation of its parts, starting
+    /// from an empty string so the result is always text.
+    fn woven(&mut self, s: String, shielded: &[usize], line: usize, col: usize) -> Result<(), String> {
+        let lang = self.lang;
+        let chars: Vec<char> = s.chars().collect();
+        let opens_var = |j: usize| {
+            chars.get(j).copied() == lang.sigil && !shielded.contains(&j) && chars.get(j + 1).map_or(false, |n| lang.begins_name(*n))
+        };
+        // (is code, text)
+        let mut parts: Vec<(bool, String)> = Vec::new();
+        let mut text = String::new();
+        let mut i = 0;
+        while i < chars.len() {
+            let c = chars[i];
+            if c == '{' && opens_var(i + 1) {
+                let mut depth = 0;
+                let mut close = None;
+                for (j, ch) in chars.iter().enumerate().skip(i) {
+                    match ch {
+                        '{' => depth += 1,
+                        '}' if depth == 1 => {
+                            close = Some(j);
+                            break;
+                        }
+                        '}' => depth -= 1,
+                        _ => {}
+                    }
+                }
+                if let Some(end) = close {
+                    parts.push((false, std::mem::take(&mut text)));
+                    parts.push((true, chars[i + 1..end].iter().collect()));
+                    i = end + 1;
+                    continue;
+                }
+            } else if opens_var(i) {
+                let mut j = i + 1;
+                while j < chars.len() && lang.extends_name(chars[j]) {
+                    j += 1;
+                }
+                // A simple index: digits or a variable up to the bracket.
+                if chars.get(j) == Some(&'[') {
+                    if let Some(width) = chars[j..].iter().position(|c| *c == ']') {
+                        let inner: String = chars[j + 1..j + width].iter().collect();
+                        let simple = !inner.is_empty()
+                            && (inner.chars().all(|c| c.is_ascii_digit()) || inner.starts_with(|c| Some(c) == lang.sigil));
+                        if simple {
+                            j += width + 1;
+                        }
+                    }
+                }
+                parts.push((false, std::mem::take(&mut text)));
+                parts.push((true, chars[i..j].iter().collect()));
+                i = j;
+                continue;
+            }
+            text.push(c);
+            i += 1;
+        }
+        parts.push((false, text));
+        if !parts.iter().any(|(code, _)| *code) {
+            self.push(Shape::Quote, s, 0, line, col);
+            return Ok(());
+        }
+        let (Some(group), Some(join)) = (lang.grouping.as_ref(), lang.concat.as_ref()) else {
+            return Err("String interpolation needs syntax.group and op.concat".to_string());
+        };
+        self.push(Shape::Sign, group.open.clone(), 0, line, col);
+        self.push(Shape::Quote, String::new(), 0, line, col);
+        for (code, part) in parts {
+            if !code && part.is_empty() {
+                continue;
+            }
+            self.push(Shape::Sign, join.clone(), 0, line, col);
+            if !code {
+                self.push(Shape::Quote, part, 0, line, col);
+                continue;
+            }
+            let mut inner = Cursor { lang, text: part.chars().collect(), at: 0, row: line, column: col, out: Vec::new() };
+            inner.run(false)?;
+            self.out.append(&mut inner.out);
+        }
+        self.push(Shape::Sign, group.close.clone(), 0, line, col);
         Ok(())
     }
 
@@ -307,39 +417,47 @@ impl<'a> Cursor<'a> {
     }
 }
 
-pub fn lex(source: &str, lang: &Lang) -> Result<Vec<Token>, String> {
-    let text = drop_comments(drop_prologue(source, lang), lang);
-    let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new() };
-    let mut at_line_start = true;
-    while cur.at < cur.text.len() {
-        if at_line_start {
-            at_line_start = cur.indentation();
+impl<'a> Cursor<'a> {
+    /// Tokens to the end of the text.
+    fn run(&mut self, mut at_line_start: bool) -> Result<(), String> {
+        let lang = self.lang;
+        while self.at < self.text.len() {
             if at_line_start {
-                continue;
+                at_line_start = self.indentation();
+                if at_line_start {
+                    continue;
+                }
+            }
+            let c = self.text[self.at];
+            if c == '\n' {
+                let (line, col) = (self.row, self.column);
+                self.step();
+                self.push(Shape::LineEnd, "\n".to_string(), 0, line, col);
+                at_line_start = true;
+            } else if c == ' ' || c == '\t' || c == '\r' {
+                self.step();
+            } else if lang.quotes.contains(&c) {
+                self.string(c)?;
+            } else if c.is_ascii_digit() {
+                self.number();
+            } else if lang.quote_for_names == Some(c) {
+                self.quoted_name(c)?;
+            } else if lang.begins_name(c) {
+                self.word(false);
+            } else if lang.sigil == Some(c) && self.look(1).map_or(false, |n| lang.begins_name(n)) {
+                self.word(true);
+            } else {
+                self.symbol()?;
             }
         }
-        let c = cur.text[cur.at];
-        if c == '\n' {
-            let (line, col) = (cur.row, cur.column);
-            cur.step();
-            cur.push(Shape::LineEnd, "\n".to_string(), 0, line, col);
-            at_line_start = true;
-        } else if c == ' ' || c == '\t' || c == '\r' {
-            cur.step();
-        } else if lang.quotes.contains(&c) {
-            cur.string(c)?;
-        } else if c.is_ascii_digit() {
-            cur.number();
-        } else if lang.quote_for_names == Some(c) {
-            cur.quoted_name(c)?;
-        } else if lang.begins_name(c) {
-            cur.word(false);
-        } else if lang.sigil == Some(c) && cur.look(1).map_or(false, |n| lang.begins_name(n)) {
-            cur.word(true);
-        } else {
-            cur.symbol()?;
-        }
+        Ok(())
     }
+}
+
+pub fn lex(source: &str, lang: &Lang) -> Result<Vec<Token>, String> {
+    let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
+    let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new() };
+    cur.run(true)?;
     let (line, col) = (cur.row, cur.column);
     cur.push(Shape::Finish, "EOF".to_string(), 0, line, col);
     Ok(cur.out)

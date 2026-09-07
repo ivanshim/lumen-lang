@@ -113,6 +113,15 @@ pub struct Lang {
     pub precision_binding: Option<String>,
     pub entry_binding: Option<String>,
     pub sort_bindings: Vec<(String, Sort)>,
+
+    /// The ext.* labels: extensions of the core, read by the full
+    /// kernels and ignored by the reference ones; absent means none.
+    pub epilogue: Vec<String>,
+    pub bare_calls: bool,
+    pub increments: Vec<String>,
+    pub decrements: Vec<String>,
+    pub interpolating: Vec<char>,
+    pub concat: Option<String>,
 }
 
 /// Every tag with its shape: w a word list, s a string, b a switch,
@@ -154,8 +163,15 @@ w system.entry | w system.kind.integer | w system.kind.rational | w system.kind.
 w system.kind.string | w system.kind.boolean | w system.kind.array | w system.kind.null
 ";
 
-fn number_shapes() -> Vec<(char, &'static str)> {
-    LABELS
+/// The extension labels a definition may add beyond the core; a
+/// missing one reads as empty (or off).
+const EXT_LABELS: &str = "
+w ext.lexical.epilogue | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
+w ext.op.decrement | w ext.lexical.interpolating_quotes
+";
+
+fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
+    table
         .split(['\n', '|'])
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -163,11 +179,25 @@ fn number_shapes() -> Vec<(char, &'static str)> {
         .collect()
 }
 
+fn number_shapes() -> Vec<(char, &'static str)> {
+    shapes_of(LABELS)
+}
+
+static ABSENT_LIST: Json = Json::Array(Vec::new());
+static ABSENT_SWITCH: Json = Json::Bool(false);
+
 struct Reader<'a>(&'a serde_json::Map<String, Json>);
 
 impl<'a> Reader<'a> {
     fn field(&self, key: &str) -> Result<&'a Json, String> {
-        self.0.get(key).ok_or_else(|| format!("missing label '{key}'"))
+        if let Some(value) = self.0.get(key) {
+            return Ok(value);
+        }
+        match shapes_of(EXT_LABELS).iter().find(|(_, tag)| *tag == key) {
+            Some(('b', _)) => Ok(&ABSENT_SWITCH),
+            Some(_) => Ok(&ABSENT_LIST),
+            None => Err(format!("missing label '{key}'")),
+        }
     }
 
     fn strings(&self, key: &str) -> Result<Vec<String>, String> {
@@ -301,9 +331,10 @@ impl Lang {
                 return Err(format!("missing label '{tag}'"));
             }
         }
+        let extensions = shapes_of(EXT_LABELS);
         let mut strange: Vec<&str> = map
             .keys()
-            .filter(|k| !k.starts_with('$') && !shapes.iter().any(|(_, l)| l == k))
+            .filter(|k| !k.starts_with('$') && !shapes.iter().chain(&extensions).any(|(_, l)| l == k))
             .map(String::as_str)
             .collect();
         strange.sort();
@@ -514,7 +545,7 @@ impl Lang {
             ("builtin.precision", Builtin::Places), ("builtin.to_string", Builtin::ToText),
             ("builtin.to_int", Builtin::ToInt), ("builtin.to_real", Builtin::AsReal), ("builtin.num", Builtin::Numer),
             ("builtin.den", Builtin::Denom), ("builtin.push", Builtin::Append), ("builtin.get", Builtin::Fetch),
-            ("builtin.put", Builtin::Replace),
+            ("builtin.put", Builtin::Replace), ("ext.builtin.echo", Builtin::Tell),
         ] {
             for lex in r.strings(tag)? {
                 let begins = lex.chars().next().map_or(false, |c| c == '_' || c.is_alphabetic());
@@ -629,7 +660,22 @@ impl Lang {
             precision_binding: precision_name,
             entry_binding: entry_name,
             sort_bindings: kind_names,
+            epilogue: r.strings("ext.lexical.epilogue")?,
+            bare_calls: r.flag("ext.syntax.call.bare")?,
+            increments: r.strings("ext.op.increment")?,
+            decrements: r.strings("ext.op.decrement")?,
+            interpolating: r.letters("ext.lexical.interpolating_quotes")?,
+            concat: r.head("op.concat")?,
         };
+        if let Some(q) = lang.interpolating.iter().find(|q| !lang.quotes.contains(q)) {
+            return Err(format!("ext.lexical.interpolating_quotes '{q}' is not among lexical.string_quotes"));
+        }
+        if !lang.interpolating.is_empty() && (lang.grouping.is_none() || lang.concat.is_none()) {
+            return Err("ext.lexical.interpolating_quotes needs syntax.group and op.concat".to_string());
+        }
+        if lang.bare_calls && lang.calling.is_none() {
+            return Err("ext.syntax.call.bare needs syntax.call".to_string());
+        }
         lang.order_lexemes()?;
         Ok(lang)
     }
@@ -659,7 +705,7 @@ impl Lang {
         let mut lists: Vec<&Vec<String>> = vec![
             &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.return_marks,
             &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open,
-            &self.quote_close,
+            &self.quote_close, &self.increments, &self.decrements,
         ];
         if self.blocks != Blocks::Indented {
             lists.push(&self.block_opens);

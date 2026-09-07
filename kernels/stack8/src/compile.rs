@@ -558,7 +558,84 @@ impl<'a> Compiler<'a> {
         if lang.blocks == Blocks::Braced && self.on_any(&lang.block_opens) {
             return self.bare_block();
         }
+        if self.bump_stmt()? {
+            return Ok(());
+        }
+        if lang.bare_calls && self.look().shape == Shape::Instr {
+            let w = self.look().lexeme.clone();
+            match lang.builtins.get(&w) {
+                Some(Builtin::Append) | Some(Builtin::Replace) | None => {}
+                Some(_) => return self.bare_call(w),
+            }
+        }
         self.assign_or_expr()
+    }
+
+    /// The increment or decrement a sign spells, if any.
+    fn bump_of(&self, tok: &Token) -> Option<Action> {
+        if tok.shape != Shape::Sign {
+            return None;
+        }
+        if self.lang.increments.iter().any(|s| *s == tok.lexeme) {
+            Some(Action::Add)
+        } else if self.lang.decrements.iter().any(|s| *s == tok.lexeme) {
+            Some(Action::Sub)
+        } else {
+            None
+        }
+    }
+
+    /// x = x + 1 (or - 1), the name left in the slot.
+    fn bump(&mut self, name: &str, op: Action) {
+        self.read(name);
+        self.constant(Value::Small(1));
+        self.act(op, 2);
+        self.write(name);
+    }
+
+    /// `++x;` or `x++;` as a statement: the value is not wanted, so
+    /// both orders come to the same thing.
+    fn bump_stmt(&mut self) -> Res<bool> {
+        let (first, second) = (self.look().clone(), self.look_ahead(1).clone());
+        if let (Some(op), Shape::Instr) = (self.bump_of(&first), second.shape) {
+            self.take();
+            self.take();
+            self.bump(&second.lexeme, op);
+            return Ok(true);
+        }
+        if let (Shape::Instr, Some(op)) = (first.shape, self.bump_of(&second)) {
+            if self.lang.keywords.contains(&first.lexeme) || self.lang.builtins.contains_key(&first.lexeme) {
+                return Ok(false);
+            }
+            self.take();
+            self.take();
+            self.bump(&first.lexeme, op);
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    /// A builtin at the head of a statement called without brackets:
+    /// its arguments, separated like call arguments, run to the end of
+    /// the statement (ext.syntax.call.bare).
+    fn bare_call(&mut self, name: String) -> Res<()> {
+        self.take();
+        let sep = self.lang.calling.as_ref().and_then(|c| c.between.clone());
+        let mut argc = 0;
+        while !self.on_sep() && !self.exhausted() {
+            self.expr(0)?;
+            argc += 1;
+            match &sep {
+                Some(s) if self.at_symbol(s) => {
+                    self.take();
+                }
+                _ => break,
+            }
+        }
+        self.call(&name, argc)?;
+        self.piece().result_touched = true;
+        self.write(RESULT_CELL);
+        Ok(())
     }
 
     /// A bare block's bindings are forgotten on leaving it.
@@ -984,6 +1061,14 @@ impl<'a> Compiler<'a> {
     fn prefix(&mut self) -> Res<()> {
         let lang = self.lang;
         let tok = self.look().clone();
+        if let (Some(op), Shape::Instr) = (self.bump_of(&tok), self.look_ahead(1).shape) {
+            // ++x: the new value.
+            self.take();
+            let name = self.take().lexeme;
+            self.bump(&name, op);
+            self.read(&name);
+            return Ok(());
+        }
         if matches!(tok.shape, Shape::Sign | Shape::Instr) {
             if let Some(infix) = lang.monadic.get(&tok.lexeme).cloned() {
                 self.take();
@@ -1033,7 +1118,14 @@ impl<'a> Compiler<'a> {
                                 self.call(&tok.lexeme, argc)?;
                             }
                         }
-                        _ => self.read(&tok.lexeme),
+                        _ => {
+                            self.read(&tok.lexeme);
+                            if let Some(op) = self.bump_of(&self.look().clone()) {
+                                // x++: the old value stays, the slot moves on.
+                                self.take();
+                                self.bump(&tok.lexeme, op);
+                            }
+                        }
                     }
                 }
             }
@@ -1442,7 +1534,7 @@ impl<'a> Compiler<'a> {
             let (argc, returns_value) = match native {
                 Builtin::Append | Builtin::Replace => return Err(format!("'{}' needs a quoted name before it", word)),
                 Builtin::External | Builtin::Span => return Err(format!("'{}' has no postfix form", word)),
-                Builtin::Echo | Builtin::Say | Builtin::Out | Builtin::Raise => (1, false),
+                Builtin::Echo | Builtin::Say | Builtin::Out | Builtin::Tell | Builtin::Raise => (1, false),
                 Builtin::CharAtIndex | Builtin::Fetch | Builtin::MakeReal => (2, true),
                 _ => (1, true),
             };

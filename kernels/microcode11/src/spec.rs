@@ -202,7 +202,7 @@ impl Spec {
             items.insert(*key, read_item(key, *shape, json)?);
         }
         let mut unknown: Vec<&str> =
-            map.keys().map(String::as_str).filter(|k| !k.starts_with('$') && SCHEMA.iter().all(|(l, _)| l != k)).collect();
+            map.keys().map(String::as_str).filter(|k| !k.starts_with('$') && !k.starts_with("ext.") && SCHEMA.iter().all(|(l, _)| l != k)).collect();
         unknown.sort();
         if !unknown.is_empty() {
             return Err(format!("unknown label(s): {}", unknown.join(", ")));

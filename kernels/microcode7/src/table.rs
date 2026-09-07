@@ -75,19 +75,47 @@ system.kind.integer:L system.kind.rational:L system.kind.real:L system.kind.stri
 system.kind.array:L system.kind.null:L \
 ";
 
+/// Extension labels beyond the core: optional, an absent one is empty
+/// (or off). The reference kernels skip them; this one reads them.
+const EXT_TAGS: &str = "\
+ext.lexical.epilogue:L ext.builtin.echo:L ext.syntax.call.bare:B ext.op.increment:L ext.op.decrement:L \
+ext.lexical.interpolating_quotes:L \
+";
+
+fn tag_shapes(table: &'static str) -> Vec<(&'static str, char)> {
+    table.split_whitespace().map(|e| {
+        let (k, s) = e.rsplit_once(':').unwrap();
+        (k, s.chars().next().unwrap())
+    }).collect()
+}
+
+fn cell_of(key: &str, shape: char, json: &Json) -> Result<Entry, String> {
+    Ok(match (shape, json) {
+        ('L', j) => Entry::Strings(strings_at(key, j)?),
+        ('B', Json::Bool(b)) => Entry::Flag(*b),
+        ('N', Json::Null) => Entry::Count(None),
+        ('N', Json::Number(n)) if n.as_u64().is_some() => Entry::Count(n.as_u64().map(|n| n as usize)),
+        ('W', Json::String(s)) if !s.is_empty() => Entry::One(Some(s.clone())),
+        ('O', Json::Null) => Entry::One(None),
+        ('O', Json::String(s)) if !s.is_empty() => Entry::One(Some(s.clone())),
+        ('T', Json::Array(tiers)) => Entry::Tiers(tiers.iter().map(|t| strings_at(key, t)).collect::<Result<_, _>>()?),
+        _ => return Err(format!("label '{key}' has the wrong shape")),
+    })
+}
+
 const MUST_BE_EMPTY: [&str; 8] = [
     "syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close",
     "stmt.foreach", "stmt.foreach.as", "stmt.foreach.pair", "stmt.emit",
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 21] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 22] = [
     ("builtin.emit", Prim::Echo), ("builtin.print", Prim::Say), ("builtin.write", Prim::Out), ("builtin.len", Prim::Length),
     ("builtin.char_at", Prim::CharAtIndex), ("builtin.ord", Prim::CodeOf), ("builtin.chr", Prim::CharOf), ("builtin.typeof", Prim::SortOf),
     ("builtin.error", Prim::Raise), ("builtin.extern", Prim::External), ("builtin.range", Prim::Span), ("builtin.real", Prim::MakeReal),
     ("builtin.precision", Prim::Places), ("builtin.to_string", Prim::AsText), ("builtin.to_int", Prim::AsInt),
     ("builtin.to_real", Prim::AsReal), ("builtin.num", Prim::Numer), ("builtin.den", Prim::Denom), ("builtin.push", Prim::Append),
-    ("builtin.get", Prim::Fetch), ("builtin.put", Prim::Replace),
+    ("builtin.get", Prim::Fetch), ("builtin.put", Prim::Replace), ("ext.builtin.echo", Prim::Tell),
 ];
 
 const BINARY_LABELS: [(&str, Prim); 16] = [
@@ -125,24 +153,19 @@ impl Table {
     pub fn parse(text: &str) -> Result<Table, String> {
         let map = top_object(text)?;
         let mut cells = HashMap::new();
-        let known: Vec<(&'static str, char)> = TAGS.split_whitespace().map(|e| {
-            let (k, s) = e.rsplit_once(':').unwrap();
-            (k, s.chars().next().unwrap())
-        }).collect();
+        let mut known = tag_shapes(TAGS);
         for (key, shape) in &known {
             let json = map.get(*key).ok_or_else(|| format!("missing label '{key}'"))?;
-            let cell = match (shape, json) {
-                ('L', j) => Entry::Strings(strings_at(key, j)?),
-                ('B', Json::Bool(b)) => Entry::Flag(*b),
-                ('N', Json::Null) => Entry::Count(None),
-                ('N', Json::Number(n)) if n.as_u64().is_some() => Entry::Count(n.as_u64().map(|n| n as usize)),
-                ('W', Json::String(s)) if !s.is_empty() => Entry::One(Some(s.clone())),
-                ('O', Json::Null) => Entry::One(None),
-                ('O', Json::String(s)) if !s.is_empty() => Entry::One(Some(s.clone())),
-                ('T', Json::Array(tiers)) => Entry::Tiers(tiers.iter().map(|t| strings_at(key, t)).collect::<Result<_, _>>()?),
-                _ => return Err(format!("label '{key}' has the wrong shape")),
+            cells.insert(*key, cell_of(key, *shape, json)?);
+        }
+        for (key, shape) in tag_shapes(EXT_TAGS) {
+            let cell = match map.get(key) {
+                Some(json) => cell_of(key, shape, json)?,
+                None if shape == 'B' => Entry::Flag(false),
+                None => Entry::Strings(Vec::new()),
             };
-            cells.insert(*key, cell);
+            cells.insert(key, cell);
+            known.push((key, shape));
         }
         let mut strange: Vec<&str> = map.keys().map(String::as_str).filter(|k| !k.starts_with('$') && !known.iter().any(|(l, _)| l == k)).collect();
         strange.sort();
@@ -260,6 +283,16 @@ impl Table {
             if let Some(w) = self.strings(key).iter().find(|w| w.chars().count() != 1) {
                 return Err(format!("label '{key}' takes single characters, got '{w}'"));
             }
+        }
+        let woven = self.strings("ext.lexical.interpolating_quotes");
+        if let Some(q) = woven.iter().find(|q| !self.spells("lexical.string_quotes", q)) {
+            return Err(format!("ext.lexical.interpolating_quotes '{q}' is not among lexical.string_quotes"));
+        }
+        if !woven.is_empty() && (!self.has_any("syntax.group.open") || !self.has_any("op.concat")) {
+            return Err("ext.lexical.interpolating_quotes needs syntax.group and op.concat".to_string());
+        }
+        if self.flag("ext.syntax.call.bare") && !self.has_any("syntax.call.open") {
+            return Err("ext.syntax.call.bare needs syntax.call".to_string());
         }
         if self.strings("lexical.comment_block.open").len() != self.strings("lexical.comment_block.close").len() {
             return Err("lexical.comment_block.open and .close must pair up position by position".to_string());
@@ -411,7 +444,8 @@ impl Table {
             "block.intro", "stmt.assign", "stmt.terminator", "stmt.let.annotation", "stmt.function.returns", "stack.dup", "stack.drop",
             "stack.swap", "stack.over", "stack.rot", "stack.eval", "stack.program.open", "stack.program.close", "stmt.let",
             "stmt.let.mutable", "stmt.if", "stmt.elif", "stmt.else", "stmt.while", "stmt.until", "stmt.for", "stmt.for.in",
-            "stmt.return", "stmt.break", "stmt.continue", "stmt.function", "stmt.pass", "literal.true", "literal.false", "literal.null"];
+            "stmt.return", "stmt.break", "stmt.continue", "stmt.function", "stmt.pass", "literal.true", "literal.false", "literal.null",
+            "ext.op.increment", "ext.op.decrement"];
         for key in symbol_labels {
             all.extend(self.strings(key).iter().cloned());
         }

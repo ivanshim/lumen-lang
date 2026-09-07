@@ -34,6 +34,10 @@ fn drop_comments(source: &str, table: &Table) -> String {
             text = &text[lead + p.len()..];
         }
     }
+    // A closing marker at the very end (ext.lexical.epilogue).
+    if let Some(cut) = table.strings("ext.lexical.epilogue").iter().find_map(|e| text.trim_end().strip_suffix(e.as_str())) {
+        text = cut;
+    }
     let lines = table.strings("lexical.comment_line");
     let opens = table.strings("lexical.comment_block.open");
     let closes = table.strings("lexical.comment_block.close");
@@ -78,6 +82,7 @@ pub fn scan(source: &str, table: &Table) -> Result<Vec<Token>, String> {
     let src: Vec<char> = text.chars().collect();
     let quotes = table.letters("lexical.string_quotes");
     let raw = table.letters("lexical.raw_quotes");
+    let weaving = table.letters("ext.lexical.interpolating_quotes");
     let escapes = table.letters("lexical.string_escapes");
     let point = table.letter("lexical.number.decimal_point");
     let base = table.letter("lexical.number.base_marker");
@@ -129,11 +134,20 @@ pub fn scan(source: &str, table: &Table) -> Result<Vec<Token>, String> {
         }
         if quotes.contains(&c) {
             let is_raw = raw.contains(&c);
+            let woven = weaving.contains(&c);
+            // Positions in s that were escaped, so never open a variable.
+            let mut plain: Vec<usize> = Vec::new();
             let (mut s, mut k, mut closed) = (String::new(), pos + 1, false);
             while k < src.len() {
                 let d = src[k];
                 if d == '\\' && k + 1 < src.len() {
                     let e = src[k + 1];
+                    if woven && Some(e) == prefix {
+                        plain.push(s.chars().count());
+                        s.push(e);
+                        k += 2;
+                        continue;
+                    }
                     if e == '\\' || e == c || (!is_raw && escapes.contains(&e)) {
                         s.push(match e {
                             'n' => '\n',
@@ -162,7 +176,11 @@ pub fn scan(source: &str, table: &Table) -> Result<Vec<Token>, String> {
             if !closed {
                 return Err(format!("Unterminated {} string", c));
             }
-            tokens.push(tok(Shape::Quote, s, row));
+            if woven {
+                weave(&s, &plain, table, row, &mut tokens)?;
+            } else {
+                tokens.push(tok(Shape::Quote, s, row));
+            }
             pos = k;
             continue;
         }
@@ -255,4 +273,98 @@ pub fn scan(source: &str, table: &Table) -> Result<Vec<Token>, String> {
     }
     tokens.push(tok(Shape::Finish, "EOF".into(), row));
     Ok(tokens)
+}
+
+/// One piece of an interpolating string: literal text, or code to scan.
+enum Piece {
+    Text(String),
+    Code(String),
+}
+
+/// Cut a string with values woven in (ext.lexical.interpolating_quotes)
+/// into pieces: `$name`, `$name[i]` with a plain index, and `{$expr}`
+/// are code, the rest text. Char positions listed in `plain` are text.
+fn pieces(s: &str, plain: &[usize], table: &Table) -> Vec<Piece> {
+    let sigil = table.letter("identifier.variable_prefix");
+    let cs: Vec<char> = s.chars().collect();
+    let variable_at = |at: usize| {
+        cs.get(at).copied() == sigil && !plain.contains(&at) && cs.get(at + 1).map_or(false, |n| table.begins_name(*n))
+    };
+    let mut out = Vec::new();
+    let mut text = String::new();
+    let mut at = 0;
+    while at < cs.len() {
+        // {$expr}: up to the brace that balances the opener.
+        if cs[at] == '{' && variable_at(at + 1) {
+            let mut depth = 0i32;
+            let close = cs[at..].iter().position(|c| {
+                depth += match c { '{' => 1, '}' => -1, _ => 0 };
+                depth == 0
+            });
+            if let Some(len) = close {
+                out.push(Piece::Text(std::mem::take(&mut text)));
+                out.push(Piece::Code(cs[at + 1..at + len].iter().collect()));
+                at += len + 1;
+                continue;
+            }
+        }
+        if variable_at(at) {
+            let mut end = at + 1;
+            while end < cs.len() && table.extends_name(cs[end]) {
+                end += 1;
+            }
+            if cs.get(end) == Some(&'[') {
+                let inside: String = cs[end + 1..].iter().take_while(|c| **c != ']').collect();
+                let closed = cs.get(end + 1 + inside.chars().count()) == Some(&']');
+                let plain_index = !inside.is_empty() && (inside.chars().all(|c| c.is_ascii_digit()) || inside.starts_with(|c| Some(c) == sigil));
+                if closed && plain_index {
+                    end += inside.chars().count() + 2;
+                }
+            }
+            out.push(Piece::Text(std::mem::take(&mut text)));
+            out.push(Piece::Code(cs[at..end].iter().collect()));
+            at = end;
+            continue;
+        }
+        text.push(cs[at]);
+        at += 1;
+    }
+    out.push(Piece::Text(text));
+    out
+}
+
+/// The tokens of a woven string: a bracketed concatenation starting
+/// from the empty string, so the result is text whatever is woven in.
+fn weave(s: &str, plain: &[usize], table: &Table, row: u32, tokens: &mut Vec<Token>) -> Result<(), String> {
+    let cut = pieces(s, plain, table);
+    let sign = |text: &str| Token { shape: Shape::Sign, lexeme: text.to_string(), span: 0, row };
+    let quote = |text: String| Token { shape: Shape::Quote, lexeme: text, span: 0, row };
+    if !cut.iter().any(|p| matches!(p, Piece::Code(_))) {
+        tokens.push(quote(s.to_string()));
+        return Ok(());
+    }
+    let (Some(open), Some(close), Some(join)) = (table.single("syntax.group.open"), table.single("syntax.group.close"), table.single("op.concat")) else {
+        return Err("String interpolation needs syntax.group and op.concat".to_string());
+    };
+    tokens.push(sign(open));
+    tokens.push(quote(String::new()));
+    for piece in cut {
+        match piece {
+            Piece::Text(t) if t.is_empty() => {}
+            Piece::Text(t) => {
+                tokens.push(sign(join));
+                tokens.push(quote(t));
+            }
+            Piece::Code(code) => {
+                tokens.push(sign(join));
+                let inner = scan(&code, table)?;
+                tokens.extend(inner.into_iter().filter(|t| !matches!(t.shape, Shape::Lead | Shape::Finish)).map(|mut t| {
+                    t.row = row;
+                    t
+                }));
+            }
+        }
+    }
+    tokens.push(sign(close));
+    Ok(())
 }

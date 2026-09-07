@@ -117,6 +117,18 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   `foreach`, `class` or `=>`; Python's spells 17 of 35 and no `class`,
   `import`, `try`, `lambda` or `{`. The report ranks the reasons and the
   functions the suites call most, `var_dump` and `assertEqual` first.
+- **Extension labels**: a definition may add `ext.` labels for what its
+  language has beyond the 132 core labels. The full kernels, stack8 and
+  microcode7, read them; the four reference kernels skip every `ext.`
+  key. The first six, for PHP: `ext.lexical.epilogue` (`?>`),
+  `ext.builtin.echo`, `ext.syntax.call.bare` (`echo "a", "b";`,
+  `print "x";`), `ext.op.increment` and `ext.op.decrement` (`++`, `--`,
+  prefix and postfix, statement and expression) and
+  `ext.lexical.interpolating_quotes` (`"$name"`, `"$a[0]"`, `"{$expr}"`,
+  scanned into a bracketed concatenation). `scripts/reference_tests.py`
+  runs both full kernels and scores each suite directory on each; the
+  PHP suites go from 0 to 18 passing (11 of `tests/php/lang`), the same
+  on both kernels.
 - **Notation and block style are separate labels; RPLumen is indented**:
   a new label `syntax.notation` (`infix` or `postfix`) says how a
   language is read, and `block.style` is free to be `indentation`,

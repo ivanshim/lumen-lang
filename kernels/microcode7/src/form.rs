@@ -35,6 +35,8 @@ pub enum Prim {
     Echo,
     Say,
     Out,
+    /// Each argument's text in turn, nothing between, no line end.
+    Tell,
     MakeReal,
     Places,
     AsText,

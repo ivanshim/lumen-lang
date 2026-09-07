@@ -69,6 +69,8 @@ pub enum Builtin {
     Echo,
     Say,
     Out,
+    /// Every argument's text, run together, no line end (ext.builtin.echo).
+    Tell,
     MakeReal,
     Places,
     ToText,
