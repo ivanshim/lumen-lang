@@ -38,27 +38,36 @@ pub fn language_of(definition: &str) -> Result<String, String> {
     table::identify(definition).map(|(n, _)| n)
 }
 
-pub fn run(language: &str, source: &str, program_args: &[String]) -> Result<(), String> {
+pub fn run(language: &str, source: &str, program_args: &[String], request: &[(String, String, String)]) -> Result<(), String> {
     for text in EMBEDDED {
         if table::identify(text)?.0 == language {
-            return run_definition(text, source, program_args);
+            return run_definition(text, source, program_args, request);
         }
     }
     Err(format!("Error: Unknown language '{}'", language))
 }
 
-pub fn run_definition(definition: &str, source: &str, program_args: &[String]) -> Result<(), String> {
+pub fn run_definition(definition: &str, source: &str, program_args: &[String], request: &[(String, String, String)]) -> Result<(), String> {
     let table = Table::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
     let prefix = table.banner();
-    go(&table, source, program_args).map_err(|e| format!("{}: {}", prefix, e))
+    go(&table, source, program_args, request).map_err(|e| format!("{}: {}", prefix, e))
 }
 
-fn go(table: &Table, source: &str, program_args: &[String]) -> Result<(), String> {
+/// Which group of the request each label names, and the one that holds
+/// what the query, the form and the cookies carry together.
+const REQUEST_PARTS: [(&str, &str); 7] = [
+    ("GET", "ext.system.request.query"), ("POST", "ext.system.request.form"), ("COOKIE", "ext.system.request.cookies"),
+    ("SERVER", "ext.system.request.server"), ("ENV", "ext.system.request.env"), ("FILES", "ext.system.request.files"),
+    ("ALL", "ext.system.request.all"),
+];
+
+fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, String, String)]) -> Result<(), String> {
     let tokens = scan::scan(source, table)?;
     let tokens = indent::indent(tokens, table)?;
     let system = ["system.args", "system.memoization", "system.real_default_precision", "system.entry", "system.kind.integer",
         "system.kind.rational", "system.kind.real", "system.kind.string", "system.kind.boolean", "system.kind.array", "system.kind.null"];
-    let seeded: Vec<String> = system.iter().filter_map(|k| table.single(k).map(str::to_string)).collect();
+    let mut seeded: Vec<String> = system.iter().filter_map(|k| table.single(k).map(str::to_string)).collect();
+    seeded.extend(REQUEST_PARTS.iter().filter_map(|(_, key)| table.single(key).map(str::to_string)));
     let reduced = if !table.rpn {
         build::build(&tokens, table, &seeded, HashMap::new(), true)?
     } else {
@@ -79,6 +88,21 @@ fn go(table: &Table, source: &str, program_args: &[String]) -> Result<(), String
     let mut machine = exec::Machine::new(table, reduced.globals.clone());
     if let Some(n) = table.single("system.args") {
         machine.define(n, Value::text(&program_args.join(" ")));
+    }
+    // What the request carries, each group a map under the name the
+    // definition gives it.
+    for (group, key) in REQUEST_PARTS {
+        let Some(name) = table.single(key) else { continue };
+        let wanted: Vec<&str> = if group == "ALL" { vec!["GET", "POST", "COOKIE"] } else { vec![group] };
+        let mut carried: Vec<(Value, Value)> = Vec::new();
+        for (_, field, value) in request.iter().filter(|(from, _, _)| wanted.contains(&from.as_str())) {
+            let field = Value::text(field);
+            match carried.iter_mut().find(|(k, _)| k.equals(&field)) {
+                Some(place) => place.1 = Value::text(value),
+                None => carried.push((field, Value::text(value))),
+            }
+        }
+        machine.define(name, Value::Dict(std::rc::Rc::new(carried)));
     }
     for (key, sort) in [("system.kind.integer", Kind::Whole), ("system.kind.rational", Kind::Fraction), ("system.kind.real", Kind::Decimal),
         ("system.kind.string", Kind::Chars), ("system.kind.boolean", Kind::Truth), ("system.kind.array", Kind::Vector), ("system.kind.null", Kind::Nothing)] {

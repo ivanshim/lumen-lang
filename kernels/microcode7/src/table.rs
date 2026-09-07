@@ -42,6 +42,8 @@ pub struct Table {
     pub prims: HashMap<String, Prim>,
     /// `x op= e` for each binary operator (ext.op.assign.compound).
     pub compound: HashMap<String, Prim>,
+    /// The labels the definition wrote out, empty ones included.
+    given: HashSet<String>,
     pub keywords: HashSet<String>,
     pub signs: Vec<String>,
 }
@@ -56,7 +58,7 @@ block.open:L block.close:L block.intro:L block.indent_size:N stmt.terminator:L \
 syntax.notation:W syntax.group.open:L syntax.group.close:L syntax.call.open:L syntax.call.separator:L \
 syntax.call.close:L syntax.call.label:L syntax.array.open:L syntax.array.separator:L syntax.array.close:L \
 syntax.map.open:L syntax.map.separator:L syntax.map.pair:L syntax.map.close:L literal.true:L \
-literal.false:L literal.null:L op.precedence:T op.right_associative:L op.add:L \
+literal.false:L literal.null:L literal.null.silent:B op.precedence:T op.right_associative:L op.add:L \
 op.sub:L op.mul:L op.div:L op.div.result:O op.quot:L \
 op.rem:L op.pow:L op.eq:L op.ne:L op.lt:L \
 op.le:L op.gt:L op.ge:L op.and:L op.or:L \
@@ -85,7 +87,12 @@ ext.lexical.interpolating_quotes:L ext.stmt.for.c:L ext.op.assign.compound:B ext
 ext.stmt.const:L ext.builtin.define:L ext.builtin.var_dump:L ext.stmt.switch:L ext.stmt.case:L \
 ext.stmt.default:L ext.stmt.case.mark:L ext.op.ternary:L ext.block.lone_statement:B ext.stmt.function.hoisted:B \
 ext.lexical.number.exponent:L ext.op.plus:L ext.stmt.break.levels:B ext.builtin.array:L ext.op.index.append:B ext.stmt.for.collection:B ext.builtin.print_r:L \
-ext.stmt.function.returns:L \
+ext.stmt.function.returns:L ext.stmt.class:L ext.stmt.class.extends:L ext.stmt.class.new:L ext.stmt.class.this:L \
+ext.stmt.class.constructor:L ext.stmt.class.modifier:L ext.stmt.class.shared:L ext.op.member:L ext.op.scope:L \
+ext.op.instanceof:L ext.stmt.class.parent:L ext.stmt.class.self:L ext.lexical.name_lead:L ext.stmt.try:L \
+ext.stmt.catch:L ext.stmt.finally:L ext.stmt.throw:L ext.stmt.catch.separator:L ext.op.reference:L \
+ext.system.request.query:L ext.system.request.form:L ext.system.request.cookies:L ext.system.request.server:L \
+ext.system.request.env:L ext.system.request.files:L ext.system.request.all:L ext.op.index.absent:B \
 ";
 
 fn tag_shapes(table: &'static str) -> Vec<(&'static str, char)> {
@@ -192,6 +199,7 @@ impl Table {
             precedence: HashMap::new(),
             prims: HashMap::new(),
             compound: HashMap::new(),
+            given: map.keys().cloned().collect(),
             keywords: HashSet::new(),
             signs: Vec::new(),
         };
@@ -210,6 +218,12 @@ impl Table {
 
     pub fn single(&self, key: &str) -> Option<&str> {
         self.strings(key).first().map(String::as_str)
+    }
+
+    /// Whether the definition gave this label at all, even empty: an
+    /// empty list can still say something.
+    pub fn cell_present(&self, key: &str) -> bool {
+        self.given.contains(key)
     }
 
     pub fn has_any(&self, key: &str) -> bool {
@@ -437,6 +451,9 @@ impl Table {
         if self.has_any("ext.stmt.switch") && (!self.has_any("ext.stmt.case") || !self.has_any("ext.stmt.case.mark")) {
             return Err("ext.stmt.switch needs ext.stmt.case and ext.stmt.case.mark".to_string());
         }
+        if self.has_any("ext.stmt.class") && (!self.has_any("ext.op.member") || !self.has_any("ext.stmt.class.new")) {
+            return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
+        }
         if self.has_any("stmt.foreach") && !self.has_any("stmt.foreach.as") {
             return Err("stmt.foreach needs stmt.foreach.as".to_string());
         }
@@ -481,7 +498,10 @@ impl Table {
             "ext.op.increment", "ext.op.decrement", "ext.stmt.case.mark", "ext.op.ternary", "ext.stmt.for.c", "ext.stmt.static",
             "ext.stmt.global", "ext.stmt.const", "ext.stmt.switch", "ext.stmt.case", "ext.stmt.default", "ext.op.plus",
             "syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close", "stmt.foreach", "stmt.foreach.as",
-            "ext.stmt.function.returns"];
+            "ext.stmt.function.returns", "ext.op.member", "ext.op.scope", "ext.stmt.class", "ext.stmt.class.extends",
+            "ext.stmt.class.new", "ext.stmt.class.modifier", "ext.stmt.class.shared", "ext.op.instanceof",
+            "ext.stmt.class.parent", "ext.stmt.class.self", "ext.stmt.try", "ext.stmt.catch", "ext.stmt.finally",
+            "ext.stmt.throw", "ext.stmt.catch.separator", "ext.op.reference"];
         for key in symbol_labels {
             all.extend(self.strings(key).iter().cloned());
         }

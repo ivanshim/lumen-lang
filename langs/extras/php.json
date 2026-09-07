@@ -99,6 +99,7 @@
   "literal.null": [
     "null"
   ],
+  "literal.null.silent": true,
   "op.precedence": [
     [
       "or"
@@ -321,13 +322,25 @@
   "system.memoization": [],
   "system.real_default_precision": [],
   "system.entry": [],
-  "system.kind.integer": [],
+  "system.kind.integer": [
+    "integer"
+  ],
   "system.kind.rational": [],
-  "system.kind.real": [],
-  "system.kind.string": [],
-  "system.kind.boolean": [],
-  "system.kind.array": [],
-  "system.kind.null": [],
+  "system.kind.real": [
+    "double"
+  ],
+  "system.kind.string": [
+    "string"
+  ],
+  "system.kind.boolean": [
+    "boolean"
+  ],
+  "system.kind.array": [
+    "array"
+  ],
+  "system.kind.null": [
+    "NULL"
+  ],
   "ext.lexical.epilogue": [
     "?>"
   ],
@@ -398,5 +411,90 @@
   ],
   "ext.stmt.function.returns": [
     ":"
-  ]
+  ],
+  "ext.stmt.class": [
+    "class"
+  ],
+  "ext.stmt.class.extends": [
+    "extends"
+  ],
+  "ext.stmt.class.new": [
+    "new"
+  ],
+  "ext.stmt.class.this": [
+    "$this"
+  ],
+  "ext.stmt.class.constructor": [
+    "__construct"
+  ],
+  "ext.stmt.class.modifier": [
+    "public",
+    "private",
+    "protected",
+    "final",
+    "abstract",
+    "readonly",
+    "var"
+  ],
+  "ext.stmt.class.shared": [
+    "static"
+  ],
+  "ext.op.member": [
+    "->"
+  ],
+  "ext.op.scope": [
+    "::"
+  ],
+  "ext.op.instanceof": [
+    "instanceof"
+  ],
+  "ext.stmt.class.parent": [
+    "parent"
+  ],
+  "ext.stmt.class.self": [
+    "self"
+  ],
+  "ext.lexical.name_lead": [
+    "\\"
+  ],
+  "ext.stmt.try": [
+    "try"
+  ],
+  "ext.stmt.catch": [
+    "catch"
+  ],
+  "ext.stmt.finally": [
+    "finally"
+  ],
+  "ext.stmt.throw": [
+    "throw"
+  ],
+  "ext.stmt.catch.separator": [
+    "|"
+  ],
+  "ext.op.reference": [
+    "&"
+  ],
+  "ext.system.request.query": [
+    "$_GET"
+  ],
+  "ext.system.request.form": [
+    "$_POST"
+  ],
+  "ext.system.request.cookies": [
+    "$_COOKIE"
+  ],
+  "ext.system.request.server": [
+    "$_SERVER"
+  ],
+  "ext.system.request.env": [
+    "$_ENV"
+  ],
+  "ext.system.request.files": [
+    "$_FILES"
+  ],
+  "ext.system.request.all": [
+    "$_REQUEST"
+  ],
+  "ext.op.index.absent": true
 }

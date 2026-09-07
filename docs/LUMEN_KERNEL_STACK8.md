@@ -92,7 +92,7 @@ program under `examples/`; all 498 print the same. microcode7 is the same
 promotion on the tree.
 
 Being a full kernel, it also reads the `ext.` labels a definition may add
-beyond the 132 core labels (see `langs/README.md`): an epilogue marker,
+beyond the 133 core labels (see `langs/README.md`): an epilogue marker,
 `echo`, bracketless builtin calls, `++`/`--`, interpolating strings
 (which the scanner turns into a bracketed concatenation before the
 compiler sees them), the three-part `for` (its test at the bottom like a
@@ -105,6 +105,15 @@ time), `var_dump`, compound assignment, `break n`, hoisted top-level
 functions (their instrs lifted to the front of the unit) and exponent
 literals. The reference kernels skip those labels, so the reference
 suites under `tests/` run on this kernel and microcode7 only.
+
+Classes are values here too: a class declaration forges one from a plan
+the compiler builds and binds it to its name, so `new C` and `C::X` are
+reads. Methods are ordinary programs whose first parameter is the object.
+A raised value travels as a fault the run loop catches: `Guard` marks
+where a catch stands and how deep the stack was, `Unguard` takes the mark
+away, and an `Act` that raises unwinds to the nearest guard. A last part
+is written twice, once for each way out, and a return inside a try writes
+its value aside, runs the last parts, and only then leaves.
 
 It also holds a map, which the reference kernels do not: `Value::Map`, an
 ordered list of keys with their values, beside the plain array. A literal

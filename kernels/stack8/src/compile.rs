@@ -32,7 +32,7 @@ use crate::lang::{Lang, Brackets, Blocks};
 use crate::arith;
 use crate::lex::{Shape, Token};
 use crate::value::Value;
-use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr};
+use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr, Plan};
 
 /// The global names, each with a slot.
 #[derive(Default)]
@@ -71,6 +71,9 @@ struct Piece {
     /// Names a `global` statement bound to the global of that name, and
     /// names a `static` statement bound to a hidden global.
     globals: Vec<(String, String)>,
+    /// Where the last parts of the open try statements begin: each runs
+    /// before a return, a break or a continue leaves them.
+    lasts: Vec<usize>,
     cycles: Vec<Cycle>,
     escapes: Vec<usize>,
     /// Whether an expression statement stored into the result slot; a
@@ -86,6 +89,12 @@ pub struct Compiler<'a> {
     registry: &'a mut Registry,
     pieces: Vec<Piece>,
     counter: usize,
+    /// The class being read, and what it stands on: what `self` and
+    /// `parent` mean inside a method.
+    within: Option<(String, Option<String>)>,
+    /// Which parameters of each program take a name's own cell rather
+    /// than a copy of what it holds, found before anything is read.
+    shared_args: HashMap<String, Vec<bool>>,
 }
 
 type Res<T> = Result<T, String>;
@@ -113,12 +122,14 @@ pub fn compile(tokens: &[Token], lang: &Lang, table: &mut Registry) -> Res<Rc<Ro
         declared: Vec::new(),
         scopes: Vec::new(),
         globals: Vec::new(),
+        lasts: Vec::new(),
         cycles: Vec::new(),
         escapes: Vec::new(),
         result_touched: false,
         instrs: Vec::new(),
     };
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0 };
+    let shared_args = shared_parameters(tokens, lang);
+    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args };
     if lang.rpn {
         a.rpn_body(&[], Span::Block)?;
         if !a.exhausted() {
@@ -155,7 +166,7 @@ pub fn compile(tokens: &[Token], lang: &Lang, table: &mut Registry) -> Res<Rc<Ro
         a.piece().instrs[at] = Instr::Skip(end);
     }
     let unit = a.pieces.pop().expect("the top unit");
-    Ok(Rc::new(Routine { ident: unit.ident, formals: Vec::new(), idents: unit.idents, returns_value: false, instrs: peephole(unit.instrs) }))
+    Ok(Rc::new(Routine { ident: unit.ident, formals: Vec::new(), least: 0, idents: unit.idents, returns_value: false, instrs: peephole(unit.instrs) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -489,7 +500,7 @@ impl<'a> Compiler<'a> {
     /// A program assembled in its own unit. A function keeps a result
     /// slot: null at first, each expression statement's value after, and
     /// its value is left on the stack at the end.
-    fn routine(&mut self, name: &str, formals: Vec<String>, returns_value: bool, body: impl FnOnce(&mut Self) -> Res<()>) -> Res<Rc<Routine>> {
+    fn routine(&mut self, name: &str, formals: Vec<String>, least: usize, returns_value: bool, body: impl FnOnce(&mut Self) -> Res<()>) -> Res<Rc<Routine>> {
         self.pieces.push(Piece {
             outermost: false,
             ident: name.to_string(),
@@ -497,6 +508,7 @@ impl<'a> Compiler<'a> {
             declared: vec![false; formals.len()],
             scopes: Vec::new(),
             globals: Vec::new(),
+            lasts: Vec::new(),
             cycles: Vec::new(),
             escapes: Vec::new(),
             result_touched: false,
@@ -520,7 +532,7 @@ impl<'a> Compiler<'a> {
         }
         let unit = self.pieces.pop().expect("the unit");
         let instrs = if returns_value && !used { relocated(unit.instrs.into_iter().skip(2).collect(), -2) } else { unit.instrs };
-        Ok(Rc::new(Routine { ident: unit.ident, formals, idents: unit.idents, returns_value, instrs: peephole(instrs) }))
+        Ok(Rc::new(Routine { ident: unit.ident, formals, least, idents: unit.idents, returns_value, instrs: peephole(instrs) }))
     }
 
     // ---------- statements ----------
@@ -601,20 +613,35 @@ impl<'a> Compiler<'a> {
             if Lang::spells(&lang.break_words, &w) {
                 self.take();
                 let levels = self.levels()?;
+                self.leaving_lasts()?;
                 return self.leave(levels);
             }
             if Lang::spells(&lang.continue_words, &w) {
                 self.take();
                 let levels = self.levels()?;
+                self.leaving_lasts()?;
                 return self.resume(levels);
             }
             if Lang::spells(&lang.function_words, &w) {
                 self.take();
+                self.skip_reference();
                 let name = self.want_name("after the function keyword")?;
                 return self.function(name);
             }
             if Lang::spells(&lang.pass_words, &w) {
                 self.take();
+                return Ok(());
+            }
+            if Lang::spells(&lang.class_words, &w) {
+                return self.class_decl();
+            }
+            if Lang::spells(&lang.try_words, &w) {
+                return self.attempt();
+            }
+            if Lang::spells(&lang.throw_words, &w) {
+                self.take();
+                self.expr(0)?;
+                self.act(Action::Hurl, 1);
                 return Ok(());
             }
             if Lang::spells(&lang.foreach_words, &w) {
@@ -1260,18 +1287,286 @@ impl<'a> Compiler<'a> {
         } else {
             self.expr(0)?;
         }
+        // The value is worked out first, then the last parts of any open
+        // try statements run, and only then does the program leave.
+        let value = self.gensym("returned");
+        let held = !self.piece().lasts.is_empty();
+        if held {
+            self.write(&value);
+        }
+        self.leaving_lasts()?;
+        if held {
+            self.read(&value);
+        }
         self.escape();
         Ok(())
     }
 
     /// From the parameter list on: `( formals ) [returns type] block`,
     /// with declarations before the body where the language has them.
-    fn function(&mut self, name: String) -> Res<()> {
+    /// `try { } catch (A | B $e) { } finally { }`: the body runs under a
+    /// guard, and a value raised inside it arrives on the stack where the
+    /// guard points. Each clause says which classes it takes; what no
+    /// clause takes is raised again. The last part, if there is one, runs
+    /// on both ways out, so it is written twice.
+    fn attempt(&mut self) -> Res<()> {
+        let lang = self.lang;
+        self.take();
+        // Where the last part begins, found before the body is read, so
+        // that a return inside the body can run it first.
+        let last = self.last_part_ahead();
+        let guard = self.put(Instr::Guard(0));
+        if let Some(at) = last {
+            self.piece().lasts.push(at);
+        }
+        self.body()?;
+        self.put(Instr::Unguard);
+        let mut done = vec![self.leap()];
+        let here = self.mark();
+        self.piece().instrs[guard] = Instr::Guard(here);
+        let group = lang.grouping.clone().ok_or_else(|| "A catch needs syntax.group".to_string())?;
+        let mut clauses = 0;
+        while self.on_keyword(&lang.catch_words) {
+            self.take();
+            self.want_sign(&group.open, "after catch")?;
+            let mut classes = vec![self.want_name("as the class caught")?];
+            while lang.catch_between.as_ref().map_or(false, |s| self.at_symbol(s)) {
+                self.take();
+                classes.push(self.want_name("as another class caught")?);
+            }
+            let held = match self.look().shape {
+                Shape::Instr => Some(self.take().lexeme),
+                _ => None,
+            };
+            self.want_sign(&group.close, "after the class caught")?;
+            self.act(Action::Twin, 1);
+            self.act(Action::Matches(Rc::new(classes)), 1);
+            let past = self.skip();
+            match held {
+                Some(name) => self.write(&name),
+                None => self.discard(),
+            }
+            self.body()?;
+            done.push(self.leap());
+            self.land(past);
+            clauses += 1;
+        }
+        if last.is_some() {
+            self.piece().lasts.pop();
+        }
+        if clauses == 0 && last.is_none() {
+            return Err("A try needs a catch or a last part".to_string());
+        }
+        self.last_part(last)?;
+        self.act(Action::Hurl, 1);
+        for at in done {
+            self.land(at);
+        }
+        self.last_part(last)?;
+        Ok(())
+    }
+
+    /// The last part of a try statement, read again from where it stands.
+    fn last_part(&mut self, at: Option<usize>) -> Res<()> {
+        let Some(at) = at else { return Ok(()) };
+        self.pos = at;
+        self.take();
+        self.body()
+    }
+
+    /// Every open try statement's last part, innermost first: what a
+    /// return, a break or a continue runs before it leaves them. Where
+    /// the reader stands is put back afterwards.
+    fn leaving_lasts(&mut self) -> Res<()> {
+        let held = self.pos;
+        for at in self.piece().lasts.clone().into_iter().rev() {
+            self.last_part(Some(at))?;
+        }
+        self.pos = held;
+        Ok(())
+    }
+
+    /// Where the last part of this try statement begins, if it has one:
+    /// the token after the body and any catch clauses.
+    fn last_part_ahead(&self) -> Option<usize> {
+        let lang = self.lang;
+        let (mut depth, mut i) = (0usize, self.pos);
+        while i < self.tokens.len() && self.tokens[i].shape != Shape::Finish {
+            let t = &self.tokens[i];
+            let lexeme_here = |list: &[String]| matches!(t.shape, Shape::Sign | Shape::Instr) && list.iter().any(|x| *x == t.lexeme);
+            if lexeme_here(&lang.block_opens) {
+                depth += 1;
+            } else if lexeme_here(&lang.block_closes) {
+                depth -= 1;
+                if depth == 0 {
+                    let mut j = i + 1;
+                    while j < self.tokens.len() {
+                        let w = &self.tokens[j];
+                        let sep = w.shape == Shape::LineEnd || (w.shape == Shape::Sign && lang.ends_stmt(&w.lexeme));
+                        if !sep {
+                            break;
+                        }
+                        j += 1;
+                    }
+                    let w = &self.tokens[j];
+                    if w.shape != Shape::Instr {
+                        return None;
+                    }
+                    if Lang::spells(&lang.finally_words, &w.lexeme) {
+                        return Some(j);
+                    }
+                    if !Lang::spells(&lang.catch_words, &w.lexeme) {
+                        return None;
+                    }
+                    i = j;
+                }
+            }
+            i += 1;
+        }
+        None
+    }
+
+    /// A class and its members: properties, constants, the values it
+    /// keeps for itself, and its methods. The class becomes a value
+    /// bound to its name, so `new C` and `C::X` are ordinary reads.
+    fn class_decl(&mut self) -> Res<()> {
+        let lang = self.lang;
+        self.take();
+        let name = self.want_name("as the class name")?;
+        let base = match self.on_keyword(&lang.extends_words) {
+            true => {
+                self.take();
+                Some(self.want_name("as the class it stands on")?)
+            }
+            false => None,
+        };
+        // Every member's value is read into its own run of instrs, so
+        // that they can be laid out in the order the plan names them.
+        let (mut fields, mut shared, mut constants) = (Vec::new(), Vec::new(), Vec::new());
+        let mut methods = Vec::new();
+        let outer = self.within.replace((name.clone(), base.clone()));
+        let which = lang.block_opens.iter().position(|o| self.at_lexeme(o));
+        let Some(i) = which else {
+            return Err(format!("Expected '{}' to open the class, got '{}'", lang.block_opens[0], self.look().lexeme));
+        };
+        self.take();
+        let close = lang.block_closes[i].clone();
+        self.skip_seps();
+        while !self.at_lexeme(&close) && !self.exhausted() {
+            let mut own = false;
+            while self.look().shape == Shape::Instr {
+                let w = self.look().lexeme.clone();
+                if Lang::spells(&lang.shared_words, &w) {
+                    own = true;
+                } else if !Lang::spells(&lang.modifier_words, &w) {
+                    break;
+                }
+                self.take();
+            }
+            if self.on_keyword(&lang.const_words) {
+                self.take();
+                let member = self.want_name("as the constant name")?;
+                self.expect_assign("after the constant name")?;
+                constants.push((member, self.member_value()?));
+            } else if self.on_keyword(&lang.function_words) {
+                self.take();
+                self.skip_reference();
+                let member = self.want_name("as the method name")?;
+                methods.push((member.clone(), self.method(&member)?));
+            } else {
+                // A property, perhaps with a type word before its name.
+                if self.look().shape == Shape::Instr && self.look_ahead(1).shape == Shape::Instr {
+                    self.take();
+                }
+                let member = self.want_name("as the property name")?;
+                let bare = lang.sigil.map_or(member.clone(), |s| member.trim_start_matches(s).to_string());
+                let value = match self.on_assign() {
+                    true => {
+                        self.take();
+                        self.member_value()?
+                    }
+                    false => vec![Instr::Const(Value::Null)],
+                };
+                if own {
+                    shared.push((bare, value));
+                } else {
+                    fields.push((bare, value));
+                }
+            }
+            self.skip_seps();
+        }
+        self.want_lexeme(&close)?;
+        self.within = outer;
+        // The class it stands on first, then a value for every property,
+        // every value of its own and every constant, in that order.
+        let mut argc = 0;
+        if let Some(base) = &base {
+            self.read(base);
+            argc += 1;
+        }
+        let names = |parts: Vec<(String, Vec<Instr>)>, a: &mut Self, argc: &mut usize| {
+            parts
+                .into_iter()
+                .map(|(member, code)| {
+                    let at = a.mark();
+                    for w in relocated(code, at as i64) {
+                        a.put(w);
+                    }
+                    *argc += 1;
+                    member
+                })
+                .collect::<Vec<String>>()
+        };
+        let field_names = names(fields, self, &mut argc);
+        let shared_names = names(shared, self, &mut argc);
+        let constant_names = names(constants, self, &mut argc);
+        let plan = Plan { name: name.clone(), field_names, shared_names, constant_names, methods, extends: base.is_some() };
+        self.act(Action::Forge(Rc::new(plan)), argc);
+        self.write_global(&name);
+        Ok(())
+    }
+
+    /// A member's value, read into instrs of its own that begin at nought.
+    fn member_value(&mut self) -> Res<Vec<Instr>> {
+        let from = self.mark();
+        self.expr(0)?;
+        let code: Vec<Instr> = self.piece().instrs.drain(from..).collect();
+        Ok(relocated(code, -(from as i64)))
+    }
+
+    /// A method: a program whose first parameter is the object it is for,
+    /// under the name the definition gives (`$this`).
+    fn method(&mut self, name: &str) -> Res<Rc<Routine>> {
         let lang = self.lang;
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
-        self.want_sign(&call.open, "after function name")?;
+        self.want_sign(&call.open, "after method name")?;
+        let mut formals = vec![lang.this_word.clone().ok_or_else(|| "A class needs ext.stmt.class.this".to_string())?];
+        let (params, spares) = self.parameters(&call)?;
+        formals.extend(params);
+        // The object it is for is always given, so the count is one more.
+        let least = formals.len() - spares.len();
+        let given = formals.clone();
+        let spares: Vec<(usize, usize)> = spares.into_iter().map(|(at, from)| (at + 1, from)).collect();
+        if self.look().shape == Shape::Sign && Lang::spells(&lang.return_marks, &self.look().lexeme) {
+            self.take();
+            self.skip_nothing_mark();
+            self.want_name("as a return type")?;
+        }
+        self.routine(name, formals, least, true, |a| {
+            a.spare_values(&spares, &given)?;
+            a.body()
+        })
+    }
+
+    /// The parameters of a function or a method, up to the closing bracket.
+    fn parameters(&mut self, call: &Brackets) -> Res<(Vec<String>, Vec<(usize, usize)>)> {
+        let lang = self.lang;
         let mut formals = Vec::new();
+        // Which parameter, and where its own value is written: it is read
+        // again inside the program, where its names mean what they should.
+        let mut spares: Vec<(usize, usize)> = Vec::new();
         while !self.at_symbol(&call.close) && !self.exhausted() {
+            self.skip_reference();
             if lang.types_first {
                 let type_word = self.want_name("as a parameter type")?;
                 if !Lang::spells(&lang.let_words, &type_word) {
@@ -1281,11 +1576,27 @@ impl<'a> Compiler<'a> {
                     formals.push(self.take().lexeme);
                 }
             } else {
+                // A type may stand before the name, and may be marked as
+                // taking nothing as well: `?int $x`.
+                if lang.ternary.as_ref().map_or(false, |(q, _)| self.at_symbol(q)) && self.look_ahead(1).shape == Shape::Instr {
+                    self.take();
+                }
+                if self.look().shape == Shape::Instr && self.look_ahead(1).shape == Shape::Instr {
+                    self.take();
+                }
                 formals.push(self.want_name("as a parameter name")?);
                 if self.look().shape == Shape::Sign && Lang::spells(&lang.type_marks, &self.look().lexeme) {
                     self.take();
                     self.want_name("as a type name")?;
                 }
+            }
+            // A parameter may carry a value of its own for calls that
+            // leave it out.
+            if self.on_assign() {
+                self.take();
+                spares.push((formals.len() - 1, self.pos));
+                // Read once here only to step over it.
+                self.member_value()?;
             }
             if let Some(sep) = &call.between {
                 if self.at_symbol(sep) {
@@ -1297,12 +1608,57 @@ impl<'a> Compiler<'a> {
             }
         }
         self.want_sign(&call.close, "after parameters")?;
+        Ok((formals, spares))
+    }
+
+    /// Step over the sign saying a type takes nothing as well: `?int`.
+    fn skip_nothing_mark(&mut self) {
+        let marked = self.lang.ternary.as_ref().map_or(false, |(q, _)| self.at_symbol(q));
+        if marked && self.look_ahead(1).shape == Shape::Instr {
+            self.take();
+        }
+    }
+
+    /// Step over the sign that says a name shares a cell; where it
+    /// stands is already known from the reading done before compiling.
+    fn skip_reference(&mut self) {
+        if self.lang.reference_mark.as_ref().map_or(false, |m| self.at_symbol(m)) {
+            self.take();
+        }
+    }
+
+    /// The instrs a program begins with when some of its parameters
+    /// carry a value of their own: each is written when the call left
+    /// that parameter out.
+    fn spare_values(&mut self, spares: &[(usize, usize)], formals: &[String]) -> Res<()> {
+        let held = self.pos;
+        for (at, from) in spares {
+            self.put(Instr::Missing(*at));
+            let past = self.skip();
+            self.pos = *from;
+            self.expr(0)?;
+            self.write(&formals[*at]);
+            self.land(past);
+        }
+        self.pos = held;
+        Ok(())
+    }
+
+    fn function(&mut self, name: String) -> Res<()> {
+        let lang = self.lang;
+        let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
+        self.want_sign(&call.open, "after function name")?;
+        let (formals, spares) = self.parameters(&call)?;
+        let least = formals.len() - spares.len();
+        let given = formals.clone();
         if self.look().shape == Shape::Sign && Lang::spells(&lang.return_marks, &self.look().lexeme) {
             self.take();
+            self.skip_nothing_mark();
             self.want_name("as a return type")?;
         }
         let declarations = self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme);
-        let program = self.routine(&name, formals, true, |a| {
+        let program = self.routine(&name, formals, least, true, |a| {
+            a.spare_values(&spares, &given)?;
             if declarations {
                 loop {
                     a.skip_seps();
@@ -1334,6 +1690,21 @@ impl<'a> Compiler<'a> {
         // The target came out as a load; turn it into a store.
         let target: Vec<Instr> = self.piece().instrs.drain(from..).collect();
         match target.as_slice() {
+            // `b = &a`: b is fastened to a's cell, not given a copy.
+            [Instr::Read(slot)]
+                if !slot.moving
+                    && compound.is_none()
+                    && self.lang.reference_mark.as_ref().map_or(false, |m| self.at_symbol(m)) =>
+            {
+                let name = slot.ident.to_string();
+                self.take();
+                let source = self.want_name("as the name to share a cell with")?;
+                let shared = self.cell_to_write(&source);
+                self.put(Instr::Bond(shared));
+                let held = self.cell_to_write(&name);
+                self.put(Instr::Fasten(held));
+                Ok(())
+            }
             [Instr::Read(slot)] if !slot.moving => {
                 let name = slot.ident.to_string();
                 if let Some(op) = compound {
@@ -1348,6 +1719,49 @@ impl<'a> Compiler<'a> {
                 Ok(())
             }
             _ if compound.is_some() => Err(format!("'{}' needs a plain variable on its left", assign)),
+            // The read of a member turns into a write of it.
+            [rest @ .., Instr::Act(Action::Grab(member), 1)] => {
+                let (member, rest) = (member.clone(), rest.to_vec());
+                for w in relocated(rest, 0) {
+                    self.put(w);
+                }
+                self.expr(0)?;
+                self.act(Action::Plant(member), 2);
+                Ok(())
+            }
+            [rest @ .., Instr::Act(Action::Reach(member), 1)] => {
+                let (member, rest) = (member.clone(), rest.to_vec());
+                for w in relocated(rest, 0) {
+                    self.put(w);
+                }
+                self.expr(0)?;
+                self.act(Action::Sow(member), 2);
+                Ok(())
+            }
+            // `$o->a[i] = v` and `$o->a[] = v`: the property is read, the
+            // array within it rewritten, and the property written back.
+            [Instr::Read(slot), Instr::Act(Action::Grab(member), 1), index @ ..]
+                if !slot.moving
+                    && matches!(index.last(), Some(Instr::Act(Action::At, 2)) | Some(Instr::Act(Action::AtEnd, 1))) =>
+            {
+                let name = slot.ident.to_string();
+                let (member, index) = (member.clone(), index.to_vec());
+                let appending = matches!(index.last(), Some(Instr::Act(Action::AtEnd, 1)));
+                self.read(&name);
+                if !appending {
+                    for w in relocated(index[..index.len() - 1].to_vec(), self.mark() as i64 - 2) {
+                        self.put(w);
+                    }
+                }
+                self.expr(0)?;
+                self.read(&name);
+                self.act(Action::Grab(member.clone()), 1);
+                let native = if appending { Builtin::Append } else { Builtin::Replace };
+                let argc = if appending { 2 } else { 3 };
+                self.act(Action::Builtin(native, Rc::from("put")), argc);
+                self.act(Action::Plant(member), 2);
+                Ok(())
+            }
             [Instr::Read(slot), Instr::Act(Action::AtEnd, 1)] if !slot.moving => {
                 // a[] = v appends.
                 let name = slot.ident.to_string();
@@ -1390,6 +1804,12 @@ impl<'a> Compiler<'a> {
                 }
                 self.take();
                 self.pipe_target(from)?;
+                continue;
+            }
+            if self.on_keyword(&lang.instanceof_words) {
+                self.take();
+                let named = self.want_name("as the class to test against")?;
+                self.act(Action::Kindred(Rc::from(named.as_str())), 1);
                 continue;
             }
             let Some(infix) = lang.dyadic.get(&text).cloned() else {
@@ -1473,6 +1893,7 @@ impl<'a> Compiler<'a> {
 
     fn prefix(&mut self) -> Res<()> {
         let lang = self.lang;
+        let from = self.mark();
         let tok = self.look().clone();
         if let (Some(op), Shape::Instr) = (self.bump_of(&tok), self.look_ahead(1).shape) {
             // ++x: the new value.
@@ -1505,6 +1926,23 @@ impl<'a> Compiler<'a> {
             Shape::Quote => {
                 self.take();
                 self.constant(Value::text(&tok.lexeme));
+            }
+            Shape::Instr if Lang::spells(&lang.new_words, &tok.lexeme) => {
+                self.take();
+                let named = self.want_name("as the class to make")?;
+                self.read_class(&named)?;
+                let argc = match lang.calling.clone() {
+                    Some(call) if self.at_symbol(&call.open) => {
+                        self.take();
+                        self.arguments(&call)?
+                    }
+                    _ => 0,
+                };
+                self.act(Action::Make, argc + 1);
+            }
+            Shape::Instr if Lang::spells(&lang.self_words, &tok.lexeme) || Lang::spells(&lang.parent_words, &tok.lexeme) => {
+                self.take();
+                self.read_class(&tok.lexeme)?;
             }
             Shape::Instr => {
                 self.take();
@@ -1551,7 +1989,7 @@ impl<'a> Compiler<'a> {
                                 self.write_global(&name);
                                 self.constant(Value::Flag(true));
                             } else {
-                                let argc = self.arguments(&call)?;
+                                let argc = self.arguments_of(&tok.lexeme, &call)?;
                                 self.call(&tok.lexeme, argc)?;
                             }
                         }
@@ -1572,7 +2010,7 @@ impl<'a> Compiler<'a> {
                         self.take();
                         self.expr(0)?;
                         self.want_sign(&group.close, "to close a group")?;
-                        return self.indexing();
+                        return self.indexing(from);
                     }
                 }
                 if let Some(array) = lang.array_brackets.clone() {
@@ -1580,7 +2018,7 @@ impl<'a> Compiler<'a> {
                         self.take();
                         let count = self.elements(&array)?;
                         self.act(Action::MakeArray, count);
-                        return self.indexing();
+                        return self.indexing(from);
                     }
                 }
                 if let Some(map) = lang.map_brackets.clone() {
@@ -1588,19 +2026,87 @@ impl<'a> Compiler<'a> {
                         self.take();
                         let count = self.elements(&map)?;
                         self.act(Action::MakeMap, count);
-                        return self.indexing();
+                        return self.indexing(from);
                     }
                 }
                 return Err(format!("Unexpected token: {}", tok.lexeme));
             }
             _ => return Err("Expected an expression".to_string()),
         }
-        self.indexing()
+        self.indexing(from)
     }
 
-    /// `expr[i]`, repeatable.
-    fn indexing(&mut self) -> Res<()> {
+    /// The class a name stands for: `self` and `parent` name the class
+    /// being read and the one it stands on.
+    fn read_class(&mut self, name: &str) -> Res<()> {
+        let lang = self.lang;
+        if Lang::spells(&lang.self_words, name) {
+            let (here, _) = self.within.clone().ok_or_else(|| format!("'{}' belongs inside a class", name))?;
+            self.read(&here);
+            return Ok(());
+        }
+        if Lang::spells(&lang.parent_words, name) {
+            let (here, base) = self.within.clone().ok_or_else(|| format!("'{}' belongs inside a class", name))?;
+            let base = base.ok_or_else(|| format!("Class {} stands on nothing", here))?;
+            self.read(&base);
+            return Ok(());
+        }
+        self.read(name);
+        Ok(())
+    }
+
+    /// `expr[i]`, `expr->member` and `expr::member`, repeatable.
+    fn indexing(&mut self, from: usize) -> Res<()> {
+        let lang = self.lang;
+        loop {
+            let member = lang.member_mark.as_ref().map_or(false, |m| self.at_symbol(m));
+            let scope = lang.scope_mark.as_ref().map_or(false, |m| self.at_symbol(m));
+            if !member && !scope {
+                break;
+            }
+            self.take();
+            let named = self.want_name("after the member mark")?;
+            let call = lang.calling.clone().filter(|c| self.at_symbol(&c.open));
+            if member {
+                match call {
+                    Some(call) => {
+                        self.take();
+                        let argc = self.arguments_of(&named, &call)?;
+                        self.act(Action::Send(Rc::from(named.as_str())), argc + 1);
+                    }
+                    None => self.act(Action::Grab(Rc::from(named.as_str())), 1),
+                }
+                continue;
+            }
+            if Lang::spells(&lang.class_words, &named) {
+                self.act(Action::Titled, 1);
+                continue;
+            }
+            match call {
+                Some(call) => {
+                    // The method is given the object it is for, so what
+                    // named the class is written again after it.
+                    self.take();
+                    let named_class: Vec<Instr> = self.piece().instrs.drain(from..).collect();
+                    match (&lang.this_word, self.within.is_some()) {
+                        (Some(this), true) => self.read(&this.clone()),
+                        _ => self.constant(Value::Null),
+                    }
+                    let at = self.mark();
+                    for w in relocated(named_class, at as i64 - from as i64) {
+                        self.put(w);
+                    }
+                    let argc = self.arguments_of(&named, &call)?;
+                    self.act(Action::Summon(Rc::from(named.as_str())), argc + 2);
+                }
+                None => {
+                    let bare = lang.sigil.map_or(named.clone(), |s| named.trim_start_matches(s).to_string());
+                    self.act(Action::Reach(Rc::from(bare.as_str())), 1);
+                }
+            }
+        }
         let Some(index) = self.lang.index_brackets.clone() else { return Ok(()) };
+        let mut stepped = false;
         while self.at_symbol(&index.open) {
             // `a[]`: the place after the last, which only a store reaches.
             if self.lang.append_index && self.look_ahead(1).is_lexeme(Shape::Sign, &index.close) {
@@ -1613,6 +2119,13 @@ impl<'a> Compiler<'a> {
             self.expr(0)?;
             self.want_sign(&index.close, "after array index")?;
             self.act(Action::At, 2);
+            stepped = true;
+        }
+        // An index may be followed by more members: `$a[0]->b`.
+        let more = lang.member_mark.as_ref().map_or(false, |m| self.at_symbol(m))
+            || lang.scope_mark.as_ref().map_or(false, |m| self.at_symbol(m));
+        if stepped && more {
+            return self.indexing(from);
         }
         Ok(())
     }
@@ -1633,6 +2146,40 @@ impl<'a> Compiler<'a> {
                     self.expr(0)?;
                     self.act(Action::Tie, 2);
                 }
+            }
+            count += 1;
+            if let Some(sep) = &pair.between {
+                if self.at_symbol(sep) {
+                    self.take();
+                }
+            }
+        }
+        self.take();
+        Ok(count)
+    }
+
+    /// The arguments of a call by name: a parameter written with the
+    /// reference sign is given the name's own cell, so what the program
+    /// writes to it the caller sees.
+    fn arguments_of(&mut self, called: &str, pair: &Brackets) -> Res<usize> {
+        let shared = self.shared_args.get(called).cloned().unwrap_or_default();
+        if !shared.iter().any(|x| *x) {
+            return self.arguments(pair);
+        }
+        let mut count = 0;
+        while !self.at_symbol(&pair.close) {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", pair.close));
+            }
+            let lone = self.look().shape == Shape::Instr
+                && (self.look_ahead(1).is_lexeme(Shape::Sign, &pair.close)
+                    || pair.between.as_ref().map_or(false, |s| self.look_ahead(1).is_lexeme(Shape::Sign, s)));
+            if shared.get(count).copied().unwrap_or(false) && lone {
+                let name = self.take().lexeme;
+                let cell = self.cell_to_write(&name);
+                self.put(Instr::Bond(cell));
+            } else {
+                self.expr(0)?;
             }
             count += 1;
             if let Some(sep) = &pair.between {
@@ -1981,7 +2528,7 @@ impl<'a> Compiler<'a> {
         if let Some(i) = lang.quote_open.iter().position(|o| o == word) {
             let close = lang.quote_close[i].clone();
             let name = self.gensym("program");
-            let program = self.routine(&format!("<{}>", &name[1..]), Vec::new(), false, |a| {
+            let program = self.routine(&format!("<{}>", &name[1..]), Vec::new(), 0, false, |a| {
                 a.rpn_body(std::slice::from_ref(&close), Span::Routine)?;
                 a.want_lexeme(&close)
             })?;
@@ -2113,7 +2660,7 @@ fn peephole(instrs: Vec<Instr>) -> Vec<Instr> {
     map[instrs.len()] = out.len();
     for w in out.iter_mut() {
         match w {
-            Instr::Skip(t) | Instr::SkipCmp { to: t, .. } => *t = map[*t],
+            Instr::Skip(t) | Instr::SkipCmp { to: t, .. } | Instr::Guard(t) => *t = map[*t],
             _ => {}
         }
     }
@@ -2121,11 +2668,69 @@ fn peephole(instrs: Vec<Instr>) -> Vec<Instr> {
 }
 
 /// Words moved by `delta`, their jump targets moved with them.
+/// Which parameters of each program are written with the reference sign,
+/// found by reading the tokens before anything is compiled: a call has to
+/// know before it works out its arguments, and a program may be called
+/// above where it is written.
+fn shared_parameters(tokens: &[Token], lang: &Lang) -> HashMap<String, Vec<bool>> {
+    let mut found = HashMap::new();
+    let (Some(mark), Some(call)) = (&lang.reference_mark, &lang.calling) else { return found };
+    let sign = |t: &Token, text: &str| t.is_lexeme(Shape::Sign, text);
+    let mut i = 0;
+    while i + 2 < tokens.len() {
+        let t = &tokens[i];
+        if t.shape != Shape::Instr || !Lang::spells(&lang.function_words, &t.lexeme) {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 1;
+        if sign(&tokens[j], mark) {
+            j += 1;
+        }
+        if tokens[j].shape != Shape::Instr || !sign(&tokens[j + 1], &call.open) {
+            i += 1;
+            continue;
+        }
+        let name = tokens[j].lexeme.clone();
+        j += 2;
+        let (mut marks, mut shared, mut anything, mut defaulting, mut depth) = (Vec::new(), false, false, false, 1usize);
+        while j < tokens.len() {
+            let p = &tokens[j];
+            if sign(p, &call.open) {
+                depth += 1;
+            } else if sign(p, &call.close) {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            } else if depth == 1 {
+                anything = true;
+                if call.between.as_ref().map_or(false, |s| sign(p, s)) {
+                    marks.push(shared);
+                    (shared, defaulting) = (false, false);
+                } else if p.shape == Shape::Sign && Lang::spells(&lang.assign_words, &p.lexeme) {
+                    defaulting = true;
+                } else if !defaulting && sign(p, mark) {
+                    shared = true;
+                }
+            }
+            j += 1;
+        }
+        if anything {
+            marks.push(shared);
+        }
+        found.insert(name, marks);
+        i = j;
+    }
+    found
+}
+
 fn relocated(instrs: Vec<Instr>, delta: i64) -> Vec<Instr> {
     instrs
         .into_iter()
         .map(|w| match w {
             Instr::Skip(t) => Instr::Skip((t as i64 + delta) as usize),
+            Instr::Guard(t) => Instr::Guard((t as i64 + delta) as usize),
             other => other,
         })
         .collect()

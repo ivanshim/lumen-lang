@@ -75,7 +75,11 @@ impl<'a> Machine<'a> {
         Literals {
             yes: self.spec.first("literal.true").unwrap_or("true"),
             no: self.spec.first("literal.false").unwrap_or("false"),
-            none: self.spec.first("literal.null").unwrap_or("null"),
+            // A language may show nothing as no text at all.
+            none: match self.spec.flag("literal.null.silent") {
+                true => "",
+                false => self.spec.first("literal.null").unwrap_or("null"),
+            },
         }
     }
 

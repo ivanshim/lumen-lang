@@ -2,6 +2,7 @@
 // reference count, so the stack moves pointers. Arrays copy when written
 // through a shared reference, which a taking load avoids.
 
+use std::cell::RefCell;
 use std::fmt::Write as _;
 use std::rc::Rc;
 
@@ -62,6 +63,11 @@ pub enum Value {
     Array(Rc<Vec<Value>>),
     /// Keys and their values, in the order they were put there.
     Map(Rc<Vec<(Value, Value)>>),
+    /// A cell two or more names share: a write through any of them is a
+    /// write all of them see. Never a value a program can hold itself.
+    Bond(Rc<RefCell<Value>>),
+    Class(Rc<Class>),
+    Object(Rc<Instance>),
     /// A key and a value written together (`k => v`), waiting to be
     /// gathered into a map.
     Tie(Rc<(Value, Value)>),
@@ -106,6 +112,8 @@ impl Value {
             Value::Text(_) => Sort::Text,
             Value::Flag(_) => Sort::Boolean,
             Value::Array(_) | Value::Map(_) => Sort::Array,
+            Value::Bond(shared) => return shared.borrow().sort(),
+            Value::Class(_) | Value::Object(_) => return None,
             Value::Null | Value::SortOf(_) => Sort::Null,
             _ => return None,
         })
@@ -120,6 +128,8 @@ impl Value {
             Value::Text(s) => !s.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
             Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::SortOf(_) => true,
+            Value::Bond(shared) => shared.borrow().is_true(),
+            Value::Class(_) | Value::Object(_) => true,
         }
     }
 
@@ -135,6 +145,8 @@ impl Value {
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
             Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
+            Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
+            Value::Bond(shared) => shared.borrow().as_big(),
             Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
         }
@@ -157,6 +169,10 @@ impl Value {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
             }
             (Value::Tie(a), Value::Tie(b)) => a.0.equals(&b.0) && a.1.equals(&b.1),
+            // Two names for one object are the same object; two objects
+            // of one class are not.
+            (Value::Object(a), Value::Object(b)) => Rc::ptr_eq(a, b),
+            (Value::Class(a), Value::Class(b)) => a.name == b.name,
             _ => false,
         }
     }
@@ -201,6 +217,9 @@ impl Value {
             }
             Value::Tie(pair) => format!("{} => {}", pair.0.plain(), pair.1.plain()),
             Value::Routine(p) => format!("<function({})>", p.formals.join(", ")),
+            Value::Bond(shared) => shared.borrow().plain(),
+            Value::Class(c) => format!("<class {}>", c.name),
+            Value::Object(o) => format!("<object {}>", o.class.name),
             Value::SortOf(k) => k.tag().to_string(),
         }
     }
@@ -237,6 +256,13 @@ impl Value {
             Value::Routine(p) => {
                 let _ = write!(into, "p{:p}", Rc::as_ptr(p));
             }
+            Value::Object(o) => {
+                let _ = write!(into, "o{:p}", Rc::as_ptr(o));
+            }
+            Value::Bond(shared) => shared.borrow().memo_key(into),
+            Value::Class(c) => {
+                let _ = write!(into, "c{}", c.name);
+            }
             other => into.push_str(&other.plain()),
         }
         into.push('|');
@@ -267,4 +293,70 @@ pub fn decimal_string(p: &BigInt, q: &BigInt, places: usize) -> String {
         left -= 1;
     }
     s
+}
+
+/// A class: what it is called, what it stands on, the properties an
+/// object of it begins with, the programs it answers to, its constants
+/// and the values it keeps for itself.
+#[derive(Debug)]
+pub struct Class {
+    pub name: String,
+    pub base: Option<Rc<Class>>,
+    pub fields: Vec<(String, Value)>,
+    pub methods: Vec<(String, Rc<Routine>)>,
+    pub constants: Vec<(String, Value)>,
+    pub shared: RefCell<Vec<(String, Value)>>,
+}
+
+impl Class {
+    /// The program of that name, in this class or the nearest one
+    /// beneath it that has one.
+    pub fn method(&self, name: &str) -> Option<&Rc<Routine>> {
+        match self.methods.iter().find(|(n, _)| n == name) {
+            Some((_, p)) => Some(p),
+            None => self.base.as_ref().and_then(|b| b.method(name)),
+        }
+    }
+
+    /// The constant of that name, looked for the same way.
+    pub fn constant(&self, name: &str) -> Option<&Value> {
+        match self.constants.iter().find(|(n, _)| n == name) {
+            Some((_, v)) => Some(v),
+            None => self.base.as_ref().and_then(|b| b.constant(name)),
+        }
+    }
+
+    /// The class holding a value of that name for itself.
+    pub fn holder(&self, name: &str) -> Option<&Class> {
+        if self.shared.borrow().iter().any(|(n, _)| n == name) {
+            return Some(self);
+        }
+        self.base.as_ref().and_then(|b| b.holder(name))
+    }
+
+    /// Whether this class is that one, or stands on it.
+    pub fn descends_from(&self, name: &str) -> bool {
+        self.name == name || self.base.as_ref().map_or(false, |b| b.descends_from(name))
+    }
+
+    /// Every property an object of this class begins with, those it
+    /// stands on first, so a class of its own overrides them.
+    pub fn all_fields(&self) -> Vec<(String, Value)> {
+        let mut all = self.base.as_ref().map_or_else(Vec::new, |b| b.all_fields());
+        for (name, value) in &self.fields {
+            match all.iter_mut().find(|(n, _)| n == name) {
+                Some(place) => place.1 = value.clone(),
+                None => all.push((name.clone(), value.clone())),
+            }
+        }
+        all
+    }
+}
+
+/// One object: the class that made it and what it holds. An object is a
+/// handle, so two names for it see one another's writes.
+#[derive(Debug)]
+pub struct Instance {
+    pub class: Rc<Class>,
+    pub fields: RefCell<Vec<(String, Value)>>,
 }

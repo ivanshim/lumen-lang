@@ -12,6 +12,7 @@
 // that traps them stops them.
 
 use std::collections::HashMap;
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use num_traits::ToPrimitive;
@@ -19,11 +20,13 @@ use num_traits::ToPrimitive;
 use crate::math::{self, Calc};
 use crate::table::Table;
 use crate::form::{Input, Traps, Form, Prim, Routine, Address, Callee};
-use crate::data::{Env, Kind, Value, Names};
+use crate::data::{Blueprint, Thing, Env, Kind, Value, Names};
 
 pub enum Escape {
     Error(String),
     Yield(Value),
+    /// A value raised for a clause to take.
+    Thrown(Value),
     /// break, out of so many loops.
     Leave(usize),
     /// continue, the next pass of the loop so many levels out.
@@ -92,7 +95,12 @@ impl<'a> Machine<'a> {
         Names {
             truth: self.table.single("literal.true").unwrap_or("true"),
             falsity: self.table.single("literal.false").unwrap_or("false"),
-            nil: self.table.single("literal.null").unwrap_or("null"),
+            // A language may show nothing as no text at all, as PHP does,
+            // rather than as the word a program writes for it.
+            nil: match self.table.flag("literal.null.silent") {
+                true => "",
+                false => self.table.single("literal.null").unwrap_or("null"),
+            },
         }
     }
 
@@ -100,6 +108,15 @@ impl<'a> Machine<'a> {
         let top = self.outermost.clone();
         match self.value_of(body, &top) {
             Ok(_) | Err(Escape::Yield(_)) | Err(Escape::Leave(_)) | Err(Escape::Resume(_)) => Ok(()),
+            // A value nobody took is a fault, told the way PHP tells it.
+            Err(Escape::Thrown(Value::Thing(thing))) => {
+                let told = thing.holds.borrow().iter().find(|(k, _)| k == "message").map(|(_, x)| x.bare());
+                Err(match told {
+                    Some(told) => format!("Uncaught {}: {}", thing.of.name, told),
+                    None => format!("Uncaught {}", thing.of.name),
+                })
+            }
+            Err(Escape::Thrown(v)) => Err(format!("Uncaught {}", v.bare())),
             Err(Escape::Error(e)) => Err(e),
         }
     }
@@ -109,6 +126,9 @@ impl<'a> Machine<'a> {
     fn fetch(&self, slot: &Address, frame: &Rc<Env>) -> Result<Value, String> {
         let f = ascend(frame, slot.up);
         let v = f.cells.borrow()[slot.at].clone();
+        if let Value::Shared(cell) = v {
+            return Ok(cell.borrow().clone());
+        }
         if !matches!(v, Value::Unset) {
             return Ok(v);
         }
@@ -126,8 +146,32 @@ impl<'a> Machine<'a> {
         if Rc::ptr_eq(f, &self.outermost) && Some(slot.at) == self.args_cell {
             return Err(format!("Cannot reassign {} (system-provided immutable value)", slot.ident));
         }
-        f.cells.borrow_mut()[slot.at] = value;
+        // A name standing for a shared cell writes inside it.
+        let shared = match &f.cells.borrow()[slot.at] {
+            Value::Shared(cell) => Some(cell.clone()),
+            _ => None,
+        };
+        match shared {
+            Some(cell) => *cell.borrow_mut() = value,
+            None => f.cells.borrow_mut()[slot.at] = value,
+        }
         Ok(())
+    }
+
+    /// The shared cell a name stands for, made from what it holds when
+    /// it does not stand for one yet.
+    fn shared_cell(&self, slot: &Address, frame: &Rc<Env>) -> Rc<RefCell<Value>> {
+        let f = ascend(frame, slot.up);
+        let held = f.cells.borrow()[slot.at].clone();
+        if let Value::Shared(cell) = held {
+            return cell;
+        }
+        let cell = Rc::new(RefCell::new(match held {
+            Value::Unset => Value::Nil,
+            other => other,
+        }));
+        f.cells.borrow_mut()[slot.at] = Value::Shared(cell.clone());
+        cell
     }
 
     /// The frame and index an array lives in, for writing it in place.
@@ -160,12 +204,15 @@ impl<'a> Machine<'a> {
             Form::Read(slot) => Ok(self.fetch(slot, frame)?),
             Form::Bump { slot, by } => {
                 let v = self.fetch(slot, frame)?;
+                // A step down subtracts, so a string of digits counts
+                // rather than being joined to.
+                let (op, size) = if *by < 0 { (Prim::Minus, -*by) } else { (Prim::Plus, *by) };
                 let r = match v {
                     Value::Small(x) => match x.checked_add(*by) {
                         Some(y) => Value::Small(y),
-                        None => self.prim(Prim::Plus, "", &[v, Value::Small(*by)])?,
+                        None => self.prim(op, "", &[v, Value::Small(size)])?,
                     },
-                    other => self.prim(Prim::Plus, "", &[other, Value::Small(*by)])?,
+                    other => self.prim(op, "", &[other, Value::Small(size)])?,
                 };
                 self.store(slot, frame, r.clone())?;
                 Ok(r)
@@ -194,6 +241,79 @@ impl<'a> Machine<'a> {
                     Some(v) => Ok(v),
                     None => Ok(self.prim(*op, name, &[av, bv])?),
                 }
+            }
+            Form::Share(slot) => Ok(Value::Shared(self.shared_cell(slot, frame))),
+            Form::Tie(slot, source) => {
+                let cell = self.value_of(source, frame)?;
+                let f = ascend(frame, slot.up);
+                f.cells.borrow_mut()[slot.at] = cell;
+                Ok(Value::Nil)
+            }
+            Form::Missing(slot) => {
+                let f = ascend(frame, slot.up);
+                let empty = matches!(f.cells.borrow()[slot.at], Value::Unset);
+                Ok(Value::Flag(empty))
+            }
+            Form::Attempt { body, clauses, last } => {
+                let ending = self.value_of(body, frame);
+                let ending = match ending {
+                    Err(Escape::Thrown(raised)) => {
+                        // The first clause that takes this class holds it
+                        // and runs; what none takes is raised again.
+                        let of = match &raised {
+                            Value::Thing(thing) => Some(thing.of.clone()),
+                            _ => None,
+                        };
+                        let taken = clauses.iter().find(|clause| {
+                            of.as_ref().map_or(false, |o| clause.classes.iter().any(|name| o.built_on(name)))
+                        });
+                        match taken {
+                            Some(clause) => {
+                                if let Some(slot) = &clause.held {
+                                    self.store(slot, frame, raised)?;
+                                }
+                                self.value_of(&clause.body, frame)
+                            }
+                            None => Err(Escape::Thrown(raised)),
+                        }
+                    }
+                    other => other,
+                };
+                // The last part runs however the body ended, and only
+                // then does whatever stopped it go on.
+                if let Some(last) = last {
+                    self.value_of(last, frame)?;
+                }
+                ending
+            }
+            Form::Class { plan, values } => {
+                // What was written: the class it is built on, then a value
+                // for every property, kept value and constant, in the
+                // order the plan names them.
+                let mut given = self.value_list(values, frame)?.into_iter();
+                let under = match plan.extends {
+                    false => None,
+                    true => match given.next() {
+                        Some(Value::Blueprint(b)) => Some(b),
+                        _ => return Err(format!("Class {} cannot be built on that", plan.name).into()),
+                    },
+                };
+                let mut named = |names: &[String]| -> Vec<(String, Value)> {
+                    names.iter().map(|n| (n.clone(), given.next().unwrap_or(Value::Nil))).collect()
+                };
+                // Taken in the order they were written, not the order the
+                // class holds them in.
+                let fields = named(&plan.field_names);
+                let shared = named(&plan.shared_names);
+                let constants = named(&plan.constant_names);
+                Ok(Value::Blueprint(Rc::new(Blueprint {
+                    name: plan.name.clone(),
+                    under,
+                    fields,
+                    methods: plan.methods.clone(),
+                    constants,
+                    shared: RefCell::new(shared),
+                })))
             }
             Form::Cycle { test, body, step, after } => {
                 loop {
@@ -267,6 +387,67 @@ impl<'a> Machine<'a> {
                     };
                     Err(if *op == Prim::Leave { Escape::Leave(levels) } else { Escape::Resume(levels) })
                 }
+                Prim::Hurl => {
+                    let values = self.value_list(args, frame)?;
+                    let raised = values.into_iter().next().ok_or_else(|| format!("{}() needs a value to raise", name))?;
+                    Err(Escape::Thrown(raised))
+                }
+                Prim::Spawn => {
+                    let mut values = self.value_list(args, frame)?;
+                    if values.is_empty() {
+                        return Err("Nothing was given to make".to_string().into());
+                    }
+                    let Value::Blueprint(class) = values.remove(0) else {
+                        return Err("Only a class can be made into a thing".to_string().into());
+                    };
+                    let thing = Rc::new(Thing { of: class.clone(), holds: RefCell::new(class.every_field()) });
+                    let maker = self.table.single("ext.stmt.class.constructor").and_then(|m| class.program(m)).cloned();
+                    match maker {
+                        Some(maker) => {
+                            let mut all = vec![Value::Thing(thing.clone())];
+                            all.extend(values);
+                            self.invoke(maker, self.outermost.clone(), all)?;
+                        }
+                        None if !values.is_empty() => {
+                            return Err(format!("Class {} takes nothing when it is made", class.name).into());
+                        }
+                        None => {}
+                    }
+                    Ok(Value::Thing(thing))
+                }
+                Prim::Ask => {
+                    let mut values = self.value_list(args, frame)?;
+                    if values.len() < 2 {
+                        return Err(format!("{}() needs a thing and a method name", name).into());
+                    }
+                    let subject = values.remove(0);
+                    let called = values.remove(0).bare();
+                    let Value::Thing(thing) = subject else {
+                        return Err(format!("Cannot call '{}' on something that is not an object", called).into());
+                    };
+                    let program = thing.of.program(&called).cloned();
+                    let program = program.ok_or_else(|| format!("Call to undefined method {}::{}()", thing.of.name, called))?;
+                    let mut all = vec![Value::Thing(thing)];
+                    all.extend(values);
+                    Ok(self.invoke(program, self.outermost.clone(), all)?)
+                }
+                Prim::Bid => {
+                    let mut values = self.value_list(args, frame)?;
+                    if values.len() < 3 {
+                        return Err(format!("{}() needs a class and a method name", name).into());
+                    }
+                    let subject = values.remove(0);
+                    let holder = values.remove(0);
+                    let called = values.remove(0).bare();
+                    let Value::Blueprint(class) = holder else {
+                        return Err(format!("Cannot call '{}' on something that is not a class", called).into());
+                    };
+                    let program = class.program(&called).cloned();
+                    let program = program.ok_or_else(|| format!("Call to undefined method {}::{}()", class.name, called))?;
+                    let mut all = vec![subject];
+                    all.extend(values);
+                    Ok(self.invoke(program, self.outermost.clone(), all)?)
+                }
                 Prim::Append | Prim::Replace => {
                     let Some(Form::Read(slot)) = args.first() else {
                         return Err(format!("First argument to {}() must be an array variable name", name).into());
@@ -277,36 +458,21 @@ impl<'a> Machine<'a> {
                         return Err(format!("{}() expects {} arguments, got {}", name, want + 1, values.len() + 1).into());
                     }
                     let (f, i) = self.locate(slot, frame)?;
-                    let mut slots = f.cells.borrow_mut();
                     let mut values = values;
                     let value = values.pop().unwrap();
                     let key = values.pop();
-                    // A list written at a place it already holds stays a
-                    // list; any other key turns it into a map, its places
-                    // becoming the keys.
-                    let stays = match (&slots[i], &key) {
-                        (Value::Vector(items), Some(k)) => as_index(k).map_or(false, |at| at < items.len()),
-                        (Value::Vector(_), None) => true,
-                        _ => false,
+                    // Through the shared cell when the name stands for one.
+                    let shared = match &f.cells.borrow()[i] {
+                        Value::Shared(cell) => Some(cell.clone()),
+                        _ => None,
                     };
-                    if let (Value::Vector(items), true) = (&mut slots[i], stays) {
-                        let items = Rc::make_mut(items);
-                        match key {
-                            Some(k) => items[as_index(&k)?] = value,
-                            None => items.push(value),
-                        }
+                    if let Some(cell) = shared {
+                        let mut held = cell.borrow_mut();
+                        written_into(&mut held, key, value, &slot.ident)?;
                         return Ok(Value::Nil);
                     }
-                    if let Value::Vector(items) = &slots[i] {
-                        let spread = items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect();
-                        slots[i] = Value::Dict(Rc::new(spread));
-                    }
-                    let Value::Dict(entries) = &mut slots[i] else {
-                        return Err(format!("Variable '{}' is not an array", slot.ident).into());
-                    };
-                    let entries = Rc::make_mut(entries);
-                    let key = key.unwrap_or_else(|| Value::Small(after_keys(entries)));
-                    set_key(entries, key, value);
+                    let mut slots = f.cells.borrow_mut();
+                    written_into(&mut slots[i], key, value, &slot.ident)?;
                     Ok(Value::Nil)
                 }
                 op => {
@@ -370,9 +536,10 @@ impl<'a> Machine<'a> {
     }
 
     fn env_for(&mut self, program: &Rc<Routine>, env: Rc<Env>, args: &[Form], caller: &Rc<Env>) -> Res<Rc<Env>> {
-        if args.len() != program.formals.len() {
+        if args.len() > program.formals.len() || args.len() < program.least {
             self.value_list(args, caller)?;
-            return Err(format!("Function {} expects {} arguments, got {}", program.ident, program.formals.len(), args.len()).into());
+            let wanted = program.formals.len();
+            return Err(format!("Function {} expects {} arguments, got {}", program.ident, wanted, args.len()).into());
         }
         if program.frameless {
             return Ok(env);
@@ -386,8 +553,9 @@ impl<'a> Machine<'a> {
     }
 
     pub fn invoke(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
-        if args.len() != program.formals.len() {
-            return Err(format!("Function {} expects {} arguments, got {}", program.ident, program.formals.len(), args.len()).into());
+        if args.len() > program.formals.len() || args.len() < program.least {
+            let wanted = program.formals.len();
+            return Err(format!("Function {} expects {} arguments, got {}", program.ident, wanted, args.len()).into());
         }
         let frame = if program.frameless {
             env
@@ -497,6 +665,119 @@ impl<'a> Machine<'a> {
                 }
             }
             Prim::AtEnd => return Err("An empty index belongs on the left of an assignment".to_string()),
+            Prim::Of => {
+                n(2)?;
+                let called = v[1].bare();
+                match &v[0] {
+                    Value::Thing(thing) => {
+                        let found = thing.holds.borrow().iter().find(|(k, _)| *k == called).map(|(_, x)| x.clone());
+                        found.ok_or_else(|| format!("Undefined property: {}::${}", thing.of.name, called))?
+                    }
+                    other => return Err(format!("Cannot read property '{}' of {}", called, other.bare())),
+                }
+            }
+            Prim::Onto => {
+                n(3)?;
+                let called = v[1].bare();
+                match &v[0] {
+                    Value::Thing(thing) => {
+                        let mut holds = thing.holds.borrow_mut();
+                        match holds.iter_mut().find(|(k, _)| *k == called) {
+                            Some(place) => place.1 = v[2].clone(),
+                            None => holds.push((called, v[2].clone())),
+                        }
+                        Value::Nil
+                    }
+                    other => return Err(format!("Cannot write property '{}' of {}", called, other.bare())),
+                }
+            }
+            Prim::Within => {
+                n(2)?;
+                let called = v[1].bare();
+                match &v[0] {
+                    Value::Blueprint(class) => match class.constant(&called) {
+                        Some(x) => x.clone(),
+                        None => match class.keeper(&called) {
+                            Some(keeper) => {
+                                let held = keeper.shared.borrow().iter().find(|(k, _)| *k == called).map(|(_, x)| x.clone());
+                                held.expect("the keeper holds it")
+                            }
+                            None => return Err(format!("Undefined constant {}::{}", class.name, called)),
+                        },
+                    },
+                    other => return Err(format!("Cannot reach '{}' in {}", called, other.bare())),
+                }
+            }
+            Prim::Into => {
+                n(3)?;
+                let called = v[1].bare();
+                match &v[0] {
+                    Value::Blueprint(class) => {
+                        let keeper = class.keeper(&called).unwrap_or(class);
+                        let mut shared = keeper.shared.borrow_mut();
+                        match shared.iter_mut().find(|(k, _)| *k == called) {
+                            Some(place) => place.1 = v[2].clone(),
+                            None => shared.push((called, v[2].clone())),
+                        }
+                        Value::Nil
+                    }
+                    other => return Err(format!("Cannot write '{}' in {}", called, other.bare())),
+                }
+            }
+            Prim::Akin => {
+                n(2)?;
+                match &v[0] {
+                    Value::Thing(thing) => Value::Flag(thing.of.built_on(&v[1].bare())),
+                    _ => Value::Flag(false),
+                }
+            }
+            Prim::Named => {
+                n(1)?;
+                match &v[0] {
+                    Value::Thing(thing) => Value::text(&thing.of.name),
+                    Value::Blueprint(class) => Value::text(&class.name),
+                    other => return Err(format!("{} has no class name", other.bare())),
+                }
+            }
+            Prim::Added => {
+                n(2)?;
+                match &v[0] {
+                    Value::Vector(items) => {
+                        let mut all = items.as_ref().clone();
+                        all.push(v[1].clone());
+                        Value::Vector(Rc::new(all))
+                    }
+                    Value::Dict(entries) => {
+                        let mut all = entries.as_ref().clone();
+                        let key = Value::Small(after_keys(&all));
+                        all.push((key, v[1].clone()));
+                        Value::Dict(Rc::new(all))
+                    }
+                    _ => return Err(format!("{}() requires an array", name)),
+                }
+            }
+            Prim::Placed => {
+                n(3)?;
+                match &v[0] {
+                    Value::Vector(items) if as_index(&v[1]).map_or(false, |at| at < items.len()) => {
+                        let mut all = items.as_ref().clone();
+                        all[as_index(&v[1])?] = v[2].clone();
+                        Value::Vector(Rc::new(all))
+                    }
+                    Value::Vector(items) => {
+                        let mut all: Vec<(Value, Value)> =
+                            items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect();
+                        set_key(&mut all, v[1].clone(), v[2].clone());
+                        Value::Dict(Rc::new(all))
+                    }
+                    Value::Dict(entries) => {
+                        let mut all = entries.as_ref().clone();
+                        set_key(&mut all, v[1].clone(), v[2].clone());
+                        Value::Dict(Rc::new(all))
+                    }
+                    _ => return Err(format!("{}() requires an array", name)),
+                }
+            }
             Prim::Gather => return Err(format!("{}() is a literal, not a call", name)),
             Prim::Portray => {
                 n(1)?;
@@ -712,18 +993,31 @@ impl<'a> Machine<'a> {
                 }
                 x.clone()
             }
-            Prim::Seq | Prim::Choose | Prim::Both | Prim::Either | Prim::Yield | Prim::Leave | Prim::Resume | Prim::Append | Prim::Replace => unreachable!("handled in eval"),
+            Prim::Seq | Prim::Choose | Prim::Both | Prim::Either | Prim::Yield | Prim::Leave | Prim::Resume | Prim::Append | Prim::Replace
+            | Prim::Spawn | Prim::Ask | Prim::Bid | Prim::Hurl => unreachable!("handled in eval"),
         })
     }
 
     fn element(&self, target: &Value, at: &Value) -> Result<Value, String> {
+        // A language may say that a place an array does not hold reads as
+        // nothing rather than stopping the program.
+        let missing = |told: String| if self.table.flag("ext.op.index.absent") { Ok(Value::Nil) } else { Err(told) };
         if let Value::Dict(entries) = target {
             let found = entries.iter().find(|(k, _)| k.equals(at));
-            return found.map(|(_, v)| v.clone()).ok_or_else(|| format!("Undefined array key {}", at.bare()));
+            return match found {
+                Some((_, v)) => Ok(v.clone()),
+                None => missing(format!("Undefined array key {}", at.bare())),
+            };
         }
-        let i = as_index(at)?;
+        let i = match as_index(at) {
+            Ok(i) => i,
+            Err(told) => return missing(told),
+        };
         match target {
-            Value::Vector(l) => l.get(i).cloned().ok_or_else(|| format!("Array index {} out of bounds (length: {})", i, l.len())),
+            Value::Vector(l) => match l.get(i) {
+                Some(v) => Ok(v.clone()),
+                None => missing(format!("Array index {} out of bounds (length: {})", i, l.len())),
+            },
             Value::Text(s) if self.table.flag("op.index.strings") => s
                 .chars()
                 .nth(i)
@@ -858,4 +1152,35 @@ fn over_lines(v: &Value, along: usize) -> String {
     }
     out.push_str(&format!("{lead})\n"));
     out
+}
+
+/// Write a value into an array held in a binding: at a key, or at the
+/// end when no key is given. A list written where it already reaches
+/// stays a list; any other key turns it into a map, its places becoming
+/// the keys.
+fn written_into(held: &mut Value, key: Option<Value>, value: Value, ident: &str) -> Result<(), String> {
+    let stays = match (&*held, &key) {
+        (Value::Vector(items), Some(k)) => as_index(k).map_or(false, |at| at < items.len()),
+        (Value::Vector(_), None) => true,
+        _ => false,
+    };
+    if let (Value::Vector(items), true) = (&mut *held, stays) {
+        let items = Rc::make_mut(items);
+        match key {
+            Some(k) => items[as_index(&k)?] = value,
+            None => items.push(value),
+        }
+        return Ok(());
+    }
+    if let Value::Vector(items) = &*held {
+        let spread = items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect();
+        *held = Value::Dict(Rc::new(spread));
+    }
+    let Value::Dict(entries) = held else {
+        return Err(format!("Variable '{}' is not an array", ident));
+    };
+    let entries = Rc::make_mut(entries);
+    let key = key.unwrap_or_else(|| Value::Small(after_keys(entries)));
+    set_key(entries, key, value);
+    Ok(())
 }

@@ -89,7 +89,7 @@ microcode4's. All 498 example programs print the same on this kernel as
 on the other five. stack8 is the same promotion on the stack machine.
 
 Being a full kernel, it also reads the `ext.` labels a definition may add
-beyond the 132 core labels (see `langs/README.md`): an epilogue marker,
+beyond the 133 core labels (see `langs/README.md`): an epilogue marker,
 `echo`, bracketless builtin calls, `++`/`--` (a statement folds into a
 `Bump`; `x++` in an expression keeps the old value aside in a hidden
 binding), interpolating strings (which the scanner turns into a
@@ -104,6 +104,12 @@ carrying its count down through the cycles), hoisted top-level
 functions and exponent literals. The reference kernels skip those
 labels, so the reference suites under `tests/` run on this kernel and
 stack8 only.
+
+Classes are values here too: `Form::Class` builds one from a plan and the
+values written for its members, and `Form::Attempt` holds a body, its
+clauses and its last part. Because a return, a break and a raised value
+are all escapes in this kernel, the last part runs on the way out of any
+of them without being written twice.
 
 It also holds a map: `Value::Dict`, keys with their values in the order
 they were written, beside the plain vector. A literal gathers couples

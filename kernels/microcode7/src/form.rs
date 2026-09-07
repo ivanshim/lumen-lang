@@ -75,6 +75,31 @@ pub enum Prim {
     Extent,
     /// `a[]`, a place only a store reaches.
     AtEnd,
+    /// A thing of the class given, its maker run over the rest.
+    Spawn,
+    /// The property named by the second value, of the thing in the first.
+    Of,
+    /// Write that property: the thing, the name, the value.
+    Onto,
+    /// Call the method named second, of the thing named first.
+    Ask,
+    /// A constant or a kept value of the class given.
+    Within,
+    /// Write a kept value: the class, the name, the value.
+    Into,
+    /// Call a method of a named class: what it is for, the class, the
+    /// name, then the arguments.
+    Bid,
+    /// Whether the first is a thing of the class named second.
+    Akin,
+    /// The name of the class of a thing, or of a class.
+    Named,
+    /// Raise the value given, for a clause to take.
+    Hurl,
+    /// An array with one more item, or with one place written: the
+    /// array itself is left alone.
+    Added,
+    Placed,
     // operators
     Plus,
     Minus,
@@ -119,6 +144,40 @@ pub enum Form {
     Dyad { op: Prim, name: Rc<str>, a: Input, b: Input },
     /// `x = x + k`, the binding stepped in place.
     Bump { slot: Address, by: i64 },
+    /// A class declaration: what is known while building, and a value
+    /// for each property, kept value and constant the plan names.
+    Class { plan: Rc<Plan>, values: Vec<Form> },
+    /// A body run with clauses ready to take what it raises, and a last
+    /// part that runs however the body ends.
+    Attempt { body: Box<Form>, clauses: Vec<Clause>, last: Option<Box<Form>> },
+    /// Whether the call left this binding without a value.
+    Missing(Address),
+    /// The binding's own cell, made shareable if it is not already, so
+    /// another name can be tied to it.
+    Share(Address),
+    /// Tie a name to a shared cell, past whatever it held before.
+    Tie(Address, Box<Form>),
+}
+
+/// One catch: the classes it takes, where it holds what it caught, and
+/// what it does with it.
+#[derive(Debug)]
+pub struct Clause {
+    pub classes: Vec<String>,
+    pub held: Option<Address>,
+    pub body: Form,
+}
+
+/// A class as the builder knows it. What it is built on, and the value
+/// of every member, are worked out when the declaration runs.
+#[derive(Debug)]
+pub struct Plan {
+    pub name: String,
+    pub field_names: Vec<String>,
+    pub shared_names: Vec<String>,
+    pub constant_names: Vec<String>,
+    pub methods: Vec<(String, Rc<Routine>)>,
+    pub extends: bool,
 }
 
 /// An operand of a dyad that is a binding or a
@@ -153,6 +212,9 @@ pub enum Traps {
 
 #[derive(Debug)]
 pub struct Routine {
+    /// How many arguments must be given; the rest carry a value of their
+    /// own, written by the body's first forms.
+    pub least: usize,
     pub ident: String,
     pub formals: Vec<String>,
     pub formal_slots: Vec<usize>,

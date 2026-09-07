@@ -42,7 +42,7 @@ const LABELS: &[&str] = &[
     "syntax.call.open", "syntax.call.separator", "syntax.call.close", "syntax.call.label",
     "syntax.array.open", "syntax.array.separator", "syntax.array.close",
     "syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close",
-    "literal.true", "literal.false", "literal.null",
+    "literal.true", "literal.false", "literal.null", "literal.null.silent",
     "op.precedence", "op.right_associative",
     "op.add", "op.sub", "op.mul", "op.div", "op.div.result", "op.quot", "op.rem", "op.pow",
     "op.eq", "op.ne", "op.lt", "op.le", "op.gt", "op.ge",
@@ -83,6 +83,8 @@ pub struct Definition {
     pub identifier_unicode: bool,
     pub identifiers_case_insensitive: bool,
     pub keywords_case_insensitive: bool,
+    /// Nothing shows as no text at all, not as the word for it.
+    pub nothing_silent: bool,
     /// The binding words are type names placed first (C's `int x = 1;`),
     /// and a name followed by the call bracket defines a function.
     pub type_first: bool,
@@ -160,6 +162,7 @@ impl Definition {
             right_associative: Vec::new(),
             identifier_unicode: false,
             identifiers_case_insensitive: false,
+            nothing_silent: false,
             keywords_case_insensitive: false,
             type_first: false,
             div_real: false,
@@ -196,6 +199,7 @@ impl Definition {
                 ("lexical.keywords_case_insensitive", Json::Bool(flag)) => definition.keywords_case_insensitive = *flag,
                 ("stmt.let.type_first", Json::Bool(flag)) => definition.type_first = *flag,
                 ("op.index.strings", Json::Bool(flag)) => definition.index_strings = *flag,
+                ("literal.null.silent", Json::Bool(flag)) => definition.nothing_silent = *flag,
                 ("stmt.function.result_by_name", Json::Bool(flag)) => definition.result_by_name = *flag,
                 ("op.div.result", Json::String(result)) => {
                     definition.div_real = match result.as_str() {

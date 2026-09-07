@@ -272,10 +272,30 @@ of CPython's `Lib/test`, copied unchanged with their licenses.
 which reserved words the definition spells and which functions the suites
 call that it does not. The suites run on the two full kernels, stack8 and
 microcode7, the ones that read the `ext.` labels a language needs beyond
-the 132 core labels, and the only two that hold a map value: PHP's
+the 133 core labels, and the only two that hold a map value: PHP's
 associative arrays and Python's dictionaries, with `foreach` and
 `print_r`. The report is the measure of the distance and the order to
 close it in. See [tests/README.md](tests/README.md).
+
+## The web
+
+A Lumen program can answer web requests. The host gathers a request the
+way a web server has always handed one to a program — the parts of it in
+the environment, the body on the input — and the full kernels bind them
+under whatever the language calls them, `$_GET`, `$_POST`, `$_COOKIE`,
+`$_SERVER` and `$_REQUEST` for PHP.
+
+```bash
+lumen-lang --serve 8080 --lang langs/extras/php.json site.php
+curl 'http://127.0.0.1:8080/hello?who=Ada'
+```
+
+`--serve` answers each request by running the program once with that
+request in its environment, so a served run is an ordinary run. A
+program may write headers before a blank line, as CGI has always let it;
+what follows is the body. Run without `--serve`, the same program reads
+whatever request the environment holds, so it works behind any web
+server that speaks CGI.
 
 ## The kernel lab
 

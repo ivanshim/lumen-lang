@@ -93,6 +93,7 @@
   "literal.null": [
     "None"
   ],
+  "literal.null.silent": false,
   "op.precedence": [
     [
       "or"

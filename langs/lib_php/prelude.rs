@@ -5,6 +5,8 @@
 pub static PROLOGUE: &str = "<?php";
 
 pub static FILES: &[(&str, &str)] = &[
+    ("langs/lib_php/native/exceptions.php", include_str!("native/exceptions.php")),
+    ("langs/lib_php/native/runtime.php", include_str!("native/runtime.php")),
     ("langs/lib_php/to_string.php", include_str!("to_string.php")),
     ("langs/lib_php/string_to_value.php", include_str!("string_to_value.php")),
     ("langs/lib_php/numeric.php", include_str!("numeric.php")),

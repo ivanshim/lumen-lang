@@ -89,7 +89,11 @@ impl<'a> Runner<'a> {
         Words {
             yes: self.spec.one("literal.true").unwrap_or("true"),
             no: self.spec.one("literal.false").unwrap_or("false"),
-            none: self.spec.one("literal.null").unwrap_or("null"),
+            // Nothing may show as no text at all, the way PHP shows it.
+            none: match self.spec.on("literal.null.silent") {
+                true => "",
+                false => self.spec.one("literal.null").unwrap_or("null"),
+            },
         }
     }
 

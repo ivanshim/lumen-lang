@@ -71,6 +71,34 @@ pub enum Action {
     AtEnd,
     /// How many places an array or a map holds.
     Extent,
+    /// Build the class this plan describes; what it stands on, if it
+    /// stands on anything, is the value below.
+    Forge(Rc<Plan>),
+    /// A new object of the class below the arguments, its maker run.
+    Make,
+    /// The property of that name, of the object above.
+    Grab(Rc<str>),
+    /// Write that property: the object, then the value.
+    Plant(Rc<str>),
+    /// Call that method of the object below the arguments.
+    Send(Rc<str>),
+    /// A constant or a class's own value, of the class above.
+    Reach(Rc<str>),
+    /// Write a class's own value: the class, then the value.
+    Sow(Rc<str>),
+    /// Call that method of a named class: the object it is for, the
+    /// class, then the arguments.
+    Summon(Rc<str>),
+    /// Whether the object above is of that class, or of one beneath it.
+    Kindred(Rc<str>),
+    /// The name of the class of the value above.
+    Titled,
+    /// Raise the value above as a fault to be caught.
+    Hurl,
+    /// Whether the value above is of any of those classes; it is consumed.
+    Matches(Rc<Vec<String>>),
+    /// Push the value above a second time.
+    Twin,
     /// Everything above the nearest mark as an array, the mark removed.
     Collect,
     Builtin(Builtin, Rc<str>),
@@ -133,6 +161,19 @@ pub enum Instr {
     Act(Action, usize),
     /// Pop; when the value is not true, continue at the index.
     Skip(usize),
+    /// Whether the call left the frame's slot without a value.
+    Missing(usize),
+    /// Make this binding a shared cell if it is not one already, and
+    /// push that cell, so another name can be fastened to it.
+    Bond(Cell),
+    /// Pop a shared cell and put it in this binding, so the two names
+    /// stand for one cell from here on.
+    Fasten(Cell),
+    /// From here to the matching Unguard, a raised value is caught: the
+    /// stack goes back to its depth here, the value is pushed, and the
+    /// run goes on at the index.
+    Guard(usize),
+    Unguard,
     /// A binary operation whose operands come from bindings, constants or
     /// the stack, the result pushed: an operator that never touches the
     /// stack for a binding.
@@ -149,10 +190,29 @@ pub enum Instr {
 pub struct Routine {
     pub ident: String,
     pub formals: Vec<String>,
+    /// How many arguments must be given; the rest have a value of their
+    /// own, written by the program's own first instrs.
+    pub least: usize,
     /// Every local slot's name, the parameters first.
     pub idents: Vec<String>,
     /// A function leaves one value, its result; a postfix program leaves
     /// whatever it pushed.
     pub returns_value: bool,
     pub instrs: Vec<Instr>,
+}
+
+/// What a class declaration comes to: everything about the class that is
+/// known while compiling. What it stands on is looked up when it runs.
+#[derive(Debug)]
+pub struct Plan {
+    pub name: String,
+    /// The names of the properties, of the values the class keeps for
+    /// itself and of its constants; a value for each is on the stack, in
+    /// that order, when the class is forged.
+    pub field_names: Vec<String>,
+    pub shared_names: Vec<String>,
+    pub constant_names: Vec<String>,
+    pub methods: Vec<(String, Rc<Routine>)>,
+    /// Whether a class to stand on is given first.
+    pub extends: bool,
 }

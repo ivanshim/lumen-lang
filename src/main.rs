@@ -18,6 +18,8 @@ use std::fs;
 use std::path::Path;
 use std::process;
 
+mod web;
+
 const KERNELS: [&str; 6] = ["stream35", "microcode11", "microcode4", "microcode7", "stack5", "stack8"];
 const DEFAULT_KERNEL: &str = "stack8";
 const DEFAULT_LANGUAGE: &str = "lumen";
@@ -65,7 +67,11 @@ fn mirror_for(language: &str) -> Option<(&'static str, &'static [(&'static str, 
 /// Lumen program, the language's mirror of it for any other. A program
 /// that opens with the language's prologue (Python's `import sys`) keeps
 /// it first, since the kernels drop a prologue only at the start.
-fn with_library(language: &str, source: String) -> String {
+/// The kernels that read the ext.* labels, and so the only ones a
+/// mirror's hand-written native source can run on.
+const FULL_KERNELS: [&str; 2] = ["stack8", "microcode7"];
+
+fn with_library(kernel: &str, language: &str, source: String) -> String {
     if env::var_os("LUMEN_BARE").is_some() {
         return source;
     }
@@ -77,6 +83,11 @@ fn with_library(language: &str, source: String) -> String {
         return format!("{}\n{}", prelude, source);
     }
     let Some((prologue, files)) = mirror_for(language) else { return source };
+    // A mirror may carry hand-written source of the language's own under
+    // native/, spelling what only the full kernels read; the others are
+    // given the ported library alone.
+    let full = FULL_KERNELS.contains(&kernel);
+    let files: Vec<_> = files.iter().filter(|(path, _)| full || !path.contains("/native/")).collect();
     if files.is_empty() {
         return source;
     }
@@ -94,8 +105,9 @@ fn with_library(language: &str, source: String) -> String {
 enum Language {
     /// An embedded definition, by name.
     Named(String),
-    /// A definition read from a file on disk, with the name it declares.
-    File { name: String, text: String },
+    /// A definition read from a file on disk, with the name it declares
+    /// and where it was read from.
+    File { name: String, path: String, text: String },
 }
 
 impl Language {
@@ -105,11 +117,21 @@ impl Language {
             Language::File { name, .. } => name,
         }
     }
+
+    /// What to write after `--lang` to ask for this language again.
+    fn given(&self) -> Option<String> {
+        match self {
+            Language::Named(name) => Some(name.clone()),
+            Language::File { path, .. } => Some(path.clone()),
+        }
+    }
 }
 
 struct Invocation {
     kernel: String,
     file: String,
+    /// Where to answer web requests, when the run is to serve them.
+    serve: Option<String>,
     language: Language,
     /// A language to write the program in instead of running it (microcode11 only).
     emit: Option<Language>,
@@ -126,7 +148,7 @@ fn main() {
     });
 
     // Every program runs on top of its language's library.
-    let source = with_library(inv.language.name(), source);
+    let source = with_library(&inv.kernel, inv.language.name(), source);
 
     if let Some(target) = &inv.emit {
         if inv.kernel != "microcode11" {
@@ -152,6 +174,30 @@ fn main() {
         return;
     }
 
+    // What a web request carries, gathered once here so that a kernel
+    // has only to bind it: the full kernels take it, the others do not
+    // read the labels that name it.
+    let request = web::gathered();
+
+    // Serving runs the program once for each request that arrives, with
+    // the request in its environment, so a served run is an ordinary run.
+    if let Some(address) = &inv.serve {
+        let mut program: Vec<String> = Vec::new();
+        program.push("--kernel".to_string());
+        program.push(inv.kernel.clone());
+        if let Some(named) = inv.language.given() {
+            program.push("--lang".to_string());
+            program.push(named);
+        }
+        program.push(inv.file.clone());
+        program.extend(inv.program_args.iter().cloned());
+        if let Err(e) = web::serve(address, &program) {
+            eprintln!("{}", e);
+            process::exit(1);
+        }
+        return;
+    }
+
     let result = match (inv.kernel.as_str(), &inv.language) {
         ("stream35", Language::Named(name)) => lumen_stream35::run(name, &source, &inv.program_args),
         ("stream35", Language::File { text, .. }) => lumen_stream35::run_definition(text, &source, &inv.program_args),
@@ -161,10 +207,10 @@ fn main() {
         ("microcode4", Language::File { text, .. }) => lumen_microcode4::run_definition(text, &source, &inv.program_args),
         ("stack5", Language::Named(name)) => lumen_stack5::run(name, &source, &inv.program_args),
         ("stack5", Language::File { text, .. }) => lumen_stack5::run_definition(text, &source, &inv.program_args),
-        ("stack8", Language::Named(name)) => lumen_stack8::run(name, &source, &inv.program_args),
-        ("stack8", Language::File { text, .. }) => lumen_stack8::run_definition(text, &source, &inv.program_args),
-        ("microcode7", Language::Named(name)) => lumen_microcode7::run(name, &source, &inv.program_args),
-        ("microcode7", Language::File { text, .. }) => lumen_microcode7::run_definition(text, &source, &inv.program_args),
+        ("stack8", Language::Named(name)) => lumen_stack8::run(name, &source, &inv.program_args, &request),
+        ("stack8", Language::File { text, .. }) => lumen_stack8::run_definition(text, &source, &inv.program_args, &request),
+        ("microcode7", Language::Named(name)) => lumen_microcode7::run(name, &source, &inv.program_args, &request),
+        ("microcode7", Language::File { text, .. }) => lumen_microcode7::run_definition(text, &source, &inv.program_args, &request),
         _ => unreachable!("kernel names are validated in parse_args"),
     };
 
@@ -176,7 +222,7 @@ fn main() {
 
 fn usage(program: &str) -> ! {
     eprintln!(
-        "Usage: {} [--kernel stream35|microcode11|microcode4|microcode7|stack5|stack8] [--lang <name|extension|definition.json>] [--emit <name|extension|definition.json>] <file> [program args...]",
+        "Usage: {} [--kernel stream35|microcode11|microcode4|microcode7|stack5|stack8] [--lang <name|extension|definition.json>] [--emit <name|extension|definition.json>] [--serve <address|port>] <file> [program args...]",
         program
     );
     process::exit(1);
@@ -200,7 +246,7 @@ fn definition_from_file(path: &str) -> Language {
         eprintln!("Error: language definition {}: {}", path, e);
         process::exit(1);
     });
-    Language::File { name, text }
+    Language::File { name, path: path.to_string(), text }
 }
 
 /// Resolve a `--lang` value.
@@ -243,6 +289,7 @@ fn parse_args(args: &[String]) -> Invocation {
     let mut rest: &[String] = &args[1..];
 
     let mut kernel = DEFAULT_KERNEL.to_string();
+    let mut serve: Option<String> = None;
     let mut language: Option<Language> = None;
     let mut emit: Option<Language> = None;
     let mut file: Option<String> = None;
@@ -269,6 +316,14 @@ fn parse_args(args: &[String]) -> Invocation {
                 language = Some(language_from_flag(&rest[1]));
                 rest = &rest[2..];
             }
+            Some("--serve") => {
+                if rest.len() < 2 {
+                    eprintln!("Error: --serve requires an address or a port");
+                    process::exit(1);
+                }
+                serve = Some(rest[1].clone());
+                rest = &rest[2..];
+            }
             Some("--emit") => {
                 if rest.len() < 2 {
                     eprintln!("Error: --emit requires an argument");
@@ -290,7 +345,7 @@ fn parse_args(args: &[String]) -> Invocation {
         Language::Named(language_from_extension(&file).unwrap_or_else(|| DEFAULT_LANGUAGE.to_string()))
     });
 
-    Invocation { kernel, file, language, emit, program_args: rest.to_vec() }
+    Invocation { kernel, file, serve, language, emit, program_args: rest.to_vec() }
 }
 
 /// The language whose embedded definition claims the file's extension.

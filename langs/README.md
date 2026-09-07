@@ -208,7 +208,7 @@ functions in Pascal.
 
 ## Extension labels
 
-The 132 labels of the table below are the core: every definition carries all of them,
+The 133 labels of the table below are the core: every definition carries all of them,
 and every kernel reads them. A definition may add labels under `ext.`
 for what its language has beyond the core. The full kernels, stack8 and
 microcode7, read them; the reference kernels (stream35, microcode11,
@@ -280,11 +280,94 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.print_r`: a builtin writing a value over lines, as PHP's
   `print_r` does: a scalar on its own, an array as `Array` and its places
   in brackets, each array within eight spaces further along.
+- `ext.stmt.class` and its family: `ext.stmt.class.extends`,
+  `ext.stmt.class.new`, `ext.stmt.class.this` (the name a method knows
+  its own object by), `ext.stmt.class.constructor` (the method run when
+  an object is made), `ext.stmt.class.modifier` (words before a member
+  that this kernel reads past: `public`, `final`), `ext.stmt.class.shared`
+  (the modifier for a member the class keeps rather than its objects),
+  `ext.stmt.class.parent` and `ext.stmt.class.self`. A class is a value
+  bound to its name, so `new C`, `C::CONST` and `catch (C $e)` are
+  ordinary reads of it. Objects are handles: naming one twice names one
+  object.
+- `ext.op.member` and `ext.op.scope`: `object->member` and
+  `class::member`, each reading a property, a constant or a method, and
+  `class::class` giving the class's name.
+- `ext.op.instanceof`: whether a value is an object of a class or of one
+  beneath it.
+- `ext.stmt.try`, `ext.stmt.catch`, `ext.stmt.finally`, `ext.stmt.throw`
+  and `ext.stmt.catch.separator`: a body watched for a raised value, the
+  first clause whose class takes it holding it, and a last part that runs
+  however the body ended, a return through it included. What no clause
+  takes is raised again.
+- `ext.lexical.name_lead`: signs a name may be led by that say nothing,
+  PHP's `\TypeError`.
+- `ext.op.reference`: the sign that makes one name stand for another's
+  cell. `$b = &$a` ties the two names to one cell, and a parameter
+  written `&$x` is given the caller's cell rather than a copy, so what
+  the program writes to it the caller sees. Which parameters are written
+  that way is read from the tokens before anything is compiled, since a
+  call must know before it works out its arguments and a program may be
+  called above where it is written.
 - `ext.stmt.function.returns`: the mark before a return type, read beside
   the core `stmt.function.returns`. PHP says it here because the porter
   writes a type for every function it ports and PHP has no word for a
   rational: filling the core label would drop from the ported examples
   every function that returns one.
+
+## The web
+
+A program may be run for a web request. The host gathers the request the
+way a web server has always handed one to a program: the parts of it
+stand in the environment (`REQUEST_METHOD`, `QUERY_STRING`,
+`HTTP_COOKIE`) and the body arrives on the input. It works them into
+named values and hands those to the kernel, which binds them under
+whatever the definition calls them:
+
+- `ext.system.request.query`, `.form`, `.cookies`: what the query
+  string, the form body and the cookies carry (`$_GET`, `$_POST`,
+  `$_COOKIE`).
+- `ext.system.request.server`, `.env`: the request's own variables and
+  the environment (`$_SERVER`, `$_ENV`).
+- `ext.system.request.all`: the query, the form and the cookies together
+  (`$_REQUEST`).
+- `ext.system.request.files`: what was uploaded; nothing is put there
+  yet.
+
+`lumen-lang --serve 8080 site.php` answers requests on that address by
+running the program once for each, which is the same run with the
+request in its environment. A program may write headers first, as CGI
+has always let it; what it writes after the first blank line is the
+body.
+
+Two more labels come with it, both PHP's way of reading what is not
+there: `ext.op.index.absent` says that reading a place an array does not
+hold gives nothing rather than stopping, and the core label
+`literal.null.silent` says that nothing shows as no text at all rather
+than as the word a program writes for it.
+
+## A parameter's own value
+
+A parameter may be given a value for calls that leave it out
+(`function f($a, $b = 2)`), in every language whose definition spells
+assignment. It is not a label of its own: it falls out of the parameter
+list. The value is read again inside the program, where its names mean
+what they mean there, and written only when the call left that parameter
+out.
+
+## Hand-written source in a mirror
+
+`langs/lib_<language>/native/` holds source the porter never writes:
+what a language has and Lumen has not. PHP's exception classes live
+there, written in PHP, so that no kernel carries PHP's class names, and
+so do its constants (`PHP_EOL`, `E_ALL`, `PHP_INT_MAX`) and the part of
+its library that PHP itself can express (`implode`, `array_merge`,
+`array_pop`, `in_array`, the `is_*` tests). The settings a kernel run
+from a command line has nothing to change (`ini_set`, `error_reporting`)
+answer as they would with nothing set.
+Those files use the extension labels, so the host gives them only to the
+kernels that read them; the reference kernels get the ported library
+alone.
 
 ## What a kernel does not implement
 
@@ -368,6 +451,7 @@ Generated by `python3 scripts/lang_table.py`; edit the JSON, not the table.
 | `literal.true` | `true` | `true` | `True` | `true` | `true` | `true` | `true` | `true` | `true` | `true` |
 | `literal.false` | `false` | `false` | `False` | `false` | `false` | `false` | `false` | `false` | `false` | `false` |
 | `literal.null` | `null` | `null` | `None` | `None` | `NULL` | `null` `undefined` | `nil` | `null` | `nil` | `nil` |
+| `literal.null.silent` | `false` | `false` | `false` | `false` | `false` | `false` | `false` | `true` | `false` | `false` |
 | `op.right_associative` | `**` | - | `**` | - | - | `**` | - | `**` | `**` | - |
 | `op.add` | `+` | `+` | `+` | `+` | `+` | `+` | `+` | `+` | `+` | `+` |
 | `op.sub` | `-` | `-` | `-` | `-` | `-` | `-` | `-` | `-` | `-` | `-` |
@@ -450,13 +534,13 @@ Generated by `python3 scripts/lang_table.py`; edit the JSON, not the table.
 | `system.memoization` | `MEMOIZATION` | - | - | - | - | - | - | - | - | - |
 | `system.real_default_precision` | `REAL_DEFAULT_PRECISION` | - | - | - | - | - | - | - | - | - |
 | `system.entry` | - | - | - | `main` | `main` | - | - | - | - | - |
-| `system.kind.integer` | `INTEGER` | `INTEGER` | - | - | - | - | - | - | - | - |
+| `system.kind.integer` | `INTEGER` | `INTEGER` | - | - | - | - | - | `integer` | - | - |
 | `system.kind.rational` | `RATIONAL` | `RATIONAL` | - | - | - | - | - | - | - | - |
-| `system.kind.real` | `REAL` | `REAL` | - | - | - | - | - | - | - | - |
-| `system.kind.string` | `STRING` | `STRING` | - | - | - | - | - | - | - | - |
-| `system.kind.boolean` | `BOOLEAN` | `BOOLEAN` | - | - | - | - | - | - | - | - |
-| `system.kind.array` | `ARRAY` | `ARRAY` | - | - | - | - | - | - | - | - |
-| `system.kind.null` | `NULL` | `NULL` | - | - | - | - | - | - | - | - |
+| `system.kind.real` | `REAL` | `REAL` | - | - | - | - | - | `double` | - | - |
+| `system.kind.string` | `STRING` | `STRING` | - | - | - | - | - | `string` | - | - |
+| `system.kind.boolean` | `BOOLEAN` | `BOOLEAN` | - | - | - | - | - | `boolean` | - | - |
+| `system.kind.array` | `ARRAY` | `ARRAY` | - | - | - | - | - | `array` | - | - |
+| `system.kind.null` | `NULL` | `NULL` | - | - | - | - | - | `NULL` | - | - |
 
 Operator precedence, lowest tier first. Unary operators sit in their own tier.
 
@@ -483,18 +567,36 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.var_dump` | - | - | - | - | - | - | - | `var_dump` | - | - |
 | `ext.lexical.epilogue` | - | - | - | - | - | - | - | `?>` | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | - | - | - | `"` | - | - |
+| `ext.lexical.name_lead` | - | - | - | - | - | - | - | `\` | - | - |
 | `ext.lexical.number.exponent` | - | - | - | - | - | - | - | `e` `E` | - | - |
 | `ext.op.assign.compound` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.decrement` | - | - | - | - | - | - | - | `--` | - | - |
 | `ext.op.increment` | - | - | - | - | - | - | - | `++` | - | - |
+| `ext.op.index.absent` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.index.append` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.op.instanceof` | - | - | - | - | - | - | - | `instanceof` | - | - |
+| `ext.op.member` | - | - | - | - | - | - | - | `->` | - | - |
 | `ext.op.plus` | - | - | - | - | - | - | - | `+` | - | - |
+| `ext.op.reference` | - | - | - | - | - | - | - | `&` | - | - |
+| `ext.op.scope` | - | - | - | - | - | - | - | `::` | - | - |
 | `ext.op.ternary` | - | - | - | - | - | - | - | `?` `:` | - | - |
 | `ext.stmt.break.levels` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.stmt.case` | - | - | - | - | - | - | - | `case` | - | - |
 | `ext.stmt.case.mark` | - | - | - | - | - | - | - | `:` | - | - |
+| `ext.stmt.catch` | - | - | - | - | - | - | - | `catch` | - | - |
+| `ext.stmt.catch.separator` | - | - | - | - | - | - | - | `\|` | - | - |
+| `ext.stmt.class` | - | - | - | - | - | - | - | `class` | - | - |
+| `ext.stmt.class.constructor` | - | - | - | - | - | - | - | `__construct` | - | - |
+| `ext.stmt.class.extends` | - | - | - | - | - | - | - | `extends` | - | - |
+| `ext.stmt.class.modifier` | - | - | - | - | - | - | - | `public` `private` `protected` `final` `abstract` `readonly` `var` | - | - |
+| `ext.stmt.class.new` | - | - | - | - | - | - | - | `new` | - | - |
+| `ext.stmt.class.parent` | - | - | - | - | - | - | - | `parent` | - | - |
+| `ext.stmt.class.self` | - | - | - | - | - | - | - | `self` | - | - |
+| `ext.stmt.class.shared` | - | - | - | - | - | - | - | `static` | - | - |
+| `ext.stmt.class.this` | - | - | - | - | - | - | - | `$this` | - | - |
 | `ext.stmt.const` | - | - | - | - | - | - | - | `const` | - | - |
 | `ext.stmt.default` | - | - | - | - | - | - | - | `default` | - | - |
+| `ext.stmt.finally` | - | - | - | - | - | - | - | `finally` | - | - |
 | `ext.stmt.for.c` | - | - | - | - | - | - | - | `for` | - | - |
 | `ext.stmt.for.collection` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.function.hoisted` | - | - | - | - | - | - | - | `true` | - | - |
@@ -502,5 +604,14 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.global` | - | - | - | - | - | - | - | `global` | - | - |
 | `ext.stmt.static` | - | - | - | - | - | - | - | `static` | - | - |
 | `ext.stmt.switch` | - | - | - | - | - | - | - | `switch` | - | - |
+| `ext.stmt.throw` | - | - | - | - | - | - | - | `throw` | - | - |
+| `ext.stmt.try` | - | - | - | - | - | - | - | `try` | - | - |
 | `ext.syntax.call.bare` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.system.request.all` | - | - | - | - | - | - | - | `$_REQUEST` | - | - |
+| `ext.system.request.cookies` | - | - | - | - | - | - | - | `$_COOKIE` | - | - |
+| `ext.system.request.env` | - | - | - | - | - | - | - | `$_ENV` | - | - |
+| `ext.system.request.files` | - | - | - | - | - | - | - | `$_FILES` | - | - |
+| `ext.system.request.form` | - | - | - | - | - | - | - | `$_POST` | - | - |
+| `ext.system.request.query` | - | - | - | - | - | - | - | `$_GET` | - | - |
+| `ext.system.request.server` | - | - | - | - | - | - | - | `$_SERVER` | - | - |
 <!-- table:end -->
