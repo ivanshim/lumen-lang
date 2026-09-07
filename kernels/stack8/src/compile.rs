@@ -3011,8 +3011,24 @@ fn relocated(instrs: Vec<Instr>, delta: i64) -> Vec<Instr> {
 // ---------- numbers ----------
 
 fn parse_number(text: &str, lang: &Lang) -> Res<Value> {
-    if let Some(digits) = lang.hex_prefix.as_ref().and_then(|p| text.strip_prefix(p.as_str())) {
-        return BigInt::parse_bytes(digits.as_bytes(), 16).map(Value::of_big).ok_or_else(|| format!("Invalid number: {}", text));
+    // Marks put between digits to break them up count for nothing.
+    let plain: String = text.chars().filter(|c| !lang.digit_separators.contains(c)).collect();
+    if plain != text {
+        return parse_number(&plain, lang);
+    }
+    for (prefix, base) in &lang.base_prefixes {
+        if let Some(digits) = text.strip_prefix(prefix.as_str()) {
+            return BigInt::parse_bytes(digits.as_bytes(), *base)
+                .map(Value::of_big)
+                .ok_or_else(|| format!("Invalid number: {}", text));
+        }
+    }
+    // A nought before more digits, where a language says so, means the
+    // digits are read in base eight.
+    if lang.octal_lead && text.len() > 1 && text.starts_with('0') && text.bytes().all(|b| b.is_ascii_digit()) {
+        return BigInt::parse_bytes(text[1..].as_bytes(), 8)
+            .map(Value::of_big)
+            .ok_or_else(|| format!("Invalid number: {}", text));
     }
     if let Some(mark) = lang.base_mark.filter(|m| text.contains(*m)) {
         let (p, q) = in_given_base(text, mark, lang.point, lang.exponent_mark)?;

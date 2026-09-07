@@ -53,6 +53,15 @@ pub struct Lang {
     pub base_mark: Option<char>,
     pub exponent_mark: Option<char>,
     pub hex_prefix: Option<String>,
+    /// Each way of writing a number in a base of its own, with the base
+    /// its digits are read in: `0x` for sixteen, `0b` for two.
+    pub base_prefixes: Vec<(String, u32)>,
+    /// A nought before more digits means base eight, as it does in the
+    /// languages that grew from C.
+    pub octal_lead: bool,
+    /// Marks a program may put between the digits of a number to break
+    /// them up, which count for nothing.
+    pub digit_separators: Vec<char>,
     pub unicode_names: bool,
     pub sigil: Option<char>,
     pub keywords_folded: bool,
@@ -303,6 +312,7 @@ w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at | b ext.op.assign.value | b ext.op.index.plain_keys
 w ext.system.source.file | w ext.system.source.directory | w ext.system.source.line
 w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.complaint.deprecated
+w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -503,12 +513,22 @@ impl Lang {
         if let Some(e) = escapes.iter().find(|e| !matches!(e, 'n' | 't' | 'r' | '0' | '\\') && !quotes.contains(e)) {
             return Err(format!("lexical.string_escapes: unknown escape letter '{e}'"));
         }
-        let hex_prefix = r.head("lexical.number.hex_prefix")?;
-        if let Some(p) = &hex_prefix {
-            if p.chars().count() != 2 || !p.starts_with(|c: char| c.is_ascii_digit()) {
-                return Err(format!("lexical.number.hex_prefix must be a digit followed by one letter, got '{p}'"));
+        // Each way of writing a number in a base of its own: a digit,
+        // one letter, and the base those digits are read in.
+        let mut base_prefixes: Vec<(String, u32)> = Vec::new();
+        for (tag, base) in [
+            ("lexical.number.hex_prefix", 16u32),
+            ("ext.lexical.number.binary_prefix", 2),
+            ("ext.lexical.number.octal_prefix", 8),
+        ] {
+            for p in r.strings(tag)? {
+                if p.chars().count() != 2 || !p.starts_with(|c: char| c.is_ascii_digit()) {
+                    return Err(format!("{tag} must be a digit followed by one letter, got '{p}'"));
+                }
+                base_prefixes.push((p, base));
             }
         }
+        let hex_prefix = r.head("lexical.number.hex_prefix")?;
 
         let style = match r.string("block.style")?.as_str() {
             "indentation" => Blocks::Indented,
@@ -756,6 +776,9 @@ impl Lang {
             base_mark: r.letter("lexical.number.base_marker")?,
             exponent_mark: r.letter("lexical.number.exponent_marker")?,
             hex_prefix,
+            base_prefixes,
+            octal_lead: r.flag("ext.lexical.number.octal_lead")?,
+            digit_separators: r.letters("ext.lexical.number.separator")?,
             unicode_names: unicode,
             sigil: var_prefix,
             keywords_folded: r.flag("lexical.keywords_case_insensitive")?,

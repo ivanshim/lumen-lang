@@ -2735,10 +2735,26 @@ fn dup_pure(node: &Form) -> Form {
 // ---------- numbers
 
 pub fn numeral(text: &str, table: &Table) -> Res<Value> {
-    if let Some(p) = table.single("lexical.number.hex_prefix") {
-        if let Some(d) = text.strip_prefix(p) {
-            return BigInt::parse_bytes(d.as_bytes(), 16).map(Value::from_big).ok_or_else(|| format!("Invalid number: {}", text));
+    let apart = table.letters("ext.lexical.number.separator");
+    let plain: String = text.chars().filter(|c| !apart.contains(c)).collect();
+    if plain != text {
+        return numeral(&plain, table);
+    }
+    for (key, radix) in [
+        ("lexical.number.hex_prefix", 16u32),
+        ("ext.lexical.number.binary_prefix", 2),
+        ("ext.lexical.number.octal_prefix", 8),
+    ] {
+        for p in table.strings(key) {
+            if let Some(d) = text.strip_prefix(p.as_str()) {
+                return BigInt::parse_bytes(d.as_bytes(), radix).map(Value::from_big).ok_or_else(|| format!("Invalid number: {}", text));
+            }
         }
+    }
+    // Where a language says so, a nought before more digits means those
+    // digits are read in base eight.
+    if table.flag("ext.lexical.number.octal_lead") && text.len() > 1 && text.starts_with('0') && text.bytes().all(|b| b.is_ascii_digit()) {
+        return BigInt::parse_bytes(text[1..].as_bytes(), 8).map(Value::from_big).ok_or_else(|| format!("Invalid number: {}", text));
     }
     let point = table.letter("lexical.number.decimal_point");
     if let Some(mark) = table.letter("lexical.number.base_marker").filter(|m| text.contains(*m)) {
