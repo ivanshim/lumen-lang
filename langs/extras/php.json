@@ -597,5 +597,8 @@
   "ext.system.real.bits": 64,
   "ext.system.complaint.fatal": [
     "Fatal error"
+  ],
+  "ext.system.fault.class": [
+    "Error"
   ]
 }

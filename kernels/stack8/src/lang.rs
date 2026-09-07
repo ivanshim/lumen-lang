@@ -164,6 +164,9 @@ pub struct Lang {
     /// complaint rather than a stop.
     pub complaint_words: Vec<(Complaint, String)>,
     pub line_binding: Option<String>,
+    /// The class a fault of the kernel's own is raised as, where a
+    /// language names one, so that a program may take it like any other.
+    pub fault_class: Option<String>,
     /// Whether a binding never written is a complaint rather than a stop.
     pub warns_of_unwritten: bool,
     /// Whether the language says where a complaint happened, so that
@@ -321,6 +324,7 @@ w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at | b ext.op.assign.value | b ext.op.index.plain_keys
 w ext.system.source.file | w ext.system.source.directory | w ext.system.source.line
 w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.complaint.deprecated | w ext.system.complaint.fatal
+w ext.system.fault.class
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 ";
@@ -881,6 +885,7 @@ impl Lang {
                 found
             },
             line_binding: r.head("ext.system.source.line")?,
+            fault_class: r.head("ext.system.fault.class")?,
             warns_of_unwritten: r.head("ext.system.complaint.warning")?.is_some(),
             tells_place: tells_complaints,
             source_bindings: {

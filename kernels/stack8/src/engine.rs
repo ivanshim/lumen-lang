@@ -131,8 +131,19 @@ impl<'a> Engine<'a> {
     /// written where a language has no word for it.
     pub fn ended_uncaught(&self, fault: &Fault) {
         let Some((_, word)) = self.lang.complaint_words.iter().find(|(k, _)| *k == Complaint::Fatal) else { return };
-        let Fault::Thrown(raised) = fault else { return };
         let sp = self.wording();
+        let raised = match fault {
+            Fault::Thrown(raised) => raised,
+            // A fault of the kernel's own is told under the class the
+            // language names for one, where it names any.
+            Fault::Note(told) => {
+                let Some(named) = &self.lang.fault_class else { return };
+                let at = self.line;
+                println!("\n{}: Uncaught {}: {} in {}:{}", word, named, told, self.source, at);
+                println!("Stack trace:\n#0 {{main}}\n  thrown in {} on line {}", self.source, at);
+                return;
+            }
+        };
         let said = match raised {
             Value::Object(o) => {
                 let told = o.fields.borrow().iter().find(|(n, _)| n == "message").map(|(_, v)| v.plain());
@@ -146,6 +157,36 @@ impl<'a> Engine<'a> {
         let at = self.hurled_at.get();
         println!("\n{}: {} in {}:{}", word, said, self.source, at);
         println!("Stack trace:\n#0 {{main}}\n  thrown in {} on line {}", self.source, at);
+    }
+
+    /// A fault of the kernel's own as a value of the class the language
+    /// names for one, so a program may take it. Nothing where the
+    /// language names no such class, or where it is not to be found.
+    fn as_fault(&mut self, told: &str) -> Option<Value> {
+        let named = self.lang.fault_class.clone()?;
+        let Some(Value::Class(class)) = self.lookup(&named).cloned() else { return None };
+        self.hurled_at.set(self.line);
+        self.made += 1;
+        let mut fields = class.all_fields();
+        match fields.iter_mut().find(|(n, _)| n == "message") {
+            Some(place) => place.1 = Value::text(told),
+            None => fields.push(("message".to_string(), Value::text(told))),
+        }
+        Some(Value::Object(Rc::new(Instance { class, fields: RefCell::new(fields), mark: self.made })))
+    }
+
+    /// Offer a fault of the kernel's own to the innermost guard as a
+    /// raised value. Nothing where the language names no class for one,
+    /// or where no guard is watching.
+    fn offer_to_guard(&mut self, told: &str, guards: &mut Vec<(usize, usize)>) -> Option<usize> {
+        if guards.is_empty() {
+            return None;
+        }
+        let made = self.as_fault(told)?;
+        let (catch, depth) = guards.pop().expect("a guard was watching");
+        self.data.truncate(depth);
+        self.data.push(made);
+        Some(catch)
     }
 
     pub fn define(&mut self, name: &str, v: Value) {
@@ -439,16 +480,33 @@ impl<'a> Engine<'a> {
         while pc < instrs.len() {
             match &instrs[pc] {
                 Instr::Const(v) => self.data.push(v.clone()),
-                Instr::Read(slot) => {
-                    let v = self.load_cell(slot, frame)?;
-                    self.data.push(v);
-                }
+                Instr::Read(slot) => match self.load_cell(slot, frame) {
+                    Ok(v) => self.data.push(v),
+                    Err(told) => match self.offer_to_guard(&told, &mut guards) {
+                        Some(catch) => {
+                            pc = catch;
+                            continue;
+                        }
+                        None => return Err(told.into()),
+                    },
+                },
                 Instr::Write(slot) => {
                     let v = self.drop_top()?;
                     self.store_cell(slot, frame, v)?;
                 }
                 Instr::Act(op, argc) => {
                     if let Err(fault) = self.perform(op, *argc) {
+                        // A language that names a class for the kernel's
+                        // own faults has them raised as one of that
+                        // class, so a program may take them like any
+                        // other raised value.
+                        let fault = match fault {
+                            Fault::Note(told) if !guards.is_empty() => match self.as_fault(&told) {
+                                Some(made) => Fault::Thrown(made),
+                                None => Fault::Note(told),
+                            },
+                            other => other,
+                        };
                         let Fault::Thrown(raised) = fault else { return Err(fault) };
                         let Some((catch, depth)) = guards.pop() else { return Err(Fault::Thrown(raised)) };
                         self.data.truncate(depth);

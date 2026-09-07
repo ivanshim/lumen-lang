@@ -340,6 +340,20 @@ only. The extension labels so far, all from PHP:
   after them where it stands very high or very low, and a number past
   every one of that width is written `INF`. Where a language says
   nothing, its numbers are exact and unbounded, as Lumen's own are.
+- `ext.system.complaint.warning`, `.notice`, `.deprecated` and
+  `.fatal`: the word a language uses for each kind of complaint. Where
+  a language has a word for a warning, a binding never written, a place
+  an array does not hold and a property a thing does not carry are
+  complained about and read as nothing rather than stopping the run.
+  Where it has a word for the end of a run, a value raised and never
+  taken is told with that word, and written where the program's own
+  writing goes.
+- `ext.system.source.line`: the name a program calls the line it is
+  written on (`__LINE__`), which is known while the program is read.
+- `ext.system.fault.class`: the class a fault of the kernel's own is
+  raised as, where a language names one. A statement written to take a
+  raised value then takes a fault as it takes anything else, and one
+  nobody takes is told under that class.
 - `ext.system.source.file` and `ext.system.source.directory`: the names
   a program calls the file it is written in and the place that file
   lies in (`__FILE__`, `__DIR__`). The host works both out from the
@@ -737,8 +751,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.try` | - | - | - | - | - | - | - | `try` | - | - |
 | `ext.syntax.call.bare` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.system.complaint.deprecated` | - | - | - | - | - | - | - | `Deprecated` | - | - |
+| `ext.system.complaint.fatal` | - | - | - | - | - | - | - | `Fatal error` | - | - |
 | `ext.system.complaint.notice` | - | - | - | - | - | - | - | `Notice` | - | - |
 | `ext.system.complaint.warning` | - | - | - | - | - | - | - | `Warning` | - | - |
+| `ext.system.fault.class` | - | - | - | - | - | - | - | `Error` | - | - |
 | `ext.system.integer.bits` | - | - | - | - | - | - | - | `64` | - | - |
 | `ext.system.kind.spelled` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.system.real.bits` | - | - | - | - | - | - | - | `64` | - | - |

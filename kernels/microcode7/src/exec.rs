@@ -211,6 +211,21 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// A fault of the kernel's own as a value of the class the language
+    /// names for one. Nothing where it names none, or where the class
+    /// itself is nowhere to be found.
+    fn as_raised(&mut self, told: &str) -> Option<Value> {
+        let named = self.table.single("ext.system.fault.class")?.to_string();
+        let Some(Value::Blueprint(of)) = self.lookup(&named) else { return None };
+        self.made += 1;
+        let mut holds = of.every_field();
+        match holds.iter_mut().find(|(k, _)| k == "message") {
+            Some(place) => place.1 = Value::text(told),
+            None => holds.push(("message".to_string(), Value::text(told))),
+        }
+        Some(Value::Thing(Rc::new(Thing { of, holds: RefCell::new(holds), turn: self.made })))
+    }
+
     /// How a run ended, told the way a language with a word for the end
     /// of one tells it: what stopped it, where, and how the run stood.
     /// Nothing is written where a language has no word for it.
@@ -239,7 +254,17 @@ impl<'a> Machine<'a> {
                 self.end_of_run(&said);
                 Err(said)
             }
-            Err(Escape::Error(e)) => Err(e),
+            // A fault of the kernel's own is told under the class the
+            // language names for one, where it names any.
+            Err(Escape::Error(e)) => {
+                if let Some(named) = self.table.single("ext.system.fault.class") {
+                    if self.complaint_words.iter().any(|(k, _)| *k == "fatal") {
+                        self.raised_on = self.row;
+                        self.end_of_run(&format!("Uncaught {}: {}", named, e));
+                    }
+                }
+                Err(e)
+            }
         }
     }
 
@@ -412,6 +437,16 @@ impl<'a> Machine<'a> {
             }
             Form::Attempt { body, clauses, last } => {
                 let ending = self.value_of(body, frame);
+                // A language that names a class for the kernel's own
+                // faults has one raised as a value of that class, so a
+                // clause may take it like any other raised value.
+                let ending = match ending {
+                    Err(Escape::Error(told)) => match self.as_raised(&told) {
+                        Some(made) => Err(Escape::Thrown(made)),
+                        None => Err(Escape::Error(told)),
+                    },
+                    other => other,
+                };
                 let ending = match ending {
                     Err(Escape::Thrown(raised)) => {
                         // The first clause that takes this class holds it

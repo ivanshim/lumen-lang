@@ -2881,13 +2881,29 @@ fn peephole(instrs: Vec<Instr>) -> Vec<Instr> {
             targets[*t] = true;
         }
     }
+    // Words standing under a guard are left as they are. A fault is
+    // offered to the guard where it comes of applying an operation, so
+    // fusing the operation into its operands would put it out of reach
+    // of the very statement written to take it.
+    let mut watched = vec![false; instrs.len()];
+    let mut depth = 0usize;
+    for (at, w) in instrs.iter().enumerate() {
+        match w {
+            Instr::Guard(_) => depth += 1,
+            Instr::Unguard => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        watched[at] = depth > 0;
+    }
     let comparison = |op: &Action| matches!(op, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge);
     let arithmetic = |op: &Action| comparison(op) || matches!(op, Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv | Action::Mod | Action::Power | Action::Join | Action::At);
     let mut out: Vec<Instr> = Vec::with_capacity(instrs.len());
     let mut map = vec![0usize; instrs.len() + 1];
     let mut i = 0;
     while i < instrs.len() {
-        let clear = |width: usize| i + width <= instrs.len() && !targets[i + 1..i + width].iter().any(|&t| t);
+        let clear = |width: usize| {
+            i + width <= instrs.len() && !targets[i + 1..i + width].iter().any(|&t| t) && !watched[i..i + width].iter().any(|&w| w)
+        };
         let mut group = None;
         let mut width = 4;
         if clear(4) {
