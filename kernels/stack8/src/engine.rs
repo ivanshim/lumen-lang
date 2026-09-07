@@ -1053,19 +1053,39 @@ impl<'a> Engine<'a> {
             }
             Action::Add if self.lang.concat.is_none() && (matches!(a, Value::Text(_)) || matches!(b, Value::Text(_))) => joined(),
             // Text that spells a number is worked with as that number,
-            // fractions included, rather than only as a whole one.
+            // fractions included, rather than only as a whole one. Text
+            // that spells one and then goes on saying something else is
+            // worth the number it opens with, and text that spells none
+            // is worth nothing; a language with a word for a warning is
+            // told of both rather than stopped.
             _ if matches!(a, Value::Text(_)) || matches!(b, Value::Text(_)) => {
-                let spelled = |v: &Value| match v {
-                    Value::Text(s) => number_spelled(s),
+                let read = |v: &Value| match v {
+                    Value::Text(s) => Some(number_opening(s)),
                     _ => None,
                 };
-                match (spelled(a), spelled(b)) {
-                    (None, None) => return self.dyadic_numbers(op, a, b),
-                    (x, y) => {
-                        let (x, y) = (x.unwrap_or_else(|| a.clone()), y.unwrap_or_else(|| b.clone()));
-                        return self.dyadic_numbers(op, &x, &y);
-                    }
+                let (x, y) = (read(a), read(b));
+                if !self.lang.warns_of_unwritten {
+                    let taken = |told: Option<(Option<Value>, bool)>, held: &Value| match told {
+                        Some((Some(n), true)) => n,
+                        _ => held.clone(),
+                    };
+                    let (x, y) = (taken(x, a), taken(y, b));
+                    return self.dyadic_numbers(op, &x, &y);
                 }
+                let worth = |told: Option<(Option<Value>, bool)>, held: &Value| match told {
+                    None => held.clone(),
+                    Some((Some(n), true)) => n,
+                    Some((Some(n), false)) => {
+                        self.complain(Complaint::Warning, "A non-well-formed numeric value encountered");
+                        n
+                    }
+                    Some((None, _)) => {
+                        self.complain(Complaint::Warning, "A non-numeric value encountered");
+                        Value::Small(0)
+                    }
+                };
+                let (x, y) = (worth(x, a), worth(y, b));
+                return self.dyadic_numbers(op, &x, &y);
             }
             _ => return self.dyadic_numbers(op, a, b),
         })
@@ -1806,4 +1826,35 @@ fn whole_spelled(s: &str) -> Option<i64> {
         return None;
     }
     digits.parse::<i64>().ok().map(|n| n * sign)
+}
+
+/// The number a piece of text opens with, and whether that is the whole
+/// of it: `"12"` is twelve and the whole, `"12abc"` twelve and not, and
+/// `"abc"` no number at all.
+fn number_opening(s: &str) -> (Option<Value>, bool) {
+    if let Some(whole) = number_spelled(s) {
+        return (Some(whole), true);
+    }
+    let text = s.trim_start();
+    let mut end = 0;
+    let bytes = text.as_bytes();
+    if matches!(bytes.first(), Some(b'-') | Some(b'+')) {
+        end = 1;
+    }
+    let mut seen_point = false;
+    while end < bytes.len() {
+        let c = bytes[end];
+        if c.is_ascii_digit() {
+            end += 1;
+        } else if c == b'.' && !seen_point {
+            seen_point = true;
+            end += 1;
+        } else {
+            break;
+        }
+    }
+    match number_spelled(&text[..end]) {
+        Some(opening) => (Some(opening), false),
+        None => (None, false),
+    }
 }

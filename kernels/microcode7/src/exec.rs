@@ -1235,15 +1235,43 @@ impl<'a> Machine<'a> {
                 Value::text(&format!("{}{}", v[0].render(w), v[1].render(w)))
             }
             // Text that spells a number is worked with as that number,
-            // fractions included, so long as one side spells one.
+            // fractions included. Text that spells one and then says
+            // something more is worth what it opens with, and text that
+            // spells none is worth nothing; a language with a word for a
+            // warning hears of both instead of being stopped.
             Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power
             | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge
-                if number_spelled_in(&v[0]).is_some() || number_spelled_in(&v[1]).is_some() =>
+                // Only where every piece of text will give up a number,
+                // so that what is worked out below is never text again.
+                if (matches!(v[0], Value::Text(_)) || matches!(v[1], Value::Text(_)))
+                    && [&v[0], &v[1]].iter().all(|x| {
+                        !matches!(x, Value::Text(_))
+                            || number_spelled_in(x).is_some()
+                            || self.complaint_words.iter().any(|(k, _)| *k == "warning")
+                    }) =>
             {
-                let pair = [
-                    number_spelled_in(&v[0]).unwrap_or_else(|| v[0].clone()),
-                    number_spelled_in(&v[1]).unwrap_or_else(|| v[1].clone()),
-                ];
+                let warns = self.complaint_words.iter().any(|(k, _)| *k == "warning");
+                let worth = |x: &Value| -> Value {
+                    let Value::Text(_) = x else { return x.clone() };
+                    match number_opening_in(x) {
+                        (Some(n), true) => n,
+                        (Some(n), false) => {
+                            if warns {
+                                self.grumble("warning", "A non-well-formed numeric value encountered");
+                                return n;
+                            }
+                            x.clone()
+                        }
+                        (None, _) => {
+                            if warns {
+                                self.grumble("warning", "A non-numeric value encountered");
+                                return Value::Small(0);
+                            }
+                            x.clone()
+                        }
+                    }
+                };
+                let pair = [worth(&v[0]), worth(&v[1])];
                 return self.prim(op, name, &pair);
             }
             Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power => {
@@ -1831,4 +1859,33 @@ fn whole_number_spelled(s: &str) -> Option<i64> {
         return None;
     }
     digits.parse::<i64>().ok().map(|n| n * sign)
+}
+
+/// The number a piece of text opens with, and whether that is the whole
+/// of it: "12" is twelve and the whole, "12abc" twelve and not, and
+/// "abc" no number at all.
+fn number_opening_in(v: &Value) -> (Option<Value>, bool) {
+    if let Some(whole) = number_spelled_in(v) {
+        return (Some(whole), true);
+    }
+    let Value::Text(s) = v else { return (None, false) };
+    let text = s.trim_start();
+    let letters = text.as_bytes();
+    let mut end = usize::from(matches!(letters.first(), Some(b'-') | Some(b'+')));
+    let mut had_point = false;
+    while end < letters.len() {
+        let c = letters[end];
+        if c.is_ascii_digit() {
+            end += 1;
+        } else if c == b'.' && !had_point {
+            had_point = true;
+            end += 1;
+        } else {
+            break;
+        }
+    }
+    match number_spelled_in(&Value::text(&text[..end])) {
+        Some(opening) => (Some(opening), false),
+        None => (None, false),
+    }
 }
