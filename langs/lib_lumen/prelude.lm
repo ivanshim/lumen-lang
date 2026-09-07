@@ -1,0 +1,24 @@
+# ============================================================
+# Lumen Standard Library Prelude (Manifest)
+# This file is loaded automatically by the kernel before user code.
+# It contains only include directives, not library implementations.
+# ============================================================
+
+include "langs/lib_lumen/render.lm"
+include "langs/lib_lumen/to_string.lm"
+include "langs/lib_lumen/string_to_value.lm"
+include "langs/lib_lumen/numeric.lm"
+include "langs/lib_lumen/output.lm"
+include "langs/lib_lumen/array.lm"
+include "langs/lib_lumen/string.lm"
+include "langs/lib_lumen/string_ord_chr.lm"
+include "langs/lib_lumen/factorial.lm"
+include "langs/lib_lumen/round.lm"
+include "langs/lib_lumen/e_integer.lm"
+include "langs/lib_lumen/pi_machin.lm"
+include "langs/lib_lumen/modular_arithmetic.lm"
+include "langs/lib_lumen/primes.lm"
+include "langs/lib_lumen/number_theory.lm"
+include "langs/lib_lumen/constants_1024.lm"
+include "langs/lib_lumen/constants.lm"
+include "langs/lib_lumen/constants_default.lm"

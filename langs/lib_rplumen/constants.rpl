@@ -1,0 +1,57 @@
+# The Lumen library file langs/lib_lumen/constants.lm, ported by scripts/port_examples.py; edit the Lumen original, not this file.
+
+« 'sigfigs' =
+    sigfigs pi_1024 return
+» 'pi' =
+
+« 'sigfigs' =
+    sigfigs e_1024 return
+» 'e' =
+
+« 'sigfigs' =
+    sigfigs sqrt2_1024 return
+» 'sqrt2' =
+
+« 'sigfigs' =
+    sigfigs sqrt_pi_1024 return
+» 'sqrt_pi' =
+
+« 'sigfigs' =
+    sigfigs sqrt_2pi_1024 return
+» 'sqrt_2pi' =
+
+« 'sigfigs' =
+    sigfigs e2_1024 return
+» 'e2' =
+
+« 'sigfigs' =
+    sigfigs inv_pi_1024 return
+» 'inv_pi' =
+
+« 'sigfigs' =
+    sigfigs inv_e_1024 return
+» 'inv_e' =
+
+« 'sigfigs' =
+    sigfigs inv_sqrt_2pi_1024 return
+» 'inv_sqrt_2pi' =
+
+« 'sigfigs' =
+    sigfigs ln2_1024 return
+» 'ln2' =
+
+« 'sigfigs' =
+    sigfigs ln10_1024 return
+» 'ln10' =
+
+« 'sigfigs' =
+    sigfigs log2e_1024 return
+» 'log2e' =
+
+« 'sigfigs' =
+    sigfigs log10e_1024 return
+» 'log10e' =
+
+« 'sigfigs' =
+    sigfigs two_over_sqrt_pi_1024 return
+» 'two_over_sqrt_pi' =

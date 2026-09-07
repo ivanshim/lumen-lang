@@ -1,0 +1,5 @@
+# The Lumen library file langs/lib_lumen/numeric.lm, ported by scripts/port_examples.py; edit the Lumen original, not this file.
+
+« 'x' =
+    x x to_int - return
+» 'frac' =

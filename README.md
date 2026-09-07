@@ -79,9 +79,9 @@ langs/                 language definitions as JSON, one file per language,
                        reads them. Lumen, RPLumen, Python and Rust are embedded at
                        build time; langs/extras/ holds definitions read from
                        disk at run time with --lang <path>
-lib_lumen/             the Lumen standard library, written in Lumen
-lib_<language>/        the same library as each other language spells it,
-                       written by the porter from lib_lumen/ and prepended
+langs/lib_lumen/       the Lumen standard library, written in Lumen
+langs/lib_<language>/  the same library as each other language spells it,
+                       written by the porter from langs/lib_lumen/ and prepended
                        to every program in that language
 examples/              programs for every language
 ```
@@ -217,9 +217,9 @@ the suite requires the six kernels to print the same for every one of
 them.
 
 The library goes with them. The same porter writes every function of
-`lib_lumen/` that a language can spell into `lib_<language>/`, file for
+`langs/lib_lumen/` that a language can spell into `langs/lib_<language>/`, file for
 file, and the host prepends that mirror to every program in the language,
-as it prepends `lib_lumen/` to every Lumen program; so a Python or Pascal
+as it prepends `langs/lib_lumen/` to every Lumen program; so a Python or Pascal
 program calls `gcd` or `substring` as a Lumen program does, and a port
 carries no library code of its own. [docs/LIBRARY_PORTS.md](docs/LIBRARY_PORTS.md)
 says for each function and language whether the mirror has it, or which
@@ -230,7 +230,7 @@ with instead. A mirror costs a program a few milliseconds to read;
 Lumen is the reference language: integers, exact rationals and reals of
 configurable precision, strings, arrays, functions, `for`/`while`/`until`
 loops, a pipe operator, base-N literals, and a standard library in
-`lib_lumen/` built on a handful of kernel built-ins. Its design principles are
+`langs/lib_lumen/` built on a handful of kernel built-ins. Its design principles are
 in [docs/LUMEN_LANGUAGE_DESIGN.md](docs/LUMEN_LANGUAGE_DESIGN.md), and every
 label of its definition is compared with the other languages in
 [langs/README.md](langs/README.md).
@@ -261,6 +261,17 @@ GitHub Actions runs the independence check, the build with warnings as
 errors, a check that the ported examples match what
 `scripts/port_examples.py` writes, and the whole suite on every push.
 `TEST_QUIET=1` prints program output only for failures.
+
+## Reference suites
+
+`tests/` holds tests the languages' own projects wrote: php-src's
+`tests/lang`, `tests/basic` and `tests/func`, and the core-language files
+of CPython's `Lib/test`, copied unchanged with their licenses.
+`scripts/reference_tests.py` runs them against the definitions and writes
+[tests/REPORT.md](tests/REPORT.md): what passes, why the rest does not,
+which reserved words the definition spells and which functions the suites
+call that it does not. Today nothing passes; the report is the measure of
+the distance and the order to close it in. See [tests/README.md](tests/README.md).
 
 ## The kernel lab
 

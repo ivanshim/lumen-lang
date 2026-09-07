@@ -3,7 +3,7 @@
 # Example: lumen-lang pi_machin.lm 1000
 # Default: Computes 1000 digits of pi using Machin's formula
 
-# import("lib_lumen/pi_machin.lm")  # Not needed - functions already linked from lib_lumen
+# pi_machin comes from the library (langs/lib_lumen/pi_machin.lm), loaded with every Lumen program
 
 significant_figures = 1000
 # Note: ARGS parsing with to_int() doesn't work yet - to_int() doesn't parse strings

@@ -91,7 +91,7 @@ impl Env {
         self.in_view()
             .find_map(|i| self.scopes[i].get(name))
             .cloned()
-            .ok_or_else(|| format!("Undefined variable '{}'", name))
+            .ok_or_else(|| format!("Undefined variable: {}", name))
     }
 
     /// Mutable access to the innermost binding of `name` in view, for

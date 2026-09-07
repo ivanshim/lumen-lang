@@ -22,27 +22,27 @@ const KERNELS: [&str; 6] = ["stream35", "microcode11", "microcode4", "microcode7
 const DEFAULT_KERNEL: &str = "stack8";
 const DEFAULT_LANGUAGE: &str = "lumen";
 
-/// Build-time packaging of the Lumen standard library (`lib_lumen/*.lm`).
+/// Build-time packaging of the Lumen standard library (`langs/lib_lumen/*.lm`).
 mod embedded_files {
-    include!("../lib_lumen/prelude.rs");
+    include!("../langs/lib_lumen/prelude.rs");
 }
 
 /// The prelude manifest: a list of `include "path"` lines.
-const PRELUDE_MANIFEST: &str = include_str!("../lib_lumen/prelude.lm");
+const PRELUDE_MANIFEST: &str = include_str!("../langs/lib_lumen/prelude.lm");
 
-/// The Lumen library as every other language spells it (`lib_<language>/`,
+/// The Lumen library as every other language spells it (`langs/lib_<language>/`,
 /// written by scripts/port_examples.py), prepended to programs in that
-/// language as `lib_lumen/` is to Lumen programs.
+/// language as `langs/lib_lumen/` is to Lumen programs.
 mod mirrors {
-    pub mod python { include!("../lib_python/prelude.rs"); }
-    pub mod rplumen { include!("../lib_rplumen/prelude.rs"); }
-    pub mod rust { include!("../lib_rust/prelude.rs"); }
-    pub mod c { include!("../lib_c/prelude.rs"); }
-    pub mod javascript { include!("../lib_javascript/prelude.rs"); }
-    pub mod pascal { include!("../lib_pascal/prelude.rs"); }
-    pub mod php { include!("../lib_php/prelude.rs"); }
-    pub mod ruby { include!("../lib_ruby/prelude.rs"); }
-    pub mod swift { include!("../lib_swift/prelude.rs"); }
+    pub mod python { include!("../langs/lib_python/prelude.rs"); }
+    pub mod rplumen { include!("../langs/lib_rplumen/prelude.rs"); }
+    pub mod rust { include!("../langs/lib_rust/prelude.rs"); }
+    pub mod c { include!("../langs/lib_c/prelude.rs"); }
+    pub mod javascript { include!("../langs/lib_javascript/prelude.rs"); }
+    pub mod pascal { include!("../langs/lib_pascal/prelude.rs"); }
+    pub mod php { include!("../langs/lib_php/prelude.rs"); }
+    pub mod ruby { include!("../langs/lib_ruby/prelude.rs"); }
+    pub mod swift { include!("../langs/lib_swift/prelude.rs"); }
 }
 
 /// A language's mirror of the library: its prologue and its files.

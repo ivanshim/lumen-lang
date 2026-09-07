@@ -1,9 +1,0 @@
-# The Lumen library file lib_lumen/factorial.lm, ported by scripts/port_examples.py; edit the Lumen original, not this file.
-
-« 'n' =
-    n 1 <= if
-        1 return
-    else
-        n n 1 - factorial * return
-    null return
-» 'factorial' =

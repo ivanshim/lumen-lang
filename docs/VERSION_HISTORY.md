@@ -98,6 +98,25 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   every language. The `pi_machin` example computes 200 digits instead of
   1000 (`bench/pi.lm` keeps 1000). The full run fell from eleven minutes
   to about one.
+- **Errors agree, and the library moves under `langs/`**: stream35
+  labelled its errors LexError, StructureError and RuntimeError and left
+  parse errors bare, where every other kernel prints the language's own
+  banner (`PythonError`, `RplumenError`); it now derives the same banner
+  for every stage, says "Undefined variable: x" as the others do, and no
+  longer panics on an unfinished construct at the end of a file.
+  microcode11's stack underflow drops its line number to match. The
+  library directories, `lib_lumen/` and the nine mirrors, moved from the
+  top level to `langs/lib_lumen/` and `langs/lib_<language>/`, next to
+  the definitions they belong with; the embedded paths follow.
+- **Reference suites**: `tests/php/` holds php-src's `tests/lang`,
+  `tests/basic` and `tests/func` (422 `.phpt` files) and `tests/python/`
+  the core-language files of CPython's `Lib/test` (50 files), copied
+  unchanged with their licenses. `scripts/reference_tests.py` runs them
+  against the definitions and writes `tests/REPORT.md`: none pass yet.
+  PHP's definition spells 12 of its 68 reserved words and no `echo`,
+  `foreach`, `class` or `=>`; Python's spells 17 of 35 and no `class`,
+  `import`, `try`, `lambda` or `{`. The report ranks the reasons and the
+  functions the suites call most, `var_dump` and `assertEqual` first.
 - **Notation and block style are separate labels; RPLumen is indented**:
   a new label `syntax.notation` (`infix` or `postfix`) says how a
   language is read, and `block.style` is free to be `indentation`,

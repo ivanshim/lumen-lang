@@ -983,7 +983,7 @@ impl<'a> Reducer<'a> {
         let frame = &mut self.frames[here];
         if !frame.postfix_program {
             if self.strict {
-                return Err(format!("Stack underflow (line {})", line));
+                return Err("Stack underflow".to_string());
             }
             return Ok(Self::literal(line, Value::Nothing));
         }

@@ -2,7 +2,7 @@
 
 This card lists **user-accessible functions** across the kernel primitives and the standard Lumen library, plus core operators and syntax reminders. For each category, kernel functions are listed first, followed by library functions. Each function is tagged as `[kernel]` or `[library]`.
 
-> **Library scope note:** All functions in `lib_lumen/*.lm` become available to users when the corresponding library file is loaded.
+> **Library scope note:** All functions in `langs/lib_lumen/*.lm` become available to users when the corresponding library file is loaded.
 
 ---
 
@@ -111,7 +111,7 @@ Exponentiation is an expression-level operation and is never part of numeric lit
 **Kernel**
 - (none: Lumen renders every value in its library, so the kernel renders nothing for Lumen. The polymorphic `to_string`, `to_int` and `to_real` primitives exist for languages that spell conversions with one name, `str` or `String`; Lumen gives them no name.)
 
-**Library** (lib_lumen/render.lm)
+**Library** (langs/lib_lumen/render.lm)
 - `int_to_string(x)` — `[library]` INTEGER to decimal text, digit by digit.
 - `rational_to_string(x)` — `[library]` RATIONAL to "numerator/denominator".
 - `real_to_string(x)` — `[library]` REAL to decimal text to its own significant digits, read with `precision(x)`.
@@ -119,7 +119,7 @@ Exponentiation is an expression-level operation and is never part of numeric lit
 - `array_to_string(x)` — `[library]` ARRAY to "[a, b, c]", each element through `to_string`.
 - `null_to_string(x)` — `[library]` NULL to `null`.
 
-**Library** (lib_lumen/to_string.lm)
+**Library** (langs/lib_lumen/to_string.lm)
 - `is_int(x)` — `[library]` Returns `true` if `x` has INTEGER kind.
 - `is_rational(x)` — `[library]` Returns `true` if `x` has RATIONAL kind.
 - `is_real(x)` — `[library]` Returns `true` if `x` has REAL kind.
@@ -137,7 +137,7 @@ Exponentiation is an expression-level operation and is never part of numeric lit
 - `real_to_base_string_default(value, radix)` — `[library]` Base conversion for reals using `REAL_DEFAULT_PRECISION`.
 - `frac_to_base_string(f, radix, limit)` — `[library]` Fractional helper used by real_to_base_string.
 
-**Library** (lib_lumen/string_to_value.lm)
+**Library** (langs/lib_lumen/string_to_value.lm)
 - `string_to_value(s)` — `[library]` Parse string to numeric value (supports base prefixes, rationals, reals, exponents).
 - `numeric_literal_to_value(s, i)` — `[library]` Parse numeric literal starting at index i, returns [value, new_index].
 - `digits_to_base_value(s, i, base)` — `[library]` Parse base-N digits starting at index i, returns [value, scale, new_index].
@@ -154,7 +154,7 @@ Exponentiation is an expression-level operation and is never part of numeric lit
 - `REAL_DEFAULT_PRECISION = 15` — `[kernel]` Default significant-digit precision for real conversions.
 - `real(x, precision)` — `[kernel]` Convert integer/rational/real to a real value with the requested significant-digit precision.
 
-**Library** (lib_lumen/numeric.lm)
+**Library** (langs/lib_lumen/numeric.lm)
 - `to_real(x)` — `[library]` Convert numeric value to real using `REAL_DEFAULT_PRECISION`.
 - `to_int(x)` — `[library]` Integer part of any number, truncated toward zero: `num(x) // den(x)`.
 - `frac(x)` — `[library]` Fractional part of any number, at its own precision: `x - to_int(x)`.
@@ -166,7 +166,7 @@ Exponentiation is an expression-level operation and is never part of numeric lit
 **Kernel**
 - `emit(string)` — `[kernel]` Write a raw string to stdout; requires a string input and returns `null`.
 
-**Library** (lib_lumen/output.lm)
+**Library** (langs/lib_lumen/output.lm)
 - `write(x)` — `[library]` Convert `x` to a string with `to_string(x)` and emit without a newline.
 - `print(x)` — `[library]` Write `x` followed by a newline.
 
@@ -181,7 +181,7 @@ Exponentiation is an expression-level operation and is never part of numeric lit
 - `ord(string)` — `[kernel]` Unicode code point of the first character.
 - `chr(integer)` — `[kernel]` Single-character string for a Unicode code point.
 
-**Library** (lib_lumen/string.lm)
+**Library** (langs/lib_lumen/string.lm)
 - `char_at_or_null(s, index)` — `[library]` Character at index, or `null` if out of bounds (permissive wrapper for `char_at`).
 - `substring(s, from_start, to_end)` — `[library]` Slice string from `from_start` (inclusive) to `to_end` (exclusive).
 - `substring_end(s, from_here)` — `[library]` Slice string from `from_here` to the end.
@@ -200,7 +200,7 @@ Exponentiation is an expression-level operation and is never part of numeric lit
 **Kernel**
 - (none)
 
-**Library** (lib_lumen/string_ord_chr.lm)
+**Library** (langs/lib_lumen/string_ord_chr.lm)
 
 **Character Predicates**
 - `is_ascii(c)` — `[library]` True if character is ASCII (code point < 128).
@@ -232,7 +232,7 @@ Exponentiation is an expression-level operation and is never part of numeric lit
 **Kernel**
 - `push(arr, value)` — `[kernel]` Append `value` to array `arr` (mutates in place).
 
-**Library** (lib_lumen/array.lm)
+**Library** (langs/lib_lumen/array.lm)
 - `array_concat(a, b)` — `[library]` A new array of a's elements then b's.
 - `array_slice(a, start, stop)` — `[library]` The elements from `start` (inclusive) to `stop` (exclusive).
 - `array_index_of(a, x)` — `[library]` Index of the first element equal to `x`, or -1.
@@ -263,15 +263,15 @@ Exponentiation is an expression-level operation and is never part of numeric lit
 - (none)
 
 **Library**
-- `round(x, decimals)` — `[library]` Round using round-half-away-from-zero semantics. (lib_lumen/round.lm)
-- `factorial(n)` — `[library]` Recursive integer factorial. (lib_lumen/factorial.lm)
+- `round(x, decimals)` — `[library]` Round using round-half-away-from-zero semantics. (langs/lib_lumen/round.lm)
+- `factorial(n)` — `[library]` Recursive integer factorial. (langs/lib_lumen/factorial.lm)
 
 **Modular Arithmetic**
 
 **Kernel**
 - (none)
 
-**Library** (lib_lumen/modular_arithmetic.lm)
+**Library** (langs/lib_lumen/modular_arithmetic.lm)
 
 This module contains ONLY closed operations in ℤ/mℤ. These functions perform arithmetic within the ring of integers modulo m, taking elements of ℤ/mℤ and returning elements of ℤ/mℤ. They do not analyze structure, test properties, or construct group elements.
 
@@ -283,7 +283,7 @@ This module contains ONLY closed operations in ℤ/mℤ. These functions perform
 **Kernel**
 - (none)
 
-**Library** (lib_lumen/number_theory.lm)
+**Library** (langs/lib_lumen/number_theory.lm)
 
 This module contains functions that analyze, construct, or reason about modular structures but do not perform modular arithmetic themselves. These include gatekeepers, group structure analysis, group properties, computational problems, and characters.
 
@@ -326,7 +326,7 @@ This module contains functions that analyze, construct, or reason about modular 
 **Kernel**
 - (none)
 
-**Library** (lib_lumen/primes.lm)
+**Library** (langs/lib_lumen/primes.lm)
 - `next_prime(n)` — `[library]` Smallest prime greater than `n`.
 - `primes_up_to(limit)` — `[library]` Sieve of Eratosthenes, inclusive.
 - `unique_prime_factors(n)` — `[library]` Unique prime factors of `n`.
@@ -338,7 +338,7 @@ This module contains functions that analyze, construct, or reason about modular 
 **Kernel**
 - (none)
 
-**Library** (lib_lumen/constants_1024.lm)
+**Library** (langs/lib_lumen/constants_1024.lm)
 - `real_from_const(sigfigs, max_sigfigs, scaled)` — `[library]` Helper to scale/round a stored integer constant into a real.
 - `pi_1024(sigfigs)` — `[library]` π from a 1024-digit backing store.
 - `e_1024(sigfigs)` — `[library]` e from a 1024-digit backing store.
@@ -355,9 +355,9 @@ This module contains functions that analyze, construct, or reason about modular 
 - `log10e_1024(sigfigs)` — `[library]` log₁₀(e) from a 1024-digit backing store.
 - `two_over_sqrt_pi_1024(sigfigs)` — `[library]` 2/√π from a 1024-digit backing store.
 
-Parameterised precision is supported via the `sigfigs` parameter in functions such as `pi(sigfigs)`, `e(sigfigs)`, etc. (lib_lumen/constants.lm).
+Parameterised precision is supported via the `sigfigs` parameter in functions such as `pi(sigfigs)`, `e(sigfigs)`, etc. (langs/lib_lumen/constants.lm).
 
-Default-precision helpers such as `pi_default()`, `e_default()`, etc. derive their precision from `REAL_DEFAULT_PRECISION` (lib_lumen/constants_default.lm).
+Default-precision helpers such as `pi_default()`, `e_default()`, etc. derive their precision from `REAL_DEFAULT_PRECISION` (langs/lib_lumen/constants_default.lm).
 
 ---
 
@@ -367,5 +367,5 @@ Default-precision helpers such as `pi_default()`, `e_default()`, etc. derive the
 - (none)
 
 **Library**
-- `pi_machin(sigfigs)` — `[library]` π via Machin's formula (integer arithmetic). (lib_lumen/pi_machin.lm)
-- `e_integer(sigfigs)` — `[library]` e via integer Taylor series with guard digits. (lib_lumen/e_integer.lm)
+- `pi_machin(sigfigs)` — `[library]` π via Machin's formula (integer arithmetic). (langs/lib_lumen/pi_machin.lm)
+- `e_integer(sigfigs)` — `[library]` e via integer Taylor series with guard digits. (langs/lib_lumen/e_integer.lm)
