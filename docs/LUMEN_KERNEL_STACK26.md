@@ -83,9 +83,12 @@ is a local slot; every other name is a global slot. A `Load` names both,
 and a local slot that holds nothing yet falls through to the global, which
 gives a callee the view of its caller's world that the other kernels give
 through their frame chains. A bare block gets fresh slots for what it
-binds and a `Forget` on the way out, so it shadows rather than overwrites.
-At the top level everything is global; the system bindings (`ARGS`,
-`MEMOIZATION`, the kind names) are globals seeded before the program runs.
+binds and a `Forget` on the way out, so it shadows rather than overwrites;
+a slot a block declared is found only from inside that block, so once the
+block has closed the outer binding of the same name is back. At the top
+level every name outside a block is global, and a block's bindings are
+slots of the top frame; the system bindings (`ARGS`, `MEMOIZATION`, the
+kind names) are globals seeded before the program runs.
 
 ## Values and speed
 

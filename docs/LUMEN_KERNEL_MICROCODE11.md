@@ -53,7 +53,10 @@ recognises those shapes and writes them back as `for` and `until`.
 
 Names are resolved when the tree is built, as in the stack26 kernel: inside
 a program every name it assigns is a local slot and every other name is
-a global; a `Load` names both, and an empty local slot falls through to
+a global; a bare block's bindings are slots of their own, found only from
+inside the block, which a `Scope` empties on the way out, so after the
+block the outer binding of the same name is back, at the top level too;
+a `Load` names both, and an empty local slot falls through to
 the global of the same name. A `Slot` keeps the name, so the emitter can
 write it and the executor can report it. There are no hidden names in
 the environment: a loop bound lives in a slot that has no name.

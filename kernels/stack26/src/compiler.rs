@@ -48,6 +48,9 @@ struct Loop {
 struct Frame {
     top_level: bool,
     slot_names: Vec<String>,
+    /// Whether each slot was declared by a bare block; such a slot is
+    /// found only from inside its block, never after it closes.
+    block_owned: Vec<bool>,
     /// Slots declared by each open bare block, innermost last.
     blocks: Vec<Vec<usize>>,
     loops: Vec<Loop>,
@@ -56,7 +59,14 @@ struct Frame {
 
 impl Frame {
     fn new(top_level: bool, params: &[String]) -> Frame {
-        Frame { top_level, slot_names: params.to_vec(), blocks: Vec::new(), loops: Vec::new(), words: Vec::new() }
+        Frame {
+            top_level,
+            slot_names: params.to_vec(),
+            block_owned: vec![false; params.len()],
+            blocks: Vec::new(),
+            loops: Vec::new(),
+            words: Vec::new(),
+        }
     }
 
     fn here(&self) -> usize {
@@ -90,7 +100,8 @@ pub fn compile(tokens: &[Token], lang: &Language, globals: &mut Globals) -> Fall
         }
     }
     let frame = c.frames.pop().expect("top frame");
-    Ok(Rc::new(Program { name: "<program>".to_string(), params: Vec::new(), names: Vec::new(), slots: 0, words: frame.words }))
+    let slots = frame.slot_names.len();
+    Ok(Rc::new(Program { name: "<program>".to_string(), params: Vec::new(), names: frame.slot_names, slots, words: frame.words }))
 }
 
 impl<'a> Compiler<'a> {
@@ -210,52 +221,45 @@ impl<'a> Compiler<'a> {
         Rc::from(text)
     }
 
+    /// The slot a name has outside every bare block: the function's own,
+    /// or none at the top level, where such names are global.
+    fn own_slot(frame: &Frame, name: &str) -> Option<usize> {
+        (0..frame.slot_names.len()).rev().find(|&s| frame.slot_names[s] == name && !frame.block_owned[s])
+    }
+
     /// Where a name is read from: every slot of that name from the
-    /// innermost open block outward, then the global.
+    /// innermost open block outward, then the function's own, then the
+    /// global. A slot of a block that has closed is never found.
     fn place_of(&mut self, name: &str) -> Place {
         let global = self.globals.slot(name);
         let frame = self.frames.last().expect("frame");
-        if frame.top_level {
-            return Place { locals: Vec::new(), global };
-        }
         let mut locals = Vec::new();
         for block in frame.blocks.iter().rev() {
             locals.extend(block.iter().rev().filter(|&&s| frame.slot_names[s] == name).copied());
         }
-        let in_blocks: Vec<usize> = frame.blocks.iter().flatten().copied().collect();
-        if let Some(slot) = frame.slot_names.iter().rposition(|n| n == name).filter(|s| !in_blocks.contains(s)) {
-            locals.push(slot);
-        }
+        locals.extend(Self::own_slot(frame, name));
         Place { locals, global }
     }
 
     /// Where a name is written to: the innermost slot of that name in the
-    /// current block or function, made new if there is none.
+    /// current block or function, made new if there is none. Outside a
+    /// block at the top level every name is global; inside one, a binding
+    /// is the block's own and is forgotten on leaving it.
     fn target_of(&mut self, name: &str) -> Place {
         let global = self.globals.slot(name);
         let frame = self.frames.last_mut().expect("frame");
-        if frame.top_level {
-            // At the top level every name is global; one first bound inside
-            // a bare block is forgotten on leaving it.
-            let known = frame.slot_names.iter().any(|n| n == name);
-            match frame.blocks.last_mut() {
-                Some(block) if !known && !block.contains(&global) => block.push(global),
-                None if !known => frame.slot_names.push(name.to_string()),
-                _ => {}
-            }
+        if frame.top_level && frame.blocks.is_empty() {
             return Place { locals: Vec::new(), global };
         }
         let existing = match frame.blocks.last() {
             Some(block) => block.iter().rev().find(|&&s| frame.slot_names[s] == name).copied(),
-            None => {
-                let in_blocks: Vec<usize> = frame.blocks.iter().flatten().copied().collect();
-                frame.slot_names.iter().rposition(|n| n == name).filter(|s| !in_blocks.contains(s))
-            }
+            None => Self::own_slot(frame, name),
         };
         let slot = match existing {
             Some(slot) => slot,
             None => {
                 frame.slot_names.push(name.to_string());
+                frame.block_owned.push(!frame.blocks.is_empty());
                 let slot = frame.slot_names.len() - 1;
                 if let Some(block) = frame.blocks.last_mut() {
                     block.push(slot);
@@ -454,12 +458,7 @@ impl<'a> Compiler<'a> {
         self.block()?;
         let slots = self.frame().blocks.pop().expect("block");
         if !slots.is_empty() {
-            let word = if self.frame().top_level {
-                Word::Forget { locals: Vec::new(), globals: slots }
-            } else {
-                Word::Forget { locals: slots, globals: Vec::new() }
-            };
-            self.emit(word);
+            self.emit(Word::Forget { locals: slots, globals: Vec::new() });
         }
         Ok(())
     }

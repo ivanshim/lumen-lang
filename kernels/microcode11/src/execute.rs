@@ -119,9 +119,9 @@ impl<'a> Machine<'a> {
     }
 
     /// Run the top level; a break or return there ends the program.
-    pub fn run_top(&mut self, body: &Node) -> Result<(), String> {
-        let mut frame = Frame { locals: Vec::new() };
-        match self.eval(body, &mut frame) {
+    pub fn run_top(&mut self, program: &Program) -> Result<(), String> {
+        let mut frame = Frame { locals: vec![Value::Empty; program.slot_names.len()] };
+        match self.eval(&program.body, &mut frame) {
             Ok(_) | Err(Signal::Return(_)) | Err(Signal::Break) | Err(Signal::Continue) => Ok(()),
             Err(Signal::Fail(e)) => Err(e),
         }

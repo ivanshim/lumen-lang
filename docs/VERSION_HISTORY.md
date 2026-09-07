@@ -31,6 +31,17 @@ Each entry is intentionally self-contained so that it remains meaningful even if
   definition is loaded at run time. PHP moved there, and Ruby, Pascal, C,
   JavaScript and Swift are added with examples; all nine languages run on
   both kernels.
+- **Bare-block shadowing fixed in the slot kernels**: in stack26,
+  microcode11 and stack5, a name bound inside a bare block (`{ let v =
+  10; }` in Rust, C, JavaScript, Swift or PHP) shadowed an outer binding
+  of the same name for good: the block's slot was still found after the
+  block closed, and had been emptied, so the outer `v` read as undefined;
+  at the top level the block's binding overwrote the global outright.
+  A slot a block declared is now found only from inside that block, and a
+  top-level block's bindings are slots of the top frame, so the outer
+  binding is back after the block on every kernel. Two hand-written
+  examples pin it: `examples/rust/constructs/block_shadowing.rs` and
+  `examples/javascript/constructs/block_shadowing.js`.
 - **The stack kernel, second design**: a sixth kernel, `kernels/stack5`
   (`--kernel stack5`), is the stack machine at its floor: five words,
   `Lit`, `Load`, `Store`, `Apply` and `Unless`, and every construct a

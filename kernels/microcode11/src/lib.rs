@@ -118,7 +118,7 @@ fn execute_program(spec: &Spec, program: &Rc<Program>, globals: reduce::Globals,
     if let Some(name) = spec.first("system.real_default_precision") {
         machine.bind_global(name, Value::Small(numeric::DEFAULT_DIGITS as i64));
     }
-    machine.run_top(&program.body)?;
+    machine.run_top(&program)?;
     if let Some(entry) = spec.first("system.entry") {
         if let Some(Value::Routine(main)) = machine.global(entry).cloned() {
             machine.run(&main, Vec::new())?;
