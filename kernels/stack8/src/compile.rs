@@ -632,7 +632,13 @@ impl<'a> Compiler<'a> {
                 self.take();
                 return Ok(());
             }
-            if Lang::spells(&lang.class_words, &w) || Lang::spells(&lang.interface_words, &w) {
+            let names_class = |word: &str| Lang::spells(&lang.class_words, word) || Lang::spells(&lang.interface_words, word);
+            if names_class(&w) {
+                return self.class_decl();
+            }
+            // A class may be marked before it is named: `abstract class C`.
+            if Lang::spells(&lang.modifier_words, &w) && self.look_ahead(1).shape == Shape::Instr && names_class(&self.look_ahead(1).lexeme) {
+                self.take();
                 return self.class_decl();
             }
             if Lang::spells(&lang.try_words, &w) {
@@ -1873,6 +1879,19 @@ impl<'a> Compiler<'a> {
                 }
                 self.take();
                 self.pipe_target(from)?;
+                continue;
+            }
+            if lang.otherwise_mark.as_ref().map_or(false, |m| self.at_symbol(m)) {
+                // `a ?? b`: b is worked out only when a is nothing.
+                self.take();
+                self.write(TEMP_CELL);
+                self.read(TEMP_CELL);
+                self.act(Action::Nothing, 1);
+                let done = self.skip();
+                self.expr(0)?;
+                self.write(TEMP_CELL);
+                self.land(done);
+                self.read(TEMP_CELL);
                 continue;
             }
             if self.on_keyword(&lang.instanceof_words) {

@@ -674,6 +674,14 @@ impl<'a> Builder<'a> {
             if self.key("ext.stmt.class") || self.key("ext.stmt.class.interface") {
                 return self.class_decl();
             }
+            // A class may be marked before it is named: `abstract class C`.
+            if self.key("ext.stmt.class.modifier") && self.glance(1).shape == Shape::Bare {
+                let next = self.glance(1).lexeme.clone();
+                if self.table.spells("ext.stmt.class", &next) || self.table.spells("ext.stmt.class.interface", &next) {
+                    self.advance();
+                    return self.class_decl();
+                }
+            }
             if self.key("ext.stmt.try") {
                 return self.attempt_stmt();
             }
@@ -1633,6 +1641,13 @@ impl<'a> Builder<'a> {
                     }
                 }
                 left = self.named_call(&name, args)?;
+                continue;
+            }
+            if table.single("ext.op.otherwise").map_or(false, |m| self.sign(m)) {
+                // `a ?? b`: b is a program, read only when a is nothing.
+                self.advance();
+                let otherwise = self.limb(Traps::Naught, |r| r.expr(0))?;
+                left = prim_call(Prim::Otherwise, vec![left, otherwise]);
                 continue;
             }
             if self.look().shape == Shape::Bare && table.spells("ext.op.instanceof", &text) {

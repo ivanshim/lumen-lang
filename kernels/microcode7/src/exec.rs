@@ -415,6 +415,18 @@ impl<'a> Machine<'a> {
                     };
                     Err(if *op == Prim::Leave { Escape::Leave(levels) } else { Escape::Resume(levels) })
                 }
+                Prim::Otherwise => {
+                    // The second is worked out only when the first is nothing.
+                    let first = self.value_of(&args[0], frame)?;
+                    if !matches!(first, Value::Nil | Value::Unset) {
+                        return Ok(first);
+                    }
+                    // The second is read in place and run only here.
+                    match self.value_of(&args[1], frame)? {
+                        Value::Bound(p, env) => Ok(self.invoke(p, env, Vec::new())?),
+                        other => Ok(other),
+                    }
+                }
                 Prim::Hurl => {
                     let values = self.value_list(args, frame)?;
                     let raised = values.into_iter().next().ok_or_else(|| format!("{}() needs a value to raise", name))?;
@@ -1074,7 +1086,7 @@ impl<'a> Machine<'a> {
                 x.clone()
             }
             Prim::Seq | Prim::Choose | Prim::Both | Prim::Either | Prim::Yield | Prim::Leave | Prim::Resume | Prim::Append | Prim::Replace
-            | Prim::Spawn | Prim::Ask | Prim::Bid | Prim::Hurl => unreachable!("handled in eval"),
+            | Prim::Spawn | Prim::Ask | Prim::Bid | Prim::Hurl | Prim::Otherwise => unreachable!("handled in eval"),
         })
     }
 

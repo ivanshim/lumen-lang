@@ -73,6 +73,8 @@ pub enum Action {
     Extent,
     /// Which of two values comes first: below, alike, or above.
     Rank,
+    /// Whether the value above is nothing at all.
+    Nothing,
     /// Build the class this plan describes; what it stands on, if it
     /// stands on anything, is the value below.
     Forge(Rc<Plan>),

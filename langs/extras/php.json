@@ -510,5 +510,8 @@
   "ext.builtin.unset": [
     "unset"
   ],
-  "ext.lexical.template": true
+  "ext.lexical.template": true,
+  "ext.op.otherwise": [
+    "??"
+  ]
 }

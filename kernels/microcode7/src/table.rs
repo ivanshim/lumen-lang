@@ -94,6 +94,7 @@ ext.stmt.catch:L ext.stmt.finally:L ext.stmt.throw:L ext.stmt.catch.separator:L 
 ext.system.request.query:L ext.system.request.form:L ext.system.request.cookies:L ext.system.request.server:L \
 ext.system.request.env:L ext.system.request.files:L ext.system.request.all:L ext.op.index.absent:B \
 ext.stmt.class.interface:L ext.stmt.class.implements:L ext.op.compare:L ext.builtin.unset:L ext.lexical.template:B \
+ext.op.otherwise:L \
 ";
 
 fn tag_shapes(table: &'static str) -> Vec<(&'static str, char)> {
@@ -504,7 +505,7 @@ impl Table {
             "ext.stmt.class.new", "ext.stmt.class.modifier", "ext.stmt.class.shared", "ext.op.instanceof",
             "ext.stmt.class.parent", "ext.stmt.class.self", "ext.stmt.class.interface", "ext.stmt.class.implements",
             "ext.stmt.try", "ext.stmt.catch", "ext.stmt.finally",
-            "ext.stmt.throw", "ext.stmt.catch.separator", "ext.op.reference"];
+            "ext.stmt.throw", "ext.stmt.catch.separator", "ext.op.reference", "ext.op.otherwise"];
         for key in symbol_labels {
             all.extend(self.strings(key).iter().cloned());
         }

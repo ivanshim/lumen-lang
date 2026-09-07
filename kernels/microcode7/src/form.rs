@@ -45,6 +45,9 @@ pub enum Prim {
     Portray,
     /// Which of two values comes first: below, alike or above.
     Rank,
+    /// The first value when it is something, else the second, which is
+    /// worked out only then.
+    Otherwise,
     /// Give an array back without the place named (ext.builtin.unset).
     Erase,
     /// Each argument with its kind, as PHP's var_dump (ext.builtin.var_dump).

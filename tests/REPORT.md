@@ -55,6 +55,7 @@ is listed, since the full kernels are meant to behave alike.
 | Expected ')' to close a group, got '=' | 3 |
 | Unexpected token: ) | 3 |
 | Undefined variable: require_once | 3 |
+| Undefined variable: StdClass | 3 |
 | Only a name or a place in an array can be forgotten | 3 |
 | Undefined variable: func_get_arg | 3 |
 | Unexpected token: -> | 3 |
@@ -67,7 +68,6 @@ is listed, since the full kernels are meant to behave alike.
 | Unexpected token: } | 2 |
 | Undefined variable: trigger_error | 2 |
 | no --FILE-- section | 2 |
-| Undefined variable: StdClass | 2 |
 
 ### Reserved words: 41 of 68 spelled
 
@@ -526,7 +526,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/bitwiseShiftRight_variationStr2.phpt` | error | error | Unexpected token: > |
 | `php/lang/operators/bitwiseXor_basiclong_64bit.phpt` | error | error | Unexpected character '^' |
 | `php/lang/operators/bitwiseXor_variationStr.phpt` | error | error | Unexpected character '^' |
-| `php/lang/operators/coalesce.phpt` | error | error | Unexpected token: ? |
+| `php/lang/operators/coalesce.phpt` | error | error | Undefined variable: StdClass |
 | `php/lang/operators/divide_basiclong_64bit.phpt` | error | error | --- testing: 9223372036854775807 / 0 --- |
 | `php/lang/operators/divide_variationStr.phpt` | error | error | --- testing: '<number>'/'<number>' --- |
 | `php/lang/operators/modulus_basiclong_64bit.phpt` | error | error | --- testing: 9223372036854775807 % 0 --- |

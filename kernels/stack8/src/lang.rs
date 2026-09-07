@@ -178,6 +178,8 @@ pub struct Lang {
     pub instanceof_words: Vec<String>,
     /// A class of method names only, and the word saying a class
     /// answers to one.
+    /// `a ?? b`: a when it is something, else b.
+    pub otherwise_mark: Option<String>,
     pub interface_words: Vec<String>,
     pub implements_words: Vec<String>,
     pub parent_words: Vec<String>,
@@ -256,7 +258,7 @@ w ext.op.member | w ext.op.scope | w ext.op.instanceof | w ext.stmt.class.parent
 w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.try | w ext.stmt.catch
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
-w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | b ext.op.index.absent | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template
+w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | b ext.op.index.absent | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -796,6 +798,7 @@ impl Lang {
             member_mark: r.head("ext.op.member")?,
             scope_mark: r.head("ext.op.scope")?,
             instanceof_words: r.strings("ext.op.instanceof")?,
+            otherwise_mark: r.head("ext.op.otherwise")?,
             interface_words: r.strings("ext.stmt.class.interface")?,
             implements_words: r.strings("ext.stmt.class.implements")?,
             parent_words: r.strings("ext.stmt.class.parent")?,
@@ -892,7 +895,7 @@ impl Lang {
         if let Some(mark) = &self.pair_mark {
             place(mark);
         }
-        for mark in [&self.member_mark, &self.scope_mark, &self.catch_between, &self.reference_mark].into_iter().flatten() {
+        for mark in [&self.member_mark, &self.scope_mark, &self.catch_between, &self.reference_mark, &self.otherwise_mark].into_iter().flatten() {
             place(mark);
         }
         for pair in [&self.grouping, &self.calling, &self.array_brackets, &self.map_brackets, &self.index_brackets].into_iter().flatten() {

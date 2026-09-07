@@ -682,6 +682,7 @@ impl<'a> Engine<'a> {
                 Value::Class(c) => Value::text(&c.name),
                 v => return Err(format!("{} has no class name", v.plain()).into()),
             },
+            Action::Nothing => Value::Flag(matches!(self.drop_top()?, Value::Null | Value::Blank | Value::Gap)),
             Action::Extent => match self.drop_top()? {
                 Value::Array(items) => Value::Small(items.len() as i64),
                 Value::Map(pairs) => Value::Small(pairs.len() as i64),
