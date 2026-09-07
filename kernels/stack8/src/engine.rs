@@ -1066,6 +1066,17 @@ impl<'a> Engine<'a> {
             Action::Unsame => Value::Flag(!a.identical(b)),
             Action::Join => joined(),
             Action::At => self.element(a, b)?,
+            // Reaching inside makes the place on the way where nothing
+            // is there yet, which is what a write to it means.
+            Action::Nested => {
+                self.hushed.set(self.hushed.get() + 1);
+                let found = self.element(a, b).unwrap_or(Value::Null);
+                self.hushed.set(self.hushed.get() - 1);
+                match found {
+                    Value::Null | Value::Blank | Value::Gap => Value::Array(std::rc::Rc::new(Vec::new())),
+                    held => held,
+                }
+            }
             // Looking has nothing to say about what is not there.
             Action::Peek => {
                 self.hushed.set(self.hushed.get() + 1);

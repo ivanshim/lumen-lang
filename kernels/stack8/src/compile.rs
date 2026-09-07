@@ -102,6 +102,10 @@ pub struct Compiler<'a> {
     promoted: Vec<String>,
     /// How many lines stand before the program's own text.
     before: u32,
+    /// Where each key of the index chain just read begins, so that a
+    /// write to a place within a place can take the keys apart and work
+    /// each of them out exactly once.
+    keyed: Vec<usize>,
 }
 
 type Res<T> = Result<T, String>;
@@ -139,7 +143,7 @@ pub fn compile(tokens: &[Token], lang: &Lang, table: &mut Registry, before: u32)
         instrs: Vec::new(),
     };
     let shared_args = shared_parameters(tokens, lang);
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, promoted: Vec::new(), before };
+    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, promoted: Vec::new(), before, keyed: Vec::new() };
     if lang.rpn {
         a.rpn_body(&[], Span::Block)?;
         if !a.exhausted() {
@@ -1923,6 +1927,11 @@ impl<'a> Compiler<'a> {
         let assign = self.take().lexeme;
         // The target came out as a load; turn it into a store.
         let target: Vec<Instr> = self.piece().instrs.drain(from..).collect();
+        // Where the target read its way into a place within a place,
+        // the keys are taken apart, each with where it began, so that
+        // the store may work each of them out once and in order.
+        let (keys, key_at) = keys_apart(&target, from, &self.keyed);
+        let appending = matches!(target.last(), Some(Instr::Act(Action::AtEnd, 1)));
         match target.as_slice() {
             // `b = &a`: b is fastened to a's cell, not given a copy.
             [Instr::Read(slot)]
@@ -1954,6 +1963,70 @@ impl<'a> Compiler<'a> {
                 } else {
                     self.value_written(keep)?;
                 }
+                self.write(&name);
+                Ok(())
+            }
+            // `a[i][j] = v` and `a[i][] = v`: each key is worked out once
+            // and in order, then the arrays along the way are rewritten
+            // from the innermost outwards. A place not there yet is made
+            // on the way, since that is what writing into it means.
+            [Instr::Read(slot), ..] if !slot.moving && (keys.len() > 1 || (keys.len() == 1 && appending)) => {
+                let name = slot.ident.to_string();
+                let held: Vec<String> = (0..keys.len()).map(|_| self.gensym("key")).collect();
+                for (i, key) in keys.iter().enumerate() {
+                    let at = self.mark();
+                    for w in relocated(key.clone(), at as i64 - key_at[i] as i64) {
+                        self.put(w);
+                    }
+                    self.write(&held[i]);
+                }
+                // Down through the arrays, keeping each one, as far as
+                // the one the write itself lands in.
+                let deep = match appending { true => keys.len(), false => keys.len() - 1 };
+                let inner: Vec<String> = (0..=deep).map(|_| self.gensym("within")).collect();
+                self.read(&name);
+                self.write(&inner[0]);
+                for i in 0..deep {
+                    self.read(&inner[i]);
+                    self.read(&held[i]);
+                    self.act(Action::Nested, 2);
+                    self.write(&inner[i + 1]);
+                }
+                let value = self.gensym("value");
+                match compound {
+                    // x op= e writes what x holds now, taken with e.
+                    Some(op) => {
+                        self.read(&inner[deep]);
+                        self.read(&held[deep]);
+                        self.act(Action::At, 2);
+                        self.expr(0)?;
+                        self.act(op, 2);
+                        self.kept(keep);
+                    }
+                    None => self.value_written(keep)?,
+                }
+                self.write(&value);
+                // Back out again, each array rewritten in the one above.
+                let made = self.gensym("made");
+                if appending {
+                    self.read(&value);
+                    self.read(&inner[deep]);
+                    self.act(Action::Builtin(Builtin::Append, Rc::from("push")), 2);
+                } else {
+                    self.read(&held[deep]);
+                    self.read(&value);
+                    self.read(&inner[deep]);
+                    self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
+                }
+                self.write(&made);
+                for i in (0..deep).rev() {
+                    self.read(&held[i]);
+                    self.read(&made);
+                    self.read(&inner[i]);
+                    self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
+                    self.write(&made);
+                }
+                self.read(&made);
                 self.write(&name);
                 Ok(())
             }
@@ -2465,6 +2538,7 @@ impl<'a> Compiler<'a> {
         }
         let Some(index) = self.lang.index_brackets.clone() else { return Ok(()) };
         let mut stepped = false;
+        let mut keyed: Vec<usize> = Vec::new();
         while self.at_symbol(&index.open) {
             // `a[]`: the place after the last, which only a store reaches.
             if self.lang.append_index && self.look_ahead(1).is_lexeme(Shape::Sign, &index.close) {
@@ -2474,11 +2548,16 @@ impl<'a> Compiler<'a> {
                 continue;
             }
             self.take();
+            let began = self.mark();
             self.expr(0)?;
             self.want_sign(&index.close, "after array index")?;
+            keyed.push(began);
             self.act(Action::At, 2);
             stepped = true;
         }
+        // A chain read within a key finishes before the chain holding
+        // it, so the one left standing is the outermost.
+        self.keyed = keyed;
         // An index may be followed by more members: `$a[0]->b`.
         let more = lang.member_mark.as_ref().map_or(false, |m| self.at_symbol(m))
             || lang.scope_mark.as_ref().map_or(false, |m| self.at_symbol(m));
@@ -3097,6 +3176,36 @@ fn shared_parameters(tokens: &[Token], lang: &Lang) -> HashMap<String, Vec<bool>
         i = j;
     }
     found
+}
+
+/// The keys of an index chain, each with where it began, taken out of
+/// the instrs that read `a[k1][k2]...`. Nothing is given back unless the
+/// chain stands on a bare name and every key is followed by the one look
+/// that reads it, since only then may a store take the chain apart.
+fn keys_apart(target: &[Instr], from: usize, keyed: &[usize]) -> (Vec<Vec<Instr>>, Vec<usize>) {
+    let nothing = (Vec::new(), Vec::new());
+    let appending = matches!(target.last(), Some(Instr::Act(Action::AtEnd, 1)));
+    let reach = target.len() - usize::from(appending);
+    if keyed.is_empty() || reach == 0 || !matches!(target[reach - 1], Instr::Act(Action::At, 2)) {
+        return nothing;
+    }
+    // The chain must stand on the one instr that reads the name.
+    if keyed[0] != from + 1 || keyed.windows(2).any(|w| w[0] >= w[1]) || keyed[keyed.len() - 1] >= from + reach {
+        return nothing;
+    }
+    let mut keys = Vec::new();
+    for i in 0..keyed.len() {
+        let began = keyed[i] - from;
+        let ended = match keyed.get(i + 1) {
+            Some(next) => next - from - 1,
+            None => reach - 1,
+        };
+        if began >= ended || !matches!(target[ended], Instr::Act(Action::At, 2)) {
+            return nothing;
+        }
+        keys.push(target[began..ended].to_vec());
+    }
+    (keys, keyed.to_vec())
 }
 
 fn relocated(instrs: Vec<Instr>, delta: i64) -> Vec<Instr> {

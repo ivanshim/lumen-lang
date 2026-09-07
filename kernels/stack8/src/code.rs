@@ -93,6 +93,10 @@ pub enum Action {
     /// all, and saying nothing about it either way: how a language asks
     /// whether something is there without minding that it is not.
     Peek,
+    /// What an array holds at that place, an empty array where it holds
+    /// nothing there: how a write reaches a place within a place that
+    /// is not there yet, and makes it on the way.
+    Nested,
     /// Build the class this plan describes; what it stands on, if it
     /// stands on anything, is the value below.
     Forge(Rc<Plan>),

@@ -1361,6 +1361,17 @@ impl<'a> Machine<'a> {
                 seen
             }
             Prim::Standing => Value::Flag(v.iter().all(|x| !matches!(x, Value::Nil | Value::Unset))),
+            // Reaching in makes the place where nothing is there yet,
+            // which is what a write into it asks for.
+            Prim::Inward => {
+                self.quieted += 1;
+                let reached = self.element(&v[0], &v[1]).unwrap_or(Value::Nil);
+                self.quieted -= 1;
+                match reached {
+                    Value::Nil | Value::Unset => Value::Vector(std::rc::Rc::new(Vec::new())),
+                    already => already,
+                }
+            }
             // Adding text joins it only where the language has no
             // operator of its own for joining; where it has one, adding
             // is arithmetic.

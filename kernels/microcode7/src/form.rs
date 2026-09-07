@@ -57,6 +57,10 @@ pub enum Prim {
     Glance,
     /// Whether every one of these is something other than nothing.
     Standing,
+    /// What an array holds at that place, an empty array where it holds
+    /// nothing there: how a write reaches into a place that is not there
+    /// yet, making it on the way in.
+    Inward,
     /// Source read while the program runs: the text itself
     /// (ext.builtin.eval), or the text a file holds
     /// (ext.builtin.include). It is built against the globals the run

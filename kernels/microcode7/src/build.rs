@@ -231,6 +231,61 @@ fn glancing(form: Form) -> Form {
     }
 }
 
+/// An index chain written on a bare name: the name, the keys from the
+/// outside in, and whether the write lands after the last place rather
+/// than at one of them. A chain standing on anything but a name is
+/// given back untouched, since it is written into another way.
+fn chain_apart(form: Form) -> Result<(String, Vec<Form>, bool), Form> {
+    let (mut walk, after) = match form {
+        Form::Apply(Callee::Prim(Prim::AtEnd, name), mut args) if args.len() == 1 => match args.pop() {
+            Some(only) => (only, true),
+            None => return Err(Form::Apply(Callee::Prim(Prim::AtEnd, name), Vec::new())),
+        },
+        other => (other, false),
+    };
+    let mut keys = Vec::new();
+    let mut peeled: Vec<Form> = Vec::new();
+    loop {
+        match walk {
+            Form::Apply(Callee::Prim(Prim::At, name), mut args) if args.len() == 2 => {
+                let key = args.pop().expect("the key");
+                let held = args.pop().expect("what holds it");
+                keys.push(key);
+                peeled.push(Form::Apply(Callee::Prim(Prim::At, name), Vec::new()));
+                walk = held;
+            }
+            Form::Read(slot) => {
+                let enough = keys.len() > 1 || (after && !keys.is_empty());
+                if enough {
+                    keys.reverse();
+                    return Ok((slot.ident.to_string(), keys, after));
+                }
+                // Put the chain back as it was for the arms that take it.
+                let mut back = Form::Read(slot);
+                for shell in peeled.into_iter().rev() {
+                    let Form::Apply(callee, _) = shell else { unreachable!("a look") };
+                    back = Form::Apply(callee, vec![back, keys.pop().expect("its key")]);
+                }
+                if after {
+                    back = prim_call(Prim::AtEnd, vec![back]);
+                }
+                return Err(back);
+            }
+            other => {
+                let mut back = other;
+                for shell in peeled.into_iter().rev() {
+                    let Form::Apply(callee, _) = shell else { unreachable!("a look") };
+                    back = Form::Apply(callee, vec![back, keys.pop().expect("its key")]);
+                }
+                if after {
+                    back = prim_call(Prim::AtEnd, vec![back]);
+                }
+                return Err(back);
+            }
+        }
+    }
+}
+
 fn invoke(program: Form, args: Vec<Form>) -> Form {
     Form::Apply(Callee::Code(Box::new(program)), args)
 }
@@ -1701,6 +1756,10 @@ impl<'a> Builder<'a> {
             let back = self.read(cell);
             value = sequence(vec![stored, back]);
         }
+        let (chain, expr) = match chain_apart(expr) {
+            Ok(found) => (Some(found), Form::Const(Value::Nil)),
+            Err(back) => (None, back),
+        };
         let made = match expr {
             // x op= e is x = x op e.
             Form::Read(slot) => match compound {
@@ -1715,6 +1774,72 @@ impl<'a> Builder<'a> {
                 }
                 None => self.write(&slot.ident, value),
             },
+            // `a[i][j] = v` and `a[i][] = v`: the keys are worked out
+            // once and in order, the arrays along the way kept, and each
+            // rewritten in the one above it. A place not there yet is
+            // made on the way in, since that is what a write asks for.
+            _ if chain.is_some() => {
+                let (name, keys, after) = chain.expect("a chain on a name");
+                let mut steps = Vec::new();
+                let mut at_cells = Vec::new();
+                for key in keys {
+                    self.gensyms += 1;
+                    let cell = format!("#key{}", self.gensyms);
+                    let stored = self.write(&cell, key);
+                    steps.push(stored);
+                    at_cells.push(cell);
+                }
+                // In through the arrays, each one kept as far as the one
+                // the write lands in.
+                let deep = match after { true => at_cells.len(), false => at_cells.len() - 1 };
+                let mut in_cells = Vec::new();
+                self.gensyms += 1;
+                let root = format!("#in{}", self.gensyms);
+                let start = self.read(&name);
+                steps.push(self.write(&root, start));
+                in_cells.push(root);
+                for i in 0..deep {
+                    self.gensyms += 1;
+                    let cell = format!("#in{}", self.gensyms);
+                    let (so_far, key) = (self.read(&in_cells[i]), self.read(&at_cells[i]));
+                    let further = prim_call(Prim::Inward, vec![so_far, key]);
+                    steps.push(self.write(&cell, further));
+                    in_cells.push(cell);
+                }
+                self.gensyms += 1;
+                let holding = format!("#value{}", self.gensyms);
+                let written = match compound {
+                    Some(op) => {
+                        let (lands_in, key) = (self.read(&in_cells[deep]), self.read(&at_cells[deep]));
+                        let now = prim_call(Prim::At, vec![lands_in, key]);
+                        prim_call(op, vec![now, value])
+                    }
+                    None => value,
+                };
+                steps.push(self.write(&holding, written));
+                // Writing into a place changes the array the name holds
+                // where it stands, so each array along the way is written
+                // into the one above it, from the innermost outwards.
+                let lands_in = self.read(&in_cells[deep]);
+                let put = self.read(&holding);
+                steps.push(match after {
+                    true => prim_call(Prim::Append, vec![lands_in, put]),
+                    false => {
+                        let key = self.read(&at_cells[deep]);
+                        prim_call(Prim::Replace, vec![lands_in, key, put])
+                    }
+                });
+                for i in (0..deep).rev() {
+                    let (holds, key, done) = (self.read(&in_cells[i]), self.read(&at_cells[i]), self.read(&in_cells[i + 1]));
+                    steps.push(prim_call(Prim::Replace, vec![holds, key, done]));
+                }
+                let back = self.read(&in_cells[0]);
+                steps.push(self.write(&name, back));
+                if gives_back {
+                    steps.push(self.read(&holding));
+                }
+                sequence(steps)
+            }
             _ if compound.is_some() => return Err(format!("'{}' needs a plain variable on its left", assign.lexeme)),
             // A read of a member becomes a write of it.
             Form::Apply(Callee::Prim(Prim::Of, _), mut args) if args.len() == 2 => {
