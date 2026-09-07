@@ -71,6 +71,8 @@ pub enum Action {
     AtEnd,
     /// How many places an array or a map holds.
     Extent,
+    /// Which of two values comes first: below, alike, or above.
+    Rank,
     /// Build the class this plan describes; what it stands on, if it
     /// stands on anything, is the value below.
     Forge(Rc<Plan>),
@@ -118,6 +120,8 @@ pub enum Builtin {
     Pack,
     /// A value laid out over lines, PHP's print_r (ext.builtin.print_r).
     Layout,
+    /// Take a binding, or a place in an array, away (ext.builtin.unset).
+    Erase,
     /// Each argument with its kind, PHP's var_dump (ext.builtin.var_dump).
     Dump,
     MakeReal,
@@ -169,6 +173,12 @@ pub enum Instr {
     /// Pop a shared cell and put it in this binding, so the two names
     /// stand for one cell from here on.
     Fasten(Cell),
+    /// Pop a place, make what the array in this binding holds there a
+    /// shared cell, and push that cell: how a walk hands out its items
+    /// for writing.
+    BondItem(Cell),
+    /// Leave this binding as though nothing were ever written to it.
+    Forget(Cell),
     /// From here to the matching Unguard, a raised value is caught: the
     /// stack goes back to its depth here, the value is pushed, and the
     /// run goes on at the index.
@@ -206,6 +216,9 @@ pub struct Routine {
 #[derive(Debug)]
 pub struct Plan {
     pub name: String,
+    /// How many classes of method names only stand after the one this
+    /// class is built on, when the class is forged.
+    pub answers: usize,
     /// The names of the properties, of the values the class keeps for
     /// itself and of its constants; a value for each is on the stack, in
     /// that order, when the class is forged.

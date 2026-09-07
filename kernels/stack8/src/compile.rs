@@ -632,7 +632,7 @@ impl<'a> Compiler<'a> {
                 self.take();
                 return Ok(());
             }
-            if Lang::spells(&lang.class_words, &w) {
+            if Lang::spells(&lang.class_words, &w) || Lang::spells(&lang.interface_words, &w) {
                 return self.class_decl();
             }
             if Lang::spells(&lang.try_words, &w) {
@@ -688,7 +688,7 @@ impl<'a> Compiler<'a> {
             let bracketed = lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).is_lexeme(Shape::Sign, &c.open));
             match lang.builtins.get(&w) {
                 Some(Builtin::Tell) => return self.bare_call(w),
-                Some(Builtin::Append) | Some(Builtin::Replace) | Some(Builtin::Define) | Some(Builtin::Pack) | None => {}
+                Some(Builtin::Append) | Some(Builtin::Replace) | Some(Builtin::Define) | Some(Builtin::Pack) | Some(Builtin::Erase) | None => {}
                 Some(_) if !bracketed => return self.bare_call(w),
                 Some(_) => {}
             }
@@ -757,28 +757,53 @@ impl<'a> Compiler<'a> {
         self.take();
         let group = lang.grouping.clone().ok_or_else(|| "A foreach needs syntax.group".to_string())?;
         self.want_sign(&group.open, "after foreach")?;
-        self.expr(0)?;
-        let bag = self.gensym("bag");
-        self.write(&bag);
+        // A walk that hands out its items for writing walks the binding
+        // itself, so that writing an item writes the array it came from.
+        let named = match (self.look().shape, self.look_ahead(1).shape) {
+            (Shape::Instr, Shape::Instr) if Lang::spells(&lang.foreach_as_words, &self.look_ahead(1).lexeme) => {
+                Some(self.take().lexeme)
+            }
+            _ => None,
+        };
+        let bag = match &named {
+            Some(name) => name.clone(),
+            None => {
+                self.expr(0)?;
+                let bag = self.gensym("bag");
+                self.write(&bag);
+                bag
+            }
+        };
         if !self.on_keyword(&lang.foreach_as_words) {
             return Err(format!("Expected '{}' in foreach, got '{}'", lang.foreach_as_words[0], self.look().lexeme));
         }
         self.take();
+        let mut shared = self.lang.reference_mark.as_ref().map_or(false, |m| self.at_symbol(m));
+        if shared {
+            self.take();
+        }
         let first = self.want_name("as the foreach variable")?;
         let paired = lang.pair_mark.as_ref().map_or(false, |m| self.at_symbol(m));
         let (key, value) = if paired {
             self.take();
+            if self.lang.reference_mark.as_ref().map_or(false, |m| self.at_symbol(m)) {
+                self.take();
+                shared = true;
+            }
             (Some(first), self.want_name("as the foreach value")?)
         } else {
             (None, first)
         };
+        if shared && named.is_none() {
+            return Err("A foreach that hands out its items for writing needs a named array".to_string());
+        }
         self.want_sign(&group.close, "after the foreach names")?;
-        self.walk(&bag, key.as_deref(), &value)
+        self.walk(&bag, key.as_deref(), &value, shared)
     }
 
     /// The walk itself: a place counted up to the extent, the key and
     /// the value bound from it at the head of each pass.
-    fn walk(&mut self, bag: &str, key: Option<&str>, value: &str) -> Res<()> {
+    fn walk(&mut self, bag: &str, key: Option<&str>, value: &str, shared: bool) -> Res<()> {
         let at = self.gensym("at");
         self.constant(Value::Small(0));
         self.write(&at);
@@ -795,10 +820,19 @@ impl<'a> Compiler<'a> {
             self.act(Action::KeyAt, 2);
             self.write(key);
         }
-        self.read(bag);
-        self.read(&at);
-        self.act(Action::ValueAt, 2);
-        self.write(value);
+        if shared {
+            // The name is fastened to the item's own cell.
+            self.read(&at);
+            let held = self.cell_to_read(bag, false);
+            self.put(Instr::BondItem(held));
+            let name = self.cell_to_write(value);
+            self.put(Instr::Fasten(name));
+        } else {
+            self.read(bag);
+            self.read(&at);
+            self.act(Action::ValueAt, 2);
+            self.write(value);
+        }
         self.body()?;
         let again = self.mark();
         self.read(&at);
@@ -1245,7 +1279,7 @@ impl<'a> Compiler<'a> {
                     self.put(w);
                 }
                 self.write(&bag);
-                return self.walk(&bag, None, &var);
+                return self.walk(&bag, None, &var, false);
             }
             self.take();
             self.write(&var);
@@ -1431,15 +1465,36 @@ impl<'a> Compiler<'a> {
     /// bound to its name, so `new C` and `C::X` are ordinary reads.
     fn class_decl(&mut self) -> Res<()> {
         let lang = self.lang;
-        self.take();
+        let word = self.take().lexeme;
         let name = self.want_name("as the class name")?;
-        let base = match self.on_keyword(&lang.extends_words) {
-            true => {
-                self.take();
-                Some(self.want_name("as the class it stands on")?)
+        // A class of method names only may stand on several at once; a
+        // class stands on one and answers to any number.
+        let bare = Lang::spells(&lang.interface_words, &word);
+        let between = lang.calling.as_ref().and_then(|c| c.between.clone());
+        let more = |a: &mut Self, into: &mut Vec<String>| -> Res<()> {
+            while between.as_ref().map_or(false, |s| a.at_symbol(s)) {
+                a.take();
+                into.push(a.want_name("as another class named there")?);
             }
-            false => None,
+            Ok(())
         };
+        let mut base = None;
+        let mut answers: Vec<String> = Vec::new();
+        if self.on_keyword(&lang.extends_words) {
+            self.take();
+            let first = self.want_name("as the class it stands on")?;
+            match bare {
+                true => answers.push(first),
+                false => base = Some(first),
+            }
+            more(self, &mut answers)?;
+        }
+        if self.on_keyword(&lang.implements_words) {
+            self.take();
+            let first = self.want_name("as the class it answers to")?;
+            answers.push(first);
+            more(self, &mut answers)?;
+        }
         // Every member's value is read into its own run of instrs, so
         // that they can be laid out in the order the plan names them.
         let (mut fields, mut shared, mut constants) = (Vec::new(), Vec::new(), Vec::new());
@@ -1504,6 +1559,10 @@ impl<'a> Compiler<'a> {
             self.read(base);
             argc += 1;
         }
+        for named in &answers {
+            self.read(named);
+            argc += 1;
+        }
         let names = |parts: Vec<(String, Vec<Instr>)>, a: &mut Self, argc: &mut usize| {
             parts
                 .into_iter()
@@ -1520,7 +1579,7 @@ impl<'a> Compiler<'a> {
         let field_names = names(fields, self, &mut argc);
         let shared_names = names(shared, self, &mut argc);
         let constant_names = names(constants, self, &mut argc);
-        let plan = Plan { name: name.clone(), field_names, shared_names, constant_names, methods, extends: base.is_some() };
+        let plan = Plan { name: name.clone(), answers: answers.len(), field_names, shared_names, constant_names, methods, extends: base.is_some() };
         self.act(Action::Forge(Rc::new(plan)), argc);
         self.write_global(&name);
         Ok(())
@@ -1551,6 +1610,16 @@ impl<'a> Compiler<'a> {
             self.take();
             self.skip_nothing_mark();
             self.want_name("as a return type")?;
+        }
+        // A method may be named and not written out, in a class of
+        // method names only; it answers with nothing.
+        if self.on_sep() {
+            return self.routine(name, formals, least, true, |a| {
+                a.constant(Value::Null);
+                a.piece().result_touched = true;
+                a.write(RESULT_CELL);
+                Ok(())
+            });
         }
         self.routine(name, formals, least, true, |a| {
             a.spare_values(&spares, &given)?;
@@ -1970,6 +2039,8 @@ impl<'a> Compiler<'a> {
                                 }
                                 let argc = self.arguments(&call)?;
                                 self.mutation(&tok.lexeme, &target, argc + 1)?;
+                            } else if native == Some(Builtin::Erase) {
+                                self.forget(&call)?;
                             } else if native == Some(Builtin::Pack) {
                                 // array(...) gathers its arguments like a literal.
                                 let count = self.elements(&call)?;
@@ -2052,6 +2123,44 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         self.read(name);
+        Ok(())
+    }
+
+    /// `unset(a, b[k])`: each name is left as though nothing were ever
+    /// written to it, and each place named is taken out of its array.
+    fn forget(&mut self, call: &Brackets) -> Res<()> {
+        while !self.at_symbol(&call.close) {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", call.close));
+            }
+            let from = self.mark();
+            self.expr(0)?;
+            let named: Vec<Instr> = self.piece().instrs.drain(from..).collect();
+            match named.as_slice() {
+                [Instr::Read(slot)] => {
+                    let held = self.cell_to_write(&slot.ident.to_string());
+                    self.put(Instr::Forget(held));
+                }
+                [Instr::Read(slot), index @ .., Instr::Act(Action::At, 2)] => {
+                    let name = slot.ident.to_string();
+                    let at = self.mark();
+                    self.read(&name);
+                    for w in relocated(index.to_vec(), at as i64 - from as i64) {
+                        self.put(w);
+                    }
+                    self.act(Action::Builtin(Builtin::Erase, Rc::from("unset")), 2);
+                    self.write(&name);
+                }
+                _ => return Err("Only a name or a place in an array can be forgotten".to_string()),
+            }
+            if let Some(sep) = &call.between {
+                if self.at_symbol(sep) {
+                    self.take();
+                }
+            }
+        }
+        self.take();
+        self.constant(Value::Null);
         Ok(())
     }
 
@@ -2564,7 +2673,7 @@ impl<'a> Compiler<'a> {
                 Builtin::External | Builtin::Span => return Err(format!("'{}' has no postfix form", word)),
                 Builtin::Echo | Builtin::Say | Builtin::Out | Builtin::Tell | Builtin::Dump | Builtin::Raise => (1, false),
                 Builtin::Layout => (1, true),
-                Builtin::Define | Builtin::Pack => return Err(format!("'{}' has no postfix form", word)),
+                Builtin::Define | Builtin::Pack | Builtin::Erase => return Err(format!("'{}' has no postfix form", word)),
                 Builtin::CharAtIndex | Builtin::Fetch | Builtin::MakeReal => (2, true),
                 _ => (1, true),
             };

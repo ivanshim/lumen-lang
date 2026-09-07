@@ -302,6 +302,8 @@ pub fn decimal_string(p: &BigInt, q: &BigInt, places: usize) -> String {
 pub struct Class {
     pub name: String,
     pub base: Option<Rc<Class>>,
+    /// The classes of method names only that this one answers to.
+    pub answers: Vec<Rc<Class>>,
     pub fields: Vec<(String, Value)>,
     pub methods: Vec<(String, Rc<Routine>)>,
     pub constants: Vec<(String, Value)>,
@@ -334,9 +336,11 @@ impl Class {
         self.base.as_ref().and_then(|b| b.holder(name))
     }
 
-    /// Whether this class is that one, or stands on it.
+    /// Whether this class is that one, stands on it, or answers to it.
     pub fn descends_from(&self, name: &str) -> bool {
-        self.name == name || self.base.as_ref().map_or(false, |b| b.descends_from(name))
+        self.name == name
+            || self.base.as_ref().map_or(false, |b| b.descends_from(name))
+            || self.answers.iter().any(|a| a.descends_from(name))
     }
 
     /// Every property an object of this class begins with, those it

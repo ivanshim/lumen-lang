@@ -3,6 +3,7 @@
 // every pascal program. Not library code; edit lib_lumen/ instead.
 
 pub static PROLOGUE: &str = "";
+pub static EPILOGUE: &str = "";
 
 pub static FILES: &[(&str, &str)] = &[
     ("langs/lib_pascal/render.pas", include_str!("render.pas")),

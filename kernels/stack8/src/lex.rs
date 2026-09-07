@@ -474,10 +474,62 @@ impl<'a> Cursor<'a> {
 }
 
 pub fn lex(source: &str, lang: &Lang) -> Result<Vec<Token>, String> {
-    let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
-    let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new() };
-    cur.run(true)?;
-    let (line, col) = (cur.row, cur.column);
-    cur.push(Shape::Finish, "EOF".to_string(), 0, line, col);
-    Ok(cur.out)
+    let mut out = match lang.template {
+        true => woven_source(source, lang)?,
+        false => {
+            let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
+            let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new() };
+            cur.run(true)?;
+            cur.out
+        }
+    };
+    out.push(Token { shape: Shape::Finish, lexeme: "EOF".to_string(), width: 0, row: 1, column: 1 });
+    Ok(out)
+}
+
+/// A source that is text with code in it (ext.lexical.template): what
+/// stands between the prologue and the epilogue is read as code, and
+/// everything else is written out as it stands, as though the program
+/// had said so itself.
+fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, String> {
+    let opening = lang.prologue.clone().ok_or_else(|| "A template needs lexical.prologue".to_string())?;
+    let closing = lang.epilogue.first().cloned();
+    let telling = lang
+        .builtins
+        .iter()
+        .find(|(_, native)| **native == crate::code::Builtin::Tell)
+        .map(|(word, _)| word.clone())
+        .ok_or_else(|| "A template needs a builtin that writes what it is given".to_string())?;
+    let ending = lang.stmt_ends.first().cloned().unwrap_or_else(|| ";".to_string());
+    let mut out: Vec<Token> = Vec::new();
+    let told = |text: &str, out: &mut Vec<Token>| {
+        if text.is_empty() {
+            return;
+        }
+        out.push(Token { shape: Shape::Instr, lexeme: telling.clone(), width: 0, row: 1, column: 1 });
+        out.push(Token { shape: Shape::Quote, lexeme: text.to_string(), width: 0, row: 1, column: 1 });
+        out.push(Token { shape: Shape::Sign, lexeme: ending.clone(), width: 0, row: 1, column: 1 });
+    };
+    let mut rest = source;
+    let mut row = 1;
+    while let Some(at) = rest.find(opening.as_str()) {
+        told(&rest[..at], &mut out);
+        row += rest[..at].matches('\n').count();
+        let after = &rest[at + opening.len()..];
+        let (code, tail) = match closing.as_ref().and_then(|e| after.find(e.as_str())) {
+            Some(end) => (&after[..end], &after[end + closing.as_ref().map_or(0, String::len)..]),
+            None => (after, ""),
+        };
+        let text = drop_comments(code, lang);
+        let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row, column: 1, out: Vec::new() };
+        cur.run(true)?;
+        // A run of code stands as its own statement, however it ended.
+        out.append(&mut cur.out);
+        out.push(Token { shape: Shape::Sign, lexeme: ending.clone(), width: 0, row: cur.row, column: 1 });
+        row = cur.row;
+        // One line end straight after the closing marker is PHP's to eat.
+        rest = tail.strip_prefix('\n').unwrap_or_else(|| tail.strip_prefix("\r\n").unwrap_or(tail));
+    }
+    told(rest, &mut out);
+    Ok(out)
 }

@@ -1819,13 +1819,17 @@ def write_mirror(lang, d, files, reasons):
         target.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
         written.append(target.name)
     prologue = d["lexical.prologue"][0] if d["lexical.prologue"] else ""
+    # A language whose source is text with code in it needs the marker
+    # that closes a run of code, so the host can wrap the library in one.
+    epilogue = (d.get("ext.lexical.epilogue") or [""])[0]
     entries = "".join(f'    ("langs/lib_{lang}/native/{n}", include_str!("native/{n}")),\n' for n in native)
     entries += "".join(f'    ("langs/lib_{lang}/{n}", include_str!("{n}")),\n' for n in written)
     (out / "prelude.rs").write_text(
         "// Build-time packaging artifact, written by scripts/port_examples.py: the\n"
         f"// Lumen library as {lang} spells it, embedded in the host and prepended to\n"
         f"// every {lang} program. Not library code; edit lib_lumen/ instead.\n\n"
-        f"pub static PROLOGUE: &str = {json.dumps(prologue)};\n\n"
+        f"pub static PROLOGUE: &str = {json.dumps(prologue)};\n"
+        f"pub static EPILOGUE: &str = {json.dumps(epilogue)};\n\n"
         f"pub static FILES: &[(&str, &str)] = &[\n{entries}];\n", encoding="utf-8")
 
 

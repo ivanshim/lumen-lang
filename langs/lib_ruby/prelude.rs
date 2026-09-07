@@ -3,6 +3,7 @@
 // every ruby program. Not library code; edit lib_lumen/ instead.
 
 pub static PROLOGUE: &str = "";
+pub static EPILOGUE: &str = "";
 
 pub static FILES: &[(&str, &str)] = &[
     ("langs/lib_ruby/to_string.rb", include_str!("to_string.rb")),

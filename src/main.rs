@@ -48,17 +48,17 @@ mod mirrors {
 }
 
 /// A language's mirror of the library: its prologue and its files.
-fn mirror_for(language: &str) -> Option<(&'static str, &'static [(&'static str, &'static str)])> {
+fn mirror_for(language: &str) -> Option<(&'static str, &'static str, &'static [(&'static str, &'static str)])> {
     Some(match language {
-        "python" => (mirrors::python::PROLOGUE, mirrors::python::FILES),
-        "rplumen" => (mirrors::rplumen::PROLOGUE, mirrors::rplumen::FILES),
-        "rust" => (mirrors::rust::PROLOGUE, mirrors::rust::FILES),
-        "c" => (mirrors::c::PROLOGUE, mirrors::c::FILES),
-        "javascript" => (mirrors::javascript::PROLOGUE, mirrors::javascript::FILES),
-        "pascal" => (mirrors::pascal::PROLOGUE, mirrors::pascal::FILES),
-        "php" => (mirrors::php::PROLOGUE, mirrors::php::FILES),
-        "ruby" => (mirrors::ruby::PROLOGUE, mirrors::ruby::FILES),
-        "swift" => (mirrors::swift::PROLOGUE, mirrors::swift::FILES),
+        "python" => (mirrors::python::PROLOGUE, mirrors::python::EPILOGUE, mirrors::python::FILES),
+        "rplumen" => (mirrors::rplumen::PROLOGUE, mirrors::rplumen::EPILOGUE, mirrors::rplumen::FILES),
+        "rust" => (mirrors::rust::PROLOGUE, mirrors::rust::EPILOGUE, mirrors::rust::FILES),
+        "c" => (mirrors::c::PROLOGUE, mirrors::c::EPILOGUE, mirrors::c::FILES),
+        "javascript" => (mirrors::javascript::PROLOGUE, mirrors::javascript::EPILOGUE, mirrors::javascript::FILES),
+        "pascal" => (mirrors::pascal::PROLOGUE, mirrors::pascal::EPILOGUE, mirrors::pascal::FILES),
+        "php" => (mirrors::php::PROLOGUE, mirrors::php::EPILOGUE, mirrors::php::FILES),
+        "ruby" => (mirrors::ruby::PROLOGUE, mirrors::ruby::EPILOGUE, mirrors::ruby::FILES),
+        "swift" => (mirrors::swift::PROLOGUE, mirrors::swift::EPILOGUE, mirrors::swift::FILES),
         _ => return None,
     })
 }
@@ -82,7 +82,7 @@ fn with_library(kernel: &str, language: &str, source: String) -> String {
         });
         return format!("{}\n{}", prelude, source);
     }
-    let Some((prologue, files)) = mirror_for(language) else { return source };
+    let Some((prologue, epilogue, files)) = mirror_for(language) else { return source };
     // A mirror may carry hand-written source of the language's own under
     // native/, spelling what only the full kernels read; the others are
     // given the ported library alone.
@@ -95,10 +95,15 @@ fn with_library(kernel: &str, language: &str, source: String) -> String {
     let lead = source.len() - source.trim_start().len();
     if !prologue.is_empty() && !source[..lead].contains('\n') && source[lead..].starts_with(prologue) {
         let cut = lead + prologue.len();
-        format!("{}\n{}\n{}", &source[..cut], library, &source[cut..])
-    } else {
-        format!("{}\n{}", library, source)
+        return format!("{}\n{}\n{}", &source[..cut], library, &source[cut..]);
     }
+    // A source that is text with code in it opens a run of code for the
+    // library and closes it again, so the library is code and the text
+    // that follows is still text.
+    if !epilogue.is_empty() {
+        return format!("{}\n{}\n{}\n{}", prologue, library, epilogue, source);
+    }
+    format!("{}\n{}", library, source)
 }
 
 /// Where a language comes from.

@@ -302,13 +302,32 @@ only. The extension labels so far, all from PHP:
   takes is raised again.
 - `ext.lexical.name_lead`: signs a name may be led by that say nothing,
   PHP's `\TypeError`.
+- `ext.lexical.template`: a switch; the source is text with code in it.
+  What lies between `lexical.prologue` and `ext.lexical.epilogue` is
+  code, and everything else is written out as it stands, as though the
+  program had said so. A run of code stands as its own statement, so a
+  block may be opened in one run and closed in another, which is how a
+  page is written around a loop. One line end straight after the closing
+  marker belongs to it.
+- `ext.stmt.class.interface` and `ext.stmt.class.implements`: a class of
+  method names only, and the word saying a class answers to one. A
+  method may be named and not written out there; it answers with
+  nothing. Answering to a class counts for `instanceof` and for a catch,
+  so `catch (Countable $e)` takes anything that answers to it.
+- `ext.op.compare`: which of two values comes first, as -1, 0 or 1
+  (`<=>`). It takes its tier from `op.precedence` like any operator; a
+  kernel that does not read the label reads past its tier too.
+- `ext.builtin.unset`: takes a binding away, leaving it as though
+  nothing were ever written to it, or takes a place out of an array.
 - `ext.op.reference`: the sign that makes one name stand for another's
   cell. `$b = &$a` ties the two names to one cell, and a parameter
   written `&$x` is given the caller's cell rather than a copy, so what
   the program writes to it the caller sees. Which parameters are written
   that way is read from the tokens before anything is compiled, since a
   call must know before it works out its arguments and a program may be
-  called above where it is written.
+  called above where it is written. A walk may hand out its items the
+  same way (`foreach ($a as &$v)`), and then it walks the binding itself,
+  so writing an item writes the array it came from.
 - `ext.stmt.function.returns`: the mark before a return type, read beside
   the core `stmt.function.returns`. PHP says it here because the porter
   writes a type for every function it ports and PHP has no word for a
@@ -551,7 +570,7 @@ Operator precedence, lowest tier first. Unary operators sit in their own tier.
 - **c (extra)**: `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `!` `-`
 - **javascript (extra)**: `||` < `&&` < `===` `!==` `==` `!=` < `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `!` `-` < `**` < `.`
 - **pascal (extra)**: `=` `<>` `<` `>` `<=` `>=` < `+` `-` `or` < `*` `/` `div` `mod` `and` < `-` `not`
-- **php (extra)**: `or` < `and` < `||` < `&&` < `==` `!=` `===` `!==` < `<` `>` `<=` `>=` < `.` < `+` `-` < `*` `/` `%` < `!` < `-` < `**`
+- **php (extra)**: `or` < `and` < `||` < `&&` < `==` `!=` `===` `!==` < `<` `>` `<=` `>=` `<=>` < `.` < `+` `-` < `*` `/` `%` < `!` < `-` < `**`
 - **ruby (extra)**: `or` < `and` < `not` < `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `...` < `+` `-` < `*` `/` `%` < `-` < `!` < `**` < `.`
 - **swift (extra)**: `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `..<` < `+` `-` < `*` `/` `%` < `!` `-` < `.`
 
@@ -564,12 +583,15 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.define` | - | - | - | - | - | - | - | `define` | - | - |
 | `ext.builtin.echo` | - | - | - | - | - | - | - | `echo` | - | - |
 | `ext.builtin.print_r` | - | - | - | - | - | - | - | `print_r` | - | - |
+| `ext.builtin.unset` | - | - | - | - | - | - | - | `unset` | - | - |
 | `ext.builtin.var_dump` | - | - | - | - | - | - | - | `var_dump` | - | - |
 | `ext.lexical.epilogue` | - | - | - | - | - | - | - | `?>` | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | - | - | - | `"` | - | - |
 | `ext.lexical.name_lead` | - | - | - | - | - | - | - | `\` | - | - |
 | `ext.lexical.number.exponent` | - | - | - | - | - | - | - | `e` `E` | - | - |
+| `ext.lexical.template` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.assign.compound` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.op.compare` | - | - | - | - | - | - | - | `<=>` | - | - |
 | `ext.op.decrement` | - | - | - | - | - | - | - | `--` | - | - |
 | `ext.op.increment` | - | - | - | - | - | - | - | `++` | - | - |
 | `ext.op.index.absent` | - | - | - | - | - | - | - | `true` | - | - |
@@ -588,6 +610,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class` | - | - | - | - | - | - | - | `class` | - | - |
 | `ext.stmt.class.constructor` | - | - | - | - | - | - | - | `__construct` | - | - |
 | `ext.stmt.class.extends` | - | - | - | - | - | - | - | `extends` | - | - |
+| `ext.stmt.class.implements` | - | - | - | - | - | - | - | `implements` | - | - |
+| `ext.stmt.class.interface` | - | - | - | - | - | - | - | `interface` | - | - |
 | `ext.stmt.class.modifier` | - | - | - | - | - | - | - | `public` `private` `protected` `final` `abstract` `readonly` `var` | - | - |
 | `ext.stmt.class.new` | - | - | - | - | - | - | - | `new` | - | - |
 | `ext.stmt.class.parent` | - | - | - | - | - | - | - | `parent` | - | - |
