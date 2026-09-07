@@ -148,7 +148,9 @@ impl Spec {
             };
             cells.insert(*key, cell);
         }
-        let mut strange: Vec<&str> = map.keys().map(String::as_str).filter(|k| !k.starts_with('$') && !known.iter().any(|(l, _)| l == k)).collect();
+        // ext.* labels extend the core beyond this kernel's scope; they are not read.
+        let mut strange: Vec<&str> =
+            map.keys().map(String::as_str).filter(|k| !k.starts_with('$') && !k.starts_with("ext.") && !known.iter().any(|(l, _)| l == k)).collect();
         strange.sort();
         if !strange.is_empty() {
             return Err(format!("unknown label(s): {}", strange.join(", ")));

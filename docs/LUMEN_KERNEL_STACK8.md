@@ -90,3 +90,10 @@ checks every pair, and this kernel is written in its own words, not
 stack5's. The test suite compares it with the others on every
 program under `examples/`; all 498 print the same. microcode7 is the same
 promotion on the tree.
+
+Being a full kernel, it also reads the `ext.` labels a definition may add
+beyond the 132 core labels (see `langs/README.md`): an epilogue marker,
+`echo`, bracketless builtin calls, `++`/`--`, and interpolating strings,
+which the scanner turns into a bracketed concatenation before the compiler
+sees them. The reference kernels skip those labels, so the reference
+suites under `tests/` run on this kernel and microcode7 only.

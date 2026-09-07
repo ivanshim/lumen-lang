@@ -5,7 +5,7 @@ what the language, as defined here, does not yet do.
 tests/php/ holds php-src's tests/lang, tests/basic and tests/func (.phpt
 files: a --FILE-- section to run and an --EXPECT-- section to match);
 tests/python/ holds the core-language files of CPython's Lib/test. Each
-test is run on one kernel with the language's definition, its output is
+test is run on the full kernels with the language's definition, its output is
 compared with what the reference expects, and a test that fails is
 classified by the first error the kernel reports. The report,
 tests/REPORT.md, counts the results, ranks the reasons, and lists the
@@ -14,6 +14,9 @@ against what the definition spells: the missing pieces, in the order
 the reference suites need them.
 
 Usage: python3 scripts/reference_tests.py [--kernel stack8]
+
+Without --kernel every test runs on both full kernels, stack8 and
+microcode7, and the report shows them side by side.
 """
 import json
 import re
@@ -27,7 +30,8 @@ ROOT = Path(__file__).resolve().parent.parent
 BINARY = ROOT / "target" / "release" / "lumen-lang"
 REPORT = ROOT / "tests" / "REPORT.md"
 TIMEOUT = 10
-CLOSING_TAGS = [0]
+# The full kernels, the deployment one first: its reasons lead the report.
+KERNELS = ["stack8", "microcode7"]
 
 PHP_RESERVED = ("abstract and array as break callable case catch class clone const continue declare default do echo "
                 "else elseif empty enddeclare endfor endforeach endif endswitch endwhile eval exit extends final finally fn "
@@ -51,12 +55,12 @@ def spelled(definition):
     return words
 
 
-def run(args, source, suffix):
+def run(kernel, args, source, suffix):
     with tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False, encoding="utf-8") as f:
         f.write(source)
         path = f.name
     try:
-        p = subprocess.run([str(BINARY)] + args + [path], capture_output=True, text=True, timeout=TIMEOUT, errors="replace")
+        p = subprocess.run([str(BINARY), "--kernel", kernel] + args + [path], capture_output=True, text=True, timeout=TIMEOUT, errors="replace")
         return p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
         return 124, "", "timeout"
@@ -118,7 +122,7 @@ def expectf_pattern(expected):
     return "".join(out)
 
 
-def run_phpt(path):
+def run_phpt(path, kernel):
     s = phpt_sections(path.read_text(encoding="utf-8", errors="replace"))
     if "FILE" not in s:
         return "skipped", "no --FILE-- section"
@@ -127,13 +131,7 @@ def run_phpt(path):
     expected = s.get("EXPECT", s.get("EXPECTF", s.get("EXPECTREGEX")))
     if expected is None:
         return "skipped", "no --EXPECT-- section"
-    # A closing `?>` ends most reference files; no definition label spells it
-    # yet, so it is taken off here and counted, and the test shows what comes next.
-    source = s["FILE"]
-    if re.search(r"\?>\s*$", source):
-        source = re.sub(r"\?>\s*$", "", source)
-        CLOSING_TAGS[0] += 1
-    code, out, err = run(["--lang", "langs/extras/php.json"], source, ".php")
+    code, out, err = run(kernel, ["--lang", "langs/extras/php.json"], s["FILE"], ".php")
     got = out.rstrip()
     want = expected.rstrip()
     if code == 0:
@@ -146,9 +144,9 @@ def run_phpt(path):
 
 # ---------------------------------------------------------------- python
 
-def run_python(path):
+def run_python(path, kernel):
     source = path.read_text(encoding="utf-8", errors="replace")
-    code, out, err = run([], source, ".py")
+    code, out, err = run(kernel, [], source, ".py")
     if code == 0:
         return "differs", "ran to the end without asserting anything"
     return "error", reason_of(code, out, err, "PythonError")
@@ -167,27 +165,29 @@ def keyword_table(words, have):
 
 
 def main():
-    kernel = "stack8"
+    kernels = list(KERNELS)
     if "--kernel" in sys.argv:
-        kernel = sys.argv[sys.argv.index("--kernel") + 1]
+        kernels = [sys.argv[sys.argv.index("--kernel") + 1]]
     subprocess.run(["cargo", "build", "--release", "--quiet"], cwd=ROOT, check=True)
     php_def = json.loads((ROOT / "langs" / "extras" / "php.json").read_text())
     py_def = json.loads((ROOT / "langs" / "python.json").read_text())
     php_have, py_have = spelled(php_def), spelled(py_def)
 
-    results = {}
-    reasons = {"php": Counter(), "python": Counter()}
+    # results[kernel][file] = (status, reason)
+    results = {k: {} for k in kernels}
+    reasons = {k: {"php": Counter(), "python": Counter()} for k in kernels}
     php_files = sorted((ROOT / "tests" / "php").rglob("*.phpt"))
     py_files = sorted((ROOT / "tests" / "python").glob("*.py"))
-    for f in php_files:
-        status, why = run_phpt(f)
-        results[f] = (status, why)
-        if status in ("error", "differs", "skipped"):
-            reasons["php"][why] += 1
-    for f in py_files:
-        status, why = run_python(f)
-        results[f] = (status, why)
-        reasons["python"][why] += 1
+    for kernel in kernels:
+        for f in php_files:
+            status, why = run_phpt(f, kernel)
+            results[kernel][f] = (status, why)
+            if status in ("error", "differs", "skipped"):
+                reasons[kernel]["php"][why] += 1
+        for f in py_files:
+            status, why = run_python(f, kernel)
+            results[kernel][f] = (status, why)
+            reasons[kernel]["python"][why] += 1
 
     php_calls = Counter()
     for f in php_files:
@@ -197,32 +197,50 @@ def main():
     for f in py_files:
         py_calls.update(calls_in(f.read_text(encoding="utf-8", errors="replace"), PYTHON_KEYWORDS))
 
-    def totals(files):
-        c = Counter(results[f][0] for f in files)
-        return c
+    def totals(kernel, files):
+        return Counter(results[kernel][f][0] for f in files)
+
+    def score(c):
+        return f"pass {c['pass']}, differs {c['differs']}, error {c['error']}, skipped {c['skipped']}"
+
+    def by_directory(files):
+        groups = {}
+        for f in files:
+            groups.setdefault(f.parent.relative_to(ROOT / "tests").as_posix(), []).append(f)
+        return groups
+
+    lead = kernels[0]
     lines = ["# The reference suites against the definitions", "",
              "Generated by `scripts/reference_tests.py`. `tests/php/` is php-src's `tests/lang`,",
              "`tests/basic` and `tests/func`; `tests/python/` is the core-language part of",
-             "CPython's `Lib/test`. Each test ran on the " + kernel + " kernel with the language's",
+             "CPython's `Lib/test`. Each test ran on the " + " and ".join(kernels) + " kernel" + ("s" if len(kernels) > 1 else "") + " with the language's",
              "definition. A test *passes* when it prints what the reference expects, *differs*",
              "when it runs but prints something else, and *errors* when the kernel stops it;",
              "the error's first line, names and numbers folded, is its reason. The reasons,",
              "ranked, are the constructs the definition (or a kernel) does not yet spell, in",
              "the order the reference suites need them. An error is the first one met: a",
              "character the lexer does not know stops a file before any keyword in it is",
-             "seen, so the reserved-word and function tables below say what lies behind it.", ""]
+             "seen, so the reserved-word and function tables below say what lies behind it.",
+             "The reasons are " + lead + "'s; where the kernels disagree on a test, the disagreement",
+             "is listed, since the full kernels are meant to behave alike.", ""]
     for name, files in (("PHP", php_files), ("Python", py_files)):
-        c = totals(files)
-        lines += [f"## {name}: {len(files)} tests", "",
-                  f"pass {c['pass']}, differs {c['differs']}, error {c['error']}, skipped {c['skipped']}", ""]
-        if name == "PHP":
-            lines += [f"{CLOSING_TAGS[0]} tests end with a closing `?>`, which no definition label spells; it is",
-                      "taken off before the run so the test can show what it needs next.", ""]
+        lines += [f"## {name}: {len(files)} tests", "", "| Suite | Tests | " + " | ".join(kernels) + " |", "|---|---|" + "---|" * len(kernels)]
+        for directory, group in by_directory(files).items():
+            lines.append(f"| `{directory}` | {len(group)} | " + " | ".join(score(totals(k, group)) for k in kernels) + " |")
+        if len(by_directory(files)) > 1:
+            lines.append(f"| all | {len(files)} | " + " | ".join(score(totals(k, files)) for k in kernels) + " |")
+        lines.append("")
         key = "php" if name == "PHP" else "python"
         lines += ["| Reason | Tests |", "|---|---|"]
-        for why, n in reasons[key].most_common(40):
+        for why, n in reasons[lead][key].most_common(40):
             lines.append("| " + why.replace("|", "\\|") + f" | {n} |")
         lines.append("")
+        split = [f for f in files if len({results[k][f][0] for k in kernels}) > 1]
+        if split:
+            lines += [f"### Kernel disagreements: {len(split)}", "", "| Test | " + " | ".join(kernels) + " |", "|---|" + "---|" * len(kernels)]
+            for f in split:
+                lines.append(f"| `{f.relative_to(ROOT / 'tests')}` | " + " | ".join(f"{results[k][f][0]}: " + results[k][f][1].replace("|", "\\|") for k in kernels) + " |")
+            lines.append("")
         words = PHP_RESERVED if name == "PHP" else PYTHON_KEYWORDS
         have = php_have if name == "PHP" else py_have
         yes, no = keyword_table(words, have)
@@ -235,14 +253,15 @@ def main():
         for fn, n in calls.most_common(40):
             lines.append(f"| `{fn}` | {n} | {'yes' if fn in have else 'no'} |")
         lines.append("")
-    lines += ["## Every test", "", "| Test | Result | Reason |", "|---|---|---|"]
+    lines += ["## Every test", "", "| Test | " + " | ".join(kernels) + f" | Reason ({lead}) |", "|---|" + "---|" * (len(kernels) + 1)]
     for f in php_files + py_files:
-        status, why = results[f]
-        lines.append(f"| `{f.relative_to(ROOT / 'tests')}` | {status} | " + why.replace("|", "\\|") + " |")
+        status, why = results[lead][f]
+        lines.append(f"| `{f.relative_to(ROOT / 'tests')}` | " + " | ".join(results[k][f][0] for k in kernels) + " | " + why.replace("|", "\\|") + " |")
     REPORT.write_text("\n".join(lines) + "\n", encoding="utf-8")
     for name, files in (("PHP", php_files), ("Python", py_files)):
-        c = totals(files)
-        print(f"{name}: {len(files)} tests: pass {c['pass']}, differs {c['differs']}, error {c['error']}, skipped {c['skipped']}")
+        for kernel in kernels:
+            for directory, group in by_directory(files).items():
+                print(f"{name} {directory} on {kernel}: {len(group)} tests: {score(totals(kernel, group))}")
     return 0
 
 

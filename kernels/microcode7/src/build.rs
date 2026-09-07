@@ -150,7 +150,7 @@ fn inert(node: &Form) -> bool {
             _ => true,
         }),
         Form::Apply(Callee::Prim(op, _), args) => {
-            !matches!(op, Prim::Echo | Prim::Say | Prim::Out | Prim::Raise | Prim::External | Prim::Append | Prim::Replace | Prim::Yield | Prim::Leave | Prim::Resume | Prim::Choose | Prim::Both | Prim::Either | Prim::Seq)
+            !matches!(op, Prim::Echo | Prim::Say | Prim::Out | Prim::Tell | Prim::Raise | Prim::External | Prim::Append | Prim::Replace | Prim::Yield | Prim::Leave | Prim::Resume | Prim::Choose | Prim::Both | Prim::Either | Prim::Seq)
                 && args.iter().all(inert)
         }
         _ => false,
@@ -567,7 +567,62 @@ impl<'a> Builder<'a> {
             let program = self.routine("<block>", Holds::Fresh, Traps::Naught, Vec::new(), |r| r.body())?;
             return Ok(invoke(program, Vec::new()));
         }
+        // `x++;` / `++x;`: as a statement only the stepping counts.
+        let (here, next) = (self.look().clone(), self.glance(1).clone());
+        if let (Some(by), Shape::Bare) = (self.step_by(&here), next.shape) {
+            self.pos += 2;
+            return Ok(self.stepped(&next.lexeme, by));
+        }
+        if let (Shape::Bare, Some(by)) = (here.shape, self.step_by(&next)) {
+            let reserved = self.table.keywords.contains(&here.lexeme) || self.table.prims.contains_key(&here.lexeme);
+            if !reserved {
+                self.pos += 2;
+                return Ok(self.stepped(&here.lexeme, by));
+            }
+        }
+        if self.table.flag("ext.syntax.call.bare") && here.shape == Shape::Bare {
+            let op = self.table.prims.get(&here.lexeme).copied();
+            if op.is_some() && !matches!(op, Some(Prim::Append | Prim::Replace)) {
+                return self.unbracketed_call(&here.lexeme);
+            }
+        }
         self.write_or_expr()
+    }
+
+    /// +1 for an increment sign, -1 for a decrement sign (ext.op.*).
+    fn step_by(&self, t: &Token) -> Option<i64> {
+        if t.shape != Shape::Sign {
+            return None;
+        }
+        if self.table.spells("ext.op.increment", &t.lexeme) {
+            Some(1)
+        } else if self.table.spells("ext.op.decrement", &t.lexeme) {
+            Some(-1)
+        } else {
+            None
+        }
+    }
+
+    /// `x = x + by`, which the writer folds into a Bump.
+    fn stepped(&mut self, name: &str, by: i64) -> Form {
+        let sum = prim_call(Prim::Plus, vec![self.read(name), constant(Value::Small(by))]);
+        self.write(name, sum)
+    }
+
+    /// A builtin at the head of a statement, its arguments running
+    /// unbracketed to the end of the statement (ext.syntax.call.bare).
+    fn unbracketed_call(&mut self, name: &str) -> Res<Form> {
+        self.advance();
+        let sep = self.table.single("syntax.call.separator").map(str::to_string);
+        let mut args = Vec::new();
+        while !self.on_stmt_end() && !self.exhausted() {
+            args.push(self.expr(0)?);
+            match &sep {
+                Some(s) if self.sign(s) => self.advance(),
+                _ => break,
+            };
+        }
+        self.named_call(name, args)
     }
 
     fn if_stmt(&mut self) -> Res<Form> {
@@ -831,6 +886,13 @@ impl<'a> Builder<'a> {
     fn monadic_expr(&mut self) -> Res<Form> {
         let table = self.table;
         let t = self.look().clone();
+        if let (Some(by), Shape::Bare) = (self.step_by(&t), self.glance(1).shape) {
+            // ++x is the stepped value.
+            self.advance();
+            let name = self.advance().lexeme;
+            let step = self.stepped(&name, by);
+            return Ok(sequence(vec![step, self.read(&name)]));
+        }
         if matches!(t.shape, Shape::Sign | Shape::Bare) {
             if let Some(op) = table.monadic.get(&t.lexeme).copied() {
                 self.advance();
@@ -859,6 +921,15 @@ impl<'a> Builder<'a> {
                     self.advance();
                     let args = self.args("syntax.call.close", "syntax.call.separator")?;
                     self.named_call(&t.lexeme, args)?
+                } else if let Some(by) = self.step_by(&self.look().clone()) {
+                    // x++ is the value before the step, kept aside.
+                    self.advance();
+                    self.gensyms += 1;
+                    let aside = format!("#was{}", self.gensyms);
+                    let before = self.read(&t.lexeme);
+                    let keep = self.write(&aside, before);
+                    let step = self.stepped(&t.lexeme, by);
+                    sequence(vec![keep, step, self.read(&aside)])
                 } else {
                     self.read(&t.lexeme)
                 }
@@ -1435,7 +1506,7 @@ impl<'a> Builder<'a> {
             let (takes, leaves) = match op {
                 Prim::Append | Prim::Replace => return Err(format!("'{}' needs a quoted name before it", w)),
                 Prim::External | Prim::Span => return Err(format!("'{}' has no postfix form", w)),
-                Prim::Echo | Prim::Say | Prim::Out | Prim::Raise => (1, false),
+                Prim::Echo | Prim::Say | Prim::Out | Prim::Tell | Prim::Raise => (1, false),
                 Prim::CharAtIndex | Prim::Fetch | Prim::MakeReal => (2, true),
                 _ => (1, true),
             };

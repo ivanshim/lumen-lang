@@ -489,6 +489,13 @@ impl<'a> Engine<'a> {
                 print!("{}", self.render(&args));
                 Value::Null
             }
+            Builtin::Tell => {
+                let sp = self.wording();
+                for v in args.iter() {
+                    print!("{}", v.display(&sp));
+                }
+                Value::Null
+            }
             Builtin::Span => return Err(format!("{}() spells a range, which belongs in a for loop", name)),
             Builtin::MakeReal => {
                 if args.is_empty() || args.len() > 2 {

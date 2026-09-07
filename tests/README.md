@@ -18,10 +18,13 @@ A PHP test is a `.phpt` file: a `--FILE--` section to run and an `--EXPECT--`
 `unittest` module; none can run yet, and each stops at the first construct
 the definition or a kernel does not know, which the report records.
 
-The suites are not part of `test.sh`: they measure distance, they do not
-gate. Run them with
+The suites run on the two full kernels, stack8 and microcode7, which are
+the ones that implement the `ext.` labels the languages need beyond the
+core (see `langs/README.md`); the report scores each suite directory on
+each kernel and lists any test the two disagree on. The suites are not
+part of `test.sh`: they measure distance, they do not gate. Run them with
 
 ```bash
-python3 scripts/reference_tests.py            # stack8
+python3 scripts/reference_tests.py            # both full kernels
 python3 scripts/reference_tests.py --kernel microcode7
 ```

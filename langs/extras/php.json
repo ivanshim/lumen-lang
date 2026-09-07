@@ -2,104 +2,250 @@
   "$comment": "PHP: brace blocks, sigil-prefixed variables, case-insensitive keywords, dot concatenation, division yielding a real. print writes without a newline, as in PHP, so a line is print($x . \"\\n\"). Loaded at run time from langs/extras/. Array literals as maps, foreach and echo are omitted until the kernel supports them; everything listed is PHP.",
   "format_version": 1,
   "language": "php",
-  "extensions": ["php"],
-  "lexical.comment_line": ["//", "#"],
-  "lexical.comment_block.open": ["/*"],
-  "lexical.comment_block.close": ["*/"],
-  "lexical.string_quotes": ["\"", "'"],
-  "lexical.raw_quotes": ["'"],
-  "lexical.string_escapes": ["n", "t", "\\", "\""],
-  "lexical.prologue": ["<?php"],
+  "extensions": [
+    "php"
+  ],
+  "lexical.comment_line": [
+    "//",
+    "#"
+  ],
+  "lexical.comment_block.open": [
+    "/*"
+  ],
+  "lexical.comment_block.close": [
+    "*/"
+  ],
+  "lexical.string_quotes": [
+    "\"",
+    "'"
+  ],
+  "lexical.raw_quotes": [
+    "'"
+  ],
+  "lexical.string_escapes": [
+    "n",
+    "t",
+    "\\",
+    "\""
+  ],
+  "lexical.prologue": [
+    "<?php"
+  ],
   "lexical.name_quote": [],
-  "lexical.number.decimal_point": ["."],
+  "lexical.number.decimal_point": [
+    "."
+  ],
   "lexical.number.base_marker": [],
   "lexical.number.exponent_marker": [],
-  "lexical.number.hex_prefix": ["0x"],
+  "lexical.number.hex_prefix": [
+    "0x"
+  ],
   "lexical.keywords_case_insensitive": true,
   "identifier.unicode": true,
-  "identifier.variable_prefix": ["$"],
+  "identifier.variable_prefix": [
+    "$"
+  ],
   "identifier.case_insensitive": false,
   "block.style": "braces",
-  "block.open": ["{"],
-  "block.close": ["}"],
+  "block.open": [
+    "{"
+  ],
+  "block.close": [
+    "}"
+  ],
   "block.intro": [],
   "block.indent_size": null,
-  "stmt.terminator": [";"],
+  "stmt.terminator": [
+    ";"
+  ],
   "syntax.notation": "infix",
-  "syntax.group.open": ["("],
-  "syntax.group.close": [")"],
-  "syntax.call.open": ["("],
-  "syntax.call.separator": [","],
-  "syntax.call.close": [")"],
+  "syntax.group.open": [
+    "("
+  ],
+  "syntax.group.close": [
+    ")"
+  ],
+  "syntax.call.open": [
+    "("
+  ],
+  "syntax.call.separator": [
+    ","
+  ],
+  "syntax.call.close": [
+    ")"
+  ],
   "syntax.call.label": [],
-  "syntax.array.open": ["["],
-  "syntax.array.separator": [","],
-  "syntax.array.close": ["]"],
+  "syntax.array.open": [
+    "["
+  ],
+  "syntax.array.separator": [
+    ","
+  ],
+  "syntax.array.close": [
+    "]"
+  ],
   "syntax.map.open": [],
   "syntax.map.separator": [],
   "syntax.map.pair": [],
   "syntax.map.close": [],
-  "literal.true": ["true"],
-  "literal.false": ["false"],
-  "literal.null": ["null"],
-  "op.precedence": [
-    ["or"],
-    ["and"],
-    ["||"],
-    ["&&"],
-    ["==", "!="],
-    ["<", ">", "<=", ">="],
-    ["."],
-    ["+", "-"],
-    ["*", "/", "%"],
-    ["!"],
-    ["-"],
-    ["**"]
+  "literal.true": [
+    "true"
   ],
-  "op.right_associative": ["**"],
-  "op.add": ["+"],
-  "op.sub": ["-"],
-  "op.mul": ["*"],
-  "op.div": ["/"],
+  "literal.false": [
+    "false"
+  ],
+  "literal.null": [
+    "null"
+  ],
+  "op.precedence": [
+    [
+      "or"
+    ],
+    [
+      "and"
+    ],
+    [
+      "||"
+    ],
+    [
+      "&&"
+    ],
+    [
+      "==",
+      "!="
+    ],
+    [
+      "<",
+      ">",
+      "<=",
+      ">="
+    ],
+    [
+      "."
+    ],
+    [
+      "+",
+      "-"
+    ],
+    [
+      "*",
+      "/",
+      "%"
+    ],
+    [
+      "!"
+    ],
+    [
+      "-"
+    ],
+    [
+      "**"
+    ]
+  ],
+  "op.right_associative": [
+    "**"
+  ],
+  "op.add": [
+    "+"
+  ],
+  "op.sub": [
+    "-"
+  ],
+  "op.mul": [
+    "*"
+  ],
+  "op.div": [
+    "/"
+  ],
   "op.div.result": "real",
   "op.quot": [],
-  "op.rem": ["%"],
-  "op.pow": ["**"],
-  "op.eq": ["=="],
-  "op.ne": ["!="],
-  "op.lt": ["<"],
-  "op.le": ["<="],
-  "op.gt": [">"],
-  "op.ge": [">="],
-  "op.and": ["&&", "and"],
-  "op.or": ["||", "or"],
-  "op.not": ["!"],
-  "op.negate": ["-"],
-  "op.concat": ["."],
+  "op.rem": [
+    "%"
+  ],
+  "op.pow": [
+    "**"
+  ],
+  "op.eq": [
+    "=="
+  ],
+  "op.ne": [
+    "!="
+  ],
+  "op.lt": [
+    "<"
+  ],
+  "op.le": [
+    "<="
+  ],
+  "op.gt": [
+    ">"
+  ],
+  "op.ge": [
+    ">="
+  ],
+  "op.and": [
+    "&&",
+    "and"
+  ],
+  "op.or": [
+    "||",
+    "or"
+  ],
+  "op.not": [
+    "!"
+  ],
+  "op.negate": [
+    "-"
+  ],
+  "op.concat": [
+    "."
+  ],
   "op.range": [],
-  "op.index.open": ["["],
-  "op.index.close": ["]"],
+  "op.index.open": [
+    "["
+  ],
+  "op.index.close": [
+    "]"
+  ],
   "op.index.strings": true,
   "op.pipe": [],
-  "stmt.assign": ["="],
+  "stmt.assign": [
+    "="
+  ],
   "stmt.let": [],
   "stmt.let.mutable": [],
   "stmt.let.annotation": [],
   "stmt.let.type_first": false,
-  "stmt.if": ["if"],
-  "stmt.elif": ["elseif"],
-  "stmt.else": ["else"],
-  "stmt.while": ["while"],
+  "stmt.if": [
+    "if"
+  ],
+  "stmt.elif": [
+    "elseif"
+  ],
+  "stmt.else": [
+    "else"
+  ],
+  "stmt.while": [
+    "while"
+  ],
   "stmt.until": [],
   "stmt.for": [],
   "stmt.for.in": [],
   "stmt.foreach": [],
   "stmt.foreach.as": [],
   "stmt.foreach.pair": [],
-  "stmt.return": ["return"],
-  "stmt.break": ["break"],
-  "stmt.continue": ["continue"],
-  "stmt.function": ["function"],
+  "stmt.return": [
+    "return"
+  ],
+  "stmt.break": [
+    "break"
+  ],
+  "stmt.continue": [
+    "continue"
+  ],
+  "stmt.function": [
+    "function"
+  ],
   "stmt.function.returns": [],
   "stmt.function.result_by_name": false,
   "stmt.pass": [],
@@ -114,27 +260,52 @@
   "stack.program.close": [],
   "builtin.emit": [],
   "builtin.print": [],
-  "builtin.write": ["print"],
+  "builtin.write": [
+    "print"
+  ],
   "builtin.print.placeholder": [],
-  "builtin.len": ["count", "strlen"],
+  "builtin.len": [
+    "count",
+    "strlen"
+  ],
   "builtin.char_at": [],
-  "builtin.ord": ["ord"],
-  "builtin.chr": ["chr"],
-  "builtin.typeof": ["gettype"],
-  "builtin.error": ["exit"],
+  "builtin.ord": [
+    "ord"
+  ],
+  "builtin.chr": [
+    "chr"
+  ],
+  "builtin.typeof": [
+    "gettype"
+  ],
+  "builtin.error": [
+    "exit"
+  ],
   "builtin.extern": [],
-  "builtin.range": ["range"],
+  "builtin.range": [
+    "range"
+  ],
   "builtin.real": [],
   "builtin.num": [],
   "builtin.den": [],
-  "builtin.push": ["array_push"],
+  "builtin.push": [
+    "array_push"
+  ],
   "builtin.get": [],
   "builtin.put": [],
   "builtin.precision": [],
-  "builtin.to_string": ["strval"],
-  "builtin.to_int": ["intval"],
-  "builtin.to_real": ["floatval"],
-  "system.args": ["$argv"],
+  "builtin.to_string": [
+    "strval"
+  ],
+  "builtin.to_int": [
+    "intval"
+  ],
+  "builtin.to_real": [
+    "floatval"
+  ],
+  "system.args": [
+    "$argv"
+  ],
   "system.memoization": [],
   "system.real_default_precision": [],
   "system.entry": [],
@@ -144,5 +315,21 @@
   "system.kind.string": [],
   "system.kind.boolean": [],
   "system.kind.array": [],
-  "system.kind.null": []
+  "system.kind.null": [],
+  "ext.lexical.epilogue": [
+    "?>"
+  ],
+  "ext.builtin.echo": [
+    "echo"
+  ],
+  "ext.syntax.call.bare": true,
+  "ext.op.increment": [
+    "++"
+  ],
+  "ext.op.decrement": [
+    "--"
+  ],
+  "ext.lexical.interpolating_quotes": [
+    "\""
+  ]
 }

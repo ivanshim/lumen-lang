@@ -206,6 +206,34 @@ example by example. Reading it is a quick way to see what each definition
 still lacks: `kind` and the kind names, `extern`, `write` in Swift,
 functions in Pascal.
 
+## Extension labels
+
+The 132 labels of the table below are the core: every definition carries all of them,
+and every kernel reads them. A definition may add labels under `ext.`
+for what its language has beyond the core. The full kernels, stack8 and
+microcode7, read them; the reference kernels (stream35, microcode11,
+microcode4, stack5) skip every `ext.` key, so a program that uses an
+extension construct fails there and the kernel diff in `test.sh` keeps
+the examples to the core. An extension label is optional: absent means
+empty, or `false` for a switch. The porter and the emitter use the core
+only. The extension labels so far, all from PHP:
+
+- `ext.lexical.epilogue`: a closing marker dropped from the very end of
+  the source (`?>`), the mirror of `lexical.prologue`.
+- `ext.builtin.echo`: a builtin that prints each argument's text with
+  nothing between and no line end (`echo`).
+- `ext.syntax.call.bare`: a builtin at the head of a statement may be
+  called without brackets, its arguments separated as call arguments are
+  and running to the end of the statement (`echo "a", "b";`, `print "x";`).
+- `ext.op.increment`, `ext.op.decrement`: `++` and `--`, as statements
+  and in expressions, before or after the name (`++$i` is the stepped
+  value, `$i++` the value before).
+- `ext.lexical.interpolating_quotes`: string quotes inside which `$name`,
+  `$name[i]` (a number or a variable as index) and `{$expr}` weave values
+  in; the scanner turns such a string into a bracketed concatenation
+  (`op.concat` inside `syntax.group`) starting from the empty string, so
+  the result is always text. `\$` is a literal sigil.
+
 ## Labels without a kernel path yet
 
 These describe real syntax the target languages have, but the kernel does
@@ -217,7 +245,8 @@ definition change:
   and PHP associative arrays are left out.
 - `stmt.foreach.*`, and `stmt.for` over a collection rather than a range: no
   iteration over collections.
-- `stmt.emit`: output as a statement rather than a call, PHP's `echo`.
+- `stmt.emit`: output as a statement rather than a call; PHP's `echo` is
+  spelled by the extension labels instead.
 
 ## Comparison
 
@@ -370,4 +399,15 @@ Operator precedence, lowest tier first. Unary operators sit in their own tier.
 - **php (extra)**: `or` < `and` < `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `.` < `+` `-` < `*` `/` `%` < `!` < `-` < `**`
 - **ruby (extra)**: `or` < `and` < `not` < `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `...` < `+` `-` < `*` `/` `%` < `-` < `!` < `**` < `.`
 - **swift (extra)**: `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `..<` < `+` `-` < `*` `/` `%` < `!` `-` < `.`
+
+Extension labels, optional and read by the full kernels only (absent means empty or false):
+
+| Label | lumen | rplumen | python | rust | c (extra) | javascript (extra) | pascal (extra) | php (extra) | ruby (extra) | swift (extra) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `ext.builtin.echo` | - | - | - | - | - | - | - | `echo` | - | - |
+| `ext.lexical.epilogue` | - | - | - | - | - | - | - | `?>` | - | - |
+| `ext.lexical.interpolating_quotes` | - | - | - | - | - | - | - | `"` | - | - |
+| `ext.op.decrement` | - | - | - | - | - | - | - | `--` | - | - |
+| `ext.op.increment` | - | - | - | - | - | - | - | `++` | - | - |
+| `ext.syntax.call.bare` | - | - | - | - | - | - | - | `true` | - | - |
 <!-- table:end -->

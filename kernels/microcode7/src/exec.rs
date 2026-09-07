@@ -502,6 +502,12 @@ impl<'a> Machine<'a> {
                 print!("{}", self.show(v));
                 Value::Nil
             }
+            Prim::Tell => {
+                let w = self.wording();
+                let text: String = v.iter().map(|x| x.render(w)).collect();
+                print!("{}", text);
+                Value::Nil
+            }
             Prim::Span => return Err(format!("{}() spells a range, which belongs in a for loop", name)),
             Prim::MakeReal => {
                 if v.is_empty() || v.len() > 2 {

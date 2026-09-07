@@ -302,7 +302,7 @@ impl Def {
         }
         let mut strange: Vec<&str> = map
             .keys()
-            .filter(|k| !k.starts_with('$') && !shapes.iter().any(|(_, l)| l == k))
+            .filter(|k| !k.starts_with('$') && !k.starts_with("ext.") && !shapes.iter().any(|(_, l)| l == k))
             .map(String::as_str)
             .collect();
         strange.sort();

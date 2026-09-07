@@ -87,3 +87,11 @@ The kernels never import each other; `scripts/kernel_independence.py`
 checks every pair, and this kernel is written in its own words, not
 microcode4's. All 498 example programs print the same on this kernel as
 on the other five. stack8 is the same promotion on the stack machine.
+
+Being a full kernel, it also reads the `ext.` labels a definition may add
+beyond the 132 core labels (see `langs/README.md`): an epilogue marker,
+`echo`, bracketless builtin calls, `++`/`--` (a statement folds into a
+`Bump`; `x++` in an expression keeps the old value aside in a hidden
+binding), and interpolating strings, which the scanner turns into a
+bracketed concatenation. The reference kernels skip those labels, so the
+reference suites under `tests/` run on this kernel and stack8 only.
