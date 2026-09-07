@@ -1,0 +1,7 @@
+# A string built up piece by piece: allocation and text.
+s = ""
+i = 0
+while i < 20000
+    s = s . "ab"
+    i = i + 1
+print(len(s))

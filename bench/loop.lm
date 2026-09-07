@@ -1,0 +1,7 @@
+# An arithmetic loop: the cost of a loop iteration and a few operators.
+i = 0
+s = 0
+while i < 300000
+    s = s + i * 2 % 7
+    i = i + 1
+print(s)
