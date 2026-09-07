@@ -103,6 +103,9 @@ fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>) {
 fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String, String, bool)>) {
     let (mut posted, mut sent) = (Vec::new(), Vec::new());
     let mut files = 0usize;
+    // A part written before the files may say how large a file the form
+    // will take; one larger than that is turned away.
+    let mut form_limit: Option<usize> = None;
     let mark = format!("--{}", boundary);
     let mut rest: &[u8] = body;
     while let Some(at) = find_bytes(rest, mark.as_bytes()) {
@@ -124,22 +127,44 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
             }
         }
         let named = |what: &str| -> Option<String> { attribute(&head, what) };
+        // What a part holds is named before the first semicolon; what
+        // follows one says something more about it and is not the name.
         let kind = head
             .lines()
-            .find_map(|line| line.to_ascii_lowercase().starts_with("content-type:").then(|| line[13..].trim().to_string()))
+            .find_map(|line| {
+                line.to_ascii_lowercase()
+                    .starts_with("content-type:")
+                    .then(|| line[13..].split(';').next().unwrap_or("").trim().to_string())
+            })
             .unwrap_or_else(|| "text/plain".to_string());
+        // A name that opens a bracket must close on one: a part naming
+        // anything after the last bracket is no name at all, and the
+        // whole part goes unread. A form's own fields are read more
+        // kindly than this, which is why the rule lives here.
+        if named("name").map_or(false, |name| name.contains('[') && !name.ends_with(']')) {
+            continue;
+        }
         match (named("name"), named("filename")) {
             (None, None) => continue,
-            (Some(name), None) => posted.push((steps_of(&name), String::from_utf8_lossy(content).into_owned())),
+            (Some(name), None) => {
+                let said = String::from_utf8_lossy(content).into_owned();
+                if name == "MAX_FILE_SIZE" {
+                    form_limit = said.trim().parse().ok();
+                }
+                posted.push((steps_of(&name), said));
+            }
             (given, Some(filename)) => {
                 // A part naming no file at all sent none: it is counted
                 // among the files, and everything said of it is empty
                 // but for the word that says none came.
                 let none_sent = filename.is_empty();
+                // A file larger than the form said it would take is
+                // turned away, and nothing of it is kept.
+                let too_large = form_limit.map_or(false, |most| content.len() > most);
                 // The file is written out, since a program is given the
                 // place it lies in rather than what it holds.
                 let held = env::temp_dir().join(format!("lumenup{}{}", std::process::id(), files));
-                let written = !none_sent && std::fs::write(&held, content).is_ok();
+                let written = !none_sent && !too_large && std::fs::write(&held, content).is_ok();
                 let place = held.to_string_lossy().into_owned();
                 // A part that says nothing of its name is kept by its
                 // turn among the files.
@@ -161,16 +186,18 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
                 for (what, value, counted) in [
                     ("name", called, false),
                     ("full_path", filename, false),
-                    ("type", if none_sent { nothing.clone() } else { kind.clone() }, false),
+                    ("type", if none_sent || too_large { nothing.clone() } else { kind.clone() }, false),
                     ("tmp_name", if written { place } else { nothing.clone() }, false),
-                    // 0: it came. 4: none was sent. 1: it came and could
+                    // 0: it came. 2: it was larger than the form said it
+                    // would take. 4: none was sent. 1: it came and could
                     // not be put anywhere.
-                    ("error", match (none_sent, written) {
-                        (true, _) => "4".to_string(),
-                        (_, true) => "0".to_string(),
+                    ("error", match (none_sent, too_large, written) {
+                        (true, ..) => "4".to_string(),
+                        (_, true, _) => "2".to_string(),
+                        (.., true) => "0".to_string(),
                         _ => "1".to_string(),
                     }, true),
-                    ("size", if none_sent { "0".to_string() } else { content.len().to_string() }, true),
+                    ("size", if none_sent || too_large { "0".to_string() } else { content.len().to_string() }, true),
                 ] {
                     let path = match deeper {
                         Some(rest) => format!("{first}{BETWEEN_STEPS}{what}{BETWEEN_STEPS}{rest}"),

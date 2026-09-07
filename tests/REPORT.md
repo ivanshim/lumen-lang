@@ -17,18 +17,18 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 37, differs 39, error 28, skipped 10 | pass 37, differs 39, error 28, skipped 10 |
+| `php/basic` | 114 | pass 39, differs 37, error 28, skipped 10 | pass 39, differs 37, error 28, skipped 10 |
 | `php/func` | 14 | pass 7, differs 3, error 4, skipped 0 | pass 7, differs 3, error 4, skipped 0 |
 | `php/lang` | 213 | pass 62, differs 57, error 89, skipped 5 | pass 62, differs 57, error 89, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 29, differs 18, error 11, skipped 6 | pass 29, differs 18, error 11, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 140, differs 125, error 132, skipped 25 | pass 140, differs 125, error 132, skipped 25 |
+| all | 422 | pass 142, differs 123, error 132, skipped 25 | pass 142, differs 123, error 132, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 125 |
+| ran, printed something else | 123 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | Unexpected character '$' | 6 |
@@ -293,8 +293,8 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/rfc1867_file_upload_disabled.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_garbled_mime_headers.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_invalid_boundary.phpt` | differs | differs | ran, printed something else |
-| `php/basic/rfc1867_malicious_input.phpt` | differs | differs | ran, printed something else |
-| `php/basic/rfc1867_max_file_size.phpt` | differs | differs | ran, printed something else |
+| `php/basic/rfc1867_malicious_input.phpt` | pass | pass |  |
+| `php/basic/rfc1867_max_file_size.phpt` | pass | pass |  |
 | `php/basic/rfc1867_max_file_uploads_empty_files.phpt` | pass | pass |  |
 | `php/basic/rfc1867_missing_boundary.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_missing_boundary_2.phpt` | differs | differs | ran, printed something else |
