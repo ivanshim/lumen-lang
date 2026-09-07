@@ -259,6 +259,7 @@ w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.try | w ext.stmt.ca
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
 w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | b ext.op.index.absent | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
+w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -539,6 +540,8 @@ impl Lang {
             ("op.quot", Action::IntDiv), ("op.rem", Action::Mod), ("op.pow", Action::Power), ("op.eq", Action::Eq),
             ("op.ne", Action::Ne), ("op.lt", Action::Lt), ("op.le", Action::Le), ("op.gt", Action::Gt), ("op.ge", Action::Ge),
             ("op.and", Action::And), ("op.or", Action::Or), ("op.concat", Action::Join), ("ext.op.compare", Action::Rank),
+            ("ext.op.bit.and", Action::BitBoth), ("ext.op.bit.or", Action::BitEither), ("ext.op.bit.xor", Action::BitOne),
+            ("ext.op.bit.left", Action::BitUp), ("ext.op.bit.right", Action::BitDown),
         ] {
             for lex in r.strings(tag)? {
                 let tier = tier_of(&lex, false).ok_or_else(|| format!("'{lex}' ({tag}) does not appear in op.precedence"))?;
@@ -549,7 +552,7 @@ impl Lang {
             }
         }
         let mut unary = HashMap::new();
-        for (tag, op) in [("op.not", Action::Not), ("op.negate", Action::Negate)] {
+        for (tag, op) in [("op.not", Action::Not), ("op.negate", Action::Negate), ("ext.op.bit.not", Action::BitTurn)] {
             for lex in r.strings(tag)? {
                 let tier = tier_of(&lex, true).ok_or_else(|| format!("'{lex}' ({tag}) does not appear in op.precedence"))?;
                 if unary.insert(lex.clone(), Operator { action: op.clone(), level: tier, right_assoc: false }).is_some() {

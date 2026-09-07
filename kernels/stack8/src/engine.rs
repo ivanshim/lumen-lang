@@ -478,6 +478,16 @@ impl<'a> Engine<'a> {
         let result = match op {
             Action::Not => Value::Flag(!self.drop_top()?.is_true()),
             Action::AsBool => Value::Flag(self.drop_top()?.is_true()),
+            Action::BitTurn => {
+                let v = self.drop_top()?;
+                match &v {
+                    Value::Text(s) => {
+                        let out: Vec<u8> = s.as_bytes().iter().map(|c| !c).collect();
+                        Value::text(&String::from_utf8_lossy(&out))
+                    }
+                    _ => Value::Small(!bits_of(&v)?),
+                }
+            }
             Action::Negate => {
                 // 0 - x, so a real keeps its precision.
                 let v = self.drop_top()?;
@@ -751,6 +761,47 @@ impl<'a> Engine<'a> {
             // Adding text joins it only where the language has no
             // operator of its own for joining; where it has one, adding
             // is arithmetic and the text stands for a number.
+            // Two pieces of text take their bits letter by letter, which
+            // is what a language that spells these operators means by
+            // them; the shorter side decides the length, save for `or`,
+            // where the longer one stands on as it is.
+            Action::BitBoth | Action::BitEither | Action::BitOne if matches!(a, Value::Text(_)) && matches!(b, Value::Text(_)) => {
+                let (x, y) = (a.display(&sp), b.display(&sp));
+                let (x, y) = (x.as_bytes(), y.as_bytes());
+                let mut out: Vec<u8> = Vec::new();
+                let reach = if matches!(op, Action::BitEither) { x.len().max(y.len()) } else { x.len().min(y.len()) };
+                for i in 0..reach {
+                    let (p, q) = (x.get(i).copied().unwrap_or(0), y.get(i).copied().unwrap_or(0));
+                    out.push(match op {
+                        Action::BitBoth => p & q,
+                        Action::BitEither => p | q,
+                        _ => p ^ q,
+                    });
+                }
+                Value::text(&String::from_utf8_lossy(&out))
+            }
+            // Working on the bits reads each side as a whole number of
+            // sixty-four bits, sign and all, whatever it was written as.
+            Action::BitBoth | Action::BitEither | Action::BitOne | Action::BitUp | Action::BitDown => {
+                let (x, y) = (bits_of(a)?, bits_of(b)?);
+                Value::Small(match op {
+                    Action::BitBoth => x & y,
+                    Action::BitEither => x | y,
+                    Action::BitOne => x ^ y,
+                    _ => {
+                        if y < 0 {
+                            return Err("Bit shift by a negative number".to_string());
+                        }
+                        let places = y.min(64) as u32;
+                        match op {
+                            Action::BitUp => x.checked_shl(places).unwrap_or(0),
+                            // Moving down keeps the sign, so a negative
+                            // number falls to -1 rather than to 0.
+                            _ => x.checked_shr(places).unwrap_or(if x < 0 { -1 } else { 0 }),
+                        }
+                    }
+                })
+            }
             Action::Add if self.lang.concat.is_none() && (matches!(a, Value::Text(_)) || matches!(b, Value::Text(_))) => joined(),
             // Text that spells a number is worked with as that number,
             // fractions included, rather than only as a whole one.
@@ -1300,4 +1351,51 @@ fn number_spelled(s: &str) -> Option<Value> {
     let below: BigInt = after.parse().ok()?;
     let places = (before.len() + after.len()).max(15);
     Some(arith::shape_number((above * &scale + below) * sign, scale, Some(places)))
+}
+
+/// A value as sixty-four bits. Anything that is not a whole number is
+/// cut down to one first, the way a language that works on bits expects:
+/// a fraction loses what lies past the point, and a flag or nothing
+/// stands for 1 or 0.
+fn bits_of(v: &Value) -> Res<i64> {
+    let whole = match v {
+        Value::Small(n) => return Ok(*n),
+        Value::Text(s) => match number_spelled(s) {
+            Some(n) => n,
+            None => return Ok(0),
+        },
+        other => other.clone(),
+    };
+    match &whole {
+        Value::Small(n) => Ok(*n),
+        Value::Huge(n) => Ok(n.to_i64().unwrap_or(0)),
+        // What lies past the point is dropped, towards nothing rather
+        // than downwards, so -1.5 stands for -1.
+        Value::Frac(_) | Value::Real(_) => {
+            let below = matches!(arith::order_values(&whole, &Value::Small(0)), Some(std::cmp::Ordering::Less));
+            let size = if below { self_negated(&whole)? } else { whole.clone() };
+            match arith::calculate(Operation::Floor, &size, &Value::Small(1)) {
+                Some(Ok(v)) => {
+                    let n = match v {
+                        Value::Small(n) => n,
+                        Value::Huge(n) => n.to_i64().unwrap_or(0),
+                        _ => return Err("Working on bits needs a whole number".to_string()),
+                    };
+                    Ok(if below { -n } else { n })
+                }
+                _ => Err("Working on bits needs a whole number".to_string()),
+            }
+        }
+        Value::Flag(true) => Ok(1),
+        Value::Flag(false) | Value::Null | Value::Blank | Value::Gap => Ok(0),
+        _ => Err("Working on bits needs a whole number".to_string()),
+    }
+}
+
+/// 0 - x, for a number whose sign is to be turned around.
+fn self_negated(v: &Value) -> Res<Value> {
+    match arith::calculate(Operation::Minus, &Value::Small(0), v) {
+        Some(r) => r,
+        None => Err("Working on bits needs a whole number".to_string()),
+    }
 }

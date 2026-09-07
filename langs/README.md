@@ -317,6 +317,18 @@ only. The extension labels so far, all from PHP:
 - `ext.op.compare`: which of two values comes first, as -1, 0 or 1
   (`<=>`). It takes its tier from `op.precedence` like any operator; a
   kernel that does not read the label reads past its tier too.
+- `ext.op.bit.and`, `ext.op.bit.or`, `ext.op.bit.xor`, `ext.op.bit.not`,
+  `ext.op.bit.left` and `ext.op.bit.right`: the bits of a value taken
+  together, turned over, or moved along (`&`, `|`, `^`, `~`, `<<`, `>>`).
+  A value is read as a whole number of sixty-four bits, sign and all:
+  what lies past a decimal point is dropped towards nothing, so -1.5
+  stands for -1, and text that spells no number stands for zero. Moving
+  by a negative count is an error, and moving by sixty-four places or
+  more leaves nothing, save that moving down keeps the sign. Two pieces
+  of text meet letter by letter instead, the shorter one saying how far
+  it goes save where either bit will do. Like any operator these take
+  their tiers from `op.precedence`, and a kernel that does not read the
+  labels reads past those tiers too.
 - `ext.builtin.unset`: takes a binding away, leaving it as though
   nothing were ever written to it, or takes a place out of an array.
 - `ext.op.reference`: the sign that makes one name stand for another's
@@ -579,7 +591,7 @@ Operator precedence, lowest tier first. Unary operators sit in their own tier.
 - **c (extra)**: `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `!` `-`
 - **javascript (extra)**: `||` < `&&` < `===` `!==` `==` `!=` < `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `!` `-` < `**` < `.`
 - **pascal (extra)**: `=` `<>` `<` `>` `<=` `>=` < `+` `-` `or` < `*` `/` `div` `mod` `and` < `-` `not`
-- **php (extra)**: `or` < `and` < `||` < `&&` < `==` `!=` `===` `!==` < `<` `>` `<=` `>=` `<=>` < `.` < `+` `-` < `*` `/` `%` < `!` < `-` < `**`
+- **php (extra)**: `or` < `and` < `||` < `&&` < `|` < `^` < `&` < `==` `!=` `===` `!==` < `<` `>` `<=` `>=` `<=>` < `.` < `<<` `>>` < `+` `-` < `*` `/` `%` < `!` `~` < `-` < `**`
 - **ruby (extra)**: `or` < `and` < `not` < `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `...` < `+` `-` < `*` `/` `%` < `-` < `!` < `**` < `.`
 - **swift (extra)**: `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `..<` < `+` `-` < `*` `/` `%` < `!` `-` < `.`
 
@@ -600,6 +612,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.number.exponent` | - | - | - | - | - | - | - | `e` `E` | - | - |
 | `ext.lexical.template` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.assign.compound` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.op.bit.and` | - | - | - | - | - | - | - | `&` | - | - |
+| `ext.op.bit.left` | - | - | - | - | - | - | - | `<<` | - | - |
+| `ext.op.bit.not` | - | - | - | - | - | - | - | `~` | - | - |
+| `ext.op.bit.or` | - | - | - | - | - | - | - | `\|` | - | - |
+| `ext.op.bit.right` | - | - | - | - | - | - | - | `>>` | - | - |
+| `ext.op.bit.xor` | - | - | - | - | - | - | - | `^` | - | - |
 | `ext.op.compare` | - | - | - | - | - | - | - | `<=>` | - | - |
 | `ext.op.decrement` | - | - | - | - | - | - | - | `--` | - | - |
 | `ext.op.increment` | - | - | - | - | - | - | - | `++` | - | - |
@@ -607,6 +625,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.index.append` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.instanceof` | - | - | - | - | - | - | - | `instanceof` | - | - |
 | `ext.op.member` | - | - | - | - | - | - | - | `->` | - | - |
+| `ext.op.otherwise` | - | - | - | - | - | - | - | `??` | - | - |
 | `ext.op.plus` | - | - | - | - | - | - | - | `+` | - | - |
 | `ext.op.reference` | - | - | - | - | - | - | - | `&` | - | - |
 | `ext.op.scope` | - | - | - | - | - | - | - | `::` | - | - |

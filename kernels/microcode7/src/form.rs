@@ -50,6 +50,15 @@ pub enum Prim {
     Otherwise,
     /// Give an array back without the place named (ext.builtin.unset).
     Erase,
+    /// The bits of a value, sixty-four of them, sign and all: both set,
+    /// either set, one alone set, all turned over, and moved up or down.
+    /// Two pieces of text take their bits letter by letter instead.
+    BitsBoth,
+    BitsEither,
+    BitsOne,
+    BitsOver,
+    BitsUp,
+    BitsDown,
     /// Each argument with its kind, as PHP's var_dump (ext.builtin.var_dump).
     Dump,
     MakeReal,

@@ -858,6 +858,55 @@ impl<'a> Machine<'a> {
                 Value::Flag(true)
             }
             Prim::Invert => Value::Flag(!v[0].is_true()),
+            // Turning text over works letter by letter; anything else is
+            // read as a whole number of sixty-four bits first.
+            Prim::BitsOver => match &v[0] {
+                Value::Text(s) => Value::text(&letters_turned(s)),
+                other => Value::Small(!sixty_four(other)?),
+            },
+            // Two pieces of text meet letter by letter. The shorter one
+            // says how far it goes, save where either bit will do, and
+            // there the longer one carries on alone.
+            Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne
+                if matches!(v[0], Value::Text(_)) && matches!(v[1], Value::Text(_)) =>
+            {
+                let (left, right) = (v[0].bare(), v[1].bare());
+                let (left, right) = (left.as_bytes(), right.as_bytes());
+                let far = if op == Prim::BitsEither { left.len().max(right.len()) } else { left.len().min(right.len()) };
+                let mut letters: Vec<u8> = Vec::with_capacity(far);
+                for at in 0..far {
+                    let one = *left.get(at).unwrap_or(&0);
+                    let other = *right.get(at).unwrap_or(&0);
+                    letters.push(match op {
+                        Prim::BitsBoth => one & other,
+                        Prim::BitsEither => one | other,
+                        _ => one ^ other,
+                    });
+                }
+                Value::text(&String::from_utf8_lossy(&letters))
+            }
+            Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne => {
+                let (left, right) = (sixty_four(&v[0])?, sixty_four(&v[1])?);
+                Value::Small(match op {
+                    Prim::BitsBoth => left & right,
+                    Prim::BitsEither => left | right,
+                    _ => left ^ right,
+                })
+            }
+            Prim::BitsUp | Prim::BitsDown => {
+                let (bits, by) = (sixty_four(&v[0])?, sixty_four(&v[1])?);
+                if by < 0 {
+                    return Err("Bit shift by a negative number".to_string());
+                }
+                // Past sixty-four places nothing of the number is left,
+                // save the sign when the bits go down.
+                let far = by.min(64) as u32;
+                Value::Small(if op == Prim::BitsUp {
+                    bits.checked_shl(far).unwrap_or(0)
+                } else {
+                    bits.checked_shr(far).unwrap_or(if bits < 0 { -1 } else { 0 })
+                })
+            }
             Prim::Negate => match math::compute(Calc::Minus, &Value::Small(0), &v[0]) {
                 Some(r) => r?,
                 None => return Err("Cannot negate non-numeric value".to_string()),
@@ -1328,4 +1377,46 @@ fn number_spelled_in(v: &Value) -> Option<Value> {
     let below: BigInt = after.parse().ok()?;
     let digits_told = (before.len() + after.len()).max(15);
     Some(math::make_number((above * &scale + below) * sign, scale, Some(digits_told)))
+}
+
+/// Every letter of a piece of text with its bits turned over.
+fn letters_turned(s: &str) -> String {
+    let letters: Vec<u8> = s.as_bytes().iter().map(|c| !c).collect();
+    String::from_utf8_lossy(&letters).into_owned()
+}
+
+/// A value as a whole number of sixty-four bits. Text that spells a
+/// number stands for it and text that spells none stands for nothing; a
+/// fraction drops what lies past the point, towards nothing rather than
+/// downwards, so -1.5 stands for -1.
+fn sixty_four(v: &Value) -> Result<i64, String> {
+    let number = match v {
+        Value::Small(n) => return Ok(*n),
+        Value::Flag(yes) => return Ok(i64::from(*yes)),
+        Value::Nil | Value::Unset => return Ok(0),
+        Value::Text(_) => match number_spelled_in(v) {
+            Some(n) => n,
+            None => return Ok(0),
+        },
+        other => other.clone(),
+    };
+    let below = math::below(&number, &Value::Small(0)) == Some(true);
+    let size = if below {
+        match math::compute(Calc::Minus, &Value::Small(0), &number) {
+            Some(r) => r?,
+            None => return Err("Working on bits needs a whole number".to_string()),
+        }
+    } else {
+        number
+    };
+    let whole = match math::compute(Calc::IntDiv, &size, &Value::Small(1)) {
+        Some(r) => r?,
+        None => size,
+    };
+    let count = match whole {
+        Value::Small(n) => n,
+        Value::Huge(n) => n.to_i64().unwrap_or(0),
+        _ => return Err("Working on bits needs a whole number".to_string()),
+    };
+    Ok(if below { -count } else { count })
 }

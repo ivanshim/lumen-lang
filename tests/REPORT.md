@@ -17,39 +17,35 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 26, differs 40, error 48, skipped 0 | pass 26, differs 40, error 48, skipped 0 |
-| `php/func` | 14 | pass 2, differs 2, error 10, skipped 0 | pass 2, differs 2, error 10, skipped 0 |
-| `php/lang` | 213 | pass 34, differs 24, error 153, skipped 2 | pass 34, differs 24, error 153, skipped 2 |
+| `php/basic` | 114 | pass 27, differs 40, error 47, skipped 0 | pass 27, differs 40, error 47, skipped 0 |
+| `php/func` | 14 | pass 2, differs 3, error 9, skipped 0 | pass 2, differs 3, error 9, skipped 0 |
+| `php/lang` | 213 | pass 34, differs 26, error 151, skipped 2 | pass 34, differs 26, error 151, skipped 2 |
 | `php/lang/constants` | 2 | pass 1, differs 1, error 0, skipped 0 | pass 1, differs 1, error 0, skipped 0 |
 | `php/lang/integer_literals` | 6 | pass 0, differs 0, error 6, skipped 0 | pass 0, differs 0, error 6, skipped 0 |
-| `php/lang/operators` | 64 | pass 4, differs 23, error 37, skipped 0 | pass 4, differs 23, error 37, skipped 0 |
-| `php/lang/string` | 9 | pass 1, differs 7, error 1, skipped 0 | pass 1, differs 7, error 1, skipped 0 |
-| all | 422 | pass 68, differs 97, error 255, skipped 2 | pass 68, differs 97, error 255, skipped 2 |
+| `php/lang/operators` | 64 | pass 9, differs 28, error 27, skipped 0 | pass 9, differs 28, error 27, skipped 0 |
+| `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
+| all | 422 | pass 74, differs 106, error 240, skipped 2 | pass 74, differs 106, error 240, skipped 2 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 97 |
+| ran, printed something else | 106 |
 | } | 8 |
-| Unexpected token: & | 8 |
 | Undefined variable: eval | 7 |
 | Unexpected character '$' | 6 |
 | Expected '{' to open the class, got ' | 6 |
 | Unexpected token: = | 6 |
 | static belongs inside a function | 5 |
 | Undefined variable: include | 5 |
+| Unexpected token: & | 5 |
 | Expected identifier as the property name, got '{' | 5 |
-| Unexpected token: > | 5 |
+| Undefined variable: __DIR__ | 4 |
 | Unexpected token: , | 4 |
 | string(10) "..." | 4 |
 | ---( Array with 1 element(s): )--- | 4 |
-| Unexpected token: < | 4 |
 | --- testing: 'abc' --- | 4 |
-| Unexpected token: \| | 3 |
 | Cannot reassign $argv (system-provided immutable value) | 3 |
 | Unexpected character '@' | 3 |
-| Undefined variable: __DIR__ | 3 |
 | Test | 3 |
-| Undefined variable: register_shutdown_function | 3 |
 | Undefined variable: var_export | 3 |
 | Unexpected token: : | 3 |
 | Expected ')' to close a group, got '=' | 3 |
@@ -61,13 +57,17 @@ is listed, since the full kernels are meant to behave alike.
 | Unexpected token: -> | 3 |
 | Unexpected token: . | 2 |
 | Expected an expression | 2 |
-| Undefined variable: LC_ALL | 2 |
 | Unexpected token: { | 2 |
 | Undefined variable: ini_parse_quantity | 2 |
+| timeout | 2 |
+| Function register_shutdown_function expects 1 arguments, got 2 | 2 |
 | Expected ')' after the foreach names, got '[' | 2 |
 | Unexpected token: } | 2 |
-| Undefined variable: trigger_error | 2 |
 | no --FILE-- section | 2 |
+| Expected ']' after array index, got '++' | 2 |
+| Unexpected token: ++ | 2 |
+| Function foo expects 1 arguments, got 2 | 2 |
+| Undefined variable: func_get_args | 2 |
 
 ### Reserved words: 41 of 68 spelled
 
@@ -204,7 +204,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/007.phpt` | pass | pass |  |
 | `php/basic/008.phpt` | pass | pass |  |
 | `php/basic/009.phpt` | pass | pass |  |
-| `php/basic/010.phpt` | error | error | Unexpected token: \| |
+| `php/basic/010.phpt` | pass | pass |  |
 | `php/basic/011.phpt` | error | error | Cannot reassign $argv (system-provided immutable value) |
 | `php/basic/011_empty_query.phpt` | differs | differs | ran, printed something else |
 | `php/basic/011_register_argc_argv_disabled.phpt` | differs | differs | ran, printed something else |
@@ -236,7 +236,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/bug31875.phpt` | error | error | Undefined variable: get_defined_functions |
 | `php/basic/bug45986.phpt` | error | error | Undefined variable: rename |
 | `php/basic/bug53180.phpt` | pass | pass |  |
-| `php/basic/bug54514.phpt` | error | error | Undefined variable: realpath |
+| `php/basic/bug54514.phpt` | error | error | Undefined variable: PHP_BINARY |
 | `php/basic/bug55500.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug61000.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug67198.phpt` | error | error | Expected an expression |
@@ -248,7 +248,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/bug79699.phpt` | pass | pass |  |
 | `php/basic/bug80384.phpt` | error | error | Undefined variable: __DIR__ |
 | `php/basic/build_date.phpt` | error | error | Undefined variable: PHP_BUILD_DATE |
-| `php/basic/consistent_float_string_casts.phpt` | error | error | Undefined variable: LC_ALL |
+| `php/basic/consistent_float_string_casts.phpt` | error | error | Function setlocale expects 2 arguments, got 13 |
 | `php/basic/enable_post_data_reading_01.phpt` | error | error | } |
 | `php/basic/enable_post_data_reading_02.phpt` | error | error | } |
 | `php/basic/enable_post_data_reading_03.phpt` | error | error | } |
@@ -257,7 +257,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/enable_post_data_reading_06.phpt` | error | error | Test |
 | `php/basic/enable_post_data_reading_07.phpt` | error | error | Test |
 | `php/basic/encoding.phpt` | differs | differs | ran, printed something else |
-| `php/basic/errorlog_permission.phpt` | error | error | Unexpected token: & |
+| `php/basic/errorlog_permission.phpt` | error | error | Undefined variable: umask |
 | `php/basic/gh15905.phpt` | pass | pass |  |
 | `php/basic/gh16998.phpt` | error | error | Unexpected token: . |
 | `php/basic/gh17951_ini_parse_1.phpt` | differs | differs | ran, printed something else |
@@ -271,7 +271,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/gh17951_runtime_change_4.phpt` | differs | differs | ran, printed something else |
 | `php/basic/gh17951_runtime_change_5.phpt` | pass | pass |  |
 | `php/basic/gh17951_runtime_change_6.phpt` | differs | differs | ran, printed something else |
-| `php/basic/gh20858.phpt` | error | error | Undefined variable: phpversion |
+| `php/basic/gh20858.phpt` | error | error | Function error_log expects 1 arguments, got 3 |
 | `php/basic/gh20964.phpt` | error | error | Undefined variable: fopen |
 | `php/basic/gh7896.phpt` | differs | differs | ran, printed something else |
 | `php/basic/header_register_callback.phpt` | error | error | Unexpected token: { |
@@ -303,23 +303,23 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/rfc1867_post_max_size.phpt` | differs | differs | ran, printed something else |
 | `php/basic/timeout_variation_0.phpt` | error | error | timeout |
 | `php/basic/timeout_variation_1.phpt` | differs | differs | ran, printed something else |
-| `php/basic/timeout_variation_10.phpt` | error | error | Undefined variable: register_shutdown_function |
+| `php/basic/timeout_variation_10.phpt` | error | error | Function register_shutdown_function expects 1 arguments, got 2 |
 | `php/basic/timeout_variation_2.phpt` | error | error | Undefined variable: array_map |
 | `php/basic/timeout_variation_4.phpt` | error | error | Undefined variable: call_user_func |
 | `php/basic/timeout_variation_7.phpt` | error | error | Undefined variable: INF |
 | `php/basic/timeout_variation_8.phpt` | error | error | Undefined variable: InfiniteIterator |
-| `php/basic/timeout_variation_9.phpt` | error | error | Undefined variable: register_shutdown_function |
+| `php/basic/timeout_variation_9.phpt` | error | error | Function register_shutdown_function expects 1 arguments, got 2 |
 | `php/func/001.phpt` | pass | pass |  |
 | `php/func/002.phpt` | error | error | hey=2, -2 |
 | `php/func/003.phpt` | error | error | hey |
 | `php/func/004.phpt` | pass | pass |  |
-| `php/func/005.phpt` | error | error | Undefined variable: register_shutdown_function |
-| `php/func/005a.phpt` | error | error | Start |
+| `php/func/005.phpt` | differs | differs | ran, printed something else |
+| `php/func/005a.phpt` | error | error | timeout |
 | `php/func/006.phpt` | error | error | 0A0B |
 | `php/func/007.phpt` | error | error | false |
 | `php/func/008.phpt` | error | error | Undefined variable: var_export |
 | `php/func/009.phpt` | error | error | Undefined variable: var_export |
-| `php/func/010.phpt` | error | error | Undefined variable: dechex |
+| `php/func/010.phpt` | error | error | Undefined variable: __DIR__ |
 | `php/func/011.phpt` | differs | differs | ran, printed something else |
 | `php/func/bug64523.phpt` | differs | differs | ran, printed something else |
 | `php/func/ini_alter.phpt` | error | error | Undefined variable: ini_alter |
@@ -375,7 +375,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug19566.phpt` | error | error | Undefined variable: get_declared_classes |
 | `php/lang/bug19943.phpt` | error | error | Unexpected character '@' |
 | `php/lang/bug20175.phpt` | error | error | Unexpected token: ) |
-| `php/lang/bug21094.phpt` | error | error | Undefined variable: trigger_error |
+| `php/lang/bug21094.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug21600.phpt` | error | error | Unexpected token: & |
 | `php/lang/bug21669.phpt` | error | error | Only a class can be made into an object |
 | `php/lang/bug21820.phpt` | differs | differs | ran, printed something else |
@@ -400,7 +400,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug24658.phpt` | error | error | NULL |
 | `php/lang/bug24783.phpt` | error | error | 8: |
 | `php/lang/bug24908.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug24951.phpt` | error | error | Expected ')' to close a group, got '&' |
+| `php/lang/bug24951.phpt` | error | error | Hello from t1 1 Hello from t1 2 |
 | `php/lang/bug25145.phpt` | pass | pass |  |
 | `php/lang/bug25547.phpt` | error | error | Cannot coerce array to number |
 | `php/lang/bug25652.phpt` | differs | differs | ran, printed something else |
@@ -419,7 +419,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug29893.phpt` | error | error | '-=' needs a plain variable on its left |
 | `php/lang/bug29944.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug30578.phpt` | error | error | Expected '{' to open the class, got ' |
-| `php/lang/bug30638.phpt` | error | error | Undefined variable: LC_NUMERIC |
+| `php/lang/bug30638.phpt` | error | error | Function setlocale expects 2 arguments, got 7 |
 | `php/lang/bug30726.phpt` | error | error | Unexpected token: , |
 | `php/lang/bug30862.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug32828.phpt` | differs | differs | ran, printed something else |
@@ -433,7 +433,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug45392.phpt` | error | error | Undefined variable: __LINE__ |
 | `php/lang/bug55754.phpt` | error | error | Unexpected token: = |
 | `php/lang/bug71897.phpt` | error | error | Undefined variable: eval |
-| `php/lang/bug73172.phpt` | error | error | Undefined variable: LC_ALL |
+| `php/lang/bug73172.phpt` | error | error | Function setlocale expects 2 arguments, got 3 |
 | `php/lang/bug73329.phpt` | error | error | Undefined variable: float |
 | `php/lang/bug7515.phpt` | error | error | Undefined variable: stdClass |
 | `php/lang/catchable_error_001.phpt` | error | error | Undefined variable: StdClass |
@@ -441,7 +441,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/comments.phpt` | pass | pass |  |
 | `php/lang/comments2.phpt` | skipped | skipped | no --FILE-- section |
 | `php/lang/compare_objects_basic1.phpt` | pass | pass |  |
-| `php/lang/compare_objects_basic2.phpt` | error | error | Undefined variable: date_default_timezone_set |
+| `php/lang/compare_objects_basic2.phpt` | error | error | Simple test comparing two objects with different compare callback handler |
 | `php/lang/constants/PHP_INT_32bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/constants/PHP_INT_64bit.phpt` | pass | pass |  |
 | `php/lang/empty_variation.phpt` | error | error | Undefined variable: empty |
@@ -454,7 +454,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/engine_assignExecutionOrder_007.phpt` | error | error | Expected ']' after array index, got '=' |
 | `php/lang/engine_assignExecutionOrder_008.phpt` | error | error | Unexpected character '$' |
 | `php/lang/engine_assignExecutionOrder_009.phpt` | error | error | Unexpected token: = |
-| `php/lang/error_2_exception_001.phpt` | error | error | Undefined variable: trigger_error |
+| `php/lang/error_2_exception_001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/execution_order.phpt` | error | error | Expected ')' to close a group, got '=' |
 | `php/lang/foreachLoop.001.phpt` | error | error | string(1) "..." |
 | `php/lang/foreachLoop.002.phpt` | error | error | string(10) "..." |
@@ -511,21 +511,21 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/invalid_octal.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/add_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/add_variationStr.phpt` | error | error | --- testing: '<number>' + 'abc' --- |
-| `php/lang/operators/bitwiseAnd_basiclong_64bit.phpt` | error | error | Unexpected token: & |
-| `php/lang/operators/bitwiseAnd_variationStr.phpt` | error | error | Unexpected token: & |
-| `php/lang/operators/bitwiseNot_basiclong_64bit.phpt` | error | error | Unexpected character '~' |
-| `php/lang/operators/bitwiseNot_variationStr.phpt` | error | error | Unexpected character '~' |
-| `php/lang/operators/bitwiseOr_basiclong_64bit.phpt` | error | error | Unexpected token: \| |
-| `php/lang/operators/bitwiseOr_variationStr.phpt` | error | error | Unexpected token: \| |
-| `php/lang/operators/bitwiseShiftLeft_basiclong_64bit.phpt` | error | error | Unexpected token: < |
-| `php/lang/operators/bitwiseShiftLeft_variationStr.phpt` | error | error | Unexpected token: < |
-| `php/lang/operators/bitwiseShiftLeft_variationStr2.phpt` | error | error | Unexpected token: < |
-| `php/lang/operators/bitwiseShiftLeft_variationStr_64bit.phpt` | error | error | Unexpected token: < |
-| `php/lang/operators/bitwiseShiftRight_basiclong_64bit.phpt` | error | error | Unexpected token: > |
-| `php/lang/operators/bitwiseShiftRight_variationStr.phpt` | error | error | Unexpected token: > |
-| `php/lang/operators/bitwiseShiftRight_variationStr2.phpt` | error | error | Unexpected token: > |
-| `php/lang/operators/bitwiseXor_basiclong_64bit.phpt` | error | error | Unexpected character '^' |
-| `php/lang/operators/bitwiseXor_variationStr.phpt` | error | error | Unexpected character '^' |
+| `php/lang/operators/bitwiseAnd_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/bitwiseAnd_variationStr.phpt` | pass | pass |  |
+| `php/lang/operators/bitwiseNot_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/bitwiseNot_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/bitwiseOr_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/bitwiseOr_variationStr.phpt` | pass | pass |  |
+| `php/lang/operators/bitwiseShiftLeft_basiclong_64bit.phpt` | error | error | --- testing: 9223372036854775807 << -1 --- |
+| `php/lang/operators/bitwiseShiftLeft_variationStr.phpt` | error | error | --- testing: '<number>' << '-44' --- |
+| `php/lang/operators/bitwiseShiftLeft_variationStr2.phpt` | pass | pass |  |
+| `php/lang/operators/bitwiseShiftLeft_variationStr_64bit.phpt` | error | error | --- testing: '<number>' << '-44' --- |
+| `php/lang/operators/bitwiseShiftRight_basiclong_64bit.phpt` | error | error | --- testing: 9223372036854775807 >> -1 --- |
+| `php/lang/operators/bitwiseShiftRight_variationStr.phpt` | error | error | --- testing: '<number>' >> '-44' --- |
+| `php/lang/operators/bitwiseShiftRight_variationStr2.phpt` | pass | pass |  |
+| `php/lang/operators/bitwiseXor_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/bitwiseXor_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/coalesce.phpt` | error | error | Undefined variable: StdClass |
 | `php/lang/operators/divide_basiclong_64bit.phpt` | error | error | --- testing: 9223372036854775807 / 0 --- |
 | `php/lang/operators/divide_variationStr.phpt` | error | error | --- testing: '<number>'/'<number>' --- |
@@ -607,7 +607,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/string/unicode_escape_legacy.phpt` | pass | pass |  |
 | `php/lang/string/unicode_escape_sign.phpt` | differs | differs | ran, printed something else |
 | `php/lang/string/unicode_escape_sign2.phpt` | differs | differs | ran, printed something else |
-| `php/lang/string/unicode_escape_surrogates.phpt` | error | error | Undefined variable: bin2hex |
+| `php/lang/string/unicode_escape_surrogates.phpt` | differs | differs | ran, printed something else |
 | `php/lang/string/unicode_escape_whitespace.phpt` | differs | differs | ran, printed something else |
 | `php/lang/string_decimals_001.phpt` | error | error | --> Testing ..9: |
 | `php/lang/syntax_errors.phpt` | error | error | Undefined variable: eval |

@@ -73,6 +73,15 @@ pub enum Action {
     Extent,
     /// Which of two values comes first: below, alike, or above.
     Rank,
+    /// The bits of two whole numbers taken together, and the bits of one
+    /// turned over. A number is read as sixty-four bits, sign and all.
+    BitBoth,
+    BitEither,
+    BitOne,
+    BitTurn,
+    /// The bits moved up or down that many places.
+    BitUp,
+    BitDown,
     /// Whether the value above is nothing at all.
     Nothing,
     /// Build the class this plan describes; what it stands on, if it

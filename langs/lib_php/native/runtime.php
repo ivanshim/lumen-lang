@@ -203,3 +203,189 @@ function abs($n) { if ($n < 0) { return 0 - $n; } return $n; }
 function max($a, $b) { if ($a > $b) { return $a; } return $b; }
 function min($a, $b) { if ($a < $b) { return $a; } return $b; }
 function intdiv($a, $b) { return intval($a / $b); }
+
+// Text taken apart and put back together, the way PHP's own library
+// spells it.  What is written here is PHP, so the kernel need learn
+// nothing of it.
+
+function substr($text, $start, $length = null) {
+    $size = strlen($text);
+    if ($start < 0) {
+        $start = $size + $start;
+        if ($start < 0) { $start = 0; }
+    }
+    if ($start > $size) { return ""; }
+    if ($length === null) {
+        $stop = $size;
+    } elseif ($length < 0) {
+        $stop = $size + $length;
+    } else {
+        $stop = $start + $length;
+    }
+    if ($stop > $size) { $stop = $size; }
+    if ($stop < $start) { return ""; }
+    return substring($text, $start, $stop);
+}
+
+function strpos($haystack, $needle, $offset = 0) {
+    $at = index_of(substr($haystack, $offset), $needle);
+    if ($at < 0) { return false; }
+    return $at + $offset;
+}
+
+function strstr($haystack, $needle, $before = false) {
+    $at = index_of($haystack, $needle);
+    if ($at < 0) { return false; }
+    if ($before) { return substr($haystack, 0, $at); }
+    return substr($haystack, $at);
+}
+
+function str_replace($search, $replace, $subject) {
+    $out = "";
+    $rest = $subject;
+    $width = strlen($search);
+    if ($width == 0) { return $subject; }
+    while (true) {
+        $at = index_of($rest, $search);
+        if ($at < 0) { return $out . $rest; }
+        $out = $out . substr($rest, 0, $at) . $replace;
+        $rest = substr($rest, $at + $width);
+    }
+}
+
+function str_pad($text, $width, $pad = " ", $side = 1) {
+    $short = $width - strlen($text);
+    if ($short <= 0 || strlen($pad) == 0) { return $text; }
+    $filler = "";
+    while (strlen($filler) < $short) { $filler = $filler . $pad; }
+    $filler = substr($filler, 0, $short);
+    if ($side == 0) { return $filler . $text; }
+    if ($side == 2) {
+        $left = intdiv($short, 2);
+        return substr($filler, 0, $left) . $text . substr($filler, 0, $short - $left);
+    }
+    return $text . $filler;
+}
+
+function str_split($text, $width = 1) {
+    $pieces = array();
+    $at = 0;
+    $size = strlen($text);
+    if ($size == 0) { return array(""); }
+    while ($at < $size) {
+        array_push($pieces, substr($text, $at, $width));
+        $at = $at + $width;
+    }
+    return $pieces;
+}
+
+function explode($apart, $text) {
+    $pieces = array();
+    $rest = $text;
+    $width = strlen($apart);
+    if ($width == 0) { return false; }
+    while (true) {
+        $at = index_of($rest, $apart);
+        if ($at < 0) {
+            array_push($pieces, $rest);
+            return $pieces;
+        }
+        array_push($pieces, substr($rest, 0, $at));
+        $rest = substr($rest, $at + $width);
+    }
+}
+
+// A number written in another base, and read back from one.
+
+function base_digits() { return "0123456789abcdefghijklmnopqrstuvwxyz"; }
+
+function number_in_base($n, $base) {
+    if ($n == 0) { return "0"; }
+    $digits = base_digits();
+    $out = "";
+    $left = $n;
+    while ($left > 0) {
+        $out = $digits[$left % $base] . $out;
+        $left = intdiv($left, $base);
+    }
+    return $out;
+}
+
+function base_to_number($text, $base) {
+    $digits = base_digits();
+    $total = 0;
+    $at = 0;
+    while ($at < strlen($text)) {
+        $place = index_of($digits, char_to_lower($text[$at]));
+        if ($place >= 0 && $place < $base) { $total = $total * $base + $place; }
+        $at = $at + 1;
+    }
+    return $total;
+}
+
+function dechex($n) { return number_in_base($n, 16); }
+function hexdec($text) { return base_to_number($text, 16); }
+function decbin($n) { return number_in_base($n, 2); }
+function bindec($text) { return base_to_number($text, 2); }
+function decoct($n) { return number_in_base($n, 8); }
+function octdec($text) { return base_to_number($text, 8); }
+
+function bin2hex($text) {
+    $out = "";
+    $at = 0;
+    while ($at < strlen($text)) {
+        $out = $out . str_pad(dechex(ord($text[$at])), 2, "0", 0);
+        $at = $at + 1;
+    }
+    return $out;
+}
+
+function hex2bin($text) {
+    $out = "";
+    $at = 0;
+    while ($at + 1 < strlen($text)) {
+        $out = $out . chr(hexdec(substr($text, $at, 2)));
+        $at = $at + 2;
+    }
+    return $out;
+}
+
+// The rest of what a program expects to find already there.
+
+function phpversion($extension = null) { return PHP_VERSION; }
+function php_sapi_name() { return "cli"; }
+function php_uname($mode = "a") { return PHP_OS; }
+function setlocale($category, $locale) { return false; }
+function date_default_timezone_set($zone) { return true; }
+function date_default_timezone_get() { return "UTC"; }
+function register_shutdown_function($work) { return null; }
+function trigger_error($message, $level = 1024) { return true; }
+function file_exists($path) { return false; }
+function realpath($path) { return $path; }
+function basename($path) {
+    $at = strlen($path) - 1;
+    while ($at >= 0) {
+        if ($path[$at] == "/") { return substr($path, $at + 1); }
+        $at = $at - 1;
+    }
+    return $path;
+}
+function dirname($path) {
+    $at = strlen($path) - 1;
+    while ($at > 0) {
+        if ($path[$at] == "/") { return substr($path, 0, $at); }
+        $at = $at - 1;
+    }
+    return ".";
+}
+
+define("LC_ALL", 6);
+define("LC_COLLATE", 3);
+define("LC_CTYPE", 0);
+define("LC_MONETARY", 4);
+define("LC_NUMERIC", 1);
+define("LC_TIME", 2);
+define("LC_MESSAGES", 5);
+define("STR_PAD_RIGHT", 1);
+define("STR_PAD_LEFT", 0);
+define("STR_PAD_BOTH", 2);
