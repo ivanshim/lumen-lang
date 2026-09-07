@@ -220,6 +220,17 @@ fn prim_call(op: Prim, args: Vec<Form>) -> Form {
     Form::Apply(Callee::Prim(op, Rc::from(name)), args)
 }
 
+/// Every look inside a value being asked about becomes a glance, which
+/// answers nothing rather than minding that nothing is there.
+fn glancing(form: Form) -> Form {
+    match form {
+        Form::Apply(Callee::Prim(Prim::At, name), args) => {
+            Form::Apply(Callee::Prim(Prim::Glance, name), args.into_iter().map(glancing).collect())
+        }
+        other => other,
+    }
+}
+
 fn invoke(program: Form, args: Vec<Form>) -> Form {
     Form::Apply(Callee::Code(Box::new(program)), args)
 }
@@ -1309,7 +1320,7 @@ impl<'a> Builder<'a> {
             let bracketed = self.table.single("syntax.call.open").map_or(false, |o| next.shape == Shape::Sign && next.lexeme == o);
             let bare = match op {
                 Some(Prim::Tell) => true,
-                Some(Prim::Append | Prim::Replace | Prim::Define | Prim::Gather | Prim::Erase) | None => false,
+                Some(Prim::Append | Prim::Replace | Prim::Define | Prim::Gather | Prim::Erase | Prim::Standing) | None => false,
                 Some(_) => !bracketed,
             };
             if bare {
@@ -1913,6 +1924,9 @@ impl<'a> Builder<'a> {
                     if table.prims.get(&t.lexeme) == Some(&Prim::Erase) {
                         return self.forget();
                     }
+                    if table.prims.get(&t.lexeme) == Some(&Prim::Standing) {
+                        return self.standing();
+                    }
                     if table.prims.get(&t.lexeme) == Some(&Prim::Gather) {
                         // array(...) gathers what it is given, like a literal.
                         let items = self.elements("syntax.call.close", "syntax.call.separator")?;
@@ -2003,6 +2017,34 @@ impl<'a> Builder<'a> {
         self.advance();
         items.push(constant(Value::Nil));
         Ok(sequence(items))
+    }
+
+    /// `isset(a, b[k])`: whether every one of them is something other
+    /// than nothing. A name never written and a place an array does not
+    /// hold both count as nothing, and neither is complained about, so
+    /// every look inside is a glance and the whole is muted.
+    fn standing(&mut self) -> Res<Form> {
+        let table = self.table;
+        let close = table.single("syntax.call.close").unwrap().to_string();
+        let sep = table.single("syntax.call.separator").map(str::to_string);
+        let mut asked = Vec::new();
+        while !self.sign(&close) {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", close));
+            }
+            let one = self.expr(0)?;
+            asked.push(Form::Muted(Box::new(glancing(one))));
+            if let Some(s) = &sep {
+                if self.sign(s) {
+                    self.advance();
+                }
+            }
+        }
+        self.advance();
+        if asked.is_empty() {
+            return Err("Nothing was asked about".to_string());
+        }
+        Ok(prim_call(Prim::Standing, asked))
     }
 
     /// The class a name stands for: `self` names the class being read
@@ -2694,7 +2736,7 @@ impl<'a> Builder<'a> {
                 Prim::External | Prim::Span => return Err(format!("'{}' has no postfix form", w)),
                 Prim::Echo | Prim::Say | Prim::Out | Prim::Tell | Prim::Dump | Prim::Raise => (1, false),
                 Prim::Portray => (1, true),
-                Prim::Define | Prim::Gather | Prim::Erase => return Err(format!("'{}' has no postfix form", w)),
+                Prim::Define | Prim::Gather | Prim::Erase | Prim::Standing => return Err(format!("'{}' has no postfix form", w)),
                 Prim::CharAtIndex | Prim::Fetch | Prim::MakeReal => (2, true),
                 _ => (1, true),
             };

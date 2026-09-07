@@ -2248,6 +2248,8 @@ impl<'a> Compiler<'a> {
                                 self.mutation(&tok.lexeme, &target, argc + 1)?;
                             } else if native == Some(Builtin::Erase) {
                                 self.forget(&call)?;
+                            } else if native == Some(Builtin::Held) {
+                                self.held(&call)?;
                             } else if native == Some(Builtin::Pack) {
                                 // array(...) gathers its arguments like a literal.
                                 let count = self.elements(&call)?;
@@ -2368,6 +2370,46 @@ impl<'a> Compiler<'a> {
         }
         self.take();
         self.constant(Value::Null);
+        Ok(())
+    }
+
+    /// `isset(a, b[k])`: whether every one of them holds something other
+    /// than nothing. A binding never written and a place an array does
+    /// not hold are both nothing, and neither is complained about, so
+    /// every read within is a gentle one.
+    fn held(&mut self, call: &Brackets) -> Res<()> {
+        let mut asked = 0;
+        while !self.at_symbol(&call.close) {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", call.close));
+            }
+            let from = self.mark();
+            self.put(Instr::Hush(true));
+            self.expr(0)?;
+            // Every look inside becomes a gentle one, so that a place
+            // that is not there answers nothing instead of stopping.
+            for w in self.piece().instrs[from..].iter_mut() {
+                if let Instr::Act(Action::At, 2) = w {
+                    *w = Instr::Act(Action::Peek, 2);
+                }
+            }
+            self.put(Instr::Hush(false));
+            self.act(Action::Nothing, 1);
+            self.act(Action::Not, 1);
+            asked += 1;
+            if let Some(sep) = &call.between {
+                if self.at_symbol(sep) {
+                    self.take();
+                }
+            }
+        }
+        self.take();
+        if asked == 0 {
+            return Err("Nothing was asked about".to_string());
+        }
+        for _ in 1..asked {
+            self.act(Action::And, 2);
+        }
         Ok(())
     }
 

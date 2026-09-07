@@ -524,6 +524,9 @@
   "ext.builtin.unset": [
     "unset"
   ],
+  "ext.builtin.isset": [
+    "isset"
+  ],
   "ext.lexical.template": true,
   "ext.op.otherwise": [
     "??"

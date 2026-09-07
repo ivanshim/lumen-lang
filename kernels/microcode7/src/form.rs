@@ -50,6 +50,13 @@ pub enum Prim {
     Otherwise,
     /// Give an array back without the place named (ext.builtin.unset).
     Erase,
+    /// What an array holds at that place, answering nothing where it
+    /// holds nothing there and where what is asked is not an array,
+    /// with nothing said about it: how a language asks whether
+    /// something is there without minding that it is not.
+    Glance,
+    /// Whether every one of these is something other than nothing.
+    Standing,
     /// Source read while the program runs: the text itself
     /// (ext.builtin.eval), or the text a file holds
     /// (ext.builtin.include). It is built against the globals the run

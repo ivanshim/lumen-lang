@@ -371,6 +371,13 @@ only. The extension labels so far, all from PHP:
   the complaints go unsaid, and a raised value still rises, since it is
   not something said but something that happened. One hushed piece may
   hold another, and the quiet lasts exactly as far as the piece does.
+- `ext.builtin.isset`: builtins asking whether each of the names or
+  places given holds something other than nothing, answering yes only
+  where every one of them does. A name never written and a place an
+  array does not hold both count as nothing, and neither is complained
+  about: the asking is a glance, which has nothing to say about what
+  is not there. It is the companion of `ext.builtin.unset`, and takes
+  what that takes.
 - `ext.builtin.eval`: builtins taking a piece of the language written
   out as text, reading it as the run's own language and running it
   where the call stands. The text is read with whatever a program of
@@ -729,6 +736,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.file.remove` | - | - | - | - | - | - | - | `unlink` | - | - |
 | `ext.builtin.file.write` | - | - | - | - | - | - | - | `file_put_contents` | - | - |
 | `ext.builtin.include` | - | - | - | - | - | - | - | `include` `include_once` `require` `require_once` | - | - |
+| `ext.builtin.isset` | - | - | - | - | - | - | - | `isset` | - | - |
 | `ext.builtin.print_r` | - | - | - | - | - | - | - | `print_r` | - | - |
 | `ext.builtin.time_limit` | - | - | - | - | - | - | - | `set_time_limit` | - | - |
 | `ext.builtin.unset` | - | - | - | - | - | - | - | `unset` | - | - |

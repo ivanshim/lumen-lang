@@ -88,6 +88,11 @@ pub enum Action {
     BitDown,
     /// Whether the value above is nothing at all.
     Nothing,
+    /// What an array holds at that place, answering nothing where it
+    /// holds nothing there, or where what is asked is not an array at
+    /// all, and saying nothing about it either way: how a language asks
+    /// whether something is there without minding that it is not.
+    Peek,
     /// Build the class this plan describes; what it stands on, if it
     /// stands on anything, is the value below.
     Forge(Rc<Plan>),
@@ -137,6 +142,11 @@ pub enum Builtin {
     Layout,
     /// Take a binding, or a place in an array, away (ext.builtin.unset).
     Erase,
+    /// Whether each of those bindings, or places in an array, holds
+    /// something other than nothing, asking without minding that a
+    /// binding was never written or a place is not there
+    /// (ext.builtin.isset).
+    Held,
     /// Each argument with its kind, PHP's var_dump (ext.builtin.var_dump).
     Dump,
     /// Source read while the program runs: the text itself

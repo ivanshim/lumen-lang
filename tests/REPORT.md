@@ -17,18 +17,18 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 32, differs 47, error 35, skipped 0 | pass 32, differs 47, error 35, skipped 0 |
-| `php/func` | 14 | pass 6, differs 3, error 5, skipped 0 | pass 6, differs 3, error 5, skipped 0 |
-| `php/lang` | 213 | pass 59, differs 57, error 95, skipped 2 | pass 59, differs 57, error 95, skipped 2 |
+| `php/basic` | 114 | pass 32, differs 48, error 34, skipped 0 | pass 32, differs 48, error 34, skipped 0 |
+| `php/func` | 14 | pass 7, differs 3, error 4, skipped 0 | pass 7, differs 3, error 4, skipped 0 |
+| `php/lang` | 213 | pass 60, differs 57, error 94, skipped 2 | pass 60, differs 57, error 94, skipped 2 |
 | `php/lang/constants` | 2 | pass 1, differs 1, error 0, skipped 0 | pass 1, differs 1, error 0, skipped 0 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 3, error 0, skipped 0 | pass 3, differs 3, error 0, skipped 0 |
 | `php/lang/operators` | 64 | pass 21, differs 28, error 15, skipped 0 | pass 21, differs 28, error 15, skipped 0 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 123, differs 147, error 150, skipped 2 | pass 123, differs 147, error 150, skipped 2 |
+| all | 422 | pass 125, differs 148, error 147, skipped 2 | pass 125, differs 148, error 147, skipped 2 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 147 |
+| ran, printed something else | 148 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | Unexpected character '$' | 6 |
 | Unexpected token: & | 5 |
@@ -38,7 +38,6 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Stack underflow in <file> | 4 |
 | Fatal error: Uncaught Error: push() requires an array in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
-| Fatal error: Uncaught Error: Undefined variable: isset in <file> | 3 |
 | Unexpected token: : | 3 |
 | Unexpected token: ) | 3 |
 | Fatal error: Uncaught Error: Undefined variable: current in <file> | 3 |
@@ -68,12 +67,13 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: PHP_BINARY in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: ENT_HTML5 in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> | 1 |
+| Expected identifier as the property name, got '{' | 1 |
 
-### Reserved words: 46 of 68 spelled
+### Reserved words: 47 of 68 spelled
 
-Spelled: `abstract`, `and`, `array`, `as`, `break`, `case`, `catch`, `class`, `const`, `continue`, `default`, `echo`, `else`, `elseif`, `eval`, `exit`, `extends`, `final`, `finally`, `for`, `foreach`, `function`, `global`, `if`, `implements`, `include`, `include_once`, `instanceof`, `interface`, `new`, `or`, `print`, `private`, `protected`, `public`, `readonly`, `require`, `require_once`, `return`, `static`, `switch`, `throw`, `try`, `unset`, `var`, `while`
+Spelled: `abstract`, `and`, `array`, `as`, `break`, `case`, `catch`, `class`, `const`, `continue`, `default`, `echo`, `else`, `elseif`, `eval`, `exit`, `extends`, `final`, `finally`, `for`, `foreach`, `function`, `global`, `if`, `implements`, `include`, `include_once`, `instanceof`, `interface`, `isset`, `new`, `or`, `print`, `private`, `protected`, `public`, `readonly`, `require`, `require_once`, `return`, `static`, `switch`, `throw`, `try`, `unset`, `var`, `while`
 
-Not spelled: `callable`, `clone`, `declare`, `do`, `empty`, `enddeclare`, `endfor`, `endforeach`, `endif`, `endswitch`, `endwhile`, `fn`, `goto`, `insteadof`, `isset`, `list`, `match`, `namespace`, `trait`, `use`, `xor`, `yield`
+Not spelled: `callable`, `clone`, `declare`, `do`, `empty`, `enddeclare`, `endfor`, `endforeach`, `endif`, `endswitch`, `endwhile`, `fn`, `goto`, `insteadof`, `list`, `match`, `namespace`, `trait`, `use`, `xor`, `yield`
 
 ### Most-called functions in the suite, and whether the definition spells them
 
@@ -230,7 +230,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/032.phpt` | differs | differs | ran, printed something else |
 | `php/basic/GHSA-9pqp-7h25-4f32.phpt` | error | error | Unexpected token: . |
 | `php/basic/array_key_exists_null_deprecation.phpt` | differs | differs | ran, printed something else |
-| `php/basic/array_null_offset_deprecation.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: isset in <file> |
+| `php/basic/array_null_offset_deprecation.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug20539.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: session_id in <file> |
 | `php/basic/bug29971.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug31875.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> |
@@ -310,7 +310,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/timeout_variation_8.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: InfiniteIterator in <file> |
 | `php/basic/timeout_variation_9.phpt` | error | error | Fatal error: Uncaught Error: exit() argument must be a string in <file> |
 | `php/func/001.phpt` | pass | pass |  |
-| `php/func/002.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: isset in <file> |
+| `php/func/002.phpt` | pass | pass |  |
 | `php/func/003.phpt` | pass | pass |  |
 | `php/func/004.phpt` | pass | pass |  |
 | `php/func/005.phpt` | differs | differs | ran, printed something else |
@@ -408,7 +408,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug26182.phpt` | pass | pass |  |
 | `php/lang/bug26696.phpt` | pass | pass |  |
 | `php/lang/bug26866.phpt` | error | error | Fatal error: Uncaught Error: Cannot call method 'get_name' on a value that is not an object in <file> |
-| `php/lang/bug26869.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: isset in <file> |
+| `php/lang/bug26869.phpt` | pass | pass |  |
 | `php/lang/bug27354.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug27439.phpt` | error | error | Unexpected token: } |
 | `php/lang/bug27443.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: defined in <file> |

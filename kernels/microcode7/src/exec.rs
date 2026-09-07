@@ -1353,6 +1353,14 @@ impl<'a> Machine<'a> {
             Prim::Unlike => Value::Flag(!v[0].selfsame(&v[1])),
             Prim::Join => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),
             Prim::At => self.element(&v[0], &v[1])?,
+            // A glance has nothing to say about what is not there.
+            Prim::Glance => {
+                self.quieted += 1;
+                let seen = self.element(&v[0], &v[1]).unwrap_or(Value::Nil);
+                self.quieted -= 1;
+                seen
+            }
+            Prim::Standing => Value::Flag(v.iter().all(|x| !matches!(x, Value::Nil | Value::Unset))),
             // Adding text joins it only where the language has no
             // operator of its own for joining; where it has one, adding
             // is arithmetic.

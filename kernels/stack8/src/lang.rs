@@ -332,7 +332,7 @@ w ext.system.source.file | w ext.system.source.directory | w ext.system.source.l
 w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.complaint.deprecated | w ext.system.complaint.fatal
 w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove
-w ext.builtin.eval | w ext.builtin.include | w ext.op.hush
+w ext.builtin.eval | w ext.builtin.include | w ext.op.hush | w ext.builtin.isset
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 ";
@@ -733,7 +733,7 @@ impl Lang {
             ("builtin.den", Builtin::Denom), ("builtin.push", Builtin::Append), ("builtin.get", Builtin::Fetch),
             ("builtin.put", Builtin::Replace), ("ext.builtin.echo", Builtin::Tell), ("ext.builtin.define", Builtin::Define),
             ("ext.builtin.var_dump", Builtin::Dump), ("ext.builtin.array", Builtin::Pack),
-            ("ext.builtin.print_r", Builtin::Layout), ("ext.builtin.unset", Builtin::Erase),
+            ("ext.builtin.print_r", Builtin::Layout), ("ext.builtin.unset", Builtin::Erase), ("ext.builtin.isset", Builtin::Held),
             ("ext.builtin.args.all", Builtin::Given), ("ext.builtin.args.count", Builtin::GivenCount),
             ("ext.builtin.args.at", Builtin::GivenAt), ("ext.builtin.time_limit", Builtin::TimeLimit),
             ("ext.builtin.eval", Builtin::Eval), ("ext.builtin.include", Builtin::Include),
