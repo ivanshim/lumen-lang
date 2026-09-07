@@ -1322,6 +1322,38 @@ impl<'a> Engine<'a> {
                 print!("{}", s);
                 Value::Null
             }
+            // Reaching outside the run: only a language that spells
+            // these labels can, and what cannot be done gives false
+            // back rather than stopping, as such a language expects.
+            Builtin::FileRead => {
+                arity(1)?;
+                let sp = self.wording();
+                match std::fs::read(args[0].display(&sp)) {
+                    Ok(bytes) => Value::text(&String::from_utf8_lossy(&bytes)),
+                    Err(_) => Value::Flag(false),
+                }
+            }
+            Builtin::FileWrite => {
+                if args.len() != 2 {
+                    return Err(format!("{}() expects 2 arguments, got {}", name, args.len()));
+                }
+                let sp = self.wording();
+                let (where_to, what) = (args[0].display(&sp), args[1].display(&sp));
+                match std::fs::write(where_to, what.as_bytes()) {
+                    Ok(()) => Value::Small(what.len() as i64),
+                    Err(_) => Value::Flag(false),
+                }
+            }
+            Builtin::FileThere => {
+                arity(1)?;
+                let sp = self.wording();
+                Value::Flag(std::path::Path::new(&args[0].display(&sp)).exists())
+            }
+            Builtin::FileGone => {
+                arity(1)?;
+                let sp = self.wording();
+                Value::Flag(std::fs::remove_file(args[0].display(&sp)).is_ok())
+            }
             Builtin::TimeLimit => {
                 arity(1)?;
                 let seconds = as_index(&args[0])?;

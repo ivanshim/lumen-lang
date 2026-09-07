@@ -50,6 +50,13 @@ pub enum Prim {
     Otherwise,
     /// Give an array back without the place named (ext.builtin.unset).
     Erase,
+    /// What a file holds, all at once; what to put into one; whether a
+    /// file is there; and taking one away (ext.builtin.file.*). A
+    /// language reaches outside its run only by spelling these.
+    Slurp,
+    Spill,
+    There,
+    Gone,
     /// How long the run may take from here, counted in seconds; nought
     /// takes the limit away (ext.builtin.time_limit).
     Clock,

@@ -612,5 +612,17 @@
     "bool",
     "array",
     "null"
+  ],
+  "ext.builtin.file.read": [
+    "file_get_contents"
+  ],
+  "ext.builtin.file.write": [
+    "file_put_contents"
+  ],
+  "ext.builtin.file.exists": [
+    "file_exists"
+  ],
+  "ext.builtin.file.remove": [
+    "unlink"
   ]
 }

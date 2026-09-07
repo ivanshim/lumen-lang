@@ -1106,6 +1106,36 @@ impl<'a> Machine<'a> {
                 }
             }
             Prim::Gather => return Err(format!("{}() is a literal, not a call", name)),
+            // Reaching outside the run, which only a language that
+            // spells these labels does at all. What cannot be done
+            // answers false rather than stopping the run.
+            Prim::Slurp => {
+                n(1)?;
+                let w = self.wording();
+                match std::fs::read(v[0].render(w)) {
+                    Ok(bytes) => Value::text(&String::from_utf8_lossy(&bytes)),
+                    Err(_) => Value::Flag(false),
+                }
+            }
+            Prim::Spill => {
+                n(2)?;
+                let w = self.wording();
+                let (place, what) = (v[0].render(w), v[1].render(w));
+                match std::fs::write(place, what.as_bytes()) {
+                    Ok(()) => Value::Small(what.len() as i64),
+                    Err(_) => Value::Flag(false),
+                }
+            }
+            Prim::There => {
+                n(1)?;
+                let w = self.wording();
+                Value::Flag(std::path::Path::new(&v[0].render(w)).exists())
+            }
+            Prim::Gone => {
+                n(1)?;
+                let w = self.wording();
+                Value::Flag(std::fs::remove_file(v[0].render(w)).is_ok())
+            }
             Prim::Clock => {
                 n(1)?;
                 self.allowed = as_index(&v[0])?;

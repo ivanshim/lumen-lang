@@ -410,7 +410,6 @@ function date_default_timezone_set($zone) { return true; }
 function date_default_timezone_get() { return "UTC"; }
 function register_shutdown_function($work) { return null; }
 function trigger_error($message, $level = 1024) { return true; }
-function file_exists($path) { return false; }
 function realpath($path) { return $path; }
 function basename($path) {
     $at = strlen($path) - 1;

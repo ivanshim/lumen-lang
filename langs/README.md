@@ -358,6 +358,13 @@ only. The extension labels so far, all from PHP:
   real, text, flag, array, nothing; a lone dash says a kind has no
   shorter name and the usual one stands. A flag is named by the word
   the program writes for it, since that is what was written.
+- `ext.builtin.file.read`, `.write`, `.exists` and `.remove`: builtins
+  that reach outside the run — what a file holds, all of it at once;
+  what to put into one, giving back how much was written; whether a
+  file is there; and taking one away. A language reaches outside its
+  run only by spelling these, and only the full kernels read them. What
+  cannot be done answers false rather than stopping the run, which is
+  what a language spelling them expects.
 - `ext.builtin.time_limit`: a builtin saying how long the run may take
   from here, counted in seconds, with nought taking the limit away. A
   run that passes it is stopped and told with the word for the end of a
@@ -699,6 +706,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.array` | - | - | - | - | - | - | - | `array` | - | - |
 | `ext.builtin.define` | - | - | - | - | - | - | - | `define` | - | - |
 | `ext.builtin.echo` | - | - | - | - | - | - | - | `echo` | - | - |
+| `ext.builtin.file.exists` | - | - | - | - | - | - | - | `file_exists` | - | - |
+| `ext.builtin.file.read` | - | - | - | - | - | - | - | `file_get_contents` | - | - |
+| `ext.builtin.file.remove` | - | - | - | - | - | - | - | `unlink` | - | - |
+| `ext.builtin.file.write` | - | - | - | - | - | - | - | `file_put_contents` | - | - |
 | `ext.builtin.print_r` | - | - | - | - | - | - | - | `print_r` | - | - |
 | `ext.builtin.time_limit` | - | - | - | - | - | - | - | `set_time_limit` | - | - |
 | `ext.builtin.unset` | - | - | - | - | - | - | - | `unset` | - | - |

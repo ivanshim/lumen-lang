@@ -17,20 +17,19 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 32, differs 39, error 43, skipped 0 | pass 32, differs 39, error 43, skipped 0 |
+| `php/basic` | 114 | pass 32, differs 47, error 35, skipped 0 | pass 32, differs 47, error 35, skipped 0 |
 | `php/func` | 14 | pass 5, differs 3, error 6, skipped 0 | pass 5, differs 3, error 6, skipped 0 |
 | `php/lang` | 213 | pass 54, differs 49, error 108, skipped 2 | pass 54, differs 49, error 108, skipped 2 |
 | `php/lang/constants` | 2 | pass 1, differs 1, error 0, skipped 0 | pass 1, differs 1, error 0, skipped 0 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 3, error 0, skipped 0 | pass 3, differs 3, error 0, skipped 0 |
 | `php/lang/operators` | 64 | pass 15, differs 34, error 15, skipped 0 | pass 15, differs 34, error 15, skipped 0 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 111, differs 137, error 172, skipped 2 | pass 111, differs 137, error 172, skipped 2 |
+| all | 422 | pass 111, differs 145, error 164, skipped 2 | pass 111, differs 145, error 164, skipped 2 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 137 |
-| Fatal error: Uncaught Error: Undefined variable: file_get_contents in <file> | 8 |
-| Fatal error: Uncaught Error: Undefined variable: include in <file> | 8 |
+| ran, printed something else | 145 |
+| Fatal error: Uncaught Error: Undefined variable: include in <file> | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | Fatal error: Uncaught Error: Undefined variable: eval in <file> | 7 |
 | Unexpected character '$' | 6 |
@@ -68,6 +67,7 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Division by zero in <file> | 2 |
 | Unexpected token: > | 2 |
 | Unexpected token: :: | 2 |
+| Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> | 1 |
 
 ### Reserved words: 41 of 68 spelled
 
@@ -92,7 +92,7 @@ Not spelled: `callable`, `clone`, `declare`, `do`, `empty`, `enddeclare`, `endfo
 | `ini_set` | 30 | no |
 | `__construct` | 24 | yes |
 | `print_r` | 21 | yes |
-| `file_get_contents` | 21 | no |
+| `file_get_contents` | 21 | yes |
 | `current` | 13 | no |
 | `var_export` | 12 | no |
 | `ob_start` | 12 | no |
@@ -249,15 +249,15 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/bug80384.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
 | `php/basic/build_date.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: PHP_BUILD_DATE in <file> |
 | `php/basic/consistent_float_string_casts.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: string in <file> |
-| `php/basic/enable_post_data_reading_01.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: file_get_contents in <file> |
-| `php/basic/enable_post_data_reading_02.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: file_get_contents in <file> |
-| `php/basic/enable_post_data_reading_03.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: file_get_contents in <file> |
-| `php/basic/enable_post_data_reading_04.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: file_get_contents in <file> |
+| `php/basic/enable_post_data_reading_01.phpt` | differs | differs | ran, printed something else |
+| `php/basic/enable_post_data_reading_02.phpt` | differs | differs | ran, printed something else |
+| `php/basic/enable_post_data_reading_03.phpt` | differs | differs | ran, printed something else |
+| `php/basic/enable_post_data_reading_04.phpt` | differs | differs | ran, printed something else |
 | `php/basic/enable_post_data_reading_05.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
 | `php/basic/enable_post_data_reading_06.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
 | `php/basic/enable_post_data_reading_07.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
 | `php/basic/encoding.phpt` | differs | differs | ran, printed something else |
-| `php/basic/errorlog_permission.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: unlink in <file> |
+| `php/basic/errorlog_permission.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: umask in <file> |
 | `php/basic/gh15905.phpt` | pass | pass |  |
 | `php/basic/gh16998.phpt` | error | error | Unexpected token: . |
 | `php/basic/gh17951_ini_parse_1.phpt` | differs | differs | ran, printed something else |
@@ -289,17 +289,17 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/rfc1867_array_upload.phpt` | pass | pass |  |
 | `php/basic/rfc1867_boundary_1.phpt` | pass | pass |  |
 | `php/basic/rfc1867_boundary_2.phpt` | differs | differs | ran, printed something else |
-| `php/basic/rfc1867_empty_upload.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: file_get_contents in <file> |
+| `php/basic/rfc1867_empty_upload.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_file_upload_disabled.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_garbled_mime_headers.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_invalid_boundary.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_malicious_input.phpt` | differs | differs | ran, printed something else |
-| `php/basic/rfc1867_max_file_size.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: file_get_contents in <file> |
-| `php/basic/rfc1867_max_file_uploads_empty_files.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: file_get_contents in <file> |
+| `php/basic/rfc1867_max_file_size.phpt` | differs | differs | ran, printed something else |
+| `php/basic/rfc1867_max_file_uploads_empty_files.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_missing_boundary.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_missing_boundary_2.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_multiple_webkitdirectory.phpt` | differs | differs | ran, printed something else |
-| `php/basic/rfc1867_post_max_filesize.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: file_get_contents in <file> |
+| `php/basic/rfc1867_post_max_filesize.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_post_max_size.phpt` | differs | differs | ran, printed something else |
 | `php/basic/timeout_variation_0.phpt` | error | error | Fatal error: Maximum execution time of 1 second exceeded in <file> |
 | `php/basic/timeout_variation_1.phpt` | differs | differs | ran, printed something else |
@@ -319,7 +319,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/func/007.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ini_restore in <file> |
 | `php/func/008.phpt` | pass | pass |  |
 | `php/func/009.phpt` | pass | pass |  |
-| `php/func/010.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: file_put_contents in <file> |
+| `php/func/010.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: include in <file> |
 | `php/func/011.phpt` | differs | differs | ran, printed something else |
 | `php/func/bug64523.phpt` | differs | differs | ran, printed something else |
 | `php/func/ini_alter.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ini_alter in <file> |

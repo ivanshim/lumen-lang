@@ -139,6 +139,14 @@ pub enum Builtin {
     Erase,
     /// Each argument with its kind, PHP's var_dump (ext.builtin.var_dump).
     Dump,
+    /// What a file holds, all of it at once; what to write into one;
+    /// whether a file is there at all; and taking one away
+    /// (ext.builtin.file.*). Only a language that spells these reaches
+    /// outside the run at all.
+    FileRead,
+    FileWrite,
+    FileThere,
+    FileGone,
     /// How long the run may take from here, in seconds; nought lifts
     /// the limit (ext.builtin.time_limit).
     TimeLimit,
