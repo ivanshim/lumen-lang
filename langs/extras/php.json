@@ -469,6 +469,9 @@
   "ext.builtin.output.depth": [
     "__output_depth"
   ],
+  "ext.builtin.output.begun": [
+    "__output_begun"
+  ],
   "ext.builtin.at_end": [
     "__at_end"
   ],
@@ -556,6 +559,9 @@
   ],
   "ext.stmt.class.writer": [
     "__set"
+  ],
+  "ext.stmt.class.caller": [
+    "__call"
   ],
   "ext.op.walk.class": [
     "Iterator"

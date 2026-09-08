@@ -342,6 +342,10 @@ fn shared_parameters(tokens: &[Token], table: &Table) -> (HashMap<String, Vec<bo
 // ---------- node builders
 
 
+/// What a routine written where a value stands is called, being
+/// bound to no name of its own.
+const ANONYMOUS: &str = "{closure}";
+
 fn constant(v: Value) -> Form {
     Form::Const(v)
 }
@@ -1073,7 +1077,7 @@ impl<'a> Builder<'a> {
                 let gives_cell = self.skip_reference();
                 let name = self.need_word("after the function keyword")?;
                 self.giving_cells.push(gives_cell);
-                let built = self.func(name);
+                let built = self.func(name, true);
                 self.giving_cells.pop();
                 return built;
             }
@@ -2040,7 +2044,7 @@ impl<'a> Builder<'a> {
             let name = self.need_word("after the type")?;
             if let Some(open) = self.table.single("syntax.call.open") {
                 if self.sign(open) {
-                    return self.func(name);
+                    return self.func(name, true);
                 }
             }
             let value = if self.on_stmt_end() || self.exhausted() {
@@ -2225,7 +2229,7 @@ impl<'a> Builder<'a> {
         Ok(first)
     }
 
-    fn func(&mut self, name: String) -> Res<Form> {
+    fn func(&mut self, name: String, bound: bool) -> Res<Form> {
         let table = self.table;
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
@@ -2262,15 +2266,20 @@ impl<'a> Builder<'a> {
         })?;
         let mut items: Vec<Form> = said;
         items.extend(self.statics.drain(statics_before..));
-        // A language may bind every routine among the outermost bindings,
-        // wherever it is written, so one written inside another is there
-        // for the whole run once that one has run.
-        items.push(match self.table.flag("ext.stmt.function.outermost") {
-            true => {
-                let slot = self.global_address(&name);
-                Form::Write(slot, Box::new(program))
-            }
-            false => self.write(&name, program),
+        // A routine written where a value stands is bound to no name and
+        // stands for itself; one written out is bound to its name.
+        items.push(match bound {
+            false => program,
+            // A language may bind every routine among the outermost
+            // bindings, wherever it is written, so one written inside
+            // another is there for the whole run once that one has run.
+            true => match self.table.flag("ext.stmt.function.outermost") {
+                true => {
+                    let slot = self.global_address(&name);
+                    Form::Write(slot, Box::new(program))
+                }
+                false => self.write(&name, program),
+            },
         });
         Ok(sequence(items))
     }
@@ -3004,6 +3013,21 @@ impl<'a> Builder<'a> {
                     constant(Value::Flag(false))
                 } else if table.spells("literal.null", &t.lexeme) {
                     constant(Value::Nil)
+                } else if table.spells("stmt.function", &t.lexeme)
+                    && table.single("syntax.call.open").map_or(false, |o| {
+                        self.sign(o)
+                            || (table.single("ext.op.reference").map_or(false, |m| self.sign(m)) && self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == o)
+                    })
+                {
+                    // A routine written where a value stands is bound to
+                    // no name and stands for itself. It reaches none of
+                    // the names around it, only the outermost ones, as a
+                    // routine written out does.
+                    let gives_cell = self.skip_reference();
+                    self.giving_cells.push(gives_cell);
+                    let built = self.func(ANONYMOUS.to_string(), false);
+                    self.giving_cells.pop();
+                    return self.subscript(built?);
                 } else if table.single("syntax.call.open").map_or(false, |o| self.sign(o)) {
                     self.advance();
                     if table.prims.get(&t.lexeme) == Some(&Prim::Erase) {

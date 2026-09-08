@@ -374,14 +374,13 @@ function array_reverse($array) {
     return $out;
 }
 
+// The last place goes and the rest stay as they are, cells and all: a
+// name tied to one of them is tied to it still.
 function array_pop(&$array) {
     $n = count($array);
     if ($n == 0) { return null; }
     $last = $array[$n - 1];
-    $kept = array();
-    $i = 0;
-    while ($i < $n - 1) { $kept[] = $array[$i]; $i = $i + 1; }
-    $array = $kept;
+    unset($array[$n - 1]);
     return $last;
 }
 
@@ -536,8 +535,30 @@ function sys_get_temp_dir() {
     return "/tmp";
 }
 function header($line, $replace = true, $code = 0) { return null; }
-function headers_sent() { return false; }
+// Headers go out with the first thing written, so anything written at
+// all means they are gone.
+function headers_sent() { return __output_begun(); }
 function headers_list() { return array(); }
+// A routine to run as the headers go out. Where they are already gone
+// there is nothing left to run it for; where they are not, they go out
+// when the run ends and nothing has sent them before.
+$__header_callback = null;
+$__headers_gone = false;
+function header_register_callback($callback) {
+    global $__header_callback;
+    if (__output_begun()) { return false; }
+    $__header_callback = $callback;
+    __at_end('__headers_going');
+    return true;
+}
+function __headers_going() {
+    global $__header_callback, $__headers_gone;
+    if ($__headers_gone) { return true; }
+    $__headers_gone = true;
+    $callback = $__header_callback;
+    if ($callback !== null) { $callback(); }
+    return true;
+}
 // The arguments the run was started with are part of what the run knows
 // about itself, under the host's names for them as well as their own.
 // A run reached over the web knows them only where it is told to; one

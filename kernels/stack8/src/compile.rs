@@ -171,6 +171,10 @@ enum Span {
 
 const RESULT_CELL: &str = "#result";
 const TEMP_CELL: &str = "#t";
+/// What a routine written where a value stands is called, since it
+/// is bound to no name of its own.
+const ANONYMOUS: &str = "{closure}";
+
 const SPARE_CELLS: [&str; 3] = ["#a", "#b", "#c"];
 
 /// `before` is how many lines were put before the program's own text,
@@ -2323,7 +2327,10 @@ impl<'a> Compiler<'a> {
         built
     }
 
-    fn function_body(&mut self, name: String) -> Res<()> {
+    /// A routine read and left standing as a value. A name written
+    /// before its brackets binds it; one written where a value stands
+    /// has none, and stands for itself.
+    fn function_value(&mut self, name: &str) -> Res<()> {
         let lang = self.lang;
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
@@ -2337,7 +2344,7 @@ impl<'a> Compiler<'a> {
             self.want_name("as a return type")?;
         }
         let declarations = self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme);
-        let program = self.routine(&name, formals, least, true, |a| {
+        let program = self.routine(name, formals, least, true, |a| {
             a.spare_values(&spares, &given)?;
             if declarations {
                 loop {
@@ -2352,6 +2359,11 @@ impl<'a> Compiler<'a> {
             a.body()
         })?;
         self.constant(Value::Routine(program));
+        Ok(())
+    }
+
+    fn function_body(&mut self, name: String) -> Res<()> {
+        self.function_value(&name)?;
         // A language may bind every routine among the outermost
         // bindings, wherever it is written, so one written inside
         // another is there for the whole run once that one has run.
@@ -3213,6 +3225,21 @@ impl<'a> Compiler<'a> {
                     self.constant(Value::Flag(false));
                 } else if Lang::spells(&lang.null_words, &tok.lexeme) {
                     self.constant(Value::Null);
+                } else if Lang::spells(&lang.function_words, &tok.lexeme)
+                    && lang
+                        .calling
+                        .as_ref()
+                        .map_or(false, |c| self.at_symbol(&c.open) || (lang.reference_mark.as_ref().map_or(false, |m| self.at_symbol(m)) && self.look_ahead(1).is_lexeme(Shape::Sign, &c.open)))
+                {
+                    // A routine written where a value stands has no
+                    // name to be bound to and stands for itself. It
+                    // reaches none of the names around it, only the
+                    // outermost ones, as a routine written out does.
+                    let gives_cell = self.skip_reference();
+                    self.giving_cells.push(gives_cell);
+                    let built = self.function_value(ANONYMOUS);
+                    self.giving_cells.pop();
+                    built?;
                 } else {
                     match lang.calling.clone() {
                         Some(call) if self.at_symbol(&call.open) => {

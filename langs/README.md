@@ -266,6 +266,10 @@ only. The extension labels so far, all from PHP:
   a statement is closed rather than with `ext.stmt.case.mark`. The
   section still reads; the words are raised as a deprecation while the
   program is read, so they come out ahead of anything it prints.
+- `ext.builtin.output.begun`: a builtin answering whether anything has
+  gone out of the run yet. What is held back in a piece of output kept
+  aside has not gone out. PHP's `headers_sent` and
+  `header_register_callback` are written on it.
 - `ext.builtin.uncaught`: a builtin naming a routine to be handed a
   value nobody took, rather than the run telling it in its own words.
   Giving nothing takes the routine away again. PHP's
@@ -286,6 +290,12 @@ only. The extension labels so far, all from PHP:
   where a block is expected (`if ($x) echo "y";`, `for (...) $n++;`).
 - `ext.stmt.function.hoisted`: a switch; a function defined at the top
   level is bound before anything else runs, so a call above it finds it.
+  Wherever `stmt.function` is spelled, a routine may also be written
+  where a value stands — `$f = function ($x) { return $x; }` — with the
+  brackets standing straight after the word and no name between. Such a
+  routine is bound to no name and stands for itself; it reaches the
+  outermost bindings, as a routine written out does, and none of the
+  names around where it was written.
 - `ext.lexical.number.exponent`: the letters that open a decimal exponent
   in a number (`1e9`, `2.5E-3`), always a real.
 - `ext.op.plus`: a sign that leaves its operand as it is (`+5`), bound as
@@ -318,6 +328,8 @@ only. The extension labels so far, all from PHP:
   its things do not hold, given the name asked for, and the one that
   takes such a write, given the name and the value; a class written
   without them reads and writes the property as before),
+  `ext.stmt.class.caller` (the method a class answers a call it does not
+  have with, given the name called and the arguments as an array),
   `ext.stmt.class.modifier` (words before a member
   that this kernel reads past: `public`, `final`), `ext.stmt.class.shared`
   (the modifier for a member the class keeps rather than its objects),
@@ -1195,6 +1207,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.include` | - | - | - | - | - | - | - | `include` `require` | - | - |
 | `ext.builtin.include.once` | - | - | - | - | - | - | - | `include_once` `require_once` | - | - |
 | `ext.builtin.isset` | - | - | - | - | - | - | - | `isset` | - | - |
+| `ext.builtin.output.begun` | - | - | - | - | - | - | - | `__output_begun` | - | - |
 | `ext.builtin.output.depth` | - | - | - | - | - | - | - | `__output_depth` | - | - |
 | `ext.builtin.output.drop` | - | - | - | - | - | - | - | `__output_drop` | - | - |
 | `ext.builtin.output.held` | - | - | - | - | - | - | - | `__output_held` | - | - |
@@ -1276,6 +1289,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.catch` | - | - | - | - | - | - | - | `catch` | - | - |
 | `ext.stmt.catch.separator` | - | - | - | - | - | - | - | `\|` | - | - |
 | `ext.stmt.class` | - | - | - | - | - | - | - | `class` | - | - |
+| `ext.stmt.class.caller` | - | - | - | - | - | - | - | `__call` | - | - |
 | `ext.stmt.class.constructor` | - | - | - | - | - | - | - | `__construct` | - | - |
 | `ext.stmt.class.destructor` | - | - | - | - | - | - | - | `__destruct` | - | - |
 | `ext.stmt.class.extends` | - | - | - | - | - | - | - | `extends` | - | - |

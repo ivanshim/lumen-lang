@@ -46,6 +46,9 @@ pub struct Engine<'a> {
     /// The routine a value nobody took is handed to, where the program
     /// put one in its way.
     untaken: RefCell<Option<Value>>,
+    /// Whether anything has gone out of the run yet. What is held back
+    /// in a piece of output kept aside has not gone out.
+    written_out: std::cell::Cell<bool>,
     /// Where the routine a fault was raised on the way into is written.
     /// Such a fault belongs there and not where the call stood, which
     /// is worth saying only where nothing takes it.
@@ -188,6 +191,7 @@ impl<'a> Engine<'a> {
             under: None,
             entering: None,
             untaken: RefCell::new(None),
+            written_out: std::cell::Cell::new(false),
             nothing: Value::Null,
             hurled_at: std::cell::Cell::new(0),
             limit: std::cell::Cell::new(0),
@@ -349,6 +353,9 @@ impl<'a> Engine<'a> {
             Some(kept) => kept.push_str(text),
             None => {
                 drop(holding);
+                if !text.is_empty() {
+                    self.written_out.set(true);
+                }
                 print!("{}", text);
             }
         }
@@ -2081,7 +2088,18 @@ impl<'a> Engine<'a> {
                     return Err(format!("Cannot call method '{}' on a value that is not an object", name).into());
                 };
                 let method = o.class.method(&name).cloned();
-                let method = method.ok_or_else(|| format!("Call to undefined method {}::{}()", o.class.name, name))?;
+                // A class may answer for a call it does not have: where
+                // the language names such a method and the class is
+                // written with it, it is called with the name asked for
+                // and the arguments gathered into an array.
+                let Some(method) = method else {
+                    let stands = self.lang.caller.as_deref().and_then(|named| o.class.method(named).cloned());
+                    let Some(stands) = stands else {
+                        return Err(format!("Call to undefined method {}::{}()", o.class.name, name).into());
+                    };
+                    let asked = Value::Text(Rc::from(name.as_ref()));
+                    return self.invoke(&stands, vec![Value::Object(o), asked, Value::array(args)]);
+                };
                 let mut all = vec![Value::Object(o)];
                 all.extend(args);
                 return self.invoke(&method, all);
@@ -3097,6 +3115,10 @@ impl<'a> Engine<'a> {
                 }
             }
             // The routine every complaint is to be handed to, or none.
+            Builtin::OutBegun => {
+                arity(0)?;
+                Value::Flag(self.written_out.get())
+            }
             Builtin::Untaken => {
                 let put = args.first().cloned().unwrap_or(Value::Null);
                 let held = matches!(put, Value::Null | Value::Blank);

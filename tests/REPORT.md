@@ -17,14 +17,14 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 87, differs 2, error 15, skipped 10 | pass 87, differs 2, error 15, skipped 10 |
+| `php/basic` | 114 | pass 91, differs 2, error 11, skipped 10 | pass 91, differs 2, error 11, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
 | `php/lang` | 213 | pass 178, differs 21, error 9, skipped 5 | pass 178, differs 21, error 9, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 49, differs 8, error 1, skipped 6 | pass 49, differs 8, error 1, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 340, differs 32, error 25, skipped 25 | pass 340, differs 32, error 25, skipped 25 |
+| all | 422 | pass 344, differs 32, error 21, skipped 25 | pass 344, differs 32, error 21, skipped 25 |
 
 | Reason | Tests |
 |---|---|
@@ -33,8 +33,6 @@ is listed, since the full kernels are meant to behave alike.
 | skip Windows only test | 5 |
 | skip php-cgi not available | 2 |
 | timeout | 2 |
-| Parse error: Unexpected token: { in <file> | 2 |
-| Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> | 1 |
@@ -268,10 +266,10 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/gh20858.phpt` | pass | pass |  |
 | `php/basic/gh20964.phpt` | pass | pass |  |
 | `php/basic/gh7896.phpt` | skipped | skipped | skip for Windows only |
-| `php/basic/header_register_callback.phpt` | error | error | Parse error: Unexpected token: { in <file> |
-| `php/basic/header_register_callback_after_output.phpt` | error | error | Parse error: Unexpected token: { in <file> |
-| `php/basic/header_register_callback_trampoline.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> |
-| `php/basic/header_register_callback_trampoline_after_headers_sent.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> |
+| `php/basic/header_register_callback.phpt` | pass | pass |  |
+| `php/basic/header_register_callback_after_output.phpt` | pass | pass |  |
+| `php/basic/header_register_callback_trampoline.phpt` | pass | pass |  |
+| `php/basic/header_register_callback_trampoline_after_headers_sent.phpt` | pass | pass |  |
 | `php/basic/ini_directive_deprecated_report_memleaks.phpt` | pass | pass |  |
 | `php/basic/ini_parse_quantity_basic.phpt` | pass | pass |  |
 | `php/basic/ini_parse_quantity_warnings.phpt` | pass | pass |  |

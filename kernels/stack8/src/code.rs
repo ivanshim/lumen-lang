@@ -311,6 +311,9 @@ pub enum Builtin {
     /// a complaint of its own and has it told as the run's own are, in
     /// its place and through whatever stands in their way.
     Complain,
+    /// Whether anything has gone out of the run yet: what is held back
+    /// in a piece of output kept aside has not (ext.builtin.output.begun).
+    OutBegun,
     /// A routine to be handed a value nobody took, rather than the run
     /// telling it in its own words (ext.builtin.uncaught). Giving
     /// nothing takes the routine away again.

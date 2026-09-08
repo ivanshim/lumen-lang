@@ -383,6 +383,9 @@ pub struct Lang {
     /// the name that was asked for, the writer the value as well.
     pub reader: Option<String>,
     pub writer: Option<String>,
+    /// The method a class answers a call it does not have with, given
+    /// the name called and the arguments as an array.
+    pub caller: Option<String>,
     /// A thing may be its own walk. The class of method names saying so,
     /// and the five methods of the walk: wind back, whether there is
     /// more, what stands here, what it is called, and step on.
@@ -501,7 +504,7 @@ w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.
 w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
 w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
-w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.destructor | w ext.stmt.class.reader | w ext.stmt.class.writer
+w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.destructor | w ext.stmt.class.reader | w ext.stmt.class.writer | w ext.stmt.class.caller
 w ext.op.walk.class | w ext.op.walk.rewind | w ext.op.walk.more | w ext.op.walk.this | w ext.op.walk.key
 w ext.op.walk.onward | w ext.op.walk.giver.class | w ext.op.walk.giver | w ext.op.walk.no_cell | w ext.op.walk.key.no_cell | w ext.stmt.class.modifier | w ext.stmt.class.hidden | w ext.stmt.class.guarded | w ext.stmt.class.shared
 w ext.op.member | w ext.op.scope | w ext.op.instanceof | w ext.stmt.class.parent
@@ -519,7 +522,7 @@ w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.co
 w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
-w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught
+w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
 w ext.system.fault.operands | w ext.op.increment.text | w ext.op.decrement.text
 w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind | w ext.system.fault.class.value
@@ -942,6 +945,7 @@ impl Lang {
             ("ext.builtin.eval", Builtin::Eval), ("ext.builtin.include", Builtin::Include), ("ext.builtin.include.once", Builtin::IncludeOnce),
             ("ext.builtin.output.hold", Builtin::HoldOut), ("ext.builtin.output.held", Builtin::HeldOut),
             ("ext.builtin.output.drop", Builtin::DropOut), ("ext.builtin.output.depth", Builtin::DeepOut),
+            ("ext.builtin.output.begun", Builtin::OutBegun),
             ("ext.builtin.at_end", Builtin::WhenDone), ("ext.builtin.complaint.handler", Builtin::Complainer), ("ext.builtin.complaint.say", Builtin::Complain),
             ("ext.builtin.calls", Builtin::Calls),
             ("ext.builtin.uncaught", Builtin::Untaken),
@@ -1224,6 +1228,7 @@ impl Lang {
             destructor: r.head("ext.stmt.class.destructor")?,
             reader: r.head("ext.stmt.class.reader")?,
             writer: r.head("ext.stmt.class.writer")?,
+            caller: r.head("ext.stmt.class.caller")?,
             walker_class: r.head("ext.op.walk.class")?,
             walk_rewind: r.head("ext.op.walk.rewind")?,
             walk_more: r.head("ext.op.walk.more")?,

@@ -174,6 +174,9 @@ pub struct Machine<'a> {
     /// The routine a value nobody took is handed to, where the program
     /// put one in its way.
     untaken: RefCell<Option<Value>>,
+    /// Whether anything has gone out of the run yet. What is held back
+    /// in a piece of output kept aside has not gone out.
+    written_out: std::cell::Cell<bool>,
     unheard: RefCell<Vec<(String, String, u32)>>,
     any_unheard: std::cell::Cell<bool>,
     /// Whether writing into a place makes what is needed to hold it: an
@@ -243,6 +246,7 @@ impl<'a> Machine<'a> {
             frames_named: Vec::new(),
             hearer: RefCell::new(None),
             untaken: RefCell::new(None),
+            written_out: std::cell::Cell::new(false),
             unheard: RefCell::new(Vec::new()),
             any_unheard: std::cell::Cell::new(false),
             builds_places: table.flag("ext.op.index.makes"),
@@ -643,6 +647,9 @@ impl<'a> Machine<'a> {
             Some(kept) => kept.push_str(text),
             None => {
                 drop(holding);
+                if !text.is_empty() {
+                    self.written_out.set(true);
+                }
                 print!("{}", text);
             }
         }
@@ -1797,7 +1804,18 @@ impl<'a> Machine<'a> {
                         return Err(format!("Cannot call '{}' on something that is not an object", called).into());
                     };
                     let program = thing.of.program(&called).cloned();
-                    let program = program.ok_or_else(|| format!("Call to undefined method {}::{}()", thing.of.name, called))?;
+                    // A class may answer for a call it does not have:
+                    // where the language names such a method and the
+                    // class is written with it, it stands in, given the
+                    // name asked for and the arguments as an array.
+                    let Some(program) = program else {
+                        let stands = self.stands_for_calls(&thing.of);
+                        let Some(stands) = stands else {
+                            return Err(format!("Call to undefined method {}::{}()", thing.of.name, called).into());
+                        };
+                        let handed = vec![Value::Thing(thing), Value::text(&called), Value::Vector(Rc::new(values))];
+                        return Ok(self.invoke(stands, self.outermost.clone(), handed)?);
+                    };
                     let mut all = vec![Value::Thing(thing)];
                     all.extend(values);
                     Ok(self.invoke(program, self.outermost.clone(), all)?)
@@ -1945,6 +1963,13 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// The method a class answers a call it does not have with, where
+    /// the language names one and the class is written with it.
+    fn stands_for_calls(&self, class: &Rc<Blueprint>) -> Option<Rc<Routine>> {
+        let named = self.table.single("ext.stmt.class.caller")?;
+        class.program(named).cloned()
+    }
+
     /// A pair of a thing and a method's name, standing where a routine
     /// would: that method of that thing, the thing handed over first.
     /// A class in the first place names a method of the class itself.
@@ -1975,7 +2000,14 @@ impl<'a> Machine<'a> {
             _ => return Some(Err(format!("Cannot call '{}' on something that holds no method", called).into())),
         };
         let Some(program) = class.program(&called).cloned() else {
-            return Some(Err(format!("Call to undefined method {}::{}()", class.name, called).into()));
+            // A class may answer for a call it does not have, given the
+            // name asked for and the arguments as an array.
+            let stands = self.stands_for_calls(&class);
+            let Some(stands) = stands else {
+                return Some(Err(format!("Call to undefined method {}::{}()", class.name, called).into()));
+            };
+            let handed = vec![first, Value::text(&called), Value::Vector(Rc::new(given))];
+            return Some(self.invoke(stands, self.outermost.clone(), handed).map_err(Escape::from));
         };
         let mut all = vec![first];
         all.extend(given);
@@ -2790,6 +2822,10 @@ impl<'a> Machine<'a> {
                 }
             }
             // The routine every complaint is to be handed to, or none.
+            Prim::OutBegun => {
+                n(0)?;
+                Value::Flag(self.written_out.get())
+            }
             Prim::Untaken => {
                 let put = v.first().cloned().unwrap_or(Value::Nil);
                 let none = matches!(put, Value::Nil | Value::Unset);
