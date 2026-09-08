@@ -361,6 +361,13 @@ only. The extension labels so far, all from PHP:
   `ext.stmt.class.modifier` (words before a member
   that this kernel reads past: `public`, `final`), `ext.stmt.class.shared`
   (the modifier for a member the class keeps rather than its objects),
+  `ext.stmt.class.trait`, `ext.stmt.class.uses` and
+  `ext.stmt.class.uses.alias` (a bag of members a class may take in as
+  its own: `trait T { ... }` binds nothing and runs nothing, and
+  `use T, U { T::f as g; }` inside a class reads each bag's body again
+  as that class's own, so the members stand in the class taking them —
+  what it keeps to itself is its own, `self` is it, and a member may be
+  given another name in it besides),
   `ext.stmt.class.parent` and `ext.stmt.class.self`. A class is a value
   bound to its name, so `new C`, `C::CONST` and `catch (C $e)` are
   ordinary reads of it. Objects are handles: naming one twice names one
@@ -1337,6 +1344,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.self` | - | - | - | - | - | - | - | `self` | - | - |
 | `ext.stmt.class.shared` | - | - | - | - | - | - | - | `static` | - | - |
 | `ext.stmt.class.this` | - | - | - | - | - | - | - | `$this` | - | - |
+| `ext.stmt.class.trait` | - | - | - | - | - | - | - | `trait` | - | - |
+| `ext.stmt.class.uses` | - | - | - | - | - | - | - | `use` | - | - |
+| `ext.stmt.class.uses.alias` | - | - | - | - | - | - | - | `as` | - | - |
 | `ext.stmt.class.writer` | - | - | - | - | - | - | - | `__set` | - | - |
 | `ext.stmt.const` | - | - | - | - | - | - | - | `const` | - | - |
 | `ext.stmt.default` | - | - | - | - | - | - | - | `default` | - | - |

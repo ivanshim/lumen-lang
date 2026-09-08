@@ -17,14 +17,14 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 94, differs 2, error 8, skipped 10 | pass 94, differs 2, error 8, skipped 10 |
+| `php/basic` | 114 | pass 95, differs 2, error 7, skipped 10 | pass 95, differs 2, error 7, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
 | `php/lang` | 213 | pass 189, differs 15, error 4, skipped 5 | pass 189, differs 15, error 4, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 49, differs 8, error 1, skipped 6 | pass 49, differs 8, error 1, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 358, differs 26, error 13, skipped 25 | pass 358, differs 26, error 13, skipped 25 |
+| all | 422 | pass 359, differs 26, error 12, skipped 25 | pass 359, differs 26, error 12, skipped 25 |
 
 | Reason | Tests |
 |---|---|
@@ -37,7 +37,6 @@ is listed, since the full kernels are meant to behave alike.
 | Parse error: Unexpected token: << in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: ENT_HTML5 in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> | 1 |
-| Parse error: Expected identifier as the property name, got '{' in <file> | 1 |
 | timeout | 1 |
 | skip locale needed for this test is not supported on this platform | 1 |
 | Fatal error: Uncaught Error: Undefined variable: umask in <file> | 1 |
@@ -54,11 +53,11 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: NAN in <file> | 1 |
 | Fatal error: Uncaught Error: Expected ')' to close a group, got ';' in <file> | 1 |
 
-### Reserved words: 56 of 68 spelled
+### Reserved words: 58 of 68 spelled
 
-Spelled: `abstract`, `and`, `array`, `as`, `break`, `callable`, `case`, `catch`, `class`, `const`, `continue`, `default`, `do`, `echo`, `else`, `elseif`, `empty`, `endfor`, `endforeach`, `endif`, `endswitch`, `endwhile`, `eval`, `exit`, `extends`, `final`, `finally`, `for`, `foreach`, `function`, `global`, `if`, `implements`, `include`, `include_once`, `instanceof`, `interface`, `isset`, `list`, `new`, `or`, `print`, `private`, `protected`, `public`, `readonly`, `require`, `require_once`, `return`, `static`, `switch`, `throw`, `try`, `unset`, `var`, `while`
+Spelled: `abstract`, `and`, `array`, `as`, `break`, `callable`, `case`, `catch`, `class`, `const`, `continue`, `default`, `do`, `echo`, `else`, `elseif`, `empty`, `endfor`, `endforeach`, `endif`, `endswitch`, `endwhile`, `eval`, `exit`, `extends`, `final`, `finally`, `for`, `foreach`, `function`, `global`, `if`, `implements`, `include`, `include_once`, `instanceof`, `interface`, `isset`, `list`, `new`, `or`, `print`, `private`, `protected`, `public`, `readonly`, `require`, `require_once`, `return`, `static`, `switch`, `throw`, `trait`, `try`, `unset`, `use`, `var`, `while`
 
-Not spelled: `clone`, `declare`, `enddeclare`, `fn`, `goto`, `insteadof`, `match`, `namespace`, `trait`, `use`, `xor`, `yield`
+Not spelled: `clone`, `declare`, `enddeclare`, `fn`, `goto`, `insteadof`, `match`, `namespace`, `xor`, `yield`
 
 ### Most-called functions in the suite, and whether the definition spells them
 
@@ -227,7 +226,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/bug67198.phpt` | error | error | Parse error: Unexpected token: << in <file> |
 | `php/basic/bug67988.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ENT_HTML5 in <file> |
 | `php/basic/bug71273.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> |
-| `php/basic/bug73969.phpt` | error | error | Parse error: Expected identifier as the property name, got '{' in <file> |
+| `php/basic/bug73969.phpt` | pass | pass |  |
 | `php/basic/bug78236.phpt` | pass | pass |  |
 | `php/basic/bug78929.phpt` | pass | pass |  |
 | `php/basic/bug79699.phpt` | pass | pass |  |

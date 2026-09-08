@@ -670,6 +670,15 @@
     "$_REQUEST"
   ],
   "ext.op.index.absent": true,
+  "ext.stmt.class.trait": [
+    "trait"
+  ],
+  "ext.stmt.class.uses": [
+    "use"
+  ],
+  "ext.stmt.class.uses.alias": [
+    "as"
+  ],
   "ext.stmt.class.interface": [
     "interface"
   ],

@@ -67,6 +67,10 @@ pub struct Builder<'a> {
     /// The line the routine now being read was written on, which a
     /// fault raised on the way into it names.
     declared_at: u32,
+    /// Where each bag of members a class may take in begins, by name:
+    /// the token just past the mark that opens its body. Its members are
+    /// read again wherever a class takes them in.
+    bags: HashMap<String, usize>,
     /// Remarks the reading itself raised, which belong ahead of anything
     /// the program prints because they were noticed before it ran.
     noted_when_read: Vec<Form>,
@@ -195,7 +199,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         gives_back.extend(backs.iter().cloned());
         layers.push(Layer { holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
-    let mut r = Builder { within: standing_in, shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(),
+    let mut r = Builder { within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(),
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
@@ -342,6 +346,17 @@ fn shared_parameters(tokens: &[Token], table: &Table) -> (HashMap<String, Vec<bo
 
 // ---------- node builders
 
+
+/// What a class body gathers as it is read: its properties and how far
+/// each is reached from, the values it keeps for itself, its constants
+/// and its methods.
+struct Members {
+    fields: Vec<(String, Form)>,
+    shared: Vec<(String, Form)>,
+    constants: Vec<(String, Form)>,
+    methods: Vec<(String, Rc<Routine>)>,
+    reaches: Vec<Reach>,
+}
 
 /// What a routine written where a value stands is called, being
 /// bound to no name of its own.
@@ -1111,6 +1126,9 @@ impl<'a> Builder<'a> {
                 self.advance();
                 return Ok(constant(Value::Nil));
             }
+            if self.key("ext.stmt.class.trait") {
+                return self.bag_decl();
+            }
             if self.key("ext.stmt.class") || self.key("ext.stmt.class.interface") {
                 return self.class_decl();
             }
@@ -1311,6 +1329,99 @@ impl<'a> Builder<'a> {
     /// A class and what it holds: properties, constants, values kept by
     /// the class, and methods. The class becomes a value under its own
     /// name, so `new C` and `C::X` are ordinary reads.
+    /// A bag of members a class may take in as its own. Nothing of it
+    /// runs and nothing is bound to its name: where its body begins is
+    /// written down, and every class taking it in reads that body again
+    /// as its own, so the members stand in the class and not in the bag.
+    fn bag_decl(&mut self) -> Res<Form> {
+        let table = self.table;
+        self.advance();
+        let name = self.need_word("as the name of the members to take in")?;
+        self.skip_lead_word();
+        self.skip_line_ends();
+        let opens = table.strings("block.open");
+        let k = opens
+            .iter()
+            .position(|o| self.lexeme_of(o))
+            .ok_or_else(|| format!("Expected '{}' to open the members, got '{}'", opens[0], self.look().lexeme))?;
+        self.advance();
+        self.bags.insert(name, self.pos);
+        // The body is stepped over, mark for mark, since it is read
+        // where it is taken in and nowhere else.
+        let (open, close) = (opens[k].clone(), table.strings("block.close")[k].clone());
+        let mut deep = 1usize;
+        while deep > 0 {
+            if self.exhausted() {
+                return Err(format!("Expected '{}' to close the members", close));
+            }
+            if self.lexeme_of(&open) {
+                deep += 1;
+            } else if self.lexeme_of(&close) {
+                deep -= 1;
+            }
+            self.advance();
+        }
+        Ok(constant(Value::Nil))
+    }
+
+    /// `use T, U { T::f as g; }`: the members of each bag named are read
+    /// again here, standing in the class that takes them in, and any of
+    /// them may be given another name in it as well.
+    fn take_in_members(&mut self, held: &mut Members) -> Res<()> {
+        let table = self.table;
+        self.advance();
+        let apart = table.single("syntax.call.separator").map(str::to_string);
+        let mut taken = Vec::new();
+        loop {
+            taken.push(self.need_word("as the members to take in")?);
+            match &apart {
+                Some(sep) if self.sign(sep) => self.advance(),
+                _ => break,
+            };
+        }
+        for named in &taken {
+            let Some(from) = self.bags.get(named).copied() else {
+                return Err(format!("No members named {} to take in", named));
+            };
+            let close = table.strings("block.close")[0].clone();
+            let stood = self.pos;
+            self.pos = from;
+            let read = self.class_members(&close, held);
+            self.pos = stood;
+            read?;
+        }
+        // What follows may name members of the bags and give each
+        // another name in this class.
+        let opens = table.strings("block.open");
+        let Some(k) = opens.iter().position(|o| self.lexeme_of(o)) else { return Ok(()) };
+        self.advance();
+        let close = table.strings("block.close")[k].clone();
+        self.skip_line_ends();
+        while !self.lexeme_of(&close) && !self.exhausted() {
+            let first = self.need_word("as the member to name again")?;
+            let member = match table.single("ext.op.scope").map_or(false, |m| self.sign(m)) {
+                true => {
+                    self.advance();
+                    self.need_word("as the member to name again")?
+                }
+                false => first,
+            };
+            if !self.key("ext.stmt.class.uses.alias") {
+                return Err(format!("Expected '{}' after the member to name again", table.single("ext.stmt.class.uses.alias").unwrap_or("as")));
+            }
+            self.advance();
+            let called = self.need_word("as the other name")?;
+            let found = held.methods.iter().find(|(n, _)| *n == member).map(|(_, p)| p.clone());
+            let Some(program) = found else {
+                return Err(format!("No member named {} among the ones taken in", member));
+            };
+            held.methods.push((called, program));
+            self.skip_line_ends();
+        }
+        self.need_lexeme(&close)?;
+        Ok(())
+    }
+
     fn class_decl(&mut self) -> Res<Form> {
         let table = self.table;
         let word = self.advance().lexeme;
@@ -1349,87 +1460,17 @@ impl<'a> Builder<'a> {
         let k = opens.iter().position(|o| self.lexeme_of(o)).ok_or_else(|| format!("Expected '{}' to open the class, got '{}'", opens[0], self.look().lexeme))?;
         self.advance();
         let close = table.strings("block.close")[k].clone();
-        let (mut fields, mut shared, mut constants) = (Vec::new(), Vec::new(), Vec::new());
-        let mut reaches: Vec<Reach> = Vec::new();
-        let mut methods = Vec::new();
+        let (fields, shared, constants) = (Vec::new(), Vec::new(), Vec::new());
+        let reaches: Vec<Reach> = Vec::new();
+        let methods = Vec::new();
         self.skip_line_ends();
         // What a method keeps between calls is set where the class is
         // declared, as a plain routine's own values are set where the
         // routine is defined.
         let statics_before = self.statics.len();
-        while !self.lexeme_of(&close) && !self.exhausted() {
-            let mut kept = false;
-            let mut reach = Reach::Everywhere;
-            while self.look().shape == Shape::Bare {
-                if self.key("ext.stmt.class.shared") {
-                    kept = true;
-                } else if self.key("ext.stmt.class.hidden") {
-                    reach = Reach::Alone;
-                } else if self.key("ext.stmt.class.guarded") {
-                    reach = Reach::Within;
-                } else if !self.key("ext.stmt.class.modifier") {
-                    break;
-                }
-                self.advance();
-            }
-            if self.key("ext.stmt.const") {
-                self.advance();
-                let member = self.need_word("as the constant name")?;
-                self.need_assign("after the constant name")?;
-                constants.push((member, self.expr(0)?));
-            } else if self.key("stmt.function") {
-                self.advance();
-                let gives_cell = self.skip_reference();
-                let member = self.need_word("as the method name")?;
-                self.giving_cells.push(gives_cell);
-                let program = self.method(&member);
-                self.giving_cells.pop();
-                methods.push((member, program?));
-                // A parameter of the maker that names a property makes
-                // the class carry that property too.
-                for named in std::mem::take(&mut self.also_property) {
-                    let bare = match table.letter("identifier.variable_prefix") {
-                        Some(sigil) => named.trim_start_matches(sigil).to_string(),
-                        None => named,
-                    };
-                    fields.push((bare, constant(Value::Nil)));
-                    reaches.push(Reach::Everywhere);
-                }
-            } else {
-                // A property, perhaps with a type word before its name.
-                if self.look().shape == Shape::Bare && self.glance(1).shape == Shape::Bare {
-                    self.advance();
-                }
-                // One declaration may name several properties, written
-                // apart the way a call's arguments are.
-                let apart = table.single("syntax.call.separator").map(str::to_string);
-                loop {
-                    let member = self.need_word("as the property name")?;
-                    let bare = match table.letter("identifier.variable_prefix") {
-                        Some(sigil) => member.trim_start_matches(sigil).to_string(),
-                        None => member.clone(),
-                    };
-                    let value = match self.on_assign() {
-                        true => {
-                            self.advance();
-                            self.expr(0)?
-                        }
-                        false => constant(Value::Nil),
-                    };
-                    if kept {
-                        shared.push((bare, value));
-                    } else {
-                        fields.push((bare, value));
-                        reaches.push(reach);
-                    }
-                    match &apart {
-                        Some(sep) if self.sign(sep) => self.advance(),
-                        _ => break,
-                    };
-                }
-            }
-            self.skip_line_ends();
-        }
+        let mut held = Members { fields, shared, constants, methods, reaches };
+        self.class_members(&close, &mut held)?;
+        let Members { fields, shared, constants, methods, reaches } = held;
         self.need_lexeme(&close)?;
         self.within = outer;
         // What it is built on first, then a value for each property, each
@@ -1470,6 +1511,90 @@ impl<'a> Builder<'a> {
         let mut items = vec![written];
         items.extend(kept);
         Ok(sequence(items))
+    }
+
+    /// The members a class or a bag declares, read one after another
+    /// until the mark that closes the body. A bag's members are read
+    /// again here, at the `use` that takes them in, so that they stand
+    /// in the class taking them and not in the bag.
+    fn class_members(&mut self, close: &str, held: &mut Members) -> Res<()> {
+        let table = self.table;
+        while !self.lexeme_of(close) && !self.exhausted() {
+            let mut kept = false;
+            let mut reach = Reach::Everywhere;
+            while self.look().shape == Shape::Bare {
+                if self.key("ext.stmt.class.shared") {
+                    kept = true;
+                } else if self.key("ext.stmt.class.hidden") {
+                    reach = Reach::Alone;
+                } else if self.key("ext.stmt.class.guarded") {
+                    reach = Reach::Within;
+                } else if !self.key("ext.stmt.class.modifier") {
+                    break;
+                }
+                self.advance();
+            }
+            if self.key("ext.stmt.class.uses") {
+                self.take_in_members(held)?;
+            } else if self.key("ext.stmt.const") {
+                self.advance();
+                let member = self.need_word("as the constant name")?;
+                self.need_assign("after the constant name")?;
+                held.constants.push((member, self.expr(0)?));
+            } else if self.key("stmt.function") {
+                self.advance();
+                let gives_cell = self.skip_reference();
+                let member = self.need_word("as the method name")?;
+                self.giving_cells.push(gives_cell);
+                let program = self.method(&member);
+                self.giving_cells.pop();
+                held.methods.push((member, program?));
+                // A parameter of the maker that names a property makes
+                // the class carry that property too.
+                for named in std::mem::take(&mut self.also_property) {
+                    let bare = match table.letter("identifier.variable_prefix") {
+                        Some(sigil) => named.trim_start_matches(sigil).to_string(),
+                        None => named,
+                    };
+                    held.fields.push((bare, constant(Value::Nil)));
+                    held.reaches.push(Reach::Everywhere);
+                }
+            } else {
+                // A property, perhaps with a type word before its name.
+                if self.look().shape == Shape::Bare && self.glance(1).shape == Shape::Bare {
+                    self.advance();
+                }
+                // One declaration may name several properties, written
+                // apart the way a call's arguments are.
+                let apart = table.single("syntax.call.separator").map(str::to_string);
+                loop {
+                    let member = self.need_word("as the property name")?;
+                    let bare = match table.letter("identifier.variable_prefix") {
+                        Some(sigil) => member.trim_start_matches(sigil).to_string(),
+                        None => member.clone(),
+                    };
+                    let value = match self.on_assign() {
+                        true => {
+                            self.advance();
+                            self.expr(0)?
+                        }
+                        false => constant(Value::Nil),
+                    };
+                    if kept {
+                        held.shared.push((bare, value));
+                    } else {
+                        held.fields.push((bare, value));
+                        held.reaches.push(reach);
+                    }
+                    match &apart {
+                        Some(sep) if self.sign(sep) => self.advance(),
+                        _ => break,
+                    };
+                }
+            }
+            self.skip_line_ends();
+        }
+        Ok(())
     }
 
     /// A method: a program whose first parameter is the thing it is for,

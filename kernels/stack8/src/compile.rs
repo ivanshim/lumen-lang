@@ -50,6 +50,10 @@ pub struct Registry {
     /// about what it does. They are found while reading and said before
     /// the run, since that is when the reference says them.
     pub said_while_reading: Vec<(Complaint, String, u32)>,
+    /// Where each bag of members a class may take in begins, by name:
+    /// the token just past the mark that opens its body. Its members are
+    /// read again wherever a class takes them in.
+    pub bags: std::collections::HashMap<String, usize>,
     /// Which parameters of which routines take a cell rather than a
     /// value, and which routines give a cell back. Kept here because
     /// text read while the run goes is a piece of the same program and
@@ -171,6 +175,17 @@ enum Span {
 
 const RESULT_CELL: &str = "#result";
 const TEMP_CELL: &str = "#t";
+/// What a class body gathers as it is read: its properties and how far
+/// each may be reached from, the values it keeps for itself, its
+/// constants and its methods.
+struct Members {
+    fields: Vec<(String, Vec<Instr>)>,
+    shared: Vec<(String, Vec<Instr>)>,
+    constants: Vec<(String, Vec<Instr>)>,
+    methods: Vec<(String, Rc<Routine>)>,
+    reaches: Vec<Reach>,
+}
+
 /// What a routine written where a value stands is called, since it
 /// is bound to no name of its own.
 const ANONYMOUS: &str = "{closure}";
@@ -870,6 +885,9 @@ impl<'a> Compiler<'a> {
             if Lang::spells(&lang.pass_words, &w) {
                 self.take();
                 return Ok(());
+            }
+            if Lang::spells(&lang.trait_words, &w) {
+                return self.bag_decl();
             }
             let names_class = |word: &str| Lang::spells(&lang.class_words, word) || Lang::spells(&lang.interface_words, word);
             if names_class(&w) {
@@ -1970,6 +1988,99 @@ impl<'a> Compiler<'a> {
         None
     }
 
+    /// A bag of members a class may take in as its own. Nothing of it
+    /// runs and nothing is bound to its name: where its body begins is
+    /// written down, and every class taking it in reads that body again
+    /// as its own, so the members stand in the class and not in the bag.
+    fn bag_decl(&mut self) -> Res<()> {
+        let lang = self.lang;
+        self.take();
+        let name = self.want_name("as the name of the members to take in")?;
+        self.skip_intro();
+        self.skip_seps();
+        let which = lang.block_opens.iter().position(|o| self.at_lexeme(o));
+        let Some(i) = which else {
+            return Err(format!("Expected '{}' to open the members, got '{}'", lang.block_opens[0], self.look().lexeme));
+        };
+        self.take();
+        self.registry.bags.insert(name, self.pos);
+        // The body is stepped over, mark for mark, since it is read
+        // where it is taken in and nowhere else.
+        let (open, close) = (lang.block_opens[i].clone(), lang.block_closes[i].clone());
+        let mut deep = 1usize;
+        while deep > 0 {
+            if self.exhausted() {
+                return Err(format!("Expected '{}' to close the members", close));
+            }
+            if self.at_lexeme(&open) {
+                deep += 1;
+            } else if self.at_lexeme(&close) {
+                deep -= 1;
+            }
+            self.take();
+        }
+        Ok(())
+    }
+
+    /// `use T, U { T::f as g; }`: the members of each bag named are read
+    /// again here, standing in the class that takes them in, and any of
+    /// them may be given another name in it as well.
+    fn take_in_members(&mut self, held: &mut Members) -> Res<()> {
+        let lang = self.lang;
+        self.take();
+        let apart = lang.calling.as_ref().and_then(|c| c.between.clone());
+        let mut taken = Vec::new();
+        loop {
+            let named = self.want_name("as the members to take in")?;
+            taken.push(named);
+            match &apart {
+                Some(sep) if self.at_symbol(sep) => self.take(),
+                _ => break,
+            };
+        }
+        for named in &taken {
+            let Some(from) = self.registry.bags.get(named).copied() else {
+                return Err(format!("No members named {} to take in", named));
+            };
+            let close = lang.block_closes[0].clone();
+            let held_at = self.pos;
+            self.pos = from;
+            let read = self.class_members(&close, held);
+            self.pos = held_at;
+            read?;
+        }
+        // What follows may name members of the bags and give each
+        // another name in this class.
+        let which = lang.block_opens.iter().position(|o| self.at_lexeme(o));
+        let Some(i) = which else { return Ok(()) };
+        self.take();
+        let close = lang.block_closes[i].clone();
+        self.skip_seps();
+        while !self.at_lexeme(&close) && !self.exhausted() {
+            let first = self.want_name("as the member to name again")?;
+            let member = match lang.scope_mark.as_ref().map_or(false, |m| self.at_symbol(m)) {
+                true => {
+                    self.take();
+                    self.want_name("as the member to name again")?
+                }
+                false => first,
+            };
+            if !self.on_keyword(&lang.uses_alias) {
+                return Err(format!("Expected '{}' after the member to name again", lang.uses_alias.first().map_or("as", String::as_str)));
+            }
+            self.take();
+            let called = self.want_name("as the other name")?;
+            let found = held.methods.iter().find(|(n, _)| *n == member).map(|(_, p)| p.clone());
+            let Some(program) = found else {
+                return Err(format!("No member named {} among the ones taken in", member));
+            };
+            held.methods.push((called, program));
+            self.skip_seps();
+        }
+        self.want_lexeme(&close)?;
+        Ok(())
+    }
+
     /// A class and its members: properties, constants, the values it
     /// keeps for itself, and its methods. The class becomes a value
     /// bound to its name, so `new C` and `C::X` are ordinary reads.
@@ -2007,9 +2118,9 @@ impl<'a> Compiler<'a> {
         }
         // Every member's value is read into its own run of instrs, so
         // that they can be laid out in the order the plan names them.
-        let (mut fields, mut shared, mut constants) = (Vec::new(), Vec::new(), Vec::new());
-        let mut reaches: Vec<Reach> = Vec::new();
-        let mut methods = Vec::new();
+        let (fields, shared, constants) = (Vec::new(), Vec::new(), Vec::new());
+        let reaches: Vec<Reach> = Vec::new();
+        let methods = Vec::new();
         let outer = self.within.replace((name.clone(), base.clone()));
         // The body may open on a line of its own, as every other block may.
         self.skip_intro();
@@ -2025,74 +2136,9 @@ impl<'a> Compiler<'a> {
         // declared, and is set after the class is bound, since what it
         // is set to may name the class itself.
         let settings = self.mark();
-        while !self.at_lexeme(&close) && !self.exhausted() {
-            let mut own = false;
-            let mut reach = Reach::Open;
-            while self.look().shape == Shape::Instr {
-                let w = self.look().lexeme.clone();
-                if Lang::spells(&lang.shared_words, &w) {
-                    own = true;
-                } else if Lang::spells(&lang.hidden_words, &w) {
-                    reach = Reach::Hidden;
-                } else if Lang::spells(&lang.guarded_words, &w) {
-                    reach = Reach::Guarded;
-                } else if !Lang::spells(&lang.modifier_words, &w) {
-                    break;
-                }
-                self.take();
-            }
-            if self.on_keyword(&lang.const_words) {
-                self.take();
-                let member = self.want_name("as the constant name")?;
-                self.expect_assign("after the constant name")?;
-                constants.push((member, self.member_value()?));
-            } else if self.on_keyword(&lang.function_words) {
-                self.take();
-                let gives_cell = self.skip_reference();
-                let member = self.want_name("as the method name")?;
-                self.giving_cells.push(gives_cell);
-                let built = self.method(&member);
-                self.giving_cells.pop();
-                methods.push((member.clone(), built?));
-                // A parameter of the maker that names a property makes
-                // the class carry that property too.
-                for named in std::mem::take(&mut self.promoted) {
-                    let bare = lang.sigil.map_or(named.clone(), |s| named.trim_start_matches(s).to_string());
-                    fields.push((bare, vec![Instr::Const(Value::Null)]));
-                    reaches.push(Reach::Open);
-                }
-            } else {
-                // A property, perhaps with a type word before its name.
-                // One declaration may name several, written apart the
-                // way a call's arguments are.
-                if self.look().shape == Shape::Instr && self.look_ahead(1).shape == Shape::Instr {
-                    self.take();
-                }
-                let apart = lang.calling.as_ref().and_then(|c| c.between.clone());
-                loop {
-                    let member = self.want_name("as the property name")?;
-                    let bare = lang.sigil.map_or(member.clone(), |s| member.trim_start_matches(s).to_string());
-                    let value = match self.on_assign() {
-                        true => {
-                            self.take();
-                            self.member_value()?
-                        }
-                        false => vec![Instr::Const(Value::Null)],
-                    };
-                    if own {
-                        shared.push((bare, value));
-                    } else {
-                        fields.push((bare, value));
-                        reaches.push(reach);
-                    }
-                    match &apart {
-                        Some(sep) if self.at_symbol(sep) => self.take(),
-                        _ => break,
-                    };
-                }
-            }
-            self.skip_seps();
-        }
+        let mut held = Members { fields, shared, constants, methods, reaches };
+        self.class_members(&close, &mut held)?;
+        let Members { fields, shared, constants, methods, reaches } = held;
         self.want_lexeme(&close)?;
         self.within = outer;
         let kept: Vec<Instr> = self.piece().instrs.drain(settings..).collect();
@@ -2132,6 +2178,85 @@ impl<'a> Compiler<'a> {
         let at = self.mark();
         for w in relocated(kept, at as i64 - settings as i64) {
             self.put(w);
+        }
+        Ok(())
+    }
+
+    /// The members a class or a trait declares, read one after
+    /// another until the mark that closes the body. A trait's members
+    /// are read again here, at the `use` that takes them in, so that
+    /// they stand in the class taking them and not in the trait.
+    fn class_members(&mut self, close: &str, held: &mut Members) -> Res<()> {
+        let lang = self.lang;
+        while !self.at_lexeme(close) && !self.exhausted() {
+            let mut own = false;
+            let mut reach = Reach::Open;
+            while self.look().shape == Shape::Instr {
+                let w = self.look().lexeme.clone();
+                if Lang::spells(&lang.shared_words, &w) {
+                    own = true;
+                } else if Lang::spells(&lang.hidden_words, &w) {
+                    reach = Reach::Hidden;
+                } else if Lang::spells(&lang.guarded_words, &w) {
+                    reach = Reach::Guarded;
+                } else if !Lang::spells(&lang.modifier_words, &w) {
+                    break;
+                }
+                self.take();
+            }
+            if self.on_keyword(&lang.uses_words) {
+                self.take_in_members(held)?;
+            } else if self.on_keyword(&lang.const_words) {
+                self.take();
+                let member = self.want_name("as the constant name")?;
+                self.expect_assign("after the constant name")?;
+                held.constants.push((member, self.member_value()?));
+            } else if self.on_keyword(&lang.function_words) {
+                self.take();
+                let gives_cell = self.skip_reference();
+                let member = self.want_name("as the method name")?;
+                self.giving_cells.push(gives_cell);
+                let built = self.method(&member);
+                self.giving_cells.pop();
+                held.methods.push((member.clone(), built?));
+                // A parameter of the maker that names a property makes
+                // the class carry that property too.
+                for named in std::mem::take(&mut self.promoted) {
+                    let bare = lang.sigil.map_or(named.clone(), |s| named.trim_start_matches(s).to_string());
+                    held.fields.push((bare, vec![Instr::Const(Value::Null)]));
+                    held.reaches.push(Reach::Open);
+                }
+            } else {
+                // A property, perhaps with a type word before its name.
+                // One declaration may name several, written apart the
+                // way a call's arguments are.
+                if self.look().shape == Shape::Instr && self.look_ahead(1).shape == Shape::Instr {
+                    self.take();
+                }
+                let apart = lang.calling.as_ref().and_then(|c| c.between.clone());
+                loop {
+                    let member = self.want_name("as the property name")?;
+                    let bare = lang.sigil.map_or(member.clone(), |s| member.trim_start_matches(s).to_string());
+                    let value = match self.on_assign() {
+                        true => {
+                            self.take();
+                            self.member_value()?
+                        }
+                        false => vec![Instr::Const(Value::Null)],
+                    };
+                    if own {
+                        held.shared.push((bare, value));
+                    } else {
+                        held.fields.push((bare, value));
+                        held.reaches.push(reach);
+                    }
+                    match &apart {
+                        Some(sep) if self.at_symbol(sep) => self.take(),
+                        _ => break,
+                    };
+                }
+            }
+            self.skip_seps();
         }
         Ok(())
     }
