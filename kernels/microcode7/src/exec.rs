@@ -487,6 +487,16 @@ impl<'a> Machine<'a> {
         self.table.count("ext.system.real.digits").unwrap_or(math::DEFAULT_PLACES)
     }
 
+    /// Whether two numbers are the one number at the width the language
+    /// holds its reals in. Where it holds none, or neither is a real,
+    /// they are one only where they are exactly one.
+    fn alike_at_width(&self, a: &Value, b: &Value) -> bool {
+        if !self.holds_reals_to_width() || !(self.a_real(a) || self.a_real(b)) {
+            return a.equals(b);
+        }
+        self.at_width(self.as_wide_real(a)).equals(&self.at_width(self.as_wide_real(b)))
+    }
+
     /// A number as a real of the language's own width.
     fn as_wide_real(&self, v: &Value) -> Value {
         match math::ratio_of(v) {
@@ -2141,9 +2151,14 @@ impl<'a> Machine<'a> {
                         _ => left.equals(right),
                     },
                     (Value::Text(s), other) | (other, Value::Text(s)) if counts(other) => match self.number_said(left).or_else(|| self.number_said(right)) {
-                        Some(x) => x.equals(other),
+                        Some(x) => self.alike_at_width(&x, other),
                         None => **s == other.bare(),
                     },
+                    // Two numbers are set against each other at the
+                    // width the language holds them in, as they are
+                    // worked at it: a whole number past that width and
+                    // the real it comes to are the one number.
+                    (x, y) if counts(x) && counts(y) => self.alike_at_width(x, y),
                     _ => left.equals(right),
                 };
                 Value::Flag((op == Prim::Eq) == alike)

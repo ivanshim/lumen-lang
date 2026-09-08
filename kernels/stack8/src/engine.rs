@@ -1524,6 +1524,22 @@ impl<'a> Engine<'a> {
     /// language holds its numbers in. Without that a number written out
     /// and the same number spelled in text would be told apart, since
     /// one had been brought to the width and the other had not.
+    /// Whether two numbers are the same at the width the language holds
+    /// its reals in. Where it holds none, or neither is a real, they
+    /// are the same only where they are exactly so.
+    fn same_at_width(&self, a: &Value, b: &Value) -> bool {
+        let real_here = |v: &Value| matches!(v, Value::Real(_) | Value::Frac(_));
+        if self.lang.real_bits.is_none() || !(real_here(a) || real_here(b)) {
+            return a.equals(b);
+        }
+        let places = self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES);
+        let widened = |v: &Value| match arith::to_real(v, places) {
+            Some(real) => self.at_real_width(real),
+            None => v.clone(),
+        };
+        widened(a).equals(&widened(b))
+    }
+
     fn number_of(&self, s: &str) -> Option<Value> {
         number_spelled(s).map(|n| self.at_real_width(n))
     }
@@ -1584,9 +1600,14 @@ impl<'a> Engine<'a> {
                         _ => x == y,
                     },
                     (Value::Text(s), other) | (other, Value::Text(s)) if numeric(other) => match self.number_of(s) {
-                        Some(n) => n.equals(other),
+                        Some(n) => self.same_at_width(&n, other),
                         None => s.as_ref() == other.display(&sp),
                     },
+                    // Two numbers are set against each other at the
+                    // width the language holds them in, as they are
+                    // worked at it: a whole number too wide for that
+                    // width and the real it comes to are one number.
+                    (x, y) if numeric(x) && numeric(y) => self.same_at_width(x, y),
                     _ => a.equals(b),
                 };
                 Value::Flag(matches!(op, Action::Eq) == alike)

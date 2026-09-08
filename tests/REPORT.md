@@ -22,13 +22,13 @@ is listed, since the full kernels are meant to behave alike.
 | `php/lang` | 213 | pass 119, differs 42, error 47, skipped 5 | pass 119, differs 42, error 47, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
-| `php/lang/operators` | 64 | pass 44, differs 12, error 2, skipped 6 | pass 44, differs 12, error 2, skipped 6 |
+| `php/lang/operators` | 64 | pass 46, differs 10, error 2, skipped 6 | pass 46, differs 10, error 2, skipped 6 |
 | `php/lang/string` | 9 | pass 2, differs 1, error 6, skipped 0 | pass 2, differs 1, error 6, skipped 0 |
-| all | 422 | pass 259, differs 60, error 78, skipped 25 | pass 259, differs 60, error 78, skipped 25 |
+| all | 422 | pass 261, differs 58, error 78, skipped 25 | pass 261, differs 58, error 78, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 60 |
+| ran, printed something else | 58 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | Fatal error: Uncaught Error: Undefined variable: iterator in <file> | 5 |
@@ -538,7 +538,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/negate_variationStr.phpt` | error | error | Fatal error: Uncaught Error: Cannot negate non-numeric value in <file> |
 | `php/lang/operators/operator_equals_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_equals_variation.phpt` | skipped | skipped | skip this test is for 32bit platform only |
-| `php/lang/operators/operator_equals_variation_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_equals_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_gt_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_gt_or_equal_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_gt_or_equal_variation.phpt` | skipped | skipped | skip this test is for 32bit platform only |
@@ -557,7 +557,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/operator_lt_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_notequals_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_notequals_variation.phpt` | skipped | skipped | skip this test is for 32bit platform only |
-| `php/lang/operators/operator_notequals_variation_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_notequals_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_notidentical_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_notidentical_variation.phpt` | skipped | skipped | skip this test is for 32bit platform only |
 | `php/lang/operators/operator_notidentical_variation_64bit.phpt` | pass | pass |  |
