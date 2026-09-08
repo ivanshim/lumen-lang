@@ -557,6 +557,9 @@
     ">>"
   ],
   "ext.op.hush": ["@"],
+  "ext.op.name_by_value": [
+    "$"
+  ],
   "ext.op.identical": [
     "==="
   ],

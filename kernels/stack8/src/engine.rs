@@ -186,6 +186,18 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// The binding a piece of text names. Where a language marks its
+    /// variables, the mark belongs to the name and not to the text that
+    /// spells it, so it is put back on.
+    fn name_spelled(&self, spelled: &Value) -> String {
+        let sp = self.wording();
+        let said = spelled.display(&sp);
+        match self.lang.sigil {
+            Some(mark) if !said.starts_with(mark) => format!("{}{}", mark, said),
+            _ => said,
+        }
+    }
+
     fn complain(&self, kind: Complaint, message: &str) {
         if self.hushed.get() > 0 {
             return;
@@ -816,6 +828,36 @@ impl<'a> Engine<'a> {
             Action::AsBool => {
                 let held = self.drop_top()?;
                 Value::Flag(self.truth(&held))
+            }
+            // A name worked out while the run goes stands for the
+            // binding of that name among the outermost ones, since only
+            // those have names the run can still see.
+            Action::Named => {
+                let spelled = self.drop_top()?;
+                let name = self.name_spelled(&spelled);
+                let at = self.registry.slot(&name);
+                self.world.resize(self.registry.idents.len(), Value::Blank);
+                match &self.world[at] {
+                    Value::Bond(shared) => shared.borrow().clone(),
+                    Value::Blank if self.warns_about(&name) => {
+                        self.complain(Complaint::Warning, &format!("Undefined variable {}", name));
+                        Value::Null
+                    }
+                    Value::Blank => return Err(format!("Undefined variable: {}", name).into()),
+                    held => held.clone(),
+                }
+            }
+            Action::WriteNamed => {
+                let value = self.drop_top()?;
+                let spelled = self.drop_top()?;
+                let name = self.name_spelled(&spelled);
+                let at = self.registry.slot(&name);
+                self.world.resize(self.registry.idents.len(), Value::Blank);
+                match &self.world[at] {
+                    Value::Bond(shared) => *shared.borrow_mut() = value,
+                    _ => self.world[at] = value,
+                }
+                Value::Null
             }
             Action::BitTurn => {
                 let v = self.drop_top()?;

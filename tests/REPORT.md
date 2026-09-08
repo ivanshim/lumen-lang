@@ -31,17 +31,17 @@ is listed, since the full kernels are meant to behave alike.
 | ran, printed something else | 122 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
-| Unexpected character '$' | 6 |
 | skip Windows only test | 5 |
 | Unexpected token: & | 5 |
+| Unexpected token: ) | 4 |
 | Unexpected token: -> | 4 |
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
 | Unexpected token: : | 3 |
-| Unexpected token: ) | 3 |
 | Fatal error: Uncaught Error: Undefined variable: current in <file> | 3 |
 | Fatal error: Uncaught Error: Cannot index non-array value in <file> | 3 |
 | Unexpected token: , | 3 |
+| Unexpected token: ++ | 3 |
 | Only a name or a place in an array can be forgotten | 3 |
 | skip php-cgi not available | 2 |
 | Expected an expression | 2 |
@@ -50,6 +50,7 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: ini_parse_quantity in <file> | 2 |
 | Fatal error: Maximum execution time of 1 second exceeded in <file> | 2 |
 | Fatal error: Uncaught Error: Undefined variable: ob_get_contents in <file> | 2 |
+| Invalid assignment target before '=' | 2 |
 | Expected ')' after the foreach names, got '[' | 2 |
 | Unexpected token: } | 2 |
 | Fatal error: Uncaught Error: Only a class can be made into an object in <file> | 2 |
@@ -57,7 +58,6 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: StdClass in <file> | 2 |
 | Fatal error: Uncaught Error: Array index 2 out of bounds (length: 1) in <file> | 2 |
 | Expected ']' after array index, got '++' | 2 |
-| Unexpected token: ++ | 2 |
 | Unexpected token: > | 2 |
 | Unexpected token: :: | 2 |
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
@@ -345,8 +345,8 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/020.phpt` | pass | pass |  |
 | `php/lang/021.phpt` | pass | pass |  |
 | `php/lang/022.phpt` | pass | pass |  |
-| `php/lang/023.phpt` | error | error | Fatal error: Uncaught Error: Unexpected character '$' in <file> |
-| `php/lang/024.phpt` | error | error | Unexpected character '$' |
+| `php/lang/023.phpt` | error | error | Fatal error: Uncaught Error: Unexpected token: += in <file> |
+| `php/lang/024.phpt` | error | error | Invalid assignment target before '=' |
 | `php/lang/025.phpt` | pass | pass |  |
 | `php/lang/026.phpt` | pass | pass |  |
 | `php/lang/027.phpt` | error | error | Expected an expression |
@@ -391,7 +391,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug23584.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug23624.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: current in <file> |
 | `php/lang/bug24054.phpt` | pass | pass |  |
-| `php/lang/bug24396.phpt` | error | error | Unexpected character '$' |
+| `php/lang/bug24396.phpt` | error | error | Expected identifier after the global keyword, got '$' |
 | `php/lang/bug24436.phpt` | error | error | Fatal error: Uncaught Error: Cannot index non-array value in <file> |
 | `php/lang/bug24499.phpt` | pass | pass |  |
 | `php/lang/bug24573.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: debug_backtrace in <file> |
@@ -445,14 +445,14 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/constants/PHP_INT_32bit.phpt` | skipped | skipped | skip this test is for 32-bit platforms only |
 | `php/lang/constants/PHP_INT_64bit.phpt` | pass | pass |  |
 | `php/lang/empty_variation.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: empty in <file> |
-| `php/lang/engine_assignExecutionOrder_001.phpt` | error | error | Unexpected character '$' |
+| `php/lang/engine_assignExecutionOrder_001.phpt` | error | error | Expected identifier after the member mark, got '$' |
 | `php/lang/engine_assignExecutionOrder_002.phpt` | error | error | Unexpected token: , |
-| `php/lang/engine_assignExecutionOrder_003.phpt` | error | error | Unexpected character '$' |
+| `php/lang/engine_assignExecutionOrder_003.phpt` | error | error | Unexpected token: ) |
 | `php/lang/engine_assignExecutionOrder_004.phpt` | error | error | Unexpected token: , |
 | `php/lang/engine_assignExecutionOrder_005.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_006.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_007.phpt` | error | error | Fatal error: Uncaught Error: Only a class can be made into an object in <file> |
-| `php/lang/engine_assignExecutionOrder_008.phpt` | error | error | Unexpected character '$' |
+| `php/lang/engine_assignExecutionOrder_008.phpt` | error | error | Unexpected token: ++ |
 | `php/lang/engine_assignExecutionOrder_009.phpt` | pass | pass |  |
 | `php/lang/error_2_exception_001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/execution_order.phpt` | differs | differs | ran, printed something else |
@@ -469,7 +469,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/foreachLoop.013.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
 | `php/lang/foreachLoop.014.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
 | `php/lang/foreachLoop.015.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
-| `php/lang/foreachLoop.016.phpt` | error | error | Unexpected character '$' |
+| `php/lang/foreachLoop.016.phpt` | error | error | A foreach that hands out its items for writing needs a named array |
 | `php/lang/foreachLoop.017.phpt` | pass | pass |  |
 | `php/lang/foreachLoopIterator.001.phpt` | error | error | Expected ']' after array index, got '++' |
 | `php/lang/foreachLoopIterator.002.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: Iterator in <file> |

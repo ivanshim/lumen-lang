@@ -396,6 +396,17 @@ only. The extension labels so far, all from PHP:
   number given is not written. Nothing more is written and no complaint
   is made, so it is not `builtin.error`, which stops the run with
   something gone wrong that a statement written to take it may take.
+- `ext.op.name_by_value`: a mark written before a value to say that
+  the value spells a name and the name is what is meant. What follows
+  it is either a piece written within the block marks (`${e}`) or
+  whatever binds as tightly as a negation, so a mark before a mark
+  (`$$$a`) is read from the inside out. Where a language marks its
+  variables, the mark belongs to the name and not to the text spelling
+  it, and is put back on. A name worked out this way stands for one of
+  the outermost bindings, those being the only ones whose names are
+  still there to be looked up while the run goes; the mark written
+  inside a unit of its own is turned down rather than quietly meaning
+  another binding.
 - `ext.builtin.eval`: builtins taking a piece of the language written
   out as text, reading it as the run's own language and running it
   where the call stands. The text is read with whatever a program of
@@ -813,6 +824,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.index.plain_keys` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.instanceof` | - | - | - | - | - | - | - | `instanceof` | - | - |
 | `ext.op.member` | - | - | - | - | - | - | - | `->` | - | - |
+| `ext.op.name_by_value` | - | - | - | - | - | - | - | `$` | - | - |
 | `ext.op.not_identical` | - | - | - | - | - | - | - | `!==` | - | - |
 | `ext.op.otherwise` | - | - | - | - | - | - | - | `??` | - | - |
 | `ext.op.plus` | - | - | - | - | - | - | - | `+` | - | - |

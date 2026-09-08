@@ -223,6 +223,9 @@ pub struct Lang {
     /// A sign that leaves its operand as it is.
     pub plus_words: Vec<String>,
     pub hush_words: Vec<String>,
+    /// The mark written before a value to say that the value spells a
+    /// name, and the name is what is meant.
+    pub naming_words: Vec<String>,
     /// Whether writing into a place makes what is needed to hold it:
     /// an array where a name holds nothing, and one at each place along
     /// the way that is not there yet.
@@ -350,6 +353,7 @@ w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists |
 w ext.builtin.eval | w ext.builtin.include | w ext.op.hush | w ext.builtin.isset | b ext.op.index.makes
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
 w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind
+w ext.op.name_by_value
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 ";
@@ -959,6 +963,7 @@ impl Lang {
             exponent_letters: r.letters("ext.lexical.number.exponent")?,
             plus_words: r.strings("ext.op.plus")?,
             hush_words: hushes,
+            naming_words: r.strings("ext.op.name_by_value")?,
             makes_places: r.flag("ext.op.index.makes")?,
             untrue_text: r.strings("ext.system.untrue.text")?,
             untrue_empty: r.flag("ext.system.untrue.empty_array")?,
@@ -1068,6 +1073,9 @@ impl Lang {
             place(mark);
         }
         for lex in &self.plus_words {
+            place(lex);
+        }
+        for lex in &self.naming_words {
             place(lex);
         }
         if let Some(mark) = &self.pair_mark {

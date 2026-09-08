@@ -260,6 +260,31 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// The binding a piece of text calls. Where a language marks its
+    /// variables, the mark belongs to the name and not to the text
+    /// spelling it, so it goes back on.
+    fn name_it_spells(&self, spelled: &Value) -> String {
+        let w = self.wording();
+        let said = spelled.render(w).to_string();
+        match self.table.letter("identifier.variable_prefix") {
+            Some(mark) if !said.starts_with(mark) => format!("{}{}", mark, said),
+            _ => said,
+        }
+    }
+
+    /// Where among the outermost bindings that name stands, making room
+    /// for it if it is a name nothing has stood under yet.
+    fn place_called(&mut self, name: &str) -> usize {
+        match self.idents.iter().position(|n| n == name) {
+            Some(at) => at,
+            None => {
+                self.idents.push(name.to_string());
+                self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
+                self.idents.len() - 1
+            }
+        }
+    }
+
     fn grumble(&self, kind: &str, about: &str) {
         if self.quieted > 0 {
             return;
@@ -637,6 +662,39 @@ impl<'a> Machine<'a> {
                 let f = ascend(frame, slot.up);
                 f.cells.borrow_mut()[slot.at] = cell;
                 Ok(Value::Nil)
+            }
+            // A name worked out as the run goes stands for the binding
+            // of that name among the outermost ones, those being the
+            // only ones whose names the run can still see.
+            Form::Called(spells) => {
+                let spelled = self.value_of(spells, frame)?;
+                let name = self.name_it_spells(&spelled);
+                let at = self.place_called(&name);
+                let held = self.outermost.cells.borrow()[at].clone();
+                return Ok(match held {
+                    Value::Shared(cell) => cell.borrow().clone(),
+                    Value::Unset if self.complaint_words.iter().any(|(k, _)| *k == "warning") => {
+                        self.grumble("warning", &format!("Undefined variable {}", name));
+                        Value::Nil
+                    }
+                    Value::Unset => return Err(format!("Undefined variable '{}'", name).into()),
+                    other => other,
+                });
+            }
+            Form::CallWrite(spells, worth) => {
+                let spelled = self.value_of(spells, frame)?;
+                let name = self.name_it_spells(&spelled);
+                let value = self.value_of(worth, frame)?;
+                let at = self.place_called(&name);
+                let shared = match &self.outermost.cells.borrow()[at] {
+                    Value::Shared(cell) => Some(cell.clone()),
+                    _ => None,
+                };
+                match shared {
+                    Some(cell) => *cell.borrow_mut() = value.clone(),
+                    None => self.outermost.cells.borrow_mut()[at] = value.clone(),
+                }
+                return Ok(value);
             }
             Form::Muted(inner) => {
                 self.quieted += 1;

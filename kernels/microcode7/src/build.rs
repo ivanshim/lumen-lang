@@ -1864,6 +1864,8 @@ impl<'a> Builder<'a> {
                 }
                 sequence(steps)
             }
+            // A read of the binding a value names becomes a write of it.
+            Form::Called(spells) if compound.is_none() => Form::CallWrite(spells, Box::new(value)),
             _ if compound.is_some() => return Err(format!("'{}' needs a plain variable on its left", assign.lexeme)),
             // A read of a member becomes a write of it.
             Form::Apply(Callee::Prim(Prim::Of, _), mut args) if args.len() == 2 => {
@@ -2022,6 +2024,19 @@ impl<'a> Builder<'a> {
                 let operand = self.expr(op.level)?;
                 return Ok(prim_call(op.prim, vec![operand]));
             }
+            if table.spells("ext.op.name_by_value", &t.lexeme) {
+                // `$$a` and `${e}`: the name is whatever the value
+                // spells. Only the outermost bindings keep names the
+                // run can still see, so a name worked out inside a unit
+                // of its own is turned down rather than quietly meaning
+                // some other binding.
+                if self.layers.len() > 1 {
+                    return Err(format!("'{}' works a name out as the run goes, which only the outermost bindings keep", t.lexeme));
+                }
+                self.advance();
+                let spells = self.spelling()?;
+                return self.subscript(Form::Called(Box::new(spells)));
+            }
             if table.spells("ext.op.hush", &t.lexeme) {
                 // What the piece under the mark has to say about itself
                 // goes unsaid; the value it comes to is unchanged.
@@ -2166,6 +2181,25 @@ impl<'a> Builder<'a> {
         self.advance();
         items.push(constant(Value::Nil));
         Ok(sequence(items))
+    }
+
+    /// What comes after the mark saying a value spells a name: a piece
+    /// written within the block marks, or else whatever binds as
+    /// tightly as a negation, so `$$$a` is read from the inside out.
+    fn spelling(&mut self) -> Res<Form> {
+        let table = self.table;
+        let opens = table.single("block.open").map(str::to_string);
+        let closes = table.single("block.close").map(str::to_string);
+        if let (Some(open), Some(close)) = (opens, closes) {
+            if self.sign(&open) {
+                self.advance();
+                let named = self.expr(0)?;
+                self.need_sign(&close, "after the name to work out")?;
+                return Ok(named);
+            }
+        }
+        let tier = table.monadic.values().map(|m| m.level).max().unwrap_or(0);
+        self.expr(tier)
     }
 
     /// `isset(a, b[k])`: whether every one of them is something other

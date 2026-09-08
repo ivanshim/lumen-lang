@@ -86,6 +86,12 @@ pub enum Action {
     /// The bits moved up or down that many places.
     BitUp,
     BitDown,
+    /// The value of the binding whose name the text above spells: how a
+    /// language reads a name worked out while the program runs.
+    Named,
+    /// Write the value above into the binding whose name the text under
+    /// it spells.
+    WriteNamed,
     /// Whether the value above is nothing at all.
     Nothing,
     /// What an array holds at that place, answering nothing where it

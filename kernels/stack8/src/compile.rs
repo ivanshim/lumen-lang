@@ -2056,6 +2056,16 @@ impl<'a> Compiler<'a> {
                 Ok(())
             }
             _ if compound.is_some() => Err(format!("'{}' needs a plain variable on its left", assign)),
+            // A read of the binding a value names turns into a write
+            // of it: the text stays where it is and the value follows.
+            [rest @ .., Instr::Act(Action::Named, 1)] if compound.is_none() => {
+                for w in relocated(rest.to_vec(), 0) {
+                    self.put(w);
+                }
+                self.value_written(keep)?;
+                self.act(Action::WriteNamed, 2);
+                Ok(())
+            }
             // The read of a member turns into a write of it.
             [rest @ .., Instr::Act(Action::Grab(member), 1)] => {
                 let (member, rest) = (member.clone(), rest.to_vec());
@@ -2274,6 +2284,19 @@ impl<'a> Compiler<'a> {
                 self.act(infix.action, 1);
                 return Ok(());
             }
+            if Lang::spells(&lang.naming_words, &tok.lexeme) {
+                // `$$a` and `${e}`: the name is what the value spells.
+                // Only the outermost bindings have names the run can
+                // still see, so a name worked out inside a unit of its
+                // own is refused rather than quietly meaning another.
+                if !self.piece().outermost {
+                    return Err(format!("'{}' works a name out while the program runs, which only the outermost bindings have", tok.lexeme));
+                }
+                self.take();
+                self.naming()?;
+                self.act(Action::Named, 1);
+                return self.indexing(from);
+            }
             if Lang::spells(&lang.hush_words, &tok.lexeme) {
                 // Whatever the piece under the mark has to say about
                 // itself is kept quiet; its value stands as it would.
@@ -2469,6 +2492,23 @@ impl<'a> Compiler<'a> {
         self.take();
         self.constant(Value::Null);
         Ok(())
+    }
+
+    /// What follows the mark that says a value spells a name: a piece
+    /// written within the block marks, or whatever binds as tightly as
+    /// a negation, so that `$$$a` reads from the inside out.
+    fn naming(&mut self) -> Res<()> {
+        let lang = self.lang;
+        if let (Some(open), Some(close)) = (lang.block_opens.first().cloned(), lang.block_closes.first().cloned()) {
+            if self.at_symbol(&open) {
+                self.take();
+                self.expr(0)?;
+                self.want_sign(&close, "after the name to work out")?;
+                return Ok(());
+            }
+        }
+        let tier = lang.monadic.values().map(|m| m.level).max().unwrap_or(0);
+        self.expr(tier)
     }
 
     /// `isset(a, b[k])`: whether every one of them holds something other
