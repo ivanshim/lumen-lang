@@ -905,5 +905,8 @@
   ],
   "ext.builtin.class.beneath": [
     "__class_beneath"
+  ],
+  "ext.builtin.clock": [
+    "__clock"
   ]
 }

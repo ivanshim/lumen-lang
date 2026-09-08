@@ -2935,6 +2935,14 @@ impl<'a> Machine<'a> {
                     None => Value::Nil,
                 }
             }
+            // How far the clock the system keeps has come since the
+            // year it counts from. A clock that will not answer counts
+            // as standing at the start of it.
+            Prim::SinceEpoch => {
+                n(0)?;
+                let gone = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+                Value::Small(gone.map_or(0, |since| since.as_secs() as i64))
+            }
             Prim::OutBegun => {
                 n(0)?;
                 Value::Flag(self.written_out.get())

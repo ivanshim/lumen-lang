@@ -900,6 +900,198 @@ function php_uname($mode = "a") { return PHP_OS; }
 function setlocale($category, $locale) { return false; }
 function date_default_timezone_set($zone) { return true; }
 function date_default_timezone_get() { return "UTC"; }
+// The clock and the calendar. The kernel is asked only how far the clock
+// has come since the start of 1970; turning that into a date, and a date
+// back into it, is arithmetic and belongs here. Everything is reckoned
+// in UTC, which is the one zone this run keeps.
+function time() { return __clock(); }
+function microtime($as_float = false) {
+    $now = __clock();
+    if ($as_float) { return $now + 0.0; }
+    return "0.00000000 " . $now;
+}
+function hrtime($as_number = false) {
+    $now = __clock();
+    if ($as_number) { return $now * 1000000000; }
+    return array($now, 0);
+}
+// Dividing where what is left over is never below nought, so that dates
+// before 1970 count back the way dates after it count on.
+function __floor_div($a, $b) {
+    $whole = intdiv($a, $b);
+    if ($a % $b != 0 && ($a < 0) != ($b < 0)) { $whole = $whole - 1; }
+    return $whole;
+}
+function __floor_rem($a, $b) { return $a - __floor_div($a, $b) * $b; }
+// The day a date stands on, counting from the first of January 1970.
+// Howard Hinnant's reckoning: the year is turned about so that a leap
+// day falls at the end of it, and the four-hundred-year turn of the
+// calendar is counted out whole.
+function __days_of_date($year, $month, $day) {
+    $y = $month <= 2 ? $year - 1 : $year;
+    $era = __floor_div($y, 400);
+    $of_era = $y - $era * 400;
+    $of_year = intdiv(153 * ($month + ($month > 2 ? -3 : 9)) + 2, 5) + $day - 1;
+    $of_era_days = $of_era * 365 + intdiv($of_era, 4) - intdiv($of_era, 100) + $of_year;
+    return $era * 146097 + $of_era_days - 719468;
+}
+// The date a day stands on, the same reckoning read backwards.
+function __date_of_days($days) {
+    $days = $days + 719468;
+    $era = __floor_div($days, 146097);
+    $of_era = $days - $era * 146097;
+    $of_era_year = intdiv($of_era - intdiv($of_era, 1460) + intdiv($of_era, 36524) - intdiv($of_era, 146096), 365);
+    $year = $of_era_year + $era * 400;
+    $of_year = $of_era - (365 * $of_era_year + intdiv($of_era_year, 4) - intdiv($of_era_year, 100));
+    $mp = intdiv(5 * $of_year + 2, 153);
+    $day = $of_year - intdiv(153 * $mp + 2, 5) + 1;
+    $month = $mp + ($mp < 10 ? 3 : -9);
+    if ($month <= 2) { $year = $year + 1; }
+    return array($year, $month, $day);
+}
+function __is_leap_year($year) {
+    if ($year % 4 != 0) { return false; }
+    if ($year % 100 != 0) { return true; }
+    return $year % 400 == 0;
+}
+function __days_in_month($month, $year) {
+    $lengths = array(31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31);
+    if ($month == 2 && __is_leap_year($year)) { return 29; }
+    return $lengths[$month - 1];
+}
+// Everything a moment is made of, which the readers below share.
+function __moment($when) {
+    $days = __floor_div($when, 86400);
+    $of_day = __floor_rem($when, 86400);
+    $ymd = __date_of_days($days);
+    $year = $ymd[0];
+    $month = $ymd[1];
+    $day = $ymd[2];
+    return array(
+        "seconds" => __floor_rem($of_day, 60),
+        "minutes" => __floor_rem(intdiv($of_day, 60), 60),
+        "hours" => intdiv($of_day, 3600),
+        "mday" => $day,
+        "wday" => __floor_rem($days + 4, 7),
+        "mon" => $month,
+        "year" => $year,
+        "yday" => $days - __days_of_date($year, 1, 1),
+        "weekday" => __weekday_name(__floor_rem($days + 4, 7)),
+        "month" => __month_name($month),
+        0 => $when,
+    );
+}
+function __weekday_name($wday) {
+    $names = array("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday");
+    return $names[$wday];
+}
+function __month_name($month) {
+    $names = array("January", "February", "March", "April", "May", "June",
+                   "July", "August", "September", "October", "November", "December");
+    return $names[$month - 1];
+}
+function getdate($when = null) {
+    if ($when === null) { $when = __clock(); }
+    return __moment($when);
+}
+// A date written out as the clock counts it. A part left out is taken
+// from the moment the clock stands at now, as the reference takes it.
+function mktime($hour = null, $minute = null, $second = null, $month = null, $day = null, $year = null) {
+    $now = __moment(__clock());
+    if ($hour === null) { $hour = $now["hours"]; }
+    if ($minute === null) { $minute = $now["minutes"]; }
+    if ($second === null) { $second = $now["seconds"]; }
+    if ($month === null) { $month = $now["mon"]; }
+    if ($day === null) { $day = $now["mday"]; }
+    if ($year === null) { $year = $now["year"]; }
+    // A month or a day past its own bounds counts on into the next, as
+    // the reference lets it.
+    $year = $year + __floor_div($month - 1, 12);
+    $month = __floor_rem($month - 1, 12) + 1;
+    return __days_of_date($year, $month, $day) * 86400 + $hour * 3600 + $minute * 60 + $second;
+}
+function gmmktime($hour = null, $minute = null, $second = null, $month = null, $day = null, $year = null) {
+    return mktime($hour, $minute, $second, $month, $day, $year);
+}
+function checkdate($month, $day, $year) {
+    if ($month < 1 || $month > 12 || $day < 1 || $year < 1 || $year > 32767) { return false; }
+    return $day <= __days_in_month($month, $year);
+}
+// A number written out with noughts before it so that it fills the width.
+function __padded($n, $width) {
+    $out = (string) $n;
+    while (strlen($out) < $width) { $out = "0" . $out; }
+    return $out;
+}
+function __ordinal_suffix($day) {
+    if ($day % 100 >= 11 && $day % 100 <= 13) { return "th"; }
+    $last = $day % 10;
+    if ($last == 1) { return "st"; }
+    if ($last == 2) { return "nd"; }
+    if ($last == 3) { return "rd"; }
+    return "th";
+}
+// A moment written out letter by letter, as the reference writes it. A
+// letter with a backslash before it stands for itself.
+function date($pattern, $when = null) {
+    if ($when === null) { $when = __clock(); }
+    $m = __moment($when);
+    $out = "";
+    $at = 0;
+    $reach = strlen($pattern);
+    while ($at < $reach) {
+        $c = $pattern[$at];
+        if ($c === "\\") {
+            $at = $at + 1;
+            if ($at < $reach) { $out = $out . $pattern[$at]; }
+            $at = $at + 1;
+            continue;
+        }
+        $out = $out . __date_letter($c, $m, $when);
+        $at = $at + 1;
+    }
+    return $out;
+}
+function gmdate($pattern, $when = null) { return date($pattern, $when); }
+function __date_letter($c, $m, $when) {
+    if ($c === "d") { return __padded($m["mday"], 2); }
+    if ($c === "j") { return (string) $m["mday"]; }
+    if ($c === "S") { return __ordinal_suffix($m["mday"]); }
+    if ($c === "D") { return substr($m["weekday"], 0, 3); }
+    if ($c === "l") { return $m["weekday"]; }
+    if ($c === "N") { return (string) ($m["wday"] == 0 ? 7 : $m["wday"]); }
+    if ($c === "w") { return (string) $m["wday"]; }
+    if ($c === "z") { return (string) $m["yday"]; }
+    if ($c === "m") { return __padded($m["mon"], 2); }
+    if ($c === "n") { return (string) $m["mon"]; }
+    if ($c === "M") { return substr($m["month"], 0, 3); }
+    if ($c === "F") { return $m["month"]; }
+    if ($c === "t") { return (string) __days_in_month($m["mon"], $m["year"]); }
+    if ($c === "L") { return __is_leap_year($m["year"]) ? "1" : "0"; }
+    if ($c === "Y") { return (string) $m["year"]; }
+    if ($c === "y") { return __padded($m["year"] % 100, 2); }
+    if ($c === "H") { return __padded($m["hours"], 2); }
+    if ($c === "G") { return (string) $m["hours"]; }
+    if ($c === "h") { return __padded(__twelve_hour($m["hours"]), 2); }
+    if ($c === "g") { return (string) __twelve_hour($m["hours"]); }
+    if ($c === "i") { return __padded($m["minutes"], 2); }
+    if ($c === "s") { return __padded($m["seconds"], 2); }
+    if ($c === "a") { return $m["hours"] < 12 ? "am" : "pm"; }
+    if ($c === "A") { return $m["hours"] < 12 ? "AM" : "PM"; }
+    if ($c === "U") { return (string) $when; }
+    if ($c === "e" || $c === "T") { return "UTC"; }
+    if ($c === "P") { return "+00:00"; }
+    if ($c === "O") { return "+0000"; }
+    if ($c === "Z") { return "0"; }
+    if ($c === "u") { return "000000"; }
+    if ($c === "v") { return "000"; }
+    return $c;
+}
+function __twelve_hour($hours) {
+    $twelve = $hours % 12;
+    return $twelve == 0 ? 12 : $twelve;
+}
+
 function register_shutdown_function($work, $a = null, $b = null, $c = null) {
     if ($c !== null) { return __at_end($work, $a, $b, $c); }
     if ($b !== null) { return __at_end($work, $a, $b); }

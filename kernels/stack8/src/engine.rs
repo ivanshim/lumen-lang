@@ -3244,6 +3244,14 @@ impl<'a> Engine<'a> {
                     None => Value::Null,
                 }
             }
+            // How far the clock the system keeps has come since the
+            // year it counts from. A clock that will not answer counts
+            // as standing at the start of it.
+            Builtin::Clock => {
+                arity(0)?;
+                let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+                Value::Small(since.map_or(0, |gone| gone.as_secs() as i64))
+            }
             Builtin::OutBegun => {
                 arity(0)?;
                 Value::Flag(self.written_out.get())

@@ -137,6 +137,9 @@ pub enum Prim {
     /// (ext.builtin.classes, ext.builtin.routines).
     ClassesBound,
     RoutinesBound,
+    /// How many seconds have passed since the start of the year the
+    /// system counts from (ext.builtin.clock).
+    SinceEpoch,
     /// The name of the class the one above stands on, where it stands on
     /// any: a thing is asked of its own class (ext.builtin.class.beneath).
     ClassBeneath,
