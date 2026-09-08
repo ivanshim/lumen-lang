@@ -279,6 +279,7 @@ impl<'a> Cursor<'a> {
     /// `$name`, `$name[i]` and `{$expr}` inside it become code, and the
     /// whole becomes a bracketed concatenation of its parts, starting
     /// from an empty string so the result is always text.
+    /// Whether the mark is written at that place in the run.
     fn woven(&mut self, s: String, shielded: &[usize], line: usize, col: usize) -> Result<(), String> {
         let lang = self.lang;
         let chars: Vec<char> = s.chars().collect();
@@ -316,19 +317,56 @@ impl<'a> Cursor<'a> {
                 while j < chars.len() && lang.extends_name(chars[j]) {
                     j += 1;
                 }
-                // A simple index: digits or a variable up to the bracket.
-                if chars.get(j) == Some(&'[') {
-                    if let Some(width) = chars[j..].iter().position(|c| *c == ']') {
-                        let inner: String = chars[j + 1..j + width].iter().collect();
-                        let simple = !inner.is_empty()
-                            && (inner.chars().all(|c| c.is_ascii_digit()) || inner.starts_with(|c| Some(c) == lang.sigil));
-                        if simple {
-                            j += width + 1;
+                // One step past the binding is woven in as well, which
+                // is as far as this shorter way of writing reaches: a
+                // place named in brackets, or a member named after the
+                // mark for one. Anything further wants the brackets
+                // that take a whole piece of code.
+                let mut written: Option<String> = None;
+                let mut stepped = false;
+                if let Some(index) = lang.index_brackets.clone() {
+                    if at_word(&chars, j, &index.open) {
+                        let from = j + index.open.chars().count();
+                        if let Some(end) = word_at(&chars, from, &index.close) {
+                            let inside: String = chars[from..end].iter().collect();
+                            let opens = |f: fn(&Lang, char) -> bool| inside.chars().next().map_or(false, |c| f(lang, c));
+                            let digits = !inside.is_empty() && inside.chars().all(|c| c.is_ascii_digit());
+                            let binding = inside.chars().next().map_or(false, |c| Some(c) == lang.sigil);
+                            let bare = opens(Lang::begins_name) && inside.chars().all(|c| lang.extends_name(c));
+                            let past = end + index.close.chars().count();
+                            if digits || binding {
+                                j = past;
+                                stepped = true;
+                            } else if bare {
+                                // A bare word between the brackets
+                                // stands for the text it spells and not
+                                // for a name, so it is written as text.
+                                if let Some(quote) = lang.raw_quotes.first().or_else(|| lang.quotes.first()) {
+                                    let named: String = chars[i..j].iter().collect();
+                                    written = Some(format!("{named}{}{quote}{inside}{quote}{}", index.open, index.close));
+                                    j = past;
+                                    stepped = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                if !stepped {
+                    if let Some(mark) = lang.member_mark.clone() {
+                        if at_word(&chars, j, &mark) {
+                            let after = j + mark.chars().count();
+                            if chars.get(after).map_or(false, |c| lang.begins_name(*c)) {
+                                let mut past = after + 1;
+                                while past < chars.len() && lang.extends_name(chars[past]) {
+                                    past += 1;
+                                }
+                                j = past;
+                            }
                         }
                     }
                 }
                 parts.push((false, std::mem::take(&mut text)));
-                parts.push((true, chars[i..j].iter().collect()));
+                parts.push((true, written.unwrap_or_else(|| chars[i..j].iter().collect())));
                 i = j;
                 continue;
             }
@@ -598,4 +636,15 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, String> {
     }
     told(rest, &mut out);
     Ok(out)
+}
+
+/// Whether a mark stands written at that place in a run of characters.
+fn at_word(chars: &[char], at: usize, mark: &str) -> bool {
+    !mark.is_empty() && chars.len() >= at + mark.chars().count() && chars[at..].iter().zip(mark.chars()).all(|(c, m)| *c == m)
+}
+
+/// Where a mark next stands, from that place onwards; nothing where it
+/// stands nowhere after it.
+fn word_at(chars: &[char], from: usize, mark: &str) -> Option<usize> {
+    (from..chars.len()).find(|at| at_word(chars, *at, mark))
 }

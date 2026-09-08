@@ -424,6 +424,17 @@ enum Piece {
 /// Cut a string with values woven in (ext.lexical.interpolating_quotes)
 /// into pieces: `$name`, `$name[i]` with a plain index, and `{$expr}`
 /// are code, the rest text. Char positions listed in `plain` are text.
+/// Whether a mark stands written at that place in a run of letters.
+fn written_at(cs: &[char], at: usize, mark: &str) -> bool {
+    !mark.is_empty() && cs.len() >= at + mark.chars().count() && cs[at..].iter().zip(mark.chars()).all(|(c, m)| *c == m)
+}
+
+/// Where a mark next stands from that place on, and nothing where it
+/// stands nowhere after it.
+fn next_written(cs: &[char], from: usize, mark: &str) -> Option<usize> {
+    (from..cs.len()).find(|at| written_at(cs, *at, mark))
+}
+
 fn pieces(s: &str, plain: &[usize], table: &Table) -> Vec<Piece> {
     let sigil = table.letter("identifier.variable_prefix");
     let cs: Vec<char> = s.chars().collect();
@@ -453,16 +464,57 @@ fn pieces(s: &str, plain: &[usize], table: &Table) -> Vec<Piece> {
             while end < cs.len() && table.extends_name(cs[end]) {
                 end += 1;
             }
-            if cs.get(end) == Some(&'[') {
-                let inside: String = cs[end + 1..].iter().take_while(|c| **c != ']').collect();
-                let closed = cs.get(end + 1 + inside.chars().count()) == Some(&']');
-                let plain_index = !inside.is_empty() && (inside.chars().all(|c| c.is_ascii_digit()) || inside.starts_with(|c| Some(c) == sigil));
-                if closed && plain_index {
-                    end += inside.chars().count() + 2;
+            // One step beyond the binding comes with it, which is the
+            // whole of this shorter way of writing: a place asked for
+            // in brackets, or a member asked for after the member mark.
+            // Anything longer wants the braces that take code entire.
+            let mut said: Option<String> = None;
+            let mut took_step = false;
+            if let (Some(shut), Some(opener)) = (table.single("op.index.close"), table.single("op.index.open")) {
+                if written_at(&cs, end, opener) {
+                    let after = end + opener.chars().count();
+                    if let Some(stop) = next_written(&cs, after, shut) {
+                        let inside: String = cs[after..stop].iter().collect();
+                        let all_digits = !inside.is_empty() && inside.chars().all(|c| c.is_ascii_digit());
+                        let a_name = inside.chars().next().map_or(false, |c| Some(c) == sigil);
+                        let a_word = inside.chars().next().map_or(false, |c| table.begins_name(c))
+                            && inside.chars().all(|c| table.extends_name(c));
+                        let beyond = stop + shut.chars().count();
+                        if all_digits || a_name {
+                            end = beyond;
+                            took_step = true;
+                        } else if a_word {
+                            // A word written bare between the brackets
+                            // asks for the text it spells, not a name,
+                            // so it is handed on written as text.
+                            let quotes = table.strings("lexical.raw_quotes");
+                            let any = table.strings("lexical.string_quotes");
+                            if let Some(mark) = quotes.first().or_else(|| any.first()) {
+                                let held: String = cs[at..end].iter().collect();
+                                said = Some(format!("{held}{opener}{mark}{inside}{mark}{shut}"));
+                                end = beyond;
+                                took_step = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if !took_step {
+                if let Some(mark) = table.single("ext.op.member") {
+                    if written_at(&cs, end, mark) {
+                        let after = end + mark.chars().count();
+                        if cs.get(after).map_or(false, |c| table.begins_name(*c)) {
+                            let mut beyond = after + 1;
+                            while beyond < cs.len() && table.extends_name(cs[beyond]) {
+                                beyond += 1;
+                            }
+                            end = beyond;
+                        }
+                    }
                 }
             }
             out.push(Piece::Text(std::mem::take(&mut text)));
-            out.push(Piece::Code(cs[at..end].iter().collect()));
+            out.push(Piece::Code(said.unwrap_or_else(|| cs[at..end].iter().collect())));
             at = end;
             continue;
         }
