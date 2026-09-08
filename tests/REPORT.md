@@ -19,20 +19,20 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 73, differs 5, error 26, skipped 10 | pass 73, differs 5, error 26, skipped 10 |
 | `php/func` | 14 | pass 13, differs 0, error 1, skipped 0 | pass 13, differs 0, error 1, skipped 0 |
-| `php/lang` | 213 | pass 114, differs 42, error 52, skipped 5 | pass 114, differs 42, error 52, skipped 5 |
+| `php/lang` | 213 | pass 115, differs 43, error 50, skipped 5 | pass 115, differs 43, error 50, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
-| `php/lang/operators` | 64 | pass 34, differs 21, error 3, skipped 6 | pass 34, differs 21, error 3, skipped 6 |
+| `php/lang/operators` | 64 | pass 34, differs 22, error 2, skipped 6 | pass 34, differs 22, error 2, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 239, differs 76, error 82, skipped 25 | pass 239, differs 76, error 82, skipped 25 |
+| all | 422 | pass 240, differs 78, error 79, skipped 25 | pass 240, differs 78, error 79, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 76 |
+| ran, printed something else | 78 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
-| Fatal error: Uncaught Error: Undefined variable: Iterator in <file> | 5 |
+| Fatal error: Uncaught Error: Undefined variable: iterator in <file> | 5 |
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
 | Fatal error: Uncaught Error: Undefined variable: current in <file> | 3 |
@@ -44,7 +44,6 @@ is listed, since the full kernels are meant to behave alike.
 | Unexpected token: & | 2 |
 | Fatal error: Uncaught Error: Only a class can be made into an object in <file> | 2 |
 | no --FILE-- section | 2 |
-| Fatal error: Uncaught Error: Undefined variable: StdClass in <file> | 2 |
 | Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> | 2 |
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> | 1 |
@@ -60,14 +59,15 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: serialize in <file> | 1 |
 | skip Run only on Windows | 1 |
 | Fatal error: Uncaught Error: Undefined variable: INF in <file> | 1 |
-| Fatal error: Uncaught Error: Undefined variable: InfiniteIterator in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: infiniteiterator in <file> | 1 |
 | Shutdown | 1 |
 | Fatal error: Uncaught Error: Unexpected token: ; in <file> | 1 |
 | Fatal error: Uncaught Error: Unexpected token: += in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: call_user_func in <file> | 1 |
 | skip Can't find german locale | 1 |
-| Fatal error: Uncaught Error: Cannot reach 'b' in B in <file> | 1 |
-| Fatal error: Uncaught Error: Cannot reach 'B' in B in <file> | 1 |
+| Fatal error: Uncaught Error: Cannot reach 'b' in null in <file> | 1 |
+| Fatal error: Uncaught Error: Cannot reach 'B' in null in <file> | 1 |
+| Fatal error: Uncaught Error: Cannot call 'foo' on a value that is not a class in <file> | 1 |
 
 ### Reserved words: 55 of 68 spelled
 
@@ -307,7 +307,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/timeout_variation_2.phpt` | skipped | skipped | skip Windows only test |
 | `php/basic/timeout_variation_4.phpt` | skipped | skipped | skip Windows only test |
 | `php/basic/timeout_variation_7.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: INF in <file> |
-| `php/basic/timeout_variation_8.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: InfiniteIterator in <file> |
+| `php/basic/timeout_variation_8.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: infiniteiterator in <file> |
 | `php/basic/timeout_variation_9.phpt` | skipped | skipped | skip Windows only test |
 | `php/func/001.phpt` | pass | pass |  |
 | `php/func/002.phpt` | pass | pass |  |
@@ -361,8 +361,8 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/038.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
 | `php/lang/039.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
 | `php/lang/040.phpt` | pass | pass |  |
-| `php/lang/041.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'b' in B in <file> |
-| `php/lang/042.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'B' in B in <file> |
+| `php/lang/041.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'b' in null in <file> |
+| `php/lang/042.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'B' in null in <file> |
 | `php/lang/043.phpt` | error | error | Fatal error: Uncaught Error: Cannot call 'foo' on a value that is not a class in <file> |
 | `php/lang/044.phpt` | error | error | Fatal error: Uncaught Error: Call to undefined method A::$methodname() in <file> |
 | `php/lang/045.phpt` | error | error | Fatal error: Maximum execution time of 1 second exceeded in <file> |
@@ -385,7 +385,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug22510.phpt` | pass | pass |  |
 | `php/lang/bug22592.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug23279.phpt` | error | error | thrown in <file> |
-| `php/lang/bug23384.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: Foo in <file> |
+| `php/lang/bug23384.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: foo in <file> |
 | `php/lang/bug23489.phpt` | pass | pass |  |
 | `php/lang/bug23524.phpt` | pass | pass |  |
 | `php/lang/bug23584.phpt` | differs | differs | ran, printed something else |
@@ -436,12 +436,12 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug73172.phpt` | pass | pass |  |
 | `php/lang/bug73329.phpt` | pass | pass |  |
 | `php/lang/bug7515.phpt` | pass | pass |  |
-| `php/lang/catchable_error_001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: StdClass in <file> |
+| `php/lang/catchable_error_001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/catchable_error_002.phpt` | differs | differs | ran, printed something else |
 | `php/lang/comments.phpt` | pass | pass |  |
 | `php/lang/comments2.phpt` | skipped | skipped | no --FILE-- section |
 | `php/lang/compare_objects_basic1.phpt` | pass | pass |  |
-| `php/lang/compare_objects_basic2.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: DateTime in <file> |
+| `php/lang/compare_objects_basic2.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: datetime in <file> |
 | `php/lang/constants/PHP_INT_32bit.phpt` | skipped | skipped | skip this test is for 32-bit platforms only |
 | `php/lang/constants/PHP_INT_64bit.phpt` | pass | pass |  |
 | `php/lang/empty_variation.phpt` | pass | pass |  |
@@ -471,18 +471,18 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/foreachLoop.015.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
 | `php/lang/foreachLoop.016.phpt` | error | error | A foreach that hands out its items for writing needs a named array |
 | `php/lang/foreachLoop.017.phpt` | pass | pass |  |
-| `php/lang/foreachLoopIterator.001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: Iterator in <file> |
-| `php/lang/foreachLoopIterator.002.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: Iterator in <file> |
-| `php/lang/foreachLoopIteratorAggregate.001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: Iterator in <file> |
-| `php/lang/foreachLoopIteratorAggregate.002.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: IteratorAggregate in <file> |
-| `php/lang/foreachLoopIteratorAggregate.003.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: Iterator in <file> |
-| `php/lang/foreachLoopIteratorAggregate.004.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: Iterator in <file> |
+| `php/lang/foreachLoopIterator.001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: iterator in <file> |
+| `php/lang/foreachLoopIterator.002.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: iterator in <file> |
+| `php/lang/foreachLoopIteratorAggregate.001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: iterator in <file> |
+| `php/lang/foreachLoopIteratorAggregate.002.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: iteratoraggregate in <file> |
+| `php/lang/foreachLoopIteratorAggregate.003.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: iterator in <file> |
+| `php/lang/foreachLoopIteratorAggregate.004.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: iterator in <file> |
 | `php/lang/foreachLoopObjects.001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/foreachLoopObjects.002.phpt` | differs | differs | ran, printed something else |
 | `php/lang/foreachLoopObjects.003.phpt` | error | error | Fatal error: Uncaught Error: Array index 2 out of bounds (length: 2) in <file> |
 | `php/lang/foreachLoopObjects.004.phpt` | error | error | Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> |
 | `php/lang/foreachLoopObjects.005.phpt` | error | error | Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> |
-| `php/lang/foreachLoopObjects.006.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: stdclass in <file> |
+| `php/lang/foreachLoopObjects.006.phpt` | pass | pass |  |
 | `php/lang/foreach_with_object_001.phpt` | pass | pass |  |
 | `php/lang/foreach_with_references_001.phpt` | pass | pass |  |
 | `php/lang/func_get_arg.001.phpt` | differs | differs | ran, printed something else |
@@ -526,7 +526,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/bitwiseShiftRight_variationStr2.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseXor_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseXor_variationStr.phpt` | pass | pass |  |
-| `php/lang/operators/coalesce.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: StdClass in <file> |
+| `php/lang/operators/coalesce.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/divide_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/divide_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/modulus_basiclong_64bit.phpt` | differs | differs | ran, printed something else |

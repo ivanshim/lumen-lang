@@ -384,10 +384,21 @@ impl Class {
     }
 
     /// Whether this class is that one, stands on it, or answers to it.
+    /// Loosely, how the name is written is not part of it.
+    pub fn named(&self, name: &str, loosely: bool) -> bool {
+        let same = match loosely {
+            true => self.name.eq_ignore_ascii_case(name),
+            false => self.name == name,
+        };
+        same
+            || self.base.as_ref().map_or(false, |b| b.named(name, loosely))
+            || self.answers.iter().any(|a| a.named(name, loosely))
+    }
+
+    /// Whether this class is that one, stands on it, or answers to it,
+    /// the name written just as it is.
     pub fn descends_from(&self, name: &str) -> bool {
-        self.name == name
-            || self.base.as_ref().map_or(false, |b| b.descends_from(name))
-            || self.answers.iter().any(|a| a.descends_from(name))
+        self.named(name, false)
     }
 
     /// Every property an object of this class begins with, those it

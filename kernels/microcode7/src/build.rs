@@ -1256,10 +1256,12 @@ impl<'a> Builder<'a> {
         // kept value and each constant, in the order the plan names them.
         let mut values = Vec::new();
         if let Some(under) = &under {
-            values.push(self.read(under));
+            let under = self.class_binding(under);
+            values.push(self.read(&under));
         }
         for named in &answers {
-            let read = self.read(named);
+            let named = self.class_binding(named);
+            let read = self.read(&named);
             values.push(read);
         }
         let names = |parts: Vec<(String, Form)>, values: &mut Vec<Form>| -> Vec<String> {
@@ -1276,7 +1278,8 @@ impl<'a> Builder<'a> {
         let constant_names = names(constants, &mut values);
         let plan = Plan { name: name.clone(), answers: answers.len(), field_names, shared_names, constant_names, methods, extends: under.is_some() };
         let made = Form::Class { plan: Rc::new(plan), values };
-        let slot = self.global_address(&name);
+        let bound = self.class_binding(&name);
+        let slot = self.global_address(&bound);
         let written = Form::Write(slot, Box::new(made));
         let mut items: Vec<Form> = self.statics.drain(statics_before..).collect();
         if items.is_empty() {
@@ -2667,6 +2670,10 @@ impl<'a> Builder<'a> {
                     let spells = self.expr(0)?;
                     self.need_sign(table.single("op.index.close").unwrap(), "after the name of the binding")?;
                     return self.subscript(Form::Called(Box::new(spells)));
+                } else if table.single("ext.op.scope").map_or(false, |m| self.sign(m)) {
+                    // A name written before the scope mark names a
+                    // class, so it is read as one.
+                    self.read_class(&t.lexeme)?
                 } else {
                     self.read(&t.lexeme)
                 }
@@ -3028,20 +3035,33 @@ impl<'a> Builder<'a> {
         Ok(prim_call(Prim::Standing, asked))
     }
 
+    /// The name a class is bound under. Where a language lets a class
+    /// go by its name however the name is written, every class binds
+    /// its name written small, so that each way of writing it arrives.
+    fn class_binding(&self, name: &str) -> String {
+        match self.table.flag("ext.system.class.folded") {
+            true => name.to_lowercase(),
+            false => name.to_string(),
+        }
+    }
+
     /// The class a name stands for: `self` names the class being read
     /// and `parent` the one it is built on.
     fn read_class(&mut self, name: &str) -> Res<Form> {
         let table = self.table;
         if table.spells("ext.stmt.class.self", name) {
             let (here, _) = self.within.clone().ok_or_else(|| format!("'{}' belongs inside a class", name))?;
+            let here = self.class_binding(&here);
             return Ok(self.read(&here));
         }
         if table.spells("ext.stmt.class.parent", name) {
             let (here, under) = self.within.clone().ok_or_else(|| format!("'{}' belongs inside a class", name))?;
             let under = under.ok_or_else(|| format!("Class {} is built on nothing", here))?;
+            let under = self.class_binding(&under);
             return Ok(self.read(&under));
         }
-        Ok(self.read(name))
+        let bound = self.class_binding(name);
+        Ok(self.read(&bound))
     }
 
     /// `thing->member` and `class::member`, in a chain.

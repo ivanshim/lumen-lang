@@ -426,6 +426,7 @@
   "ext.op.index.makes": true,
   "ext.op.index.text": true,
   "ext.op.spelled": true,
+  "ext.system.class.folded": true,
   "ext.builtin.output.hold": [
     "__output_hold"
   ],

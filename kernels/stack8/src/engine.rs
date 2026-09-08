@@ -399,7 +399,7 @@ impl<'a> Engine<'a> {
 
     fn as_fault(&mut self, told: &str) -> Option<Value> {
         let named = self.class_for(told)?;
-        let Some(Value::Class(class)) = self.lookup(&named).cloned() else { return None };
+        let Some(Value::Class(class)) = self.class_named(&named).cloned() else { return None };
         self.hurled_at.set(self.line);
         self.made += 1;
         let mut fields = class.all_fields();
@@ -440,9 +440,22 @@ impl<'a> Engine<'a> {
         if !self.lang.spelled_stands {
             return v;
         }
-        match self.lookup(name) {
+        match self.class_named(name) {
             Some(found @ (Value::Class(_) | Value::Routine(_))) => found.clone(),
             _ => v,
+        }
+    }
+
+    /// The outermost binding of that name. Where a language knows a
+    /// class by its name however the name is written, a name nothing
+    /// answers to is tried again with every letter made small.
+    fn class_named(&self, name: &str) -> Option<&Value> {
+        if let found @ Some(_) = self.lookup(name) {
+            return found;
+        }
+        match self.lang.classes_folded {
+            true => self.lookup(&name.to_lowercase()),
+            false => None,
         }
     }
 
@@ -1424,7 +1437,7 @@ impl<'a> Engine<'a> {
                 return self.invoke(&method, all);
             }
             Action::Kindred(name) => match self.drop_top()? {
-                Value::Object(o) => Value::Flag(o.class.descends_from(&name)),
+                Value::Object(o) => Value::Flag(o.class.named(&name, self.lang.classes_folded)),
                 _ => Value::Flag(false),
             },
             Action::Twin => {
@@ -1432,7 +1445,7 @@ impl<'a> Engine<'a> {
                 top
             }
             Action::Matches(names) => match self.drop_top()? {
-                Value::Object(o) => Value::Flag(names.iter().any(|n| o.class.descends_from(n))),
+                Value::Object(o) => Value::Flag(names.iter().any(|n| o.class.named(n, self.lang.classes_folded))),
                 _ => Value::Flag(false),
             },
             Action::Hurl => {

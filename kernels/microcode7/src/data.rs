@@ -354,9 +354,18 @@ impl Blueprint {
     }
 
     pub fn built_on(&self, name: &str) -> bool {
-        self.name == name
-            || self.under.as_ref().map_or(false, |u| u.built_on(name))
-            || self.answers.iter().any(|a| a.built_on(name))
+        self.goes_by(name, false)
+    }
+
+    /// The same, save that letters written large and small may be
+    /// counted the one letter where a language asks for that.
+    pub fn goes_by(&self, name: &str, either_way: bool) -> bool {
+        let it = match either_way {
+            true => self.name.eq_ignore_ascii_case(name),
+            false => self.name == name,
+        };
+        it || self.under.as_ref().map_or(false, |u| u.goes_by(name, either_way))
+            || self.answers.iter().any(|a| a.goes_by(name, either_way))
     }
 
     /// Every property a thing of this class starts with, what it is

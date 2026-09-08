@@ -288,6 +288,8 @@ pub struct Lang {
     /// those being the only ones still there to be looked up as the run
     /// goes.
     pub spelled_stands: bool,
+    /// Whether a class is known by its name however the name is written.
+    pub classes_folded: bool,
     /// What a language says when a builtin that reads what the running
     /// call was handed is reached where no call is running, one for each
     /// of the three; and what it says of a place below the first or past
@@ -435,7 +437,7 @@ w ext.op.name_by_value | b ext.op.cast | w ext.stmt.unpack
 w ext.system.source.routine | w ext.system.source.class | w ext.system.source.method
 b ext.op.member.by_value | b ext.op.index.text | w ext.system.globals
 w ext.op.reference.unshared.written | w ext.op.reference.unshared.given | w ext.op.reference.unshared.handed
-w ext.stmt.block.instead | w ext.stmt.block.instead.close | b ext.op.spelled
+w ext.stmt.block.instead | w ext.stmt.block.instead.close | b ext.op.spelled | b ext.system.class.folded
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 ";
@@ -1082,6 +1084,7 @@ impl Lang {
             instead_closes: r.strings("ext.stmt.block.instead.close")?,
             do_words: r.strings("ext.stmt.do")?,
             spelled_stands: r.flag("ext.op.spelled")?,
+            classes_folded: r.flag("ext.system.class.folded")?,
             args_outside_all: r.head("ext.builtin.args.all.outside")?,
             args_outside_count: r.head("ext.builtin.args.count.outside")?,
             args_outside_at: r.head("ext.builtin.args.at.outside")?,

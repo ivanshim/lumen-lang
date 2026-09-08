@@ -128,6 +128,8 @@ pub struct Machine<'a> {
     /// Whether a piece of text spelling the name of a routine or a class
     /// may stand where the routine or class itself would.
     spelled_stands: bool,
+    /// Whether a class goes by its name however the name is written.
+    classes_either_way: bool,
     /// Pieces of text this language holds untrue past text with nothing
     /// in it, and whether an array with nothing in it is untrue.
     false_words: Vec<String>,
@@ -177,6 +179,7 @@ impl<'a> Machine<'a> {
             builds_places: table.flag("ext.op.index.makes"),
             letter_places: table.flag("ext.op.index.text"),
             spelled_stands: table.flag("ext.op.spelled"),
+            classes_either_way: table.flag("ext.system.class.folded"),
             false_words: table.strings("ext.system.untrue.text").to_vec(),
             hollow_is_false: table.flag("ext.system.untrue.empty_array"),
             complaint_words: COMPLAINT_LABELS
@@ -304,9 +307,22 @@ impl<'a> Machine<'a> {
         if !self.spelled_stands {
             return v;
         }
-        match self.lookup(name) {
+        match self.class_bound(name) {
             Some(found @ (Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..))) => found.clone(),
             _ => v,
+        }
+    }
+
+    /// The outermost binding of that name. Where classes go by their
+    /// names however the names are written, a name nothing stands
+    /// under is asked for again with its letters written small.
+    fn class_bound(&self, name: &str) -> Option<Value> {
+        if let found @ Some(_) = self.lookup(name) {
+            return found;
+        }
+        match self.classes_either_way {
+            true => self.lookup(&name.to_lowercase()),
+            false => None,
         }
     }
 
@@ -540,7 +556,7 @@ impl<'a> Machine<'a> {
 
     fn as_raised(&mut self, told: &str) -> Option<Value> {
         let named = self.class_of_fault(told)?;
-        let Some(Value::Blueprint(of)) = self.lookup(&named) else { return None };
+        let Some(Value::Blueprint(of)) = self.class_bound(&named) else { return None };
         self.made += 1;
         let mut holds = of.every_field();
         match holds.iter_mut().find(|(k, _)| k == "message") {
@@ -1029,7 +1045,9 @@ impl<'a> Machine<'a> {
                             _ => None,
                         };
                         let taken = clauses.iter().find(|clause| {
-                            of.as_ref().map_or(false, |o| clause.classes.iter().any(|name| o.built_on(name)))
+                            of.as_ref().map_or(false, |o| {
+                                clause.classes.iter().any(|name| o.goes_by(name, self.classes_either_way))
+                            })
                         });
                         match taken {
                             Some(clause) => {
@@ -1682,7 +1700,7 @@ impl<'a> Machine<'a> {
             Prim::Akin => {
                 n(2)?;
                 match &v[0] {
-                    Value::Thing(thing) => Value::Flag(thing.of.built_on(&v[1].bare())),
+                    Value::Thing(thing) => Value::Flag(thing.of.goes_by(&v[1].bare(), self.classes_either_way)),
                     _ => Value::Flag(false),
                 }
             }

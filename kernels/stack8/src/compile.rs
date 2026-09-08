@@ -1841,11 +1841,13 @@ impl<'a> Compiler<'a> {
         // every value of its own and every constant, in that order.
         let mut argc = 0;
         if let Some(base) = &base {
-            self.read(base);
+            let base = self.class_key(base);
+            self.read(&base);
             argc += 1;
         }
         for named in &answers {
-            self.read(named);
+            let named = self.class_key(named);
+            self.read(&named);
             argc += 1;
         }
         let names = |parts: Vec<(String, Vec<Instr>)>, a: &mut Self, argc: &mut usize| {
@@ -1866,7 +1868,8 @@ impl<'a> Compiler<'a> {
         let constant_names = names(constants, self, &mut argc);
         let plan = Plan { name: name.clone(), answers: answers.len(), field_names, shared_names, constant_names, methods, extends: base.is_some() };
         self.act(Action::Forge(Rc::new(plan)), argc);
-        self.write_global(&name);
+        let filed = self.class_key(&name);
+        self.write_global(&filed);
         Ok(())
     }
 
@@ -2908,6 +2911,11 @@ impl<'a> Compiler<'a> {
                             self.want_sign(&index.close, "after the name of the binding")?;
                             self.act(Action::Named, 1);
                         }
+                        // A name written before the scope mark names a
+                        // class, so it is read as one.
+                        _ if lang.scope_mark.as_ref().map_or(false, |m| self.at_symbol(m)) => {
+                            self.read_class(&tok.lexeme)?;
+                        }
                         _ => self.read(&tok.lexeme),
                     }
                 }
@@ -2944,22 +2952,35 @@ impl<'a> Compiler<'a> {
         self.indexing(from)
     }
 
+    /// The name a class is filed under. Where a language knows a class
+    /// by its name however the name is written, every class is filed
+    /// with its letters made small, so that each spelling finds it.
+    fn class_key(&self, name: &str) -> String {
+        match self.lang.classes_folded {
+            true => name.to_lowercase(),
+            false => name.to_string(),
+        }
+    }
+
     /// The class a name stands for: `self` and `parent` name the class
     /// being read and the one it stands on.
     fn read_class(&mut self, name: &str) -> Res<()> {
         let lang = self.lang;
         if Lang::spells(&lang.self_words, name) {
             let (here, _) = self.within.clone().ok_or_else(|| format!("'{}' belongs inside a class", name))?;
+            let here = self.class_key(&here);
             self.read(&here);
             return Ok(());
         }
         if Lang::spells(&lang.parent_words, name) {
             let (here, base) = self.within.clone().ok_or_else(|| format!("'{}' belongs inside a class", name))?;
             let base = base.ok_or_else(|| format!("Class {} stands on nothing", here))?;
+            let base = self.class_key(&base);
             self.read(&base);
             return Ok(());
         }
-        self.read(name);
+        let named = self.class_key(name);
+        self.read(&named);
         Ok(())
     }
 

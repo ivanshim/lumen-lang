@@ -464,6 +464,14 @@ only. The extension labels so far, all from PHP:
   whatever happens when text is asked to be a class. It differs from
   `ext.op.name_by_value` in having no mark of its own: the value simply
   stands where the name would.
+- `ext.system.class.folded`: a switch; a class goes by its name however
+  the name is written, so `stdClass`, `StdClass` and `stdclass` all name
+  the one class, in a `new`, in a class it is built on, in a `catch`, on
+  the right of an `instanceof` and where a name reaches a member of it.
+  Only classes: bindings, constants and the names of members are told
+  apart by how they are written, as they were before. A class keeps the
+  spelling it was declared with, which is what is answered when a
+  program asks a thing what class it is of.
 - `ext.builtin.output.hold`, `.held`, `.drop` and `.depth`: keeping
   what the run writes out instead of letting it go. The first begins a
   keeping, the second answers with what has been kept since that
@@ -1102,6 +1110,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.try` | - | - | - | - | - | - | - | `try` | - | - |
 | `ext.stmt.unpack` | - | - | - | - | - | - | - | `list` | - | - |
 | `ext.syntax.call.bare` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.system.class.folded` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.system.complaint.deprecated` | - | - | - | - | - | - | - | `Deprecated` | - | - |
 | `ext.system.complaint.fatal` | - | - | - | - | - | - | - | `Fatal error` | - | - |
 | `ext.system.complaint.notice` | - | - | - | - | - | - | - | `Notice` | - | - |
