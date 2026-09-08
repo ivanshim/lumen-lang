@@ -17,18 +17,18 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 71, differs 7, error 26, skipped 10 | pass 71, differs 7, error 26, skipped 10 |
+| `php/basic` | 114 | pass 73, differs 5, error 26, skipped 10 | pass 73, differs 5, error 26, skipped 10 |
 | `php/func` | 14 | pass 13, differs 0, error 1, skipped 0 | pass 13, differs 0, error 1, skipped 0 |
 | `php/lang` | 213 | pass 114, differs 42, error 52, skipped 5 | pass 114, differs 42, error 52, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 21, error 3, skipped 6 | pass 34, differs 21, error 3, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 237, differs 78, error 82, skipped 25 | pass 237, differs 78, error 82, skipped 25 |
+| all | 422 | pass 239, differs 76, error 82, skipped 25 | pass 239, differs 76, error 82, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 78 |
+| ran, printed something else | 76 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
@@ -278,7 +278,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/header_register_callback_after_output.phpt` | error | error | Unexpected token: { |
 | `php/basic/header_register_callback_trampoline.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> |
 | `php/basic/header_register_callback_trampoline_after_headers_sent.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> |
-| `php/basic/ini_directive_deprecated_report_memleaks.phpt` | differs | differs | ran, printed something else |
+| `php/basic/ini_directive_deprecated_report_memleaks.phpt` | pass | pass |  |
 | `php/basic/ini_parse_quantity_basic.phpt` | pass | pass |  |
 | `php/basic/ini_parse_quantity_warnings.phpt` | pass | pass |  |
 | `php/basic/precision.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: serialize in <file> |
@@ -297,7 +297,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/rfc1867_max_file_size.phpt` | pass | pass |  |
 | `php/basic/rfc1867_max_file_uploads_empty_files.phpt` | pass | pass |  |
 | `php/basic/rfc1867_missing_boundary.phpt` | pass | pass |  |
-| `php/basic/rfc1867_missing_boundary_2.phpt` | differs | differs | ran, printed something else |
+| `php/basic/rfc1867_missing_boundary_2.phpt` | pass | pass |  |
 | `php/basic/rfc1867_multiple_webkitdirectory.phpt` | pass | pass |  |
 | `php/basic/rfc1867_post_max_filesize.phpt` | pass | pass |  |
 | `php/basic/rfc1867_post_max_size.phpt` | pass | pass |  |

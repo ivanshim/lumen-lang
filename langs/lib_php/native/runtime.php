@@ -58,6 +58,17 @@ define("PHP_OUTPUT_HANDLER_CONT", 0);
 // and with no routine of its own in the way.
 // What the host found amiss in the request before the program ran is
 // said first of all, as PHP says it.
+// A setting on its way out is said to be, before the program runs.
+function __say_settings_outworn() {
+    global $__started_with;
+    if (!is_array($__started_with)) { return null; }
+    foreach ($__started_with as $name => $said) {
+        if ($name === "report_memleaks") {
+            echo "\nDeprecated: PHP Startup: Directive '" . $name . "' is deprecated in Unknown on line 0\n";
+        }
+    }
+    return null;
+}
 function __say_request_amiss() {
     global $__request_amiss;
     if (!is_array($__request_amiss)) { return null; }
@@ -73,6 +84,7 @@ $__reporting = __ini_reporting();
 $__error_handler = null;
 __hook_as_needed();
 __say_request_amiss();
+__say_settings_outworn();
 function error_reporting($level = null) {
     global $__reporting;
     $was = $__reporting;

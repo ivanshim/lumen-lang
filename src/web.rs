@@ -248,7 +248,11 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
             break;
         }
         let after = after.strip_prefix(b"\r\n").or_else(|| after.strip_prefix(b"\n")).unwrap_or(after);
-        let end = find_bytes(after, mark.as_bytes()).unwrap_or(after.len());
+        // A part the closing mark never comes after was cut short: what
+        // it holds is only half of it, so none of it is kept.
+        let shut = find_bytes(after, mark.as_bytes());
+        let cut_short = shut.is_none();
+        let end = shut.unwrap_or(after.len());
         let piece = &after[..end];
         let head_end = find_bytes(piece, b"\r\n\r\n").map(|p| (p, 4)).or_else(|| find_bytes(piece, b"\n\n").map(|p| (p, 2)));
         rest = &after[end.min(after.len())..];
@@ -306,7 +310,7 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
                 // The file is written out, since a program is given the
                 // place it lies in rather than what it holds.
                 let held = env::temp_dir().join(format!("lumenup{}{}", std::process::id(), files));
-                let written = !none_sent && !too_large && std::fs::write(&held, content).is_ok();
+                let written = !none_sent && !too_large && !cut_short && std::fs::write(&held, content).is_ok();
                 let place = held.to_string_lossy().into_owned();
                 // A part that says nothing of its name is kept by its
                 // turn among the files.
@@ -328,19 +332,24 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
                 for (what, value, counted) in [
                     ("name", called, false),
                     ("full_path", filename, false),
-                    ("type", if none_sent || too_large { nothing.clone() } else { kind.clone() }, false),
+                    ("type", if none_sent || too_large || cut_short { nothing.clone() } else { kind.clone() }, false),
                     ("tmp_name", if written { place } else { nothing.clone() }, false),
                     // 0: it came. 2: it was larger than the form said it
                     // would take. 4: none was sent. 1: it came and could
                     // not be put anywhere.
-                    ("error", match (none_sent, too_large, written) {
+                    // 0: it came. 3: only half of it came. 2: it was
+                    // larger than the form said it would take. 1: larger
+                    // than the run was told to take, or it came and could
+                    // not be put anywhere. 4: none was sent.
+                    ("error", match (none_sent, cut_short, too_large, written) {
                         (true, ..) => "4".to_string(),
-                        (_, true, _) if past_limit => "1".to_string(),
-                        (_, true, _) => "2".to_string(),
+                        (_, true, ..) => "3".to_string(),
+                        (_, _, true, _) if past_limit => "1".to_string(),
+                        (_, _, true, _) => "2".to_string(),
                         (.., true) => "0".to_string(),
                         _ => "1".to_string(),
                     }, true),
-                    ("size", if none_sent || too_large { "0".to_string() } else { content.len().to_string() }, true),
+                    ("size", if none_sent || too_large || cut_short { "0".to_string() } else { content.len().to_string() }, true),
                 ] {
                     let path = match deeper {
                         Some(rest) => format!("{first}{BETWEEN_STEPS}{what}{BETWEEN_STEPS}{rest}"),
