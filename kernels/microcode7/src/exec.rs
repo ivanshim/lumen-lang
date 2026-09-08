@@ -2082,14 +2082,31 @@ impl<'a> Machine<'a> {
         out
     }
 
+    /// Whether a call stands for the run and not for the program: the
+    /// routine the run hands its complaints to is the run's own doing,
+    /// so a trace looks past it to whatever raised the complaint.
+    fn stands_for_the_run(&self, named: &str) -> bool {
+        match self.hearer.borrow().as_ref() {
+            Some(Value::Bound(p, _)) => p.ident == named,
+            Some(Value::Routine(p)) => p.ident == named,
+            Some(v) => matches!(v, Value::Text(t) if t.as_ref() == named),
+            None => false,
+        }
+    }
+
     /// The calls under way, innermost first, each named with where it
     /// was written and what it was handed, and the outermost body last.
     fn calls_told(&self) -> String {
         let mut out = String::from("Stack trace:\n");
-        for (at, call) in self.calls.iter().rev().enumerate() {
+        let mut at = 0;
+        for call in self.calls.iter().rev() {
+            if self.stands_for_the_run(&call.named) {
+                continue;
+            }
             out.push_str(&format!("#{} {}({}): {}({})\n", at, call.from, call.on, self.call_named(call), self.call_handed(call)));
+            at += 1;
         }
-        out.push_str(&format!("#{} {{main}}\n", self.calls.len()));
+        out.push_str(&format!("#{} {{main}}\n", at));
         out
     }
 
@@ -2698,6 +2715,9 @@ impl<'a> Machine<'a> {
                 n(0)?;
                 let mut told = Vec::new();
                 for call in self.calls.iter().rev() {
+                    if self.stands_for_the_run(&call.named) {
+                        continue;
+                    }
                     let mut pairs = vec![
                         (Value::text("file"), Value::text(&call.from)),
                         (Value::text("line"), Value::Small(call.on as i64)),

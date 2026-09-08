@@ -145,7 +145,7 @@ function ini_set($name, $value) {
     $was = ini_get($name);
     if ($name === 'memory_limit') {
         $held = __room_allowed((string)$value);
-        if ($held[1]) { __complain(E_WARNING, __room_said((string)$value, $held[0])); }
+        if ($held[1]) { __complaint_say(__complaint_word(E_WARNING), __room_said((string)$value, $held[0])); }
         $__settings[$name] = $held[0];
         return $was;
     }
@@ -209,14 +209,14 @@ function ini_parse_quantity($text) {
     // that once took such a setting still takes it.
     if ($times > 1) {
         if ($over !== "") {
-            __complain(E_WARNING, 'Invalid quantity "' . $text . '", interpreting as "' . $found . ' ' . $last . '" for backwards compatibility');
+            __complaint_say(__complaint_word(E_WARNING), 'Invalid quantity "' . $text . '", interpreting as "' . $found . ' ' . $last . '" for backwards compatibility');
         }
     } elseif ($over !== "") {
         $mark = ord($last);
         if ($mark >= 97 && $mark <= 122) {
-            __complain(E_WARNING, 'Invalid quantity "' . $text . '": unknown multiplier "' . $last . '", interpreting as "' . $found . '" for backwards compatibility');
+            __complaint_say(__complaint_word(E_WARNING), 'Invalid quantity "' . $text . '": unknown multiplier "' . $last . '", interpreting as "' . $found . '" for backwards compatibility');
         } else {
-            __complain(E_WARNING, 'Invalid quantity "' . $text . '", interpreting as "' . $found . '" for backwards compatibility');
+            __complaint_say(__complaint_word(E_WARNING), 'Invalid quantity "' . $text . '", interpreting as "' . $found . '" for backwards compatibility');
         }
     }
     return $found * $times;
@@ -293,21 +293,6 @@ function __complaint_word($level) {
     if ($level == E_USER_DEPRECATED || $level == E_DEPRECATED) { return "Deprecated"; }
     return "Notice";
 }
-// A complaint the program itself makes: the routine a program put in
-// the way of them takes it, and where there is none it is written out
-// as the run's own complaints are, if its kind is one being said.
-function __complain($level, $message) {
-    global $__error_handler, $__reporting;
-    if ($__error_handler !== null) {
-        $handler = $__error_handler;
-        $handler($level, $message, __FILE__, __LINE__);
-        return true;
-    }
-    if (($__reporting & $level) == 0) { return true; }
-    // Said as the run's own complaints are, so it names the line the
-    // program was on and not one of the library's.
-    return __complaint_say(__complaint_word($level), $message);
-}
 function set_exception_handler($handler) { return null; }
 // A message put where the run keeps them. Sending one on as mail is not
 // something a run of this kind does, so saying to send one with nowhere
@@ -326,7 +311,7 @@ function memory_get_usage($real = false) { return 0; }
 // of text, which is on its way out and said to be.
 function array_key_exists($key, $array) {
     if ($key === null) {
-        __complain(E_DEPRECATED, "Using null as the key parameter for array_key_exists() is deprecated, use an empty string instead");
+        __complaint_say(__complaint_word(E_DEPRECATED), "Using null as the key parameter for array_key_exists() is deprecated, use an empty string instead");
     }
     foreach ($array as $k => $v) {
         if ($k == $key) { return true; }
@@ -556,7 +541,7 @@ if ($__knows_itself && !$__over_the_web) {
     // A run reached over the web has no arguments of its own, so where
     // it is told to know some it takes the words of the query, which the
     // reference says is a thing to be leaving behind.
-    __complain(E_DEPRECATED, "Deriving \$_SERVER['argv'] from the query string is deprecated. Configure register_argc_argv=0 to turn this message off");
+    __complaint_say(__complaint_word(E_DEPRECATED), "Deriving \$_SERVER['argv'] from the query string is deprecated. Configure register_argc_argv=0 to turn this message off");
     $__query = isset($_SERVER['QUERY_STRING']) ? $_SERVER['QUERY_STRING'] : '';
     $_SERVER['argv'] = $__query === '' ? array() : explode('+', $__query);
     $_SERVER['argc'] = count($_SERVER['argv']);
@@ -840,7 +825,20 @@ function register_shutdown_function($work, $a = null, $b = null, $c = null) {
     if ($a !== null) { return __at_end($work, $a); }
     return __at_end($work);
 }
-function trigger_error($message, $level = 1024) { return __complain($level, $message); }
+// A complaint the program itself makes, which names its own kind: the
+// kinds a program raises are told apart from the kinds a run raises,
+// and only the number says which, so the routine in their way is handed
+// the number and not the word the run would use.
+function trigger_error($message, $level = 1024) {
+    global $__error_handler, $__reporting;
+    if ($__error_handler !== null) {
+        $handler = $__error_handler;
+        $handler($level, $message, __FILE__, __LINE__);
+        return true;
+    }
+    if (($__reporting & $level) == 0) { return true; }
+    return __complaint_say(__complaint_word($level), $message);
+}
 function user_error($message, $level = 1024) { return trigger_error($message, $level); }
 // What a file holds. The body of the request the run was started with
 // is a file a program may name, and reads the same however often it is
@@ -861,7 +859,7 @@ function realpath($path) { return $path; }
 function rename($from, $to) {
     $held = __file_read($from);
     if ($held === false) {
-        __complain(E_WARNING, "rename(" . $from . "," . $to . "): No such file or directory");
+        __complaint_say(__complaint_word(E_WARNING), "rename(" . $from . "," . $to . "): No such file or directory");
         return false;
     }
     file_put_contents($to, $held);

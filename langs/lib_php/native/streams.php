@@ -28,7 +28,7 @@ function __stream_at($handle) {
     return $__streams[$handle];
 }
 function __stream_amiss($said, $handle) {
-    __complain(E_WARNING, $said . '(): Argument #1 ($stream) must be of type resource, ' . gettype($handle) . " given");
+    __complaint_say(__complaint_word(E_WARNING), $said . '(): Argument #1 ($stream) must be of type resource, ' . gettype($handle) . " given");
     return false;
 }
 // Where a program is reading, or nothing where a seek took it off the
@@ -61,7 +61,7 @@ function fopen($path, $mode = "r") {
         $held = __file_read($path);
         if ($held === false) {
             if (strpos($mode, "a") === false) {
-                __complain(E_WARNING, "fopen(" . $path . "): Failed to open stream: No such file or directory");
+                __complaint_say(__complaint_word(E_WARNING), "fopen(" . $path . "): Failed to open stream: No such file or directory");
                 return false;
             }
             $held = "";

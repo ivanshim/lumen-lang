@@ -478,11 +478,28 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// Whether a call stands for the run rather than for the program:
+    /// the routine the run hands its complaints to is the run's own
+    /// doing, so a trace looks past it to whatever raised the
+    /// complaint.
+    fn stands_for_the_run(&self, named: &str) -> bool {
+        let put = self.complainer.borrow();
+        match put.as_ref() {
+            Some(Value::Routine(p)) => p.ident == named,
+            Some(v) => matches!(v, Value::Text(t) if t.as_ref() == named),
+            None => false,
+        }
+    }
+
     /// The calls under way, innermost first, each named with where it
     /// was written and what it was given, and the outermost body last.
     fn calls_told(&self) -> String {
         let mut out = String::from("Stack trace:\n");
-        for (at, call) in self.calls.iter().rev().enumerate() {
+        let mut at = 0;
+        for call in self.calls.iter().rev() {
+            if self.stands_for_the_run(&call.named) {
+                continue;
+            }
             let named = match &call.within {
                 Some(class) => format!("{}::{}", class, call.named),
                 None => call.named.to_string(),
@@ -492,8 +509,9 @@ impl<'a> Engine<'a> {
                 None => String::new(),
             };
             out.push_str(&format!("#{} {}({}): {}({})\n", at, call.from, call.on, named, handed));
+            at += 1;
         }
-        out.push_str(&format!("#{} {{main}}\n", self.calls.len()));
+        out.push_str(&format!("#{} {{main}}\n", at));
         out
     }
 
@@ -2999,6 +3017,9 @@ impl<'a> Engine<'a> {
                 arity(0)?;
                 let mut told = Vec::new();
                 for call in self.calls.iter().rev() {
+                    if self.stands_for_the_run(&call.named) {
+                        continue;
+                    }
                     let mut pairs = vec![
                         (Value::text("file"), Value::text(&call.from)),
                         (Value::text("line"), Value::Small(call.on as i64)),
