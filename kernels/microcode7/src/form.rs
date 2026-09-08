@@ -309,6 +309,19 @@ pub enum Form {
     /// Make the outermost binding this value spells a shared cell if it
     /// is not one already, and give the cell back.
     ShareCalled(Box<Form>),
+    /// The cell of a place inside whatever a cell already holds: how a
+    /// place is shared out of something that is no binding of its own,
+    /// such as a property or a class's own value holding an array.
+    ShareWithin(Box<Form>, Vec<Form>),
+    /// Take the place the key names out of what a cell holds, leaving
+    /// the rest of it where it was.
+    ForgetWithin(Box<Form>, Box<Form>),
+    /// Leave the outermost binding this value spells as though nothing
+    /// were ever written to it.
+    ForgetCalled(Box<Form>),
+    /// Make the outermost binding this value spells ready, as the form
+    /// above does for one written out.
+    ReadyCalled(Box<Form>),
     /// Leave this binding as though nothing were ever written to it.
     Forget(Address),
     /// Make this global ready: where nothing was ever written to it,

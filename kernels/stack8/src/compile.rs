@@ -940,6 +940,35 @@ impl<'a> Compiler<'a> {
         self.take();
         let sep = self.lang.calling.as_ref().and_then(|c| c.between.clone());
         loop {
+            // A name worked out as the run goes already spells one of
+            // the outermost bindings, which is what a global is, so
+            // saying so binds nothing further: only the name itself is
+            // worked out, and what it spells made ready to be read.
+            if self.look().shape != Shape::Instr {
+                let seen = self.look().lexeme.clone();
+                let from = self.mark();
+                self.expr(0)?;
+                let read: Vec<Instr> = self.piece().instrs.drain(from..).collect();
+                match read.as_slice() {
+                    [rest @ .., Instr::Act(Action::Named, 1)] => {
+                        let rest = rest.to_vec();
+                        let at = self.mark();
+                        for w in relocated(rest, at as i64 - from as i64) {
+                            self.put(w);
+                        }
+                        self.act(Action::ReadyNamed, 1);
+                        self.discard();
+                    }
+                    _ => return Err(format!("Expected identifier after the global keyword, got '{}'", seen)),
+                }
+                match &sep {
+                    Some(s) if self.at_symbol(s) => {
+                        self.take();
+                        continue;
+                    }
+                    _ => return Ok(()),
+                }
+            }
             let name = self.want_name("after the global keyword")?;
             // A name bound to a global stands for that global whether or
             // not anything was ever written to it, so the global is made
@@ -1008,6 +1037,40 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// Whether the head of a walk, read from where the subject begins,
+    /// carries the mark that hands items out for writing. The subject
+    /// is stepped over by counting the grouping marks, so that a call
+    /// written within it does not look like the end of the head.
+    fn hands_over(&mut self, group: &Brackets) -> Res<bool> {
+        let lang = self.lang;
+        let mark = match &lang.reference_mark {
+            Some(mark) => mark.clone(),
+            None => return Ok(false),
+        };
+        let mut at = self.pos;
+        let mut deep = 0usize;
+        let mut past_as = false;
+        while at < self.tokens.len() {
+            let w = &self.tokens[at];
+            if w.shape == Shape::Sign && w.lexeme == group.open {
+                deep += 1;
+            } else if w.shape == Shape::Sign && w.lexeme == group.close {
+                if deep == 0 {
+                    break;
+                }
+                deep -= 1;
+            } else if !past_as {
+                if deep == 0 && w.shape == Shape::Instr && Lang::spells(&lang.foreach_as_words, &w.lexeme) {
+                    past_as = true;
+                }
+            } else if w.shape == Shape::Sign && w.lexeme == mark {
+                return Ok(true);
+            }
+            at += 1;
+        }
+        Ok(false)
+    }
+
     /// `foreach (a as v)` and `foreach (a as k => v)`: the array or map
     /// held aside, walked by position, its key and value bound each pass.
     fn foreach(&mut self) -> Res<()> {
@@ -1017,14 +1080,28 @@ impl<'a> Compiler<'a> {
         self.want_sign(&group.open, "after foreach")?;
         // A walk that hands out its items for writing walks the binding
         // itself, so that writing an item writes the array it came from.
-        let named = match (self.look().shape, self.look_ahead(1).shape) {
+        let mut named = match (self.look().shape, self.look_ahead(1).shape) {
             (Shape::Instr, Shape::Instr) if Lang::spells(&lang.foreach_as_words, &self.look_ahead(1).lexeme) => {
                 Some(self.take().lexeme)
             }
             _ => None,
         };
         if named.is_none() {
-            self.expr(0)?;
+            // What is walked for its own cells need not be written out
+            // as a name: a place in an array, a member, or a binding
+            // named as the run goes has a cell as well. Where the head
+            // hands items out, such a subject is asked for its cell and
+            // a hidden name fastened to it, which the walk then treats
+            // as the name it was not given.
+            if self.hands_over(&group)? {
+                let held = self.gensym("walked");
+                self.a_cell(&self.lang.unshared_written.clone(), false, None)?;
+                let cell = self.cell_to_write(&held);
+                self.put(Instr::Fasten(cell));
+                named = Some(held);
+            } else {
+                self.expr(0)?;
+            }
         }
         if !self.on_keyword(&lang.foreach_as_words) {
             return Err(format!("Expected '{}' in foreach, got '{}'", lang.foreach_as_words[0], self.look().lexeme));
@@ -2613,6 +2690,31 @@ impl<'a> Compiler<'a> {
                 self.put_away();
                 Ok(())
             }
+            // `$$x op= e`: the name is worked out once and kept, the
+            // binding it spells read under that name, taken with the
+            // value, and what comes of it written back under it.
+            [rest @ .., Instr::Act(Action::Named, 1)] if compound.is_some() => {
+                let rest = rest.to_vec();
+                let op = compound.expect("the operation");
+                let spelling = self.gensym("spelling");
+                for w in relocated(rest, 0) {
+                    self.put(w);
+                }
+                self.write(&spelling);
+                self.read(&spelling);
+                self.act(Action::Named, 1);
+                self.stood_before();
+                self.addend()?;
+                self.act(op, 2);
+                self.kept(keep);
+                let value = self.gensym("value");
+                self.write(&value);
+                self.read(&spelling);
+                self.read(&value);
+                self.act(Action::WriteNamed, 2);
+                self.put_away();
+                Ok(())
+            }
             _ if compound.is_some() => Err(format!("'{}' needs a plain variable on its left", assign)),
             // `$GLOBALS['n'][] = v`: the binding the name spells is read
             // quietly, since a write makes what is not there yet, the
@@ -3251,6 +3353,21 @@ impl<'a> Compiler<'a> {
                     let held = self.cell_to_write(&slot.ident.to_string());
                     self.put(Instr::Forget(held));
                 }
+                // `unset($o->p[k])`, `unset(C::$a[k])`: what holds the
+                // place is asked for its own cell, and the place taken
+                // out of what that cell holds.
+                [.., Instr::Act(Action::At, 2)] if self.footed(&named, from) => {
+                    let (keys, key_at) = keys_apart(&named, from, &self.keyed);
+                    let last = keys.len() - 1;
+                    let holder = named[..key_at[last] - from].to_vec();
+                    self.footing_cell(&holder, from)?;
+                    let at = self.mark();
+                    for w in relocated(keys[last].clone(), at as i64 - key_at[last] as i64) {
+                        self.put(w);
+                    }
+                    self.act(Action::ForgetWithin, 2);
+                    self.discard();
+                }
                 [Instr::Read(slot), index @ .., Instr::Act(Action::At, 2)] => {
                     let name = slot.ident.to_string();
                     let at = self.mark();
@@ -3270,6 +3387,17 @@ impl<'a> Compiler<'a> {
                         self.put(w);
                     }
                     self.act(Action::Uproot(member), 1);
+                    self.discard();
+                }
+                // `unset($$x)`: the name is worked out as the run goes
+                // and the binding it spells left standing for nothing.
+                [rest @ .., Instr::Act(Action::Named, 1)] => {
+                    let rest = rest.to_vec();
+                    let at = self.mark();
+                    for w in relocated(rest, at as i64 - from as i64) {
+                        self.put(w);
+                    }
+                    self.act(Action::ForgetNamed, 1);
                     self.discard();
                 }
                 _ => return Err("Only a name, a place in an array or a property can be forgotten".to_string()),
@@ -3381,6 +3509,75 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// Whether a read of a place in an array stands on something that
+    /// has a cell of its own: a property, a binding named as the run
+    /// goes, or another such place.
+    fn footed(&self, read: &[Instr], from: usize) -> bool {
+        let (keys, key_at) = keys_apart(read, from, &self.keyed);
+        if keys.is_empty() {
+            return false;
+        }
+        matches!(
+            read[..key_at[0] - from],
+            [.., Instr::Act(Action::Grab(_) | Action::Reach(_) | Action::Named, 1)]
+        ) || matches!(read[..key_at[0] - from], [.., Instr::Act(Action::At, 2)])
+    }
+
+    /// The cell of whatever a chain of places stands on, left on the
+    /// stack: a name of its own, a property, a binding named as the run
+    /// goes, or a place in one of those.
+    fn footing_cell(&mut self, read: &[Instr], from: usize) -> Res<()> {
+        match read {
+            [Instr::Read(slot)] if !slot.moving => {
+                let shared = self.cell_to_write(&slot.ident.to_string());
+                self.put(Instr::Bond(shared));
+            }
+            [rest @ .., Instr::Act(Action::Grab(member), 1)] => {
+                let (member, rest) = (member.clone(), rest.to_vec());
+                let at = self.mark();
+                for w in relocated(rest, at as i64 - from as i64) {
+                    self.put(w);
+                }
+                self.act(Action::BondField(member), 1);
+            }
+            [rest @ .., Instr::Act(Action::Reach(member), 1)] => {
+                let (member, rest) = (member.clone(), rest.to_vec());
+                let at = self.mark();
+                for w in relocated(rest, at as i64 - from as i64) {
+                    self.put(w);
+                }
+                self.act(Action::BondOwn(member), 1);
+            }
+            [rest @ .., Instr::Act(Action::Named, 1)] => {
+                let rest = rest.to_vec();
+                let at = self.mark();
+                for w in relocated(rest, at as i64 - from as i64) {
+                    self.put(w);
+                }
+                self.act(Action::BondNamed, 1);
+            }
+            [.., Instr::Act(Action::At, 2)] => {
+                let (keys, key_at) = keys_apart(read, from, &self.keyed);
+                if keys.is_empty() {
+                    return Err("Only a place in a named array has a cell to share".to_string());
+                }
+                let under = read[..key_at[0] - from].to_vec();
+                self.footing_cell(&under, from)?;
+                for (i, key) in keys.iter().enumerate() {
+                    let at = self.mark();
+                    for w in relocated(key.clone(), at as i64 - key_at[i] as i64) {
+                        self.put(w);
+                    }
+                }
+                self.put(Instr::Hush(true));
+                self.act(Action::BondWithin(keys.len()), keys.len() + 1);
+                self.put(Instr::Hush(false));
+            }
+            _ => return Err("Only a place in a named array has a cell to share".to_string()),
+        }
+        Ok(())
+    }
+
     /// What stands after the mark that shares a cell: a name, a place in
     /// an array, or a property. Whichever it is, a cell is made of it
     /// where it is not one already and left on the stack, so a name may
@@ -3408,6 +3605,16 @@ impl<'a> Compiler<'a> {
                 }
                 self.act(Action::BondField(member), 1);
             }
+            // A class's own value is held once for the whole class, and
+            // so has a cell as a binding does.
+            [rest @ .., Instr::Act(Action::Reach(member), 1)] => {
+                let (member, rest) = (member.clone(), rest.to_vec());
+                let at = self.mark();
+                for w in relocated(rest, at as i64 - from as i64) {
+                    self.put(w);
+                }
+                self.act(Action::BondOwn(member), 1);
+            }
             // A binding named as the run goes has a cell as any binding
             // does, and asking for it is asking for that one.
             [rest @ .., Instr::Act(Action::Named, 1)] => {
@@ -3417,6 +3624,23 @@ impl<'a> Compiler<'a> {
                     self.put(w);
                 }
                 self.act(Action::BondNamed, 1);
+            }
+            // `&$o->p[k]`: the chain stands on something that is not a
+            // binding, so that footing is asked for its own cell first
+            // and the place within taken from that.
+            [.., Instr::Act(Action::At, 2)] if self.footed(&read, from) => {
+                let (keys, key_at) = keys_apart(&read, from, &self.keyed);
+                let footing = read[..key_at[0] - from].to_vec();
+                self.footing_cell(&footing, from)?;
+                for (i, key) in keys.iter().enumerate() {
+                    let at = self.mark();
+                    for w in relocated(key.clone(), at as i64 - key_at[i] as i64) {
+                        self.put(w);
+                    }
+                }
+                self.put(Instr::Hush(true));
+                self.act(Action::BondWithin(keys.len()), keys.len() + 1);
+                self.put(Instr::Hush(false));
             }
             [Instr::Read(slot), .., Instr::Act(Action::At, 2)] if !slot.moving => {
                 let name = slot.ident.to_string();

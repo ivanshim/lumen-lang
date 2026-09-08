@@ -1374,6 +1374,103 @@ impl<'a> Engine<'a> {
                 }
                 Value::Null
             }
+            Action::ForgetNamed => {
+                let spelled = self.drop_top()?;
+                let name = self.name_spelled(&spelled);
+                let at = self.registry.slot(&name);
+                self.world.resize(self.registry.idents.len(), Value::Blank);
+                self.world[at] = Value::Blank;
+                Value::Null
+            }
+            Action::ReadyNamed => {
+                let spelled = self.drop_top()?;
+                let name = self.name_spelled(&spelled);
+                let at = self.registry.slot(&name);
+                self.world.resize(self.registry.idents.len(), Value::Blank);
+                if matches!(self.world[at], Value::Blank) {
+                    self.world[at] = Value::Null;
+                }
+                Value::Null
+            }
+            Action::BondWithin(count) => {
+                let mut keys = self.drop_many(*count)?;
+                for k in keys.iter_mut() {
+                    *k = self.key(k);
+                }
+                let holder = self.drop_top()?;
+                let makes = self.lang.makes_places;
+                match holder {
+                    Value::Bond(cell) => {
+                        let shared = {
+                            let mut inside = cell.borrow_mut();
+                            shared_deep(&mut inside, &keys, makes)?
+                        };
+                        Value::Bond(shared)
+                    }
+                    _ => return Err("Cannot take a cell from a place in something that is not an array".into()),
+                }
+            }
+            Action::BondOwn(name) => {
+                let stands = {
+                    let top = self.drop_top()?;
+                    self.what_it_spells(top)
+                };
+                match stands {
+                    Value::Class(c) => {
+                        let holder = c.holder(&name).unwrap_or(&c);
+                        let mut own = holder.shared.borrow_mut();
+                        let at = match own.iter().position(|(n, _)| n == name.as_ref()) {
+                            Some(at) => at,
+                            None => {
+                                own.push((name.to_string(), Value::Null));
+                                own.len() - 1
+                            }
+                        };
+                        if let Value::Bond(shared) = &own[at].1 {
+                            let shared = shared.clone();
+                            drop(own);
+                            Value::Bond(shared)
+                        } else {
+                            let was = std::mem::replace(&mut own[at].1, Value::Null);
+                            let shared = Rc::new(RefCell::new(was));
+                            own[at].1 = Value::Bond(shared.clone());
+                            drop(own);
+                            Value::Bond(shared)
+                        }
+                    }
+                    v => {
+                        let told = self.no_such_class(&v).unwrap_or_else(|| format!("Cannot reach '{}' in {}", name, v.plain()));
+                        return Err(told.into());
+                    }
+                }
+            }
+            Action::ForgetWithin => {
+                let named = self.drop_top()?;
+                let at = self.key_quietly(&named);
+                let holder = self.drop_top()?;
+                let Value::Bond(cell) = holder else {
+                    return Err("Cannot take a place out of something that is not an array".into());
+                };
+                let mut inside = cell.borrow_mut();
+                let left = match &*inside {
+                    Value::Array(items) => {
+                        let i = as_index(&at)?;
+                        Value::Map(Rc::new(
+                            items
+                                .iter()
+                                .enumerate()
+                                .filter(|(j, _)| *j != i)
+                                .map(|(j, v)| (Value::Small(j as i64), v.clone()))
+                                .collect(),
+                        ))
+                    }
+                    Value::Map(pairs) => Value::Map(Rc::new(pairs.iter().filter(|(k, _)| !k.equals(&at)).cloned().collect())),
+                    v => return Err(format!("Cannot take a place out of {}", v.plain()).into()),
+                };
+                *inside = left;
+                drop(inside);
+                Value::Null
+            }
             // A value made a value of another kind. Numbers give up what
             // lies past the point, text is read for the number it opens
             // with, and anything that is not an array becomes an array

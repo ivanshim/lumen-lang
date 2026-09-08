@@ -1128,36 +1128,41 @@ impl<'a> Builder<'a> {
         self.plain_stmt()
     }
 
-    /// The names after `global`, or `static` with their settings, up to
-    /// the end of the statement, separated as call arguments are.
-    fn listed_names(&mut self, what: &str, mut each: impl FnMut(&mut Self, String) -> Res<()>) -> Res<Form> {
-        self.advance();
-        let sep = self.table.single("syntax.call.separator").map(str::to_string);
-        loop {
-            let name = self.need_word(what)?;
-            each(self, name)?;
-            match &sep {
-                Some(s) if self.sign(s) => self.advance(),
-                _ => return Ok(constant(Value::Nil)),
-            };
-        }
-    }
-
     /// `global a, b;`: the names mean the globals inside this function.
     fn global_names(&mut self) -> Res<Form> {
+        self.advance();
+        let sep = self.table.single("syntax.call.separator").map(str::to_string);
         let mut ready = Vec::new();
-        let listed = self.listed_names("after the global keyword", |r, name| {
-            // A name bound to a global names it whether or not anything
-            // was ever written there, so the global is made to hold
-            // nothing where it held nothing at all: reading it is then
-            // reading a binding written to.
-            ready.push(Form::Ready(r.global_address(&name)));
-            let owner = r.layers.iter_mut().rev().find(|s| s.holds == Holds::Every).expect("the top layer");
-            owner.aliases.push((name.clone(), name));
-            Ok(())
-        })?;
-        ready.push(listed);
-        Ok(sequence(ready))
+        loop {
+            // A name worked out as the run goes already spells one of
+            // the outermost bindings, which is what a global is, so
+            // saying so binds nothing further: only the name itself is
+            // worked out, and what it spells made ready to be read.
+            if self.look().shape != Shape::Bare {
+                let seen = self.look().lexeme.clone();
+                match self.expr(0)? {
+                    Form::Called(spells) => ready.push(Form::ReadyCalled(spells)),
+                    _ => return Err(format!("Expected identifier after the global keyword, got '{}'", seen)),
+                }
+            } else {
+                let name = self.need_word("after the global keyword")?;
+                // A name bound to a global names it whether or not
+                // anything was ever written there, so the global is made
+                // to hold nothing where it held nothing at all: reading
+                // it is then reading a binding written to.
+                let at = self.global_address(&name);
+                ready.push(Form::Ready(at));
+                let owner = self.layers.iter_mut().rev().find(|s| s.holds == Holds::Every).expect("the top layer");
+                owner.aliases.push((name.clone(), name));
+            }
+            match &sep {
+                Some(s) if self.sign(s) => self.advance(),
+                _ => {
+                    ready.push(constant(Value::Nil));
+                    return Ok(sequence(ready));
+                }
+            };
+        }
     }
 
     /// `static x = e;`: x means a hidden global, set where the function
@@ -1501,13 +1506,30 @@ impl<'a> Builder<'a> {
         self.need_sign(open, "after foreach")?;
         // A walk that hands out its items for writing walks the binding
         // itself, so that writing an item writes the array it came from.
-        let named = match (self.look().shape, self.glance(1).shape) {
+        let mut named = match (self.look().shape, self.glance(1).shape) {
             (Shape::Bare, Shape::Bare) if table.spells("stmt.foreach.as", &self.glance(1).lexeme) => Some(self.advance().lexeme),
             _ => None,
         };
-        let source = match &named {
-            Some(name) => self.read(name),
-            None => self.expr(0)?,
+        // What is walked for its own cells need not be written out as a
+        // name: a place in an array, a member, a class's own value or a
+        // binding named as the run goes each keeps a cell too. Such a
+        // subject is asked for its cell and a hidden name tied to it,
+        // which stands in for the name the walk was not given.
+        let mut ahead = Vec::new();
+        let source = if named.is_some() {
+            self.read(named.as_deref().expect("the name"))
+        } else if self.mark_in_head(open, &close) {
+            let read = self.expr(0)?;
+            let cell = self.cell_of(read)?;
+            self.gensyms += 1;
+            let held = format!("#walked{}", self.gensyms);
+            let to = self.address_to_write(&held);
+            ahead.push(Form::Tie(to, Box::new(cell)));
+            let stands = self.read(&held);
+            named = Some(held);
+            stands
+        } else {
+            self.expr(0)?
         };
         if !self.key("stmt.foreach.as") {
             return Err(format!("Expected '{}' in foreach, got '{}'", table.single("stmt.foreach.as").unwrap(), self.look().lexeme));
@@ -1567,7 +1589,41 @@ impl<'a> Builder<'a> {
             (false, _) => None,
         };
         self.need_sign(&close, "after the foreach names")?;
-        self.walk(source, key, item, shares, place)
+        ahead.push(self.walk(source, key, item, shares, place)?);
+        Ok(sequence(ahead))
+    }
+
+    /// Whether the head of a walk, read from where its subject begins,
+    /// carries the mark handing items out for writing. The subject is
+    /// stepped over by counting the grouping marks, so a call written
+    /// within it does not read as the end of the head.
+    fn mark_in_head(&self, open: &str, close: &str) -> bool {
+        let table = self.table;
+        let mark = match table.single("ext.op.reference") {
+            Some(mark) => mark,
+            None => return false,
+        };
+        let mut at = self.pos;
+        let mut deep = 0usize;
+        let mut said_as = false;
+        while at < self.tokens.len() {
+            let w = &self.tokens[at];
+            let a_sign = w.shape == Shape::Sign;
+            if a_sign && w.lexeme == open {
+                deep += 1;
+            } else if a_sign && w.lexeme == close {
+                if deep == 0 {
+                    break;
+                }
+                deep -= 1;
+            } else if !said_as {
+                said_as = deep == 0 && w.shape == Shape::Bare && table.spells("stmt.foreach.as", &w.lexeme);
+            } else if a_sign && w.lexeme == mark {
+                return true;
+            }
+            at += 1;
+        }
+        false
     }
 
     /// Step to the mark closing a grouping, reading nothing on the way,
@@ -2560,6 +2616,20 @@ impl<'a> Builder<'a> {
                 let put = prim_call(Prim::Replace, vec![target, self.read(&key), made]);
                 sequence(vec![hold, put])
             }
+            // `$$x op= e`: the name is worked out once and held, the
+            // binding it spells read under that name and what comes of
+            // the working written back under it.
+            Form::Called(spells) if compound.is_some() => {
+                let op = compound.expect("the operation");
+                self.gensyms += 1;
+                let spelt = format!("#spelt{}", self.gensyms);
+                let hold = self.write(&spelt, *spells);
+                let now = Form::Called(Box::new(self.read(&spelt)));
+                let now = self.kept_before(now);
+                let made = self.kept_after(prim_call(op, vec![now, value]));
+                let put = Form::CallWrite(Box::new(self.read(&spelt)), Box::new(made));
+                sequence(vec![hold, put])
+            }
             _ if compound.is_some() => return Err(format!("'{}' needs a plain variable on its left", assign.lexeme)),
             // A read of a member becomes a write of it.
             Form::Apply(Callee::Prim(Prim::Of, _), mut args) if args.len() == 2 => {
@@ -2967,12 +3037,21 @@ impl<'a> Builder<'a> {
                             let left = prim_call(Prim::Erase, vec![array, at]);
                             self.write(&held, left)
                         }
-                        _ => return Err("Only a name or a place in an array can be forgotten".to_string()),
+                        // `unset($o->p[k])`, `unset(C::$a[k])`: what
+                        // holds the place is asked for its own cell,
+                        // and the place taken out of what it holds.
+                        under => {
+                            let cell = self.cell_of(under)?;
+                            Form::ForgetWithin(Box::new(cell), Box::new(at))
+                        }
                     }
                 }
                 // `unset($o->p)`: the property is taken off the thing
                 // itself, which every name for it sees at once.
                 Form::Apply(Callee::Prim(Prim::Of, _), args) if args.len() == 2 => prim_call(Prim::Pluck, args),
+                // `unset($$x)`: the name is worked out as the run goes
+                // and the binding it spells left standing for nothing.
+                Form::Called(spells) => Form::ForgetCalled(spells),
                 _ => return Err("Only a name, a place in an array or a property can be forgotten".to_string()),
             });
             if let Some(s) = &sep {
@@ -3136,6 +3215,14 @@ impl<'a> Builder<'a> {
                     let held = self.address_to_read(&slot.ident.to_string());
                     return Ok(Form::Muted(Box::new(Form::SharePlace(held, keys))));
                 }
+                // `&$o->p[k]`: the chain stands on something that is
+                // no binding of its own, so that footing is asked for
+                // its cell and the place taken from within it.
+                held @ (Form::Apply(Callee::Prim(Prim::Of | Prim::Within, _), _) | Form::Called(_)) => {
+                    keys.reverse();
+                    let under = self.cell_of(held)?;
+                    return Ok(Form::Muted(Box::new(Form::ShareWithin(Box::new(under), keys))));
+                }
                 _ => return Err("Only a place in a named array has a cell to share".to_string()),
             }
         }
@@ -3169,6 +3256,16 @@ impl<'a> Builder<'a> {
                 let place = args.pop().expect("the place");
                 let stands_on = args.pop().expect("what holds it");
                 self.shared_at(place, stands_on)?
+            }
+            // A class's own value is kept once for the whole class, and
+            // so keeps a cell as a binding does.
+            Form::Apply(Callee::Prim(Prim::Within, _), mut args) if args.len() == 2 => {
+                let named = args.pop().expect("the value's name");
+                let class = args.pop().expect("the class");
+                let Form::Const(Value::Text(called)) = named else {
+                    return Err("Only a class's own value named outright has a cell to share".to_string());
+                };
+                Form::ShareOwn(Box::new(class), called)
             }
             // A binding named as the run goes has a cell as any binding
             // does, and asking for it asks for that very one.

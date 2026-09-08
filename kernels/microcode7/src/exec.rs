@@ -1367,6 +1367,63 @@ impl<'a> Machine<'a> {
                 f.cells.borrow_mut()[slot.at] = Value::Unset;
                 Ok(Value::Nil)
             }
+            Form::ShareWithin(under, places) => {
+                let holder = self.value_of(under, frame)?;
+                let mut keys = Vec::with_capacity(places.len());
+                for place in places {
+                    let named = self.value_of(place, frame)?;
+                    keys.push(self.as_key(&named));
+                }
+                let Value::Shared(cell) = holder else {
+                    return Err("Cannot take a cell from a place in something that is not an array".to_string().into());
+                };
+                let makes = self.builds_places;
+                let mut inside = cell.borrow_mut();
+                Ok(Value::Shared(shared_deep(&mut inside, &keys, makes)?))
+            }
+            Form::ForgetWithin(under, place) => {
+                let holder = self.value_of(under, frame)?;
+                let named = self.value_of(place, frame)?;
+                let at = self.as_key_spoken(&named);
+                let Value::Shared(cell) = holder else {
+                    return Err("Cannot take a place out of something that is not an array".to_string().into());
+                };
+                let mut inside = cell.borrow_mut();
+                let left = match &*inside {
+                    Value::Vector(items) => {
+                        let i = as_index(&at)?;
+                        Value::Dict(Rc::new(
+                            items
+                                .iter()
+                                .enumerate()
+                                .filter(|(j, _)| *j != i)
+                                .map(|(j, v)| (Value::Small(j as i64), v.clone()))
+                                .collect(),
+                        ))
+                    }
+                    Value::Dict(pairs) => Value::Dict(Rc::new(pairs.iter().filter(|(k, _)| !k.equals(&at)).cloned().collect())),
+                    held => return Err(format!("Cannot take a place out of {}", held.bare()).into()),
+                };
+                *inside = left;
+                Ok(Value::Nil)
+            }
+            Form::ForgetCalled(spells) => {
+                let spelled = self.value_of(spells, frame)?;
+                let name = self.name_it_spells(&spelled);
+                let at = self.place_called(&name);
+                self.outermost.cells.borrow_mut()[at] = Value::Unset;
+                Ok(Value::Nil)
+            }
+            Form::ReadyCalled(spells) => {
+                let spelled = self.value_of(spells, frame)?;
+                let name = self.name_it_spells(&spelled);
+                let at = self.place_called(&name);
+                let mut cells = self.outermost.cells.borrow_mut();
+                if matches!(cells[at], Value::Unset) {
+                    cells[at] = Value::Nil;
+                }
+                Ok(Value::Nil)
+            }
             Form::OnLine(row, inner) => {
                 self.row = *row;
                 // A statement is a fair place to look at the clock:
@@ -2191,7 +2248,13 @@ impl<'a> Machine<'a> {
                         None => match class.keeper(&called) {
                             Some(keeper) => {
                                 let held = keeper.shared.borrow().iter().find(|(k, _)| *k == called).map(|(_, x)| x.clone());
-                                held.expect("the keeper holds it")
+                                // Kept in a shared cell, it reads as
+                                // what the cell holds: the sharing is
+                                // between the names, not in the value.
+                                match held.expect("the keeper holds it") {
+                                    Value::Shared(cell) => cell.borrow().clone(),
+                                    held => held,
+                                }
                             }
                             None => return Err(format!("Undefined constant {}::{}", class.name, called)),
                         },

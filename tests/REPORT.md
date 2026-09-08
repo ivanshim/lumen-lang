@@ -19,12 +19,12 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 87, differs 2, error 15, skipped 10 | pass 87, differs 2, error 15, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 164, differs 21, error 23, skipped 5 | pass 164, differs 21, error 23, skipped 5 |
+| `php/lang` | 213 | pass 167, differs 21, error 20, skipped 5 | pass 167, differs 21, error 20, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 48, differs 9, error 1, skipped 6 | pass 48, differs 9, error 1, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 325, differs 33, error 39, skipped 25 | pass 325, differs 33, error 39, skipped 25 |
+| all | 422 | pass 328, differs 33, error 36, skipped 25 | pass 328, differs 33, error 36, skipped 25 |
 
 | Reason | Tests |
 |---|---|
@@ -57,7 +57,6 @@ is listed, since the full kernels are meant to behave alike.
 | skip Can't find german locale | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_declared_classes in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> | 1 |
-| Parse error: Expected identifier after the global keyword, got '$' in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: debug_backtrace in <file> | 1 |
 | Fatal error: Uncaught Error: Function typehint_ref expects 2 arguments, got 1 in <file> | 1 |
 | Fatal error: Uncaught Error: Cannot call method 'get_name' on a value that is not an object in <file> | 1 |
@@ -68,6 +67,7 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: datetime in <file> | 1 |
 | skip this test is for 32-bit platforms only | 1 |
 | Fatal error: Uncaught Error: Cannot use a scalar value as an array in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: NAN in <file> | 1 |
 
 ### Reserved words: 55 of 68 spelled
 
@@ -391,7 +391,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug23584.phpt` | pass | pass |  |
 | `php/lang/bug23624.phpt` | pass | pass |  |
 | `php/lang/bug24054.phpt` | pass | pass |  |
-| `php/lang/bug24396.phpt` | error | error | Parse error: Expected identifier after the global keyword, got '$' in <file> |
+| `php/lang/bug24396.phpt` | pass | pass |  |
 | `php/lang/bug24436.phpt` | pass | pass |  |
 | `php/lang/bug24499.phpt` | pass | pass |  |
 | `php/lang/bug24573.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: debug_backtrace in <file> |
@@ -452,7 +452,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/engine_assignExecutionOrder_005.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_006.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_007.phpt` | pass | pass |  |
-| `php/lang/engine_assignExecutionOrder_008.phpt` | error | error | Parse error: '++' needs a plain variable on its left in <file> |
+| `php/lang/engine_assignExecutionOrder_008.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_009.phpt` | pass | pass |  |
 | `php/lang/error_2_exception_001.phpt` | pass | pass |  |
 | `php/lang/execution_order.phpt` | differs | differs | ran, printed something else |
@@ -469,7 +469,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/foreachLoop.013.phpt` | differs | differs | ran, printed something else |
 | `php/lang/foreachLoop.014.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.015.phpt` | differs | differs | ran, printed something else |
-| `php/lang/foreachLoop.016.phpt` | error | error | Parse error: A foreach that hands out its items for writing needs a named array in <file> |
+| `php/lang/foreachLoop.016.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.017.phpt` | pass | pass |  |
 | `php/lang/foreachLoopIterator.001.phpt` | pass | pass |  |
 | `php/lang/foreachLoopIterator.002.phpt` | pass | pass |  |

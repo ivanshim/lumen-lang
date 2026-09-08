@@ -121,6 +121,21 @@ pub enum Action {
     /// Write the value above into the binding whose name the text under
     /// it spells.
     WriteNamed,
+    /// Leave the binding a value spells standing for nothing.
+    ForgetNamed,
+    /// Make the binding a value spells hold nothing where it held
+    /// nothing at all, so that reading it is reading a name written to.
+    ReadyNamed,
+    /// The cell of a place inside whatever the cell below the keys
+    /// holds: how a place is shared out of something that is not a
+    /// binding of its own, such as a property holding an array.
+    BondWithin(usize),
+    /// Make that own value of the class above a shared cell if it is
+    /// not one already, and push the cell.
+    BondOwn(Rc<str>),
+    /// Take the place the key names out of whatever the cell below it
+    /// holds, leaving everything else where it was.
+    ForgetWithin,
     /// The value above made a value of that kind (ext.op.cast).
     Cast(crate::value::Sort),
     /// Whether the value above is nothing at all.
