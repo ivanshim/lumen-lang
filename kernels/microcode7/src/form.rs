@@ -268,6 +268,10 @@ pub enum Form {
     /// Make what the array in this binding holds at that place a shared
     /// cell, and give it back: how a walk hands out its items.
     ShareItem(Address, Box<Form>),
+    /// The same, but by the keys places are named by rather than by
+    /// position, and down a chain of them; where a language makes what a
+    /// write needs, the arrays and the places are made on the way in.
+    SharePlace(Address, Vec<Form>),
     /// Make that property of the thing a shared cell if it is not one
     /// already, and give the cell back, so a name may be tied to it.
     ShareField(Box<Form>, Rc<str>),

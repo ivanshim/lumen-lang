@@ -304,6 +304,12 @@ pub enum Instr {
     /// shared cell, and push that cell: how a walk hands out its items
     /// for writing.
     BondItem(Cell),
+    /// Pop that many keys, walk into the array in this binding by them,
+    /// make what it holds at the last a shared cell, and push that cell.
+    /// Unlike the one above this reads keys and not positions, and where
+    /// a language makes what a write needs it makes the arrays and the
+    /// places along the way.
+    BondPlace(Cell, usize),
     /// Leave this binding as though nothing were ever written to it.
     Forget(Cell),
     /// From here to the matching Unguard, a raised value is caught: the

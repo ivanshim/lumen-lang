@@ -3124,14 +3124,27 @@ impl<'a> Compiler<'a> {
                 }
                 self.act(Action::BondField(member), 1);
             }
-            [Instr::Read(slot), index @ .., Instr::Act(Action::At, 2)] if !slot.moving => {
+            [Instr::Read(slot), .., Instr::Act(Action::At, 2)] if !slot.moving => {
                 let name = slot.ident.to_string();
-                let at = self.mark();
-                for w in relocated(index.to_vec(), at as i64 - (from as i64 + 1)) {
-                    self.put(w);
+                // The keys are taken apart so that each is worked out
+                // once and in order, and the chain walked by them.
+                let (keys, key_at) = keys_apart(&read, from, &self.keyed);
+                if keys.is_empty() {
+                    return Err("Only a place in a named array has a cell to share".to_string());
                 }
+                for (i, key) in keys.iter().enumerate() {
+                    let at = self.mark();
+                    for w in relocated(key.clone(), at as i64 - key_at[i] as i64) {
+                        self.put(w);
+                    }
+                }
+                // Asking for a place's cell is a write as much as a
+                // read, so a name holding nothing yet is not complained
+                // about where the language makes what a write needs.
                 let held = self.cell_to_read(&name, false);
-                self.put(Instr::BondItem(held));
+                self.put(Instr::Hush(true));
+                self.put(Instr::BondPlace(held, keys.len()));
+                self.put(Instr::Hush(false));
             }
             // Anything else is read as it stands: a call of a routine
             // that gives back a cell answers with one already, and what

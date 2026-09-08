@@ -2837,13 +2837,8 @@ impl<'a> Builder<'a> {
             }
             Form::Apply(Callee::Prim(Prim::At, _), mut args) if args.len() == 2 => {
                 let place = args.pop().expect("the place");
-                match args.pop().expect("what holds it") {
-                    Form::Read(slot) => {
-                        let held = self.address_to_read(&slot.ident.to_string());
-                        Form::ShareItem(held, Box::new(place))
-                    }
-                    _ => return Err("Only a place in a named array has a cell to share".to_string()),
-                }
+                let stands_on = args.pop().expect("what holds it");
+                self.shared_at(place, stands_on)?
             }
             Form::Apply(Callee::Prim(Prim::Within, _), mut args) if args.len() == 2 => {
                 let named = args.pop().expect("the value's name");
@@ -2856,6 +2851,30 @@ impl<'a> Builder<'a> {
             Form::Called(spells) => Form::ShareCalled(spells),
             other => other,
         })
+    }
+
+    /// The cell of the place a chain of looks names: the keys are taken
+    /// apart from the innermost out, so each is worked out once and in
+    /// order. Asking a place for its cell is a write as much as a read,
+    /// so a name holding nothing yet is not complained about where a
+    /// write makes what it needs.
+    fn shared_at(&mut self, place: Form, stands_on: Form) -> Res<Form> {
+        let mut keys = vec![place];
+        let mut walk = stands_on;
+        loop {
+            match walk {
+                Form::Apply(Callee::Prim(Prim::At, _), mut inner) if inner.len() == 2 => {
+                    keys.push(inner.pop().expect("the place"));
+                    walk = inner.pop().expect("what holds it");
+                }
+                Form::Read(slot) => {
+                    keys.reverse();
+                    let held = self.address_to_read(&slot.ident.to_string());
+                    return Ok(Form::Muted(Box::new(Form::SharePlace(held, keys))));
+                }
+                _ => return Err("Only a place in a named array has a cell to share".to_string()),
+            }
+        }
     }
 
     /// What stands after the mark that shares a cell: a name, a place in
@@ -2884,13 +2903,8 @@ impl<'a> Builder<'a> {
             }
             Form::Apply(Callee::Prim(Prim::At, _), mut args) if args.len() == 2 => {
                 let place = args.pop().expect("the place");
-                match args.pop().expect("what holds it") {
-                    Form::Read(slot) => {
-                        let held = self.address_to_read(&slot.ident.to_string());
-                        Form::ShareItem(held, Box::new(place))
-                    }
-                    _ => return Err("Only a place in a named array has a cell to share".to_string()),
-                }
+                let stands_on = args.pop().expect("what holds it");
+                self.shared_at(place, stands_on)?
             }
             // Anything else is read as it stands: a call of a routine
             // giving back a cell answers with one already, and what has

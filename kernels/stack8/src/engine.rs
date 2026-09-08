@@ -888,6 +888,23 @@ impl<'a> Engine<'a> {
                     };
                     self.data.push(Value::Bond(shared));
                 }
+                Instr::BondPlace(slot, count) => {
+                    let mut keys = self.drop_many(*count)?;
+                    for k in keys.iter_mut() {
+                        *k = self.key(k);
+                    }
+                    let makes = self.lang.makes_places;
+                    let held = self.peek_cell_mut(slot, frame)?;
+                    let shared = match held {
+                        Value::Bond(cell) => {
+                            let cell = cell.clone();
+                            let mut inside = cell.borrow_mut();
+                            shared_deep(&mut inside, &keys, makes)?
+                        }
+                        _ => shared_deep(held, &keys, makes)?,
+                    };
+                    self.data.push(Value::Bond(shared));
+                }
                 Instr::Forget(slot) => {
                     for &s in &slot.near {
                         frame[s] = Value::Blank;
@@ -2632,6 +2649,68 @@ fn shared_item(held: &mut Value, at: &Value) -> Res<Rc<RefCell<Value>>> {
     let shared = Rc::new(RefCell::new(std::mem::replace(place, Value::Null)));
     *place = Value::Bond(shared.clone());
     Ok(shared)
+}
+
+/// The cell of the place a chain of keys names, the arrays and places
+/// along the way made where they are not there yet and the language
+/// makes what a write needs.
+fn shared_deep(held: &mut Value, keys: &[Value], makes: bool) -> Res<Rc<RefCell<Value>>> {
+    let Some((last, first)) = keys.split_last() else {
+        return Err("No place was named".to_string());
+    };
+    let mut spot = held;
+    for k in first {
+        spot = place_within(spot, k, makes)?;
+    }
+    let place = place_within(spot, last, makes)?;
+    if let Value::Bond(shared) = place {
+        return Ok(shared.clone());
+    }
+    let shared = Rc::new(RefCell::new(std::mem::replace(place, Value::Null)));
+    *place = Value::Bond(shared.clone());
+    Ok(shared)
+}
+
+fn place_within<'a>(held: &'a mut Value, at: &Value, makes: bool) -> Res<&'a mut Value> {
+    if makes && matches!(held, Value::Null | Value::Blank | Value::Gap) {
+        *held = Value::Array(Rc::new(Vec::new()));
+    }
+    if matches!(held, Value::Array(_)) && as_index(at).is_err() {
+        let Value::Array(items) = &*held else { unreachable!("a list") };
+        let spread = items.iter().enumerate().map(|(i, v)| (Value::Small(i as i64), v.clone())).collect();
+        *held = Value::Map(Rc::new(spread));
+    }
+    let place: &mut Value = match held {
+        Value::Array(items) => {
+            let i = as_index(at)?;
+            let items = Rc::make_mut(items);
+            if makes {
+                while items.len() <= i {
+                    items.push(Value::Null);
+                }
+            }
+            let reach = items.len();
+            match items.get_mut(i) {
+                Some(place) => place,
+                None => return Err(format!("Array index {} out of bounds (length: {})", i, reach)),
+            }
+        }
+        Value::Map(pairs) => {
+            let pairs = Rc::make_mut(pairs);
+            let found = pairs.iter().position(|(k, _)| k.equals(at));
+            let at_place = match found {
+                Some(i) => i,
+                None if makes => {
+                    pairs.push((at.clone(), Value::Null));
+                    pairs.len() - 1
+                }
+                None => return Err(format!("Undefined array key {}", at.plain())),
+            };
+            &mut pairs[at_place].1
+        }
+        _ => return Err("Cannot take a cell from a place in something that is not an array".to_string()),
+    };
+    Ok(place)
 }
 
 /// The number a piece of text spells, whole or fractional, with room

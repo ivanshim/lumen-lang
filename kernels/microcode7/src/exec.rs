@@ -969,6 +969,25 @@ impl<'a> Machine<'a> {
                 }
                 Ok(Value::Shared(shared_item(held, &at)?))
             }
+            Form::SharePlace(slot, places) => {
+                let mut keys = Vec::with_capacity(places.len());
+                for place in places {
+                    let named = self.value_of(place, frame)?;
+                    keys.push(self.as_key(&named));
+                }
+                let makes = self.builds_places;
+                let f = ascend(frame, slot.up);
+                let mut cells = f.cells.borrow_mut();
+                let held = &mut cells[slot.at];
+                // Through the shared cell where the name stands for one.
+                if let Value::Shared(cell) = held {
+                    let cell = cell.clone();
+                    drop(cells);
+                    let mut inside = cell.borrow_mut();
+                    return Ok(Value::Shared(shared_deep(&mut inside, &keys, makes)?));
+                }
+                Ok(Value::Shared(shared_deep(held, &keys, makes)?))
+            }
             Form::Forget(slot) => {
                 let f = ascend(frame, slot.up);
                 f.cells.borrow_mut()[slot.at] = Value::Unset;
@@ -2717,6 +2736,65 @@ fn shared_item(held: &mut Value, at: &Value) -> Result<Rc<RefCell<Value>>, Strin
     let cell = Rc::new(RefCell::new(std::mem::replace(place, Value::Nil)));
     *place = Value::Shared(cell.clone());
     Ok(cell)
+}
+
+/// The cell of the place a chain of keys names, the arrays and the
+/// places along the way made where they are not there yet and the
+/// language makes what a write needs.
+fn shared_deep(held: &mut Value, keys: &[Value], makes: bool) -> Result<Rc<RefCell<Value>>, String> {
+    let Some((last, first)) = keys.split_last() else {
+        return Err("No place was named".to_string());
+    };
+    let mut spot = held;
+    for k in first {
+        spot = place_within(spot, k, makes)?;
+    }
+    let place = place_within(spot, last, makes)?;
+    if let Value::Shared(cell) = place {
+        return Ok(cell.clone());
+    }
+    let cell = Rc::new(RefCell::new(std::mem::replace(place, Value::Nil)));
+    *place = Value::Shared(cell.clone());
+    Ok(cell)
+}
+
+fn place_within<'a>(held: &'a mut Value, at: &Value, makes: bool) -> Result<&'a mut Value, String> {
+    if makes && matches!(held, Value::Nil | Value::Unset) {
+        *held = Value::Vector(Rc::new(Vec::new()));
+    }
+    if matches!(held, Value::Vector(_)) && as_index(at).is_err() {
+        let Value::Vector(items) = &*held else { unreachable!("a list") };
+        let spread = items.iter().enumerate().map(|(i, x)| (Value::Small(i as i64), x.clone())).collect();
+        *held = Value::Dict(Rc::new(spread));
+    }
+    let place: &mut Value = match held {
+        Value::Vector(items) => {
+            let i = as_index(at)?;
+            let items = Rc::make_mut(items);
+            if makes {
+                while items.len() <= i {
+                    items.push(Value::Nil);
+                }
+            }
+            let reach = items.len();
+            items.get_mut(i).ok_or_else(|| format!("Array index {} out of bounds (length: {})", i, reach))?
+        }
+        Value::Dict(entries) => {
+            let entries = Rc::make_mut(entries);
+            let found = entries.iter().position(|(k, _)| k.equals(at));
+            let where_at = match found {
+                Some(i) => i,
+                None if makes => {
+                    entries.push((at.clone(), Value::Nil));
+                    entries.len() - 1
+                }
+                None => return Err(format!("Undefined array key {}", at.bare())),
+            };
+            &mut entries[where_at].1
+        }
+        _ => return Err("Cannot take a cell from a place in something that is not an array".to_string()),
+    };
+    Ok(place)
 }
 
 /// The number a piece of text spells, whole or fractional, with room for
