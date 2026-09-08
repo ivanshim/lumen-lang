@@ -2827,6 +2827,7 @@ impl<'a> Compiler<'a> {
                 self.take();
                 let named = self.want_name("as the class to make")?;
                 self.read_class(&named)?;
+                self.class_reference()?;
                 // A maker takes its arguments as any other routine does,
                 // so a parameter of it that takes a cell is handed one.
                 let maker = lang.constructor.clone().unwrap_or_default();
@@ -2960,6 +2961,30 @@ impl<'a> Compiler<'a> {
             true => name.to_lowercase(),
             false => name.to_string(),
         }
+    }
+
+    /// What is left of a class named by a value: a property of a thing,
+    /// a place in an array, one after another. A call that follows the
+    /// chain belongs to the maker and never to the chain, which is why
+    /// no step of it is ever a call.
+    fn class_reference(&mut self) -> Res<()> {
+        let lang = self.lang;
+        if let Some(mark) = lang.member_mark.clone() {
+            while self.at_symbol(&mark) {
+                self.take();
+                let member = self.want_name("after the member mark")?;
+                self.act(Action::Grab(Rc::from(member.as_str())), 1);
+            }
+        }
+        if let Some(index) = lang.index_brackets.clone() {
+            while self.at_symbol(&index.open) {
+                self.take();
+                self.expr(0)?;
+                self.want_sign(&index.close, "after the place naming the class")?;
+                self.act(Action::At, 2);
+            }
+        }
+        Ok(())
     }
 
     /// The class a name stands for: `self` and `parent` name the class

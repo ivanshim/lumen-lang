@@ -2608,7 +2608,8 @@ impl<'a> Builder<'a> {
             Shape::Bare if table.spells("ext.stmt.class.new", &t.lexeme) => {
                 self.advance();
                 let named = self.need_word("as the class to make")?;
-                let mut given = vec![self.read_class(&named)?];
+                let stands = self.read_class(&named)?;
+                let mut given = vec![self.class_reference(stands)?];
                 if table.single("syntax.call.open").map_or(false, |o| self.sign(o)) {
                     self.advance();
                     // A maker takes its arguments as any other routine
@@ -3043,6 +3044,29 @@ impl<'a> Builder<'a> {
             true => name.to_lowercase(),
             false => name.to_string(),
         }
+    }
+
+    /// What is left of a class named by a value: a property of a thing,
+    /// a place in an array, one after another. A call that follows the
+    /// chain is the maker's and never the chain's, so no step of it is
+    /// ever a call.
+    fn class_reference(&mut self, mut node: Form) -> Res<Form> {
+        let table = self.table;
+        if let Some(mark) = table.single("ext.op.member") {
+            while self.sign(mark) {
+                self.advance();
+                let named = self.need_word("after the member mark")?;
+                node = prim_call(Prim::Of, vec![node, constant(Value::text(&named))]);
+            }
+        }
+        let (Some(open), Some(close)) = (table.single("op.index.open"), table.single("op.index.close")) else { return Ok(node) };
+        while self.sign(open) {
+            self.advance();
+            let index = self.expr(0)?;
+            self.need_sign(close, "after the place naming the class")?;
+            node = prim_call(Prim::At, vec![node, index]);
+        }
+        Ok(node)
     }
 
     /// The class a name stands for: `self` names the class being read
