@@ -479,6 +479,11 @@ only. The extension labels so far, all from PHP:
   written in the language itself, since giving up what was kept hands it
   back as an ordinary value, and writing it out again writes it into
   whatever keeping now stands.
+- `ext.stmt.function.outermost`: a switch; a routine is bound among the
+  outermost bindings wherever it is written, so one written inside
+  another is there for the whole run once the routine holding it has
+  run. Without it a routine written inside another is that one's own,
+  as it is in a language where a nested routine closes over its place.
 - `ext.stmt.do`: the words opening a body that runs before its test is
   asked, the test standing after it — `do { … } while (c);`. The body
   runs at least once, and a `continue` within it goes to the test, as it
@@ -1057,6 +1062,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.for.c` | - | - | - | - | - | - | - | `for` | - | - |
 | `ext.stmt.for.collection` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.function.hoisted` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.stmt.function.outermost` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.stmt.function.returns` | - | - | - | - | - | - | - | `:` | - | - |
 | `ext.stmt.global` | - | - | - | - | - | - | - | `global` | - | - |
 | `ext.stmt.static` | - | - | - | - | - | - | - | `static` | - | - |

@@ -2061,7 +2061,13 @@ impl<'a> Compiler<'a> {
             a.body()
         })?;
         self.constant(Value::Routine(program));
-        self.write(&name);
+        // A language may bind every routine among the outermost
+        // bindings, wherever it is written, so one written inside
+        // another is there for the whole run once that one has run.
+        match self.lang.routines_outermost {
+            true => self.write_global(&name),
+            false => self.write(&name),
+        }
         Ok(())
     }
 

@@ -604,6 +604,7 @@
   "ext.stmt.do": [
     "do"
   ],
+  "ext.stmt.function.outermost": true,
   "ext.lexical.template": true,
   "ext.op.otherwise": [
     "??"

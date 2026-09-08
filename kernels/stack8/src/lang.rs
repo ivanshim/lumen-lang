@@ -227,6 +227,10 @@ pub struct Lang {
     pub lone_stmt: bool,
     /// A top-level function is bound before anything else runs.
     pub hoisted: bool,
+    /// Whether a routine declared anywhere is bound among the outermost
+    /// bindings, so one written inside another is there for the whole
+    /// run once the routine holding it has run.
+    pub routines_outermost: bool,
     /// Letters that open a decimal exponent in a number (1e9).
     pub exponent_letters: Vec<char>,
     /// A sign that leaves its operand as it is.
@@ -394,7 +398,7 @@ w ext.lexical.epilogue | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.stmt.for.c | b ext.op.assign.compound
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.const | w ext.builtin.define
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
-w ext.stmt.case.mark | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted
+w ext.stmt.case.mark | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
 w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
 w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
@@ -1035,6 +1039,7 @@ impl Lang {
             },
             lone_stmt: r.flag("ext.block.lone_statement")?,
             hoisted: r.flag("ext.stmt.function.hoisted")?,
+            routines_outermost: r.flag("ext.stmt.function.outermost")?,
             exponent_letters: r.letters("ext.lexical.number.exponent")?,
             plus_words: r.strings("ext.op.plus")?,
             hush_words: hushes,

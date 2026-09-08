@@ -1966,7 +1966,16 @@ impl<'a> Builder<'a> {
             Ok(sequence(items))
         })?;
         let mut items: Vec<Form> = self.statics.drain(statics_before..).collect();
-        items.push(self.write(&name, program));
+        // A language may bind every routine among the outermost bindings,
+        // wherever it is written, so one written inside another is there
+        // for the whole run once that one has run.
+        items.push(match self.table.flag("ext.stmt.function.outermost") {
+            true => {
+                let slot = self.global_address(&name);
+                Form::Write(slot, Box::new(program))
+            }
+            false => self.write(&name, program),
+        });
         Ok(sequence(items))
     }
 

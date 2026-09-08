@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 49, differs 29, error 26, skipped 10 | pass 49, differs 29, error 26, skipped 10 |
 | `php/func` | 14 | pass 13, differs 0, error 1, skipped 0 | pass 13, differs 0, error 1, skipped 0 |
-| `php/lang` | 213 | pass 114, differs 40, error 54, skipped 5 | pass 114, differs 40, error 54, skipped 5 |
+| `php/lang` | 213 | pass 114, differs 42, error 52, skipped 5 | pass 114, differs 42, error 52, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 21, error 3, skipped 6 | pass 34, differs 21, error 3, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 215, differs 98, error 84, skipped 25 | pass 215, differs 98, error 84, skipped 25 |
+| all | 422 | pass 215, differs 100, error 82, skipped 25 | pass 215, differs 100, error 82, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 98 |
+| ran, printed something else | 100 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
@@ -598,8 +598,8 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/short_tags.004.phpt` | differs | differs | ran, printed something else |
 | `php/lang/static_basic_001.phpt` | pass | pass |  |
 | `php/lang/static_basic_002.phpt` | differs | differs | ran, printed something else |
-| `php/lang/static_variation_001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: g1 in <file> |
-| `php/lang/static_variation_002.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: cfg in <file> |
+| `php/lang/static_variation_001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/static_variation_002.phpt` | differs | differs | ran, printed something else |
 | `php/lang/string/unicode_escape.phpt` | differs | differs | ran, printed something else |
 | `php/lang/string/unicode_escape_empty.phpt` | differs | differs | ran, printed something else |
 | `php/lang/string/unicode_escape_incomplete.phpt` | differs | differs | ran, printed something else |
