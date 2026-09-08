@@ -303,20 +303,23 @@ impl<'a> Cursor<'a> {
         let (line, col) = (self.row, self.column);
         let lang = self.lang;
         let mut s = String::new();
-        while let Some(c) = self.look(0).filter(char::is_ascii_digit) {
+        let broken = |c: &char| lang.digit_separators.contains(c);
+        while let Some(c) = self.look(0).filter(|c| c.is_ascii_digit() || broken(c)) {
             s.push(c);
             self.step();
         }
-        let hex_letter = lang.hex_prefix.as_ref().and_then(|p| {
-            let mut it = p.chars();
-            let (digit, letter) = (it.next()?, it.next()?);
-            let here = s.len() == 1 && s.starts_with(digit) && self.look(0) == Some(letter);
-            (here && self.look(1).map_or(false, |c| c.is_ascii_hexdigit())).then_some(letter)
+        // A number may be written in a base of its own, after a digit
+        // and a letter that name the base: `0x1f`, `0b1011`, `0o17`.
+        let in_base = lang.base_prefixes.iter().find(|(prefix, base)| {
+            let mut it = prefix.chars();
+            let (Some(digit), Some(letter)) = (it.next(), it.next()) else { return false };
+            s.len() == 1 && s.starts_with(digit) && self.look(0) == Some(letter)
+                && self.look(1).map_or(false, |c| c.is_digit(*base))
         });
-        if let Some(letter) = hex_letter {
-            s.push(letter);
+        if let Some((prefix, base)) = in_base.cloned() {
+            s.push(prefix.chars().nth(1).expect("a letter after the digit"));
             self.step();
-            while let Some(c) = self.look(0).filter(char::is_ascii_hexdigit) {
+            while let Some(c) = self.look(0).filter(|c| c.is_digit(base) || broken(c)) {
                 s.push(c);
                 self.step();
             }
@@ -336,7 +339,7 @@ impl<'a> Cursor<'a> {
         } else {
             if lang.point.is_some() && self.look(0) == lang.point && self.look(1).map_or(false, |c| c.is_ascii_digit()) {
                 s.push(self.step());
-                while let Some(c) = self.look(0).filter(char::is_ascii_digit) {
+                while let Some(c) = self.look(0).filter(|c| c.is_ascii_digit() || broken(c)) {
                     s.push(c);
                     self.step();
                 }

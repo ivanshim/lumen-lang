@@ -2,10 +2,11 @@
 café = 3
 π = 3.14159
 数 = café * 2
-def größe(x):
+def größe(x)
     return x + 1
+end
 
-print(café)
-print(π)
-print(数)
-print(größe(数))
+puts(café)
+puts(π)
+puts(数)
+puts(größe(数))

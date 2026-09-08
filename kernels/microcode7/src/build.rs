@@ -73,6 +73,19 @@ pub struct Builder<'a> {
     statics: Vec<Form>,
     /// The parameters of the method just read that name properties too.
     also_property: Vec<String>,
+    /// How many lines stand ahead of the program's own text, and
+    /// whether the language says where a complaint happened at all.
+    before: u32,
+    /// The file this text came out of, where it was read as the run
+    /// went, so that every program built from it carries it.
+    written_in: Option<Rc<str>>,
+    /// Where the value a write is to put is already waiting, which a
+    /// taking-apart sets before each of its places.
+    waiting: Option<String>,
+    /// The routines being built, the innermost last, so a word standing
+    /// for the one a piece is written in knows which that is.
+    naming: Vec<String>,
+    tells_place: bool,
 }
 
 pub struct Built {
@@ -89,10 +102,21 @@ enum Mode {
     Single,
 }
 
-pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool) -> Res<Built> {
+/// `before` is how many lines stand ahead of the program's own text,
+/// which the host knows and a line named in a complaint must not count.
+pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Res<Built> {
+    build_from(tokens, table, seeded, assumed, strict, before, None)
+}
+
+/// The same, said besides which file the text came out of, where it was
+/// read as the run went.
+pub fn build_from(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>) -> Res<Built> {
     let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let shared_args = shared_parameters(tokens, table);
-    let mut r = Builder { within: None, shared_args, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new() };
+    let mut r = Builder { within: None, shared_args, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, naming: Vec::new(),
+        tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
+            .iter()
+            .any(|key| table.single(key).is_some()) };
     let body = if table.rpn {
         let (mut stmts, rest) = r.rpn_body(&[], Mode::Body)?;
         if !r.exhausted() {
@@ -120,7 +144,7 @@ pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMa
         sequence(ahead)
     };
     let top = r.layers.pop().unwrap();
-    let program = Routine { ident: "<program>".into(), least: 0, formals: Vec::new(), formal_slots: Vec::new(), idents: top.idents.clone(), frameless: false, traps: Traps::Naught, body };
+    let program = Routine { ident: "<program>".into(), least: 0, formals: Vec::new(), formal_slots: Vec::new(), idents: top.idents.clone(), frameless: false, written_in: r.written_in.clone(), traps: Traps::Naught, body };
     Ok(Built { program: Rc::new(program), globals: top.idents, seen: r.seen })
 }
 
@@ -209,6 +233,84 @@ fn prim_call(op: Prim, args: Vec<Form>) -> Form {
         return Form::Dyad { op, name: Rc::from(name), a: Input::of(a), b: Input::of(b) };
     }
     Form::Apply(Callee::Prim(op, Rc::from(name)), args)
+}
+
+/// Every look inside a value being asked about becomes a glance, which
+/// answers nothing rather than minding that nothing is there.
+fn glancing(form: Form) -> Form {
+    match form {
+        Form::Apply(Callee::Prim(Prim::At, name), args) => {
+            Form::Apply(Callee::Prim(Prim::Glance, name), args.into_iter().map(glancing).collect())
+        }
+        other => other,
+    }
+}
+
+/// An index chain written on a bare name: the name, the keys from the
+/// outside in, and whether the write lands after the last place rather
+/// than at one of them. A chain standing on anything but a name is
+/// given back untouched, since it is written into another way.
+fn chain_apart(form: Form) -> Result<(String, Vec<Form>, bool), Form> {
+    let (mut walk, after) = match form {
+        Form::Apply(Callee::Prim(Prim::AtEnd, name), mut args) if args.len() == 1 => match args.pop() {
+            Some(only) => (only, true),
+            None => return Err(Form::Apply(Callee::Prim(Prim::AtEnd, name), Vec::new())),
+        },
+        other => (other, false),
+    };
+    let mut keys = Vec::new();
+    let mut peeled: Vec<Form> = Vec::new();
+    loop {
+        match walk {
+            Form::Apply(Callee::Prim(Prim::At, name), mut args) if args.len() == 2 => {
+                let key = args.pop().expect("the key");
+                let held = args.pop().expect("what holds it");
+                keys.push(key);
+                peeled.push(Form::Apply(Callee::Prim(Prim::At, name), Vec::new()));
+                walk = held;
+            }
+            Form::Read(slot) => {
+                let enough = keys.len() > 1 || (after && !keys.is_empty());
+                if enough {
+                    keys.reverse();
+                    return Ok((slot.ident.to_string(), keys, after));
+                }
+                // Put the chain back as it was for the arms that take it.
+                let mut back = Form::Read(slot);
+                for shell in peeled.into_iter().rev() {
+                    let Form::Apply(callee, _) = shell else { unreachable!("a look") };
+                    back = Form::Apply(callee, vec![back, keys.pop().expect("its key")]);
+                }
+                if after {
+                    back = prim_call(Prim::AtEnd, vec![back]);
+                }
+                return Err(back);
+            }
+            other => {
+                let mut back = other;
+                for shell in peeled.into_iter().rev() {
+                    let Form::Apply(callee, _) = shell else { unreachable!("a look") };
+                    back = Form::Apply(callee, vec![back, keys.pop().expect("its key")]);
+                }
+                if after {
+                    back = prim_call(Prim::AtEnd, vec![back]);
+                }
+                return Err(back);
+            }
+        }
+    }
+}
+
+/// The making a word calls for, by the word a language asks a value's
+/// kind with or by the shorter word it complains with. Nothing where
+/// the word names no kind of that language's.
+fn kind_made(table: &Table, word: &str) -> Option<Prim> {
+    const MAKINGS: [Prim; 7] = [Prim::AsWhole, Prim::AsDecimal, Prim::AsDecimal, Prim::AsChars, Prim::AsTruth, Prim::AsVector, Prim::AsNothing];
+    if let Some(at) = crate::exec::KIND_LABELS.iter().position(|(label, _)| table.single(label) == Some(word)) {
+        return MAKINGS.get(at).copied();
+    }
+    let at = table.strings("ext.system.kind.brief").iter().position(|n| n != "-" && n == word)?;
+    MAKINGS.get(at).copied()
 }
 
 fn invoke(program: Form, args: Vec<Form>) -> Form {
@@ -441,7 +543,38 @@ impl<'a> Builder<'a> {
         self.address_to_write(&name)
     }
 
+    /// The name of an array being written into, addressed as the write
+    /// it is: a name first met on the left of a write belongs to the
+    /// scope it is written in, and every later reading of it must find
+    /// the same cell.
+    fn read_to_write(&mut self, name: &str) -> Form {
+        let slot = self.address_to_write(name);
+        Form::Read(slot)
+    }
+
     fn read(&mut self, name: &str) -> Form {
+        // The word a language uses for the line it is written on stands
+        // for that line, which is known while the form is built.
+        if self.table.single("ext.system.source.line") == Some(name) {
+            return constant(Value::Small((self.look().row).saturating_sub(self.before) as i64));
+        }
+        // The routine a piece stands in, the class that routine belongs
+        // to, and the two written together: each is known while the form
+        // is built, so each stands for what it names.
+        let routine = self.naming.last().cloned().unwrap_or_default();
+        let within = self.within.as_ref().map(|(called, _)| called.clone()).unwrap_or_default();
+        for (label, said) in [
+            ("ext.system.source.routine", routine.clone()),
+            ("ext.system.source.class", within.clone()),
+            ("ext.system.source.method", match within.is_empty() {
+                true => routine,
+                false => format!("{}::{}", within, routine),
+            }),
+        ] {
+            if self.table.single(label) == Some(name) {
+                return constant(Value::text(&said));
+            }
+        }
         Form::Read(self.address_to_read(name))
     }
 
@@ -461,11 +594,13 @@ impl<'a> Builder<'a> {
 
     /// A program value: its body reduced in a scope of its own.
     fn routine(&mut self, name: &str, holds: Holds, catches: Traps, params: Vec<String>, least: usize, body: impl FnOnce(&mut Self) -> Res<Form>) -> Res<Form> {
+        self.naming.push(name.to_string());
         let param_slots = (0..params.len()).collect();
         self.layers.push(Layer { holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new() });
         let body = body(self)?;
         let scope = self.layers.pop().unwrap();
-        Ok(constant(Value::Routine(Rc::new(Routine { ident: name.to_string(), least, formals: params, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, traps: catches, body }))))
+        self.naming.pop();
+        Ok(constant(Value::Routine(Rc::new(Routine { ident: name.to_string(), least, formals: params, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), traps: catches, body }))))
     }
 
     /// A branch arm or a loop body: a program that holds no names.
@@ -482,7 +617,7 @@ impl<'a> Builder<'a> {
     /// that own no names, so the chosen one runs in the frame around it.
     fn choose(&mut self, test: Form, then: Form, otherwise: Form) -> Form {
         let wrap = |name: &str, body: Form| {
-            let program = Routine { ident: name.to_string(), least: 0, formals: Vec::new(), formal_slots: Vec::new(), idents: Vec::new(), frameless: true, traps: Traps::Naught, body };
+            let program = Routine { ident: name.to_string(), least: 0, formals: Vec::new(), formal_slots: Vec::new(), idents: Vec::new(), frameless: true, written_in: self.written_in.clone(), traps: Traps::Naught, body };
             constant(Value::Routine(Rc::new(program)))
         };
         prim_call(Prim::Choose, vec![test, wrap("<then>", then), wrap("<else>", otherwise)])
@@ -612,6 +747,20 @@ impl<'a> Builder<'a> {
     }
 
     fn stmt(&mut self) -> Res<Form> {
+        // A language that says where a complaint happened wants each
+        // statement to carry the line it was written on.
+        // Only the program's own lines are carried: what stands ahead of
+        // it is the library, and a complaint from within that names the
+        // line of the program that was running, as PHP names it.
+        if self.tells_place && self.look().row > self.before {
+            let row = self.look().row - self.before;
+            let made = self.plain_or_kind()?;
+            return Ok(Form::OnLine(row, Box::new(made)));
+        }
+        self.plain_or_kind()
+    }
+
+    fn plain_or_kind(&mut self) -> Res<Form> {
         if self.look().shape == Shape::Bare {
             if self.key("stmt.let") {
                 return self.bind();
@@ -1082,30 +1231,74 @@ impl<'a> Builder<'a> {
         if shares {
             self.advance();
         }
+        // A walk may hand its items to a place and not only to a name:
+        // `foreach ($a as $b[0])`. Where the name is followed by more,
+        // where it began is kept and read again at the head of every
+        // pass, the item waiting in a cell of the walk's own.
+        let first_at = self.pos;
         let first = self.need_word("as the foreach variable")?;
         let coupled = table.single("syntax.map.pair").map_or(false, |m| self.sign(m));
-        let (key, item) = if coupled {
+        let mut place: Option<usize> = None;
+        let (key, mut item) = if coupled {
             self.advance();
             if table.single("ext.op.reference").map_or(false, |m| self.sign(m)) {
                 self.advance();
                 shares = true;
             }
-            (Some(first), self.need_word("as the foreach value")?)
+            let began = self.pos;
+            let held = self.need_word("as the foreach value")?;
+            if !self.sign(&close) {
+                place = Some(began);
+            }
+            (Some(first), held)
         } else {
+            if !self.sign(&close) {
+                place = Some(first_at);
+            }
             (None, first)
         };
+        if place.is_some() {
+            if shares {
+                return Err("A walk hands its items for writing to a name, not to a place".to_string());
+            }
+            self.step_to_close(&close)?;
+            self.gensyms += 1;
+            item = format!("#item{}", self.gensyms);
+        }
         let shares = match (shares, &named) {
             (true, Some(name)) => Some(name.clone()),
             (true, None) => return Err("A foreach that hands out its items for writing needs a named array".to_string()),
             (false, _) => None,
         };
         self.need_sign(&close, "after the foreach names")?;
-        self.walk(source, key, item, shares)
+        self.walk(source, key, item, shares, place)
+    }
+
+    /// Step to the mark closing a grouping, reading nothing on the way,
+    /// so what stands within may be read later.
+    fn step_to_close(&mut self, close: &str) -> Res<()> {
+        let open = self.table.single("syntax.group.open").unwrap_or("(").to_string();
+        let mut deep = 1usize;
+        while deep > 0 {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", close));
+            }
+            if self.sign(&open) {
+                deep += 1;
+            } else if self.sign(close) {
+                deep -= 1;
+                if deep == 0 {
+                    break;
+                }
+            }
+            self.advance();
+        }
+        Ok(())
     }
 
     /// The walk itself: a place counted to the extent, the key and the
     /// item read from it at the head of every pass.
-    fn walk(&mut self, source: Form, key: Option<String>, item: String, shares: Option<String>) -> Res<Form> {
+    fn walk(&mut self, source: Form, key: Option<String>, item: String, shares: Option<String>, place: Option<usize>) -> Res<Form> {
         let bag = self.gensym("bag");
         let bag_name = bag.ident.to_string();
         let hold = Form::Write(bag, Box::new(source));
@@ -1139,7 +1332,10 @@ impl<'a> Builder<'a> {
                     // The name is tied to the item's own cell.
                     Some(named) => {
                         let at = r.read(&walk_at);
-                        let held = r.address_to_write(named);
+                        // Reached the way the walk reads it, so that the
+                        // item tied here and the array walked are the
+                        // one cell and not two.
+                        let held = r.address_to_read(named);
                         let tied = r.address_to_write(&item);
                         items.push(Form::Tie(tied, Box::new(Form::ShareItem(held, Box::new(at)))));
                     }
@@ -1148,6 +1344,20 @@ impl<'a> Builder<'a> {
                         let found = prim_call(Prim::ItemAt, vec![bag, at]);
                         items.push(r.write(&item, found));
                     }
+                }
+                // Where the walk hands its items to a place, the place
+                // is read again here, the item waiting in the walk's
+                // own cell.
+                if let Some(began) = place {
+                    let after = r.pos;
+                    r.pos = began;
+                    let target = r.expr_at(0, false)?;
+                    let was = r.waiting.replace(item.clone());
+                    let stood = r.look().clone();
+                    let done = r.write_into(target, false, None, stood);
+                    r.waiting = was;
+                    r.pos = after;
+                    items.push(done?);
                 }
                 items.push(r.body()?);
                 Ok(sequence(items))
@@ -1278,7 +1488,7 @@ impl<'a> Builder<'a> {
             let bracketed = self.table.single("syntax.call.open").map_or(false, |o| next.shape == Shape::Sign && next.lexeme == o);
             let bare = match op {
                 Some(Prim::Tell) => true,
-                Some(Prim::Append | Prim::Replace | Prim::Define | Prim::Gather | Prim::Erase) | None => false,
+                Some(Prim::Append | Prim::Replace | Prim::Define | Prim::Gather | Prim::Erase | Prim::Standing) | None => false,
                 Some(_) => !bracketed,
             };
             if bare {
@@ -1413,7 +1623,7 @@ impl<'a> Builder<'a> {
                     return Err("A for loop needs a range: start..end".to_string());
                 }
                 self.address_to_write(&var);
-                return self.walk(start, None, var, None);
+                return self.walk(start, None, var, None, None);
             }
             self.advance();
             let end = self.expr(tier + 1)?;
@@ -1632,24 +1842,40 @@ impl<'a> Builder<'a> {
     /// in a cell of its own and given back once the writing is done.
     fn written(&mut self, expr: Form, gives_back: bool) -> Res<Form> {
         let compound = if self.look().shape == Shape::Sign { self.table.compound.get(&self.look().lexeme).copied() } else { None };
-        let plain = compound.is_none();
         let assign = self.advance();
+        self.write_into(expr, gives_back, compound, assign)
+    }
+
+    /// The write itself, the sign that called for it already read.
+    fn write_into(&mut self, expr: Form, gives_back: bool, compound: Option<Prim>, assign: Token) -> Res<Form> {
+        // A target kept quiet is a write kept quiet: the muting comes
+        // off the reading and goes round the writing instead.
+        if let Form::Muted(inner) = expr {
+            let written = self.write_into(*inner, gives_back, compound, assign)?;
+            return Ok(Form::Muted(Box::new(written)));
+        }
+        let plain = compound.is_none();
         // `b = &a`: b is tied to a's cell rather than given a copy.
         if self.table.single("ext.op.reference").map_or(false, |m| self.sign(m)) && plain {
             if let Form::Read(slot) = &expr {
                 let held = slot.ident.to_string();
                 self.advance();
-                let source = self.need_word("as the name to share a cell with")?;
-                let shared = self.address_to_write(&source);
+                let shared = self.a_shared_cell()?;
                 let tied = self.address_to_write(&held);
-                let tie = Form::Tie(tied, Box::new(Form::Share(shared)));
+                let tie = Form::Tie(tied, Box::new(shared));
                 return Ok(match gives_back {
                     true => sequence(vec![tie, self.read(&held)]),
                     false => tie,
                 });
             }
         }
-        let mut value = self.expr(0)?;
+        // Where the value is already worked out and waiting in a cell,
+        // the write reads it from there rather than reading what comes
+        // after the sign: a taking-apart has no sign before each place.
+        let mut value = match self.waiting.clone() {
+            Some(cell) => self.read(&cell),
+            None => self.expr(0)?,
+        };
         let keep = (gives_back && plain).then(|| {
             self.gensyms += 1;
             format!("#written{}", self.gensyms)
@@ -1659,6 +1885,10 @@ impl<'a> Builder<'a> {
             let back = self.read(cell);
             value = sequence(vec![stored, back]);
         }
+        let (chain, expr) = match chain_apart(expr) {
+            Ok(found) => (Some(found), Form::Const(Value::Nil)),
+            Err(back) => (None, back),
+        };
         let made = match expr {
             // x op= e is x = x op e.
             Form::Read(slot) => match compound {
@@ -1673,6 +1903,80 @@ impl<'a> Builder<'a> {
                 }
                 None => self.write(&slot.ident, value),
             },
+            // `a[i][j] = v` and `a[i][] = v`: the keys are worked out
+            // once and in order, the arrays along the way kept, and each
+            // rewritten in the one above it. A place not there yet is
+            // made on the way in, since that is what a write asks for.
+            _ if chain.is_some() => {
+                let (name, keys, after) = chain.expect("a chain on a name");
+                let mut steps = Vec::new();
+                let mut at_cells = Vec::new();
+                for key in keys {
+                    self.gensyms += 1;
+                    let cell = format!("#key{}", self.gensyms);
+                    let stored = self.write(&cell, key);
+                    steps.push(stored);
+                    at_cells.push(cell);
+                }
+                // In through the arrays, each one kept as far as the one
+                // the write lands in.
+                let deep = match after { true => at_cells.len(), false => at_cells.len() - 1 };
+                let mut in_cells = Vec::new();
+                self.gensyms += 1;
+                let root = format!("#in{}", self.gensyms);
+                // Where a write makes the places it needs, the name it
+                // starts from has nothing to say about being empty.
+                let start = self.read_to_write(&name);
+                let start = match self.table.flag("ext.op.index.makes") {
+                    true => Form::Muted(Box::new(start)),
+                    false => start,
+                };
+                steps.push(self.write(&root, start));
+                in_cells.push(root);
+                for i in 0..deep {
+                    self.gensyms += 1;
+                    let cell = format!("#in{}", self.gensyms);
+                    let (so_far, key) = (self.read(&in_cells[i]), self.read(&at_cells[i]));
+                    let further = prim_call(Prim::Inward, vec![so_far, key]);
+                    steps.push(self.write(&cell, further));
+                    in_cells.push(cell);
+                }
+                self.gensyms += 1;
+                let holding = format!("#value{}", self.gensyms);
+                let written = match compound {
+                    Some(op) => {
+                        let (lands_in, key) = (self.read(&in_cells[deep]), self.read(&at_cells[deep]));
+                        let now = prim_call(Prim::At, vec![lands_in, key]);
+                        prim_call(op, vec![now, value])
+                    }
+                    None => value,
+                };
+                steps.push(self.write(&holding, written));
+                // Writing into a place changes the array the name holds
+                // where it stands, so each array along the way is written
+                // into the one above it, from the innermost outwards.
+                let lands_in = self.read(&in_cells[deep]);
+                let put = self.read(&holding);
+                steps.push(match after {
+                    true => prim_call(Prim::Append, vec![lands_in, put]),
+                    false => {
+                        let key = self.read(&at_cells[deep]);
+                        prim_call(Prim::Replace, vec![lands_in, key, put])
+                    }
+                });
+                for i in (0..deep).rev() {
+                    let (holds, key, done) = (self.read(&in_cells[i]), self.read(&at_cells[i]), self.read(&in_cells[i + 1]));
+                    steps.push(prim_call(Prim::Replace, vec![holds, key, done]));
+                }
+                let back = self.read(&in_cells[0]);
+                steps.push(self.write(&name, back));
+                if gives_back {
+                    steps.push(self.read(&holding));
+                }
+                sequence(steps)
+            }
+            // A read of the binding a value names becomes a write of it.
+            Form::Called(spells) if compound.is_none() => Form::CallWrite(spells, Box::new(value)),
             _ if compound.is_some() => return Err(format!("'{}' needs a plain variable on its left", assign.lexeme)),
             // A read of a member becomes a write of it.
             Form::Apply(Callee::Prim(Prim::Of, _), mut args) if args.len() == 2 => {
@@ -1708,7 +2012,7 @@ impl<'a> Builder<'a> {
             // a[] = v appends.
             Form::Apply(Callee::Prim(Prim::AtEnd, _), mut args) if args.len() == 1 => match args.pop().unwrap() {
                 Form::Read(slot) => {
-                    let target = self.read(&slot.ident);
+                    let target = self.read_to_write(&slot.ident);
                     prim_call(Prim::Append, vec![target, value])
                 }
                 _ => return Err("Invalid assignment target".to_string()),
@@ -1717,7 +2021,7 @@ impl<'a> Builder<'a> {
                 let index = args.pop().unwrap();
                 match args.pop().unwrap() {
                     Form::Read(slot) => {
-                        let target = self.read(&slot.ident);
+                        let target = self.read_to_write(&slot.ident);
                         prim_call(Prim::Replace, vec![target, index, value])
                     }
                     _ => return Err("Invalid assignment target".to_string()),
@@ -1825,11 +2129,77 @@ impl<'a> Builder<'a> {
             let step = self.stepped(&name, by);
             return Ok(sequence(vec![step, self.read(&name)]));
         }
+        // `list($a, $b) = v`: the places named on the left each take
+        // the matching place of the value on the right.
+        if table.spells("ext.stmt.unpack", &t.lexeme) && matches!(t.shape, Shape::Sign | Shape::Bare) {
+            self.advance();
+            let places = self.pos;
+            self.step_past_call()?;
+            let sign = self.advance();
+            if !table.strings("stmt.assign").iter().any(|w| *w == sign.lexeme) {
+                return Err(format!("A taking-apart must be written on the left of a write, not '{}'", sign.lexeme));
+            }
+            let worth = self.expr(0)?;
+            self.gensyms += 1;
+            let holding = format!("#taken{}", self.gensyms);
+            let kept = self.write(&holding, worth);
+            let after = self.pos;
+            self.pos = places;
+            let mut steps = vec![kept];
+            steps.extend(self.taken_apart(&holding)?);
+            self.pos = after;
+            steps.push(self.read(&holding));
+            return Ok(sequence(steps));
+        }
+        // `(int) x`: a kind's word written within the grouping marks
+        // before a value makes the value that kind. Only a word the
+        // language names a kind by counts, so grouping a plain name is
+        // still grouping.
+        if table.flag("ext.op.cast") {
+            let opens = table.single("syntax.group.open").map(str::to_string);
+            let closes = table.single("syntax.group.close").map(str::to_string);
+            if let (Some(open), Some(close)) = (opens, closes) {
+                let made = self
+                    .sign(&open)
+                    .then(|| kind_made(table, &self.glance(1).lexeme))
+                    .flatten()
+                    .filter(|_| self.glance(2).shape == Shape::Sign && self.glance(2).lexeme == close);
+                if let Some(made) = made {
+                    self.advance();
+                    self.advance();
+                    self.advance();
+                    let tier = table.monadic.values().map(|m| m.level).max().unwrap_or(0);
+                    let inner = self.expr(tier)?;
+                    return Ok(prim_call(made, vec![inner]));
+                }
+            }
+        }
         if matches!(t.shape, Shape::Sign | Shape::Bare) {
             if let Some(op) = table.monadic.get(&t.lexeme).copied() {
                 self.advance();
                 let operand = self.expr(op.level)?;
                 return Ok(prim_call(op.prim, vec![operand]));
+            }
+            if table.spells("ext.op.name_by_value", &t.lexeme) {
+                // `$$a` and `${e}`: the name is whatever the value
+                // spells. Only the outermost bindings keep names the
+                // run can still see, so a name worked out inside a unit
+                // of its own is turned down rather than quietly meaning
+                // some other binding.
+                if self.layers.len() > 1 {
+                    return Err(format!("'{}' works a name out as the run goes, which only the outermost bindings keep", t.lexeme));
+                }
+                self.advance();
+                let spells = self.spelling()?;
+                return self.subscript(Form::Called(Box::new(spells)));
+            }
+            if table.spells("ext.op.hush", &t.lexeme) {
+                // What the piece under the mark has to say about itself
+                // goes unsaid; the value it comes to is unchanged.
+                let tier = table.precedence.get(&t.lexeme).copied().unwrap_or(0);
+                self.advance();
+                let quiet = self.expr(tier)?;
+                return Ok(Form::Muted(Box::new(quiet)));
             }
             if t.shape == Shape::Sign && table.spells("ext.op.plus", &t.lexeme) {
                 // A plus sign leaves its operand as it is, bound like a negation.
@@ -1873,6 +2243,9 @@ impl<'a> Builder<'a> {
                     self.advance();
                     if table.prims.get(&t.lexeme) == Some(&Prim::Erase) {
                         return self.forget();
+                    }
+                    if table.prims.get(&t.lexeme) == Some(&Prim::Standing) {
+                        return self.standing();
                     }
                     if table.prims.get(&t.lexeme) == Some(&Prim::Gather) {
                         // array(...) gathers what it is given, like a literal.
@@ -1953,7 +2326,10 @@ impl<'a> Builder<'a> {
                         _ => return Err("Only a name or a place in an array can be forgotten".to_string()),
                     }
                 }
-                _ => return Err("Only a name or a place in an array can be forgotten".to_string()),
+                // `unset($o->p)`: the property is taken off the thing
+                // itself, which every name for it sees at once.
+                Form::Apply(Callee::Prim(Prim::Of, _), args) if args.len() == 2 => prim_call(Prim::Pluck, args),
+                _ => return Err("Only a name, a place in an array or a property can be forgotten".to_string()),
             });
             if let Some(s) = &sep {
                 if self.sign(s) {
@@ -1964,6 +2340,154 @@ impl<'a> Builder<'a> {
         self.advance();
         items.push(constant(Value::Nil));
         Ok(sequence(items))
+    }
+
+    /// What comes after the mark saying a value spells a name: a piece
+    /// written within the block marks, or else whatever binds as
+    /// tightly as a negation, so `$$$a` is read from the inside out.
+    fn spelling(&mut self) -> Res<Form> {
+        let table = self.table;
+        let opens = table.single("block.open").map(str::to_string);
+        let closes = table.single("block.close").map(str::to_string);
+        if let (Some(open), Some(close)) = (opens, closes) {
+            if self.sign(&open) {
+                self.advance();
+                let named = self.expr(0)?;
+                self.need_sign(&close, "after the name to work out")?;
+                return Ok(named);
+            }
+        }
+        let tier = table.monadic.values().map(|m| m.level).max().unwrap_or(0);
+        self.expr(tier)
+    }
+
+    /// Step past a bracketed piece without reading it, so what follows
+    /// may be read first: the places a taking-apart names are read only
+    /// once the value they take from is worked out.
+    fn step_past_call(&mut self) -> Res<()> {
+        let open = self.table.single("syntax.call.open").ok_or("A taking-apart needs the call brackets")?.to_string();
+        let close = self.table.single("syntax.call.close").ok_or("A taking-apart needs the call brackets")?.to_string();
+        self.need_sign(&open, "after the word that takes a value apart")?;
+        let mut deep = 1usize;
+        while deep > 0 {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", close));
+            }
+            if self.sign(&open) {
+                deep += 1;
+            } else if self.sign(&close) {
+                deep -= 1;
+            }
+            self.advance();
+        }
+        Ok(())
+    }
+
+    /// What stands after the mark that shares a cell: a name, a place in
+    /// an array, or a property. Whichever it is, a cell is made of it
+    /// where it is not one already, so a name may be tied to it.
+    fn a_shared_cell(&mut self) -> Res<Form> {
+        let read = self.expr_at(0, false)?;
+        Ok(match read {
+            Form::Read(slot) => {
+                let shared = self.address_to_write(&slot.ident.to_string());
+                Form::Share(shared)
+            }
+            Form::Apply(Callee::Prim(Prim::Of, _), mut args) if args.len() == 2 => {
+                let named = args.pop().expect("the property");
+                let thing = args.pop().expect("what holds it");
+                let Form::Const(Value::Text(called)) = named else {
+                    return Err("Only a property named outright has a cell to share".to_string());
+                };
+                Form::ShareField(Box::new(thing), called)
+            }
+            Form::Apply(Callee::Prim(Prim::At, _), mut args) if args.len() == 2 => {
+                let place = args.pop().expect("the place");
+                match args.pop().expect("what holds it") {
+                    Form::Read(slot) => {
+                        let held = self.address_to_read(&slot.ident.to_string());
+                        Form::ShareItem(held, Box::new(place))
+                    }
+                    _ => return Err("Only a place in a named array has a cell to share".to_string()),
+                }
+            }
+            _ => return Err("Only a name, a place in an array or a property has a cell to share".to_string()),
+        })
+    }
+
+    /// `list($a, , $b) = v`: each place named takes the matching place
+    /// of the value. A place left out is stepped over and still counts,
+    /// and a taking-apart within one takes the place holding it.
+    fn taken_apart(&mut self, holding: &str) -> Res<Vec<Form>> {
+        let table = self.table;
+        let open = table.single("syntax.call.open").unwrap().to_string();
+        let close = table.single("syntax.call.close").unwrap().to_string();
+        let sep = table.single("syntax.call.separator").map(str::to_string);
+        self.need_sign(&open, "after the word that takes a value apart")?;
+        let mut steps = Vec::new();
+        let mut at = 0usize;
+        while !self.sign(&close) {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", close));
+            }
+            let stepped = sep.as_ref().map_or(false, |s| self.sign(s)) || self.sign(&close);
+            if !stepped {
+                self.gensyms += 1;
+                let held = format!("#place{}", self.gensyms);
+                let from = self.read(holding);
+                let there = prim_call(Prim::At, vec![from, constant(Value::Small(at as i64))]);
+                steps.push(self.write(&held, there));
+                if table.spells("ext.stmt.unpack", &self.look().lexeme) {
+                    self.advance();
+                    steps.extend(self.taken_apart(&held)?);
+                } else {
+                    let target = self.expr_at(0, false)?;
+                    let was = self.waiting.replace(held);
+                    let stood = self.look().clone();
+                    let done = self.write_into(target, false, None, stood);
+                    self.waiting = was;
+                    steps.push(done?);
+                }
+            }
+            at += 1;
+            if let Some(s) = &sep {
+                if self.sign(s) {
+                    self.advance();
+                    continue;
+                }
+            }
+            break;
+        }
+        self.need_sign(&close, "after the places to take apart")?;
+        Ok(steps)
+    }
+
+    /// `isset(a, b[k])`: whether every one of them is something other
+    /// than nothing. A name never written and a place an array does not
+    /// hold both count as nothing, and neither is complained about, so
+    /// every look inside is a glance and the whole is muted.
+    fn standing(&mut self) -> Res<Form> {
+        let table = self.table;
+        let close = table.single("syntax.call.close").unwrap().to_string();
+        let sep = table.single("syntax.call.separator").map(str::to_string);
+        let mut asked = Vec::new();
+        while !self.sign(&close) {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", close));
+            }
+            let one = self.expr(0)?;
+            asked.push(Form::Muted(Box::new(glancing(one))));
+            if let Some(s) = &sep {
+                if self.sign(s) {
+                    self.advance();
+                }
+            }
+        }
+        self.advance();
+        if asked.is_empty() {
+            return Err("Nothing was asked about".to_string());
+        }
+        Ok(prim_call(Prim::Standing, asked))
     }
 
     /// The class a name stands for: `self` names the class being read
@@ -2056,7 +2580,17 @@ impl<'a> Builder<'a> {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", close));
             }
-            let item = self.expr(0)?;
+            // `[&$a]`: the place holds the binding's own cell, so a
+            // write through either name is a write the other sees.
+            let tied = self.table.single("ext.op.reference").map_or(false, |m| self.sign(m));
+            let item = if tied {
+                self.advance();
+                let named = self.need_word("as the name to share a cell with")?;
+                let slot = self.address_to_write(&named);
+                Form::Share(slot)
+            } else {
+                self.expr(0)?
+            };
             items.push(match &mark {
                 Some(m) if self.sign(m) => {
                     self.advance();
@@ -2563,7 +3097,7 @@ impl<'a> Builder<'a> {
             let mut param_slots = scope.formal_slots;
             params.reverse();
             param_slots.reverse();
-            let program = Routine { ident: name, least: 0, formals: params, formal_slots: param_slots, idents: scope.idents, frameless: false, traps: Traps::Yields, body: sequence(s) };
+            let program = Routine { ident: name, least: 0, formals: params, formal_slots: param_slots, idents: scope.idents, frameless: false, written_in: self.written_in.clone(), traps: Traps::Yields, body: sequence(s) };
             stack.push(constant(Value::Routine(Rc::new(program))));
             return Ok(());
         }
@@ -2655,7 +3189,7 @@ impl<'a> Builder<'a> {
                 Prim::External | Prim::Span => return Err(format!("'{}' has no postfix form", w)),
                 Prim::Echo | Prim::Say | Prim::Out | Prim::Tell | Prim::Dump | Prim::Raise => (1, false),
                 Prim::Portray => (1, true),
-                Prim::Define | Prim::Gather | Prim::Erase => return Err(format!("'{}' has no postfix form", w)),
+                Prim::Define | Prim::Gather | Prim::Erase | Prim::Standing => return Err(format!("'{}' has no postfix form", w)),
                 Prim::CharAtIndex | Prim::Fetch | Prim::MakeReal => (2, true),
                 _ => (1, true),
             };
@@ -2709,11 +3243,42 @@ fn dup_pure(node: &Form) -> Form {
 
 // ---------- numbers
 
+/// A whole number too wide for the language to hold as one is a real
+/// there, written out as a literal or worked out.
+fn at_language_width(v: Value, table: &Table) -> Value {
+    let (Some(bits), Value::Huge(n)) = (table.count("ext.system.integer.bits"), &v) else { return v };
+    if n.bits() < bits as u64 {
+        return v;
+    }
+    let figures = table.count("ext.system.real.digits").unwrap_or(math::DEFAULT_PLACES);
+    math::make_number((**n).clone(), BigInt::from(1), Some(figures))
+}
+
 pub fn numeral(text: &str, table: &Table) -> Res<Value> {
-    if let Some(p) = table.single("lexical.number.hex_prefix") {
-        if let Some(d) = text.strip_prefix(p) {
-            return BigInt::parse_bytes(d.as_bytes(), 16).map(Value::from_big).ok_or_else(|| format!("Invalid number: {}", text));
+    Ok(at_language_width(read_numeral(text, table)?, table))
+}
+
+fn read_numeral(text: &str, table: &Table) -> Res<Value> {
+    let apart = table.letters("ext.lexical.number.separator");
+    let plain: String = text.chars().filter(|c| !apart.contains(c)).collect();
+    if plain != text {
+        return read_numeral(&plain, table);
+    }
+    for (key, radix) in [
+        ("lexical.number.hex_prefix", 16u32),
+        ("ext.lexical.number.binary_prefix", 2),
+        ("ext.lexical.number.octal_prefix", 8),
+    ] {
+        for p in table.strings(key) {
+            if let Some(d) = text.strip_prefix(p.as_str()) {
+                return BigInt::parse_bytes(d.as_bytes(), radix).map(Value::from_big).ok_or_else(|| format!("Invalid number: {}", text));
+            }
         }
+    }
+    // Where a language says so, a nought before more digits means those
+    // digits are read in base eight.
+    if table.flag("ext.lexical.number.octal_lead") && text.len() > 1 && text.starts_with('0') && text.bytes().all(|b| b.is_ascii_digit()) {
+        return BigInt::parse_bytes(text[1..].as_bytes(), 8).map(Value::from_big).ok_or_else(|| format!("Invalid number: {}", text));
     }
     let point = table.letter("lexical.number.decimal_point");
     if let Some(mark) = table.letter("lexical.number.base_marker").filter(|m| text.contains(*m)) {
@@ -2725,7 +3290,7 @@ pub fn numeral(text: &str, table: &Table) -> Res<Value> {
     if let Some(at) = text.find(|c| powers.contains(&c)) {
         let (before, power) = (&text[..at], &text[at + 1..]);
         let power: i32 = power.parse().map_err(|_| format!("Invalid number: {}", text))?;
-        let (above, beneath) = match numeral(before, table)? {
+        let (above, beneath) = match read_numeral(before, table)? {
             Value::Frac(e) => (e.above.clone(), e.beneath.clone()),
             Value::Small(n) => (BigInt::from(n), BigInt::from(1)),
             Value::Huge(n) => ((*n).clone(), BigInt::from(1)),

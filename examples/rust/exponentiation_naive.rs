@@ -22,10 +22,9 @@ fn main() {
         result = 1;
         j = 0;
         while j < exp {
-            result = result * base;
+            result = result * base % mod;
             j = j + 1;
         }
-        result = result % mod;
         i = i + 1;
     }
     print!("Result: ");

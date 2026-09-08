@@ -38,7 +38,8 @@
   "lexical.number.base_marker": [],
   "lexical.number.exponent_marker": [],
   "lexical.number.hex_prefix": [
-    "0x"
+    "0x",
+    "0X"
   ],
   "lexical.keywords_case_insensitive": true,
   "identifier.unicode": true,
@@ -153,7 +154,8 @@
     ],
     [
       "!",
-      "~"
+      "~",
+      "@"
     ],
     [
       "-"
@@ -304,9 +306,7 @@
   "builtin.typeof": [
     "gettype"
   ],
-  "builtin.error": [
-    "exit"
-  ],
+  "builtin.error": [],
   "builtin.extern": [],
   "builtin.range": [
     "range"
@@ -419,6 +419,15 @@
     "array"
   ],
   "ext.op.index.append": true,
+  "ext.op.index.makes": true,
+  "ext.builtin.exit": [
+    "exit",
+    "die"
+  ],
+  "ext.system.untrue.text": [
+    "0"
+  ],
+  "ext.system.untrue.empty_array": true,
   "ext.builtin.print_r": [
     "print_r"
   ],
@@ -522,6 +531,9 @@
   "ext.builtin.unset": [
     "unset"
   ],
+  "ext.builtin.isset": [
+    "isset"
+  ],
   "ext.lexical.template": true,
   "ext.op.otherwise": [
     "??"
@@ -544,6 +556,14 @@
   "ext.op.bit.right": [
     ">>"
   ],
+  "ext.op.hush": ["@"],
+  "ext.op.name_by_value": [
+    "$"
+  ],
+  "ext.op.cast": true,
+  "ext.stmt.unpack": [
+    "list"
+  ],
   "ext.op.identical": [
     "==="
   ],
@@ -561,5 +581,95 @@
     "func_get_arg"
   ],
   "ext.op.assign.value": true,
-  "ext.op.index.plain_keys": true
+  "ext.op.index.plain_keys": true,
+  "ext.system.source.file": [
+    "__FILE__"
+  ],
+  "ext.system.source.directory": [
+    "__DIR__"
+  ],
+  "ext.system.source.routine": [
+    "__FUNCTION__"
+  ],
+  "ext.system.source.class": [
+    "__CLASS__"
+  ],
+  "ext.system.source.method": [
+    "__METHOD__"
+  ],
+  "ext.system.source.line": [
+    "__LINE__"
+  ],
+  "ext.system.complaint.warning": [
+    "Warning"
+  ],
+  "ext.system.complaint.notice": [
+    "Notice"
+  ],
+  "ext.system.complaint.deprecated": [
+    "Deprecated"
+  ],
+  "ext.lexical.number.binary_prefix": [
+    "0b",
+    "0B"
+  ],
+  "ext.lexical.number.octal_prefix": [
+    "0o",
+    "0O"
+  ],
+  "ext.lexical.number.octal_lead": true,
+  "ext.lexical.number.separator": [
+    "_"
+  ],
+  "ext.system.integer.bits": 64,
+  "ext.system.real.bits": 64,
+  "ext.system.real.digits": 14,
+  "ext.system.complaint.fatal": [
+    "Fatal error"
+  ],
+  "ext.system.fault.class": [
+    "Error"
+  ],
+  "ext.system.fault.class.arithmetic": [
+    "ArithmeticError"
+  ],
+  "ext.system.fault.class.division": [
+    "DivisionByZeroError"
+  ],
+  "ext.system.fault.class.kind": [
+    "TypeError"
+  ],
+  "ext.builtin.time_limit": [
+    "set_time_limit"
+  ],
+  "ext.system.kind.brief": [
+    "int",
+    "-",
+    "float",
+    "string",
+    "bool",
+    "array",
+    "null"
+  ],
+  "ext.builtin.file.read": [
+    "file_get_contents"
+  ],
+  "ext.builtin.file.write": [
+    "file_put_contents"
+  ],
+  "ext.builtin.file.exists": [
+    "file_exists"
+  ],
+  "ext.builtin.file.remove": [
+    "unlink"
+  ],
+  "ext.builtin.eval": [
+    "eval"
+  ],
+  "ext.builtin.include": [
+    "include",
+    "include_once",
+    "require",
+    "require_once"
+  ]
 }

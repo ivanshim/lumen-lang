@@ -75,9 +75,17 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     for (_, name) in &lang.request_bindings {
         registry.slot(name);
     }
-    let program = compile::compile(&tokens, lang, &mut registry)?;
+    for (_, name) in &lang.source_bindings {
+        registry.slot(name);
+    }
+    let before = request
+        .iter()
+        .find(|(from, key, ..)| from == "SELF" && key == "lines_before")
+        .and_then(|(.., n, _)| n.parse().ok())
+        .unwrap_or(0);
+    let program = compile::compile(&tokens, lang, &mut registry, before)?;
 
-    let mut machine = engine::Engine::new(lang, registry.idents.clone());
+    let mut machine = engine::Engine::new(lang, registry);
     if let Some(name) = &lang.args_binding {
         machine.define(name, Value::text(&program_args.join(" ")));
     }
@@ -100,6 +108,16 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
         }
         machine.define(name, Value::Map(std::rc::Rc::new(carried)));
     }
+    if let Some((.., place, _)) = request.iter().find(|(from, key, ..)| from == "SELF" && key == "file") {
+        machine.written_in(place);
+    }
+    // Where the program is written, as the request carries it.
+    for (part, name) in &lang.source_bindings {
+        let found = request.iter().find(|(from, key, ..)| from == "SELF" && key == part);
+        if let Some((.., value, _)) = found {
+            machine.define(name, Value::text(value));
+        }
+    }
     if !lang.kind_spelled {
         for (name, kind) in &lang.sort_bindings {
             machine.define(name, engine::sort_value(*kind));
@@ -110,7 +128,14 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     }
     // A value raised and never caught is a fault like any other, told
     // in the language's own words.
-    machine.invoke(&program, Vec::new()).map_err(|f| f.told(&machine.names()))?;
+    if let Err(fault) = machine.invoke(&program, Vec::new()) {
+        // A run the program itself said was over came out right.
+        if matches!(fault, engine::Fault::Finished) {
+            return Ok(());
+        }
+        machine.ended_uncaught(&fault);
+        return Err(fault.told(&machine.names()));
+    }
 
     // A language with an entry function (Rust's `main`) runs it once the
     // program body has defined it.

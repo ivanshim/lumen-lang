@@ -75,7 +75,14 @@ pub fn gathered() -> Request {
 fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>) {
     let kind = env::var("CONTENT_TYPE").unwrap_or_default();
     let plain = kind.starts_with("application/x-www-form-urlencoded");
-    let boundary = kind.split(';').map(str::trim).find_map(|part| part.strip_prefix("boundary=")).map(str::to_string);
+    // What a part is cut at runs from `boundary=` to the first comma, as
+    // a web server reads it: what follows the comma says something else
+    // about the body and is none of the boundary.
+    let boundary = kind
+        .split(';')
+        .map(str::trim)
+        .find_map(|part| part.strip_prefix("boundary="))
+        .map(|mark| mark.split(',').next().unwrap_or(mark).trim().to_string());
     if !plain && boundary.is_none() {
         return (Vec::new(), Vec::new());
     }
@@ -96,6 +103,9 @@ fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>) {
 fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String, String, bool)>) {
     let (mut posted, mut sent) = (Vec::new(), Vec::new());
     let mut files = 0usize;
+    // A part written before the files may say how large a file the form
+    // will take; one larger than that is turned away.
+    let mut form_limit: Option<usize> = None;
     let mark = format!("--{}", boundary);
     let mut rest: &[u8] = body;
     while let Some(at) = find_bytes(rest, mark.as_bytes()) {
@@ -117,18 +127,44 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
             }
         }
         let named = |what: &str| -> Option<String> { attribute(&head, what) };
+        // What a part holds is named before the first semicolon; what
+        // follows one says something more about it and is not the name.
         let kind = head
             .lines()
-            .find_map(|line| line.to_ascii_lowercase().starts_with("content-type:").then(|| line[13..].trim().to_string()))
+            .find_map(|line| {
+                line.to_ascii_lowercase()
+                    .starts_with("content-type:")
+                    .then(|| line[13..].split(';').next().unwrap_or("").trim().to_string())
+            })
             .unwrap_or_else(|| "text/plain".to_string());
+        // A name that opens a bracket must close on one: a part naming
+        // anything after the last bracket is no name at all, and the
+        // whole part goes unread. A form's own fields are read more
+        // kindly than this, which is why the rule lives here.
+        if named("name").map_or(false, |name| name.contains('[') && !name.ends_with(']')) {
+            continue;
+        }
         match (named("name"), named("filename")) {
             (None, None) => continue,
-            (Some(name), None) => posted.push((steps_of(&name), String::from_utf8_lossy(content).into_owned())),
+            (Some(name), None) => {
+                let said = String::from_utf8_lossy(content).into_owned();
+                if name == "MAX_FILE_SIZE" {
+                    form_limit = said.trim().parse().ok();
+                }
+                posted.push((steps_of(&name), said));
+            }
             (given, Some(filename)) => {
+                // A part naming no file at all sent none: it is counted
+                // among the files, and everything said of it is empty
+                // but for the word that says none came.
+                let none_sent = filename.is_empty();
+                // A file larger than the form said it would take is
+                // turned away, and nothing of it is kept.
+                let too_large = form_limit.map_or(false, |most| content.len() > most);
                 // The file is written out, since a program is given the
                 // place it lies in rather than what it holds.
                 let held = env::temp_dir().join(format!("lumenup{}{}", std::process::id(), files));
-                let written = std::fs::write(&held, content).is_ok();
+                let written = !none_sent && !too_large && std::fs::write(&held, content).is_ok();
                 let place = held.to_string_lossy().into_owned();
                 // A part that says nothing of its name is kept by its
                 // turn among the files.
@@ -141,13 +177,27 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
                     Some((first, deeper)) => (first, Some(deeper)),
                     None => (steps.as_str(), None),
                 };
+                // What a file is called is the last step of what was
+                // sent: a browser handing over a whole directory names
+                // each file by its way in, and only the whole path
+                // keeps that.
+                let called = filename.rsplit(['/', '\\']).next().unwrap_or(&filename).to_string();
+                let nothing = String::new();
                 for (what, value, counted) in [
-                    ("name", filename.clone(), false),
+                    ("name", called, false),
                     ("full_path", filename, false),
-                    ("type", kind.clone(), false),
-                    ("tmp_name", if written { place } else { String::new() }, false),
-                    ("error", if written { "0".to_string() } else { "1".to_string() }, true),
-                    ("size", content.len().to_string(), true),
+                    ("type", if none_sent || too_large { nothing.clone() } else { kind.clone() }, false),
+                    ("tmp_name", if written { place } else { nothing.clone() }, false),
+                    // 0: it came. 2: it was larger than the form said it
+                    // would take. 4: none was sent. 1: it came and could
+                    // not be put anywhere.
+                    ("error", match (none_sent, too_large, written) {
+                        (true, ..) => "4".to_string(),
+                        (_, true, _) => "2".to_string(),
+                        (.., true) => "0".to_string(),
+                        _ => "1".to_string(),
+                    }, true),
+                    ("size", if none_sent || too_large { "0".to_string() } else { content.len().to_string() }, true),
                 ] {
                     let path = match deeper {
                         Some(rest) => format!("{first}{BETWEEN_STEPS}{what}{BETWEEN_STEPS}{rest}"),
@@ -232,7 +282,7 @@ fn steps_of(name: &str) -> String {
         Some((head, rest)) => (head, rest),
         None => (name, ""),
     };
-    let mut steps = vec![head.replace(['.', ' '], "_")];
+    let mut steps = vec![head.replace(['.', ' ', '['], "_")];
     loop {
         match rest.split_once(']') {
             Some((step, tail)) => {
@@ -243,8 +293,11 @@ fn steps_of(name: &str) -> String {
                 };
             }
             None => {
-                // Brackets that never close are part of the name itself.
-                return name.replace(['.', ' '], "_");
+                // A bracket that never closes opens nothing, so it is
+                // part of the name; and a name may hold none of the
+                // marks that would make it hard to read, so each of
+                // them stands as an underscore.
+                return name.replace(['.', ' ', '['], "_");
             }
         }
     }
@@ -264,7 +317,7 @@ fn crumbs(text: &str) -> Vec<(String, String)> {
             continue;
         }
         let (name, value) = match part.split_once('=') {
-            Some((name, value)) => (steps_of(name), unescaped(value)),
+            Some((name, value)) => (steps_of(name), unescaped_plainly(value)),
             None => (steps_of(part), String::new()),
         };
         if !found.iter().any(|(had, _)| *had == name) {
@@ -275,14 +328,24 @@ fn crumbs(text: &str) -> Vec<(String, String)> {
 }
 
 /// A part of a URL as the text it stands for: `%41` is `A`, and a plus
-/// is a space.
+/// is a space where the piece was written as a form writes one.
 fn unescaped(text: &str) -> String {
+    undone(text, true)
+}
+
+/// The same, save that a plus stands for itself: what a cookie carries
+/// is written plainly and a plus in it is a plus.
+fn unescaped_plainly(text: &str) -> String {
+    undone(text, false)
+}
+
+fn undone(text: &str, plus_is_space: bool) -> String {
     let bytes = text.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
-            b'+' => out.push(b' '),
+            b'+' if plus_is_space => out.push(b' '),
             b'%' if i + 2 < bytes.len() => {
                 let digits = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("");
                 match u8::from_str_radix(digits, 16) {

@@ -7,7 +7,7 @@ use std::fmt::Write as _;
 use std::rc::Rc;
 
 use num_bigint::BigInt;
-use num_traits::{Signed, ToPrimitive, Zero};
+use num_traits::{One, Signed, ToPrimitive, Zero};
 
 use crate::code::Routine;
 
@@ -49,6 +49,10 @@ pub struct Real {
     pub p: BigInt,
     pub q: BigInt,
     pub places: usize,
+    /// A nought that came of working with a number below nought keeps
+    /// the minus, since a real of a width has two noughts and a language
+    /// holding reals to a width writes them apart.
+    pub below: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -86,6 +90,10 @@ pub struct Wording<'a> {
     pub true_word: &'a str,
     pub false_word: &'a str,
     pub null_word: &'a str,
+    /// Where a language's reals are binary numbers of a fixed width,
+    /// how many significant digits one shows when simply written out.
+    /// Where it says nothing, a real is shown to its own precision.
+    pub real_digits: Option<usize>,
 }
 
 impl Value {
@@ -213,6 +221,9 @@ impl Value {
     /// machine's own form for the rest.
     pub fn display(&self, sp: &Wording) -> String {
         match self {
+            // A cell two names share is written as what it holds: the
+            // sharing is between the names and not in the value.
+            Value::Bond(shared) => shared.borrow().display(sp),
             Value::Flag(true) => sp.true_word.to_string(),
             Value::Flag(false) => sp.false_word.to_string(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => sp.null_word.to_string(),
@@ -225,6 +236,10 @@ impl Value {
                 format!("[{}]", shown.join(", "))
             }
             Value::Tie(pair) => format!("{} => {}", pair.0.display(sp), pair.1.display(sp)),
+            // A language whose reals are binary numbers writes one out
+            // to its own count of significant figures.
+            Value::Real(r) if r.below && r.p.is_zero() => "-0".to_string(),
+            Value::Real(r) if sp.real_digits.is_some() => binary_string(as_binary(&r.p, &r.q), sp.real_digits),
             other => other.plain(),
         }
     }
@@ -398,4 +413,102 @@ pub struct Instance {
     /// Which object this is by the order it was made, counting from
     /// one: what a language that names objects when showing them shows.
     pub mark: usize,
+}
+
+/// A real as the nearest binary number of sixty-four bits. A number too
+/// large for one to hold stands beyond every one of them, which is what
+/// such a language means by an unbounded number.
+pub fn as_binary(p: &BigInt, q: &BigInt) -> f64 {
+    let beyond = || if p.is_negative() { f64::NEG_INFINITY } else { f64::INFINITY };
+    if q.is_one() {
+        return p.to_f64().unwrap_or_else(beyond);
+    }
+    match (p.to_f64(), q.to_f64()) {
+        (Some(a), Some(b)) if a.is_finite() && b.is_finite() && b != 0.0 => a / b,
+        // Too large for the division to be done straight off: bring
+        // both down by the same power of two and divide those.
+        _ => {
+            let shift = p.bits().max(q.bits()).saturating_sub(900);
+            let (a, b) = (p >> shift, q >> shift);
+            match (a.to_f64(), b.to_f64()) {
+                (Some(a), Some(b)) if b != 0.0 => a / b,
+                _ => beyond(),
+            }
+        }
+    }
+}
+
+/// What a binary real is worth, held exactly: the fewest digits that
+/// read back as the same number are what the number stands for.
+pub fn from_binary(x: f64) -> Option<(BigInt, BigInt)> {
+    if !x.is_finite() {
+        return None;
+    }
+    let written = format!("{:e}", x);
+    let (mantissa, power) = written.split_once('e')?;
+    let power: i32 = power.parse().ok()?;
+    let negative = mantissa.starts_with('-');
+    let figures: String = mantissa.trim_start_matches('-').chars().filter(|c| *c != '.').collect();
+    let scale = power - (figures.len() as i32 - 1);
+    let mut p: BigInt = figures.parse().ok()?;
+    if negative {
+        p = -p;
+    }
+    Some(match scale >= 0 {
+        true => (p * BigInt::from(10).pow(scale as u32), BigInt::one()),
+        false => (p, BigInt::from(10).pow(scale.unsigned_abs())),
+    })
+}
+
+/// A binary real written out the way such a language writes one: the
+/// fewest digits that read back as the same number, with a power of ten
+/// after them where the number is very large or very small. `digits`
+/// caps the significant figures, as a language's own setting does when
+/// a number is simply written out rather than shown with its kind.
+pub fn binary_string(x: f64, digits: Option<usize>) -> String {
+    if x.is_nan() {
+        return "NAN".to_string();
+    }
+    if x.is_infinite() {
+        return if x < 0.0 { "-INF".to_string() } else { "INF".to_string() };
+    }
+    // The shortest run of digits that reads back as this number, with
+    // the power of ten it stands at, is what the machine's own writing
+    // gives when asked for a power of ten.
+    let written = match digits {
+        Some(n) => format!("{:.*e}", n.saturating_sub(1), x),
+        None => format!("{:e}", x),
+    };
+    let (mantissa, power) = written.split_once('e').expect("a power of ten was asked for");
+    let power: i32 = power.parse().unwrap_or(0);
+    let mut figures = mantissa.trim_start_matches('-').replace('.', "");
+    if digits.is_some() {
+        while figures.len() > 1 && figures.ends_with('0') {
+            figures.pop();
+        }
+    }
+    let sign = if mantissa.starts_with('-') { "-" } else { "" };
+    // Written plainly while the power is small, and with the power
+    // spelled out beyond that, which is where such a language changes.
+    if (-5..15).contains(&power) {
+        return format!("{}{}", sign, laid_flat(&figures, power));
+    }
+    let rest = &figures[1..];
+    let after = if rest.is_empty() { "0".to_string() } else { rest.to_string() };
+    let mark = if power < 0 { "-" } else { "+" };
+    format!("{}{}.{}E{}{}", sign, &figures[..1], after, mark, power.abs())
+}
+
+/// A run of significant figures written out plainly at the power of ten
+/// it stands at: 123 at power 1 is 12.3, at power -2 is 0.0123.
+fn laid_flat(figures: &str, power: i32) -> String {
+    let point = power + 1;
+    if point <= 0 {
+        return format!("0.{}{}", "0".repeat(-point as usize), figures);
+    }
+    let point = point as usize;
+    if point >= figures.len() {
+        return format!("{}{}", figures, "0".repeat(point - figures.len()));
+    }
+    format!("{}.{}", &figures[..point], &figures[point..])
 }

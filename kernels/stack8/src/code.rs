@@ -86,8 +86,25 @@ pub enum Action {
     /// The bits moved up or down that many places.
     BitUp,
     BitDown,
+    /// The value of the binding whose name the text above spells: how a
+    /// language reads a name worked out while the program runs.
+    Named,
+    /// Write the value above into the binding whose name the text under
+    /// it spells.
+    WriteNamed,
+    /// The value above made a value of that kind (ext.op.cast).
+    Cast(crate::value::Sort),
     /// Whether the value above is nothing at all.
     Nothing,
+    /// What an array holds at that place, answering nothing where it
+    /// holds nothing there, or where what is asked is not an array at
+    /// all, and saying nothing about it either way: how a language asks
+    /// whether something is there without minding that it is not.
+    Peek,
+    /// What an array holds at that place, an empty array where it holds
+    /// nothing there: how a write reaches a place within a place that
+    /// is not there yet, and makes it on the way.
+    Nested,
     /// Build the class this plan describes; what it stands on, if it
     /// stands on anything, is the value below.
     Forge(Rc<Plan>),
@@ -97,6 +114,13 @@ pub enum Action {
     Grab(Rc<str>),
     /// Write that property: the object, then the value.
     Plant(Rc<str>),
+    /// Take that property off the object above, as though it had never
+    /// been written.
+    Uproot(Rc<str>),
+    /// Make that property of the object above a shared cell if it is
+    /// not one already, and push the cell, so another name may be
+    /// fastened to it.
+    BondField(Rc<str>),
     /// Call that method of the object below the arguments.
     Send(Rc<str>),
     /// A constant or a class's own value, of the class above.
@@ -135,10 +159,35 @@ pub enum Builtin {
     Pack,
     /// A value laid out over lines, PHP's print_r (ext.builtin.print_r).
     Layout,
+    /// Say the run is over where it stands (ext.builtin.exit). Text is
+    /// written out first; a number is not.
+    Leave,
     /// Take a binding, or a place in an array, away (ext.builtin.unset).
     Erase,
+    /// Whether each of those bindings, or places in an array, holds
+    /// something other than nothing, asking without minding that a
+    /// binding was never written or a place is not there
+    /// (ext.builtin.isset).
+    Held,
     /// Each argument with its kind, PHP's var_dump (ext.builtin.var_dump).
     Dump,
+    /// Source read while the program runs: the text itself
+    /// (ext.builtin.eval), or the text a file holds
+    /// (ext.builtin.include). It is assembled against the same globals
+    /// and run where it stands, and what it gives back is its answer.
+    Eval,
+    Include,
+    /// What a file holds, all of it at once; what to write into one;
+    /// whether a file is there at all; and taking one away
+    /// (ext.builtin.file.*). Only a language that spells these reaches
+    /// outside the run at all.
+    FileRead,
+    FileWrite,
+    FileThere,
+    FileGone,
+    /// How long the run may take from here, in seconds; nought lifts
+    /// the limit (ext.builtin.time_limit).
+    TimeLimit,
     /// What the running call was given, however much of it the routine
     /// named: all of it as an array, how much there was, or the one at a
     /// position (ext.builtin.args.*).
@@ -190,6 +239,13 @@ pub enum Instr {
     Missing(usize),
     /// Whether the global at this place has never been written.
     Unwritten(usize),
+    /// Which line of the source the instrs after this one came from,
+    /// so that a complaint can say where it happened.
+    Line(u32),
+    /// Start keeping complaints quiet, or stop: how a language that
+    /// lets a program hush what one piece of it has to say about
+    /// itself says where the quiet begins and ends.
+    Hush(bool),
     /// Make this binding a shared cell if it is not one already, and
     /// push that cell, so another name can be fastened to it.
     Bond(Cell),
@@ -234,6 +290,11 @@ pub struct Routine {
     /// The program's own body, which nothing called: what a call was
     /// given cannot be read from within it.
     pub body_of_all: bool,
+    /// The file this program was written in, where it came of text read
+    /// while the run was going. A call of it is a call into that file:
+    /// a complaint names it, and a file it asks for is looked for
+    /// beside it. Nothing where the program is the run's own.
+    pub written_in: Option<Rc<str>>,
     pub instrs: Vec<Instr>,
 }
 

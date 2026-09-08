@@ -50,6 +50,50 @@ pub enum Prim {
     Otherwise,
     /// Give an array back without the place named (ext.builtin.unset).
     Erase,
+    /// What an array holds at that place, answering nothing where it
+    /// holds nothing there and where what is asked is not an array,
+    /// with nothing said about it: how a language asks whether
+    /// something is there without minding that it is not.
+    Glance,
+    /// Whether every one of these is something other than nothing.
+    Standing,
+    /// The value made one of the whole kind (ext.op.cast).
+    AsWhole,
+    /// The value made one of the real kind.
+    AsDecimal,
+    /// The value made text.
+    AsChars,
+    /// The value made a flag.
+    AsTruth,
+    /// The value made an array; anything that is not one becomes an
+    /// array holding just itself.
+    AsVector,
+    /// The value made nothing at all.
+    AsNothing,
+    /// Say the run is over where it stands (ext.builtin.exit). Text
+    /// given is written out first; a number is not.
+    Quit,
+    /// What an array holds at that place, an empty array where it holds
+    /// nothing there: how a write reaches into a place that is not there
+    /// yet, making it on the way in.
+    Inward,
+    /// Source read while the program runs: the text itself
+    /// (ext.builtin.eval), or the text a file holds
+    /// (ext.builtin.include). It is built against the globals the run
+    /// already has and run where it stands, and what it answers with is
+    /// what it gives back.
+    Weigh,
+    Bring,
+    /// What a file holds, all at once; what to put into one; whether a
+    /// file is there; and taking one away (ext.builtin.file.*). A
+    /// language reaches outside its run only by spelling these.
+    Slurp,
+    Spill,
+    There,
+    Gone,
+    /// How long the run may take from here, counted in seconds; nought
+    /// takes the limit away (ext.builtin.time_limit).
+    Clock,
     /// What the running call was handed, whatever of it the routine
     /// gave names to: the whole of it, how much there was, or the one
     /// standing at a place (ext.builtin.args.*).
@@ -108,6 +152,9 @@ pub enum Prim {
     Of,
     /// Write that property: the thing, the name, the value.
     Onto,
+    /// Take that property off the thing, as though it had never been
+    /// written there.
+    Pluck,
     /// Call the method named second, of the thing named first.
     Ask,
     /// A constant or a kept value of the class given.
@@ -179,6 +226,9 @@ pub enum Form {
     Attempt { body: Box<Form>, clauses: Vec<Clause>, last: Option<Box<Form>> },
     /// Whether the call left this binding without a value.
     Missing(Address),
+    /// A statement together with the line of the source it was written
+    /// on, so that a complaint can say where it happened.
+    OnLine(u32, Box<Form>),
     /// The binding's own cell, made shareable if it is not already, so
     /// another name can be tied to it.
     Share(Address),
@@ -187,8 +237,20 @@ pub enum Form {
     /// Make what the array in this binding holds at that place a shared
     /// cell, and give it back: how a walk hands out its items.
     ShareItem(Address, Box<Form>),
+    /// Make that property of the thing a shared cell if it is not one
+    /// already, and give the cell back, so a name may be tied to it.
+    ShareField(Box<Form>, Rc<str>),
     /// Leave this binding as though nothing were ever written to it.
     Forget(Address),
+    /// Find this value with whatever it has to say about itself kept
+    /// quiet: how a language that lets a program silence one piece of
+    /// itself says which piece.
+    Muted(Box<Form>),
+    /// The binding whose name this value spells, found while the run
+    /// goes: how a language reads a name it works out.
+    Called(Box<Form>),
+    /// Write the second into the binding whose name the first spells.
+    CallWrite(Box<Form>, Box<Form>),
 }
 
 /// One catch: the classes it takes, where it holds what it caught, and
@@ -257,5 +319,10 @@ pub struct Routine {
     /// Holds no idents: runs in the frame it closed over, making none.
     pub frameless: bool,
     pub traps: Traps,
+    /// The file this program was written in, where it came of text read
+    /// as the run went. A call of it is a call into that file: a
+    /// complaint names it, and a file it asks for is sought beside it.
+    /// Nothing where the program is the run's own.
+    pub written_in: Option<Rc<str>>,
     pub body: Form,
 }

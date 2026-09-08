@@ -23,6 +23,14 @@ use crate::table::Table;
 use crate::form::{Input, Traps, Form, Prim, Routine, Address, Callee};
 use crate::data::{Blueprint, Thing, Env, Kind, Value, Names};
 
+/// The label under which a language spells each kind of complaint.
+pub const COMPLAINT_LABELS: [(&str, &str); 4] = [
+    ("warning", "ext.system.complaint.warning"),
+    ("notice", "ext.system.complaint.notice"),
+    ("deprecated", "ext.system.complaint.deprecated"),
+    ("fatal", "ext.system.complaint.fatal"),
+];
+
 /// The label under which a language spells each kind of value.
 pub const KIND_LABELS: [(&str, Kind); 7] = [
     ("system.kind.integer", Kind::Whole), ("system.kind.rational", Kind::Fraction), ("system.kind.real", Kind::Decimal),
@@ -32,6 +40,12 @@ pub const KIND_LABELS: [(&str, Kind); 7] = [
 
 pub enum Escape {
     Error(String),
+    /// The run is over and no clause may take it back: a limit the
+    /// language set on the run itself was passed.
+    Stopped(String),
+    /// The program said the run was over. Nothing went amiss and nothing
+    /// is told; whatever was to be written was written already.
+    Done,
     Yield(Value),
     /// A value raised for a clause to take.
     Thrown(Value),
@@ -71,6 +85,29 @@ pub struct Machine<'a> {
     loose_equals: bool,
     /// How many things have been made, so each carries its own turn.
     made: usize,
+    /// The line of the source now running and the file it is written
+    /// in, which a complaint names, and the line the last value raised
+    /// was raised on.
+    row: u32,
+    raised_on: u32,
+    written_in: String,
+    /// The words this language has for the kinds of complaint.
+    complaint_words: Vec<(&'static str, String)>,
+    /// How many seconds the run may take and when the count began;
+    /// nought is no limit at all.
+    allowed: usize,
+    started: Option<std::time::Instant>,
+    /// How many pieces now being found asked to be quiet. Counted, not
+    /// flagged, because a quiet piece may hold another.
+    quieted: usize,
+    /// Whether writing into a place makes what is needed to hold it: an
+    /// array where a name holds nothing, and one at each place along the
+    /// way that is not there yet.
+    builds_places: bool,
+    /// Pieces of text this language holds untrue past text with nothing
+    /// in it, and whether an array with nothing in it is untrue.
+    false_words: Vec<String>,
+    hollow_is_false: bool,
     /// What each call still running was handed, the innermost last, and
     /// what the call about to start is to be handed.
     handed: Vec<Vec<Value>>,
@@ -101,11 +138,172 @@ impl<'a> Machine<'a> {
             handed: Vec::new(),
             pending: Vec::new(),
             made: 0,
+            row: 0,
+            raised_on: 0,
+            allowed: 0,
+            started: None,
+            written_in: String::new(),
+            quieted: 0,
+            builds_places: table.flag("ext.op.index.makes"),
+            false_words: table.strings("ext.system.untrue.text").to_vec(),
+            hollow_is_false: table.flag("ext.system.untrue.empty_array"),
+            complaint_words: COMPLAINT_LABELS
+                .iter()
+                .filter_map(|(kind, key)| table.single(key).map(|word| (*kind, word.to_string())))
+                .collect(),
             plain_keys: table.flag("ext.op.index.plain_keys"),
             // A language with a word for being the very same means
             // something looser by being equal.
             loose_equals: table.single("ext.op.identical").is_some(),
         }
+    }
+
+    /// Where the program is written, which a complaint names.
+    pub fn found_in(&mut self, place: &str) {
+        self.written_in = place.to_string();
+    }
+
+    /// Say a complaint of this kind in the language's own word for it
+    /// and carry on. A language with no word for the kind says nothing.
+    /// The places of an array with their keys, a place's number standing
+    /// for its key where the places carry none.
+    fn places_with_keys(v: &Value) -> Vec<(Value, Value)> {
+        match v {
+            Value::Vector(items) => items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect(),
+            Value::Dict(pairs) => pairs.as_ref().clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Whether the first of two values comes before the second, asked
+    /// the loose way a language with a word for being the very same
+    /// means it. A flag or nothing on either hand makes the question one
+    /// of which is true; an array sits above whatever is not an array,
+    /// and two arrays are set against each other by how much they hold
+    /// and then place by place; text spelling a number stands for that
+    /// number, and a number met by text spelling none is read as text.
+    fn comes_first(&mut self, a: &Value, b: &Value) -> Result<bool, String> {
+        let w = self.wording();
+        let counts = |x: &Value| matches!(x.kind(), Some(Kind::Whole | Kind::Fraction | Kind::Decimal));
+        let empty = |x: &Value| matches!(x, Value::Nil | Value::Unset);
+        let gathered = |x: &Value| matches!(x, Value::Vector(_) | Value::Dict(_));
+        // Two numbers are set against each other at the width the
+        // language holds them in, as they are worked at it.
+        let plainly = |x: &Value, y: &Value| -> Result<bool, String> {
+            let (x, y) = match self.holds_reals_to_width() && (self.a_real(x) || self.a_real(y)) {
+                true => (self.at_width(self.as_wide_real(x)), self.at_width(self.as_wide_real(y))),
+                false => (x.clone(), y.clone()),
+            };
+            match math::below(&x, &y) {
+                Some(r) => Ok(r),
+                None => Ok(x.as_big()? < y.as_big()?),
+            }
+        };
+        Ok(match (a, b) {
+            (Value::Flag(_), _) | (_, Value::Flag(_)) => !self.stands_true(a) && self.stands_true(b),
+            // Nothing set against text is text with nothing in it, and
+            // nothing at all comes before that.
+            (one, Value::Text(s)) if empty(one) => !s.is_empty(),
+            (Value::Text(_), other) if empty(other) => false,
+            (one, other) if empty(one) => self.stands_true(other),
+            (_, other) if empty(other) => false,
+            (x, y) if gathered(x) && gathered(y) => {
+                let (mine, theirs) = (Self::places_with_keys(x), Self::places_with_keys(y));
+                if mine.len() != theirs.len() {
+                    return Ok(mine.len() < theirs.len());
+                }
+                for (key, held) in mine {
+                    let Some((_, yours)) = theirs.iter().find(|(k, _)| k.equals(&key)) else {
+                        // A place the other never names leaves the two
+                        // past setting against each other, and neither
+                        // comes before what it cannot be set against.
+                        return Ok(false);
+                    };
+                    let yours = yours.clone();
+                    if !self.prim(Prim::Eq, "equals", &[held.clone(), yours.clone()])?.is_true() {
+                        return self.comes_first(&held, &yours);
+                    }
+                }
+                false
+            }
+            (x, _) if gathered(x) => false,
+            (_, y) if gathered(y) => true,
+            (Value::Text(_), Value::Text(_)) => match (number_spelled_in(a), number_spelled_in(b)) {
+                (Some(x), Some(y)) => plainly(&x, &y)?,
+                _ => a.bare() < b.bare(),
+            },
+            (Value::Text(s), other) if counts(other) => match number_spelled_in(a) {
+                Some(x) => plainly(&x, other)?,
+                None => **s < *other.render(w),
+            },
+            (other, Value::Text(s)) if counts(other) => match number_spelled_in(b) {
+                Some(y) => plainly(other, &y)?,
+                None => *other.render(w) < **s,
+            },
+            _ => plainly(a, b)?,
+        })
+    }
+
+    /// Whether a value stands as true in this language. Past nought and
+    /// nothing, a language may hold an array with nothing in it untrue,
+    /// and may name pieces of text it holds untrue.
+    fn stands_true(&self, v: &Value) -> bool {
+        match v {
+            Value::Shared(cell) => self.stands_true(&cell.borrow()),
+            Value::Vector(items) if self.hollow_is_false => !items.is_empty(),
+            Value::Dict(pairs) if self.hollow_is_false => !pairs.is_empty(),
+            Value::Text(s) => match self.false_words.iter().any(|w| w == s.as_ref()) {
+                true => false,
+                false => v.is_true(),
+            },
+            other => other.is_true(),
+        }
+    }
+
+    /// The binding a piece of text calls. Where a language marks its
+    /// variables, the mark belongs to the name and not to the text
+    /// spelling it, so it goes back on.
+    fn name_it_spells(&self, spelled: &Value) -> String {
+        let w = self.wording();
+        let said = spelled.render(w).to_string();
+        match self.table.letter("identifier.variable_prefix") {
+            Some(mark) if !said.starts_with(mark) => format!("{}{}", mark, said),
+            _ => said,
+        }
+    }
+
+    /// Where among the outermost bindings that name stands, making room
+    /// for it if it is a name nothing has stood under yet.
+    fn place_called(&mut self, name: &str) -> usize {
+        match self.idents.iter().position(|n| n == name) {
+            Some(at) => at,
+            None => {
+                self.idents.push(name.to_string());
+                self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
+                self.idents.len() - 1
+            }
+        }
+    }
+
+    /// What a value is worth as a number: text for the number it opens
+    /// with, a flag for one or nought, nothing for nought, and an array
+    /// for whether it holds anything at all.
+    fn worth_of(&self, v: &Value) -> Value {
+        match v {
+            Value::Text(_) => number_opening_in(v).0.unwrap_or(Value::Small(0)),
+            Value::Flag(yes) => Value::Small(i64::from(*yes)),
+            Value::Nil | Value::Unset => Value::Small(0),
+            Value::Vector(_) | Value::Dict(_) => Value::Small(i64::from(self.stands_true(v))),
+            held => held.clone(),
+        }
+    }
+
+    fn grumble(&self, kind: &str, about: &str) {
+        if self.quieted > 0 {
+            return;
+        }
+        let Some((_, word)) = self.complaint_words.iter().find(|(k, _)| *k == kind) else { return };
+        println!("\n{}: {} in {} on line {}", word, about, self.written_in, self.row);
     }
 
     pub fn define(&mut self, name: &str, value: Value) {
@@ -122,12 +320,54 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn a_real(&self, v: &Value) -> bool {
+        matches!(v, Value::Frac(_))
+    }
+
+    fn holds_reals_to_width(&self) -> bool {
+        self.table.count("ext.system.real.bits").is_some()
+    }
+
+    fn real_figures(&self) -> usize {
+        self.table.count("ext.system.real.digits").unwrap_or(math::DEFAULT_PLACES)
+    }
+
+    /// A number as a real of the language's own width.
+    fn as_wide_real(&self, v: &Value) -> Value {
+        match math::ratio_of(v) {
+            Some(r) => math::make_number(r.above, r.beneath, Some(self.real_figures())),
+            None => v.clone(),
+        }
+    }
+
+    /// A number brought within the widths the language holds numbers
+    /// in: a whole number too wide to be one becomes a real, and a real
+    /// is brought to the nearest one of its width.
+    fn at_width(&self, v: Value) -> Value {
+        if let (Some(bits), Value::Huge(n)) = (self.table.count("ext.system.integer.bits"), &v) {
+            if n.bits() >= bits as u64 {
+                return math::make_number((**n).clone(), BigInt::from(1), Some(self.real_figures()));
+            }
+        }
+        if !self.holds_reals_to_width() {
+            return v;
+        }
+        let Value::Frac(e) = &v else { return v };
+        match crate::data::binary_worth(crate::data::nearest_binary(&e.above, &e.beneath)) {
+            // A nought under nought holds its minus at any width.
+            Some((above, beneath)) => math::made_number(above, beneath, Some(self.real_figures()), e.under),
+            // Past every number of that width, and so left as it is.
+            None => v,
+        }
+    }
+
     fn wording(&self) -> Names<'a> {
         Names {
             truth: self.table.single("literal.true").unwrap_or("true"),
             falsity: self.table.single("literal.false").unwrap_or("false"),
             // A language may show nothing as no text at all, as PHP does,
             // rather than as the word a program writes for it.
+            real_figures: self.table.count("ext.system.real.bits").and(self.table.count("ext.system.real.digits")),
             nil: match self.table.flag("literal.null.silent") {
                 true => "",
                 false => self.table.single("literal.null").unwrap_or("null"),
@@ -135,20 +375,161 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// A fault of the kernel's own as a value of the class the language
+    /// names for one. Nothing where it names none, or where the class
+    /// itself is nowhere to be found.
+    /// The class a fault of the kernel's own goes under. A language may
+    /// name one for a fault of a kind, and this kernel knows which of
+    /// its own faults are of which kind, being the one that words them.
+    /// Where the language names none for the kind, the plain class does.
+    fn class_of_fault(&self, told: &str) -> Option<String> {
+        let by_kind = match told {
+            _ if told.starts_with("Division by zero") => Some("ext.system.fault.class.division"),
+            _ if told.starts_with("Bit shift by") => Some("ext.system.fault.class.arithmetic"),
+            _ if told.starts_with("Cannot coerce") => Some("ext.system.fault.class.kind"),
+            _ => None,
+        };
+        by_kind
+            .and_then(|label| self.table.single(label))
+            .or_else(|| self.table.single("ext.system.fault.class"))
+            .map(str::to_string)
+    }
+
+    fn as_raised(&mut self, told: &str) -> Option<Value> {
+        let named = self.class_of_fault(told)?;
+        let Some(Value::Blueprint(of)) = self.lookup(&named) else { return None };
+        self.made += 1;
+        let mut holds = of.every_field();
+        match holds.iter_mut().find(|(k, _)| k == "message") {
+            Some(place) => place.1 = Value::text(told),
+            None => holds.push(("message".to_string(), Value::text(told))),
+        }
+        Some(Value::Thing(Rc::new(Thing { of, holds: RefCell::new(holds), turn: self.made })))
+    }
+
+    /// What a complaint calls a value where it names its kind. A flag
+    /// is called by the word a program writes for it, since that is
+    /// what was written; everything else by its kind, in the shorter
+    /// form where the language gives one, a lone dash saying it gives
+    /// none. Nothing is called by its kind too, since a language may
+    /// write it as no word at all.
+    fn kind_called(&self, v: &Value) -> String {
+        if matches!(v, Value::Flag(_)) {
+            return v.render(self.wording());
+        }
+        let Some(kind) = v.kind() else { return "value".to_string() };
+        let order = [Kind::Whole, Kind::Fraction, Kind::Decimal, Kind::Chars, Kind::Truth, Kind::Vector, Kind::Nothing];
+        let brief = order
+            .iter()
+            .position(|k| *k == kind)
+            .and_then(|at| self.table.strings("ext.system.kind.brief").get(at))
+            .filter(|word| *word != "-");
+        match brief {
+            Some(word) => word.clone(),
+            None => KIND_LABELS
+                .iter()
+                .find(|(_, k)| *k == kind)
+                .and_then(|(label, _)| self.table.single(label))
+                .unwrap_or("value")
+                .to_string(),
+        }
+    }
+
+    /// Whether the run has taken longer than the language allowed it.
+    fn past_its_time(&self) -> Option<Escape> {
+        let started = self.started?;
+        if self.allowed == 0 || started.elapsed().as_secs() < self.allowed as u64 {
+            return None;
+        }
+        let ending = if self.allowed == 1 { "second" } else { "seconds" };
+        Some(Escape::Stopped(format!("Maximum execution time of {} {} exceeded", self.allowed, ending)))
+    }
+
+    /// How a run ended, told the way a language with a word for the end
+    /// of one tells it: what stopped it, where, and how the run stood.
+    /// Nothing is written where a language has no word for it.
+    fn end_of_run(&self, said: &str) {
+        let Some((_, word)) = self.complaint_words.iter().find(|(k, _)| *k == "fatal") else { return };
+        println!("\n{}: {} in {}:{}", word, said, self.written_in, self.raised_on);
+        println!("Stack trace:\n#0 {{main}}\n  thrown in {} on line {}", self.written_in, self.raised_on);
+    }
+
+    /// Build source against the globals this run already has and run it
+    /// where it stands, giving back what it answered with.
+    /// Text read as the run goes, built and run where it stands. Where
+    /// it came out of a file of its own, that file is where the run is
+    /// written while it lasts: a complaint names it, and a file it asks
+    /// for in turn is sought beside it.
+    fn run_source(&mut self, source: &str, came_out_of: Option<String>) -> Result<Value, String> {
+        let tokens = crate::scan::scan(source, self.table)?;
+        let tokens = crate::indent::indent(tokens, self.table)?;
+        let built = crate::build::build_from(&tokens, self.table, &self.idents, HashMap::new(), true, 0, came_out_of.as_deref().map(Rc::from))?;
+        self.idents = built.globals;
+        // Names the new source brought with it want room to stand in.
+        self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
+        let (was_in, was_on) = (self.written_in.clone(), self.row);
+        if let Some(place) = came_out_of {
+            self.written_in = place;
+        }
+        let top = self.outermost.clone();
+        let ran = self.value_of(&built.program.body, &top);
+        self.written_in = was_in;
+        self.row = was_on;
+        match ran {
+            Ok(answer) => Ok(match answer {
+                // Nothing answered is a plain yes, as such a language says.
+                Value::Nil | Value::Unset => Value::Small(1),
+                other => other,
+            }),
+            Err(Escape::Error(told)) => Err(told),
+            Err(Escape::Yield(answer)) => Ok(answer),
+            Err(other) => Err(match other {
+                Escape::Done => return Ok(Value::Nil),
+                Escape::Stopped(told) => told,
+                Escape::Thrown(raised) => format!("Uncaught {}", raised.bare()),
+                _ => "A run of source ended oddly".to_string(),
+            }),
+        }
+    }
+
     pub fn run_main(&mut self, body: &Form) -> Result<(), String> {
         let top = self.outermost.clone();
         match self.value_of(body, &top) {
-            Ok(_) | Err(Escape::Yield(_)) | Err(Escape::Leave(_)) | Err(Escape::Resume(_)) => Ok(()),
+            // A run the program itself said was over came out right.
+            Ok(_) | Err(Escape::Done) | Err(Escape::Yield(_)) | Err(Escape::Leave(_)) | Err(Escape::Resume(_)) => Ok(()),
             // A value nobody took is a fault, told the way PHP tells it.
             Err(Escape::Thrown(Value::Thing(thing))) => {
                 let told = thing.holds.borrow().iter().find(|(k, _)| k == "message").map(|(_, x)| x.bare());
-                Err(match told {
+                let said = match told.filter(|m| !m.is_empty()) {
                     Some(told) => format!("Uncaught {}: {}", thing.of.name, told),
                     None => format!("Uncaught {}", thing.of.name),
-                })
+                };
+                self.end_of_run(&said);
+                Err(said)
             }
-            Err(Escape::Thrown(v)) => Err(format!("Uncaught {}", v.bare())),
-            Err(Escape::Error(e)) => Err(e),
+            Err(Escape::Thrown(v)) => {
+                let said = format!("Uncaught {}", v.bare());
+                self.end_of_run(&said);
+                Err(said)
+            }
+            // A limit passed is told plainly, since nothing was raised.
+            Err(Escape::Stopped(told)) => {
+                if let Some((_, word)) = self.complaint_words.iter().find(|(k, _)| *k == "fatal") {
+                    println!("\n{}: {} in {} on line {}", word, told, self.written_in, self.row);
+                }
+                Err(told)
+            }
+            // A fault of the kernel's own is told under the class the
+            // language names for one, where it names any.
+            Err(Escape::Error(e)) => {
+                if let Some(named) = self.class_of_fault(&e) {
+                    if self.complaint_words.iter().any(|(k, _)| *k == "fatal") {
+                        self.raised_on = self.row;
+                        self.end_of_run(&format!("Uncaught {}: {}", named, e));
+                    }
+                }
+                Err(e)
+            }
         }
     }
 
@@ -168,6 +549,17 @@ impl<'a> Machine<'a> {
             if !matches!(v, Value::Unset) {
                 return Ok(v);
             }
+        }
+        // A language with a word for a warning does not stop where a
+        // binding was never written: it says so and reads nothing. Only
+        // a variable counts — where variables carry a mark, a name
+        // without it names a constant or a class, and reaching for one
+        // that is not there is a fault. The cells the builder makes for
+        // itself wear no mark either, and are none of the program's.
+        let marked = self.table.letter("identifier.variable_prefix").map_or(true, |mark| slot.ident.starts_with(mark));
+        if marked && self.complaint_words.iter().any(|(k, _)| *k == "warning") {
+            self.grumble("warning", &format!("Undefined variable {}", slot.ident));
+            return Ok(Value::Nil);
         }
         Err(format!("Undefined variable: {}", slot.ident))
     }
@@ -213,6 +605,10 @@ impl<'a> Machine<'a> {
         }
         match slot.fallback {
             Some(g) if !matches!(self.outermost.cells.borrow()[g], Value::Unset) => Ok((self.outermost.clone(), g)),
+            // Where a language makes a place on writing into it, a name
+            // holding nothing is where the write goes, and the array it
+            // needs is made there.
+            _ if self.builds_places => Ok((f.clone(), slot.at)),
             _ => Err(format!("Undefined variable '{}'", slot.ident)),
         }
     }
@@ -280,6 +676,72 @@ impl<'a> Machine<'a> {
                 f.cells.borrow_mut()[slot.at] = cell;
                 Ok(Value::Nil)
             }
+            // A name worked out as the run goes stands for the binding
+            // of that name among the outermost ones, those being the
+            // only ones whose names the run can still see.
+            Form::Called(spells) => {
+                let spelled = self.value_of(spells, frame)?;
+                let name = self.name_it_spells(&spelled);
+                let at = self.place_called(&name);
+                let held = self.outermost.cells.borrow()[at].clone();
+                return Ok(match held {
+                    Value::Shared(cell) => cell.borrow().clone(),
+                    Value::Unset if self.complaint_words.iter().any(|(k, _)| *k == "warning") => {
+                        self.grumble("warning", &format!("Undefined variable {}", name));
+                        Value::Nil
+                    }
+                    Value::Unset => return Err(format!("Undefined variable '{}'", name).into()),
+                    other => other,
+                });
+            }
+            Form::CallWrite(spells, worth) => {
+                let spelled = self.value_of(spells, frame)?;
+                let name = self.name_it_spells(&spelled);
+                let value = self.value_of(worth, frame)?;
+                let at = self.place_called(&name);
+                let shared = match &self.outermost.cells.borrow()[at] {
+                    Value::Shared(cell) => Some(cell.clone()),
+                    _ => None,
+                };
+                match shared {
+                    Some(cell) => *cell.borrow_mut() = value.clone(),
+                    None => self.outermost.cells.borrow_mut()[at] = value.clone(),
+                }
+                return Ok(value);
+            }
+            Form::Muted(inner) => {
+                self.quieted += 1;
+                let found = self.value_of(inner, frame);
+                self.quieted -= 1;
+                return found;
+            }
+            // The property becomes a cell the thing and the name taking
+            // it both stand for, so a write through either is seen by
+            // both.
+            Form::ShareField(of, called) => {
+                let thing = self.value_of(of, frame)?;
+                let Value::Thing(thing) = thing else {
+                    return Err(format!("Cannot share property '{}' of {}", called, thing.bare()).into());
+                };
+                let mut holds = thing.holds.borrow_mut();
+                let at = match holds.iter().position(|(k, _)| k.as_str() == called.as_ref()) {
+                    Some(at) => at,
+                    None => {
+                        holds.push((called.to_string(), Value::Nil));
+                        holds.len() - 1
+                    }
+                };
+                if let Value::Shared(cell) = &holds[at].1 {
+                    let cell = cell.clone();
+                    drop(holds);
+                    return Ok(Value::Shared(cell));
+                }
+                let was = std::mem::replace(&mut holds[at].1, Value::Nil);
+                let cell = Rc::new(RefCell::new(was));
+                holds[at].1 = Value::Shared(cell.clone());
+                drop(holds);
+                return Ok(Value::Shared(cell));
+            }
             Form::ShareItem(slot, place) => {
                 let at = self.value_of(place, frame)?;
                 let f = ascend(frame, slot.up);
@@ -299,6 +761,16 @@ impl<'a> Machine<'a> {
                 f.cells.borrow_mut()[slot.at] = Value::Unset;
                 Ok(Value::Nil)
             }
+            Form::OnLine(row, inner) => {
+                self.row = *row;
+                // A statement is a fair place to look at the clock:
+                // often enough to stop a run that runs away, seldom
+                // enough that asking costs little.
+                if let Some(over) = self.past_its_time() {
+                    return Err(over);
+                }
+                self.value_of(inner, frame)
+            }
             Form::Missing(slot) => {
                 let f = ascend(frame, slot.up);
                 let empty = matches!(f.cells.borrow()[slot.at], Value::Unset);
@@ -306,6 +778,16 @@ impl<'a> Machine<'a> {
             }
             Form::Attempt { body, clauses, last } => {
                 let ending = self.value_of(body, frame);
+                // A language that names a class for the kernel's own
+                // faults has one raised as a value of that class, so a
+                // clause may take it like any other raised value.
+                let ending = match ending {
+                    Err(Escape::Error(told)) => match self.as_raised(&told) {
+                        Some(made) => Err(Escape::Thrown(made)),
+                        None => Err(Escape::Error(told)),
+                    },
+                    other => other,
+                };
                 let ending = match ending {
                     Err(Escape::Thrown(raised)) => {
                         // The first clause that takes this class holds it
@@ -375,7 +857,8 @@ impl<'a> Machine<'a> {
             }
             Form::Cycle { test, body, step, after } => {
                 loop {
-                    if !after && !self.value_of(test, frame)?.is_true() {
+                    let told = self.value_of(test, frame)?;
+                    if !after && !self.stands_true(&told) {
                         break;
                     }
                     match self.value_of(body, frame) {
@@ -388,7 +871,8 @@ impl<'a> Machine<'a> {
                     if let Some(step) = step {
                         self.value_of(step, frame)?;
                     }
-                    if *after && self.value_of(test, frame)?.is_true() {
+                    let told = self.value_of(test, frame)?;
+                    if *after && self.stands_true(&told) {
                         break;
                     }
                 }
@@ -417,7 +901,8 @@ impl<'a> Machine<'a> {
                     self.invoke(p, env, Vec::new())
                 }
                 Prim::Both | Prim::Either => {
-                    let left = self.value_of(&args[0], frame)?.is_true();
+                    let seen = self.value_of(&args[0], frame)?;
+                    let left = self.stands_true(&seen);
                     if (*op == Prim::Both && !left) || (*op == Prim::Either && left) {
                         return Ok(Value::Flag(left));
                     }
@@ -426,7 +911,7 @@ impl<'a> Machine<'a> {
                         Value::Bound(p, env) => self.invoke(p, env, Vec::new())?,
                         v => v,
                     };
-                    Ok(Value::Flag(right.is_true()))
+                    Ok(Value::Flag(self.stands_true(&right)))
                 }
                 Prim::Yield => {
                     let v = match args.first() {
@@ -460,6 +945,7 @@ impl<'a> Machine<'a> {
                 Prim::Hurl => {
                     let values = self.value_list(args, frame)?;
                     let raised = values.into_iter().next().ok_or_else(|| format!("{}() needs a value to raise", name))?;
+                    self.raised_on = self.row;
                     Err(Escape::Thrown(raised))
                 }
                 Prim::Spawn => {
@@ -539,12 +1025,21 @@ impl<'a> Machine<'a> {
                     };
                     if let Some(cell) = shared {
                         let mut held = cell.borrow_mut();
-                        written_into(&mut held, key, value, &slot.ident)?;
+                        written_into(&mut held, key, value, &slot.ident, self.builds_places)?;
                         return Ok(Value::Nil);
                     }
                     let mut slots = f.cells.borrow_mut();
-                    written_into(&mut slots[i], key, value, &slot.ident)?;
+                    written_into(&mut slots[i], key, value, &slot.ident, self.builds_places)?;
                     Ok(Value::Nil)
+                }
+                // A language may say the run is over where it stands.
+                // Text given is written out first; a number is not.
+                Prim::Quit => {
+                    let values = self.value_list(args, frame)?;
+                    if let Some(Value::Text(said)) = values.first() {
+                        print!("{}", said);
+                    }
+                    Err(Escape::Done)
                 }
                 op => {
                     let values = self.value_list(args, frame)?;
@@ -602,7 +1097,8 @@ impl<'a> Machine<'a> {
     /// The callee's environment, its arguments evaluated straight into
     /// their slots, with no vector between.
     fn pick(&mut self, args: &[Form], frame: &Rc<Env>) -> Res<(Rc<Routine>, Rc<Env>)> {
-        let test = self.value_of(&args[0], frame)?.is_true();
+        let asked = self.value_of(&args[0], frame)?;
+        let test = self.stands_true(&asked);
         self.bound(&args[if test { 1 } else { 2 }], frame)
     }
 
@@ -684,6 +1180,13 @@ impl<'a> Machine<'a> {
             self.handed.push(mine);
         }
         let (mut program, mut frame) = (program, frame);
+        // A program written in a file of its own runs as being in it: a
+        // complaint names that file, and a file it asks for is sought
+        // beside it, wherever the call was made.
+        let elsewhere = program.written_in.as_ref().map(|place| {
+            let was = std::mem::replace(&mut self.written_in, place.to_string());
+            (was, self.row)
+        });
         let mut caught: u8 = 0;
         let outcome: Res = loop {
             caught |= match program.traps {
@@ -723,6 +1226,10 @@ impl<'a> Machine<'a> {
                 Err(e) => break Err(e),
             }
         };
+        if let Some((was, on)) = elsewhere {
+            self.written_in = was;
+            self.row = on;
+        }
         if watching {
             self.handed.pop();
         }
@@ -761,6 +1268,15 @@ impl<'a> Machine<'a> {
                         Some((k, x)) => if wants_key { k.clone() } else { x.clone() },
                         None => return Err(format!("Array index {} out of bounds (length: {})", at, entries.len())),
                     },
+                    // A thing keeps named values too, and walking it
+                    // walks those, in the order they were written.
+                    Value::Thing(thing) => {
+                        let holds = thing.holds.borrow();
+                        match holds.get(at) {
+                            Some((k, x)) => if wants_key { Value::text(k) } else { x.clone() },
+                            None => return Err(format!("Array index {} out of bounds (length: {})", at, holds.len())),
+                        }
+                    }
                     _ => return Err("Cannot walk a value that is not an array".to_string()),
                 }
             }
@@ -769,6 +1285,15 @@ impl<'a> Machine<'a> {
                 match &v[0] {
                     Value::Vector(items) => Value::Small(items.len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
+                    Value::Thing(thing) => Value::Small(thing.holds.borrow().len() as i64),
+                    // A language with a word for a warning hears that a
+                    // value cannot be walked and walks it no times,
+                    // rather than having the run stopped over it.
+                    other if self.complaint_words.iter().any(|(k, _)| *k == "warning") => {
+                        let told = format!("foreach() argument must be of type array|object, {} given", self.kind_called(other));
+                        self.grumble("warning", &told);
+                        Value::Small(0)
+                    }
                     _ => return Err("Cannot walk a value that is not an array".to_string()),
                 }
             }
@@ -779,9 +1304,33 @@ impl<'a> Machine<'a> {
                 match &v[0] {
                     Value::Thing(thing) => {
                         let found = thing.holds.borrow().iter().find(|(k, _)| *k == called).map(|(_, x)| x.clone());
-                        found.ok_or_else(|| format!("Undefined property: {}::${}", thing.of.name, called))?
+                        match found {
+                            // A property kept in a shared cell reads as
+                            // what the cell holds; the sharing lies
+                            // between the names, not in the value.
+                            Some(Value::Shared(cell)) => cell.borrow().clone(),
+                            Some(x) => x,
+                            // A language with a word for a warning says
+                            // a property is not there, and reads nothing.
+                            None if self.complaint_words.iter().any(|(k, _)| *k == "warning") => {
+                                self.grumble("warning", &format!("Undefined property: {}::${}", thing.of.name, called));
+                                Value::Nil
+                            }
+                            None => return Err(format!("Undefined property: {}::${}", thing.of.name, called)),
+                        }
                     }
                     other => return Err(format!("Cannot read property '{}' of {}", called, other.bare())),
+                }
+            }
+            Prim::Pluck => {
+                n(2)?;
+                let called = v[1].bare();
+                match &v[0] {
+                    Value::Thing(thing) => {
+                        thing.holds.borrow_mut().retain(|(k, _)| *k != called);
+                        Value::Nil
+                    }
+                    other => return Err(format!("Cannot take property '{}' off {}", called, other.bare())),
                 }
             }
             Prim::Onto => {
@@ -887,6 +1436,80 @@ impl<'a> Machine<'a> {
                 }
             }
             Prim::Gather => return Err(format!("{}() is a literal, not a call", name)),
+            // Source read while the program runs, built against the
+            // globals it already has and run where it stands. A file
+            // that cannot be read answers false, as such a language says.
+            Prim::Weigh | Prim::Bring => {
+                n(1)?;
+                let w = self.wording();
+                let given = v[0].render(w);
+                let mut came_out_of = None;
+                let source = match op {
+                    // Text handed over to be run is code already; a file
+                    // is text with code marked out inside it, so only
+                    // the first wants the mark that opens code.
+                    Prim::Weigh => match self.table.single("lexical.prologue") {
+                        Some(open) => format!("{}\n{}", open, given),
+                        None => given,
+                    },
+                    // A file is sought beside the one asking for it
+                    // before it is sought where the run began: a program
+                    // naming a file beside itself means that one.
+                    _ => {
+                        let near = std::path::Path::new(&self.written_in).parent().map(|place| place.join(&given));
+                        let near = near.filter(|place| place.exists());
+                        came_out_of = Some(match &near {
+                            Some(place) => place.to_string_lossy().into_owned(),
+                            None => given.clone(),
+                        });
+                        let held = match near {
+                            Some(place) => std::fs::read(place),
+                            None => std::fs::read(&given),
+                        };
+                        match held {
+                            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                            Err(_) => return Ok(Value::Flag(false)),
+                        }
+                    }
+                };
+                return self.run_source(&source, came_out_of);
+            }
+            // Reaching outside the run, which only a language that
+            // spells these labels does at all. What cannot be done
+            // answers false rather than stopping the run.
+            Prim::Slurp => {
+                n(1)?;
+                let w = self.wording();
+                match std::fs::read(v[0].render(w)) {
+                    Ok(bytes) => Value::text(&String::from_utf8_lossy(&bytes)),
+                    Err(_) => Value::Flag(false),
+                }
+            }
+            Prim::Spill => {
+                n(2)?;
+                let w = self.wording();
+                let (place, what) = (v[0].render(w), v[1].render(w));
+                match std::fs::write(place, what.as_bytes()) {
+                    Ok(()) => Value::Small(what.len() as i64),
+                    Err(_) => Value::Flag(false),
+                }
+            }
+            Prim::There => {
+                n(1)?;
+                let w = self.wording();
+                Value::Flag(std::path::Path::new(&v[0].render(w)).exists())
+            }
+            Prim::Gone => {
+                n(1)?;
+                let w = self.wording();
+                Value::Flag(std::fs::remove_file(v[0].render(w)).is_ok())
+            }
+            Prim::Clock => {
+                n(1)?;
+                self.allowed = as_index(&v[0])?;
+                self.started = Some(std::time::Instant::now());
+                Value::Flag(true)
+            }
             Prim::Handed | Prim::HowMany | Prim::HandedAt => {
                 let Some(handed) = self.handed.last() else {
                     return Err(format!("{}() belongs inside a function", name));
@@ -949,7 +1572,7 @@ impl<'a> Machine<'a> {
                 print!("{}", over_lines(&v[0], 0));
                 Value::Flag(true)
             }
-            Prim::Invert => Value::Flag(!v[0].is_true()),
+            Prim::Invert => Value::Flag(!self.stands_true(&v[0])),
             // Turning text over works letter by letter; anything else is
             // read as a whole number of sixty-four bits first.
             Prim::BitsOver => match &v[0] {
@@ -999,10 +1622,33 @@ impl<'a> Machine<'a> {
                     bits.checked_shr(far).unwrap_or(if bits < 0 { -1 } else { 0 })
                 })
             }
-            Prim::Negate => match math::compute(Calc::Minus, &Value::Small(0), &v[0]) {
-                Some(r) => r?,
-                None => return Err("Cannot negate non-numeric value".to_string()),
-            },
+            Prim::Negate => {
+                let turned = match math::compute(Calc::Minus, &Value::Small(0), &v[0]) {
+                    Some(r) => r?,
+                    None => return Err("Cannot negate non-numeric value".to_string()),
+                };
+                // A nought turned about is the other nought.
+                match (&v[0], &turned) {
+                    (Value::Frac(was), Value::Frac(now)) if num_traits::Zero::is_zero(&now.above) => {
+                        math::made_number(now.above.clone(), now.beneath.clone(), now.places, !was.under)
+                    }
+                    _ => turned,
+                }
+            }
+            // Which of two comes first is asked just as loosely, so an
+            // array, a flag, nothing and text spelling no number are
+            // each set against the other the way such a language sets
+            // them.
+            Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge if self.loose_equals => {
+                n(2)?;
+                let (left, right) = (v[0].clone(), v[1].clone());
+                Value::Flag(match op {
+                    Prim::Lt => self.comes_first(&left, &right)?,
+                    Prim::Gt => self.comes_first(&right, &left)?,
+                    Prim::Le => !self.comes_first(&right, &left)?,
+                    _ => !self.comes_first(&left, &right)?,
+                })
+            }
             // Where a language has a word for being the very same,
             // being equal is the looser question: text spelling a
             // number stands for that number, a flag turns the question
@@ -1014,8 +1660,8 @@ impl<'a> Machine<'a> {
                 let empty = |x: &Value| matches!(x, Value::Nil | Value::Unset);
                 let (left, right) = (&v[0], &v[1]);
                 let alike = match (left, right) {
-                    (Value::Flag(_), _) | (_, Value::Flag(_)) => left.is_true() == right.is_true(),
-                    (one, other) | (other, one) if empty(one) && counts(other) => !other.is_true(),
+                    (Value::Flag(_), _) | (_, Value::Flag(_)) => self.stands_true(left) == self.stands_true(right),
+                    (one, other) | (other, one) if empty(one) && counts(other) => !self.stands_true(other),
                     (one, Value::Text(s)) | (Value::Text(s), one) if empty(one) => s.is_empty(),
                     (one, Value::Vector(items)) | (Value::Vector(items), one) if empty(one) => items.is_empty(),
                     (one, Value::Dict(pairs)) | (Value::Dict(pairs), one) if empty(one) => pairs.is_empty(),
@@ -1037,6 +1683,48 @@ impl<'a> Machine<'a> {
             Prim::Unlike => Value::Flag(!v[0].selfsame(&v[1])),
             Prim::Join => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),
             Prim::At => self.element(&v[0], &v[1])?,
+            // A glance has nothing to say about what is not there.
+            Prim::Glance => {
+                self.quieted += 1;
+                let seen = self.element(&v[0], &v[1]).unwrap_or(Value::Nil);
+                self.quieted -= 1;
+                seen
+            }
+            Prim::Standing => Value::Flag(v.iter().all(|x| !matches!(x, Value::Nil | Value::Unset))),
+            // A value made one of another kind. Numbers give up what
+            // lies past the point, text is read for the number it opens
+            // with, and anything that is not an array becomes an array
+            // holding only itself.
+            Prim::AsChars => Value::text(&v[0].render(w)),
+            Prim::AsTruth => Value::Flag(self.stands_true(&v[0])),
+            Prim::AsNothing => Value::Nil,
+            Prim::AsVector => match v[0].clone() {
+                held @ (Value::Vector(_) | Value::Dict(_)) => held,
+                Value::Nil | Value::Unset => Value::Vector(std::rc::Rc::new(Vec::new())),
+                held => Value::Vector(std::rc::Rc::new(vec![held])),
+            },
+            Prim::AsWhole => {
+                let worth = self.worth_of(&v[0]);
+                let r = math::ratio_of(&worth).unwrap_or(crate::data::Ratio { above: BigInt::from(0), beneath: BigInt::from(1), places: None, under: false });
+                self.at_width(Value::from_big(&r.above / &r.beneath))
+            }
+            Prim::AsDecimal => {
+                let worth = self.worth_of(&v[0]);
+                let made = math::to_decimal(&worth, self.real_figures()).unwrap_or(Value::Small(0));
+                self.at_width(made)
+            }
+            // Reaching in makes the place where nothing is there yet,
+            // which is what a write into it asks for.
+            Prim::Inward if !self.builds_places => self.element(&v[0], &v[1])?,
+            Prim::Inward => {
+                self.quieted += 1;
+                let reached = self.element(&v[0], &v[1]).unwrap_or(Value::Nil);
+                self.quieted -= 1;
+                match reached {
+                    Value::Nil | Value::Unset => Value::Vector(std::rc::Rc::new(Vec::new())),
+                    already => already,
+                }
+            }
             // Adding text joins it only where the language has no
             // operator of its own for joining; where it has one, adding
             // is arithmetic.
@@ -1046,15 +1734,43 @@ impl<'a> Machine<'a> {
                 Value::text(&format!("{}{}", v[0].render(w), v[1].render(w)))
             }
             // Text that spells a number is worked with as that number,
-            // fractions included, so long as one side spells one.
+            // fractions included. Text that spells one and then says
+            // something more is worth what it opens with, and text that
+            // spells none is worth nothing; a language with a word for a
+            // warning hears of both instead of being stopped.
             Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power
             | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge
-                if number_spelled_in(&v[0]).is_some() || number_spelled_in(&v[1]).is_some() =>
+                // Only where every piece of text will give up a number,
+                // so that what is worked out below is never text again.
+                if (matches!(v[0], Value::Text(_)) || matches!(v[1], Value::Text(_)))
+                    && [&v[0], &v[1]].iter().all(|x| {
+                        !matches!(x, Value::Text(_))
+                            || number_spelled_in(x).is_some()
+                            || self.complaint_words.iter().any(|(k, _)| *k == "warning")
+                    }) =>
             {
-                let pair = [
-                    number_spelled_in(&v[0]).unwrap_or_else(|| v[0].clone()),
-                    number_spelled_in(&v[1]).unwrap_or_else(|| v[1].clone()),
-                ];
+                let warns = self.complaint_words.iter().any(|(k, _)| *k == "warning");
+                let worth = |x: &Value| -> Value {
+                    let Value::Text(_) = x else { return x.clone() };
+                    match number_opening_in(x) {
+                        (Some(n), true) => n,
+                        (Some(n), false) => {
+                            if warns {
+                                self.grumble("warning", "A non-well-formed numeric value encountered");
+                                return n;
+                            }
+                            x.clone()
+                        }
+                        (None, _) => {
+                            if warns {
+                                self.grumble("warning", "A non-numeric value encountered");
+                                return Value::Small(0);
+                            }
+                            x.clone()
+                        }
+                    }
+                };
+                let pair = [worth(&v[0]), worth(&v[1])];
                 return self.prim(op, name, &pair);
             }
             Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power => {
@@ -1068,20 +1784,34 @@ impl<'a> Machine<'a> {
                     Prim::Mod => Calc::Remainder,
                     _ => Calc::Power,
                 };
-                match math::compute(sum, &v[0], &v[1]) {
+                // Where a language holds its reals to a width of bits,
+                // a whole number meeting a real is brought to that
+                // width first, so the two are worked as it works them.
+                let (left, right) = match self.holds_reals_to_width() && (self.a_real(&v[0]) || self.a_real(&v[1])) {
+                    true => (self.at_width(self.as_wide_real(&v[0])), self.at_width(self.as_wide_real(&v[1]))),
+                    false => (v[0].clone(), v[1].clone()),
+                };
+                let worked = match math::compute(sum, &left, &right) {
                     Some(r) => r?,
                     None => match sum {
-                        Calc::Plus => Value::from_big(v[0].as_big()? + v[1].as_big()?),
-                        Calc::Minus => Value::from_big(v[0].as_big()? - v[1].as_big()?),
-                        Calc::Times => Value::from_big(v[0].as_big()? * v[1].as_big()?),
+                        Calc::Plus => Value::from_big(left.as_big()? + right.as_big()?),
+                        Calc::Minus => Value::from_big(left.as_big()? - right.as_big()?),
+                        Calc::Times => Value::from_big(left.as_big()? * right.as_big()?),
                         Calc::Over | Calc::OverReal => return Err("Division requires numeric operands".to_string()),
                         Calc::IntDiv => return Err("Integer quotient requires numeric operands".to_string()),
                         Calc::Remainder => return Err("Modulo requires numeric operands".to_string()),
                         Calc::Power => return Err("Exponentiation requires numeric operands".to_string()),
                     },
-                }
+                };
+                self.at_width(worked)
             }
             Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge => {
+                // Two numbers are set against each other at the width
+                // the language holds them in, as they are worked at it.
+                let (left, right) = match self.holds_reals_to_width() && (self.a_real(&v[0]) || self.a_real(&v[1])) {
+                    true => (self.at_width(self.as_wide_real(&v[0])), self.at_width(self.as_wide_real(&v[1]))),
+                    false => (v[0].clone(), v[1].clone()),
+                };
                 let below = |a: &Value, b: &Value| -> Result<bool, String> {
                     match math::below(a, b) {
                         Some(r) => Ok(r),
@@ -1089,10 +1819,10 @@ impl<'a> Machine<'a> {
                     }
                 };
                 Value::Flag(match op {
-                    Prim::Lt => below(&v[0], &v[1])?,
-                    Prim::Gt => below(&v[1], &v[0])?,
-                    Prim::Le => !below(&v[1], &v[0])?,
-                    _ => !below(&v[0], &v[1])?,
+                    Prim::Lt => below(&left, &right)?,
+                    Prim::Gt => below(&right, &left)?,
+                    Prim::Le => !below(&right, &left)?,
+                    _ => !below(&left, &right)?,
                 })
             }
             Prim::Echo => {
@@ -1120,7 +1850,7 @@ impl<'a> Machine<'a> {
             Prim::Define => return Err(format!("{}() needs a quoted name as its first argument", name)),
             Prim::Dump => {
                 for x in v {
-                    println!("{}", with_kind(x, 0));
+                    println!("{}", with_kind(x, 0, self.table.count("ext.system.real.bits").is_some()));
                 }
                 Value::Nil
             }
@@ -1203,6 +1933,9 @@ impl<'a> Machine<'a> {
                     None => return Err(format!("{}() argument {} is not a valid Unicode code point", name, code)),
                 }
             }
+            // Saying the run is over is done where the call is made,
+            // since it is not a value to be worked out.
+            Prim::Quit => return Err("the run is over".to_string()),
             Prim::Raise => {
                 n(1)?;
                 return match &v[0] {
@@ -1280,25 +2013,47 @@ impl<'a> Machine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value) -> Result<Value, String> {
+        // A place holding a cell that names share reads as whatever the
+        // cell holds: the sharing lies between the names, not in the
+        // value itself.
+        return self.element_within(target, at).map(|found| match found {
+            Value::Shared(cell) => cell.borrow().clone(),
+            held => held,
+        });
+    }
+
+    fn element_within(&self, target: &Value, at: &Value) -> Result<Value, String> {
         // A language may say that a place an array does not hold reads as
         // nothing rather than stopping the program.
-        let missing = |told: String| if self.table.flag("ext.op.index.absent") { Ok(Value::Nil) } else { Err(told) };
+        // A language that reads an absent place as nothing, and has a
+        // word for a warning, says which place was missing first.
+        let missing = |told: String, key: &Value| {
+            if !self.table.flag("ext.op.index.absent") {
+                return Err(told);
+            }
+            let named = match key {
+                Value::Text(s) => format!("\"{}\"", s),
+                other => other.bare(),
+            };
+            self.grumble("warning", &format!("Undefined array key {}", named));
+            Ok(Value::Nil)
+        };
         if let Value::Dict(entries) = target {
             let at = &self.as_key(at);
             let found = entries.iter().find(|(k, _)| k.equals(at));
             return match found {
                 Some((_, v)) => Ok(v.clone()),
-                None => missing(format!("Undefined array key {}", at.bare())),
+                None => missing(format!("Undefined array key {}", at.bare()), at),
             };
         }
         let i = match as_index(at) {
             Ok(i) => i,
-            Err(told) => return missing(told),
+            Err(told) => return missing(told, at),
         };
         match target {
             Value::Vector(l) => match l.get(i) {
                 Some(v) => Ok(v.clone()),
-                None => missing(format!("Array index {} out of bounds (length: {})", i, l.len())),
+                None => missing(format!("Array index {} out of bounds (length: {})", i, l.len()), at),
             },
             Value::Text(s) if self.table.flag("op.index.strings") => s
                 .chars()
@@ -1345,15 +2100,22 @@ fn as_index(v: &Value) -> Result<usize, String> {
 /// A value shown with its kind the way PHP's var_dump does: numbers as
 /// `int(n)` and `float(x)`, text with its length in bytes, a vector
 /// one entry per line, each nested level two spaces further in.
-fn with_kind(v: &Value, level: usize) -> String {
+fn with_kind(v: &Value, level: usize, binary_reals: bool) -> String {
     let lead = "  ".repeat(level);
     match v {
+        // A cell that names share is shown as what it holds.
+        Value::Shared(cell) => with_kind(&cell.borrow(), level, binary_reals),
         Value::Small(_) | Value::Huge(_) => format!("int({})", v.bare()),
+        // Shown with its kind, a binary real is written in the fewest
+        // figures that read back as the same number.
+        // A nought under nought is written so, at any width.
+        Value::Frac(e) if e.under && num_traits::Zero::is_zero(&e.above) => "float(-0)".to_string(),
+        Value::Frac(e) if binary_reals => format!("float({})", crate::data::figured(crate::data::nearest_binary(&e.above, &e.beneath), None)),
         Value::Frac(_) => format!("float({})", v.bare()),
         Value::Text(s) => format!("string({}) \"{}\"", s.len(), s),
         Value::Flag(b) => format!("bool({})", b),
         Value::Vector(items) => {
-            let entries: Vec<String> = items.iter().enumerate().map(|(i, x)| format!("{lead}  [{i}]=>\n{lead}  {}\n", with_kind(x, level + 1))).collect();
+            let entries: Vec<String> = items.iter().enumerate().map(|(i, x)| format!("{lead}  [{i}]=>\n{lead}  {}\n", with_kind(x, level + 1, binary_reals))).collect();
             format!("array({}) {{\n{}{lead}}}", items.len(), entries.concat())
         }
         Value::Dict(entries) => {
@@ -1365,7 +2127,7 @@ fn with_kind(v: &Value, level: usize) -> String {
                         Value::Text(s) => format!("\"{}\"", s),
                         other => other.bare(),
                     };
-                    format!("{lead}  [{key}]=>\n{lead}  {}\n", with_kind(x, level + 1))
+                    format!("{lead}  [{key}]=>\n{lead}  {}\n", with_kind(x, level + 1, binary_reals))
                 })
                 .collect();
             format!("array({}) {{\n{}{lead}}}", entries.len(), shown.concat())
@@ -1374,7 +2136,7 @@ fn with_kind(v: &Value, level: usize) -> String {
             let held = thing.holds.borrow();
             let shown: Vec<String> = held
                 .iter()
-                .map(|(member, x)| format!("{lead}  [\"{member}\"]=>\n{lead}  {}\n", with_kind(x, level + 1)))
+                .map(|(member, x)| format!("{lead}  [\"{member}\"]=>\n{lead}  {}\n", with_kind(x, level + 1, binary_reals)))
                 .collect();
             format!("object({})#{} ({}) {{\n{}{lead}}}", thing.of.name, thing.turn, held.len(), shown.concat())
         }
@@ -1456,7 +2218,10 @@ fn over_lines(v: &Value, along: usize) -> String {
 /// end when no key is given. A list written where it already reaches
 /// stays a list; any other key turns it into a map, its places becoming
 /// the keys.
-fn written_into(held: &mut Value, key: Option<Value>, value: Value, ident: &str) -> Result<(), String> {
+fn written_into(held: &mut Value, key: Option<Value>, value: Value, ident: &str, builds: bool) -> Result<(), String> {
+    if builds && matches!(held, Value::Nil | Value::Unset) {
+        *held = Value::Vector(Rc::new(Vec::new()));
+    }
     let stays = match (&*held, &key) {
         (Value::Vector(items), Some(k)) => as_index(k).map_or(false, |at| at < items.len()),
         (Value::Vector(_), None) => true,
@@ -1559,7 +2324,7 @@ fn sixty_four(v: &Value) -> Result<i64, String> {
         Value::Small(n) => return Ok(*n),
         Value::Flag(yes) => return Ok(i64::from(*yes)),
         Value::Nil | Value::Unset => return Ok(0),
-        Value::Huge(n) => return Ok(n.to_i64().unwrap_or(0)),
+        Value::Huge(n) => return Ok(n.to_i64().unwrap_or(i64::MIN)),
         Value::Text(_) => match number_spelled_in(v) {
             Some(n) => n,
             None => return Ok(0),
@@ -1568,8 +2333,10 @@ fn sixty_four(v: &Value) -> Result<i64, String> {
     };
     match math::ratio_of(&number) {
         // Dividing whole numbers cuts towards nothing, which is what
-        // dropping what lies past the point comes to.
-        Some(r) => Ok((&r.above / &r.beneath).to_i64().unwrap_or(0)),
+        // dropping what lies past the point comes to. A number too wide
+        // for the bits at all comes to the lowest of them, as it does on
+        // a machine that holds numbers to a width.
+        Some(r) => Ok((&r.above / &r.beneath).to_i64().unwrap_or(i64::MIN)),
         None => Err("Working on bits needs a whole number".to_string()),
     }
 }
@@ -1613,4 +2380,33 @@ fn whole_number_spelled(s: &str) -> Option<i64> {
         return None;
     }
     digits.parse::<i64>().ok().map(|n| n * sign)
+}
+
+/// The number a piece of text opens with, and whether that is the whole
+/// of it: "12" is twelve and the whole, "12abc" twelve and not, and
+/// "abc" no number at all.
+fn number_opening_in(v: &Value) -> (Option<Value>, bool) {
+    if let Some(whole) = number_spelled_in(v) {
+        return (Some(whole), true);
+    }
+    let Value::Text(s) = v else { return (None, false) };
+    let text = s.trim_start();
+    let letters = text.as_bytes();
+    let mut end = usize::from(matches!(letters.first(), Some(b'-') | Some(b'+')));
+    let mut had_point = false;
+    while end < letters.len() {
+        let c = letters[end];
+        if c.is_ascii_digit() {
+            end += 1;
+        } else if c == b'.' && !had_point {
+            had_point = true;
+            end += 1;
+        } else {
+            break;
+        }
+    }
+    match number_spelled_in(&Value::text(&text[..end])) {
+        Some(opening) => (Some(opening), false),
+        None => (None, false),
+    }
 }

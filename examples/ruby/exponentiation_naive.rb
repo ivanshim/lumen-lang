@@ -20,10 +20,9 @@ while i < iterations do
     result = 1
     j = 0
     while j < exp do
-        result = result * base
+        result = result * base % mod
         j = j + 1
     end
-    result = result % mod
     i = i + 1
 end
 print("Result: ")

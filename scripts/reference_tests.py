@@ -56,10 +56,17 @@ def spelled(definition):
     return words
 
 
-def run(kernel, args, source, suffix, request=None):
-    with tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False, encoding="utf-8") as f:
-        f.write(source)
-        path = f.name
+def run(kernel, args, source, suffix, request=None, beside=None):
+    # php-src's run-tests.php writes the program next to the .phpt it came
+    # from, so a test naming a file beside itself finds it. Where a test
+    # says where it belongs, put it there; otherwise anywhere will do.
+    if beside is not None and not beside.with_suffix(suffix).exists():
+        path = str(beside.with_suffix(suffix))
+        Path(path).write_text(source, encoding="utf-8")
+    else:
+        with tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False, encoding="utf-8") as f:
+            f.write(source)
+            path = f.name
     setting = {**os.environ, **(request or {}).get("env", {})}
     body = (request or {}).get("body", "")
     try:
@@ -79,6 +86,9 @@ def normalise(message, banner):
         m = m[len(banner) + 2:]
     m = re.sub(r"\(line \d+\)", "", m).strip()
     m = re.sub(r" at \d+:\d+", "", m)
+    # Where a language names the file and line a fault happened in, the
+    # file is a fresh temporary each run, so the shape stands for it.
+    m = re.sub(r"\s+in\s+\S+?\.php(:\d+| on line \d+)", " in <file>", m)
     m = re.sub(r"'\$[A-Za-z_][A-Za-z0-9_]*'", "'$name'", m)
     m = re.sub(r"'\d+(\.\d+)?'", "'<number>'", m)
     m = re.sub(r'"[^"]*"', '"..."', m)
@@ -134,6 +144,13 @@ def web_request(sections):
         name, _, value = line.partition("=")
         if name.strip():
             env[name.strip()] = value.strip()
+    # run-tests.php starts the run with the settings a test's INI
+    # section names. The host carries them in the environment, each
+    # under its own name with PHP_INI_ before it.
+    for line in sections.get("INI", "").splitlines():
+        name, _, value = line.partition("=")
+        if name.strip() and not name.strip().startswith(";"):
+            env["PHP_INI_" + name.strip()] = value.strip()
     cookie = sections.get("COOKIE", "").strip()
     if cookie:
         env["HTTP_COOKIE"] = cookie
@@ -158,14 +175,28 @@ def run_phpt(path, kernel):
     s = phpt_sections(path.read_text(encoding="utf-8", errors="replace"))
     if "FILE" not in s:
         return "skipped", "no --FILE-- section"
-    if "SKIPIF" in s and re.search(r"extension_loaded|PHP_OS|getenv|zend\.", s["SKIPIF"]):
-        pass  # run anyway: the kernels have no extensions to check; the test shows what is missing
+    # run-tests.php runs a test's SKIPIF section and passes the test over
+    # when it prints a line beginning with "skip". A section the kernel
+    # cannot run says nothing either way, and the test runs, since a test
+    # that shows what is missing is worth more than one passed over.
+    if "SKIPIF" in s:
+        code, out, err = run(kernel, ["--lang", "langs/extras/php.json"], s["SKIPIF"], ".skip.php", beside=path)
+        if code == 0 and out.strip().lower().startswith("skip"):
+            return "skipped", out.strip()[:80]
     expected = s.get("EXPECT", s.get("EXPECTF", s.get("EXPECTREGEX")))
     if expected is None:
         return "skipped", "no --EXPECT-- section"
-    code, out, err = run(kernel, ["--lang", "langs/extras/php.json"], s["FILE"], ".php", web_request(s))
-    got = out.rstrip()
-    want = expected.rstrip()
+    code, out, err = run(kernel, ["--lang", "langs/extras/php.json"], s["FILE"], ".php", web_request(s), beside=path)
+    # php-src's own run-tests.php trims both ends before comparing, and
+    # a complaint is written with a blank line before it, so the same
+    # trim is what the reference expects.
+    got = out.strip()
+    want = expected.strip()
+    # run-tests.php runs a test's CLEAN section afterwards, to take away
+    # whatever the test left beside itself. What it prints is nobody's
+    # business and whether it worked changes nothing.
+    if "CLEAN" in s:
+        run(kernel, ["--lang", "langs/extras/php.json"], s["CLEAN"], ".clean.php", beside=path)
     if code == 0:
         ok = (got == want) if "EXPECT" in s else (re.fullmatch(expectf_pattern(want) if "EXPECTF" in s else want, got, re.S) is not None)
         if ok:

@@ -153,7 +153,12 @@ fn main() {
     });
 
     // Every program runs on top of its language's library.
+    let given_lines = source.lines().count();
     let source = with_library(&inv.kernel, inv.language.name(), source);
+    // How many lines the library put before the program's own text, so
+    // that a kernel can name the line a program was written on rather
+    // than the line of the two run together.
+    let lines_before = source.lines().count().saturating_sub(given_lines);
 
     if let Some(target) = &inv.emit {
         if inv.kernel != "microcode11" {
@@ -182,7 +187,14 @@ fn main() {
     // What a web request carries, gathered once here so that a kernel
     // has only to bind it: the full kernels take it, the others do not
     // read the labels that name it.
-    let request = web::gathered();
+    let mut request = web::gathered();
+    // Where the program itself lies. A definition may give names to
+    // these, and only the full kernels read those labels.
+    let whole = std::fs::canonicalize(&inv.file).unwrap_or_else(|_| std::path::PathBuf::from(&inv.file));
+    let held = whole.parent().map_or_else(|| ".".to_string(), |p| p.to_string_lossy().into_owned());
+    request.push(("SELF".to_string(), "file".to_string(), whole.to_string_lossy().into_owned(), false));
+    request.push(("SELF".to_string(), "directory".to_string(), held, false));
+    request.push(("SELF".to_string(), "lines_before".to_string(), lines_before.to_string(), true));
 
     // Serving runs the program once for each request that arrives, with
     // the request in its environment, so a served run is an ordinary run.

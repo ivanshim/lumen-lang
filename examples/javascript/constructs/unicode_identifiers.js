@@ -1,6 +1,6 @@
 // Ported from examples/lumen/constructs/unicode_identifiers.lm by scripts/port_examples.py; edit the Lumen original, not this file.
 const café = 3;
-const π = 22 / 7;
+const π = 3.14159;
 const 数 = café * 2;
 function größe(x) {
     return x + 1;

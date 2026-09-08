@@ -30,6 +30,15 @@ pub struct Operator {
     pub right_assoc: bool,
 }
 
+/// The kinds of complaint a language may have a word for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Complaint {
+    Warning,
+    Notice,
+    Deprecated,
+    Fatal,
+}
+
 pub struct Lang {
     pub ident: String,
     pub extensions: Vec<String>,
@@ -45,6 +54,23 @@ pub struct Lang {
     pub base_mark: Option<char>,
     pub exponent_mark: Option<char>,
     pub hex_prefix: Option<String>,
+    /// Each way of writing a number in a base of its own, with the base
+    /// its digits are read in: `0x` for sixteen, `0b` for two.
+    pub base_prefixes: Vec<(String, u32)>,
+    /// A nought before more digits means base eight, as it does in the
+    /// languages that grew from C.
+    pub octal_lead: bool,
+    /// Marks a program may put between the digits of a number to break
+    /// them up, which count for nothing.
+    pub digit_separators: Vec<char>,
+    /// How many bits wide a whole number is, where a language says: a
+    /// result that outgrows that width becomes a real instead.
+    pub integer_bits: Option<usize>,
+    /// How many bits wide a real is, where a language says its reals
+    /// are binary numbers rather than exact ones, and how many
+    /// significant digits one shows when simply written out.
+    pub real_bits: Option<usize>,
+    pub real_digits: Option<usize>,
     pub unicode_names: bool,
     pub sigil: Option<char>,
     pub keywords_folded: bool,
@@ -119,6 +145,11 @@ pub struct Lang {
     pub precision_binding: Option<String>,
     pub entry_binding: Option<String>,
     pub sort_bindings: Vec<(String, Sort)>,
+    /// The shorter name each kind goes by where a complaint names one,
+    /// in the order the kinds are listed under `system.kind.*`: whole,
+    /// fraction, real, text, flag, array, nothing. A lone dash says the
+    /// kind has no shorter name and the usual one stands.
+    pub brief_kinds: Vec<String>,
     /// Whether the kind of a value is given as text spelled by the
     /// `system.kind.*` names, rather than as a value of its own. Where
     /// it is, those names are not bound to anything.
@@ -132,6 +163,36 @@ pub struct Lang {
     /// Whether every key of an array is either a whole number or text,
     /// so that a key spelling a whole number is that number.
     pub plain_keys: bool,
+    /// The word a program uses for each kind of complaint, and the name
+    /// it calls the line it is written on. A language with a word for a
+    /// warning is one where reading a binding never written is a
+    /// complaint rather than a stop.
+    pub complaint_words: Vec<(Complaint, String)>,
+    pub line_binding: Option<String>,
+    /// The names a program calls the routine it is written in, the
+    /// class that routine belongs to, and the two written together.
+    /// All three are known while the program is put together.
+    pub routine_binding: Option<String>,
+    pub class_binding: Option<String>,
+    pub method_binding: Option<String>,
+    /// The class a fault of the kernel's own is raised as, where a
+    /// language names one, so that a program may take it like any other.
+    pub fault_class: Option<String>,
+    /// The class a fault of a kind is raised as, where a language names
+    /// one: working with numbers, dividing by nought, and a value of a
+    /// kind the work cannot take. Each stands in for the plain class
+    /// where the language names it.
+    pub fault_arithmetic: Option<String>,
+    pub fault_division: Option<String>,
+    pub fault_kind: Option<String>,
+    /// Whether a binding never written is a complaint rather than a stop.
+    pub warns_of_unwritten: bool,
+    /// Whether the language says where a complaint happened, so that
+    /// the assembler marks which line each statement is on.
+    pub tells_place: bool,
+    /// The names a program calls the file it is written in and the
+    /// place that file lies in, where it has words for them.
+    pub source_bindings: Vec<(String, String)>,
     /// Whether being equal is the looser question. A language with an
     /// operator for being the very same means something looser by being
     /// equal: text that spells a number stands for that number.
@@ -167,6 +228,24 @@ pub struct Lang {
     pub exponent_letters: Vec<char>,
     /// A sign that leaves its operand as it is.
     pub plus_words: Vec<String>,
+    pub hush_words: Vec<String>,
+    /// The mark written before a value to say that the value spells a
+    /// name, and the name is what is meant.
+    pub naming_words: Vec<String>,
+    /// Whether a kind's name written within the grouping marks, before
+    /// a value, makes the value that kind.
+    pub casts_kinds: bool,
+    /// The words that open a taking-apart: a list of places written on
+    /// the left of a write, each taking the matching place of the value.
+    pub unpack_words: Vec<String>,
+    /// Whether writing into a place makes what is needed to hold it:
+    /// an array where a name holds nothing, and one at each place along
+    /// the way that is not there yet.
+    pub makes_places: bool,
+    /// Pieces of text the language counts as untrue besides text with
+    /// nothing in it, and whether an array holding nothing is untrue.
+    pub untrue_text: Vec<String>,
+    pub untrue_empty: bool,
     /// `break n` and `continue n` leave n loops.
     pub break_levels: bool,
     /// The source is text with code between the prologue and the
@@ -279,6 +358,17 @@ w ext.system.request.env | w ext.system.request.files | w ext.system.request.all
 w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right
 w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at | b ext.op.assign.value | b ext.op.index.plain_keys
+w ext.system.source.file | w ext.system.source.directory | w ext.system.source.line
+w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.complaint.deprecated | w ext.system.complaint.fatal
+w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
+w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove
+w ext.builtin.eval | w ext.builtin.include | w ext.op.hush | w ext.builtin.isset | b ext.op.index.makes
+w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
+w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind
+w ext.op.name_by_value | b ext.op.cast | w ext.stmt.unpack
+w ext.system.source.routine | w ext.system.source.class | w ext.system.source.method
+w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
+n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -296,6 +386,8 @@ fn number_shapes() -> Vec<(char, &'static str)> {
 
 static ABSENT_LIST: Json = Json::Array(Vec::new());
 static ABSENT_SWITCH: Json = Json::Bool(false);
+/// A count no definition gives stands for nothing at all.
+static ABSENT_COUNT: Json = Json::Null;
 
 struct Reader<'a>(&'a serde_json::Map<String, Json>);
 
@@ -306,6 +398,7 @@ impl<'a> Reader<'a> {
         }
         match shapes_of(EXT_LABELS).iter().find(|(_, tag)| *tag == key) {
             Some(('b', _)) => Ok(&ABSENT_SWITCH),
+            Some(('n', _)) => Ok(&ABSENT_COUNT),
             Some(_) => Ok(&ABSENT_LIST),
             None => Err(format!("missing label '{key}'")),
         }
@@ -479,12 +572,22 @@ impl Lang {
         if let Some(e) = escapes.iter().find(|e| !matches!(e, 'n' | 't' | 'r' | '0' | '\\') && !quotes.contains(e)) {
             return Err(format!("lexical.string_escapes: unknown escape letter '{e}'"));
         }
-        let hex_prefix = r.head("lexical.number.hex_prefix")?;
-        if let Some(p) = &hex_prefix {
-            if p.chars().count() != 2 || !p.starts_with(|c: char| c.is_ascii_digit()) {
-                return Err(format!("lexical.number.hex_prefix must be a digit followed by one letter, got '{p}'"));
+        // Each way of writing a number in a base of its own: a digit,
+        // one letter, and the base those digits are read in.
+        let mut base_prefixes: Vec<(String, u32)> = Vec::new();
+        for (tag, base) in [
+            ("lexical.number.hex_prefix", 16u32),
+            ("ext.lexical.number.binary_prefix", 2),
+            ("ext.lexical.number.octal_prefix", 8),
+        ] {
+            for p in r.strings(tag)? {
+                if p.chars().count() != 2 || !p.starts_with(|c: char| c.is_ascii_digit()) {
+                    return Err(format!("{tag} must be a digit followed by one letter, got '{p}'"));
+                }
+                base_prefixes.push((p, base));
             }
         }
+        let hex_prefix = r.head("lexical.number.hex_prefix")?;
 
         let style = match r.string("block.style")?.as_str() {
             "indentation" => Blocks::Indented,
@@ -582,8 +685,9 @@ impl Lang {
         }
         let ranges = r.strings("op.range")?;
         let pipes = r.strings("op.pipe")?;
+        let hushes = r.strings("ext.op.hush")?;
         let mut syntax_tiers = HashMap::new();
-        for (tag, list) in [("op.range", &ranges), ("op.pipe", &pipes)] {
+        for (tag, list) in [("op.range", &ranges), ("op.pipe", &pipes), ("ext.op.hush", &hushes)] {
             for lex in list {
                 let tier = tier_of(lex, false).ok_or_else(|| format!("'{lex}' ({tag}) does not appear in op.precedence"))?;
                 syntax_tiers.insert(lex.clone(), tier);
@@ -663,9 +767,13 @@ impl Lang {
             ("builtin.den", Builtin::Denom), ("builtin.push", Builtin::Append), ("builtin.get", Builtin::Fetch),
             ("builtin.put", Builtin::Replace), ("ext.builtin.echo", Builtin::Tell), ("ext.builtin.define", Builtin::Define),
             ("ext.builtin.var_dump", Builtin::Dump), ("ext.builtin.array", Builtin::Pack),
-            ("ext.builtin.print_r", Builtin::Layout), ("ext.builtin.unset", Builtin::Erase),
+            ("ext.builtin.print_r", Builtin::Layout), ("ext.builtin.unset", Builtin::Erase), ("ext.builtin.isset", Builtin::Held),
+            ("ext.builtin.exit", Builtin::Leave),
             ("ext.builtin.args.all", Builtin::Given), ("ext.builtin.args.count", Builtin::GivenCount),
-            ("ext.builtin.args.at", Builtin::GivenAt),
+            ("ext.builtin.args.at", Builtin::GivenAt), ("ext.builtin.time_limit", Builtin::TimeLimit),
+            ("ext.builtin.eval", Builtin::Eval), ("ext.builtin.include", Builtin::Include),
+            ("ext.builtin.file.read", Builtin::FileRead), ("ext.builtin.file.write", Builtin::FileWrite),
+            ("ext.builtin.file.exists", Builtin::FileThere), ("ext.builtin.file.remove", Builtin::FileGone),
         ] {
             for lex in r.strings(tag)? {
                 let begins = lex.chars().next().map_or(false, |c| c == '_' || c.is_alphabetic());
@@ -700,6 +808,12 @@ impl Lang {
             }
         }
 
+        // A language with a word for any kind of complaint says where
+        // the complaint happened, so the lines are worth marking.
+        let tells_complaints = ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
+            .into_iter()
+            .try_fold(false, |found, tag| Ok::<bool, String>(found || r.head(tag)?.is_some()))?;
+
         // A language with an operator for being the very same means
         // something looser by being equal.
         let tells_same = binary.values().any(|op| matches!(op.action, Action::Same));
@@ -726,6 +840,12 @@ impl Lang {
             base_mark: r.letter("lexical.number.base_marker")?,
             exponent_mark: r.letter("lexical.number.exponent_marker")?,
             hex_prefix,
+            base_prefixes,
+            octal_lead: r.flag("ext.lexical.number.octal_lead")?,
+            digit_separators: r.letters("ext.lexical.number.separator")?,
+            integer_bits: r.count("ext.system.integer.bits")?,
+            real_bits: r.count("ext.system.real.bits")?,
+            real_digits: r.count("ext.system.real.digits")?,
             unicode_names: unicode,
             sigil: var_prefix,
             keywords_folded: r.flag("lexical.keywords_case_insensitive")?,
@@ -791,11 +911,47 @@ impl Lang {
             precision_binding: precision_name,
             entry_binding: entry_name,
             sort_bindings: kind_names,
+            brief_kinds: r.strings("ext.system.kind.brief")?,
             kind_spelled: r.flag("ext.system.kind.spelled")?,
             spare_args: reads_arguments,
             assign_gives_value: r.flag("ext.op.assign.value")?,
             plain_keys: r.flag("ext.op.index.plain_keys")?,
             loose_equality: tells_same,
+            complaint_words: {
+                let named = [
+                    (Complaint::Warning, "ext.system.complaint.warning"),
+                    (Complaint::Notice, "ext.system.complaint.notice"),
+                    (Complaint::Deprecated, "ext.system.complaint.deprecated"),
+                    (Complaint::Fatal, "ext.system.complaint.fatal"),
+                ];
+                let mut found = Vec::new();
+                for (kind, tag) in named {
+                    if let Some(word) = r.head(tag)? {
+                        found.push((kind, word));
+                    }
+                }
+                found
+            },
+            line_binding: r.head("ext.system.source.line")?,
+            routine_binding: r.head("ext.system.source.routine")?,
+            class_binding: r.head("ext.system.source.class")?,
+            method_binding: r.head("ext.system.source.method")?,
+            fault_class: r.head("ext.system.fault.class")?,
+            fault_arithmetic: r.head("ext.system.fault.class.arithmetic")?,
+            fault_division: r.head("ext.system.fault.class.division")?,
+            fault_kind: r.head("ext.system.fault.class.kind")?,
+            warns_of_unwritten: r.head("ext.system.complaint.warning")?.is_some(),
+            tells_place: tells_complaints,
+            source_bindings: {
+                let named = [("file", "ext.system.source.file"), ("directory", "ext.system.source.directory")];
+                let mut found = Vec::new();
+                for (part, tag) in named {
+                    if let Some(word) = r.head(tag)? {
+                        found.push((part.to_string(), word));
+                    }
+                }
+                found
+            },
             epilogue: r.strings("ext.lexical.epilogue")?,
             bare_calls: r.flag("ext.syntax.call.bare")?,
             increments: r.strings("ext.op.increment")?,
@@ -822,6 +978,13 @@ impl Lang {
             hoisted: r.flag("ext.stmt.function.hoisted")?,
             exponent_letters: r.letters("ext.lexical.number.exponent")?,
             plus_words: r.strings("ext.op.plus")?,
+            hush_words: hushes,
+            naming_words: r.strings("ext.op.name_by_value")?,
+            casts_kinds: r.flag("ext.op.cast")?,
+            unpack_words: r.strings("ext.stmt.unpack")?,
+            makes_places: r.flag("ext.op.index.makes")?,
+            untrue_text: r.strings("ext.system.untrue.text")?,
+            untrue_empty: r.flag("ext.system.untrue.empty_array")?,
             break_levels: r.flag("ext.stmt.break.levels")?,
             template: r.flag("ext.lexical.template")?,
             append_index: r.flag("ext.op.index.append")?,
@@ -930,6 +1093,9 @@ impl Lang {
         for lex in &self.plus_words {
             place(lex);
         }
+        for lex in &self.naming_words {
+            place(lex);
+        }
         if let Some(mark) = &self.pair_mark {
             place(mark);
         }
@@ -985,6 +1151,20 @@ impl Lang {
 
     pub fn ends_stmt(&self, lex: &str) -> bool {
         Lang::spells(&self.stmt_ends, lex)
+    }
+
+    /// The kind a word names, by the word the language asks a value's
+    /// kind with or by the shorter word it complains with. Nothing where
+    /// the word names no kind of the language's.
+    pub fn kind_of_word(&self, word: &str) -> Option<crate::value::Sort> {
+        use crate::value::Sort;
+        const IN_ORDER: [Sort; 7] =
+            [Sort::Integer, Sort::Rational, Sort::Real, Sort::Text, Sort::Boolean, Sort::Array, Sort::Null];
+        if let Some((_, kind)) = self.sort_bindings.iter().find(|(n, _)| n == word) {
+            return Some(*kind);
+        }
+        let at = self.brief_kinds.iter().position(|n| n != "-" && n == word)?;
+        IN_ORDER.get(at).copied()
     }
 
     pub fn begins_name(&self, c: char) -> bool {

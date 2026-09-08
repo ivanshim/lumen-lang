@@ -29,10 +29,9 @@ begin
         result := 1;
         j := 0;
         while j < exp do begin
-            result := result * base;
+            result := result * base mod mod_;
             j := j + 1;
         end;
-        result := result mod mod_;
         i := i + 1;
     end;
     write('Result: ');

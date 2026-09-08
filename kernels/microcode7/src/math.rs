@@ -14,17 +14,23 @@ pub const DEFAULT_PLACES: usize = 15;
 
 pub fn ratio_of(v: &Value) -> Option<Ratio> {
     Some(match v {
-        Value::Small(n) => Ratio { above: BigInt::from(*n), beneath: BigInt::one(), places: None },
-        Value::Huge(n) => Ratio { above: (**n).clone(), beneath: BigInt::one(), places: None },
+        Value::Small(n) => Ratio { above: BigInt::from(*n), beneath: BigInt::one(), places: None, under: false },
+        Value::Huge(n) => Ratio { above: (**n).clone(), beneath: BigInt::one(), places: None, under: false },
         Value::Frac(e) => (**e).clone(),
         _ => return None,
     })
 }
 
 pub fn make_number(above: BigInt, beneath: BigInt, places: Option<usize>) -> Value {
+    made_number(above, beneath, places, false)
+}
+
+/// The same, said besides whether a nought came of working with
+/// something under nought, which a real of a width holds on to.
+pub fn made_number(above: BigInt, beneath: BigInt, places: Option<usize>, under: bool) -> Value {
     if above.is_zero() {
         return match places {
-            Some(d) => Value::Frac(Rc::new(Ratio { above, beneath: BigInt::one(), places: Some(d) })),
+            Some(d) => Value::Frac(Rc::new(Ratio { above, beneath: BigInt::one(), places: Some(d), under })),
             None => Value::Small(0),
         };
     }
@@ -34,7 +40,7 @@ pub fn make_number(above: BigInt, beneath: BigInt, places: Option<usize>) -> Val
     if places.is_none() && beneath.is_one() {
         Value::from_big(above)
     } else {
-        Value::Frac(Rc::new(Ratio { above, beneath, places }))
+        Value::Frac(Rc::new(Ratio { above, beneath, places, under: false }))
     }
 }
 
@@ -82,10 +88,12 @@ fn precise(op: Calc, a: &Ratio, b: &Ratio) -> Result<Value, String> {
         Calc::Times if ints => Ok(Value::from_big(&a.above * &b.above)),
         Calc::Plus => Ok(make_number(&a.above * &b.beneath + &b.above * &a.beneath, &a.beneath * &b.beneath, places)),
         Calc::Minus => Ok(make_number(&a.above * &b.beneath - &b.above * &a.beneath, &a.beneath * &b.beneath, places)),
-        Calc::Times => Ok(make_number(&a.above * &b.above, &a.beneath * &b.beneath, places)),
+        // Working a nought together with something under nought leaves
+        // the nought under nought, which a real of a width writes apart.
+        Calc::Times => Ok(made_number(&a.above * &b.above, &a.beneath * &b.beneath, places, a.above.is_negative() != b.above.is_negative())),
         Calc::Over | Calc::OverReal | Calc::IntDiv if b.above.is_zero() => Err("Division by zero".to_string()),
-        Calc::Over => Ok(make_number(&a.above * &b.beneath, &a.beneath * &b.above, places)),
-        Calc::OverReal => Ok(make_number(&a.above * &b.beneath, &a.beneath * &b.above, Some(places.unwrap_or(DEFAULT_PLACES)))),
+        Calc::Over => Ok(made_number(&a.above * &b.beneath, &a.beneath * &b.above, places, a.above.is_negative() != b.above.is_negative())),
+        Calc::OverReal => Ok(made_number(&a.above * &b.beneath, &a.beneath * &b.above, Some(places.unwrap_or(DEFAULT_PLACES)), a.above.is_negative() != b.above.is_negative())),
         Calc::IntDiv => Ok(make_number((&a.above * &b.beneath) / (&b.above * &a.beneath), BigInt::one(), places)),
         Calc::Remainder => {
             let q = ratio_of(&precise(Calc::IntDiv, a, b)?).unwrap();
@@ -95,7 +103,7 @@ fn precise(op: Calc, a: &Ratio, b: &Ratio) -> Result<Value, String> {
         Calc::Power => {
             let mut e = (&b.above / &b.beneath).to_u64().ok_or_else(|| "Exponent too large".to_string())?;
             let mut base = a.clone();
-            let mut acc = Ratio { above: BigInt::one(), beneath: BigInt::one(), places: a.places };
+            let mut acc = Ratio { above: BigInt::one(), beneath: BigInt::one(), places: a.places, under: false };
             while e > 0 {
                 if e & 1 == 1 {
                     acc = ratio_of(&precise(Calc::Times, &acc, &base)?).unwrap();

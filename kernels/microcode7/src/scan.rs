@@ -134,10 +134,23 @@ fn scan_code(source: &str, table: &Table) -> Result<Vec<Token>, String> {
     let base = table.letter("lexical.number.base_marker");
     let expo = table.letter("lexical.number.exponent_marker");
     let powers = table.letters("ext.lexical.number.exponent");
-    let hex: Option<(char, char)> = table.single("lexical.number.hex_prefix").and_then(|p| {
-        let mut it = p.chars();
-        Some((it.next()?, it.next()?))
-    });
+    // Each way of writing a number in a base of its own, as the digit
+    // and letter that open it and the base its digits are read in.
+    let mut in_base: Vec<(char, char, u32)> = Vec::new();
+    for (key, radix) in [
+        ("lexical.number.hex_prefix", 16u32),
+        ("ext.lexical.number.binary_prefix", 2),
+        ("ext.lexical.number.octal_prefix", 8),
+    ] {
+        for p in table.strings(key) {
+            let mut it = p.chars();
+            if let (Some(d), Some(l)) = (it.next(), it.next()) {
+                in_base.push((d, l, radix));
+            }
+        }
+    }
+    // Marks written between digits to break them up count for nothing.
+    let apart = table.letters("ext.lexical.number.separator");
     let prefix = table.letter("identifier.variable_prefix");
     let quote_name = table.letter("lexical.name_quote");
     let unit = table.count("block.indent_size").unwrap_or(4);
@@ -233,14 +246,17 @@ fn scan_code(source: &str, table: &Table) -> Result<Vec<Token>, String> {
         }
         if c.is_ascii_digit() {
             let mut k = pos;
-            while k < src.len() && src[k].is_ascii_digit() {
+            while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                 k += 1;
             }
             let at = |k: usize| src.get(k).copied();
-            let hexed = hex.map_or(false, |(d, l)| k - pos == 1 && src[pos] == d && at(k) == Some(l) && at(k + 1).map_or(false, |x| x.is_ascii_hexdigit()));
-            if hexed {
+            let opened = in_base
+                .iter()
+                .find(|(d, l, radix)| k - pos == 1 && src[pos] == *d && at(k) == Some(*l) && at(k + 1).map_or(false, |x| x.is_digit(*radix)))
+                .copied();
+            if let Some((_, _, radix)) = opened {
                 k += 1;
-                while k < src.len() && src[k].is_ascii_hexdigit() {
+                while k < src.len() && (src[k].is_digit(radix) || apart.contains(&src[k])) {
                     k += 1;
                 }
             } else if base.is_some() && at(k) == base {
@@ -256,7 +272,7 @@ fn scan_code(source: &str, table: &Table) -> Result<Vec<Token>, String> {
             } else {
                 if point.is_some() && at(k) == point && at(k + 1).map_or(false, |x| x.is_ascii_digit()) {
                     k += 1;
-                    while k < src.len() && src[k].is_ascii_digit() {
+                    while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                         k += 1;
                     }
                 }

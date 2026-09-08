@@ -1,5 +1,8 @@
 # Benchmark naive exponentiation with modular reduction
 # Tests repeated exponentiation using simple multiplication loop
+# The modulus is taken at every step, so that every value along the way
+# stays inside a machine word and the program means the same thing in a
+# language whose whole numbers have a width as in one whose do not.
 
 base = 7
 exp = 100
@@ -26,9 +29,8 @@ while i < iterations
     result = 1
     j = 0
     while j < exp
-        result = result * base
+        result = result * base % mod
         j = j + 1
-    result = result % mod
     i = i + 1
 
 write("Result: ")

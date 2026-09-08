@@ -10,7 +10,7 @@ end;
 
 begin
     café := 3;
-    π := 22 / 7;
+    π := 3.14159;
     数 := café * 2;
     writeln(café);
     writeln(π);
