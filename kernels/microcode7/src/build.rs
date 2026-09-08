@@ -2992,7 +2992,16 @@ impl<'a> Builder<'a> {
             if self.look().shape == Shape::Bare && table.spells("ext.op.instanceof", &text) {
                 self.advance();
                 let named = self.need_word("as the class to test against")?;
-                left = prim_call(Prim::Akin, vec![left, constant(Value::text(&named))]);
+                // A class is usually written out where one is tested
+                // against. Where a binding is written there instead, it
+                // is read: what it holds spells the class, or is a thing
+                // whose own class is the one meant.
+                let a_binding = table.letter("identifier.variable_prefix").map_or(false, |mark| named.starts_with(mark));
+                let against = match a_binding {
+                    true => self.read(&named),
+                    false => constant(Value::text(&named)),
+                };
+                left = prim_call(Prim::Akin, vec![left, against]);
                 continue;
             }
             let Some(op) = table.dyadic.get(&text).copied() else {

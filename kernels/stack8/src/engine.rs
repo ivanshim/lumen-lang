@@ -2238,6 +2238,19 @@ impl<'a> Engine<'a> {
                 Value::Object(o) => Value::Flag(o.class.named(&name, self.lang.classes_folded)),
                 _ => Value::Flag(false),
             },
+            Action::KindredTo => {
+                let pair = self.drop_many(2)?;
+                let against = match &pair[1] {
+                    Value::Object(o) => Some(o.class.name.clone()),
+                    Value::Class(c) => Some(c.name.clone()),
+                    Value::Text(spelled) => Some(spelled.to_string()),
+                    _ => None,
+                };
+                match (&pair[0], against) {
+                    (Value::Object(o), Some(name)) => Value::Flag(o.class.named(&name, self.lang.classes_folded)),
+                    _ => Value::Flag(false),
+                }
+            }
             Action::Twin => {
                 let top = self.data.last().cloned().ok_or("Stack underflow")?;
                 top

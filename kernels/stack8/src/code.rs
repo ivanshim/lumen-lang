@@ -224,6 +224,9 @@ pub enum Action {
     Summon(Rc<str>),
     /// Whether the object above is of that class, or of one beneath it.
     Kindred(Rc<str>),
+    /// Whether a thing is of the class a value stands for, where the
+    /// class to test against is only known as the run reaches it.
+    KindredTo,
     /// The name of the class of the value above.
     Titled,
     /// Raise the value above as a fault to be caught.

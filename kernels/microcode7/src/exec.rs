@@ -2508,8 +2508,11 @@ impl<'a> Machine<'a> {
         }
         // Where a fault leaves the call and none has been written down
         // yet, the calls go down as they stand: the moment after this
-        // they are gone.
-        if outcome.is_err() && self.under.is_none() {
+        // they are gone. Leaving a loop or going round it again leaves
+        // a call the same way and is no fault at all, so nothing of the
+        // sort is written down for it.
+        let a_fault = matches!(outcome, Err(Escape::Error(_) | Escape::Thrown(_) | Escape::Stopped(_)));
+        if a_fault && self.under.is_none() {
             self.under = Some(self.calls_told());
         }
         if watching {
@@ -2745,8 +2748,13 @@ impl<'a> Machine<'a> {
             }
             Prim::Akin => {
                 n(2)?;
+                let against = match &v[1] {
+                    Value::Thing(thing) => thing.of.name.clone(),
+                    Value::Blueprint(class) => class.name.clone(),
+                    other => other.bare(),
+                };
                 match &v[0] {
-                    Value::Thing(thing) => Value::Flag(thing.of.goes_by(&v[1].bare(), self.classes_either_way)),
+                    Value::Thing(thing) => Value::Flag(thing.of.goes_by(&against, self.classes_either_way)),
                     _ => Value::Flag(false),
                 }
             }

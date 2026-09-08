@@ -3131,6 +3131,15 @@ impl<'a> Compiler<'a> {
             if self.on_keyword(&lang.instanceof_words) {
                 self.take();
                 let named = self.want_name("as the class to test against")?;
+                // The class to test against is usually written out. A
+                // binding written there stands for a class as the run
+                // reaches it: the class it spells, or the class of the
+                // thing it holds.
+                if lang.sigil.map_or(false, |mark| named.starts_with(mark)) {
+                    self.read(&named);
+                    self.act(Action::KindredTo, 2);
+                    continue;
+                }
                 self.act(Action::Kindred(Rc::from(named.as_str())), 1);
                 continue;
             }

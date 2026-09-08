@@ -17,10 +17,22 @@ class Throwable {
         $this->previous = $previous;
         // The calls a fault was raised under are the calls as they stood
         // before it was made: the making itself, and the making of every
-        // class it is built on, are none of them.
+        // class it is built on, are none of them. A maker belonging to
+        // some other class is a call like any other and stays.
         $under = __calls();
-        while (count($under) > 0 && $under[0]['function'] === '__construct') {
-            array_shift($under);
+        $made_at = null;
+        while (count($under) > 0) {
+            $frame = $under[0];
+            if ($frame['function'] !== '__construct' || !isset($frame['class'])) { break; }
+            $of = $frame['class'];
+            if (!($this instanceof $of)) { break; }
+            $made_at = array_shift($under);
+        }
+        // Where a fault says it was raised is where it was made, which
+        // is where the outermost of those makers was called from.
+        if ($made_at !== null) {
+            $this->file = isset($made_at['file']) ? $made_at['file'] : '';
+            $this->line = isset($made_at['line']) ? $made_at['line'] : 0;
         }
         $this->trace = $under;
     }
