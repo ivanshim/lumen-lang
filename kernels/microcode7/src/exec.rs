@@ -1769,6 +1769,13 @@ impl<'a> Machine<'a> {
                 }
                 op => {
                     let values = self.value_list(args, frame)?;
+                    // A class may answer for a property the thing does
+                    // not hold, and take the write of one: where the
+                    // language names such methods and the class is
+                    // written with them, they stand in its place.
+                    if let Some(done) = self.stands_for_property(*op, &values)? {
+                        return Ok(done);
+                    }
                     let made = self.prim(*op, name, &values)?;
                     // A complaint the operation itself raised is handed
                     // over here, before whatever holds it goes on, so
@@ -1780,6 +1787,41 @@ impl<'a> Machine<'a> {
                 }
             },
         }
+    }
+
+    /// The method a class answers a property it does not hold with, or
+    /// takes the write of one with, run in the property's stead.
+    /// Nothing where the thing holds the property already, or where the
+    /// language names no such method and the class is written without.
+    fn stands_for_property(&mut self, op: Prim, values: &[Value]) -> Res<Option<Value>> {
+        let key = match op {
+            Prim::Of if values.len() == 2 => "ext.stmt.class.reader",
+            Prim::Onto if values.len() == 3 => "ext.stmt.class.writer",
+            _ => return Ok(None),
+        };
+        let Some(named) = self.table.single(key).map(str::to_string) else {
+            return Ok(None);
+        };
+        let Value::Thing(thing) = &values[0] else {
+            return Ok(None);
+        };
+        let thing = thing.clone();
+        let called = values[1].bare();
+        let held = {
+            let holds = thing.holds.borrow();
+            self.member_place(&holds, &called).is_some()
+        };
+        if held {
+            return Ok(None);
+        }
+        let Some(program) = thing.of.program(&named).cloned() else {
+            return Ok(None);
+        };
+        let mut all = vec![values[0].clone(), Value::text(&called)];
+        if let Some(written) = values.get(2) {
+            all.push(written.clone());
+        }
+        self.invoke(program, self.outermost.clone(), all).map(Some)
     }
 
     fn value_list(&mut self, args: &[Form], frame: &Rc<Env>) -> Res<Vec<Value>> {
@@ -1819,7 +1861,14 @@ impl<'a> Machine<'a> {
             return None;
         }
         let called = pair[1].bare();
-        let subject = self.what_it_spells(pair[0].clone());
+        // The thing may stand in the pair through a cell it shares with
+        // a name, and reads there as what the cell holds, exactly as
+        // reading that name would.
+        let first_of = match &pair[0] {
+            Value::Shared(cell) => cell.borrow().clone(),
+            held => held.clone(),
+        };
+        let subject = self.what_it_spells(first_of);
         let given = match self.value_list(args, frame) {
             Ok(given) => given,
             Err(e) => return Some(Err(e)),

@@ -299,7 +299,12 @@ only. The extension labels so far, all from PHP:
   words), `ext.stmt.class.destructor` (the method run when an
   object is let go, at the latest when the run ends, every object still
   standing then being let go in the order they were made, before what the
-  run is still keeping goes out), `ext.stmt.class.modifier` (words before a member
+  run is still keeping goes out), `ext.stmt.class.reader` and
+  `ext.stmt.class.writer` (the method a class answers with for a property
+  its things do not hold, given the name asked for, and the one that
+  takes such a write, given the name and the value; a class written
+  without them reads and writes the property as before),
+  `ext.stmt.class.modifier` (words before a member
   that this kernel reads past: `public`, `final`), `ext.stmt.class.shared`
   (the modifier for a member the class keeps rather than its objects),
   `ext.stmt.class.parent` and `ext.stmt.class.self`. A class is a value
@@ -1262,9 +1267,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.modifier` | - | - | - | - | - | - | - | `public` `private` `protected` `final` `abstract` `readonly` `var` | - | - |
 | `ext.stmt.class.new` | - | - | - | - | - | - | - | `new` | - | - |
 | `ext.stmt.class.parent` | - | - | - | - | - | - | - | `parent` | - | - |
+| `ext.stmt.class.reader` | - | - | - | - | - | - | - | `__get` | - | - |
 | `ext.stmt.class.self` | - | - | - | - | - | - | - | `self` | - | - |
 | `ext.stmt.class.shared` | - | - | - | - | - | - | - | `static` | - | - |
 | `ext.stmt.class.this` | - | - | - | - | - | - | - | `$this` | - | - |
+| `ext.stmt.class.writer` | - | - | - | - | - | - | - | `__set` | - | - |
 | `ext.stmt.const` | - | - | - | - | - | - | - | `const` | - | - |
 | `ext.stmt.default` | - | - | - | - | - | - | - | `default` | - | - |
 | `ext.stmt.do` | - | - | - | - | - | - | - | `do` | - | - |

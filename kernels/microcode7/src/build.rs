@@ -2308,6 +2308,20 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// The value a compound write lands on, kept aside where the write
+    /// itself stands for a value, so what follows reads that and not
+    /// whatever the writing itself answered with.
+    fn kept_landing(&mut self, gives_back: bool, made: Form) -> (Form, Option<String>) {
+        if !gives_back {
+            return (made, None);
+        }
+        self.gensyms += 1;
+        let cell = format!("#landed{}", self.gensyms);
+        let stored = self.write(&cell, made);
+        let back = self.read(&cell);
+        (sequence(vec![stored, back]), Some(cell))
+    }
+
     fn write_into(&mut self, expr: Form, gives_back: bool, compound: Option<Prim>, assign: Token) -> Res<Form> {
         // A target kept quiet is a write kept quiet: the muting comes
         // off the reading and goes round the writing instead.
@@ -2587,8 +2601,13 @@ impl<'a> Builder<'a> {
                 let now = prim_call(Prim::Of, vec![self.read(&holder), self.read(&called)]);
                 let now = self.kept_before(now);
                 let made = self.kept_after(prim_call(op, vec![now, value]));
+                let (made, landed) = self.kept_landing(gives_back, made);
                 let put = prim_call(Prim::Onto, vec![self.read(&holder), self.read(&called), made]);
-                sequence(vec![hold, name, put])
+                let mut steps = vec![hold, name, put];
+                if let Some(cell) = landed {
+                    steps.push(self.read(&cell));
+                }
+                sequence(steps)
             }
             Form::Apply(Callee::Prim(Prim::Within, _), mut args) if compound.is_some() && args.len() == 2 => {
                 let op = compound.expect("the operation");
@@ -2603,8 +2622,13 @@ impl<'a> Builder<'a> {
                 let now = prim_call(Prim::Within, vec![self.read(&holder), self.read(&called)]);
                 let now = self.kept_before(now);
                 let made = self.kept_after(prim_call(op, vec![now, value]));
+                let (made, landed) = self.kept_landing(gives_back, made);
                 let put = prim_call(Prim::Into, vec![self.read(&holder), self.read(&called), made]);
-                sequence(vec![hold, name, put])
+                let mut steps = vec![hold, name, put];
+                if let Some(cell) = landed {
+                    steps.push(self.read(&cell));
+                }
+                sequence(steps)
             }
             Form::Apply(Callee::Prim(Prim::At, _), mut args) if compound.is_some() && args.len() == 2 => {
                 let op = compound.expect("the operation");
@@ -2619,9 +2643,14 @@ impl<'a> Builder<'a> {
                 let now = prim_call(Prim::At, vec![self.read(&held), self.read(&key)]);
                 let now = self.kept_before(now);
                 let made = self.kept_after(prim_call(op, vec![now, value]));
+                let (made, landed) = self.kept_landing(gives_back, made);
                 let target = self.read_to_write(&held);
                 let put = prim_call(Prim::Replace, vec![target, self.read(&key), made]);
-                sequence(vec![hold, put])
+                let mut steps = vec![hold, put];
+                if let Some(cell) = landed {
+                    steps.push(self.read(&cell));
+                }
+                sequence(steps)
             }
             // `$$x op= e`: the name is worked out once and held, the
             // binding it spells read under that name and what comes of

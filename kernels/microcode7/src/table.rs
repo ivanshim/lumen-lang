@@ -92,7 +92,7 @@ ext.stmt.class.constructor:L ext.stmt.class.modifier:L ext.stmt.class.hidden:L e
 ext.op.instanceof:L ext.stmt.class.parent:L ext.stmt.class.self:L ext.lexical.name_lead:L ext.stmt.try:L \
 ext.stmt.catch:L ext.stmt.finally:L ext.stmt.throw:L ext.stmt.catch.separator:L ext.op.reference:L \
 ext.system.request.query:L ext.system.request.form:L ext.system.request.cookies:L ext.system.request.server:L \
-ext.system.request.env:L ext.system.request.files:L ext.system.request.all:L ext.system.request.settings:L ext.op.index.absent:B ext.op.index.scalar:L ext.op.index.nothing:L ext.stmt.class.destructor:L \
+ext.system.request.env:L ext.system.request.files:L ext.system.request.all:L ext.system.request.settings:L ext.op.index.absent:B ext.op.index.scalar:L ext.op.index.nothing:L ext.stmt.class.destructor:L ext.stmt.class.reader:L ext.stmt.class.writer:L \
 ext.system.args.list:L ext.system.args.count:L ext.op.walk.class:L ext.op.walk.rewind:L ext.op.walk.more:L ext.op.walk.this:L ext.op.walk.key:L \
 ext.op.walk.onward:L ext.op.walk.giver.class:L ext.op.walk.giver:L ext.op.walk.no_cell:L ext.op.walk.key.no_cell:L ext.stmt.case.mark.instead:L \
 ext.stmt.class.interface:L ext.stmt.class.implements:L ext.op.compare:L ext.builtin.unset:L ext.lexical.template:B ext.lexical.prologue.echo:L \

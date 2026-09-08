@@ -551,6 +551,12 @@
   "ext.stmt.class.destructor": [
     "__destruct"
   ],
+  "ext.stmt.class.reader": [
+    "__get"
+  ],
+  "ext.stmt.class.writer": [
+    "__set"
+  ],
   "ext.op.walk.class": [
     "Iterator"
   ],

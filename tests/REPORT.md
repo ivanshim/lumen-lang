@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 87, differs 2, error 15, skipped 10 | pass 87, differs 2, error 15, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 167, differs 22, error 19, skipped 5 | pass 167, differs 22, error 19, skipped 5 |
+| `php/lang` | 213 | pass 169, differs 22, error 17, skipped 5 | pass 169, differs 22, error 17, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
-| `php/lang/operators` | 64 | pass 48, differs 9, error 1, skipped 6 | pass 48, differs 9, error 1, skipped 6 |
+| `php/lang/operators` | 64 | pass 49, differs 8, error 1, skipped 6 | pass 49, differs 8, error 1, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 328, differs 34, error 35, skipped 25 | pass 328, differs 34, error 35, skipped 25 |
+| all | 422 | pass 331, differs 33, error 33, skipped 25 | pass 331, differs 33, error 33, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 34 |
+| ran, printed something else | 33 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | skip php-cgi not available | 2 |
@@ -52,14 +52,12 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: infiniteiterator in <file> | 1 |
 | Fatal error: Uncaught Error: Unexpected token: ; in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: mktime in <file> | 1 |
-| Fatal error: Uncaught Error: Cannot call method 'GetMyName' on a value that is not an object in <file> | 1 |
 | skip Can't find german locale | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_declared_classes in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> | 1 |
 | Fatal error: Uncaught Error: 'foo' is not a function in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: debug_backtrace in <file> | 1 |
 | Fatal error: Uncaught Error: Function typehint_ref expects 2 arguments, got 1 in <file> | 1 |
-| Fatal error: Uncaught Error: Cannot call method 'get_name' on a value that is not an object in <file> | 1 |
 | skip setlocale() failed | 1 |
 | skip only for Windows | 1 |
 | Fatal error: Uncaught Error: Undefined variable: include in <file> | 1 |
@@ -68,6 +66,8 @@ is listed, since the full kernels are meant to behave alike.
 | skip this test is for 32-bit platforms only | 1 |
 | Fatal error: Uncaught Error: Cannot use a scalar value as an array in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: NAN in <file> | 1 |
+| Fatal error: Uncaught Error: Expected ')' to close a group, got ';' in <file> | 1 |
+| Fatal error: Uncaught Error: Uncaught Exception: in <file> | 1 |
 
 ### Reserved words: 55 of 68 spelled
 
@@ -350,7 +350,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/025.phpt` | pass | pass |  |
 | `php/lang/026.phpt` | pass | pass |  |
 | `php/lang/027.phpt` | pass | pass |  |
-| `php/lang/028.phpt` | error | error | Fatal error: Uncaught Error: Cannot call method 'GetMyName' on a value that is not an object in <file> |
+| `php/lang/028.phpt` | pass | pass |  |
 | `php/lang/030.phpt` | differs | differs | ran, printed something else |
 | `php/lang/032.phpt` | pass | pass |  |
 | `php/lang/033.phpt` | pass | pass |  |
@@ -407,7 +407,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug25922.phpt` | pass | pass |  |
 | `php/lang/bug26182.phpt` | pass | pass |  |
 | `php/lang/bug26696.phpt` | pass | pass |  |
-| `php/lang/bug26866.phpt` | error | error | Fatal error: Uncaught Error: Cannot call method 'get_name' on a value that is not an object in <file> |
+| `php/lang/bug26866.phpt` | pass | pass |  |
 | `php/lang/bug26869.phpt` | pass | pass |  |
 | `php/lang/bug27354.phpt` | pass | pass |  |
 | `php/lang/bug27439.phpt` | pass | pass |  |
@@ -562,7 +562,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/operator_notidentical_variation.phpt` | skipped | skipped | skip this test is for 32bit platform only |
 | `php/lang/operators/operator_notidentical_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_spaceship_basic.phpt` | pass | pass |  |
-| `php/lang/operators/overloaded_property_ref.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/overloaded_property_ref.phpt` | pass | pass |  |
 | `php/lang/operators/postdec_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/postdec_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/postinc_basiclong_64bit.phpt` | pass | pass |  |

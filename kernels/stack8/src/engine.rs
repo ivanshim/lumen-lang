@@ -638,6 +638,19 @@ impl<'a> Engine<'a> {
         held.iter().position(|(n, v)| n == name && standing(v))
     }
 
+    /// The method a class answers with for a property the thing does
+    /// not hold, and the one it takes such a write with, where the
+    /// language names them and the class is written with them.
+    fn reads_for(&self, o: &Instance) -> Option<Rc<Routine>> {
+        let named = self.lang.reader.as_deref()?;
+        o.class.method(named).cloned()
+    }
+
+    fn writes_for(&self, o: &Instance) -> Option<Rc<Routine>> {
+        let named = self.lang.writer.as_deref()?;
+        o.class.method(named).cloned()
+    }
+
     /// The thing that is its own walk, where this value is one.
     fn walker(&self, held: &Value) -> Option<Rc<Instance>> {
         let class = self.lang.walker_class.as_deref()?;
@@ -1560,13 +1573,20 @@ impl<'a> Engine<'a> {
                     Value::Array(pair) if self.lang.spelled_stands && pair.len() == 2 => {
                         let sp = self.wording();
                         let called: Rc<str> = Rc::from(pair[1].display(&sp).as_str());
-                        let subject = match self.what_it_spells(pair[0].clone()) {
+                        // The thing may stand in the pair through a cell
+                        // it shares with a name, which reads as what the
+                        // cell holds, as reading that name would.
+                        let first = match &pair[0] {
+                            Value::Bond(cell) => cell.borrow().clone(),
+                            held => held.clone(),
+                        };
+                        let subject = match self.what_it_spells(first.clone()) {
                             Value::Class(_) => Value::Null,
                             held => held,
                         };
                         let mut args = self.drop_many(argc - 1)?;
                         if matches!(subject, Value::Null) {
-                            let stands = self.what_it_spells(pair[0].clone());
+                            let stands = self.what_it_spells(first);
                             self.data.push(subject);
                             self.data.push(stands);
                             for a in args.drain(..) {
@@ -1710,6 +1730,15 @@ impl<'a> Engine<'a> {
                         // names and not in the value.
                         Some(Value::Bond(shared)) => shared.borrow().clone(),
                         Some(v) => v,
+                        // A class may answer for a property the thing
+                        // does not hold: where the language has a word
+                        // for such a method, it is called with the name
+                        // that was asked for.
+                        None if self.reads_for(&o).is_some() => {
+                            let method = self.reads_for(&o).expect("the method");
+                            let asked = Value::Text(Rc::from(name.as_ref()));
+                            return self.invoke(&method, vec![Value::Object(o), asked]);
+                        }
                         // A language with a word for a warning says a
                         // property is not there and reads nothing.
                         None if self.lang.warns_of_unwritten => {
@@ -1772,8 +1801,21 @@ impl<'a> Engine<'a> {
                 let value = pair.pop().expect("the value");
                 match pair.pop().expect("the object") {
                     Value::Object(o) => {
+                        let taken = {
+                            let fields = o.fields.borrow();
+                            self.member_at(&fields, name)
+                        };
+                        // A class may take the write of a property the
+                        // thing does not hold, the same way it answers
+                        // for one it cannot read.
+                        if taken.is_none() {
+                            if let Some(method) = self.writes_for(&o) {
+                                let asked = Value::Text(Rc::from(name.as_ref()));
+                                return self.invoke(&method, vec![Value::Object(o), asked, value]);
+                            }
+                        }
                         let mut fields = o.fields.borrow_mut();
-                        match self.member_at(&fields, name) {
+                        match taken {
                             Some(at) => fields[at].1 = value,
                             None => fields.push((name.to_string(), value)),
                         }

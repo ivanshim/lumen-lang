@@ -375,6 +375,11 @@ pub struct Lang {
     /// The method run when an object is let go, at the latest when the
     /// run ends.
     pub destructor: Option<String>,
+    /// The method that answers for a property the thing does not hold,
+    /// and the one that takes a write of such a property. Each is given
+    /// the name that was asked for, the writer the value as well.
+    pub reader: Option<String>,
+    pub writer: Option<String>,
     /// A thing may be its own walk. The class of method names saying so,
     /// and the five methods of the walk: wind back, whether there is
     /// more, what stands here, what it is called, and step on.
@@ -493,7 +498,7 @@ w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.
 w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
 w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
-w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.destructor
+w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.destructor | w ext.stmt.class.reader | w ext.stmt.class.writer
 w ext.op.walk.class | w ext.op.walk.rewind | w ext.op.walk.more | w ext.op.walk.this | w ext.op.walk.key
 w ext.op.walk.onward | w ext.op.walk.giver.class | w ext.op.walk.giver | w ext.op.walk.no_cell | w ext.op.walk.key.no_cell | w ext.stmt.class.modifier | w ext.stmt.class.hidden | w ext.stmt.class.guarded | w ext.stmt.class.shared
 w ext.op.member | w ext.op.scope | w ext.op.instanceof | w ext.stmt.class.parent
@@ -1211,6 +1216,8 @@ impl Lang {
             this_word: r.head("ext.stmt.class.this")?,
             constructor: r.head("ext.stmt.class.constructor")?,
             destructor: r.head("ext.stmt.class.destructor")?,
+            reader: r.head("ext.stmt.class.reader")?,
+            writer: r.head("ext.stmt.class.writer")?,
             walker_class: r.head("ext.op.walk.class")?,
             walk_rewind: r.head("ext.op.walk.rewind")?,
             walk_more: r.head("ext.op.walk.more")?,
