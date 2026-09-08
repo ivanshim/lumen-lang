@@ -3211,7 +3211,15 @@ impl<'a> Machine<'a> {
         // Text naming a place in text counts for the number it opens
         // with, since text counts as a number wherever one is wanted.
         let spelled = match (target, at) {
-            (Value::Text(_), Value::Text(_)) if self.letter_places => number_opening_in(at).0,
+            (Value::Text(_), Value::Text(said)) if self.letter_places => {
+                let (opens, outright) = number_opening_in(at);
+                // Where the text naming the place is no number outright,
+                // the run says so rather than counting it quietly.
+                if !outright && opens.is_some() {
+                    self.grumble("warning", &format!("Illegal string offset \"{}\"", said));
+                }
+                opens
+            }
             _ => None,
         };
         let i = match as_index(spelled.as_ref().unwrap_or(at)) {

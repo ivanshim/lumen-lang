@@ -2672,7 +2672,14 @@ impl<'a> Engine<'a> {
         // anywhere else it is asked to.
         let named = match (target, at) {
             (Value::Text(_), Value::Text(spelling)) if self.lang.text_places => {
-                number_opening(spelling).0.unwrap_or_else(|| at.clone())
+                let (opens, whole) = number_opening(spelling);
+                // Text naming a place that is not simply a number names
+                // the number it opens with, and the run says as much
+                // rather than reading it quietly.
+                if !whole && opens.is_some() {
+                    self.complain(Complaint::Warning, &format!("Illegal string offset \"{}\"", spelling));
+                }
+                opens.unwrap_or_else(|| at.clone())
             }
             _ => at.clone(),
         };
