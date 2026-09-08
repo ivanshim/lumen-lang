@@ -3322,6 +3322,20 @@ impl<'a> Compiler<'a> {
         // A chain read within a key finishes before the chain holding
         // it, so the one left standing is the outermost.
         self.keyed = keyed;
+        // What a chain of looks comes to may itself be called: the value
+        // is held aside while the arguments are worked out, since a call
+        // wants what it calls above them.
+        if let Some(call) = self.lang.calling.clone() {
+            if stepped && self.at_symbol(&call.open) {
+                let callee = self.gensym("callee");
+                self.write(&callee);
+                self.take();
+                let argc = self.arguments(&call)?;
+                self.read(&callee);
+                self.act(Action::Invoke(Rc::from("the value a look came to")), argc + 1);
+                return self.indexing(from);
+            }
+        }
         // An index may be followed by more members: `$a[0]->b`.
         let more = lang.member_mark.as_ref().map_or(false, |m| self.at_symbol(m))
             || lang.scope_mark.as_ref().map_or(false, |m| self.at_symbol(m));

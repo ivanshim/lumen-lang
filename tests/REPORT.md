@@ -19,27 +19,27 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 47, differs 31, error 26, skipped 10 | pass 47, differs 31, error 26, skipped 10 |
 | `php/func` | 14 | pass 9, differs 3, error 2, skipped 0 | pass 9, differs 3, error 2, skipped 0 |
-| `php/lang` | 213 | pass 98, differs 47, error 63, skipped 5 | pass 98, differs 47, error 63, skipped 5 |
+| `php/lang` | 213 | pass 99, differs 46, error 63, skipped 5 | pass 99, differs 46, error 63, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 21, error 3, skipped 6 | pass 34, differs 21, error 3, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 193, differs 110, error 94, skipped 25 | pass 193, differs 110, error 94, skipped 25 |
+| all | 422 | pass 194, differs 109, error 94, skipped 25 | pass 194, differs 109, error 94, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 110 |
+| ran, printed something else | 109 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
 | Fatal error: Uncaught Error: Undefined variable: Iterator in <file> | 5 |
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
+| Expected an expression | 3 |
 | Fatal error: Uncaught Error: Undefined variable: current in <file> | 3 |
 | Fatal error: Uncaught Error: Cannot index non-array value in <file> | 3 |
 | Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> | 3 |
 | skip php-cgi not available | 2 |
-| Expected an expression | 2 |
 | Unexpected token: { | 2 |
 | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> | 2 |
 | Fatal error: Maximum execution time of 1 second exceeded in <file> | 2 |
@@ -403,7 +403,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug24951.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ob_end_flush in <file> |
 | `php/lang/bug25145.phpt` | pass | pass |  |
 | `php/lang/bug25547.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug25652.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug25652.phpt` | pass | pass |  |
 | `php/lang/bug25922.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug26182.phpt` | pass | pass |  |
 | `php/lang/bug26696.phpt` | pass | pass |  |
@@ -447,7 +447,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/empty_variation.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: empty in <file> |
 | `php/lang/engine_assignExecutionOrder_001.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_002.phpt` | error | error | Fatal error: Uncaught Error: Cannot index non-array value in <file> |
-| `php/lang/engine_assignExecutionOrder_003.phpt` | error | error | Unexpected token: ) |
+| `php/lang/engine_assignExecutionOrder_003.phpt` | error | error | Expected an expression |
 | `php/lang/engine_assignExecutionOrder_004.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_005.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_006.phpt` | pass | pass |  |

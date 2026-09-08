@@ -3065,6 +3065,12 @@ impl<'a> Builder<'a> {
             let index = self.expr(0)?;
             self.need_sign(close, "after array index")?;
             node = prim_call(Prim::At, vec![node, index]);
+            // What a look comes to may itself be called.
+            if self.table.single("syntax.call.open").map_or(false, |o| self.sign(o)) {
+                self.advance();
+                let args = self.args("syntax.call.close", "syntax.call.separator")?;
+                node = invoke(node, args);
+            }
             node = self.members(node)?;
         }
         Ok(node)
