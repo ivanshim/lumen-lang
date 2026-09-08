@@ -411,7 +411,9 @@ only. The extension labels so far, all from PHP:
   for where the run was started, since a program naming a file beside
   itself means the one beside itself; and while its text runs, that
   file is where the run is written, so a complaint names it and a file
-  it asks for in turn is looked for beside it.
+  it asks for in turn is looked for beside it. A routine written in
+  such a file carries it too, so a call of that routine from anywhere
+  is a call into the file it was written in.
 - `ext.builtin.time_limit`: a builtin saying how long the run may take
   from here, counted in seconds, with nought taking the limit away. A
   run that passes it is stopped and told with the word for the end of a

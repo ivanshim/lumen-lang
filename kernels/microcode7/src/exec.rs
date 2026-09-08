@@ -425,7 +425,7 @@ impl<'a> Machine<'a> {
     fn run_source(&mut self, source: &str, came_out_of: Option<String>) -> Result<Value, String> {
         let tokens = crate::scan::scan(source, self.table)?;
         let tokens = crate::indent::indent(tokens, self.table)?;
-        let built = crate::build::build(&tokens, self.table, &self.idents, HashMap::new(), true, 0)?;
+        let built = crate::build::build_from(&tokens, self.table, &self.idents, HashMap::new(), true, 0, came_out_of.as_deref().map(Rc::from))?;
         self.idents = built.globals;
         // Names the new source brought with it want room to stand in.
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
@@ -1082,6 +1082,13 @@ impl<'a> Machine<'a> {
             self.handed.push(mine);
         }
         let (mut program, mut frame) = (program, frame);
+        // A program written in a file of its own runs as being in it: a
+        // complaint names that file, and a file it asks for is sought
+        // beside it, wherever the call was made.
+        let elsewhere = program.written_in.as_ref().map(|place| {
+            let was = std::mem::replace(&mut self.written_in, place.to_string());
+            (was, self.row)
+        });
         let mut caught: u8 = 0;
         let outcome: Res = loop {
             caught |= match program.traps {
@@ -1121,6 +1128,10 @@ impl<'a> Machine<'a> {
                 Err(e) => break Err(e),
             }
         };
+        if let Some((was, on)) = elsewhere {
+            self.written_in = was;
+            self.row = on;
+        }
         if watching {
             self.handed.pop();
         }

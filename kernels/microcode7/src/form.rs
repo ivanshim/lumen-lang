@@ -295,5 +295,10 @@ pub struct Routine {
     /// Holds no idents: runs in the frame it closed over, making none.
     pub frameless: bool,
     pub traps: Traps,
+    /// The file this program was written in, where it came of text read
+    /// as the run went. A call of it is a call into that file: a
+    /// complaint names it, and a file it asks for is sought beside it.
+    /// Nothing where the program is the run's own.
+    pub written_in: Option<Rc<str>>,
     pub body: Form,
 }

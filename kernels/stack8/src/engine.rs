@@ -133,7 +133,7 @@ impl<'a> Engine<'a> {
     /// file it asks for in turn is looked for beside it.
     fn run_source(&mut self, source: &str, came_from: Option<String>) -> Res<Value> {
         let tokens = crate::layout::layout(crate::lex::lex(source, self.lang)?, self.lang)?;
-        let program = crate::compile::compile(&tokens, self.lang, &mut self.registry, 0)?;
+        let program = crate::compile::compile_from(&tokens, self.lang, &mut self.registry, 0, came_from.as_deref().map(Rc::from))?;
         // Names the new source brought with it want room in the world.
         self.world.resize(self.registry.idents.len(), Value::Blank);
         let (was_written_in, was_on) = (self.source.clone(), self.line);
@@ -552,7 +552,18 @@ impl<'a> Engine<'a> {
         frame.truncate(program.formals.len());
         frame.resize(program.idents.len(), Value::Blank);
         let base = self.data.len();
+        // A routine written in a file of its own is run as being in it:
+        // a complaint names that file, and a file the routine asks for
+        // is looked for beside it, wherever the call was made.
+        let elsewhere = program.written_in.as_ref().map(|place| {
+            let was = std::mem::replace(&mut self.source, place.to_string());
+            (was, self.line)
+        });
         let outcome = self.run_instrs(program, &mut frame);
+        if let Some((was, on)) = elsewhere {
+            self.source = was;
+            self.line = on;
+        }
         if watching {
             self.given.pop();
         }

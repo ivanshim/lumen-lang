@@ -106,6 +106,9 @@ pub struct Compiler<'a> {
     /// write to a place within a place can take the keys apart and work
     /// each of them out exactly once.
     keyed: Vec<usize>,
+    /// The file this text came out of, where it was read while the run
+    /// was going, so that every program built from it carries it.
+    written_in: Option<Rc<str>>,
 }
 
 type Res<T> = Result<T, String>;
@@ -128,6 +131,12 @@ const SPARE_CELLS: [&str; 3] = ["#a", "#b", "#c"];
 /// `before` is how many lines were put before the program's own text,
 /// which the host knows and a line named in a complaint must not count.
 pub fn compile(tokens: &[Token], lang: &Lang, table: &mut Registry, before: u32) -> Res<Rc<Routine>> {
+    compile_from(tokens, lang, table, before, None)
+}
+
+/// The same, told besides which file the text came out of, where it was
+/// read while the run was going.
+pub fn compile_from(tokens: &[Token], lang: &Lang, table: &mut Registry, before: u32, written_in: Option<Rc<str>>) -> Res<Rc<Routine>> {
     let top = Piece {
         outermost: true,
         ident: "<program>".to_string(),
@@ -143,7 +152,7 @@ pub fn compile(tokens: &[Token], lang: &Lang, table: &mut Registry, before: u32)
         instrs: Vec::new(),
     };
     let shared_args = shared_parameters(tokens, lang);
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, promoted: Vec::new(), before, keyed: Vec::new() };
+    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, promoted: Vec::new(), before, keyed: Vec::new(), written_in };
     if lang.rpn {
         a.rpn_body(&[], Span::Block)?;
         if !a.exhausted() {
@@ -180,7 +189,7 @@ pub fn compile(tokens: &[Token], lang: &Lang, table: &mut Registry, before: u32)
         a.piece().instrs[at] = Instr::Skip(end);
     }
     let unit = a.pieces.pop().expect("the top unit");
-    Ok(Rc::new(Routine { ident: unit.ident, formals: Vec::new(), least: 0, idents: unit.idents, returns_value: false, body_of_all: true, instrs: peephole(unit.instrs) }))
+    Ok(Rc::new(Routine { ident: unit.ident, formals: Vec::new(), least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), instrs: peephole(unit.instrs) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -581,7 +590,7 @@ impl<'a> Compiler<'a> {
         }
         let unit = self.pieces.pop().expect("the unit");
         let instrs = if returns_value && !used { relocated(unit.instrs.into_iter().skip(2).collect(), -2) } else { unit.instrs };
-        Ok(Rc::new(Routine { ident: unit.ident, formals, least, idents: unit.idents, returns_value, body_of_all: false, instrs: peephole(instrs) }))
+        Ok(Rc::new(Routine { ident: unit.ident, formals, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), instrs: peephole(instrs) }))
     }
 
     // ---------- statements ----------

@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 39, differs 37, error 28, skipped 10 | pass 39, differs 37, error 28, skipped 10 |
 | `php/func` | 14 | pass 7, differs 3, error 4, skipped 0 | pass 7, differs 3, error 4, skipped 0 |
-| `php/lang` | 213 | pass 66, differs 54, error 88, skipped 5 | pass 66, differs 54, error 88, skipped 5 |
+| `php/lang` | 213 | pass 67, differs 53, error 88, skipped 5 | pass 67, differs 53, error 88, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 30, differs 21, error 7, skipped 6 | pass 30, differs 21, error 7, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 147, differs 123, error 127, skipped 25 | pass 147, differs 123, error 127, skipped 25 |
+| all | 422 | pass 148, differs 122, error 127, skipped 25 | pass 148, differs 122, error 127, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 123 |
+| ran, printed something else | 122 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | Unexpected character '$' | 6 |
@@ -500,7 +500,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/func_num_args.003.phpt` | differs | differs | ran, printed something else |
 | `php/lang/func_num_args.004.phpt` | pass | pass |  |
 | `php/lang/include_variation1.phpt` | pass | pass |  |
-| `php/lang/include_variation2.phpt` | differs | differs | ran, printed something else |
+| `php/lang/include_variation2.phpt` | pass | pass |  |
 | `php/lang/include_variation3.phpt` | pass | pass |  |
 | `php/lang/integer_literals/binary_32bit.phpt` | skipped | skipped | skip this test is for 32bit platform only |
 | `php/lang/integer_literals/binary_64bit.phpt` | pass | pass |  |

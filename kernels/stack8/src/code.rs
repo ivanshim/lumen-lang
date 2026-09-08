@@ -275,6 +275,11 @@ pub struct Routine {
     /// The program's own body, which nothing called: what a call was
     /// given cannot be read from within it.
     pub body_of_all: bool,
+    /// The file this program was written in, where it came of text read
+    /// while the run was going. A call of it is a call into that file:
+    /// a complaint names it, and a file it asks for is looked for
+    /// beside it. Nothing where the program is the run's own.
+    pub written_in: Option<Rc<str>>,
     pub instrs: Vec<Instr>,
 }
 
