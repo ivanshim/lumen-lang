@@ -112,6 +112,13 @@ pub struct Compiler<'a> {
     /// Where the value a store is to write is already waiting, which a
     /// taking-apart sets before each of its places.
     waiting: Option<String>,
+    /// How far a compound write steps what the place already holds,
+    /// where the step is the write's own and no value follows the sign:
+    /// what `++` and `--` mean.
+    stepping: Option<i64>,
+    /// Where the value a place held before a compound write is to be
+    /// kept, so that a step may give back what stood there before it.
+    stood: Option<String>,
     /// Whether each routine being read gives back a cell rather than a
     /// copy, the innermost last, so that what it answers with is made a
     /// cell where it should be.
@@ -159,7 +166,7 @@ pub fn compile_from(tokens: &[Token], lang: &Lang, table: &mut Registry, before:
         instrs: Vec::new(),
     };
     let shared_args = shared_parameters(tokens, lang);
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None, giving_cells: Vec::new() };
+    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None, stepping: None, stood: None, giving_cells: Vec::new() };
     if lang.rpn {
         a.rpn_body(&[], Span::Block)?;
         if !a.exhausted() {
@@ -783,9 +790,6 @@ impl<'a> Compiler<'a> {
     /// assignment or an expression.
     fn simple_stmt(&mut self) -> Res<()> {
         let lang = self.lang;
-        if self.bump_stmt()? {
-            return Ok(());
-        }
         if lang.bare_calls && self.look().shape == Shape::Instr {
             // A builtin without brackets after it; echo always, since a
             // bracket after it opens a group, not its arguments.
@@ -1223,36 +1227,6 @@ impl<'a> Compiler<'a> {
         } else {
             None
         }
-    }
-
-    /// x = x + 1 (or - 1), the name left in the slot.
-    fn bump(&mut self, name: &str, op: Action) {
-        self.read(name);
-        self.constant(Value::Small(1));
-        self.act(op, 2);
-        self.write(name);
-    }
-
-    /// `++x;` or `x++;` as a statement: the value is not wanted, so
-    /// both orders come to the same thing.
-    fn bump_stmt(&mut self) -> Res<bool> {
-        let (first, second) = (self.look().clone(), self.look_ahead(1).clone());
-        if let (Some(op), Shape::Instr) = (self.bump_of(&first), second.shape) {
-            self.take();
-            self.take();
-            self.bump(&second.lexeme, op);
-            return Ok(true);
-        }
-        if let (Shape::Instr, Some(op)) = (first.shape, self.bump_of(&second)) {
-            if self.lang.keywords.contains(&first.lexeme) || self.lang.builtins.contains_key(&first.lexeme) {
-                return Ok(false);
-            }
-            self.take();
-            self.take();
-            self.bump(&first.lexeme, op);
-            return Ok(true);
-        }
-        Ok(false)
     }
 
     /// A builtin at the head of a statement called without brackets:
@@ -2062,6 +2036,35 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// What a compound write takes with the value the place already
+    /// holds: the source after the sign, or the one step a `++` means,
+    /// which has no source of its own.
+    fn addend(&mut self) -> Res<()> {
+        match self.stepping {
+            Some(by) => {
+                self.constant(Value::Small(by));
+                Ok(())
+            }
+            None => self.expr(0),
+        }
+    }
+
+    /// The value the place holds, just read, kept where a step asked
+    /// for it, so that `x++` may give back what stood there.
+    fn stood_before(&mut self) {
+        if let Some(cell) = self.stood.clone() {
+            self.write(&cell);
+            self.read(&cell);
+        }
+    }
+
+    /// What a store answered with, put away: a write is not a value,
+    /// so nothing of it stands where the store was written.
+    fn put_away(&mut self) {
+        let held = self.gensym("stored");
+        self.write(&held);
+    }
+
     fn kept(&mut self, keep: Option<&str>) {
         if let Some(cell) = keep {
             self.write(cell);
@@ -2125,7 +2128,8 @@ impl<'a> Compiler<'a> {
                 if let Some(op) = compound {
                     // x op= e is x = x op e.
                     self.read(&name);
-                    self.expr(0)?;
+                    self.stood_before();
+                    self.addend()?;
                     self.act(op, 2);
                     self.kept(keep);
                 } else {
@@ -2176,7 +2180,8 @@ impl<'a> Compiler<'a> {
                         self.read(&inner[deep]);
                         self.read(&held[deep]);
                         self.act(Action::At, 2);
-                        self.expr(0)?;
+                        self.stood_before();
+                        self.addend()?;
                         self.act(op, 2);
                         self.kept(keep);
                     }
@@ -2213,7 +2218,9 @@ impl<'a> Compiler<'a> {
                 self.waiting = was;
                 stored
             }
-            [Instr::Read(slot), ..] if !slot.moving && (keys.len() > 1 || (keys.len() == 1 && appending)) => {
+            [Instr::Read(slot), ..]
+                if !slot.moving && (keys.len() > 1 || (keys.len() == 1 && (appending || compound.is_some()))) =>
+            {
                 let name = slot.ident.to_string();
                 let held: Vec<String> = (0..keys.len()).map(|_| self.gensym("key")).collect();
                 for (i, key) in keys.iter().enumerate() {
@@ -2242,7 +2249,8 @@ impl<'a> Compiler<'a> {
                         self.read(&inner[deep]);
                         self.read(&held[deep]);
                         self.act(Action::At, 2);
-                        self.expr(0)?;
+                        self.stood_before();
+                        self.addend()?;
                         self.act(op, 2);
                         self.kept(keep);
                     }
@@ -2273,6 +2281,55 @@ impl<'a> Compiler<'a> {
                 self.write(&name);
                 Ok(())
             }
+            // `p op= e` where the place is a member of something: what
+            // holds it is worked out once and kept, the member read
+            // from there, taken with the value, and what comes of it
+            // written back into the same place.
+            [rest @ .., Instr::Act(Action::Grab(member), 1)] if compound.is_some() => {
+                let (member, rest) = (member.clone(), rest.to_vec());
+                let op = compound.expect("the operation");
+                let holder = self.gensym("holder");
+                for w in relocated(rest, 0) {
+                    self.put(w);
+                }
+                self.write(&holder);
+                self.read(&holder);
+                self.act(Action::Grab(member.clone()), 1);
+                self.stood_before();
+                self.addend()?;
+                self.act(op, 2);
+                self.kept(keep);
+                let value = self.gensym("value");
+                self.write(&value);
+                self.read(&holder);
+                self.read(&value);
+                self.act(Action::Plant(member), 2);
+                self.put_away();
+                Ok(())
+            }
+            // The same for a class's own value.
+            [rest @ .., Instr::Act(Action::Reach(member), 1)] if compound.is_some() => {
+                let (member, rest) = (member.clone(), rest.to_vec());
+                let op = compound.expect("the operation");
+                let holder = self.gensym("holder");
+                for w in relocated(rest, 0) {
+                    self.put(w);
+                }
+                self.write(&holder);
+                self.read(&holder);
+                self.act(Action::Reach(member.clone()), 1);
+                self.stood_before();
+                self.addend()?;
+                self.act(op, 2);
+                self.kept(keep);
+                let value = self.gensym("value");
+                self.write(&value);
+                self.read(&holder);
+                self.read(&value);
+                self.act(Action::Sow(member), 2);
+                self.put_away();
+                Ok(())
+            }
             _ if compound.is_some() => Err(format!("'{}' needs a plain variable on its left", assign)),
             // A read of the binding a value names turns into a write
             // of it: the text stays where it is and the value follows.
@@ -2282,6 +2339,7 @@ impl<'a> Compiler<'a> {
                 }
                 self.value_written(keep)?;
                 self.act(Action::WriteNamed, 2);
+                self.put_away();
                 Ok(())
             }
             // The read of a class's own value named by a value turns
@@ -2294,6 +2352,7 @@ impl<'a> Compiler<'a> {
                 }
                 self.value_written(keep)?;
                 self.act(Action::SowNamed, 3);
+                self.put_away();
                 Ok(())
             }
             // The read of a member named by a value turns into a write
@@ -2307,6 +2366,7 @@ impl<'a> Compiler<'a> {
                 }
                 self.value_written(keep)?;
                 self.act(Action::PlantNamed, 3);
+                self.put_away();
                 Ok(())
             }
             // The read of a member turns into a write of it.
@@ -2317,6 +2377,7 @@ impl<'a> Compiler<'a> {
                 }
                 self.value_written(keep)?;
                 self.act(Action::Plant(member), 2);
+                self.put_away();
                 Ok(())
             }
             [rest @ .., Instr::Act(Action::Reach(member), 1)] => {
@@ -2326,6 +2387,7 @@ impl<'a> Compiler<'a> {
                 }
                 self.value_written(keep)?;
                 self.act(Action::Sow(member), 2);
+                self.put_away();
                 Ok(())
             }
             // `$o->a[i] = v` and `$o->a[] = v`: the property is read, the
@@ -2350,6 +2412,7 @@ impl<'a> Compiler<'a> {
                 let argc = if appending { 2 } else { 3 };
                 self.act(Action::Builtin(native, Rc::from("put")), argc);
                 self.act(Action::Plant(member), 2);
+                self.put_away();
                 Ok(())
             }
             [Instr::Read(slot), Instr::Act(Action::AtEnd, 1)] if !slot.moving => {
@@ -2534,18 +2597,46 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// `++p` and `p--` over any place a write reaches: the place is
+    /// read, stepped by one and written back. What stands afterwards is
+    /// the value after the step, or the one that stood there before it
+    /// where the step is written after the place.
+    fn bumped(&mut self, from: usize, op: Action, gives_new: bool) -> Res<()> {
+        let stood = (!gives_new).then(|| self.gensym("stood"));
+        let keep = gives_new.then(|| self.gensym("stepped"));
+        let was_step = self.stepping.replace(1);
+        let was_stood = std::mem::replace(&mut self.stood, stood.clone());
+        let done = self.store_into(from, keep.as_deref(), Some(op), "++");
+        self.stepping = was_step;
+        self.stood = was_stood;
+        done?;
+        if let Some(cell) = keep.or(stood) {
+            self.read(&cell);
+        }
+        Ok(())
+    }
+
+    /// A piece of an expression, with a step written before or after it
+    /// where the language spells one.
     fn prefix(&mut self) -> Res<()> {
+        let from = self.mark();
+        if let Some(op) = self.bump_of(&self.look().clone()) {
+            self.take();
+            self.prefix()?;
+            return self.bumped(from, op, true);
+        }
+        self.prefix_piece()?;
+        if let Some(op) = self.bump_of(&self.look().clone()) {
+            self.take();
+            return self.bumped(from, op, false);
+        }
+        Ok(())
+    }
+
+    fn prefix_piece(&mut self) -> Res<()> {
         let lang = self.lang;
         let from = self.mark();
         let tok = self.look().clone();
-        if let (Some(op), Shape::Instr) = (self.bump_of(&tok), self.look_ahead(1).shape) {
-            // ++x: the new value.
-            self.take();
-            let name = self.take().lexeme;
-            self.bump(&name, op);
-            self.read(&name);
-            return Ok(());
-        }
         // `list($a, $b) = v`: the places named on the left each take
         // the matching place of the value on the right.
         if Lang::spells(&lang.unpack_words, &tok.lexeme) && matches!(tok.shape, Shape::Instr | Shape::Sign) {
@@ -2706,14 +2797,7 @@ impl<'a> Compiler<'a> {
                                 self.call(&tok.lexeme, argc)?;
                             }
                         }
-                        _ => {
-                            self.read(&tok.lexeme);
-                            if let Some(op) = self.bump_of(&self.look().clone()) {
-                                // x++: the old value stays, the slot moves on.
-                                self.take();
-                                self.bump(&tok.lexeme, op);
-                            }
-                        }
+                        _ => self.read(&tok.lexeme),
                     }
                 }
             }

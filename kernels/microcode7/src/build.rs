@@ -82,6 +82,13 @@ pub struct Builder<'a> {
     /// Where the value a write is to put is already waiting, which a
     /// taking-apart sets before each of its places.
     waiting: Option<String>,
+    /// How far a compound write steps what the place already holds,
+    /// where no value follows the sign: what `++` and `--` mean.
+    stepping: Option<i64>,
+    /// Cells a step keeps its two values in: what the place held before
+    /// it, and what it holds after.
+    stood: Option<String>,
+    stands: Option<String>,
     /// The routines being built, the innermost last, so a word standing
     /// for the one a piece is written in knows which that is.
     naming: Vec<String>,
@@ -117,7 +124,7 @@ pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMa
 pub fn build_from(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>) -> Res<Built> {
     let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let shared_args = shared_parameters(tokens, table);
-    let mut r = Builder { within: None, shared_args, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, naming: Vec::new(), giving_cells: Vec::new(),
+    let mut r = Builder { within: None, shared_args, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(),
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
@@ -527,7 +534,12 @@ impl<'a> Builder<'a> {
     fn aliased(&mut self, name: &str) -> Option<Address> {
         let owner = self.layers.iter().rev().find(|s| s.holds == Holds::Every)?;
         let target = owner.aliases.iter().rev().find(|(n, _)| n == name)?.1.clone();
-        Some(self.global_address(&target))
+        let mut slot = self.global_address(&target);
+        // The binding keeps the name the source calls it by, so that a
+        // read of it can be turned back into a write of the same one and
+        // a complaint about it says what a reader would recognise.
+        slot.ident = Rc::from(name);
+        Some(slot)
     }
 
     fn address_to_read(&mut self, name: &str) -> Address {
@@ -1116,6 +1128,10 @@ impl<'a> Builder<'a> {
         let (mut fields, mut shared, mut constants) = (Vec::new(), Vec::new(), Vec::new());
         let mut methods = Vec::new();
         self.skip_line_ends();
+        // What a method keeps between calls is set where the class is
+        // declared, as a plain routine's own values are set where the
+        // routine is defined.
+        let statics_before = self.statics.len();
         while !self.lexeme_of(&close) && !self.exhausted() {
             let mut kept = false;
             while self.look().shape == Shape::Bare {
@@ -1209,7 +1225,13 @@ impl<'a> Builder<'a> {
         let plan = Plan { name: name.clone(), answers: answers.len(), field_names, shared_names, constant_names, methods, extends: under.is_some() };
         let made = Form::Class { plan: Rc::new(plan), values };
         let slot = self.global_address(&name);
-        Ok(Form::Write(slot, Box::new(made)))
+        let written = Form::Write(slot, Box::new(made));
+        let mut items: Vec<Form> = self.statics.drain(statics_before..).collect();
+        if items.is_empty() {
+            return Ok(written);
+        }
+        items.push(written);
+        Ok(sequence(items))
     }
 
     /// A method: a program whose first parameter is the thing it is for,
@@ -1545,19 +1567,7 @@ impl<'a> Builder<'a> {
     /// A statement without a keyword: a step, a bare call, an
     /// assignment or an expression.
     fn plain_stmt(&mut self) -> Res<Form> {
-        // `x++;` / `++x;`: as a statement only the stepping counts.
         let (here, next) = (self.look().clone(), self.glance(1).clone());
-        if let (Some(by), Shape::Bare) = (self.step_by(&here), next.shape) {
-            self.pos += 2;
-            return Ok(self.stepped(&next.lexeme, by));
-        }
-        if let (Shape::Bare, Some(by)) = (here.shape, self.step_by(&next)) {
-            let reserved = self.table.keywords.contains(&here.lexeme) || self.table.prims.contains_key(&here.lexeme);
-            if !reserved {
-                self.pos += 2;
-                return Ok(self.stepped(&here.lexeme, by));
-            }
-        }
         if self.table.flag("ext.syntax.call.bare") && here.shape == Shape::Bare {
             // A builtin with no bracket after it; echo always, since a
             // bracket after echo opens a group, not its arguments.
@@ -1598,15 +1608,6 @@ impl<'a> Builder<'a> {
         } else {
             None
         }
-    }
-
-    /// `x = x + 1` or `x = x - 1`, which the writer folds into a Bump.
-    /// A step down subtracts rather than adding a negative, so that a
-    /// string of digits is counted and not joined to.
-    fn stepped(&mut self, name: &str, by: i64) -> Form {
-        let op = if by < 0 { Prim::Minus } else { Prim::Plus };
-        let step = prim_call(op, vec![self.read(name), constant(Value::Small(by.abs()))]);
-        self.write(name, step)
     }
 
     /// A builtin at the head of a statement, its arguments running
@@ -1928,6 +1929,29 @@ impl<'a> Builder<'a> {
     }
 
     /// The write itself, the sign that called for it already read.
+    /// The value a place holds just before a step, kept where the step
+    /// asked for it, so that `p++` may stand for what was there.
+    fn kept_before(&mut self, found: Form) -> Form {
+        match self.stood.clone() {
+            Some(cell) => {
+                let stored = self.write(&cell, found);
+                sequence(vec![stored, self.read(&cell)])
+            }
+            None => found,
+        }
+    }
+
+    /// The same for the value the place holds once the step is done.
+    fn kept_after(&mut self, made: Form) -> Form {
+        match self.stands.clone() {
+            Some(cell) => {
+                let stored = self.write(&cell, made);
+                sequence(vec![stored, self.read(&cell)])
+            }
+            None => made,
+        }
+    }
+
     fn write_into(&mut self, expr: Form, gives_back: bool, compound: Option<Prim>, assign: Token) -> Res<Form> {
         // A target kept quiet is a write kept quiet: the muting comes
         // off the reading and goes round the writing instead.
@@ -1960,10 +1984,13 @@ impl<'a> Builder<'a> {
         // the write reads it from there rather than reading what comes
         // after the sign: a taking-apart has no sign before each place.
         // Where a cell was already taken, that cell is the value.
-        let mut value = match (self.waiting.clone(), &shared_value) {
-            (_, Some(_)) => constant(Value::Nil),
-            (Some(cell), None) => self.read(&cell),
-            (None, None) => self.expr(0)?,
+        let mut value = match (self.stepping, self.waiting.clone(), &shared_value) {
+            (_, _, Some(_)) => constant(Value::Nil),
+            // A step carries its own value: the one it steps by, with no
+            // source of its own after the sign.
+            (Some(by), _, None) => constant(Value::Small(by)),
+            (None, Some(cell), None) => self.read(&cell),
+            (None, None, None) => self.expr(0)?,
         };
         let keep = (gives_back && plain).then(|| {
             self.gensyms += 1;
@@ -1992,7 +2019,8 @@ impl<'a> Builder<'a> {
             Form::Read(slot) => match compound {
                 Some(op) => {
                     let current = self.read(&slot.ident);
-                    let combined = prim_call(op, vec![current, value]);
+                    let current = self.kept_before(current);
+                    let combined = self.kept_after(prim_call(op, vec![current, value]));
                     let stored = self.write(&slot.ident, combined);
                     match gives_back {
                         true => sequence(vec![stored, self.read(&slot.ident)]),
@@ -2042,8 +2070,8 @@ impl<'a> Builder<'a> {
                 let written = match compound {
                     Some(op) => {
                         let (lands_in, key) = (self.read(&in_cells[deep]), self.read(&at_cells[deep]));
-                        let now = prim_call(Prim::At, vec![lands_in, key]);
-                        prim_call(op, vec![now, value])
+                        let now = self.kept_before(prim_call(Prim::At, vec![lands_in, key]));
+                        self.kept_after(prim_call(op, vec![now, value]))
                     }
                     None => value,
                 };
@@ -2117,8 +2145,8 @@ impl<'a> Builder<'a> {
                 let written = match compound {
                     Some(op) => {
                         let (lands_in, key) = (self.read(&in_cells[deep]), self.read(&at_cells[deep]));
-                        let now = prim_call(Prim::At, vec![lands_in, key]);
-                        prim_call(op, vec![now, value])
+                        let now = self.kept_before(prim_call(Prim::At, vec![lands_in, key]));
+                        self.kept_after(prim_call(op, vec![now, value]))
                     }
                     None => value,
                 };
@@ -2161,6 +2189,60 @@ impl<'a> Builder<'a> {
             }
             // A read of the binding a value names becomes a write of it.
             Form::Called(spells) if compound.is_none() => Form::CallWrite(spells, Box::new(value)),
+            // `p op= e` where the place is a member of something, one of
+            // a class's own, or a single place in a named array: what
+            // holds it and the name of the place are each worked out
+            // once and kept, the place read from there, taken with the
+            // value, and written back where it came from.
+            Form::Apply(Callee::Prim(Prim::Of, _), mut args) if compound.is_some() && args.len() == 2 => {
+                let op = compound.expect("the operation");
+                let named = args.pop().expect("the property");
+                let thing = args.pop().expect("what holds it");
+                self.gensyms += 1;
+                let holder = format!("#holder{}", self.gensyms);
+                self.gensyms += 1;
+                let called = format!("#called{}", self.gensyms);
+                let hold = self.write(&holder, thing);
+                let name = self.write(&called, named);
+                let now = prim_call(Prim::Of, vec![self.read(&holder), self.read(&called)]);
+                let now = self.kept_before(now);
+                let made = self.kept_after(prim_call(op, vec![now, value]));
+                let put = prim_call(Prim::Onto, vec![self.read(&holder), self.read(&called), made]);
+                sequence(vec![hold, name, put])
+            }
+            Form::Apply(Callee::Prim(Prim::Within, _), mut args) if compound.is_some() && args.len() == 2 => {
+                let op = compound.expect("the operation");
+                let named = args.pop().expect("the value's name");
+                let class = args.pop().expect("the class");
+                self.gensyms += 1;
+                let holder = format!("#holder{}", self.gensyms);
+                self.gensyms += 1;
+                let called = format!("#called{}", self.gensyms);
+                let hold = self.write(&holder, class);
+                let name = self.write(&called, named);
+                let now = prim_call(Prim::Within, vec![self.read(&holder), self.read(&called)]);
+                let now = self.kept_before(now);
+                let made = self.kept_after(prim_call(op, vec![now, value]));
+                let put = prim_call(Prim::Into, vec![self.read(&holder), self.read(&called), made]);
+                sequence(vec![hold, name, put])
+            }
+            Form::Apply(Callee::Prim(Prim::At, _), mut args) if compound.is_some() && args.len() == 2 => {
+                let op = compound.expect("the operation");
+                let index = args.pop().expect("the place");
+                let Form::Read(slot) = args.pop().expect("what holds it") else {
+                    return Err("Invalid assignment target".to_string());
+                };
+                let held = slot.ident.to_string();
+                self.gensyms += 1;
+                let key = format!("#key{}", self.gensyms);
+                let hold = self.write(&key, index);
+                let now = prim_call(Prim::At, vec![self.read(&held), self.read(&key)]);
+                let now = self.kept_before(now);
+                let made = self.kept_after(prim_call(op, vec![now, value]));
+                let target = self.read_to_write(&held);
+                let put = prim_call(Prim::Replace, vec![target, self.read(&key), made]);
+                sequence(vec![hold, put])
+            }
             _ if compound.is_some() => return Err(format!("'{}' needs a plain variable on its left", assign.lexeme)),
             // A read of a member becomes a write of it.
             Form::Apply(Callee::Prim(Prim::Of, _), mut args) if args.len() == 2 => {
@@ -2303,16 +2385,47 @@ impl<'a> Builder<'a> {
         Ok(left)
     }
 
+    /// `++p` and `p--` over any place a write reaches: the place is
+    /// read, stepped by one and written back, and what stands afterwards
+    /// is the value after the step, or the one that was there before it
+    /// where the step is written after the place.
+    fn step_of(&mut self, target: Form, by: i64, gives_new: bool) -> Res<Form> {
+        self.gensyms += 1;
+        let cell = format!("#step{}", self.gensyms);
+        let was_by = self.stepping.replace(by.abs());
+        let (was_stood, was_stands) = match gives_new {
+            true => (self.stood.take(), self.stands.replace(cell.clone())),
+            false => (self.stood.replace(cell.clone()), self.stands.take()),
+        };
+        let op = if by < 0 { Prim::Minus } else { Prim::Plus };
+        let sign = self.look().clone();
+        let done = self.write_into(target, false, Some(op), sign);
+        self.stepping = was_by;
+        self.stood = was_stood;
+        self.stands = was_stands;
+        let done = done?;
+        Ok(sequence(vec![done, self.read(&cell)]))
+    }
+
+    /// A piece of an expression, with a step written before or after it
+    /// where the language spells one.
     fn monadic_expr(&mut self) -> Res<Form> {
+        if let Some(by) = self.step_by(&self.look().clone()) {
+            self.advance();
+            let target = self.monadic_expr()?;
+            return self.step_of(target, by, true);
+        }
+        let piece = self.monadic_piece()?;
+        if let Some(by) = self.step_by(&self.look().clone()) {
+            self.advance();
+            return self.step_of(piece, by, false);
+        }
+        Ok(piece)
+    }
+
+    fn monadic_piece(&mut self) -> Res<Form> {
         let table = self.table;
         let t = self.look().clone();
-        if let (Some(by), Shape::Bare) = (self.step_by(&t), self.glance(1).shape) {
-            // ++x is the stepped value.
-            self.advance();
-            let name = self.advance().lexeme;
-            let step = self.stepped(&name, by);
-            return Ok(sequence(vec![step, self.read(&name)]));
-        }
         // `list($a, $b) = v`: the places named on the left each take
         // the matching place of the value on the right.
         if table.spells("ext.stmt.unpack", &t.lexeme) && matches!(t.shape, Shape::Sign | Shape::Bare) {
@@ -2448,15 +2561,6 @@ impl<'a> Builder<'a> {
                     } else {
                         self.named_call(&t.lexeme, args)?
                     }
-                } else if let Some(by) = self.step_by(&self.look().clone()) {
-                    // x++ is the value before the step, kept aside.
-                    self.advance();
-                    self.gensyms += 1;
-                    let aside = format!("#was{}", self.gensyms);
-                    let before = self.read(&t.lexeme);
-                    let keep = self.write(&aside, before);
-                    let step = self.stepped(&t.lexeme, by);
-                    sequence(vec![keep, step, self.read(&aside)])
                 } else {
                     self.read(&t.lexeme)
                 }
