@@ -17,18 +17,18 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 46, differs 30, error 28, skipped 10 | pass 46, differs 30, error 28, skipped 10 |
-| `php/func` | 14 | pass 7, differs 3, error 4, skipped 0 | pass 7, differs 3, error 4, skipped 0 |
-| `php/lang` | 213 | pass 82, differs 52, error 74, skipped 5 | pass 82, differs 52, error 74, skipped 5 |
+| `php/basic` | 114 | pass 47, differs 31, error 26, skipped 10 | pass 47, differs 31, error 26, skipped 10 |
+| `php/func` | 14 | pass 9, differs 3, error 2, skipped 0 | pass 9, differs 3, error 2, skipped 0 |
+| `php/lang` | 213 | pass 83, differs 53, error 72, skipped 5 | pass 83, differs 53, error 72, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 20, error 4, skipped 6 | pass 34, differs 20, error 4, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 174, differs 113, error 110, skipped 25 | pass 174, differs 113, error 110, skipped 25 |
+| all | 422 | pass 178, differs 115, error 104, skipped 25 | pass 178, differs 115, error 104, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 113 |
+| ran, printed something else | 115 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> | 6 |
@@ -43,7 +43,6 @@ is listed, since the full kernels are meant to behave alike.
 | Expected an expression | 2 |
 | Unexpected token: { | 2 |
 | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> | 2 |
-| Fatal error: Uncaught Error: Undefined variable: ini_parse_quantity in <file> | 2 |
 | Fatal error: Maximum execution time of 1 second exceeded in <file> | 2 |
 | Fatal error: Uncaught Error: Undefined variable: ob_get_contents in <file> | 2 |
 | Unexpected token: } | 2 |
@@ -64,10 +63,11 @@ is listed, since the full kernels are meant to behave alike.
 | skip locale needed for this test is not supported on this platform | 1 |
 | Fatal error: Uncaught Error: Undefined variable: umask in <file> | 1 |
 | skip for Windows only | 1 |
-| Fatal error: Uncaught Error: Undefined variable: join in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: serialize in <file> | 1 |
 | skip Run only on Windows | 1 |
 | Fatal error: Uncaught Error: Undefined variable: INF in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: InfiniteIterator in <file> | 1 |
+| Fatal error: Uncaught Error: Unexpected token: ; in <file> | 1 |
 
 ### Reserved words: 48 of 68 spelled
 
@@ -279,9 +279,9 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/header_register_callback_trampoline.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> |
 | `php/basic/header_register_callback_trampoline_after_headers_sent.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> |
 | `php/basic/ini_directive_deprecated_report_memleaks.phpt` | differs | differs | ran, printed something else |
-| `php/basic/ini_parse_quantity_basic.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ini_parse_quantity in <file> |
-| `php/basic/ini_parse_quantity_warnings.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ini_parse_quantity in <file> |
-| `php/basic/precision.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: join in <file> |
+| `php/basic/ini_parse_quantity_basic.phpt` | pass | pass |  |
+| `php/basic/ini_parse_quantity_warnings.phpt` | differs | differs | ran, printed something else |
+| `php/basic/precision.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: serialize in <file> |
 | `php/basic/req44164.phpt` | pass | pass |  |
 | `php/basic/req60524-win.phpt` | skipped | skipped | skip Run only on Windows |
 | `php/basic/req60524.phpt` | differs | differs | ran, printed something else |
@@ -316,13 +316,13 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/func/005.phpt` | differs | differs | ran, printed something else |
 | `php/func/005a.phpt` | error | error | Fatal error: Maximum execution time of 1 second exceeded in <file> |
 | `php/func/006.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ob_get_contents in <file> |
-| `php/func/007.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ini_restore in <file> |
+| `php/func/007.phpt` | pass | pass |  |
 | `php/func/008.phpt` | pass | pass |  |
 | `php/func/009.phpt` | pass | pass |  |
 | `php/func/010.phpt` | pass | pass |  |
 | `php/func/011.phpt` | differs | differs | ran, printed something else |
 | `php/func/bug64523.phpt` | differs | differs | ran, printed something else |
-| `php/func/ini_alter.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ini_alter in <file> |
+| `php/func/ini_alter.phpt` | pass | pass |  |
 | `php/lang/001.phpt` | pass | pass |  |
 | `php/lang/002.phpt` | pass | pass |  |
 | `php/lang/003.phpt` | pass | pass |  |
@@ -374,7 +374,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug18872.phpt` | pass | pass |  |
 | `php/lang/bug19566.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_declared_classes in <file> |
 | `php/lang/bug19943.phpt` | pass | pass |  |
-| `php/lang/bug20175.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: zend_version in <file> |
+| `php/lang/bug20175.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug21094.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug21600.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug21669.phpt` | error | error | Fatal error: Uncaught Error: Only a class can be made into an object in <file> |
@@ -398,7 +398,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug24640.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug24652.phpt` | pass | pass |  |
 | `php/lang/bug24658.phpt` | error | error | Fatal error: Uncaught Error: Function typehint_ref expects 2 arguments, got 1 in <file> |
-| `php/lang/bug24783.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: urlencode in <file> |
+| `php/lang/bug24783.phpt` | pass | pass |  |
 | `php/lang/bug24908.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug24951.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ob_end_flush in <file> |
 | `php/lang/bug25145.phpt` | pass | pass |  |

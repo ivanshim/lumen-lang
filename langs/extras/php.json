@@ -25,6 +25,8 @@
   "lexical.string_escapes": [
     "n",
     "t",
+    "r",
+    "0",
     "\\",
     "\""
   ],

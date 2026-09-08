@@ -67,6 +67,55 @@ function ini_set($name, $value) {
     $__settings[$name] = (string)$value;
     return $was;
 }
+// ini_alter is ini_set under its older name; ini_restore drops what was
+// written while the run went, so that the setting the run was started
+// with answers again.
+function ini_alter($name, $value) { return ini_set($name, $value); }
+function ini_restore($name) {
+    global $__settings;
+    unset($__settings[$name]);
+    return null;
+}
+
+// The whole number a piece of text opens with, as a setting's size is
+// read: a sign, then figures counted in sixteens after 0x, in twos
+// after 0b, in eights after a lone nought, and in tens otherwise.
+// Anything that is not a figure ends the number.
+function leading_whole($text) {
+    $sign = 1;
+    $at = 0;
+    if (strlen($text) > 0 && ($text[0] === "-" || $text[0] === "+")) {
+        if ($text[0] === "-") { $sign = -1; }
+        $at = 1;
+    }
+    $rest = strtolower(substr($text, $at));
+    $base = 10;
+    if (starts_with($rest, "0x")) { $base = 16; $rest = substr($rest, 2); }
+    elseif (starts_with($rest, "0b")) { $base = 2; $rest = substr($rest, 2); }
+    elseif (strlen($rest) > 1 && $rest[0] === "0") { $base = 8; $rest = substr($rest, 1); }
+    $figures = substr(base_digits(), 0, $base);
+    $end = 0;
+    while ($end < strlen($rest) && strpos($figures, $rest[$end]) !== false) { $end = $end + 1; }
+    if ($end == 0) { return 0; }
+    return $sign * base_to_number(substr($rest, 0, $end), $base);
+}
+
+// A setting's size: the number the text opens with, times what the last
+// letter of the whole stands for. A thousand and twenty-four for k, that
+// many times over again for m, and once more for g; any other letter
+// stands for nothing, and the number is read without it.
+function ini_parse_quantity($text) {
+    $text = trim($text);
+    if ($text === "") { return 0; }
+    $last = strtolower($text[strlen($text) - 1]);
+    $times = 1;
+    if ($last === "k") { $times = 1024; }
+    if ($last === "m") { $times = 1048576; }
+    if ($last === "g") { $times = 1073741824; }
+    if ($times > 1) { $text = substr($text, 0, strlen($text) - 1); }
+    return leading_whole($text) * $times;
+}
+
 function set_error_handler($handler, $levels = 32767) { return null; }
 function restore_error_handler() { return true; }
 function set_exception_handler($handler) { return null; }
@@ -162,6 +211,34 @@ function implode($glue, $pieces) {
     }
     return $out;
 }
+
+function join($glue, $pieces) { return implode($glue, $pieces); }
+
+// Text as a web address carries it: a letter, a figure and a few marks
+// stand as they are, and everything else is written as a percent and the
+// two figures of its code. The older spelling writes a space as a plus
+// and does not spare the tilde.
+function url_encoded($text, $plus_for_space, $tilde_spared) {
+    $out = "";
+    $at = 0;
+    while ($at < strlen($text)) {
+        $c = $text[$at];
+        $n = ord($c);
+        $plain = ($n >= 97 && $n <= 122) || ($n >= 65 && $n <= 90) || ($n >= 48 && $n <= 57);
+        $plain = $plain || $n == 45 || $n == 46 || $n == 95 || ($tilde_spared && $n == 126);
+        if ($plain) {
+            $out = $out . $c;
+        } elseif ($n == 32 && $plus_for_space) {
+            $out = $out . "+";
+        } else {
+            $out = $out . "%" . strtoupper(str_pad(dechex($n), 2, "0", 0));
+        }
+        $at = $at + 1;
+    }
+    return $out;
+}
+function urlencode($text) { return url_encoded($text, true, false); }
+function rawurlencode($text) { return url_encoded($text, false, true); }
 
 function str_repeat($text, $times) {
     $out = "";
@@ -424,6 +501,7 @@ function hex2bin($text) {
 // The rest of what a program expects to find already there.
 
 function phpversion($extension = null) { return PHP_VERSION; }
+function zend_version() { return "4.0.0"; }
 function php_sapi_name() { return "cli"; }
 function php_uname($mode = "a") { return PHP_OS; }
 function setlocale($category, $locale) { return false; }
