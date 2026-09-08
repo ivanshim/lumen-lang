@@ -1702,6 +1702,17 @@ impl<'a> Engine<'a> {
                 self.complain(*kind, said);
                 Value::Null
             }
+            Action::HeldOrSaid(kind, said) => {
+                let held = self.drop_top()?;
+                if !matches!(held, Value::Bond(_)) {
+                    self.complain(*kind, said);
+                }
+                held
+            }
+            Action::HeldOrStop(told) => match self.drop_top()? {
+                held @ Value::Bond(_) => held,
+                _ => return Err(told.to_string().into()),
+            },
             // Only the run can say whether what a routine named had a
             // cell of its own; where it had none, one is made for it, so
             // that a routine giving back a cell always gives one.

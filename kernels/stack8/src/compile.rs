@@ -47,6 +47,9 @@ pub struct Registry {
     /// text read while the run goes is a piece of the same program and
     /// must know what the whole of it declared.
     pub shared_args: HashMap<String, Vec<bool>>,
+    /// What each routine calls its parameters, so that a language may
+    /// name the one it is speaking of.
+    pub arg_names: HashMap<String, Vec<String>>,
     pub gives_back: std::collections::HashSet<String>,
 }
 
@@ -107,6 +110,7 @@ pub struct Compiler<'a> {
     /// Which parameters of each program take a name's own cell rather
     /// than a copy of what it holds, found before anything is read.
     shared_args: HashMap<String, Vec<bool>>,
+    arg_names: HashMap<String, Vec<String>>,
     /// The routines the text declares as giving back a cell rather than
     /// a copy, so that a call of one is known to have a cell to share.
     gives_back: std::collections::HashSet<String>,
@@ -200,14 +204,17 @@ pub fn compile_within(
     };
     // Text read as standing inside a routine is a piece of a program
     // already read: what that program declared about cells stands here.
-    let (mut shared_args, mut gives_back) = shared_parameters(tokens, lang);
+    let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, lang);
     if !alone {
         for (name, marks) in &table.shared_args {
             shared_args.entry(name.clone()).or_insert_with(|| marks.clone());
         }
+        for (name, called) in &table.arg_names {
+            arg_names.entry(name.clone()).or_insert_with(|| called.clone());
+        }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new() };
+    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new() };
     if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;
@@ -255,6 +262,7 @@ pub fn compile_within(
     }
     if alone {
         a.registry.shared_args = a.shared_args.clone();
+        a.registry.arg_names = a.arg_names.clone();
         a.registry.gives_back = a.gives_back.clone();
     }
     let unit = a.pieces.pop().expect("the top unit");
@@ -1676,7 +1684,7 @@ impl<'a> Compiler<'a> {
         if self.on_sep() || self.exhausted() || self.on_any(&self.lang.block_closes) {
             self.constant(Value::Null);
         } else if by_cell {
-            self.a_cell(&self.lang.unshared_given.clone(), true)?;
+            self.a_cell(&self.lang.unshared_given.clone(), true, None)?;
         } else {
             self.expr(0)?;
         }
@@ -2295,7 +2303,7 @@ impl<'a> Compiler<'a> {
             {
                 let name = slot.ident.to_string();
                 self.take();
-                self.a_cell(&self.lang.unshared_written.clone(), false)?;
+                self.a_cell(&self.lang.unshared_written.clone(), false, None)?;
                 let held = self.cell_to_write(&name);
                 self.put(Instr::Fasten(held));
                 if keep.is_some() {
@@ -2648,7 +2656,7 @@ impl<'a> Compiler<'a> {
                     self.put(w);
                 }
                 self.take();
-                self.a_cell(&self.lang.unshared_written.clone(), false)?;
+                self.a_cell(&self.lang.unshared_written.clone(), false, None)?;
                 self.read_to_rewrite(&name);
                 self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
                 self.rewritten(&name);
@@ -3288,7 +3296,7 @@ impl<'a> Compiler<'a> {
     /// an array, or a property. Whichever it is, a cell is made of it
     /// where it is not one already and left on the stack, so a name may
     /// be fastened to it.
-    fn a_cell(&mut self, unshared: &[String], at_run: bool) -> Res<()> {
+    fn a_cell(&mut self, unshared: &[String], at_run: bool, handed: Option<(String, usize, String)>) -> Res<()> {
         let from = self.mark();
         // Where the asking stands, so that words said about it name that
         // line and not whatever line a call along the way ran last.
@@ -3369,6 +3377,44 @@ impl<'a> Compiler<'a> {
                 // is known here. Whether a routine giving back a cell
                 // was given one to give is settled by the run: the value
                 // itself says, being a cell or not.
+                // A write that fastens one name to another's cell has
+                // that very cell to hand over: the write is done and the
+                // cell it made is what goes over, not what it holds.
+                let fastened = read.iter().rev().find_map(|w| match w {
+                    Instr::Fasten(held) => Some(held.clone()),
+                    _ => None,
+                });
+                if let (Some(held), Some(_)) = (fastened, &handed) {
+                    self.put_away();
+                    self.put(Instr::Bond(held));
+                    return Ok(());
+                }
+                // A call answering with a value where a cell was asked
+                // for is a thing a language may only remark upon; a
+                // value that was never going to have one — a literal, a
+                // write — it refuses outright, naming the parameter.
+                // A call answering with a value where a cell was asked
+                // for is a thing a language may only remark upon; a
+                // value that was never going to have one — a literal, a
+                // write — it refuses outright, naming the parameter.
+                // Only the run can tell them apart, since a write of one
+                // name to another's cell answers with that very cell.
+                let calls = matches!(read.last(), Some(Instr::Act(Action::Invoke(_) | Action::Send(_) | Action::Summon(_) | Action::Builtin(..), _)));
+                if let Some((called, which, param)) = &handed {
+                    if self.lang.tells_place && row > 0 {
+                        self.put(Instr::Line(row));
+                        self.piece().line = row;
+                    }
+                    match (calls, unshared.first()) {
+                        (true, Some(said)) => self.act(Action::HeldOrSaid(Complaint::Notice, Rc::from(said.as_str())), 1),
+                        (true, None) => {}
+                        (false, _) => {
+                            let told = format!("{}(): Argument #{} ({}) could not be passed by reference", called, which + 1, param);
+                            self.act(Action::HeldOrStop(Rc::from(told.as_str())), 1);
+                        }
+                    }
+                    return Ok(());
+                }
                 let says = at_run || !shares;
                 if let (Some(said), true) = (unshared.first(), says) {
                     if self.lang.tells_place && row > 0 {
@@ -3705,7 +3751,8 @@ impl<'a> Compiler<'a> {
             // property. What has none is handed its value, and the
             // language says so where it has words for it.
             if shared.get(count).copied().unwrap_or(false) {
-                self.a_cell(&self.lang.unshared_handed.clone(), false)?;
+                let param = self.arg_names.get(called).and_then(|all| all.get(count)).cloned().unwrap_or_default();
+                self.a_cell(&self.lang.unshared_handed.clone(), false, Some((called.to_string(), count, param)))?;
             } else {
                 self.expr(0)?;
             }
@@ -4216,10 +4263,11 @@ fn peephole(instrs: Vec<Instr>) -> Vec<Instr> {
 /// found by reading the tokens before anything is compiled: a call has to
 /// know before it works out its arguments, and a program may be called
 /// above where it is written.
-fn shared_parameters(tokens: &[Token], lang: &Lang) -> (HashMap<String, Vec<bool>>, std::collections::HashSet<String>) {
+fn shared_parameters(tokens: &[Token], lang: &Lang) -> (HashMap<String, Vec<bool>>, HashMap<String, Vec<String>>, std::collections::HashSet<String>) {
     let mut found = HashMap::new();
+    let mut called = HashMap::new();
     let mut gives = std::collections::HashSet::new();
-    let (Some(mark), Some(call)) = (&lang.reference_mark, &lang.calling) else { return (found, gives) };
+    let (Some(mark), Some(call)) = (&lang.reference_mark, &lang.calling) else { return (found, called, gives) };
     let sign = |t: &Token, text: &str| t.is_lexeme(Shape::Sign, text);
     let mut i = 0;
     while i + 2 < tokens.len() {
@@ -4243,6 +4291,7 @@ fn shared_parameters(tokens: &[Token], lang: &Lang) -> (HashMap<String, Vec<bool
         }
         j += 2;
         let (mut marks, mut shared, mut anything, mut defaulting, mut depth) = (Vec::new(), false, false, false, 1usize);
+        let (mut names, mut naming) = (Vec::new(), String::new());
         while j < tokens.len() {
             let p = &tokens[j];
             if sign(p, &call.open) {
@@ -4256,22 +4305,27 @@ fn shared_parameters(tokens: &[Token], lang: &Lang) -> (HashMap<String, Vec<bool
                 anything = true;
                 if call.between.as_ref().map_or(false, |s| sign(p, s)) {
                     marks.push(shared);
+                    names.push(std::mem::take(&mut naming));
                     (shared, defaulting) = (false, false);
                 } else if p.shape == Shape::Sign && Lang::spells(&lang.assign_words, &p.lexeme) {
                     defaulting = true;
                 } else if !defaulting && sign(p, mark) {
                     shared = true;
+                } else if !defaulting && naming.is_empty() && p.shape == Shape::Instr {
+                    naming = p.lexeme.clone();
                 }
             }
             j += 1;
         }
         if anything {
             marks.push(shared);
+            names.push(naming);
         }
+        called.insert(name.clone(), names);
         found.insert(name, marks);
         i = j;
     }
-    (found, gives)
+    (found, called, gives)
 }
 
 /// The keys of an index chain, each with where it began, taken out of

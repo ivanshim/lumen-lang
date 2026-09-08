@@ -117,7 +117,7 @@ pub struct Machine<'a> {
     /// parameters take one and which routines hand one back. Text read
     /// while the run goes is a piece of the same program and is built
     /// knowing it.
-    pub knows_cells: (HashMap<String, Vec<bool>>, std::collections::HashSet<String>),
+    pub knows_cells: (HashMap<String, Vec<bool>>, HashMap<String, Vec<String>>, std::collections::HashSet<String>),
     /// The names of the frame each call is running in, innermost last,
     /// so that text read while the run goes can be built knowing them.
     frames_named: Vec<Rc<Routine>>,
@@ -185,7 +185,7 @@ impl<'a> Machine<'a> {
             afterward: RefCell::new(Vec::new()),
             things: RefCell::new(Vec::new()),
             read_before: RefCell::new(std::collections::HashSet::new()),
-            knows_cells: (HashMap::new(), std::collections::HashSet::new()),
+            knows_cells: (HashMap::new(), HashMap::new(), std::collections::HashSet::new()),
             frames_named: Vec::new(),
             hearer: RefCell::new(None),
             unheard: RefCell::new(Vec::new()),
@@ -844,7 +844,7 @@ impl<'a> Machine<'a> {
         let tokens = crate::scan::scan(source, self.table).map_err(Escape::Error)?;
         let tokens = crate::indent::indent(tokens, self.table).map_err(Escape::Error)?;
         let held: Vec<String> = self.frames_named.last().map_or_else(Vec::new, |p| p.idents.clone());
-        let knows = (&self.knows_cells.0, &self.knows_cells.1);
+        let knows = (&self.knows_cells.0, &self.knows_cells.1, &self.knows_cells.2);
         let built = crate::build::build_within(&tokens, self.table, &self.idents, &held, knows, 0).map_err(Escape::Error)?;
         self.idents = built.globals;
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
@@ -1107,6 +1107,22 @@ impl<'a> Machine<'a> {
             // Words a definition holds ready for a shape it still allows.
             // The line is set to where the shape stands, so that a call
             // worked out on the way does not leave its own line behind.
+            Form::CellOrSaid(kind, said, row, inner) => {
+                let worth = self.value_of(inner, frame)?;
+                if let Value::Shared(_) = worth {
+                    return Ok(worth);
+                }
+                if *row > 0 {
+                    self.row = *row;
+                }
+                match kind {
+                    Some(word) => {
+                        self.grumble(word, said);
+                        return Ok(worth);
+                    }
+                    None => return Err(Escape::Error(said.to_string())),
+                }
+            }
             Form::HeldEither(kind, said, row, inner) => {
                 let worth = self.value_of(inner, frame)?;
                 if let Value::Shared(_) = worth {

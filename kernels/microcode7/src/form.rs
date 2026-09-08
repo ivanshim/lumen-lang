@@ -329,6 +329,11 @@ pub enum Form {
     /// own word for that kind of remark. The line is the one the shape
     /// was written on, so that a call along the way does not move it.
     Remark(&'static str, Rc<str>, u32),
+    /// The value the form within comes to, where a cell was asked for.
+    /// Where it is a cell it goes on as it is; where it is not, these
+    /// words are said on the line given and it goes on all the same, or,
+    /// where nothing is said, the run is stopped with them.
+    CellOrSaid(Option<&'static str>, Rc<str>, u32, Box<Form>),
     /// A cell for what the form within comes to, whatever that is: the
     /// cell itself where it is one already, and otherwise these words,
     /// on the line given, and a fresh cell holding the value. A routine

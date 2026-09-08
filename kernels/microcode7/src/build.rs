@@ -60,6 +60,7 @@ pub struct Builder<'a> {
     /// Which parameters of each program take a name's own cell instead
     /// of a copy, read from the tokens before anything is built.
     shared_args: HashMap<String, Vec<bool>>,
+    arg_names: HashMap<String, Vec<String>>,
     table: &'a Table,
     forks: Vec<Fork>,
     tokens: &'a [Token],
@@ -115,6 +116,9 @@ pub struct Built {
     /// run goes is a piece of the same program and must know what the
     /// whole of it declared.
     pub shared_args: HashMap<String, Vec<bool>>,
+    /// What each routine calls its parameters, so that a language may
+    /// name the one it speaks of.
+    pub arg_names: HashMap<String, Vec<String>>,
     pub gives_back: HashSet<String>,
 }
 
@@ -156,26 +160,30 @@ pub fn build_within(
     table: &Table,
     seeded: &[String],
     inside: &[String],
-    knows: (&HashMap<String, Vec<bool>>, &HashSet<String>),
+    knows: Knows,
     before: u32,
 ) -> Res<Built> {
     build_marking(tokens, table, seeded, HashMap::new(), true, before, None, None, Some((inside, knows)))
 }
 
-type Within<'w> = (&'w [String], (&'w HashMap<String, Vec<bool>>, &'w HashSet<String>));
+type Knows<'w> = (&'w HashMap<String, Vec<bool>>, &'w HashMap<String, Vec<String>>, &'w HashSet<String>);
+type Within<'w> = (&'w [String], Knows<'w>);
 
 fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<&std::cell::Cell<u32>>, within: Option<Within>) -> Res<Built> {
     let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
-    let (mut shared_args, mut gives_back) = shared_parameters(tokens, table);
+    let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, table);
     let mut layers = vec![top];
-    if let Some((inside, (args, backs))) = within {
+    if let Some((inside, (args, spellings, backs))) = within {
         for (named, marks) in args {
             shared_args.entry(named.clone()).or_insert_with(|| marks.clone());
+        }
+        for (named, spelt) in spellings {
+            arg_names.entry(named.clone()).or_insert_with(|| spelt.clone());
         }
         gives_back.extend(backs.iter().cloned());
         layers.push(Layer { holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
-    let mut r = Builder { within: None, shared_args, gives_back, table, forks: Vec::new(), tokens, pos: 0, layers, gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(),
+    let mut r = Builder { within: None, shared_args, arg_names, gives_back, table, forks: Vec::new(), tokens, pos: 0, layers, gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(),
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
@@ -234,16 +242,17 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         None => top.idents.clone(),
     };
     let program = Routine { ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: top.idents, frameless: false, written_in: r.written_in.clone(), traps: Traps::Naught, body };
-    Ok(Built { program: Rc::new(program), globals, seen: r.seen, shared_args: r.shared_args, gives_back: r.gives_back })
+    Ok(Built { program: Rc::new(program), globals, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back })
 }
 
 /// Which parameters of each program are written with the reference sign.
 /// A call must know before it works out its arguments, and a program may
 /// be called above where it is written, so the tokens are read first.
-fn shared_parameters(tokens: &[Token], table: &Table) -> (HashMap<String, Vec<bool>>, HashSet<String>) {
+fn shared_parameters(tokens: &[Token], table: &Table) -> (HashMap<String, Vec<bool>>, HashMap<String, Vec<String>>, HashSet<String>) {
     let mut found = HashMap::new();
+    let mut spelled = HashMap::new();
     let mut gives = HashSet::new();
-    let (Some(mark), Some(open)) = (table.single("ext.op.reference"), table.single("syntax.call.open")) else { return (found, gives) };
+    let (Some(mark), Some(open)) = (table.single("ext.op.reference"), table.single("syntax.call.open")) else { return (found, spelled, gives) };
     let close = table.single("syntax.call.close").unwrap_or(")");
     let sep = table.single("syntax.call.separator");
     let is = |t: &Token, text: &str| t.shape == Shape::Sign && t.lexeme == text;
@@ -269,6 +278,7 @@ fn shared_parameters(tokens: &[Token], table: &Table) -> (HashMap<String, Vec<bo
         }
         j += 2;
         let (mut marks, mut shares, mut any, mut defaulting, mut depth) = (Vec::new(), false, false, false, 1usize);
+        let (mut spellings, mut spelling) = (Vec::new(), String::new());
         while j < tokens.len() {
             let p = &tokens[j];
             if is(p, open) {
@@ -282,23 +292,28 @@ fn shared_parameters(tokens: &[Token], table: &Table) -> (HashMap<String, Vec<bo
                 any = true;
                 if sep.map_or(false, |s| is(p, s)) {
                     marks.push(shares);
+                    spellings.push(std::mem::take(&mut spelling));
                     shares = false;
                     defaulting = false;
                 } else if p.shape == Shape::Sign && table.spells("stmt.assign", &p.lexeme) {
                     defaulting = true;
                 } else if !defaulting && is(p, mark) {
                     shares = true;
+                } else if !defaulting && spelling.is_empty() && p.shape == Shape::Bare {
+                    spelling = p.lexeme.clone();
                 }
             }
             j += 1;
         }
         if any {
             marks.push(shares);
+            spellings.push(spelling);
         }
+        spelled.insert(name.clone(), spellings);
         found.insert(name, marks);
         i = j;
     }
-    (found, gives)
+    (found, spelled, gives)
 }
 
 // ---------- node builders
@@ -1013,7 +1028,7 @@ impl<'a> Builder<'a> {
                 let value = if self.on_stmt_end() || self.exhausted() || self.on_any("block.close") {
                     Vec::new()
                 } else if by_cell {
-                    vec![self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.given").to_vec(), true)?]
+                    vec![self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.given").to_vec(), true, None)?]
                 } else {
                     vec![self.expr(0)?]
                 };
@@ -2172,13 +2187,13 @@ impl<'a> Builder<'a> {
         let mut shared_value: Option<Form> = None;
         if tied_to_a_cell && matches!(expr, Form::Apply(Callee::Prim(Prim::At, _), _)) {
             self.advance();
-            shared_value = Some(self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.written").to_vec(), false)?);
+            shared_value = Some(self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.written").to_vec(), false, None)?);
         }
         if self.table.single("ext.op.reference").map_or(false, |m| self.sign(m)) && plain {
             if let Form::Read(slot) = &expr {
                 let held = slot.ident.to_string();
                 self.advance();
-                let shared = self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.written").to_vec(), false)?;
+                let shared = self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.written").to_vec(), false, None)?;
                 let tied = self.address_to_write(&held);
                 let tie = Form::Tie(tied, Box::new(shared));
                 return Ok(match gives_back {
@@ -3047,7 +3062,7 @@ impl<'a> Builder<'a> {
     /// What stands after the mark that shares a cell: a name, a place in
     /// an array, or a property. Whichever it is, a cell is made of it
     /// where it is not one already, so a name may be tied to it.
-    fn a_shared_cell(&mut self, unshared: &[String], as_it_runs: bool) -> Res<Form> {
+    fn a_shared_cell(&mut self, unshared: &[String], as_it_runs: bool, handed: Option<(String, usize, String)>) -> Res<Form> {
         // Where the asking stands, so that words said about it name that
         // line and not one a call along the way left behind.
         let row = (self.look().row as u32).saturating_sub(self.before);
@@ -3076,6 +3091,20 @@ impl<'a> Builder<'a> {
             // A binding named as the run goes has a cell as any binding
             // does, and asking for it asks for that very one.
             Form::Called(spells) => Form::ShareCalled(spells),
+            // A write that ties one name to another's cell has that very
+            // cell to hand over: the write is done and the cell it made
+            // is what goes over, not what it holds.
+            Form::Apply(Callee::Prim(Prim::Seq, word), mut parts)
+                if handed.is_some() && matches!(parts.first(), Some(Form::Tie(..))) =>
+            {
+                let tied = match parts.first() {
+                    Some(Form::Tie(held, _)) => held.clone(),
+                    _ => unreachable!("a tie stands first"),
+                };
+                parts.pop();
+                parts.push(Form::Share(tied));
+                Form::Apply(Callee::Prim(Prim::Seq, word), parts)
+            }
             // Anything else is read as it stands: a call of a routine
             // giving back a cell answers with one already, and what has
             // no cell to share is written plainly, which is what a
@@ -3100,6 +3129,29 @@ impl<'a> Builder<'a> {
                     },
                     _ => false,
                 };
+                // A call answering with a value where a cell was asked
+                // for is a thing a language may only remark upon; a
+                // value that was never going to have one — a literal, a
+                // write — it refuses outright, naming the parameter.
+                // Only the run tells them apart, since a write fastening
+                // one name to another's cell answers with that cell.
+                if let Some((called, which, spelt)) = &handed {
+                    // A run of forms one after another is no call, however
+                    // it is spelt inside.
+                    let calls = match &found {
+                        Form::Apply(Callee::Code(_), _) => true,
+                        Form::Apply(Callee::Prim(op, _), _) => !matches!(op, Prim::Seq),
+                        _ => false,
+                    };
+                    return Ok(match (calls, unshared.first()) {
+                        (true, Some(said)) => Form::CellOrSaid(Some("notice"), Rc::from(said.as_str()), row, Box::new(found)),
+                        (true, None) => found,
+                        (false, _) => {
+                            let told = format!("{}(): Argument #{} ({}) could not be passed by reference", called, which + 1, spelt);
+                            Form::CellOrSaid(None, Rc::from(told.as_str()), row, Box::new(found))
+                        }
+                    });
+                }
                 // Whether a name may be fastened to what a call answers
                 // with is settled by how the routine is written, so it
                 // is known here. Whether a routine giving back a cell
@@ -3429,7 +3481,9 @@ impl<'a> Builder<'a> {
             // so where it has words for it.
             if shared.get(items.len()).copied().unwrap_or(false) {
                 let words = self.table.strings("ext.op.reference.unshared.handed").to_vec();
-                items.push(self.a_shared_cell(&words, false)?);
+                let spelt = self.arg_names.get(called).and_then(|all| all.get(items.len())).cloned().unwrap_or_default();
+                let which = items.len();
+                items.push(self.a_shared_cell(&words, false, Some((called.to_string(), which, spelt)))?);
             } else {
                 items.push(self.expr(0)?);
             }

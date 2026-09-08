@@ -129,6 +129,12 @@ pub enum Action {
     /// own word for that kind of remark, and go on: how a definition
     /// that has something to say about a shape it still allows says it.
     Remark(crate::lang::Complaint, Rc<str>),
+    /// The value standing here where a cell was asked for. Where it is
+    /// a cell it is handed on as it is; where it is not, these words are
+    /// said and it is handed on all the same, or, in the second, said
+    /// and the run stopped there.
+    HeldOrSaid(crate::lang::Complaint, Rc<str>),
+    HeldOrStop(Rc<str>),
     /// A cell for the value standing here, whatever it is: the cell
     /// itself where it is one already, and otherwise these words and a
     /// fresh cell holding it. A routine written to give back a cell

@@ -138,7 +138,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     let mut machine = exec::Machine::new(table, reduced.globals.clone());
     // Text read while the run goes is a piece of this same program, and
     // is built knowing what the whole of it declared about cells.
-    machine.knows_cells = (reduced.shared_args.clone(), reduced.gives_back.clone());
+    machine.knows_cells = (reduced.shared_args.clone(), reduced.arg_names.clone(), reduced.gives_back.clone());
     if let Some(n) = table.single("system.args") {
         machine.define(n, Value::text(&program_args.join(" ")));
     }
