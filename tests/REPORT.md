@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 81, differs 5, error 18, skipped 10 | pass 81, differs 5, error 18, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 146, differs 36, error 26, skipped 5 | pass 146, differs 36, error 26, skipped 5 |
+| `php/lang` | 213 | pass 150, differs 32, error 26, skipped 5 | pass 150, differs 32, error 26, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 46, differs 10, error 2, skipped 6 | pass 46, differs 10, error 2, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 299, differs 52, error 46, skipped 25 | pass 299, differs 52, error 46, skipped 25 |
+| all | 422 | pass 303, differs 48, error 46, skipped 25 | pass 303, differs 48, error 46, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 52 |
+| ran, printed something else | 48 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
@@ -471,15 +471,15 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/foreachLoop.015.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
 | `php/lang/foreachLoop.016.phpt` | error | error | Parse error: A foreach that hands out its items for writing needs a named array in <file> |
 | `php/lang/foreachLoop.017.phpt` | pass | pass |  |
-| `php/lang/foreachLoopIterator.001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoopIterator.001.phpt` | pass | pass |  |
 | `php/lang/foreachLoopIterator.002.phpt` | pass | pass |  |
-| `php/lang/foreachLoopIteratorAggregate.001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoopIteratorAggregate.001.phpt` | pass | pass |  |
 | `php/lang/foreachLoopIteratorAggregate.002.phpt` | differs | differs | ran, printed something else |
 | `php/lang/foreachLoopIteratorAggregate.003.phpt` | pass | pass |  |
 | `php/lang/foreachLoopIteratorAggregate.004.phpt` | pass | pass |  |
-| `php/lang/foreachLoopObjects.001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoopObjects.001.phpt` | pass | pass |  |
 | `php/lang/foreachLoopObjects.002.phpt` | differs | differs | ran, printed something else |
-| `php/lang/foreachLoopObjects.003.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoopObjects.003.phpt` | pass | pass |  |
 | `php/lang/foreachLoopObjects.004.phpt` | pass | pass |  |
 | `php/lang/foreachLoopObjects.005.phpt` | pass | pass |  |
 | `php/lang/foreachLoopObjects.006.phpt` | pass | pass |  |

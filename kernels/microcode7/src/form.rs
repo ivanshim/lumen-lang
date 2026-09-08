@@ -355,6 +355,8 @@ pub struct Plan {
     /// is built on, among the values written for it.
     pub answers: usize,
     pub field_names: Vec<String>,
+    /// How far each property is reached from, name for name.
+    pub field_reach: Vec<crate::data::Reach>,
     pub shared_names: Vec<String>,
     pub constant_names: Vec<String>,
     pub methods: Vec<(String, Rc<Routine>)>,

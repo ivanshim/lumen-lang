@@ -97,6 +97,11 @@ pub struct Wording<'a> {
     /// how many significant digits one shows when simply written out.
     /// Where it says nothing, a real is shown to its own precision.
     pub real_digits: Option<usize>,
+    /// The words for a member the class shares only with those standing
+    /// on it, and for one it keeps to itself, as they are marked beside
+    /// the name where a thing is shown.
+    pub guarded_word: Option<&'a str>,
+    pub hidden_word: Option<&'a str>,
 }
 
 impl Value {
@@ -351,6 +356,15 @@ pub fn decimal_string(p: &BigInt, q: &BigInt, places: usize) -> String {
     s
 }
 
+/// How far a member of a class may be reached from: from anywhere, from
+/// the class and those standing on it, or from the class alone.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Reach {
+    Open,
+    Guarded,
+    Hidden,
+}
+
 /// A class: what it is called, what it stands on, the properties an
 /// object of it begins with, the programs it answers to, its constants
 /// and the values it keeps for itself.
@@ -361,6 +375,8 @@ pub struct Class {
     /// The classes of method names only that this one answers to.
     pub answers: Vec<Rc<Class>>,
     pub fields: Vec<(String, Value)>,
+    /// How far each of those may be reached from, place for place.
+    pub reaches: Vec<Reach>,
     pub methods: Vec<(String, Rc<Routine>)>,
     pub constants: Vec<(String, Value)>,
     pub shared: RefCell<Vec<(String, Value)>>,
@@ -408,6 +424,33 @@ impl Class {
     /// the name written just as it is.
     pub fn descends_from(&self, name: &str) -> bool {
         self.named(name, false)
+    }
+
+    /// How far a member of that name may be reached from, and the class
+    /// that says so: the nearest one declaring it, this class first.
+    pub fn reach_of(&self, name: &str) -> Option<(Reach, &str)> {
+        match self.fields.iter().position(|(n, _)| n == name) {
+            Some(at) => Some((self.reaches.get(at).copied().unwrap_or(Reach::Open), self.name.as_str())),
+            None => self.base.as_ref().and_then(|b| b.reach_of(name)),
+        }
+    }
+
+    /// Whether a member of that name may be reached by code written
+    /// inside the class named, or outside every class where none is
+    /// named. What no class declares is open to all, as a property
+    /// written onto a thing while the run goes is.
+    pub fn within_reach(&self, name: &str, from: Option<&str>) -> bool {
+        let Some((reach, holder)) = self.reach_of(name) else { return true };
+        match reach {
+            Reach::Open => true,
+            Reach::Hidden => from == Some(holder),
+            // A class standing on the one that declared it reaches it,
+            // and so does the one it stands on.
+            Reach::Guarded => match from {
+                Some(here) => self.named(here, false) || here == holder,
+                None => false,
+            },
+        }
     }
 
     /// Every property an object of this class begins with, those it

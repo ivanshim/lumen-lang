@@ -74,11 +74,13 @@ pub enum Action {
     AtEnd,
     /// How many places an array or a map holds.
     Extent,
-    /// Whether the place a walk has reached still holds a member. A
-    /// property taken off a thing leaves its place behind, and the walk
-    /// steps over it rather than handing it out. The thing walked is
-    /// below the place.
-    Standing,
+    /// Whether the place a walk has reached holds a member the walk may
+    /// hand out. A property taken off a thing leaves its place behind,
+    /// and one the class keeps to itself is no business of a walk
+    /// written outside it: either is stepped over. The thing walked is
+    /// below the place, and the class the walk is written in, if any, is
+    /// carried here.
+    Standing(Option<Rc<str>>),
     /// What a walk walks. A thing that hands another over to be walked
     /// in its stead answers with that one; a thing that is its own walk
     /// is wound back and answers with itself; anything else is itself.
@@ -409,6 +411,8 @@ pub struct Plan {
     /// itself and of its constants; a value for each is on the stack, in
     /// that order, when the class is forged.
     pub field_names: Vec<String>,
+    /// How far each property may be reached from, name for name.
+    pub field_reach: Vec<crate::value::Reach>,
     pub shared_names: Vec<String>,
     pub constant_names: Vec<String>,
     pub methods: Vec<(String, Rc<Routine>)>,

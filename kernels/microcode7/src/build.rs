@@ -13,7 +13,7 @@ use crate::math;
 use crate::scan::{Shape, Token};
 use crate::table::{Blocks, Table};
 use crate::form::{Clause, Input, Traps, Form, Prim, Routine, Address, Callee, Plan};
-use crate::data::Value;
+use crate::data::{Reach, Value};
 
 type Res<T> = Result<T, String>;
 
@@ -1218,6 +1218,7 @@ impl<'a> Builder<'a> {
         self.advance();
         let close = table.strings("block.close")[k].clone();
         let (mut fields, mut shared, mut constants) = (Vec::new(), Vec::new(), Vec::new());
+        let mut reaches: Vec<Reach> = Vec::new();
         let mut methods = Vec::new();
         self.skip_line_ends();
         // What a method keeps between calls is set where the class is
@@ -1226,9 +1227,14 @@ impl<'a> Builder<'a> {
         let statics_before = self.statics.len();
         while !self.lexeme_of(&close) && !self.exhausted() {
             let mut kept = false;
+            let mut reach = Reach::Everywhere;
             while self.look().shape == Shape::Bare {
                 if self.key("ext.stmt.class.shared") {
                     kept = true;
+                } else if self.key("ext.stmt.class.hidden") {
+                    reach = Reach::Alone;
+                } else if self.key("ext.stmt.class.guarded") {
+                    reach = Reach::Within;
                 } else if !self.key("ext.stmt.class.modifier") {
                     break;
                 }
@@ -1255,6 +1261,7 @@ impl<'a> Builder<'a> {
                         None => named,
                     };
                     fields.push((bare, constant(Value::Nil)));
+                    reaches.push(Reach::Everywhere);
                 }
             } else {
                 // A property, perhaps with a type word before its name.
@@ -1281,6 +1288,7 @@ impl<'a> Builder<'a> {
                         shared.push((bare, value));
                     } else {
                         fields.push((bare, value));
+                        reaches.push(reach);
                     }
                     match &apart {
                         Some(sep) if self.sign(sep) => self.advance(),
@@ -1316,7 +1324,7 @@ impl<'a> Builder<'a> {
         let field_names = names(fields, &mut values);
         let shared_names = names(shared, &mut values);
         let constant_names = names(constants, &mut values);
-        let plan = Plan { name: name.clone(), answers: answers.len(), field_names, shared_names, constant_names, methods, extends: under.is_some() };
+        let plan = Plan { name: name.clone(), answers: answers.len(), field_names, field_reach: reaches, shared_names, constant_names, methods, extends: under.is_some() };
         let made = Form::Class { plan: Rc::new(plan), values };
         let bound = self.class_binding(&name);
         let slot = self.global_address(&bound);
@@ -1569,8 +1577,14 @@ impl<'a> Builder<'a> {
                 // empty, so that the members past it stay where they
                 // were. Such a place is passed over: the walk goes
                 // straight on to the next.
+                // A walk hands out only what it reaches: the class it
+                // is written in, where it is written in one, says which.
+                let here = match &r.within {
+                    Some((named, _)) => constant(Value::text(named)),
+                    None => constant(Value::Nil),
+                };
                 let (bag, at) = (r.read(&walk), r.read(&walk_at));
-                let there = prim_call(Prim::Kept, vec![bag, at]);
+                let there = prim_call(Prim::Kept, vec![bag, at, here]);
                 Ok(r.choose(there, pass, constant(Value::Nil)))
             },
             Some(move |r: &mut Self| {

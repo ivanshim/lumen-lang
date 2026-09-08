@@ -285,7 +285,14 @@ only. The extension labels so far, all from PHP:
 - `ext.stmt.class` and its family: `ext.stmt.class.extends`,
   `ext.stmt.class.new`, `ext.stmt.class.this` (the name a method knows
   its own object by), `ext.stmt.class.constructor` (the method run when
-  an object is made), `ext.stmt.class.destructor` (the method run when an
+  an object is made), `ext.stmt.class.hidden` and
+  `ext.stmt.class.guarded` (the modifiers saying how far a member may be
+  reached from: only from the class declaring it, or from that class and
+  those standing on it; a member with neither is open to all. A walk over
+  a thing hands out only what the class the walk is written in may reach,
+  and where a thing is shown the reach is written beside the name —
+  `["d":protected]` and `["e":"C":private]` — in the definition's own
+  words), `ext.stmt.class.destructor` (the method run when an
   object is let go, at the latest when the run ends, every object still
   standing then being let go in the order they were made, before what the
   run is still keeping goes out), `ext.stmt.class.modifier` (words before a member
@@ -1208,6 +1215,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.constructor` | - | - | - | - | - | - | - | `__construct` | - | - |
 | `ext.stmt.class.destructor` | - | - | - | - | - | - | - | `__destruct` | - | - |
 | `ext.stmt.class.extends` | - | - | - | - | - | - | - | `extends` | - | - |
+| `ext.stmt.class.guarded` | - | - | - | - | - | - | - | `protected` | - | - |
+| `ext.stmt.class.hidden` | - | - | - | - | - | - | - | `private` | - | - |
 | `ext.stmt.class.implements` | - | - | - | - | - | - | - | `implements` | - | - |
 | `ext.stmt.class.interface` | - | - | - | - | - | - | - | `interface` | - | - |
 | `ext.stmt.class.modifier` | - | - | - | - | - | - | - | `public` `private` `protected` `final` `abstract` `readonly` `var` | - | - |

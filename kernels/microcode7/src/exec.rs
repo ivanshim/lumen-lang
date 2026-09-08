@@ -21,7 +21,7 @@ use num_traits::ToPrimitive;
 use crate::math::{self, Calc};
 use crate::table::Table;
 use crate::form::{Input, Traps, Form, Prim, Routine, Address, Callee};
-use crate::data::{Blueprint, Thing, Env, Kind, Value, Names};
+use crate::data::{Blueprint, Env, Kind, Names, Reach, Thing, Value};
 
 /// The label under which a language spells each kind of complaint.
 pub const COMPLAINT_LABELS: [(&str, &str); 4] = [
@@ -705,6 +705,8 @@ impl<'a> Machine<'a> {
                 true => "",
                 false => self.table.single("literal.null").unwrap_or("null"),
             },
+            within_word: self.table.single("ext.stmt.class.guarded"),
+            alone_word: self.table.single("ext.stmt.class.hidden"),
         }
     }
 
@@ -1322,6 +1324,7 @@ impl<'a> Machine<'a> {
                     under,
                     answers,
                     fields,
+                    reaches: plan.field_reach.clone(),
                     methods: plan.methods.clone(),
                     constants,
                     shared: RefCell::new(shared),
@@ -1882,9 +1885,19 @@ impl<'a> Machine<'a> {
                 return Err(format!("{}() is worked out where a call can be made", name))
             }
             Prim::Kept => {
-                n(2)?;
+                n(3)?;
                 match (&v[0], as_index(&v[1])) {
-                    (Value::Thing(thing), Ok(at)) => Value::Flag(thing.holds.borrow().get(at).map_or(true, |(_, x)| kept(x))),
+                    // A thing that is its own walk hands out what it
+                    // pleases: what it holds is none of the walk's work.
+                    (Value::Thing(_), _) if self.walks_itself(&v[0]).is_some() => Value::Flag(true),
+                    (Value::Thing(thing), Ok(at)) => {
+                        let here = match &v[2] {
+                            Value::Text(named) => Some(named.to_string()),
+                            _ => None,
+                        };
+                        let holds = thing.holds.borrow();
+                        Value::Flag(holds.get(at).map_or(true, |(k, x)| kept(x) && thing.of.reached_from(k, here.as_deref())))
+                    }
                     _ => Value::Flag(true),
                 }
             }
@@ -2587,7 +2600,7 @@ impl<'a> Machine<'a> {
             Prim::Define => return Err(format!("{}() needs a quoted name as its first argument", name)),
             Prim::Dump => {
                 for x in v {
-                    self.utter(&format!("{}\n", with_kind(x, 0, self.table.count("ext.system.real.bits").is_some())));
+                    self.utter(&format!("{}\n", with_kind(x, 0, self.table.count("ext.system.real.bits").is_some(), self.wording())));
                 }
                 Value::Nil
             }
@@ -2850,6 +2863,18 @@ fn as_index(v: &Value) -> Result<usize, String> {
 /// A value shown with its kind the way PHP's var_dump does: numbers as
 /// `int(n)` and `float(x)`, text with its length in bytes, a vector
 /// one entry per line, each nested level two spaces further in.
+/// How far a member is reached from, written beside its name where a
+/// thing is shown: nothing where it is open to everything, the word for
+/// one a class shares only with those built on it, or the declaring
+/// class's name and the word for one it keeps to itself.
+fn written_reach(of: &Blueprint, member: &str, w: Names) -> String {
+    match of.reach_of(member) {
+        Some((Reach::Within, _)) => w.within_word.map_or_else(String::new, |word| format!(":{word}")),
+        Some((Reach::Alone, declared)) => w.alone_word.map_or_else(String::new, |word| format!(":\"{declared}\":{word}")),
+        _ => String::new(),
+    }
+}
+
 /// Whether a thing still keeps a member at a place. Taking one off
 /// empties its place and leaves it there, so that a walk already under
 /// way finds the rest of the members where it left them.
@@ -2857,7 +2882,7 @@ pub fn kept(x: &Value) -> bool {
     !matches!(x, Value::Unset)
 }
 
-fn with_kind(v: &Value, level: usize, binary_reals: bool) -> String {
+fn with_kind(v: &Value, level: usize, binary_reals: bool, w: Names) -> String {
     let lead = "  ".repeat(level);
     // Something standing inside a value is marked as shared when its
     // cell is one that some name still reaches besides the value
@@ -2869,7 +2894,7 @@ fn with_kind(v: &Value, level: usize, binary_reals: bool) -> String {
     };
     match v {
         // A cell that names share is shown as what it holds.
-        Value::Shared(cell) => with_kind(&cell.borrow(), level, binary_reals),
+        Value::Shared(cell) => with_kind(&cell.borrow(), level, binary_reals, w),
         Value::Small(_) | Value::Huge(_) => format!("int({})", v.bare()),
         // Shown with its kind, a binary real is written in the fewest
         // figures that read back as the same number.
@@ -2880,7 +2905,7 @@ fn with_kind(v: &Value, level: usize, binary_reals: bool) -> String {
         Value::Text(s) => format!("string({}) \"{}\"", s.len(), s),
         Value::Flag(b) => format!("bool({})", b),
         Value::Vector(items) => {
-            let entries: Vec<String> = items.iter().enumerate().map(|(i, x)| format!("{lead}  [{i}]=>\n{lead}  {}{}\n", tied(x), with_kind(x, level + 1, binary_reals))).collect();
+            let entries: Vec<String> = items.iter().enumerate().map(|(i, x)| format!("{lead}  [{i}]=>\n{lead}  {}{}\n", tied(x), with_kind(x, level + 1, binary_reals, w))).collect();
             format!("array({}) {{\n{}{lead}}}", items.len(), entries.concat())
         }
         Value::Dict(entries) => {
@@ -2892,7 +2917,7 @@ fn with_kind(v: &Value, level: usize, binary_reals: bool) -> String {
                         Value::Text(s) => format!("\"{}\"", s),
                         other => other.bare(),
                     };
-                    format!("{lead}  [{key}]=>\n{lead}  {}{}\n", tied(x), with_kind(x, level + 1, binary_reals))
+                    format!("{lead}  [{key}]=>\n{lead}  {}{}\n", tied(x), with_kind(x, level + 1, binary_reals, w))
                 })
                 .collect();
             format!("array({}) {{\n{}{lead}}}", entries.len(), shown.concat())
@@ -2902,7 +2927,10 @@ fn with_kind(v: &Value, level: usize, binary_reals: bool) -> String {
             let shown: Vec<String> = held
                 .iter()
                 .filter(|(_, x)| kept(x))
-                .map(|(member, x)| format!("{lead}  [\"{member}\"]=>\n{lead}  {}{}\n", tied(x), with_kind(x, level + 1, binary_reals)))
+                .map(|(member, x)| {
+                    let how = written_reach(&thing.of, member, w);
+                    format!("{lead}  [\"{member}\"{how}]=>\n{lead}  {}{}\n", tied(x), with_kind(x, level + 1, binary_reals, w))
+                })
                 .collect();
             format!("object({})#{} ({}) {{\n{}{lead}}}", thing.of.name, thing.turn, shown.len(), shown.concat())
         }
@@ -2969,7 +2997,8 @@ fn over_lines(v: &Value, along: usize, w: Names) -> String {
         Value::Dict(entries) => ("Array".to_string(), entries.iter().map(|(k, x)| (k.render(w), x)).collect()),
         Value::Thing(thing) => {
             held = thing.holds.borrow();
-            (format!("{} Object", thing.of.name), held.iter().filter(|(_, x)| kept(x)).map(|(k, x)| (k.clone(), x)).collect())
+            let named = |k: &String| format!("{k}{}", written_reach(&thing.of, k, w));
+            (format!("{} Object", thing.of.name), held.iter().filter(|(_, x)| kept(x)).map(|(k, x)| (named(k), x)).collect())
         }
         other => return other.render(w),
     };

@@ -12,7 +12,7 @@ use num_traits::ToPrimitive;
 
 use crate::lang::{Complaint, Lang};
 use crate::arith::{self, Operation};
-use crate::value::{Class, Instance, Sort, Wording, Value};
+use crate::value::{Class, Instance, Reach, Sort, Value, Wording};
 use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr};
 
 pub struct Engine<'a> {
@@ -578,6 +578,8 @@ impl<'a> Engine<'a> {
             null_word: nothing,
             flag_counts: self.lang.flags_count,
             real_digits: self.lang.real_bits.and(self.lang.real_digits),
+            guarded_word: self.lang.guarded_words.first().map(String::as_str),
+            hidden_word: self.lang.hidden_words.first().map(String::as_str),
         }
     }
 
@@ -1364,6 +1366,7 @@ impl<'a> Engine<'a> {
                     base,
                     answers,
                     fields: take(&plan.field_names),
+                    reaches: plan.field_reach.clone(),
                     methods: plan.methods.clone(),
                     shared: RefCell::new(take(&plan.shared_names)),
                     constants: take(&plan.constant_names),
@@ -1623,10 +1626,17 @@ impl<'a> Engine<'a> {
                     Value::Bond(Rc::new(RefCell::new(held)))
                 }
             },
-            Action::Standing => {
+            Action::Standing(within) => {
                 let pair = self.drop_many(2)?;
                 match (&pair[0], as_index(&pair[1])) {
-                    (Value::Object(o), Ok(at)) => Value::Flag(o.fields.borrow().get(at).map_or(true, |(_, v)| standing(v))),
+                    // A thing that is its own walk hands out what it
+                    // pleases: what it holds is no part of the walk.
+                    (Value::Object(_), _) if self.walker(&pair[0]).is_some() => Value::Flag(true),
+                    (Value::Object(o), Ok(at)) => {
+                        let here = within.as_deref();
+                        let held = o.fields.borrow();
+                        Value::Flag(held.get(at).map_or(true, |(n, v)| standing(v) && o.class.within_reach(n, here)))
+                    }
                     _ => Value::Flag(true),
                 }
             }
@@ -2530,7 +2540,7 @@ impl<'a> Engine<'a> {
             Builtin::Define => return Err(format!("{}() needs a quoted name as its first argument", name)),
             Builtin::Dump => {
                 for v in args.iter() {
-                    self.utter(&format!("{}\n", dumped(v, 0, self.lang.real_bits.is_some())));
+                    self.utter(&format!("{}\n", dumped(v, 0, self.lang.real_bits.is_some(), &self.wording())));
                 }
                 Value::Null
             }
@@ -2828,7 +2838,7 @@ pub fn places_default() -> Value {
 /// A value with its kind, as PHP's var_dump shows it: a number as
 /// `int(n)` or `float(x)`, text with its byte length, an array one
 /// entry per line, nested arrays indented two more.
-fn dumped(v: &Value, depth: usize, binary_reals: bool) -> String {
+fn dumped(v: &Value, depth: usize, binary_reals: bool, sp: &Wording) -> String {
     let pad = "  ".repeat(depth);
     // A place whose cell some name still holds besides the one holding
     // it is shown as shared. A place whose cell nothing else holds is
@@ -2840,7 +2850,7 @@ fn dumped(v: &Value, depth: usize, binary_reals: bool) -> String {
     };
     match v {
         // A cell two names share is shown as what it holds.
-        Value::Bond(shared) => dumped(&shared.borrow(), depth, binary_reals),
+        Value::Bond(shared) => dumped(&shared.borrow(), depth, binary_reals, sp),
         Value::Small(_) | Value::Huge(_) => format!("int({})", v.plain()),
         // Shown with its kind, a binary real is written in the fewest
         // digits that read back as the same number.
@@ -2853,7 +2863,7 @@ fn dumped(v: &Value, depth: usize, binary_reals: bool) -> String {
         Value::Array(items) => {
             let mut out = format!("array({}) {{\n", items.len());
             for (i, item) in items.iter().enumerate() {
-                out.push_str(&format!("{pad}  [{i}]=>\n{pad}  {}{}\n", shared(item), dumped(item, depth + 1, binary_reals)));
+                out.push_str(&format!("{pad}  [{i}]=>\n{pad}  {}{}\n", shared(item), dumped(item, depth + 1, binary_reals, sp)));
             }
             out.push_str(&pad);
             out.push('}');
@@ -2867,7 +2877,7 @@ fn dumped(v: &Value, depth: usize, binary_reals: bool) -> String {
                     Value::Text(s) => format!("\"{}\"", s),
                     other => other.plain(),
                 };
-                out.push_str(&format!("{pad}  [{shown}]=>\n{pad}  {}{}\n", shared(item), dumped(item, depth + 1, binary_reals)));
+                out.push_str(&format!("{pad}  [{shown}]=>\n{pad}  {}{}\n", shared(item), dumped(item, depth + 1, binary_reals, sp)));
             }
             out.push_str(&pad);
             out.push('}');
@@ -2878,7 +2888,8 @@ fn dumped(v: &Value, depth: usize, binary_reals: bool) -> String {
             let members: Vec<&(String, Value)> = held.iter().filter(|(_, v)| standing(v)).collect();
             let mut out = format!("object({})#{} ({}) {{\n", thing.class.name, thing.mark, members.len());
             for (member, item) in members {
-                out.push_str(&format!("{pad}  [\"{member}\"]=>\n{pad}  {}{}\n", shared(item), dumped(item, depth + 1, binary_reals)));
+                let how = marked(&thing.class, member, sp);
+                out.push_str(&format!("{pad}  [\"{member}\"{how}]=>\n{pad}  {}{}\n", shared(item), dumped(item, depth + 1, binary_reals, sp)));
             }
             out.push_str(&pad);
             out.push('}');
@@ -2938,6 +2949,25 @@ fn put_key(pairs: &mut Vec<(Value, Value)>, key: Value, value: Value) {
     }
 }
 
+/// How far a member may be reached from, as a language marks it beside
+/// the name where it shows what a thing holds: nothing at all where the
+/// member is open to everything, the word for a member the class shares
+/// with those standing on it, or the class's own name and the word for
+/// a member it keeps to itself.
+fn marked(class: &Class, member: &str, sp: &Wording) -> String {
+    match class.reach_of(member) {
+        Some((Reach::Guarded, _)) => match &sp.guarded_word {
+            Some(word) => format!(":{word}"),
+            None => String::new(),
+        },
+        Some((Reach::Hidden, holder)) => match &sp.hidden_word {
+            Some(word) => format!(":\"{holder}\":{word}"),
+            None => String::new(),
+        },
+        _ => String::new(),
+    }
+}
+
 /// Whether a thing still holds the member at a place: one taken off
 /// leaves its place behind, holding nothing, so that a walk under way
 /// keeps its footing.
@@ -2955,7 +2985,8 @@ fn laid_out(v: &Value, indent: usize, sp: &Wording) -> String {
         Value::Map(entries) => ("Array".to_string(), entries.iter().map(|(k, x)| (k.display(sp), x)).collect()),
         Value::Object(thing) => {
             held = thing.fields.borrow();
-            (format!("{} Object", thing.class.name), held.iter().filter(|(_, v)| standing(v)).map(|(k, x)| (k.clone(), x)).collect())
+            let shown = |k: &String| format!("{k}{}", marked(&thing.class, k, sp));
+            (format!("{} Object", thing.class.name), held.iter().filter(|(_, v)| standing(v)).map(|(k, x)| (shown(k), x)).collect())
         }
         other => return other.display(sp),
     };

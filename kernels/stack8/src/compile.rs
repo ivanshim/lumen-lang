@@ -31,7 +31,7 @@ use num_traits::ToPrimitive;
 use crate::lang::{Lang, Brackets, Blocks, Complaint};
 use crate::arith;
 use crate::lex::{Shape, Token};
-use crate::value::Value;
+use crate::value::{Reach, Value};
 use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr, Plan};
 
 /// The global names, each with a slot.
@@ -1085,9 +1085,12 @@ impl<'a> Compiler<'a> {
         // of that pass had gone straight on to the next. Only a language
         // with things to take members off asks the question at all.
         if !lang.class_words.is_empty() {
+            // A walk hands out only what it may reach: the class it is
+            // written in, if it is written in one, settles that.
+            let here = self.within.as_ref().map(|(named, _)| Rc::from(named.as_str()));
             self.read(&over);
             self.read(&at);
-            self.act(Action::Standing, 2);
+            self.act(Action::Standing(here), 2);
             let step_over = self.skip();
             let deep = self.piece().cycles.len() - 1;
             self.piece().cycles[deep].resumes.push(step_over);
@@ -1810,6 +1813,7 @@ impl<'a> Compiler<'a> {
         // Every member's value is read into its own run of instrs, so
         // that they can be laid out in the order the plan names them.
         let (mut fields, mut shared, mut constants) = (Vec::new(), Vec::new(), Vec::new());
+        let mut reaches: Vec<Reach> = Vec::new();
         let mut methods = Vec::new();
         let outer = self.within.replace((name.clone(), base.clone()));
         // The body may open on a line of its own, as every other block may.
@@ -1824,10 +1828,15 @@ impl<'a> Compiler<'a> {
         self.skip_seps();
         while !self.at_lexeme(&close) && !self.exhausted() {
             let mut own = false;
+            let mut reach = Reach::Open;
             while self.look().shape == Shape::Instr {
                 let w = self.look().lexeme.clone();
                 if Lang::spells(&lang.shared_words, &w) {
                     own = true;
+                } else if Lang::spells(&lang.hidden_words, &w) {
+                    reach = Reach::Hidden;
+                } else if Lang::spells(&lang.guarded_words, &w) {
+                    reach = Reach::Guarded;
                 } else if !Lang::spells(&lang.modifier_words, &w) {
                     break;
                 }
@@ -1851,6 +1860,7 @@ impl<'a> Compiler<'a> {
                 for named in std::mem::take(&mut self.promoted) {
                     let bare = lang.sigil.map_or(named.clone(), |s| named.trim_start_matches(s).to_string());
                     fields.push((bare, vec![Instr::Const(Value::Null)]));
+                    reaches.push(Reach::Open);
                 }
             } else {
                 // A property, perhaps with a type word before its name.
@@ -1874,6 +1884,7 @@ impl<'a> Compiler<'a> {
                         shared.push((bare, value));
                     } else {
                         fields.push((bare, value));
+                        reaches.push(reach);
                     }
                     match &apart {
                         Some(sep) if self.at_symbol(sep) => self.take(),
@@ -1914,7 +1925,7 @@ impl<'a> Compiler<'a> {
         let field_names = names(fields, self, &mut argc);
         let shared_names = names(shared, self, &mut argc);
         let constant_names = names(constants, self, &mut argc);
-        let plan = Plan { name: name.clone(), answers: answers.len(), field_names, shared_names, constant_names, methods, extends: base.is_some() };
+        let plan = Plan { name: name.clone(), answers: answers.len(), field_names, field_reach: reaches, shared_names, constant_names, methods, extends: base.is_some() };
         self.act(Action::Forge(Rc::new(plan)), argc);
         let filed = self.class_key(&name);
         self.write_global(&filed);

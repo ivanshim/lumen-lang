@@ -103,6 +103,11 @@ pub struct Names<'a> {
     /// figures one shows when simply written out; where it says
     /// nothing, a real is shown to the precision it carries.
     pub real_figures: Option<usize>,
+    /// The words for a member a class shares only with those built on
+    /// it, and for one it keeps to itself, as they are written beside
+    /// the name where a thing is shown.
+    pub within_word: Option<&'a str>,
+    pub alone_word: Option<&'a str>,
 }
 
 impl Value {
@@ -323,6 +328,15 @@ pub fn decimal_string(above: &BigInt, beneath: &BigInt, places: usize) -> String
 /// A class: its name, what it is built on, the properties a thing of it
 /// starts with, the programs it answers to, its constants, and the
 /// values it keeps for itself rather than for its things.
+/// How far a member of a class is reached from: from anywhere, from the
+/// class and those built on it, or from the class alone.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Reach {
+    Everywhere,
+    Within,
+    Alone,
+}
+
 #[derive(Debug)]
 pub struct Blueprint {
     pub name: String,
@@ -330,6 +344,8 @@ pub struct Blueprint {
     /// The classes of method names only that this one answers to.
     pub answers: Vec<Rc<Blueprint>>,
     pub fields: Vec<(String, Value)>,
+    /// How far each of those is reached from, one for one.
+    pub reaches: Vec<Reach>,
     pub methods: Vec<(String, Rc<Routine>)>,
     pub constants: Vec<(String, Value)>,
     pub shared: RefCell<Vec<(String, Value)>>,
@@ -371,6 +387,30 @@ impl Blueprint {
         };
         it || self.under.as_ref().map_or(false, |u| u.goes_by(name, either_way))
             || self.answers.iter().any(|a| a.goes_by(name, either_way))
+    }
+
+    /// How far a member of that name is reached from, and the class
+    /// saying so: the nearest one declaring it, this class first.
+    pub fn reach_of(&self, name: &str) -> Option<(Reach, &str)> {
+        match self.fields.iter().position(|(n, _)| n == name) {
+            Some(at) => Some((self.reaches.get(at).copied().unwrap_or(Reach::Everywhere), self.name.as_str())),
+            None => self.under.as_ref().and_then(|u| u.reach_of(name)),
+        }
+    }
+
+    /// Whether code written inside the class named — or outside every
+    /// class, where none is named — reaches a member of that name. What
+    /// no class declares is open to all, as a property written onto a
+    /// thing as the run goes is.
+    pub fn reached_from(&self, name: &str, here: Option<&str>) -> bool {
+        let Some((reach, declared)) = self.reach_of(name) else { return true };
+        match reach {
+            Reach::Everywhere => true,
+            Reach::Alone => here == Some(declared),
+            // A class built on the one declaring it reaches it, and so
+            // does the one it is built on.
+            Reach::Within => here.map_or(false, |there| self.goes_by(there, false) || there == declared),
+        }
     }
 
     /// Every property a thing of this class starts with, what it is
