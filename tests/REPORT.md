@@ -19,21 +19,20 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 46, differs 30, error 28, skipped 10 | pass 46, differs 30, error 28, skipped 10 |
 | `php/func` | 14 | pass 7, differs 3, error 4, skipped 0 | pass 7, differs 3, error 4, skipped 0 |
-| `php/lang` | 213 | pass 75, differs 51, error 82, skipped 5 | pass 75, differs 51, error 82, skipped 5 |
+| `php/lang` | 213 | pass 75, differs 49, error 84, skipped 5 | pass 75, differs 49, error 84, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 31, differs 21, error 6, skipped 6 | pass 31, differs 21, error 6, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 164, differs 113, error 120, skipped 25 | pass 164, differs 113, error 120, skipped 25 |
+| all | 422 | pass 164, differs 111, error 122, skipped 25 | pass 164, differs 111, error 122, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 113 |
+| ran, printed something else | 111 |
+| Only a name, a place in an array or a property has a cell to share | 9 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
-| Unexpected token: ) | 4 |
-| Unexpected token: -> | 4 |
 | Fatal error: Uncaught Error: Cannot index non-array value in <file> | 4 |
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
@@ -48,8 +47,8 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: ini_parse_quantity in <file> | 2 |
 | Fatal error: Maximum execution time of 1 second exceeded in <file> | 2 |
 | Fatal error: Uncaught Error: Undefined variable: ob_get_contents in <file> | 2 |
-| Invalid assignment target before '=' | 2 |
 | Unexpected token: } | 2 |
+| Fatal error: Uncaught Error: put() requires an array in <file> | 2 |
 | Fatal error: Uncaught Error: Only a class can be made into an object in <file> | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Undefined variable: StdClass in <file> | 2 |
@@ -58,7 +57,6 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> | 2 |
 | Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> | 2 |
 | Unexpected token: > | 2 |
-| Unexpected token: :: | 2 |
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: rename in <file> | 1 |
@@ -68,6 +66,8 @@ is listed, since the full kernels are meant to behave alike.
 | Expected identifier as the property name, got '{' | 1 |
 | Fatal error: Uncaught Error: Undefined variable: PHP_BUILD_DATE in <file> | 1 |
 | skip locale needed for this test is not supported on this platform | 1 |
+| Fatal error: Uncaught Error: Undefined variable: umask in <file> | 1 |
+| skip for Windows only | 1 |
 
 ### Reserved words: 48 of 68 spelled
 
@@ -373,8 +373,8 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bison1.phpt` | pass | pass |  |
 | `php/lang/bug18872.phpt` | pass | pass |  |
 | `php/lang/bug19566.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_declared_classes in <file> |
-| `php/lang/bug19943.phpt` | error | error | Invalid assignment target before '=' |
-| `php/lang/bug20175.phpt` | error | error | Unexpected token: ) |
+| `php/lang/bug19943.phpt` | error | error | Fatal error: Uncaught Error: put() requires an array in <file> |
+| `php/lang/bug20175.phpt` | error | error | Only a name, a place in an array or a property has a cell to share |
 | `php/lang/bug21094.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug21600.phpt` | error | error | Unexpected token: & |
 | `php/lang/bug21669.phpt` | error | error | Fatal error: Uncaught Error: Only a class can be made into an object in <file> |
@@ -382,7 +382,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug21849.phpt` | pass | pass |  |
 | `php/lang/bug21961.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> |
 | `php/lang/bug22231.phpt` | error | error | Unexpected token: & |
-| `php/lang/bug22510.phpt` | error | error | Unexpected token: -> |
+| `php/lang/bug22510.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: __FUNCTION__ in <file> |
 | `php/lang/bug22592.phpt` | error | error | Fatal error: Uncaught Error: put() requires an array in <file> |
 | `php/lang/bug23279.phpt` | error | error | thrown in <file> |
 | `php/lang/bug23384.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: Foo in <file> |
@@ -584,14 +584,14 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/passByReference_009.phpt` | pass | pass |  |
 | `php/lang/passByReference_010.phpt` | differs | differs | ran, printed something else |
 | `php/lang/passByReference_012.phpt` | differs | differs | ran, printed something else |
-| `php/lang/returnByReference.001.phpt` | differs | differs | ran, printed something else |
-| `php/lang/returnByReference.002.phpt` | error | error | Unexpected token: ) |
-| `php/lang/returnByReference.003.phpt` | error | error | Unexpected token: ) |
-| `php/lang/returnByReference.004.phpt` | error | error | Unexpected token: :: |
-| `php/lang/returnByReference.005.phpt` | error | error | Unexpected token: -> |
-| `php/lang/returnByReference.006.phpt` | differs | differs | ran, printed something else |
-| `php/lang/returnByReference.007.phpt` | error | error | Unexpected token: :: |
-| `php/lang/returnByReference.008.phpt` | error | error | Unexpected token: -> |
+| `php/lang/returnByReference.001.phpt` | error | error | Only a name, a place in an array or a property has a cell to share |
+| `php/lang/returnByReference.002.phpt` | error | error | Only a name, a place in an array or a property has a cell to share |
+| `php/lang/returnByReference.003.phpt` | error | error | Only a name, a place in an array or a property has a cell to share |
+| `php/lang/returnByReference.004.phpt` | error | error | Only a name, a place in an array or a property has a cell to share |
+| `php/lang/returnByReference.005.phpt` | error | error | Only a name, a place in an array or a property has a cell to share |
+| `php/lang/returnByReference.006.phpt` | error | error | Only a name, a place in an array or a property has a cell to share |
+| `php/lang/returnByReference.007.phpt` | error | error | Only a name, a place in an array or a property has a cell to share |
+| `php/lang/returnByReference.008.phpt` | error | error | Only a name, a place in an array or a property has a cell to share |
 | `php/lang/returnByReference.009.phpt` | differs | differs | ran, printed something else |
 | `php/lang/short_tags.001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/short_tags.002.phpt` | pass | pass |  |

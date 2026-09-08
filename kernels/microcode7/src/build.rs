@@ -1826,16 +1826,21 @@ impl<'a> Builder<'a> {
 
     /// The write itself, the sign that called for it already read.
     fn write_into(&mut self, expr: Form, gives_back: bool, compound: Option<Prim>, assign: Token) -> Res<Form> {
+        // A target kept quiet is a write kept quiet: the muting comes
+        // off the reading and goes round the writing instead.
+        if let Form::Muted(inner) = expr {
+            let written = self.write_into(*inner, gives_back, compound, assign)?;
+            return Ok(Form::Muted(Box::new(written)));
+        }
         let plain = compound.is_none();
         // `b = &a`: b is tied to a's cell rather than given a copy.
         if self.table.single("ext.op.reference").map_or(false, |m| self.sign(m)) && plain {
             if let Form::Read(slot) = &expr {
                 let held = slot.ident.to_string();
                 self.advance();
-                let source = self.need_word("as the name to share a cell with")?;
-                let shared = self.address_to_write(&source);
+                let shared = self.a_shared_cell()?;
                 let tied = self.address_to_write(&held);
-                let tie = Form::Tie(tied, Box::new(Form::Share(shared)));
+                let tie = Form::Tie(tied, Box::new(shared));
                 return Ok(match gives_back {
                     true => sequence(vec![tie, self.read(&held)]),
                     false => tie,
@@ -2354,6 +2359,38 @@ impl<'a> Builder<'a> {
             self.advance();
         }
         Ok(())
+    }
+
+    /// What stands after the mark that shares a cell: a name, a place in
+    /// an array, or a property. Whichever it is, a cell is made of it
+    /// where it is not one already, so a name may be tied to it.
+    fn a_shared_cell(&mut self) -> Res<Form> {
+        let read = self.expr_at(0, false)?;
+        Ok(match read {
+            Form::Read(slot) => {
+                let shared = self.address_to_write(&slot.ident.to_string());
+                Form::Share(shared)
+            }
+            Form::Apply(Callee::Prim(Prim::Of, _), mut args) if args.len() == 2 => {
+                let named = args.pop().expect("the property");
+                let thing = args.pop().expect("what holds it");
+                let Form::Const(Value::Text(called)) = named else {
+                    return Err("Only a property named outright has a cell to share".to_string());
+                };
+                Form::ShareField(Box::new(thing), called)
+            }
+            Form::Apply(Callee::Prim(Prim::At, _), mut args) if args.len() == 2 => {
+                let place = args.pop().expect("the place");
+                match args.pop().expect("what holds it") {
+                    Form::Read(slot) => {
+                        let held = self.address_to_read(&slot.ident.to_string());
+                        Form::ShareItem(held, Box::new(place))
+                    }
+                    _ => return Err("Only a place in a named array has a cell to share".to_string()),
+                }
+            }
+            _ => return Err("Only a name, a place in an array or a property has a cell to share".to_string()),
+        })
     }
 
     /// `list($a, , $b) = v`: each place named takes the matching place

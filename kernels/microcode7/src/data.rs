@@ -216,6 +216,8 @@ impl Value {
 
     pub fn render(&self, w: Names) -> String {
         match self {
+            // A cell that names share is written as what it holds.
+            Value::Shared(cell) => cell.borrow().render(w),
             Value::Flag(true) => w.truth.to_string(),
             Value::Flag(false) => w.falsity.to_string(),
             Value::Nil | Value::Unset => w.nil.to_string(),

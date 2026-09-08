@@ -221,6 +221,9 @@ impl Value {
     /// machine's own form for the rest.
     pub fn display(&self, sp: &Wording) -> String {
         match self {
+            // A cell two names share is written as what it holds: the
+            // sharing is between the names and not in the value.
+            Value::Bond(shared) => shared.borrow().display(sp),
             Value::Flag(true) => sp.true_word.to_string(),
             Value::Flag(false) => sp.false_word.to_string(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => sp.null_word.to_string(),

@@ -237,6 +237,9 @@ pub enum Form {
     /// Make what the array in this binding holds at that place a shared
     /// cell, and give it back: how a walk hands out its items.
     ShareItem(Address, Box<Form>),
+    /// Make that property of the thing a shared cell if it is not one
+    /// already, and give the cell back, so a name may be tied to it.
+    ShareField(Box<Form>, Rc<str>),
     /// Leave this binding as though nothing were ever written to it.
     Forget(Address),
     /// Find this value with whatever it has to say about itself kept

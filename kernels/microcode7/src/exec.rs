@@ -715,6 +715,33 @@ impl<'a> Machine<'a> {
                 self.quieted -= 1;
                 return found;
             }
+            // The property becomes a cell the thing and the name taking
+            // it both stand for, so a write through either is seen by
+            // both.
+            Form::ShareField(of, called) => {
+                let thing = self.value_of(of, frame)?;
+                let Value::Thing(thing) = thing else {
+                    return Err(format!("Cannot share property '{}' of {}", called, thing.bare()).into());
+                };
+                let mut holds = thing.holds.borrow_mut();
+                let at = match holds.iter().position(|(k, _)| k.as_str() == called.as_ref()) {
+                    Some(at) => at,
+                    None => {
+                        holds.push((called.to_string(), Value::Nil));
+                        holds.len() - 1
+                    }
+                };
+                if let Value::Shared(cell) = &holds[at].1 {
+                    let cell = cell.clone();
+                    drop(holds);
+                    return Ok(Value::Shared(cell));
+                }
+                let was = std::mem::replace(&mut holds[at].1, Value::Nil);
+                let cell = Rc::new(RefCell::new(was));
+                holds[at].1 = Value::Shared(cell.clone());
+                drop(holds);
+                return Ok(Value::Shared(cell));
+            }
             Form::ShareItem(slot, place) => {
                 let at = self.value_of(place, frame)?;
                 let f = ascend(frame, slot.up);
@@ -1278,6 +1305,10 @@ impl<'a> Machine<'a> {
                     Value::Thing(thing) => {
                         let found = thing.holds.borrow().iter().find(|(k, _)| *k == called).map(|(_, x)| x.clone());
                         match found {
+                            // A property kept in a shared cell reads as
+                            // what the cell holds; the sharing lies
+                            // between the names, not in the value.
+                            Some(Value::Shared(cell)) => cell.borrow().clone(),
                             Some(x) => x,
                             // A language with a word for a warning says
                             // a property is not there, and reads nothing.
@@ -2072,6 +2103,8 @@ fn as_index(v: &Value) -> Result<usize, String> {
 fn with_kind(v: &Value, level: usize, binary_reals: bool) -> String {
     let lead = "  ".repeat(level);
     match v {
+        // A cell that names share is shown as what it holds.
+        Value::Shared(cell) => with_kind(&cell.borrow(), level, binary_reals),
         Value::Small(_) | Value::Huge(_) => format!("int({})", v.bare()),
         // Shown with its kind, a binary real is written in the fewest
         // figures that read back as the same number.

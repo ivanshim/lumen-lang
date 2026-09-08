@@ -2021,13 +2021,22 @@ impl<'a> Compiler<'a> {
     /// The store itself, the sign that asked for it already read.
     fn store_into(&mut self, from: usize, keep: Option<&str>, compound: Option<Action>, assign: &str) -> Res<()> {
         // The target came out as a load; turn it into a store.
-        let target: Vec<Instr> = self.piece().instrs.drain(from..).collect();
+        let mut target: Vec<Instr> = self.piece().instrs.drain(from..).collect();
+        // A target kept quiet is a store kept quiet: the marks come off
+        // the load and go round the store instead.
+        let hushed = matches!(target.first(), Some(Instr::Hush(true))) && matches!(target.last(), Some(Instr::Hush(false)));
+        let mut from = from;
+        if hushed {
+            target = target[1..target.len() - 1].to_vec();
+            self.put(Instr::Hush(true));
+            from += 1;
+        }
         // Where the target read its way into a place within a place,
         // the keys are taken apart, each with where it began, so that
         // the store may work each of them out once and in order.
         let (keys, key_at) = keys_apart(&target, from, &self.keyed);
         let appending = matches!(target.last(), Some(Instr::Act(Action::AtEnd, 1)));
-        match target.as_slice() {
+        let done = match target.as_slice() {
             // `b = &a`: b is fastened to a's cell, not given a copy.
             [Instr::Read(slot)]
                 if !slot.moving
@@ -2036,9 +2045,7 @@ impl<'a> Compiler<'a> {
             {
                 let name = slot.ident.to_string();
                 self.take();
-                let source = self.want_name("as the name to share a cell with")?;
-                let shared = self.cell_to_write(&source);
-                self.put(Instr::Bond(shared));
+                self.a_cell()?;
                 let held = self.cell_to_write(&name);
                 self.put(Instr::Fasten(held));
                 if keep.is_some() {
@@ -2200,7 +2207,11 @@ impl<'a> Compiler<'a> {
                 Ok(())
             }
             _ => Err(format!("Invalid assignment target before '{}'", assign)),
+        };
+        if hushed {
+            self.put(Instr::Hush(false));
         }
+        done
     }
 
     // ---------- expressions ----------
@@ -2652,6 +2663,41 @@ impl<'a> Compiler<'a> {
                 deep -= 1;
             }
             self.take();
+        }
+        Ok(())
+    }
+
+    /// What stands after the mark that shares a cell: a name, a place in
+    /// an array, or a property. Whichever it is, a cell is made of it
+    /// where it is not one already and left on the stack, so a name may
+    /// be fastened to it.
+    fn a_cell(&mut self) -> Res<()> {
+        let from = self.mark();
+        self.expr_at(0, false)?;
+        let read: Vec<Instr> = self.piece().instrs.drain(from..).collect();
+        match read.as_slice() {
+            [Instr::Read(slot)] if !slot.moving => {
+                let shared = self.cell_to_write(&slot.ident.to_string());
+                self.put(Instr::Bond(shared));
+            }
+            [rest @ .., Instr::Act(Action::Grab(member), 1)] => {
+                let (member, rest) = (member.clone(), rest.to_vec());
+                let at = self.mark();
+                for w in relocated(rest, at as i64 - from as i64) {
+                    self.put(w);
+                }
+                self.act(Action::BondField(member), 1);
+            }
+            [Instr::Read(slot), index @ .., Instr::Act(Action::At, 2)] if !slot.moving => {
+                let name = slot.ident.to_string();
+                let at = self.mark();
+                for w in relocated(index.to_vec(), at as i64 - (from as i64 + 1)) {
+                    self.put(w);
+                }
+                let held = self.cell_to_read(&name, false);
+                self.put(Instr::BondItem(held));
+            }
+            _ => return Err("Only a name, a place in an array or a property has a cell to share".to_string()),
         }
         Ok(())
     }

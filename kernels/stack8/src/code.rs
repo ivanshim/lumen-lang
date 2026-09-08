@@ -117,6 +117,10 @@ pub enum Action {
     /// Take that property off the object above, as though it had never
     /// been written.
     Uproot(Rc<str>),
+    /// Make that property of the object above a shared cell if it is
+    /// not one already, and push the cell, so another name may be
+    /// fastened to it.
+    BondField(Rc<str>),
     /// Call that method of the object below the arguments.
     Send(Rc<str>),
     /// A constant or a class's own value, of the class above.

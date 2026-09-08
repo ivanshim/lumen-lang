@@ -1044,6 +1044,10 @@ impl<'a> Engine<'a> {
                 Value::Object(o) => {
                     let found = o.fields.borrow().iter().find(|(n, _)| n == name.as_ref()).map(|(_, v)| v.clone());
                     match found {
+                        // A property held in a shared cell reads as what
+                        // the cell holds, the sharing being between the
+                        // names and not in the value.
+                        Some(Value::Bond(shared)) => shared.borrow().clone(),
                         Some(v) => v,
                         // A language with a word for a warning says a
                         // property is not there and reads nothing.
@@ -1057,6 +1061,35 @@ impl<'a> Engine<'a> {
                 }
                 v => return Err(format!("Cannot read property '{}' of {}", name, v.plain()).into()),
             },
+            // The property becomes a cell the object and the name that
+            // takes it both stand for, so a write through either is a
+            // write both see.
+            Action::BondField(name) => {
+                match self.drop_top()? {
+                    Value::Object(o) => {
+                        let mut held = o.fields.borrow_mut();
+                        let at = match held.iter().position(|(n, _)| n == name.as_ref()) {
+                            Some(at) => at,
+                            None => {
+                                held.push((name.to_string(), Value::Null));
+                                held.len() - 1
+                            }
+                        };
+                        if let Value::Bond(shared) = &held[at].1 {
+                            let shared = shared.clone();
+                            drop(held);
+                            Value::Bond(shared)
+                        } else {
+                            let was = std::mem::replace(&mut held[at].1, Value::Null);
+                            let shared = Rc::new(RefCell::new(was));
+                            held[at].1 = Value::Bond(shared.clone());
+                            drop(held);
+                            Value::Bond(shared)
+                        }
+                    }
+                    v => return Err(format!("Cannot share property '{}' of {}", name, v.plain()).into()),
+                }
+            }
             Action::Uproot(name) => {
                 match self.drop_top()? {
                     Value::Object(o) => {
@@ -2064,6 +2097,8 @@ pub fn places_default() -> Value {
 fn dumped(v: &Value, depth: usize, binary_reals: bool) -> String {
     let pad = "  ".repeat(depth);
     match v {
+        // A cell two names share is shown as what it holds.
+        Value::Bond(shared) => dumped(&shared.borrow(), depth, binary_reals),
         Value::Small(_) | Value::Huge(_) => format!("int({})", v.plain()),
         // Shown with its kind, a binary real is written in the fewest
         // digits that read back as the same number.
