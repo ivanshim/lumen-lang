@@ -22,13 +22,13 @@ is listed, since the full kernels are meant to behave alike.
 | `php/lang` | 213 | pass 119, differs 42, error 47, skipped 5 | pass 119, differs 42, error 47, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
-| `php/lang/operators` | 64 | pass 42, differs 14, error 2, skipped 6 | pass 42, differs 14, error 2, skipped 6 |
+| `php/lang/operators` | 64 | pass 43, differs 13, error 2, skipped 6 | pass 43, differs 13, error 2, skipped 6 |
 | `php/lang/string` | 9 | pass 2, differs 1, error 6, skipped 0 | pass 2, differs 1, error 6, skipped 0 |
-| all | 422 | pass 257, differs 62, error 78, skipped 25 | pass 257, differs 62, error 78, skipped 25 |
+| all | 422 | pass 258, differs 61, error 78, skipped 25 | pass 258, differs 61, error 78, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 62 |
+| ran, printed something else | 61 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | Fatal error: Uncaught Error: Undefined variable: iterator in <file> | 5 |
@@ -528,7 +528,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/bitwiseXor_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/coalesce.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/divide_basiclong_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/divide_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/divide_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/modulus_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/modulus_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/multiply_basiclong_64bit.phpt` | pass | pass |  |

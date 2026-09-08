@@ -537,7 +537,7 @@ pub fn binary_string(x: f64, digits: Option<usize>) -> String {
     let sign = if mantissa.starts_with('-') { "-" } else { "" };
     // Written plainly while the power is small, and with the power
     // spelled out beyond that, which is where such a language changes.
-    if (-5..15).contains(&power) {
+    if (-4..15).contains(&power) {
         return format!("{}{}", sign, laid_flat(&figures, power));
     }
     let rest = &figures[1..];

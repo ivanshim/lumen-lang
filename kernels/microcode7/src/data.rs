@@ -488,7 +488,7 @@ pub fn figured(x: f64, figures: Option<usize>) -> String {
         }
     }
     let sign = if front.starts_with('-') { "-" } else { "" };
-    if (-5..15).contains(&power) {
+    if (-4..15).contains(&power) {
         let point = power + 1;
         let body = if point <= 0 {
             format!("0.{}{}", "0".repeat(-point as usize), run)
