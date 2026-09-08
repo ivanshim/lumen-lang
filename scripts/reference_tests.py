@@ -144,6 +144,13 @@ def web_request(sections):
         name, _, value = line.partition("=")
         if name.strip():
             env[name.strip()] = value.strip()
+    # run-tests.php starts the run with the settings a test's INI
+    # section names. The host carries them in the environment, each
+    # under its own name with PHP_INI_ before it.
+    for line in sections.get("INI", "").splitlines():
+        name, _, value = line.partition("=")
+        if name.strip() and not name.strip().startswith(";"):
+            env["PHP_INI_" + name.strip()] = value.strip()
     cookie = sections.get("COOKIE", "").strip()
     if cookie:
         env["HTTP_COOKIE"] = cookie

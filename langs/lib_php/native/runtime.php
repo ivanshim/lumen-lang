@@ -44,8 +44,29 @@ define("COUNT_RECURSIVE", 1);
 
 // The settings a kernel run from a command line has nothing to change.
 function error_reporting($level = null) { return E_ALL; }
-function ini_set($name, $value) { return false; }
-function ini_get($name) { return false; }
+// The settings a run was started with are carried in the environment,
+// each under the name it has with PHP_INI_ before it, which is how the
+// host tells the run about them. A setting written while the run goes
+// is kept beside them and answered from there afterwards.
+$__settings = array();
+function ini_get($name) {
+    global $__settings;
+    if (array_key_exists($name, $__settings)) { return $__settings[$name]; }
+    $carried = 'PHP_INI_' . $name;
+    if (array_key_exists($carried, $_ENV)) { return $_ENV[$carried]; }
+    return false;
+}
+// Only a setting the language has may be written to; a name that is
+// none of its own is refused, whatever the run was started with. These
+// are the ones this definition knows.
+function ini_set($name, $value) {
+    global $__settings;
+    $known = array('precision', 'serialize_precision', 'memory_limit', 'max_execution_time', 'error_reporting', 'display_errors', 'log_errors', 'default_charset', 'internal_encoding', 'input_encoding', 'output_encoding', 'include_path', 'date.timezone', 'output_buffering', 'zend.assertions', 'assert.exception');
+    if (!in_array($name, $known)) { return false; }
+    $was = ini_get($name);
+    $__settings[$name] = (string)$value;
+    return $was;
+}
 function set_error_handler($handler, $levels = 32767) { return null; }
 function restore_error_handler() { return true; }
 function set_exception_handler($handler) { return null; }
