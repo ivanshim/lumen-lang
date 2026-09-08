@@ -479,6 +479,15 @@ only. The extension labels so far, all from PHP:
   written in the language itself, since giving up what was kept hands it
   back as an ordinary value, and writing it out again writes it into
   whatever keeping now stands.
+- `ext.system.request.amiss`, and `.amiss.boundary`,
+  `.amiss.boundary.wrong` and `.amiss.part`: the binding holding what the
+  host found amiss in the request before the program ran, as a list of
+  pieces of text, and the words for each thing that may be amiss — a
+  body said to be written in parts naming no boundary, naming one that
+  is not whole, and a part whose headers name nothing. The host says
+  only *which* of them it found; the wording is the language's own, so
+  the shared host carries no language's words. A language leaving the
+  first out is told nothing.
 - `ext.stmt.function.outermost`: a switch; a routine is bound among the
   outermost bindings wherever it is written, so one written inside
   another is there for the whole run once the routine holding it has
@@ -1087,6 +1096,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.real.bits` | - | - | - | - | - | - | - | `64` | - | - |
 | `ext.system.real.digits` | - | - | - | - | - | - | - | `14` | - | - |
 | `ext.system.request.all` | - | - | - | - | - | - | - | `$_REQUEST` | - | - |
+| `ext.system.request.amiss` | - | - | - | - | - | - | - | `$__request_amiss` | - | - |
+| `ext.system.request.amiss.boundary` | - | - | - | - | - | - | - | `PHP Request Startup: Missing boundary in multipart/form-data POST data` | - | - |
+| `ext.system.request.amiss.boundary.wrong` | - | - | - | - | - | - | - | `PHP Request Startup: Invalid boundary in multipart/form-data POST data` | - | - |
+| `ext.system.request.amiss.part` | - | - | - | - | - | - | - | `PHP Request Startup: File Upload Mime headers garbled` | - | - |
 | `ext.system.request.cookies` | - | - | - | - | - | - | - | `$_COOKIE` | - | - |
 | `ext.system.request.env` | - | - | - | - | - | - | - | `$_ENV` | - | - |
 | `ext.system.request.files` | - | - | - | - | - | - | - | `$_FILES` | - | - |

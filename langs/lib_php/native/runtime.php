@@ -56,9 +56,20 @@ define("PHP_OUTPUT_HANDLER_CONT", 0);
 // Which kinds of complaint are to be said at all, and the routine a
 // program has put in the way of them. A run starts saying all of them
 // and with no routine of its own in the way.
+// What the host found amiss in the request before the program ran is
+// said first of all, as PHP says it.
+function __say_request_amiss() {
+    global $__request_amiss;
+    if (!is_array($__request_amiss)) { return null; }
+    foreach ($__request_amiss as $said) {
+        echo "\nWarning: " . $said . " in Unknown on line 0\n";
+    }
+    return null;
+}
 $__reporting = __ini_reporting();
 $__error_handler = null;
 __hook_as_needed();
+__say_request_amiss();
 function error_reporting($level = null) {
     global $__reporting;
     $was = $__reporting;

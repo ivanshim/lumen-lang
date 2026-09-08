@@ -46,7 +46,10 @@ pub fn gathered() -> Request {
     for (key, value) in fields(&query) {
         request.push(("GET".to_string(), key, value, false));
     }
-    let (posted, sent) = body_given();
+    let (posted, sent, amiss) = body_given();
+    for kind in amiss {
+        request.push(("SELF".to_string(), "amiss".to_string(), kind.to_string(), false));
+    }
     for (key, value) in &posted {
         request.push(("POST".to_string(), key.clone(), value.clone(), false));
     }
@@ -72,7 +75,7 @@ pub fn gathered() -> Request {
 /// it. A body written as one piece is read as a form; a body written in
 /// parts is cut at its boundary, and a part naming a file is written out
 /// where the program can read it.
-fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>) {
+fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>, Vec<&'static str>) {
     let kind = env::var("CONTENT_TYPE").unwrap_or_default();
     let plain = kind.starts_with("application/x-www-form-urlencoded");
     // What a part is cut at runs from `boundary=` to the first comma, as
@@ -83,25 +86,36 @@ fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>) {
         .map(str::trim)
         .find_map(|part| part.strip_prefix("boundary="))
         .map(|mark| mark.split(',').next().unwrap_or(mark).trim().to_string());
+    // A body said to be written in parts must say what they are cut at,
+    // and say it whole: one opening a quote must close it. A body that
+    // says nothing of parts is only left unread.
+    let in_parts_said = kind.starts_with("multipart/");
     if !plain && boundary.is_none() {
-        return (Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), if in_parts_said { vec!["boundary"] } else { Vec::new() });
+    }
+    let ragged = boundary
+        .as_deref()
+        .map_or(false, |mark| mark.starts_with('"') && !mark.ends_with('"'));
+    if ragged {
+        return (Vec::new(), Vec::new(), vec!["boundary.wrong"]);
     }
     let length: usize = env::var("CONTENT_LENGTH").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
     let mut body = vec![0u8; length];
     if std::io::stdin().read_exact(&mut body).is_err() {
-        return (Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new());
     }
     match boundary {
         Some(mark) => in_parts(&body, mark.trim_matches('"')),
-        None => (fields(&String::from_utf8_lossy(&body)), Vec::new()),
+        None => (fields(&String::from_utf8_lossy(&body)), Vec::new(), Vec::new()),
     }
 }
 
 /// A body written in parts: each part says what it is called, and a part
 /// that names a file is written out to a place of its own, which the
 /// program is told about the way PHP tells it.
-fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String, String, bool)>) {
+fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String, String, bool)>, Vec<&'static str>) {
     let (mut posted, mut sent) = (Vec::new(), Vec::new());
+    let mut amiss: Vec<&'static str> = Vec::new();
     let mut files = 0usize;
     // A part written before the files may say how large a file the form
     // will take; one larger than that is turned away.
@@ -145,7 +159,10 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
             continue;
         }
         match (named("name"), named("filename")) {
-            (None, None) => continue,
+            (None, None) => {
+                amiss.push("part");
+                continue;
+            }
             (Some(name), None) => {
                 let said = String::from_utf8_lossy(content).into_owned();
                 if name == "MAX_FILE_SIZE" {
@@ -208,7 +225,7 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
             }
         }
     }
-    (posted, sent)
+    (posted, sent, amiss)
 }
 
 /// What a head line calls something: `name=x`, `name='x'` or `name="x"`,

@@ -59,6 +59,15 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
 /// file lies in, where it has words for them.
 const OWN_PLACE: [(&str, &str); 2] = [("file", "ext.system.source.file"), ("directory", "ext.system.source.directory")];
 
+/// What the host may find amiss in a request before the program runs.
+/// The host names only which of them it found; the words for each are
+/// the language's own.
+const REQUEST_AMISS: [(&str, &str); 3] = [
+    ("boundary", "ext.system.request.amiss.boundary"),
+    ("boundary.wrong", "ext.system.request.amiss.boundary.wrong"),
+    ("part", "ext.system.request.amiss.part"),
+];
+
 const REQUEST_PARTS: [(&str, &str); 7] = [
     ("GET", "ext.system.request.query"), ("POST", "ext.system.request.form"), ("COOKIE", "ext.system.request.cookies"),
     ("SERVER", "ext.system.request.server"), ("ENV", "ext.system.request.env"), ("FILES", "ext.system.request.files"),
@@ -72,6 +81,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         "system.kind.rational", "system.kind.real", "system.kind.string", "system.kind.boolean", "system.kind.array", "system.kind.null"];
     let mut seeded: Vec<String> = system.iter().filter_map(|k| table.single(k).map(str::to_string)).collect();
     seeded.extend(REQUEST_PARTS.iter().filter_map(|(_, key)| table.single(key).map(str::to_string)));
+    seeded.extend(table.single("ext.system.request.amiss").map(str::to_string));
     seeded.extend(OWN_PLACE.iter().filter_map(|(_, key)| table.single(key).map(str::to_string)));
     seeded.extend(table.single("ext.system.source.line").map(str::to_string));
     let before: u32 = request
@@ -115,6 +125,18 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
             written_at(&mut carried, &steps, held);
         }
         machine.define(name, Value::Dict(std::rc::Rc::new(carried)));
+    }
+    // What the host found amiss in the request before the program ran,
+    // told in the language's own words.
+    if let Some(name) = table.single("ext.system.request.amiss") {
+        let said: Vec<Value> = request
+            .iter()
+            .filter(|(from, key, ..)| from == "SELF" && key == "amiss")
+            .filter_map(|(.., kind, _)| REQUEST_AMISS.iter().find(|(k, _)| k == kind))
+            .filter_map(|(_, key)| table.single(key))
+            .map(Value::text)
+            .collect();
+        machine.define(name, Value::Vector(std::rc::Rc::new(said)));
     }
     if let Some((.., place, _)) = request.iter().find(|(from, key, ..)| from == "SELF" && key == "file") {
         machine.found_in(place);

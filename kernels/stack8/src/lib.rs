@@ -75,6 +75,9 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     for (_, name) in &lang.request_bindings {
         registry.slot(name);
     }
+    if let Some(name) = &lang.amiss_binding {
+        registry.slot(name);
+    }
     for (_, name) in &lang.source_bindings {
         registry.slot(name);
     }
@@ -107,6 +110,18 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
             put_step(&mut carried, &steps, held);
         }
         machine.define(name, Value::Map(std::rc::Rc::new(carried)));
+    }
+    // What the host found amiss in the request before the program ran,
+    // in the language's own words: the host names only which of them it
+    // found, since the wording is the language's and not the host's.
+    if let Some(name) = &lang.amiss_binding {
+        let said: Vec<Value> = request
+            .iter()
+            .filter(|(from, key, ..)| from == "SELF" && key == "amiss")
+            .filter_map(|(.., kind, _)| lang.amiss_words.iter().find(|(k, _)| k == kind))
+            .map(|(_, words)| Value::text(words))
+            .collect();
+        machine.define(name, Value::array(said));
     }
     if let Some((.., place, _)) = request.iter().find(|(from, key, ..)| from == "SELF" && key == "file") {
         machine.written_in(place);
