@@ -437,6 +437,16 @@
   "ext.op.reference.unshared.handed": [
     "Only variables should be passed by reference"
   ],
+  "ext.stmt.block.instead": [
+    ":"
+  ],
+  "ext.stmt.block.instead.close": [
+    "endif",
+    "endwhile",
+    "endfor",
+    "endforeach",
+    "endswitch"
+  ],
   "ext.builtin.exit": [
     "exit",
     "die"

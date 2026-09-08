@@ -792,6 +792,23 @@ impl<'a> Builder<'a> {
             Blocks::Bracketed => {
                 let opens = self.table.strings("block.open");
                 let Some(k) = opens.iter().position(|o| self.lexeme_of(o)) else {
+                    // A language may open a block with a mark where a
+                    // bracket would stand, and close it with a word of
+                    // its own. Statements run to whichever such word
+                    // comes next: one ending the whole shape is taken
+                    // here, one opening another of its arms is left
+                    // standing for whoever opened the block.
+                    if self.table.single("ext.stmt.block.instead").map_or(false, |m| self.sign(m)) {
+                        self.advance();
+                        let mut stops = self.table.strings("ext.stmt.block.instead.close").to_vec();
+                        stops.extend(self.table.strings("stmt.elif").iter().cloned());
+                        stops.extend(self.table.strings("stmt.else").iter().cloned());
+                        let body = self.stmts_until(&stops)?;
+                        if self.table.strings("ext.stmt.block.instead.close").iter().any(|w| self.lexeme_of(w)) {
+                            self.advance();
+                        }
+                        return Ok(body);
+                    }
                     if self.table.flag("ext.block.lone_statement") {
                         return self.stmt();
                     }
@@ -1518,16 +1535,27 @@ impl<'a> Builder<'a> {
         self.skip_lead_word();
         self.skip_line_ends();
         let opens = table.strings("block.open");
-        let k = opens.iter().position(|o| self.lexeme_of(o)).ok_or_else(|| format!("Expected '{}' to open the switch, got '{}'", opens[0], self.look().lexeme))?;
-        self.advance();
-        let close = table.strings("block.close")[k].clone();
-        let mut stops = vec![close.clone()];
+        // A switch opens with a bracket or, where a language spells one,
+        // with the mark standing for a bracket; the words that close
+        // such a block close this one.
+        let closers = match opens.iter().position(|o| self.lexeme_of(o)) {
+            Some(k) => {
+                self.advance();
+                vec![table.strings("block.close")[k].clone()]
+            }
+            None if table.single("ext.stmt.block.instead").map_or(false, |m| self.sign(m)) => {
+                self.advance();
+                table.strings("ext.stmt.block.instead.close").to_vec()
+            }
+            None => return Err(format!("Expected '{}' to open the switch, got '{}'", opens[0], self.look().lexeme)),
+        };
+        let mut stops = closers.clone();
         stops.extend(table.strings("ext.stmt.case").iter().cloned());
         stops.extend(table.strings("ext.stmt.default").iter().cloned());
         // (test for the section, or None for the default; its body)
         let mut sections: Vec<(Option<Form>, Form)> = Vec::new();
         self.skip_line_ends();
-        while !self.lexeme_of(&close) && !self.exhausted() {
+        while !closers.iter().any(|w| self.lexeme_of(w)) && !self.exhausted() {
             let word = self.need_word("as case or default")?;
             let is_case = table.spells("ext.stmt.case", &word);
             if !is_case && !table.spells("ext.stmt.default", &word) {
@@ -1547,7 +1575,10 @@ impl<'a> Builder<'a> {
             let body = self.limb(Traps::Naught, |r| r.stmts_until(&stops))?;
             sections.push((test, body));
         }
-        self.need_lexeme(&close)?;
+        if !closers.iter().any(|w| self.lexeme_of(w)) {
+            return Err(format!("Expected '{}' to close the switch, got '{}'", closers[0], self.look().lexeme));
+        }
+        self.advance();
         // start = the first section whose test holds, else the default's
         // index, else one past the end.
         let none = sections.len() as i64;

@@ -667,6 +667,23 @@ impl<'a> Compiler<'a> {
             Blocks::Braced => {
                 let which = self.lang.block_opens.iter().position(|o| self.at_lexeme(o));
                 let Some(i) = which else {
+                    // A language may open a block with a mark where a
+                    // bracket would stand, closing it with a word of its
+                    // own. The statements run to whichever word comes
+                    // next: one that ends the whole shape is taken here,
+                    // and one that opens another arm of it is left
+                    // standing for whoever opened the block.
+                    if self.lang.instead_mark.as_ref().map_or(false, |m| self.at_symbol(m)) {
+                        self.take();
+                        let mut stops = self.lang.instead_closes.clone();
+                        stops.extend(self.lang.elif_words.iter().cloned());
+                        stops.extend(self.lang.else_words.iter().cloned());
+                        self.stmts_until(&stops)?;
+                        if self.on_any(&self.lang.instead_closes) {
+                            self.take();
+                        }
+                        return Ok(());
+                    }
                     if self.lang.lone_stmt {
                         return self.stmt();
                     }
@@ -1159,13 +1176,21 @@ impl<'a> Compiler<'a> {
         self.write(&subject);
         self.skip_intro();
         self.skip_seps();
-        let which = lang.block_opens.iter().position(|o| self.at_lexeme(o));
-        let Some(i) = which else {
-            return Err(format!("Expected '{}' to open the switch, got '{}'", lang.block_opens[0], self.look().lexeme));
+        // A switch is opened by a bracket or, where the language spells
+        // one, by the mark that stands for a bracket; the words closing
+        // such a block close this one.
+        let closers = match lang.block_opens.iter().position(|o| self.at_lexeme(o)) {
+            Some(i) => {
+                self.take();
+                vec![lang.block_closes[i].clone()]
+            }
+            None if lang.instead_mark.as_ref().map_or(false, |m| self.at_symbol(m)) => {
+                self.take();
+                lang.instead_closes.clone()
+            }
+            None => return Err(format!("Expected '{}' to open the switch, got '{}'", lang.block_opens[0], self.look().lexeme)),
         };
-        self.take();
-        let close = lang.block_closes[i].clone();
-        let mut stops = vec![close.clone()];
+        let mut stops = closers.clone();
         stops.extend(lang.case_words.iter().cloned());
         stops.extend(lang.default_words.iter().cloned());
         self.enter_cycle(None);
@@ -1175,7 +1200,7 @@ impl<'a> Compiler<'a> {
         let mut fell: Option<usize> = None;
         let mut default_at: Option<usize> = None;
         self.skip_seps();
-        while !self.at_lexeme(&close) && !self.exhausted() {
+        while !self.on_any(&closers) && !self.exhausted() {
             let word = self.want_name("as case or default")?;
             let is_case = Lang::spells(&lang.case_words, &word);
             if !is_case && !Lang::spells(&lang.default_words, &word) {
@@ -1203,7 +1228,10 @@ impl<'a> Compiler<'a> {
             self.stmts_until(&stops)?;
             fell = Some(self.leap());
         }
-        self.want_lexeme(&close)?;
+        if !self.on_any(&closers) {
+            return Err(format!("Expected '{}' to close the switch, got '{}'", closers[0], self.look().lexeme));
+        }
+        self.take();
         let end = self.mark();
         if let Some(at) = fell {
             self.land(at);

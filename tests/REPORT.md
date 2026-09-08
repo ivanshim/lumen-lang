@@ -19,23 +19,22 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 47, differs 31, error 26, skipped 10 | pass 47, differs 31, error 26, skipped 10 |
 | `php/func` | 14 | pass 9, differs 3, error 2, skipped 0 | pass 9, differs 3, error 2, skipped 0 |
-| `php/lang` | 213 | pass 92, differs 50, error 66, skipped 5 | pass 92, differs 50, error 66, skipped 5 |
+| `php/lang` | 213 | pass 93, differs 51, error 64, skipped 5 | pass 93, differs 51, error 64, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 21, error 3, skipped 6 | pass 34, differs 21, error 3, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 187, differs 113, error 97, skipped 25 | pass 187, differs 113, error 97, skipped 25 |
+| all | 422 | pass 188, differs 114, error 95, skipped 25 | pass 188, differs 114, error 95, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 113 |
+| ran, printed something else | 114 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
 | Fatal error: Uncaught Error: Undefined variable: Iterator in <file> | 5 |
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
-| Unexpected token: : | 3 |
 | Fatal error: Uncaught Error: Undefined variable: current in <file> | 3 |
 | Fatal error: Uncaught Error: Cannot index non-array value in <file> | 3 |
 | Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> | 3 |
@@ -68,12 +67,13 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: INF in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: InfiniteIterator in <file> | 1 |
 | Fatal error: Uncaught Error: Unexpected token: ; in <file> | 1 |
+| Fatal error: Uncaught Error: Unexpected token: += in <file> | 1 |
 
-### Reserved words: 48 of 68 spelled
+### Reserved words: 53 of 68 spelled
 
-Spelled: `abstract`, `and`, `array`, `as`, `break`, `case`, `catch`, `class`, `const`, `continue`, `default`, `echo`, `else`, `elseif`, `eval`, `exit`, `extends`, `final`, `finally`, `for`, `foreach`, `function`, `global`, `if`, `implements`, `include`, `include_once`, `instanceof`, `interface`, `isset`, `list`, `new`, `or`, `print`, `private`, `protected`, `public`, `readonly`, `require`, `require_once`, `return`, `static`, `switch`, `throw`, `try`, `unset`, `var`, `while`
+Spelled: `abstract`, `and`, `array`, `as`, `break`, `case`, `catch`, `class`, `const`, `continue`, `default`, `echo`, `else`, `elseif`, `endfor`, `endforeach`, `endif`, `endswitch`, `endwhile`, `eval`, `exit`, `extends`, `final`, `finally`, `for`, `foreach`, `function`, `global`, `if`, `implements`, `include`, `include_once`, `instanceof`, `interface`, `isset`, `list`, `new`, `or`, `print`, `private`, `protected`, `public`, `readonly`, `require`, `require_once`, `return`, `static`, `switch`, `throw`, `try`, `unset`, `var`, `while`
 
-Not spelled: `callable`, `clone`, `declare`, `do`, `empty`, `enddeclare`, `endfor`, `endforeach`, `endif`, `endswitch`, `endwhile`, `fn`, `goto`, `insteadof`, `match`, `namespace`, `trait`, `use`, `xor`, `yield`
+Not spelled: `callable`, `clone`, `declare`, `do`, `empty`, `enddeclare`, `fn`, `goto`, `insteadof`, `match`, `namespace`, `trait`, `use`, `xor`, `yield`
 
 ### Most-called functions in the suite, and whether the definition spells them
 
@@ -330,7 +330,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/005.phpt` | pass | pass |  |
 | `php/lang/006.phpt` | pass | pass |  |
 | `php/lang/007.phpt` | differs | differs | ran, printed something else |
-| `php/lang/008.phpt` | error | error | Unexpected token: : |
+| `php/lang/008.phpt` | pass | pass |  |
 | `php/lang/009.phpt` | pass | pass |  |
 | `php/lang/010.phpt` | pass | pass |  |
 | `php/lang/011.phpt` | pass | pass |  |
@@ -350,10 +350,10 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/025.phpt` | pass | pass |  |
 | `php/lang/026.phpt` | pass | pass |  |
 | `php/lang/027.phpt` | error | error | Expected an expression |
-| `php/lang/028.phpt` | error | error | Unexpected token: : |
+| `php/lang/028.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: call_user_func in <file> |
 | `php/lang/030.phpt` | error | error | Unexpected token: & |
 | `php/lang/032.phpt` | pass | pass |  |
-| `php/lang/033.phpt` | error | error | Unexpected token: : |
+| `php/lang/033.phpt` | differs | differs | ran, printed something else |
 | `php/lang/034.phpt` | skipped | skipped | skip Can't find german locale |
 | `php/lang/035.phpt` | pass | pass |  |
 | `php/lang/036.phpt` | differs | differs | ran, printed something else |

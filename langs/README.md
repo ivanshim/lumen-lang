@@ -446,6 +446,15 @@ only. The extension labels so far, all from PHP:
   a binding, a place in an array, a property, or a class's own value
   gives up its cell, and a maker's parameters take one as any other
   routine's do.
+- `ext.stmt.block.instead` and `ext.stmt.block.instead.close`: a mark
+  that opens a block where a bracket would stand, and the words that
+  close one so opened — `if ($a): ... endif;`, `while (c): ...
+  endwhile;`, and the same for a counted loop, a walk and a switch. The
+  statements run to whichever of those words comes next: one that ends
+  the whole shape is taken with the block, and one that opens another
+  arm of it (an `else`, an `elseif`) is left standing for whoever opened
+  the block. Which closing word ends which shape is not checked, since
+  nesting settles it: an inner block meets its own word first.
 - `ext.op.cast`: a switch; a kind's word written within the grouping
   marks before a value makes the value that kind — `(int) $x`. The
   words are the ones the language already gives its kinds, under
@@ -931,6 +940,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.reference.unshared.written` | - | - | - | - | - | - | - | `Only variables should be assigned by reference` | - | - |
 | `ext.op.scope` | - | - | - | - | - | - | - | `::` | - | - |
 | `ext.op.ternary` | - | - | - | - | - | - | - | `?` `:` | - | - |
+| `ext.stmt.block.instead` | - | - | - | - | - | - | - | `:` | - | - |
+| `ext.stmt.block.instead.close` | - | - | - | - | - | - | - | `endif` `endwhile` `endfor` `endforeach` `endswitch` | - | - |
 | `ext.stmt.break.levels` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.stmt.case` | - | - | - | - | - | - | - | `case` | - | - |
 | `ext.stmt.case.mark` | - | - | - | - | - | - | - | `:` | - | - |
