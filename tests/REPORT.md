@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 77, differs 5, error 22, skipped 10 | pass 77, differs 5, error 22, skipped 10 |
 | `php/func` | 14 | pass 13, differs 0, error 1, skipped 0 | pass 13, differs 0, error 1, skipped 0 |
-| `php/lang` | 213 | pass 117, differs 43, error 48, skipped 5 | pass 118, differs 43, error 47, skipped 5 |
+| `php/lang` | 213 | pass 118, differs 42, error 48, skipped 5 | pass 119, differs 42, error 47, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
-| `php/lang/operators` | 64 | pass 34, differs 22, error 2, skipped 6 | pass 34, differs 22, error 2, skipped 6 |
+| `php/lang/operators` | 64 | pass 36, differs 20, error 2, skipped 6 | pass 36, differs 20, error 2, skipped 6 |
 | `php/lang/string` | 9 | pass 2, differs 1, error 6, skipped 0 | pass 2, differs 1, error 6, skipped 0 |
-| all | 422 | pass 247, differs 71, error 79, skipped 25 | pass 248, differs 71, error 78, skipped 25 |
+| all | 422 | pass 250, differs 68, error 79, skipped 25 | pass 251, differs 68, error 78, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 71 |
+| ran, printed something else | 68 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | Fatal error: Uncaught Error: Undefined variable: iterator in <file> | 5 |
@@ -420,7 +420,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug27443.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: defined in <file> |
 | `php/lang/bug27535.phpt` | pass | pass |  |
 | `php/lang/bug28213.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug28800.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug28800.phpt` | pass | pass |  |
 | `php/lang/bug29566.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug29893.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug29944.phpt` | differs | differs | ran, printed something else |
@@ -572,11 +572,11 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/postdec_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/postdec_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/postinc_basiclong_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/postinc_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/postinc_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/predec_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/predec_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/preinc_basiclong_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/preinc_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/preinc_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/subtract_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/subtract_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/passByReference_001.phpt` | pass | pass |  |

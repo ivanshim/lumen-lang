@@ -464,6 +464,30 @@ only. The extension labels so far, all from PHP:
   whatever happens when text is asked to be a class. It differs from
   `ext.op.name_by_value` in having no mark of its own: the value simply
   stands where the name would.
+- `ext.op.increment.text` and `ext.op.decrement.text`: what a language
+  says when a step onward or back is taken on text that spells no number
+  at all. Naming either turns the rule on for that way. A step onward
+  walks the text along its letters: the last one moves on, `z` coming
+  round to `a` and carrying into the one before it, `Z` to `A` and `9` to
+  `0` likewise, so `"abc"` becomes `"abd"` and `"xyz"` becomes `"xza"`; a
+  mark that is neither letter nor digit halts the walk where it stands,
+  and a carry off the front sets a fresh `a`, `A` or `1` there. Empty
+  text becomes `"1"`. A step back leaves such text as it stands. Either
+  way the words are said as a deprecation. Text that spells a number,
+  fully and with nothing after it, is stepped as the number it spells;
+  text that spells one and then says more is not, since that is the very
+  case the letters are for.
+- `ext.system.fault.operands`: the words a language puts before naming
+  what an arithmetic step was handed, where one of them can take no part
+  in it. Text spelling no number at all is the case that matters: a
+  language naming these words stops there rather than working with
+  nothing, and the kernel writes them followed by the kind of the left
+  side, the operation as this language writes it, and the kind of the
+  right — `Unsupported operand types: string + string`. Text that spells
+  a number and then says something more is not this: it is worth what it
+  opens with, and is only complained of. The fault is raised under the
+  class `ext.system.fault.class.kind` names, that being the kind of
+  thing it is.
 - `ext.lexical.escape.codepoint`, `.open` and `.close`: a character
   written by its number rather than by itself. After the escape mark the
   letter, then the number in sixteens between the two brackets, and the
@@ -1086,9 +1110,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.cast` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.compare` | - | - | - | - | - | - | - | `<=>` | - | - |
 | `ext.op.decrement` | - | - | - | - | - | - | - | `--` | - | - |
+| `ext.op.decrement.text` | - | - | - | - | - | - | - | `Decrement on non-numeric string has no effect and is deprecated` | - | - |
 | `ext.op.hush` | - | - | - | - | - | - | - | `@` | - | - |
 | `ext.op.identical` | - | - | - | - | - | - | - | `===` | - | - |
 | `ext.op.increment` | - | - | - | - | - | - | - | `++` | - | - |
+| `ext.op.increment.text` | - | - | - | - | - | - | - | `Increment on non-numeric string is deprecated, use str_increment() instead` | - | - |
 | `ext.op.index.absent` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.index.append` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.index.makes` | - | - | - | - | - | - | - | `true` | - | - |
@@ -1152,6 +1178,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class.division` | - | - | - | - | - | - | - | `DivisionByZeroError` | - | - |
 | `ext.system.fault.class.kind` | - | - | - | - | - | - | - | `TypeError` | - | - |
 | `ext.system.fault.class.value` | - | - | - | - | - | - | - | `ValueError` | - | - |
+| `ext.system.fault.operands` | - | - | - | - | - | - | - | `Unsupported operand types` | - | - |
 | `ext.system.globals` | - | - | - | - | - | - | - | `$GLOBALS` | - | - |
 | `ext.system.integer.bits` | - | - | - | - | - | - | - | `64` | - | - |
 | `ext.system.kind.brief` | - | - | - | - | - | - | - | `int` `-` `float` `string` `bool` `array` `null` | - | - |

@@ -392,6 +392,9 @@ impl<'a> Engine<'a> {
             _ if told.starts_with("Division by zero") => &self.lang.fault_division,
             _ if told.starts_with("Bit shift by") => &self.lang.fault_arithmetic,
             _ if told.starts_with("Cannot coerce") => &self.lang.fault_kind,
+            // Words the definition gave for an operand that can take no
+            // part are known by the message opening with them.
+            _ if self.lang.operand_fault.as_ref().map_or(false, |w| told.starts_with(w.as_str())) => &self.lang.fault_kind,
             _ => &None,
         };
         named.clone().or_else(|| self.lang.fault_class.clone())
@@ -1669,6 +1672,31 @@ impl<'a> Engine<'a> {
                     }
                 })
             }
+            // A step onward or back is adding or taking away one, save
+            // on text that spells no number: a language may step such
+            // text along its letters instead, or leave it as it stands,
+            // and says so either way.
+            Action::Step(onward) => {
+                let said = match onward {
+                    true => &self.lang.step_up_text,
+                    false => &self.lang.step_down_text,
+                };
+                if let (Value::Text(letters), Some(words)) = (a, said) {
+                    if number_spelled(letters).is_none() {
+                        let words = words.clone();
+                        self.complain(Complaint::Deprecated, &words);
+                        return Ok(match onward {
+                            true => Value::text(&letters_onward(letters)),
+                            false => a.clone(),
+                        });
+                    }
+                }
+                let plain = match onward {
+                    true => Action::Add,
+                    false => Action::Sub,
+                };
+                return self.dyadic(&plain, a, b);
+            }
             Action::Add if self.lang.concat.is_none() && (matches!(a, Value::Text(_)) || matches!(b, Value::Text(_))) => joined(),
             // Text that spells a number is worked with as that number,
             // fractions included, rather than only as a whole one. Text
@@ -1677,6 +1705,16 @@ impl<'a> Engine<'a> {
             // is worth nothing; a language with a word for a warning is
             // told of both rather than stopped.
             _ if matches!(a, Value::Text(_)) || matches!(b, Value::Text(_)) => {
+                // A language may refuse text that spells no number at
+                // all where a number is wanted, and name the kinds it
+                // was handed instead of working with nothing.
+                if let Some(words) = &self.lang.operand_fault {
+                    let unnumbered = |v: &Value| matches!(v, Value::Text(s) if number_opening(s).0.is_none());
+                    if unnumbered(a) || unnumbered(b) {
+                        let told = format!("{}: {} {} {}", words, self.kind_named(a), self.written_as(op), self.kind_named(b));
+                        return Err(told.into());
+                    }
+                }
                 let read = |v: &Value| match v {
                     Value::Text(s) => Some(number_opening(s)),
                     _ => None,
@@ -1905,6 +1943,16 @@ impl<'a> Engine<'a> {
             Some(word) => word.clone(),
             None => self.lang.sort_bindings.iter().find(|(_, k)| *k == kind).map_or("value".to_string(), |(n, _)| n.clone()),
         }
+    }
+
+    /// How an operation is written in this language. Where more than
+    /// one way of writing it stands for the same, the shortest is the
+    /// one a complaint names, and the first in order among those.
+    fn written_as(&self, op: &Action) -> String {
+        let same = |one: &Action| std::mem::discriminant(one) == std::mem::discriminant(op);
+        let mut ways: Vec<&String> = self.lang.dyadic.iter().filter(|(_, o)| same(&o.action)).map(|(lex, _)| lex).collect();
+        ways.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+        ways.first().map_or_else(|| "?".to_string(), |lex| (*lex).clone())
     }
 
     /// How a key an array does not hold is named in a complaint: text
@@ -2766,16 +2814,61 @@ fn place_within<'a>(held: &'a mut Value, at: &Value, makes: bool) -> Res<&'a mut
 
 /// The number a piece of text spells, whole or fractional, with room
 /// for a sign and for space around it. Anything else is not a number.
+/// Text stepped along its letters: the last one moves on, `z` coming
+/// round to `a` and carrying into the one before it, `Z` to `A` and `9`
+/// to `0` the same way. A letter that is neither a letter nor a digit
+/// stops the step where it stands, and a carry off the front puts a
+/// fresh `a`, `A` or `1` there, after what came round first.
+fn letters_onward(s: &str) -> String {
+    if s.is_empty() {
+        return "1".to_string();
+    }
+    let mut letters: Vec<u8> = s.as_bytes().to_vec();
+    let mut at = letters.len();
+    let mut carrying = true;
+    while carrying && at > 0 {
+        at -= 1;
+        let c = letters[at];
+        match c {
+            b'z' => letters[at] = b'a',
+            b'Z' => letters[at] = b'A',
+            b'9' => letters[at] = b'0',
+            b'a'..=b'y' | b'A'..=b'Y' | b'0'..=b'8' => {
+                letters[at] = c + 1;
+                carrying = false;
+            }
+            // Anything else is not stepped at all, and stops the step.
+            _ => return String::from_utf8_lossy(&letters).into_owned(),
+        }
+    }
+    if carrying {
+        let fresh = match letters.first() {
+            Some(b'a') => b'a',
+            Some(b'A') => b'A',
+            _ => b'1',
+        };
+        letters.insert(0, fresh);
+    }
+    String::from_utf8_lossy(&letters).into_owned()
+}
+
 fn number_spelled(s: &str) -> Option<Value> {
     let text = s.trim();
     // A number may carry a power of ten after it: 1e2, 1.5E-3.
     if let Some(at) = text.find(['e', 'E']) {
         let (front, back) = text.split_at(at);
         let power: i32 = back[1..].parse().ok()?;
-        let base = number_spelled(front)?;
-        let scale = Value::of_big(BigInt::from(10).pow(power.unsigned_abs()));
-        let how = if power >= 0 { Operation::Times } else { Operation::OverReal };
-        return arith::calculate(how, &base, &scale)?.ok();
+        // A power of ten after it makes a real of it, whole or not,
+        // just as it does where the number is written in a program.
+        let (p, q) = match number_spelled(front)? {
+            Value::Real(r) => (r.p.clone(), r.q.clone()),
+            Value::Small(n) => (BigInt::from(n), BigInt::from(1)),
+            Value::Huge(n) => ((*n).clone(), BigInt::from(1)),
+            _ => return None,
+        };
+        let scale = BigInt::from(10).pow(power.unsigned_abs());
+        let (p, q) = if power < 0 { (p, q * scale) } else { (p * scale, q) };
+        return Some(arith::shape_number(p, q, Some(15)));
     }
     let (sign, digits) = match text.strip_prefix('-') {
         Some(rest) => (-1, rest),

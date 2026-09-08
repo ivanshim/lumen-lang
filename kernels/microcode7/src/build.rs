@@ -2488,7 +2488,7 @@ impl<'a> Builder<'a> {
             true => (self.stood.take(), self.stands.replace(cell.clone())),
             false => (self.stood.replace(cell.clone()), self.stands.take()),
         };
-        let op = if by < 0 { Prim::Minus } else { Prim::Plus };
+        let op = Prim::Onward(by >= 0);
         let sign = self.look().clone();
         let done = self.write_into(target, false, Some(op), sign);
         self.stepping = was_by;

@@ -743,6 +743,15 @@
   "ext.system.fault.class": [
     "Error"
   ],
+  "ext.op.increment.text": [
+    "Increment on non-numeric string is deprecated, use str_increment() instead"
+  ],
+  "ext.op.decrement.text": [
+    "Decrement on non-numeric string has no effect and is deprecated"
+  ],
+  "ext.system.fault.operands": [
+    "Unsupported operand types"
+  ],
   "ext.system.fault.class.arithmetic": [
     "ArithmeticError"
   ],

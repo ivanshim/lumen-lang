@@ -1262,9 +1262,9 @@ impl<'a> Compiler<'a> {
             return None;
         }
         if self.lang.increments.iter().any(|s| *s == tok.lexeme) {
-            Some(Action::Add)
+            Some(Action::Step(true))
         } else if self.lang.decrements.iter().any(|s| *s == tok.lexeme) {
-            Some(Action::Sub)
+            Some(Action::Step(false))
         } else {
             None
         }

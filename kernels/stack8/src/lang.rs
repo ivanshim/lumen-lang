@@ -197,6 +197,15 @@ pub struct Lang {
     /// The class of a fault about a value standing outside the range it
     /// may take.
     pub fault_value: Option<String>,
+    /// The words a language puts before naming what an arithmetic step
+    /// was handed, where one of them can take no part in it.
+    pub operand_fault: Option<String>,
+    /// What a language says when a step onward or back is taken on text
+    /// that spells no number. Naming either turns the rule on for that
+    /// way: onward moves the last letter along, carrying; back leaves
+    /// the text as it stands.
+    pub step_up_text: Option<String>,
+    pub step_down_text: Option<String>,
     /// Whether a binding never written is a complaint rather than a stop.
     pub warns_of_unwritten: bool,
     /// Whether the language says where a complaint happened, so that
@@ -444,6 +453,7 @@ w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists |
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
 w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
+w ext.system.fault.operands | w ext.op.increment.text | w ext.op.decrement.text
 w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind | w ext.system.fault.class.value
 w ext.op.name_by_value | b ext.op.cast | w ext.stmt.unpack
 w ext.system.source.routine | w ext.system.source.class | w ext.system.source.method
@@ -1034,6 +1044,9 @@ impl Lang {
             fault_division: r.head("ext.system.fault.class.division")?,
             fault_kind: r.head("ext.system.fault.class.kind")?,
             fault_value: r.head("ext.system.fault.class.value")?,
+            operand_fault: r.head("ext.system.fault.operands")?,
+            step_up_text: r.head("ext.op.increment.text")?,
+            step_down_text: r.head("ext.op.decrement.text")?,
             warns_of_unwritten: r.head("ext.system.complaint.warning")?.is_some(),
             tells_place: tells_complaints,
             source_bindings: {

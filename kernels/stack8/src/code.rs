@@ -28,6 +28,9 @@ pub struct Cell {
 #[derive(Debug, Clone)]
 pub enum Action {
     Add,
+    /// A step onward or back (`++`, `--`), which is adding or taking
+    /// away one save where a language steps text along its letters.
+    Step(bool),
     Sub,
     Mul,
     Div,
