@@ -100,6 +100,9 @@ pub struct Machine<'a> {
     /// How many pieces now being found asked to be quiet. Counted, not
     /// flagged, because a quiet piece may hold another.
     quieted: usize,
+    /// The same for a piece the program silenced outright: nothing at
+    /// all is said of it, not even a word about how it is written.
+    silenced: usize,
     /// What the run has written out while it was being kept rather than
     /// let go, innermost last. A keeping within a keeping writes into
     /// the one around it when it is given up.
@@ -181,6 +184,7 @@ impl<'a> Machine<'a> {
             started: None,
             written_in: String::new(),
             quieted: 0,
+            silenced: 0,
             holding: RefCell::new(Vec::new()),
             afterward: RefCell::new(Vec::new()),
             things: RefCell::new(Vec::new()),
@@ -587,7 +591,18 @@ impl<'a> Machine<'a> {
     }
 
     fn grumble(&self, kind: &str, about: &str) {
-        if self.quieted > 0 {
+        if self.quieted > 0 || self.silenced > 0 {
+            return;
+        }
+        self.said_regardless(kind, about);
+    }
+
+    /// The same, said even where the run keeps quiet about what is not
+    /// there: a word about how a program is written is no word about
+    /// what the run found, and only a piece silenced outright holds it
+    /// back.
+    fn said_regardless(&self, kind: &str, about: &str) {
+        if self.silenced > 0 {
             return;
         }
         // A program may put a routine in the way of every complaint. One
@@ -1162,6 +1177,12 @@ impl<'a> Machine<'a> {
                 self.quieted -= 1;
                 return found;
             }
+            Form::Silenced(inner) => {
+                self.silenced += 1;
+                let found = self.value_of(inner, frame);
+                self.silenced -= 1;
+                return found;
+            }
             // The property becomes a cell the thing and the name taking
             // it both stand for, so a write through either is seen by
             // both.
@@ -1586,7 +1607,7 @@ impl<'a> Machine<'a> {
                     let (f, i) = self.locate(slot, frame)?;
                     let mut values = values;
                     let value = values.pop().unwrap();
-                    let key = values.pop().map(|k| self.as_key(&k));
+                    let key = values.pop().map(|k| self.as_key_spoken(&k));
                     // Worked out before the place is reached, since
                     // reaching it holds the frame the name lives in.
                     let letter = self.letter_places.then(|| value.render(self.wording()));
@@ -2877,6 +2898,16 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// The same, with a word said where a place is named by nothing at
+    /// all and the language asks for that to be written out. A place
+    /// being taken away is named without a word, as the reference has it.
+    fn as_key_spoken(&self, at: &Value) -> Value {
+        if let (Value::Nil | Value::Unset, Some(said)) = (at, self.table.single("ext.op.index.nothing")) {
+            self.said_regardless("deprecated", &said.to_string());
+        }
+        self.as_key(at)
+    }
+
     fn element(&self, target: &Value, at: &Value) -> Result<Value, String> {
         // A place holding a cell that names share reads as whatever the
         // cell holds: the sharing lies between the names, not in the
@@ -2911,7 +2942,7 @@ impl<'a> Machine<'a> {
             return Ok(Value::Nil);
         }
         if let Value::Dict(entries) = target {
-            let at = &self.as_key(at);
+            let at = &self.as_key_spoken(at);
             let found = entries.iter().find(|(k, _)| k.equals(at));
             return match found {
                 Some((_, v)) => Ok(v.clone()),

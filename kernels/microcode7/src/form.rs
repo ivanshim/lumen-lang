@@ -319,6 +319,11 @@ pub enum Form {
     /// quiet: how a language that lets a program silence one piece of
     /// itself says which piece.
     Muted(Box<Form>),
+    /// The same, but the run says nothing at all of the piece within,
+    /// not even a word about how it is written: how a language lets a
+    /// program silence a piece of itself outright, where Muted only
+    /// keeps quiet about what is not there.
+    Silenced(Box<Form>),
     /// The binding whose name this value spells, found while the run
     /// goes: how a language reads a name it works out.
     Called(Box<Form>),

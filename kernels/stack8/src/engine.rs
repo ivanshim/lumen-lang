@@ -48,6 +48,9 @@ pub struct Engine<'a> {
     /// Counted rather than flagged, since one hushed piece may hold
     /// another.
     hushed: std::cell::Cell<usize>,
+    /// The same for a piece the program silenced outright: nothing at
+    /// all is said of it, not even what is said of how it is written.
+    muted: std::cell::Cell<usize>,
     /// What the run has written out while it was being kept rather than
     /// let go, innermost last. A keeping within a keeping writes into
     /// the one around it when it is given up.
@@ -141,6 +144,7 @@ impl<'a> Engine<'a> {
             limit: std::cell::Cell::new(0),
             began: std::cell::Cell::new(None),
             hushed: std::cell::Cell::new(0),
+            muted: std::cell::Cell::new(0),
             holding: RefCell::new(Vec::new()),
             when_done: RefCell::new(Vec::new()),
             things_made: RefCell::new(Vec::new()),
@@ -352,7 +356,18 @@ impl<'a> Engine<'a> {
     }
 
     fn complain(&self, kind: Complaint, message: &str) {
-        if self.hushed.get() > 0 {
+        if self.hushed.get() > 0 || self.muted.get() > 0 {
+            return;
+        }
+        self.said_anyway(kind, message);
+    }
+
+    /// The same, said even where the run is keeping quiet about what is
+    /// not there: a word about how a program is written is not a word
+    /// about what the run found, and only a piece silenced outright
+    /// keeps it back.
+    fn said_anyway(&self, kind: Complaint, message: &str) {
+        if self.muted.get() > 0 {
             return;
         }
         // A program may put a routine in the way of every complaint. A
@@ -1127,6 +1142,13 @@ impl<'a> Engine<'a> {
                     self.data.push(Value::Flag(empty));
                 }
                 Instr::Line(row) => self.line = *row,
+                Instr::Mute(quiet) => {
+                    let deep = self.muted.get();
+                    self.muted.set(match quiet {
+                        true => deep + 1,
+                        false => deep.saturating_sub(1),
+                    });
+                }
                 Instr::Hush(quiet) => {
                     let deep = self.hushed.get();
                     self.hushed.set(match quiet {
@@ -2276,6 +2298,17 @@ impl<'a> Engine<'a> {
 
     /// A key as this language takes one.
     fn key(&self, at: &Value) -> Value {
+        // Naming a place by nothing at all names the place the empty
+        // text names, which a language may ask to be written out.
+        if let (Value::Null | Value::Blank | Value::Gap, Some(said)) = (at, &self.lang.nothing_index) {
+            self.said_anyway(Complaint::Deprecated, &said.clone());
+        }
+        self.key_quietly(at)
+    }
+
+    /// The same, with nothing said about it: how a place is named where
+    /// it is being taken away rather than read or written.
+    fn key_quietly(&self, at: &Value) -> Value {
         match self.lang.plain_keys {
             true => key_taken(at.clone()),
             false => at.clone(),
@@ -2856,7 +2889,7 @@ impl<'a> Engine<'a> {
                 // Taking a place out of an array: the array is given back
                 // without it.
                 arity(2)?;
-                let at = self.key(&args.pop().expect("the place"));
+                let at = self.key_quietly(&args.pop().expect("the place"));
                 match args.pop().expect("the array") {
                     Value::Array(items) => {
                         let i = as_index(&at)?;

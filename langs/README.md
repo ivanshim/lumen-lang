@@ -348,6 +348,14 @@ only. The extension labels so far, all from PHP:
   what it writes to one of them the routine sees afterwards. Names it
   makes for itself go on the end and are gone once it is done. At the
   outermost level it has the globals and nothing else, as before.
+- `ext.op.index.nothing`: the words for naming a place by nothing at
+  all, which a language may take as naming the place the empty text
+  names. They are said where such a place is read, written or asked
+  about, and not where one is taken away, which is what the reference
+  does. A piece the program silenced outright (`ext.op.hush`) keeps them
+  back; a piece merely kept quiet about what is not there does not, since
+  a word about how a program is written is no word about what the run
+  found.
 - `ext.op.index.scalar`: the words for using a value with no places at
   all as though it had them, PHP's `Cannot use a scalar value as an
   array`. Without them the kernel says so in its own words.
@@ -1188,6 +1196,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.index.absent` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.index.append` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.index.makes` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.op.index.nothing` | - | - | - | - | - | - | - | `Using null as an array offset is deprecated, use an empty string instead` | - | - |
 | `ext.op.index.plain_keys` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.index.scalar` | - | - | - | - | - | - | - | `Cannot use a scalar value as an array` | - | - |
 | `ext.op.index.text` | - | - | - | - | - | - | - | `true` | - | - |

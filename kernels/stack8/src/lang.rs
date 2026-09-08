@@ -421,6 +421,9 @@ pub struct Lang {
     /// The words for using a value that is neither an array nor
     /// anything with places as though it had them.
     pub scalar_index: Option<String>,
+    /// The words for naming a place by nothing at all, which a language
+    /// may take as naming the place named by the empty text.
+    pub nothing_index: Option<String>,
     /// What the language calls the parts of a web request: the name for
     /// each group the host gathers, and one for all of them together.
     pub request_bindings: Vec<(String, String)>,
@@ -486,7 +489,7 @@ w ext.op.member | w ext.op.scope | w ext.op.instanceof | w ext.stmt.class.parent
 w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.try | w ext.stmt.catch
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
-w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | w ext.system.request.settings | b ext.op.index.absent | w ext.op.index.scalar | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
+w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | w ext.system.request.settings | b ext.op.index.absent | w ext.op.index.scalar | w ext.op.index.nothing | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
 w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right
 w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at
@@ -1225,6 +1228,7 @@ impl Lang {
             reference_mark: r.head("ext.op.reference")?,
             absent_index: r.flag("ext.op.index.absent")?,
             scalar_index: r.head("ext.op.index.scalar")?,
+            nothing_index: r.head("ext.op.index.nothing")?,
             request_bindings: {
                 let groups = [
                     ("GET", "ext.system.request.query"), ("POST", "ext.system.request.form"),

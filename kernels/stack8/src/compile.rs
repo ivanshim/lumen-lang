@@ -2308,10 +2308,14 @@ impl<'a> Compiler<'a> {
         // A target kept quiet is a store kept quiet: the marks come off
         // the load and go round the store instead.
         let hushed = matches!(target.first(), Some(Instr::Hush(true))) && matches!(target.last(), Some(Instr::Hush(false)));
+        let silenced = matches!(target.first(), Some(Instr::Mute(true))) && matches!(target.last(), Some(Instr::Mute(false)));
         let mut from = from;
-        if hushed {
+        if hushed || silenced {
             target = target[1..target.len() - 1].to_vec();
-            self.put(Instr::Hush(true));
+            self.put(match silenced {
+                true => Instr::Mute(true),
+                false => Instr::Hush(true),
+            });
             from += 1;
         }
         // Where the target read its way into a place within a place,
@@ -2711,8 +2715,11 @@ impl<'a> Compiler<'a> {
             }
             _ => Err(format!("Invalid assignment target before '{}'", assign)),
         };
-        if hushed {
-            self.put(Instr::Hush(false));
+        if hushed || silenced {
+            self.put(match silenced {
+                true => Instr::Mute(false),
+                false => Instr::Hush(false),
+            });
         }
         done
     }
@@ -2967,9 +2974,9 @@ impl<'a> Compiler<'a> {
                 // itself is kept quiet; its value stands as it would.
                 let tier = lang.precedence.get(&tok.lexeme).copied().unwrap_or(0);
                 self.take();
-                self.put(Instr::Hush(true));
+                self.put(Instr::Mute(true));
                 self.expr(tier)?;
-                self.put(Instr::Hush(false));
+                self.put(Instr::Mute(false));
                 return Ok(());
             }
             if tok.shape == Shape::Sign && Lang::spells(&lang.plus_words, &tok.lexeme) {

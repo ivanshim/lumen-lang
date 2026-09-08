@@ -361,6 +361,11 @@ pub enum Instr {
     BondPlace(Cell, usize),
     /// Leave this binding as though nothing were ever written to it.
     Forget(Cell),
+    /// From here until the mark that ends it, the run says nothing at
+    /// all about itself: how a language lets a program silence a piece
+    /// of itself outright, where Hush only keeps quiet about what is
+    /// not there.
+    Mute(bool),
     /// Make this global stand ready: where nothing was ever written to
     /// it, nothing is written to it now, so that a name bound to it is
     /// a name written to and not one never written.

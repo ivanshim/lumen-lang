@@ -805,6 +805,9 @@
   "ext.op.index.scalar": [
     "Cannot use a scalar value as an array"
   ],
+  "ext.op.index.nothing": [
+    "Using null as an array offset is deprecated, use an empty string instead"
+  ],
   "ext.system.fault.class.arithmetic": [
     "ArithmeticError"
   ],

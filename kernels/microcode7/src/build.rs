@@ -2208,6 +2208,10 @@ impl<'a> Builder<'a> {
     fn write_into(&mut self, expr: Form, gives_back: bool, compound: Option<Prim>, assign: Token) -> Res<Form> {
         // A target kept quiet is a write kept quiet: the muting comes
         // off the reading and goes round the writing instead.
+        if let Form::Silenced(inner) = expr {
+            let written = self.write_into(*inner, gives_back, compound, assign)?;
+            return Ok(Form::Silenced(Box::new(written)));
+        }
         if let Form::Muted(inner) = expr {
             let written = self.write_into(*inner, gives_back, compound, assign)?;
             return Ok(Form::Muted(Box::new(written)));
@@ -2778,7 +2782,7 @@ impl<'a> Builder<'a> {
                 let tier = table.precedence.get(&t.lexeme).copied().unwrap_or(0);
                 self.advance();
                 let quiet = self.expr(tier)?;
-                return Ok(Form::Muted(Box::new(quiet)));
+                return Ok(Form::Silenced(Box::new(quiet)));
             }
             if t.shape == Shape::Sign && table.spells("ext.op.plus", &t.lexeme) {
                 // A plus sign leaves its operand as it is, bound like a negation.
