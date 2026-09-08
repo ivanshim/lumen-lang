@@ -110,6 +110,12 @@ pub enum Action {
     /// own word for that kind of remark, and go on: how a definition
     /// that has something to say about a shape it still allows says it.
     Remark(crate::lang::Complaint, Rc<str>),
+    /// A cell for the value standing here, whatever it is: the cell
+    /// itself where it is one already, and otherwise these words and a
+    /// fresh cell holding it. A routine written to give back a cell
+    /// gives one back however it ends, and only the run can say whether
+    /// what it named had one of its own.
+    HeldAnyway(crate::lang::Complaint, Rc<str>),
     /// What an array holds at that place, answering nothing where it
     /// holds nothing there, or where what is asked is not an array at
     /// all, and saying nothing about it either way: how a language asks
@@ -146,6 +152,9 @@ pub enum Action {
     SendNamed(usize),
     /// A class's own value, named by the text above the class.
     ReachNamed,
+    /// Call the method of the class, named by the text above the
+    /// arguments. The count is of the arguments alone.
+    SummonNamed(usize),
     /// Write a class's own value: the class, the name, then the value.
     SowNamed,
     /// Call that method of the object below the arguments.

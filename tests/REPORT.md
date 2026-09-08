@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 81, differs 5, error 18, skipped 10 | pass 81, differs 5, error 18, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 133, differs 41, error 34, skipped 5 | pass 133, differs 41, error 34, skipped 5 |
+| `php/lang` | 213 | pass 140, differs 36, error 32, skipped 5 | pass 140, differs 36, error 32, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 46, differs 10, error 2, skipped 6 | pass 46, differs 10, error 2, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 286, differs 57, error 54, skipped 25 | pass 286, differs 57, error 54, skipped 25 |
+| all | 422 | pass 293, differs 52, error 52, skipped 25 | pass 293, differs 52, error 52, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 57 |
+| ran, printed something else | 52 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | Fatal error: Uncaught Error: Undefined variable: iterator in <file> | 5 |
@@ -58,7 +58,6 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: mktime in <file> | 1 |
 | Fatal error: Uncaught Error: Cannot call method 'GetMyName' on a value that is not an object in <file> | 1 |
 | skip Can't find german locale | 1 |
-| Fatal error: Uncaught Error: Call to undefined method A::$methodname() in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_declared_classes in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: foo in <file> | 1 |
@@ -68,6 +67,7 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Cannot call method 'get_name' on a value that is not an object in <file> | 1 |
 | skip setlocale() failed | 1 |
 | skip only for Windows | 1 |
+| Fatal error: Uncaught Error: Undefined variable: include in <file> | 1 |
 
 ### Reserved words: 55 of 68 spelled
 
@@ -364,7 +364,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/041.phpt` | pass | pass |  |
 | `php/lang/042.phpt` | pass | pass |  |
 | `php/lang/043.phpt` | pass | pass |  |
-| `php/lang/044.phpt` | error | error | Fatal error: Uncaught Error: Call to undefined method A::$methodname() in <file> |
+| `php/lang/044.phpt` | pass | pass |  |
 | `php/lang/045.phpt` | error | error | timeout |
 | `php/lang/array_shortcut_001.phpt` | pass | pass |  |
 | `php/lang/array_shortcut_002.phpt` | pass | pass |  |
@@ -579,7 +579,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/passByReference_004.phpt` | pass | pass |  |
 | `php/lang/passByReference_005.phpt` | pass | pass |  |
 | `php/lang/passByReference_006.phpt` | pass | pass |  |
-| `php/lang/passByReference_007.phpt` | differs | differs | ran, printed something else |
+| `php/lang/passByReference_007.phpt` | pass | pass |  |
 | `php/lang/passByReference_008.phpt` | pass | pass |  |
 | `php/lang/passByReference_009.phpt` | pass | pass |  |
 | `php/lang/passByReference_010.phpt` | differs | differs | ran, printed something else |
@@ -587,11 +587,11 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/returnByReference.001.phpt` | pass | pass |  |
 | `php/lang/returnByReference.002.phpt` | pass | pass |  |
 | `php/lang/returnByReference.003.phpt` | pass | pass |  |
-| `php/lang/returnByReference.004.phpt` | differs | differs | ran, printed something else |
-| `php/lang/returnByReference.005.phpt` | differs | differs | ran, printed something else |
-| `php/lang/returnByReference.006.phpt` | differs | differs | ran, printed something else |
-| `php/lang/returnByReference.007.phpt` | error | error | Fatal error: Uncaught Error: Call to undefined method C::$functionToCall() in <file> |
-| `php/lang/returnByReference.008.phpt` | differs | differs | ran, printed something else |
+| `php/lang/returnByReference.004.phpt` | pass | pass |  |
+| `php/lang/returnByReference.005.phpt` | pass | pass |  |
+| `php/lang/returnByReference.006.phpt` | pass | pass |  |
+| `php/lang/returnByReference.007.phpt` | pass | pass |  |
+| `php/lang/returnByReference.008.phpt` | pass | pass |  |
 | `php/lang/returnByReference.009.phpt` | pass | pass |  |
 | `php/lang/short_tags.001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/short_tags.002.phpt` | pass | pass |  |

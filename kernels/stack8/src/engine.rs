@@ -1414,6 +1414,12 @@ impl<'a> Engine<'a> {
                 let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
                 return self.perform(&Action::Reach(name), 1);
             }
+            Action::SummonNamed(count) => {
+                let spelled = self.drop_top()?;
+                let sp = self.wording();
+                let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
+                return self.perform(&Action::Summon(name), count + 2);
+            }
             Action::SowNamed => {
                 let value = self.drop_top()?;
                 let spelled = self.drop_top()?;
@@ -1520,6 +1526,16 @@ impl<'a> Engine<'a> {
                 self.complain(*kind, said);
                 Value::Null
             }
+            // Only the run can say whether what a routine named had a
+            // cell of its own; where it had none, one is made for it, so
+            // that a routine giving back a cell always gives one.
+            Action::HeldAnyway(kind, said) => match self.drop_top()? {
+                held @ Value::Bond(_) => held,
+                held => {
+                    self.complain(*kind, said);
+                    Value::Bond(Rc::new(RefCell::new(held)))
+                }
+            },
             Action::Standing => Value::Flag(standing(&self.drop_top()?)),
             Action::Extent => match self.drop_top()? {
                 Value::Array(items) => Value::Small(items.len() as i64),

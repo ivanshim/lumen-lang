@@ -308,6 +308,12 @@ pub enum Form {
     /// own word for that kind of remark. The line is the one the shape
     /// was written on, so that a call along the way does not move it.
     Remark(&'static str, Rc<str>, u32),
+    /// A cell for what the form within comes to, whatever that is: the
+    /// cell itself where it is one already, and otherwise these words,
+    /// on the line given, and a fresh cell holding the value. A routine
+    /// written to give back a cell gives one however it ends, and only
+    /// the run can say whether what it named had one of its own.
+    HeldEither(&'static str, Rc<str>, u32, Box<Form>),
 }
 
 /// One catch: the classes it takes, where it holds what it caught, and

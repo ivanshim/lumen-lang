@@ -962,7 +962,7 @@ impl<'a> Builder<'a> {
                 let value = if self.on_stmt_end() || self.exhausted() || self.on_any("block.close") {
                     Vec::new()
                 } else if by_cell {
-                    vec![self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.given").to_vec())?]
+                    vec![self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.given").to_vec(), true)?]
                 } else {
                     vec![self.expr(0)?]
                 };
@@ -2088,13 +2088,13 @@ impl<'a> Builder<'a> {
         let mut shared_value: Option<Form> = None;
         if tied_to_a_cell && matches!(expr, Form::Apply(Callee::Prim(Prim::At, _), _)) {
             self.advance();
-            shared_value = Some(self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.written").to_vec())?);
+            shared_value = Some(self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.written").to_vec(), false)?);
         }
         if self.table.single("ext.op.reference").map_or(false, |m| self.sign(m)) && plain {
             if let Form::Read(slot) = &expr {
                 let held = slot.ident.to_string();
                 self.advance();
-                let shared = self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.written").to_vec())?;
+                let shared = self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.written").to_vec(), false)?;
                 let tied = self.address_to_write(&held);
                 let tie = Form::Tie(tied, Box::new(shared));
                 return Ok(match gives_back {
@@ -2818,8 +2818,13 @@ impl<'a> Builder<'a> {
         // but written after the mark reaching into a class it names
         // that class's own value outright, mark and all. Only the mark
         // saying a value spells a name serves there.
+        // Unless a call follows: `C::$m()` calls the method whose name
+        // the binding holds, where `C::$m` is that class's own value of
+        // the name.
         let here = self.look();
-        member && here.shape == Shape::Bare && self.table.letter("identifier.variable_prefix").map_or(false, |mark| here.lexeme.starts_with(mark))
+        let a_binding = here.shape == Shape::Bare && self.table.letter("identifier.variable_prefix").map_or(false, |mark| here.lexeme.starts_with(mark));
+        let a_call = self.table.single("syntax.call.open").map_or(false, |open| { let next = self.glance(1); next.shape == Shape::Sign && next.lexeme == open });
+        a_binding && (member || a_call)
     }
 
     /// The value spelling a member's name: a piece within the block
@@ -2958,7 +2963,7 @@ impl<'a> Builder<'a> {
     /// What stands after the mark that shares a cell: a name, a place in
     /// an array, or a property. Whichever it is, a cell is made of it
     /// where it is not one already, so a name may be tied to it.
-    fn a_shared_cell(&mut self, unshared: &[String]) -> Res<Form> {
+    fn a_shared_cell(&mut self, unshared: &[String], as_it_runs: bool) -> Res<Form> {
         // Where the asking stands, so that words said about it name that
         // line and not one a call along the way left behind.
         let row = (self.look().row as u32).saturating_sub(self.before);
@@ -2994,15 +2999,31 @@ impl<'a> Builder<'a> {
             // does rather than stopping. Where a language has words for
             // that, they are said once the value is worked out.
             found => {
+                // A method is written as any other routine is, so one
+                // written to give back a cell gives one however it is
+                // called: through a thing, or through a class. Which
+                // argument names it depends on which of the two.
+                let named_at = |op: &Prim| match op {
+                    Prim::Ask => Some(1),
+                    Prim::Bid => Some(2),
+                    _ => None,
+                };
                 let shares = match &found {
-                    Form::Apply(Callee::Code(target), _) => match target.as_ref() {
-                        Form::Read(slot) => self.gives_back.contains(slot.ident.as_ref()),
+                    Form::Apply(Callee::Code(target), _) => matches!(target.as_ref(), Form::Read(slot) if self.gives_back.contains(slot.ident.as_ref())),
+                    Form::Apply(Callee::Prim(op, _), given) => match named_at(op).and_then(|at| given.get(at)) {
+                        Some(Form::Const(Value::Text(called))) => self.gives_back.contains(called.as_ref()),
                         _ => false,
                     },
                     _ => false,
                 };
-                match (unshared.first(), shares) {
-                    (Some(said), false) => {
+                // Whether a name may be fastened to what a call answers
+                // with is settled by how the routine is written, so it
+                // is known here. Whether a routine giving back a cell
+                // was given one to give is settled by the run, the value
+                // itself saying whether it is a cell.
+                match (unshared.first(), as_it_runs, shares) {
+                    (Some(said), true, _) => Form::HeldEither("notice", Rc::from(said.as_str()), row, Box::new(found)),
+                    (Some(said), false, false) => {
                         self.gensyms += 1;
                         let held = format!("#shared{}", self.gensyms);
                         let kept = self.write(&held, found);
@@ -3176,10 +3197,21 @@ impl<'a> Builder<'a> {
                 let spells = self.member_value_name(!owning)?;
                 let calling = table.single("syntax.call.open").map_or(false, |o| self.sign(o));
                 if owning {
-                    if calling {
-                        return Err("A method of a class named by a value is not reached this way".to_string());
+                    if !calling {
+                        node = prim_call(Prim::Within, vec![node, spells]);
+                        continue;
                     }
-                    node = prim_call(Prim::Within, vec![node, spells]);
+                    // A method is given the thing it is for, so what the
+                    // class was written as comes after it, and the name
+                    // the value spells after that.
+                    let this = match (&self.within, table.single("ext.stmt.class.this")) {
+                        (Some(_), Some(this)) => self.read(&this.to_string()),
+                        _ => constant(Value::Nil),
+                    };
+                    let mut given = vec![this, node, spells];
+                    self.advance();
+                    given.extend(self.arguments_of("the method", "syntax.call.close", "syntax.call.separator")?);
+                    node = prim_call(Prim::Bid, given);
                     continue;
                 }
                 let mut given = vec![node, spells];
@@ -3313,7 +3345,7 @@ impl<'a> Builder<'a> {
             // so where it has words for it.
             if shared.get(items.len()).copied().unwrap_or(false) {
                 let words = self.table.strings("ext.op.reference.unshared.handed").to_vec();
-                items.push(self.a_shared_cell(&words)?);
+                items.push(self.a_shared_cell(&words, false)?);
             } else {
                 items.push(self.expr(0)?);
             }

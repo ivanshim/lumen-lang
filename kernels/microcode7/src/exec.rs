@@ -923,6 +923,17 @@ impl<'a> Machine<'a> {
             // Words a definition holds ready for a shape it still allows.
             // The line is set to where the shape stands, so that a call
             // worked out on the way does not leave its own line behind.
+            Form::HeldEither(kind, said, row, inner) => {
+                let worth = self.value_of(inner, frame)?;
+                if let Value::Shared(_) = worth {
+                    return Ok(worth);
+                }
+                if *row > 0 {
+                    self.row = *row;
+                }
+                self.grumble(kind, said);
+                return Ok(Value::Shared(Rc::new(RefCell::new(worth))));
+            }
             Form::Remark(kind, said, row) => {
                 if *row > 0 {
                     self.row = *row;

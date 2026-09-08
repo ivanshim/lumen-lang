@@ -1606,7 +1606,7 @@ impl<'a> Compiler<'a> {
         if self.on_sep() || self.exhausted() || self.on_any(&self.lang.block_closes) {
             self.constant(Value::Null);
         } else if by_cell {
-            self.a_cell(&self.lang.unshared_given.clone())?;
+            self.a_cell(&self.lang.unshared_given.clone(), true)?;
         } else {
             self.expr(0)?;
         }
@@ -2215,7 +2215,7 @@ impl<'a> Compiler<'a> {
             {
                 let name = slot.ident.to_string();
                 self.take();
-                self.a_cell(&self.lang.unshared_written.clone())?;
+                self.a_cell(&self.lang.unshared_written.clone(), false)?;
                 let held = self.cell_to_write(&name);
                 self.put(Instr::Fasten(held));
                 if keep.is_some() {
@@ -2568,7 +2568,7 @@ impl<'a> Compiler<'a> {
                     self.put(w);
                 }
                 self.take();
-                self.a_cell(&self.lang.unshared_written.clone())?;
+                self.a_cell(&self.lang.unshared_written.clone(), false)?;
                 self.read_to_rewrite(&name);
                 self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
                 self.rewritten(&name);
@@ -3158,7 +3158,12 @@ impl<'a> Compiler<'a> {
         // names that class's own value outright, mark and all. Only the
         // mark that says a value spells a name works there.
         let here = self.look();
-        member && here.shape == Shape::Instr && lang.sigil.map_or(false, |mark| here.lexeme.starts_with(mark))
+        let a_binding = here.shape == Shape::Instr && lang.sigil.map_or(false, |mark| here.lexeme.starts_with(mark));
+        // Unless a call follows it: `C::$m()` calls the method whose
+        // name the binding holds, where `C::$m` is the class's own value
+        // of that name.
+        let calling = lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).is_lexeme(Shape::Sign, &c.open));
+        a_binding && (member || calling)
     }
 
     /// What follows the mark that says a value spells a name: a piece
@@ -3203,7 +3208,7 @@ impl<'a> Compiler<'a> {
     /// an array, or a property. Whichever it is, a cell is made of it
     /// where it is not one already and left on the stack, so a name may
     /// be fastened to it.
-    fn a_cell(&mut self, unshared: &[String]) -> Res<()> {
+    fn a_cell(&mut self, unshared: &[String], at_run: bool) -> Res<()> {
         let from = self.mark();
         // Where the asking stands, so that words said about it name that
         // line and not whatever line a call along the way ran last.
@@ -3273,16 +3278,31 @@ impl<'a> Compiler<'a> {
                 // has words for the rest, they are said here, once the
                 // value has been worked out.
                 let shares = match read.last() {
-                    Some(Instr::Act(Action::Invoke(name), _)) => self.gives_back.contains(name.as_ref()),
+                    // A method is declared as any other routine is, so
+                    // one written to give back a cell gives one however
+                    // it is called: through a thing, or through a class.
+                    Some(Instr::Act(Action::Invoke(name) | Action::Send(name) | Action::Summon(name), _)) => self.gives_back.contains(name.as_ref()),
                     _ => false,
                 };
-                if let (Some(said), false) = (unshared.first(), shares) {
+                // Whether a name may be fastened to what a call answers
+                // with is settled by how the routine is written, so it
+                // is known here. Whether a routine giving back a cell
+                // was given one to give is settled by the run: the value
+                // itself says, being a cell or not.
+                let says = at_run || !shares;
+                if let (Some(said), true) = (unshared.first(), says) {
                     if self.lang.tells_place && row > 0 {
                         self.put(Instr::Line(row));
                         self.piece().line = row;
                     }
-                    self.act(Action::Remark(Complaint::Notice, Rc::from(said.as_str())), 0);
-                    self.put_away();
+                    let words = Rc::from(said.as_str());
+                    match at_run {
+                        true => self.act(Action::HeldAnyway(Complaint::Notice, words), 1),
+                        false => {
+                            self.act(Action::Remark(Complaint::Notice, words), 0);
+                            self.put_away();
+                        }
+                    }
                 }
             }
         }
@@ -3412,15 +3432,40 @@ impl<'a> Compiler<'a> {
             // member is the one that value spells, worked out while the
             // program runs.
             if lang.members_by_value && self.member_named_by_value(member) {
+                let names_at = self.mark();
                 self.member_value_name(member)?;
                 let call = lang.calling.clone().filter(|c| self.at_symbol(&c.open));
                 if !member {
-                    // A class's own value, named by what the value
-                    // spells. A call of one is not reached this way.
-                    if call.is_some() {
-                        return Err("A method of a class named by a value is not reached this way".to_string());
+                    let Some(call) = call else {
+                        // A class's own value, named by what the value
+                        // spells.
+                        self.act(Action::ReachNamed, 2);
+                        continue;
+                    };
+                    // A method of the class, named by what the value
+                    // spells. The name is worked out first and kept
+                    // aside; then the object a method is given, what
+                    // names the class, and the arguments.
+                    let both: Vec<Instr> = self.piece().instrs.drain(from..).collect();
+                    let (naming_class, naming_method) = both.split_at(names_at - from);
+                    let at = self.mark();
+                    for w in relocated(naming_method.to_vec(), at as i64 - names_at as i64) {
+                        self.put(w);
                     }
-                    self.act(Action::ReachNamed, 2);
+                    let held = self.gensym("called");
+                    self.write(&held);
+                    match (&lang.this_word, self.within.is_some()) {
+                        (Some(this), true) => self.read(&this.clone()),
+                        _ => self.constant(Value::Null),
+                    }
+                    let at = self.mark();
+                    for w in relocated(naming_class.to_vec(), at as i64 - from as i64) {
+                        self.put(w);
+                    }
+                    self.take();
+                    let argc = self.arguments_of("the method", &call)?;
+                    self.read(&held);
+                    self.act(Action::SummonNamed(argc), argc + 3);
                     continue;
                 }
                 match call {
@@ -3580,7 +3625,7 @@ impl<'a> Compiler<'a> {
             // property. What has none is handed its value, and the
             // language says so where it has words for it.
             if shared.get(count).copied().unwrap_or(false) {
-                self.a_cell(&self.lang.unshared_handed.clone())?;
+                self.a_cell(&self.lang.unshared_handed.clone(), false)?;
             } else {
                 self.expr(0)?;
             }
