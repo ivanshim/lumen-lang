@@ -405,10 +405,16 @@ function array_values($array) {
     return $out;
 }
 
-function array_merge($first, $second) {
+// Arrays laid one after another. A key that is text keeps its place and
+// the last value written under it stands; a key that is a number is
+// counted afresh, so nothing is ever written over by its number.
+function array_merge() {
     $out = array();
-    foreach ($first as $v) { $out[] = $v; }
-    foreach ($second as $v) { $out[] = $v; }
+    foreach (func_get_args() as $array) {
+        foreach ($array as $k => $v) {
+            if (is_string($k)) { $out[$k] = $v; } else { $out[] = $v; }
+        }
+    }
     return $out;
 }
 

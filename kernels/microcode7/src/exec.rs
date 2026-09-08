@@ -2484,7 +2484,7 @@ impl<'a> Machine<'a> {
         // A program holding no names of its own runs in the frame around
         // it, and inside the class around it: an arm of a branch is such
         // a one, and the class it stands in is the class it stands in.
-        let mine = !program.frameless;
+        let mut mine = !program.frameless;
         if mine {
             self.frames_named.push(program.clone());
             self.inside.push(program.within.clone());
@@ -2494,7 +2494,7 @@ impl<'a> Machine<'a> {
         // A program holding no names of its own is a piece of the one
         // around it — an arm of a branch — and no call of anybody's, so
         // it is not written down as one.
-        let noted = !program.frameless;
+        let mut noted = !program.frameless;
         if noted {
             let from_library = self.calls.last().map_or(false, |c| c.of_library && !self.stands_for_the_run(&c.named));
             self.calls.push(Called {
@@ -2536,7 +2536,15 @@ impl<'a> Machine<'a> {
                     // take the place of what is running, however it was
                     // reached.
                     let stands_alone = !program.frameless;
-                    if mine && stands_alone {
+                    // A piece with no names of its own may step into a
+                    // program that has them: the run stands inside that
+                    // one from here, so its names and its call are put
+                    // down now rather than taking the place of any.
+                    if stands_alone && !mine {
+                        self.frames_named.push(program.clone());
+                        self.inside.push(program.within.clone());
+                        mine = true;
+                    } else if stands_alone {
                         if let Some(top) = self.frames_named.last_mut() {
                             *top = program.clone();
                         }
@@ -2544,7 +2552,19 @@ impl<'a> Machine<'a> {
                             *here = program.within.clone();
                         }
                     }
-                    if noted && stands_alone {
+                    if stands_alone && !noted {
+                        let from_library = self.calls.last().map_or(false, |c| c.of_library && !self.stands_for_the_run(&c.named));
+                        self.calls.push(Called {
+                            named: Rc::from(program.ident.as_str()),
+                            within: program.within.clone(),
+                            from: was_written_in.clone(),
+                            on: was_on_row,
+                            handed_at: watching.then(|| self.handed.len() - 1),
+                            of_library: program.declared_on == 0,
+                            from_library,
+                        });
+                        noted = true;
+                    } else if stands_alone {
                         if let Some(top) = self.calls.last_mut() {
                             top.named = Rc::from(program.ident.as_str());
                             top.within = program.within.clone();

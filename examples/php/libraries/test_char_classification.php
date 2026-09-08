@@ -35,7 +35,7 @@ $test_chars = ["a", "Z", "5", "_", "-", "!", "@"];
 $i = 0;
 while ($i < count($test_chars)) {
     $c = $test_chars[$i];
-    $valid = is_valid_username_char($c);
-    print(("  '" . $c . "' is valid username char: " . strval($valid)) . "\n");
+    $valid_ = is_valid_username_char($c);
+    print(("  '" . $c . "' is valid username char: " . strval($valid_)) . "\n");
     $i = $i + 1;
 }
