@@ -266,6 +266,16 @@ only. The extension labels so far, all from PHP:
   a statement is closed rather than with `ext.stmt.case.mark`. The
   section still reads; the words are raised as a deprecation while the
   program is read, so they come out ahead of anything it prints.
+- `ext.builtin.calls`: a builtin answering with the calls under way,
+  innermost first and the outermost body left out. Each is an array
+  saying what was called (`function`), the class it was written in where
+  it was written in one (`class`), the file and line the call itself
+  stands on (`file`, `line`), and what it was handed (`args`) — a
+  method's own thing is not among them. A language writes its own
+  `debug_backtrace` and its exceptions' traces on top of this.
+- `ext.system.kind.object`: the word this language calls a thing's kind
+  by (`object`), since a thing is of no kind the core knows. Without it,
+  asking a thing its kind is a fault.
 - `ext.op.ternary`: the two signs of `test ? a : b`, at the bottom of the
   precedence order.
 - `ext.block.lone_statement`: a switch; a single statement may stand
@@ -1163,6 +1173,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.args.count.outside` | - | - | - | - | - | - | - | `func_num_args() must be called from a function context` | - | - |
 | `ext.builtin.array` | - | - | - | - | - | - | - | `array` | - | - |
 | `ext.builtin.at_end` | - | - | - | - | - | - | - | `__at_end` | - | - |
+| `ext.builtin.calls` | - | - | - | - | - | - | - | `__calls` | - | - |
 | `ext.builtin.complaint.handler` | - | - | - | - | - | - | - | `__complaint_handler` | - | - |
 | `ext.builtin.complaint.say` | - | - | - | - | - | - | - | `__complaint_say` | - | - |
 | `ext.builtin.define` | - | - | - | - | - | - | - | `define` | - | - |
@@ -1306,6 +1317,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.globals` | - | - | - | - | - | - | - | `$GLOBALS` | - | - |
 | `ext.system.integer.bits` | - | - | - | - | - | - | - | `64` | - | - |
 | `ext.system.kind.brief` | - | - | - | - | - | - | - | `int` `-` `float` `string` `bool` `array` `null` | - | - |
+| `ext.system.kind.object` | - | - | - | - | - | - | - | `object` | - | - |
 | `ext.system.kind.spelled` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.system.real.bits` | - | - | - | - | - | - | - | `64` | - | - |
 | `ext.system.real.digits` | - | - | - | - | - | - | - | `14` | - | - |

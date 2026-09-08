@@ -525,7 +525,7 @@ function real_of($value) {
     if (is_string($value) && is_numeric($value)) { return floatval(0 + trim($value)); }
     return 0.0;
 }
-function is_object($value) { return false; }
+function is_object($value) { return gettype($value) === "object"; }
 function is_callable($value) { return false; }
 
 // What a run from a command line has nothing to answer with, and the
@@ -891,6 +891,43 @@ function assert($claim, $told = null) {
     if ($told !== null && !is_string($told)) { throw $told; }
     if ($told !== null) { throw new AssertionError($told); }
     throw new AssertionError("assert(false)");
+}
+// One call of a trace written out the way PHP writes it: where the call
+// stands, what it named, and enough of each argument to know it by.
+function __frame_told($frame) {
+    $named = isset($frame['class']) ? $frame['class'] . '::' . $frame['function'] : $frame['function'];
+    $pieces = array();
+    foreach ($frame['args'] as $given) {
+        $pieces[] = __argument_told($given);
+    }
+    return $frame['file'] . '(' . $frame['line'] . '): ' . $named . '(' . implode(', ', $pieces) . ')';
+}
+function __argument_told($given) {
+    if (is_string($given)) {
+        $kept = substr($given, 0, 15);
+        return "'" . $kept . (strlen($given) > 15 ? "...'" : "'");
+    }
+    if (is_bool($given)) { return $given ? 'true' : 'false'; }
+    if ($given === null) { return 'NULL'; }
+    if (is_array($given)) { return 'Array'; }
+    if (is_object($given)) { return 'Object(' . $given::class . ')'; }
+    return (string) $given;
+}
+// The calls under way where the asking itself is left out, since a
+// program asking for them is not one of the calls it wants to hear of.
+function debug_backtrace() {
+    $under = __calls();
+    array_shift($under);
+    return $under;
+}
+function debug_print_backtrace() {
+    $under = __calls();
+    array_shift($under);
+    $at = 0;
+    foreach ($under as $frame) {
+        echo '#' . $at . ' ' . __frame_told($frame) . "\n";
+        $at = $at + 1;
+    }
 }
 // Calling what a value names, with whatever else was handed over. The
 // value may be the name of a routine or a thing paired with the name of

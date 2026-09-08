@@ -487,8 +487,7 @@ impl<'a> Engine<'a> {
                 Some(class) => format!("{}::{}", class, call.named),
                 None => call.named.to_string(),
             };
-            let given = call.given_at.and_then(|i| self.given.get(i));
-            let handed = match given {
+            let handed = match self.handed_to(call) {
                 Some(values) => values.iter().map(|v| self.argument_told(v)).collect::<Vec<_>>().join(", "),
                 None => String::new(),
             };
@@ -496,6 +495,17 @@ impl<'a> Engine<'a> {
         }
         out.push_str(&format!("#{} {{main}}\n", self.calls.len()));
         out
+    }
+
+    /// What a call was handed, as a trace tells it: a method is handed
+    /// the thing it is for before everything else, and that is no
+    /// argument of the call's.
+    fn handed_to(&self, call: &Called) -> Option<&[Value]> {
+        let given = call.given_at.and_then(|i| self.given.get(i))?;
+        match call.within.is_some() && !given.is_empty() {
+            true => Some(&given[1..]),
+            false => Some(given),
+        }
     }
 
     /// An argument as a trace writes it: enough of it to know it by,
@@ -2982,6 +2992,27 @@ impl<'a> Engine<'a> {
             }
             // Words said as a complaint of a kind the language names,
             // where the run stands.
+            // The calls under way, as the program may read them: each
+            // one what it called, the class it stands in, where the call
+            // itself is written, and what it was handed.
+            Builtin::Calls => {
+                arity(0)?;
+                let mut told = Vec::new();
+                for call in self.calls.iter().rev() {
+                    let mut pairs = vec![
+                        (Value::text("file"), Value::text(&call.from)),
+                        (Value::text("line"), Value::Small(call.on as i64)),
+                        (Value::text("function"), Value::text(&call.named)),
+                    ];
+                    if let Some(class) = &call.within {
+                        pairs.push((Value::text("class"), Value::text(class)));
+                    }
+                    let handed = self.handed_to(call).unwrap_or_default().to_vec();
+                    pairs.push((Value::text("args"), Value::array(handed)));
+                    told.push(Value::Map(Rc::new(pairs)));
+                }
+                Value::array(told)
+            }
             Builtin::Complain => {
                 arity(2)?;
                 let sp = self.wording();
@@ -3179,6 +3210,11 @@ impl<'a> Engine<'a> {
             }
             Builtin::SortOf => {
                 arity(1)?;
+                // A thing is of no kind the core knows, so a language
+                // with a word of its own for one answers with that.
+                if let (Value::Object(_), Some(word)) = (&args[0], &self.lang.object_kind) {
+                    return Ok(Value::text(word));
+                }
                 let Some(kind) = args[0].sort() else {
                     return Err(format!("{}(): unknown value type", name));
                 };

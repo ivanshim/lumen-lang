@@ -864,5 +864,11 @@
   "ext.builtin.include.once": [
     "include_once",
     "require_once"
+  ],
+  "ext.builtin.calls": [
+    "__calls"
+  ],
+  "ext.system.kind.object": [
+    "object"
   ]
 }

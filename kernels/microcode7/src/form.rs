@@ -133,6 +133,11 @@ pub enum Prim {
     /// a complaint of its own and has it told as the run's own are, in
     /// its place and through whatever stands in their way.
     Complain,
+    /// The calls under way, innermost first, each a table telling what
+    /// was called, the class it was written in where it was written in
+    /// one, the file and line the call itself stands on, and what it was
+    /// handed (ext.builtin.calls).
+    Under,
     /// What the running call was handed, whatever of it the routine
     /// gave names to: the whole of it, how much there was, or the one
     /// standing at a place (ext.builtin.args.*).

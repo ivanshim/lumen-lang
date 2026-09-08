@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 87, differs 2, error 15, skipped 10 | pass 87, differs 2, error 15, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 174, differs 20, error 14, skipped 5 | pass 174, differs 20, error 14, skipped 5 |
+| `php/lang` | 213 | pass 174, differs 23, error 11, skipped 5 | pass 174, differs 23, error 11, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 49, differs 8, error 1, skipped 6 | pass 49, differs 8, error 1, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 336, differs 31, error 30, skipped 25 | pass 336, differs 31, error 30, skipped 25 |
+| all | 422 | pass 336, differs 34, error 27, skipped 25 | pass 336, differs 34, error 27, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 31 |
+| ran, printed something else | 34 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | skip php-cgi not available | 2 |
@@ -52,14 +52,11 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Unexpected token: ; in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: mktime in <file> | 1 |
 | skip Can't find german locale | 1 |
-| #0 /home/user/lumen-lang/tests/php/lang/038.php(28): Error2Exception(2, 'Undefined array...', '/home/user/lume...', 28) | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_declared_classes in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> | 1 |
 | Fatal error: Uncaught Error: 'foo' is not a function in <file> | 1 |
 | thrown in <file> | 1 |
-| Fatal error: Uncaught Error: Undefined variable: debug_backtrace in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: array_walk in <file> | 1 |
-| Fatal error: Uncaught Error: Undefined variable: debug_print_backtrace in <file> | 1 |
 | skip setlocale() failed | 1 |
 | skip only for Windows | 1 |
 | Fatal error: Uncaught Error: Undefined variable: datetime in <file> | 1 |
@@ -357,7 +354,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/035.phpt` | pass | pass |  |
 | `php/lang/036.phpt` | pass | pass |  |
 | `php/lang/037.phpt` | pass | pass |  |
-| `php/lang/038.phpt` | error | error | #0 /home/user/lumen-lang/tests/php/lang/038.php(28): Error2Exception(2, 'Undefined array...', '/home/user/lume...', 28) |
+| `php/lang/038.phpt` | differs | differs | ran, printed something else |
 | `php/lang/039.phpt` | pass | pass |  |
 | `php/lang/040.phpt` | pass | pass |  |
 | `php/lang/041.phpt` | pass | pass |  |
@@ -393,7 +390,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug24396.phpt` | pass | pass |  |
 | `php/lang/bug24436.phpt` | pass | pass |  |
 | `php/lang/bug24499.phpt` | pass | pass |  |
-| `php/lang/bug24573.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: debug_backtrace in <file> |
+| `php/lang/bug24573.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug24640.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug24652.phpt` | pass | pass |  |
 | `php/lang/bug24658.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: array_walk in <file> |
@@ -412,7 +409,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug27439.phpt` | pass | pass |  |
 | `php/lang/bug27443.phpt` | pass | pass |  |
 | `php/lang/bug27535.phpt` | pass | pass |  |
-| `php/lang/bug28213.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: debug_print_backtrace in <file> |
+| `php/lang/bug28213.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug28800.phpt` | pass | pass |  |
 | `php/lang/bug29566.phpt` | pass | pass |  |
 | `php/lang/bug29893.phpt` | pass | pass |  |

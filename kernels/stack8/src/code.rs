@@ -303,6 +303,11 @@ pub enum Builtin {
     /// a complaint of its own and has it told as the run's own are, in
     /// its place and through whatever stands in their way.
     Complain,
+    /// The calls under way, innermost first, each an array telling the
+    /// name called, the class it was written in where it was written in
+    /// one, the file and line the call itself stands on, and what it was
+    /// handed (ext.builtin.calls).
+    Calls,
     /// What the running call was given, however much of it the routine
     /// named: all of it as an array, how much there was, or the one at a
     /// position (ext.builtin.args.*).

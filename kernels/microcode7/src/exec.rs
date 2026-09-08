@@ -2101,10 +2101,20 @@ impl<'a> Machine<'a> {
     }
 
     fn call_handed(&self, call: &Called) -> String {
-        let given = call.handed_at.and_then(|i| self.handed.get(i));
-        match given {
+        match self.handed_to(call) {
             Some(values) => values.iter().map(|v| self.handed_told(v)).collect::<Vec<_>>().join(", "),
             None => String::new(),
+        }
+    }
+
+    /// What a call was handed, as a trace tells it: a method is handed
+    /// the thing it is for before all else, and that is no argument of
+    /// the call's.
+    fn handed_to(&self, call: &Called) -> Option<&[Value]> {
+        let given = call.handed_at.and_then(|i| self.handed.get(i))?;
+        match call.within.is_some() && !given.is_empty() {
+            true => Some(&given[1..]),
+            false => Some(given),
         }
     }
 
@@ -2681,6 +2691,27 @@ impl<'a> Machine<'a> {
             }
             // Words said as a complaint of a kind the language names,
             // where the run stands.
+            // The calls under way, as the program may read them: each
+            // what it called, the class it stands in, where the call
+            // itself is written, and what it was handed.
+            Prim::Under => {
+                n(0)?;
+                let mut told = Vec::new();
+                for call in self.calls.iter().rev() {
+                    let mut pairs = vec![
+                        (Value::text("file"), Value::text(&call.from)),
+                        (Value::text("line"), Value::Small(call.on as i64)),
+                        (Value::text("function"), Value::text(&call.named)),
+                    ];
+                    if let Some(class) = &call.within {
+                        pairs.push((Value::text("class"), Value::text(class)));
+                    }
+                    let handed = self.handed_to(call).unwrap_or_default().to_vec();
+                    pairs.push((Value::text("args"), Value::Vector(Rc::new(handed))));
+                    told.push(Value::Dict(Rc::new(pairs)));
+                }
+                Value::Vector(Rc::new(told))
+            }
             Prim::Complain => {
                 n(2)?;
                 let w = self.wording();
@@ -3251,6 +3282,11 @@ impl<'a> Machine<'a> {
             }
             Prim::SortOf => {
                 n(1)?;
+                // A thing is of no kind the core knows, so a language
+                // with a word of its own for one answers with that.
+                if let (Value::Thing(_), Some(word)) = (&v[0], self.table.single("ext.system.kind.object")) {
+                    return Ok(Value::text(word));
+                }
                 let Some(sort) = v[0].kind() else {
                     return Err(format!("{}(): unknown value type", name));
                 };
