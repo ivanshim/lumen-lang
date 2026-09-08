@@ -2459,8 +2459,11 @@ impl<'a> Machine<'a> {
         }
         // What this call was handed is kept while it runs. A call in
         // tail position takes the place of this one, so what it was
-        // handed takes the place of this call's too.
-        let watching = self.reads_handed;
+        // handed takes the place of this call's too. A piece with no
+        // names of its own -- an arm of a branch -- is no call of
+        // anybody's and was handed nothing, so nothing is kept for it
+        // and what the call around it was handed still stands.
+        let mut watching = self.reads_handed && !program.frameless;
         if watching {
             let mine = std::mem::take(&mut self.pending);
             self.handed.push(mine);
@@ -2540,10 +2543,16 @@ impl<'a> Machine<'a> {
                     // program that has them: the run stands inside that
                     // one from here, so its names and its call are put
                     // down now rather than taking the place of any.
-                    if stands_alone && !mine {
+                    let just_entered = stands_alone && !mine;
+                    if just_entered {
                         self.frames_named.push(program.clone());
                         self.inside.push(program.within.clone());
                         mine = true;
+                        if self.reads_handed {
+                            let taken = std::mem::take(&mut self.pending);
+                            self.handed.push(taken);
+                            watching = true;
+                        }
                     } else if stands_alone {
                         if let Some(top) = self.frames_named.last_mut() {
                             *top = program.clone();
@@ -2570,7 +2579,11 @@ impl<'a> Machine<'a> {
                             top.within = program.within.clone();
                         }
                     }
-                    if watching {
+                    // Where the call this one takes the place of was
+                    // written down, what it was handed is written over
+                    // too. Where it was just now put down, it holds
+                    // what this call was handed already.
+                    if watching && !just_entered {
                         let next = std::mem::take(&mut self.pending);
                         if let Some(top) = self.handed.last_mut() {
                             *top = next;

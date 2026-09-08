@@ -292,3 +292,166 @@ function array_splice(&$array, $offset, $length = null, $replacement = array()) 
     $array = $kept;
     return $taken;
 }
+
+// ---- putting an array in order ----
+
+// A key and its value, side by side, so that an order worked out over
+// the pairs can be laid back out with the keys kept or dropped.
+function __pairs_of($array) {
+    $pairs = array();
+    foreach ($array as $k => $v) { $pairs[] = array($k, $v); }
+    return $pairs;
+}
+
+// Two values weighed as one of the sort flags says: as they stand, as
+// numbers, or as text.
+function __weighed($a, $b, $flags) {
+    if ($flags === SORT_NUMERIC) {
+        $x = (float) $a;
+        $y = (float) $b;
+        return $x < $y ? -1 : ($x > $y ? 1 : 0);
+    }
+    if ($flags === SORT_STRING) {
+        return strcmp((string) $a, (string) $b);
+    }
+    return $a <=> $b;
+}
+
+// The pairs in order. The two halves are put in order and then brought
+// together, taking from the left wherever the two weigh alike, so that
+// items that weigh the same stand as they stood: PHP has sorted that
+// way since 8.0.
+function __in_order($pairs, $how, $by, $flags) {
+    $held = count($pairs);
+    if ($held < 2) { return $pairs; }
+    $half = (int) ($held / 2);
+    $left = array();
+    $right = array();
+    $at = 0;
+    while ($at < $held) {
+        if ($at < $half) { $left[] = $pairs[$at]; } else { $right[] = $pairs[$at]; }
+        $at = $at + 1;
+    }
+    $left = __in_order($left, $how, $by, $flags);
+    $right = __in_order($right, $how, $by, $flags);
+    $out = array();
+    $i = 0;
+    $j = 0;
+    while ($i < count($left) && $j < count($right)) {
+        if (__weighs_less($right[$j], $left[$i], $how, $by, $flags)) { $out[] = $right[$j]; $j = $j + 1; }
+        else { $out[] = $left[$i]; $i = $i + 1; }
+    }
+    while ($i < count($left)) { $out[] = $left[$i]; $i = $i + 1; }
+    while ($j < count($right)) { $out[] = $right[$j]; $j = $j + 1; }
+    return $out;
+}
+
+// Whether one pair belongs before another: by value or by key, weighed
+// by the flags or by a routine of the caller's, and turned about where
+// the order asked for runs downward.
+function __weighs_less($a, $b, $how, $by, $flags) {
+    $x = $by === 'key' ? $a[0] : $a[1];
+    $y = $by === 'key' ? $b[0] : $b[1];
+    if ($how === null) { $held = __weighed($x, $y, $flags); }
+    else if ($how === 'down') { $held = -__weighed($x, $y, $flags); }
+    else if ($how === 'natural') { $held = strnatcmp((string) $x, (string) $y); }
+    else if ($how === 'natural_fold') { $held = strnatcasecmp((string) $x, (string) $y); }
+    else { $held = $how($x, $y); }
+    return $held < 0;
+}
+
+// The pairs laid back out as an array, the keys kept or counted afresh.
+function __laid_out($pairs, $keep_keys) {
+    $out = array();
+    foreach ($pairs as $p) {
+        if ($keep_keys) { $out[$p[0]] = $p[1]; } else { $out[] = $p[1]; }
+    }
+    return $out;
+}
+
+// Values in order, the keys dropped.
+function sort(&$array, $flags = SORT_REGULAR) {
+    $array = __laid_out(__in_order(__pairs_of($array), null, 'value', $flags), false);
+    return true;
+}
+function rsort(&$array, $flags = SORT_REGULAR) {
+    $array = __laid_out(__in_order(__pairs_of($array), 'down', 'value', $flags), false);
+    return true;
+}
+// Values in order, the keys kept.
+function asort(&$array, $flags = SORT_REGULAR) {
+    $array = __laid_out(__in_order(__pairs_of($array), null, 'value', $flags), true);
+    return true;
+}
+function arsort(&$array, $flags = SORT_REGULAR) {
+    $array = __laid_out(__in_order(__pairs_of($array), 'down', 'value', $flags), true);
+    return true;
+}
+// Keys in order, the keys kept.
+function ksort(&$array, $flags = SORT_REGULAR) {
+    $array = __laid_out(__in_order(__pairs_of($array), null, 'key', $flags), true);
+    return true;
+}
+function krsort(&$array, $flags = SORT_REGULAR) {
+    $array = __laid_out(__in_order(__pairs_of($array), 'down', 'key', $flags), true);
+    return true;
+}
+// In an order the caller works out, by value or by key.
+function usort(&$array, $callback) {
+    $array = __laid_out(__in_order(__pairs_of($array), $callback, 'value', SORT_REGULAR), false);
+    return true;
+}
+function uasort(&$array, $callback) {
+    $array = __laid_out(__in_order(__pairs_of($array), $callback, 'value', SORT_REGULAR), true);
+    return true;
+}
+function uksort(&$array, $callback) {
+    $array = __laid_out(__in_order(__pairs_of($array), $callback, 'key', SORT_REGULAR), true);
+    return true;
+}
+// In the order a reader would put them, where runs of digits stand for
+// the numbers they spell.
+function natsort(&$array) {
+    $array = __laid_out(__in_order(__pairs_of($array), 'natural', 'value', SORT_REGULAR), true);
+    return true;
+}
+function natcasesort(&$array) {
+    $array = __laid_out(__in_order(__pairs_of($array), 'natural_fold', 'value', SORT_REGULAR), true);
+    return true;
+}
+
+// Two pieces of text weighed the way a reader weighs them: a run of
+// digits stands for the number it spells, so `img10` comes after
+// `img9`, and leading noughts count for nothing until everything else
+// is alike.
+function strnatcmp($a, $b) { return __naturally($a, $b, false); }
+function strnatcasecmp($a, $b) { return __naturally($a, $b, true); }
+function __naturally($a, $b, $fold) {
+    $x = $fold ? strtolower((string) $a) : (string) $a;
+    $y = $fold ? strtolower((string) $b) : (string) $b;
+    $i = 0;
+    $j = 0;
+    while ($i < strlen($x) && $j < strlen($y)) {
+        $c = $x[$i];
+        $d = $y[$j];
+        if (__is_digit($c) && __is_digit($d)) {
+            $from = $i;
+            while ($i < strlen($x) && __is_digit($x[$i])) { $i = $i + 1; }
+            $to = $j;
+            while ($j < strlen($y) && __is_digit($y[$j])) { $j = $j + 1; }
+            $one = ltrim(substr($x, $from, $i - $from), '0');
+            $two = ltrim(substr($y, $to, $j - $to), '0');
+            if (strlen($one) !== strlen($two)) { return strlen($one) < strlen($two) ? -1 : 1; }
+            if ($one !== $two) { return strcmp($one, $two); }
+            continue;
+        }
+        if ($c !== $d) { return $c < $d ? -1 : 1; }
+        $i = $i + 1;
+        $j = $j + 1;
+    }
+    $left = strlen($x) - $i;
+    $right = strlen($y) - $j;
+    if ($left === $right) { return 0; }
+    return $left < $right ? -1 : 1;
+}
+function __is_digit($c) { return $c >= '0' && $c <= '9'; }

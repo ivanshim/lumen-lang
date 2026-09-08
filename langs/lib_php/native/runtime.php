@@ -756,11 +756,7 @@ function str_ends_with($haystack, $needle) { return ends_with($haystack, $needle
 function strrev($text) { return reverse_characters($text); }
 function ucfirst($text) { return capitalize_first_word($text); }
 function ucwords($text) { return capitalize_words($text); }
-function ltrim($text) { return trim_start($text); }
-function rtrim($text) { return trim_end($text); }
 function abs($n) { if ($n < 0) { return 0 - $n; } return $n; }
-function max($a, $b) { if ($a > $b) { return $a; } return $b; }
-function min($a, $b) { if ($a < $b) { return $a; } return $b; }
 function intdiv($a, $b) { return intval($a / $b); }
 
 // Text taken apart and put back together, the way PHP's own library
