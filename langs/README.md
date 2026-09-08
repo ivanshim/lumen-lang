@@ -348,6 +348,12 @@ only. The extension labels so far, all from PHP:
   what it writes to one of them the routine sees afterwards. Names it
   makes for itself go on the end and are gone once it is done. At the
   outermost level it has the globals and nothing else, as before.
+- `ext.op.walk.key.no_cell`: the words for marking the name a walk gives
+  its keys to as taking a cell. A key is not a place: it is what a member
+  is called, and a name given it has no cell of the walk's to be fastened
+  to. It is said where the program is read, under the word for a fault of
+  the run rather than the word for a program that cannot be read, since
+  the reference counts it the first and not the second.
 - `ext.op.index.nothing`: the words for naming a place by nothing at
   all, which a language may take as naming the place the empty text
   names. They are said where such a place is read, written or asked
@@ -1227,6 +1233,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.walk.giver` | - | - | - | - | - | - | - | `getIterator` | - | - |
 | `ext.op.walk.giver.class` | - | - | - | - | - | - | - | `IteratorAggregate` | - | - |
 | `ext.op.walk.key` | - | - | - | - | - | - | - | `key` | - | - |
+| `ext.op.walk.key.no_cell` | - | - | - | - | - | - | - | `Key element cannot be a reference` | - | - |
 | `ext.op.walk.more` | - | - | - | - | - | - | - | `valid` | - | - |
 | `ext.op.walk.no_cell` | - | - | - | - | - | - | - | `An iterator cannot be used with foreach by reference` | - | - |
 | `ext.op.walk.onward` | - | - | - | - | - | - | - | `next` | - | - |

@@ -388,6 +388,9 @@ pub struct Lang {
     /// The words for asking a thing that is its own walk to hand out
     /// the items' own cells, which it has none of.
     pub walk_no_cell: Option<String>,
+    /// The words for marking the name a walk gives its keys to as taking
+    /// a cell: a key is not a place and has no cell to hand out.
+    pub walk_key_no_cell: Option<String>,
     /// Words that may stand before a member and say nothing this kernel reads.
     pub modifier_words: Vec<String>,
     /// The modifiers saying how far a member may be reached from: only
@@ -488,7 +491,7 @@ w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.
 w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
 w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.destructor
 w ext.op.walk.class | w ext.op.walk.rewind | w ext.op.walk.more | w ext.op.walk.this | w ext.op.walk.key
-w ext.op.walk.onward | w ext.op.walk.giver.class | w ext.op.walk.giver | w ext.op.walk.no_cell | w ext.stmt.class.modifier | w ext.stmt.class.hidden | w ext.stmt.class.guarded | w ext.stmt.class.shared
+w ext.op.walk.onward | w ext.op.walk.giver.class | w ext.op.walk.giver | w ext.op.walk.no_cell | w ext.op.walk.key.no_cell | w ext.stmt.class.modifier | w ext.stmt.class.hidden | w ext.stmt.class.guarded | w ext.stmt.class.shared
 w ext.op.member | w ext.op.scope | w ext.op.instanceof | w ext.stmt.class.parent
 w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.try | w ext.stmt.catch
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
@@ -1212,6 +1215,7 @@ impl Lang {
             giver_class: r.head("ext.op.walk.giver.class")?,
             walk_giver: r.head("ext.op.walk.giver")?,
             walk_no_cell: r.head("ext.op.walk.no_cell")?,
+            walk_key_no_cell: r.head("ext.op.walk.key.no_cell")?,
             modifier_words: r.strings("ext.stmt.class.modifier")?,
             hidden_words: r.strings("ext.stmt.class.hidden")?,
             guarded_words: r.strings("ext.stmt.class.guarded")?,

@@ -61,6 +61,9 @@ pub struct Builder<'a> {
     /// of a copy, read from the tokens before anything is built.
     shared_args: HashMap<String, Vec<bool>>,
     arg_names: HashMap<String, Vec<String>>,
+    /// Whether the reading stopped over a thing the language calls a
+    /// fault of the run rather than a program it could not read.
+    stopped_fatally: bool,
     table: &'a Table,
     forks: Vec<Fork>,
     tokens: &'a [Token],
@@ -138,9 +141,11 @@ pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMa
 
 /// The same, saying besides which row the reading had reached when it
 /// stopped, for a language that tells such a stopping in its own words.
-pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32)> {
+pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32, bool)> {
     let at = std::cell::Cell::new(0u32);
-    build_marking(tokens, table, seeded, assumed, strict, before, None, Some(&at), None).map_err(|said| (said, at.get()))
+    let hard = std::cell::Cell::new(false);
+    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard)), None)
+        .map_err(|said| (said, at.get(), hard.get()))
 }
 
 /// The same, said besides which file the text came out of, where it was
@@ -169,7 +174,7 @@ pub fn build_within(
 type Knows<'w> = (&'w HashMap<String, Vec<bool>>, &'w HashMap<String, Vec<String>>, &'w HashSet<String>);
 type Within<'w> = (&'w [String], Knows<'w>);
 
-fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<&std::cell::Cell<u32>>, within: Option<Within>) -> Res<Built> {
+fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>) -> Res<Built> {
     let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, table);
     let mut layers = vec![top];
@@ -183,7 +188,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         gives_back.extend(backs.iter().cloned());
         layers.push(Layer { holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
-    let mut r = Builder { within: None, shared_args, arg_names, gives_back, table, forks: Vec::new(), tokens, pos: 0, layers, gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(),
+    let mut r = Builder { within: None, shared_args, arg_names, gives_back, stopped_fatally: false, table, forks: Vec::new(), tokens, pos: 0, layers, gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(),
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
@@ -191,15 +196,17 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         let (mut stmts, rest) = match r.rpn_body(&[], Mode::Body) {
             Ok(got) => got,
             Err(said) => {
-                if let Some(mark) = mark {
+                if let Some((mark, hard)) = mark {
                     mark.set(r.look().row);
+                    hard.set(r.stopped_fatally);
                 }
                 return Err(said);
             }
         };
         if !r.exhausted() {
-            if let Some(mark) = mark {
+            if let Some((mark, hard)) = mark {
                 mark.set(r.look().row);
+                hard.set(r.stopped_fatally);
             }
             return Err(format!("Unexpected '{}'", r.look().lexeme));
         }
@@ -218,8 +225,9 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
             let stmt = match r.stmt() {
                 Ok(stmt) => stmt,
                 Err(said) => {
-                    if let Some(mark) = mark {
+                    if let Some((mark, hard)) = mark {
                         mark.set(r.look().row);
+                        hard.set(r.stopped_fatally);
                     }
                     return Err(said);
                 }
@@ -1153,6 +1161,13 @@ impl<'a> Builder<'a> {
         let mut here = Vec::new();
         loop {
             let name = self.need_word("after the static keyword")?;
+            // One name kept between calls is one binding: saying so
+            // twice in one program is a thing the language refuses.
+            let owner = self.layers.iter().rev().find(|s| s.holds == Holds::Every).expect("the top layer");
+            if owner.aliases.iter().any(|(n, _)| *n == name) {
+                self.stopped_fatally = true;
+                return Err(format!("Duplicate declaration of static variable {}", name));
+            }
             self.gensyms += 1;
             let hidden = format!("#static{}", self.gensyms);
             let inner = if alone { None } else { Some(self.layers.pop().expect("the function's layer")) };
@@ -1487,6 +1502,10 @@ impl<'a> Builder<'a> {
         }
         self.advance();
         let mut shares = table.single("ext.op.reference").map_or(false, |m| self.sign(m));
+        // Whether the mark stood before the whole of the head and not
+        // before the value alone, which tells a key marked as taking a
+        // cell from a value so marked.
+        let marked_first = shares;
         if shares {
             self.advance();
         }
@@ -1499,6 +1518,12 @@ impl<'a> Builder<'a> {
         let coupled = table.single("syntax.map.pair").map_or(false, |m| self.sign(m));
         let mut place: Option<usize> = None;
         let (key, mut item) = if coupled {
+            // A key is no place: it is what a member is called, and a
+            // name given it has no cell of the walk's to be tied to.
+            if let (true, Some(said)) = (marked_first, table.single("ext.op.walk.key.no_cell")) {
+                self.stopped_fatally = true;
+                return Err(said.to_string());
+            }
             self.advance();
             if table.single("ext.op.reference").map_or(false, |m| self.sign(m)) {
                 self.advance();

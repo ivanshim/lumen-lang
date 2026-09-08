@@ -64,8 +64,12 @@ fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, St
 /// and the line the reading stopped on. Where the language has no word
 /// for such a stopping, nothing is written here and the fault goes back
 /// as it came, for the host to tell in its own way.
-fn cannot_read(lang: &Lang, said: &str, row: usize, request: &[(String, String, String, bool)], before: u32) -> String {
-    let Some(word) = lang.reading_word.as_deref() else { return said.to_string() };
+fn cannot_read(lang: &Lang, said: &str, row: usize, request: &[(String, String, String, bool)], before: u32, fatally: bool) -> String {
+    let word = match fatally {
+        true => lang.complaint_words.iter().find(|(kind, _)| *kind == lang::Complaint::Fatal).map(|(_, word)| word.as_str()),
+        false => lang.reading_word.as_deref(),
+    };
+    let Some(word) = word else { return said.to_string() };
     let named = |key: &str| request.iter().find(|(from, k, ..)| from == "SELF" && k == key).map(|(.., v, _)| v.clone());
     let file = named("file").unwrap_or_default();
     let line = (row as u32).saturating_sub(before);
@@ -87,7 +91,7 @@ fn lines_before(request: &[(String, String, String, bool)]) -> u32 {
 
 fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     let before = lines_before(request);
-    let read = lex::lex_at(source, lang).map_err(|(said, row)| cannot_read(lang, &said, row, request, before));
+    let read = lex::lex_at(source, lang).map_err(|(said, row)| cannot_read(lang, &said, row, request, before, false));
     let tokens = layout::layout(read?, lang)?;
     let mut registry = compile::Registry::default();
     // The system names are globals whether or not the program mentions them.
@@ -114,7 +118,7 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     }
     let program = match compile::compile(&tokens, lang, &mut registry, before) {
         Ok(program) => program,
-        Err(said) => return Err(cannot_read(lang, &said, registry.stopped_at, request, before)),
+        Err(said) => return Err(cannot_read(lang, &said, registry.stopped_at, request, before, registry.stopped_fatally)),
     };
 
     let mut machine = engine::Engine::new(lang, registry);

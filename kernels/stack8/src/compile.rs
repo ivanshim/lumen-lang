@@ -42,6 +42,10 @@ pub struct Registry {
     /// The line the reading had reached when it stopped, for a language
     /// that tells such a stopping in its own words to name.
     pub stopped_at: usize,
+    /// Whether the reading stopped over a thing the language calls a
+    /// fault of the run rather than a program it could not read: the
+    /// words are the same either way, but the kind is not.
+    pub stopped_fatally: bool,
     /// Which parameters of which routines take a cell rather than a
     /// value, and which routines give a cell back. Kept here because
     /// text read while the run goes is a piece of the same program and
@@ -943,6 +947,12 @@ impl<'a> Compiler<'a> {
         let sep = self.lang.calling.as_ref().and_then(|c| c.between.clone());
         loop {
             let name = self.want_name("after the static keyword")?;
+            // One name kept between calls is one binding: saying so
+            // twice in one program is a thing the language refuses.
+            if self.piece().globals.iter().any(|(n, _)| *n == name) {
+                self.registry.stopped_fatally = true;
+                return Err(format!("Duplicate declaration of static variable {}", name));
+            }
             let hidden = self.gensym("static");
             let inner = self.pieces.pop().expect("the unit");
             let outermost = self.pieces.is_empty();
@@ -1037,6 +1047,10 @@ impl<'a> Compiler<'a> {
                 bag
             }
         };
+        // Whether the mark stood before the whole of the head rather
+        // than before the value alone, which tells a key marked as
+        // taking a cell from a value so marked.
+        let marked_first = shared;
         if shared {
             self.take();
         }
@@ -1049,6 +1063,12 @@ impl<'a> Compiler<'a> {
         let paired = lang.pair_mark.as_ref().map_or(false, |m| self.at_symbol(m));
         let mut place: Option<usize> = None;
         let (key, mut value) = if paired {
+            // A key is not a place: it is what a member is called, and a
+            // name given it has no cell of the walk's to be fastened to.
+            if let (true, Some(said)) = (marked_first, &lang.walk_key_no_cell) {
+                self.registry.stopped_fatally = true;
+                return Err(said.clone());
+            }
             self.take();
             if self.lang.reference_mark.as_ref().map_or(false, |m| self.at_symbol(m)) {
                 self.take();

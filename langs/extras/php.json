@@ -575,6 +575,9 @@
   "ext.op.walk.no_cell": [
     "An iterator cannot be used with foreach by reference"
   ],
+  "ext.op.walk.key.no_cell": [
+    "Key element cannot be a reference"
+  ],
   "ext.stmt.class.modifier": [
     "public",
     "private",
