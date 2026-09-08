@@ -879,5 +879,11 @@
   ],
   "ext.builtin.uncaught": [
     "__uncaught_handler"
+  ],
+  "ext.builtin.classes": [
+    "__classes_bound"
+  ],
+  "ext.builtin.routines": [
+    "__routines_bound"
   ]
 }

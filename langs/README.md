@@ -266,6 +266,10 @@ only. The extension labels so far, all from PHP:
   a statement is closed rather than with `ext.stmt.case.mark`. The
   section still reads; the words are raised as a deprecation while the
   program is read, so they come out ahead of anything it prints.
+- `ext.builtin.classes` and `ext.builtin.routines`: builtins answering
+  with the names of the classes, and of the routines, the run has bound.
+  PHP's `get_declared_classes` and `get_defined_functions` are written on
+  them.
 - `ext.builtin.output.begun`: a builtin answering whether anything has
   gone out of the run yet. What is held back in a piece of output kept
   aside has not gone out. PHP's `headers_sent` and
@@ -1193,6 +1197,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.array` | - | - | - | - | - | - | - | `array` | - | - |
 | `ext.builtin.at_end` | - | - | - | - | - | - | - | `__at_end` | - | - |
 | `ext.builtin.calls` | - | - | - | - | - | - | - | `__calls` | - | - |
+| `ext.builtin.classes` | - | - | - | - | - | - | - | `__classes_bound` | - | - |
 | `ext.builtin.complaint.handler` | - | - | - | - | - | - | - | `__complaint_handler` | - | - |
 | `ext.builtin.complaint.say` | - | - | - | - | - | - | - | `__complaint_say` | - | - |
 | `ext.builtin.define` | - | - | - | - | - | - | - | `define` | - | - |
@@ -1213,6 +1218,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.output.held` | - | - | - | - | - | - | - | `__output_held` | - | - |
 | `ext.builtin.output.hold` | - | - | - | - | - | - | - | `__output_hold` | - | - |
 | `ext.builtin.print_r` | - | - | - | - | - | - | - | `print_r` | - | - |
+| `ext.builtin.routines` | - | - | - | - | - | - | - | `__routines_bound` | - | - |
 | `ext.builtin.time_limit` | - | - | - | - | - | - | - | `set_time_limit` | - | - |
 | `ext.builtin.uncaught` | - | - | - | - | - | - | - | `__uncaught_handler` | - | - |
 | `ext.builtin.unset` | - | - | - | - | - | - | - | `unset` | - | - |

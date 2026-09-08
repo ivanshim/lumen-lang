@@ -3117,6 +3117,24 @@ impl<'a> Engine<'a> {
                 }
             }
             // The routine every complaint is to be handed to, or none.
+            // What the run has bound under a name, by name: the
+            // classes, and the routines.
+            Builtin::ClassesBound | Builtin::RoutinesBound => {
+                arity(0)?;
+                let wanted = |v: &Value| match builtin {
+                    Builtin::ClassesBound => matches!(v, Value::Class(_)),
+                    _ => matches!(v, Value::Routine(_)),
+                };
+                let mut named = Vec::new();
+                for (at, held) in self.world.iter().enumerate() {
+                    if wanted(held) {
+                        if let Some(name) = self.registry.idents.get(at) {
+                            named.push(Value::text(name));
+                        }
+                    }
+                }
+                Value::array(named)
+            }
             Builtin::OutBegun => {
                 arity(0)?;
                 Value::Flag(self.written_out.get())

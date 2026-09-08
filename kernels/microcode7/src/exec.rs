@@ -2835,6 +2835,25 @@ impl<'a> Machine<'a> {
                 }
             }
             // The routine every complaint is to be handed to, or none.
+            // What the run has bound under a name, by name: the
+            // classes, and the routines.
+            Prim::ClassesBound | Prim::RoutinesBound => {
+                n(0)?;
+                let cells = self.outermost.cells.borrow();
+                let mut named = Vec::new();
+                for (at, held) in cells.iter().enumerate() {
+                    let wanted = match op {
+                        Prim::ClassesBound => matches!(held, Value::Blueprint(_)),
+                        _ => matches!(held, Value::Bound(..) | Value::Routine(_)),
+                    };
+                    if wanted {
+                        if let Some(name) = self.idents.get(at) {
+                            named.push(Value::text(name));
+                        }
+                    }
+                }
+                Value::Vector(Rc::new(named))
+            }
             Prim::OutBegun => {
                 n(0)?;
                 Value::Flag(self.written_out.get())

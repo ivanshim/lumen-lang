@@ -317,6 +317,16 @@ function error_log($message, $sort = 0, $where = null, $headers = null) {
     return true;
 }
 function extension_loaded($name) { return false; }
+// The classes this run has bound, and the routines. Everything this PHP
+// has of its own is written in PHP, so there are no functions from
+// outside the language to list beside them.
+function get_declared_classes() { return __classes_bound(); }
+function get_defined_functions($exclude_disabled = true) {
+    if (func_num_args() > 0) {
+        __complaint_say(__complaint_word(E_DEPRECATED), 'get_defined_functions(): The $exclude_disabled parameter has no effect since PHP 8.0');
+    }
+    return array("internal" => array(), "user" => __routines_bound());
+}
 function function_exists($name) { return false; }
 function gc_collect_cycles() { return 0; }
 function memory_get_usage($real = false) { return 0; }
@@ -337,6 +347,19 @@ function array_key_exists($key, $array) {
 function in_array($needle, $haystack, $strict = false) {
     foreach ($haystack as $v) {
         if ($v == $needle) { return true; }
+    }
+    return false;
+}
+// Where the value stands, or false where it stands nowhere. Text and a
+// number are alike where the strict form is not asked for, as they are
+// for `in_array`.
+function array_search($needle, $haystack, $strict = false) {
+    foreach ($haystack as $k => $v) {
+        if ($strict) {
+            if ($v === $needle) { return $k; }
+        } elseif ($v == $needle) {
+            return $k;
+        }
     }
     return false;
 }

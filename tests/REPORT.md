@@ -17,14 +17,14 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 91, differs 2, error 11, skipped 10 | pass 91, differs 2, error 11, skipped 10 |
+| `php/basic` | 114 | pass 92, differs 2, error 10, skipped 10 | pass 92, differs 2, error 10, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 179, differs 21, error 8, skipped 5 | pass 179, differs 21, error 8, skipped 5 |
+| `php/lang` | 213 | pass 180, differs 21, error 7, skipped 5 | pass 180, differs 21, error 7, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 49, differs 8, error 1, skipped 6 | pass 49, differs 8, error 1, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 345, differs 32, error 20, skipped 25 | pass 345, differs 32, error 20, skipped 25 |
+| all | 422 | pass 347, differs 32, error 18, skipped 25 | pass 347, differs 32, error 18, skipped 25 |
 
 | Reason | Tests |
 |---|---|
@@ -34,7 +34,6 @@ is listed, since the full kernels are meant to behave alike.
 | skip php-cgi not available | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
-| Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: PHP_BINARY in <file> | 1 |
 | Parse error: Unexpected token: << in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: ENT_HTML5 in <file> | 1 |
@@ -50,7 +49,6 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Unexpected token: ; in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: mktime in <file> | 1 |
 | skip Can't find german locale | 1 |
-| Fatal error: Uncaught Error: Undefined variable: get_declared_classes in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> | 1 |
 | Fatal error: Uncaught Error: 'foo' is not a function in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: array_walk in <file> | 1 |
@@ -225,7 +223,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/array_null_offset_deprecation.phpt` | pass | pass |  |
 | `php/basic/bug20539.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: session_id in <file> |
 | `php/basic/bug29971.phpt` | pass | pass |  |
-| `php/basic/bug31875.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> |
+| `php/basic/bug31875.phpt` | pass | pass |  |
 | `php/basic/bug45986.phpt` | pass | pass |  |
 | `php/basic/bug53180.phpt` | pass | pass |  |
 | `php/basic/bug54514.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: PHP_BINARY in <file> |
@@ -364,7 +362,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/array_shortcut_005.phpt` | pass | pass |  |
 | `php/lang/bison1.phpt` | pass | pass |  |
 | `php/lang/bug18872.phpt` | pass | pass |  |
-| `php/lang/bug19566.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_declared_classes in <file> |
+| `php/lang/bug19566.phpt` | pass | pass |  |
 | `php/lang/bug19943.phpt` | pass | pass |  |
 | `php/lang/bug20175.phpt` | pass | pass |  |
 | `php/lang/bug21094.phpt` | pass | pass |  |

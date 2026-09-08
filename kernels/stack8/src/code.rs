@@ -311,6 +311,10 @@ pub enum Builtin {
     /// a complaint of its own and has it told as the run's own are, in
     /// its place and through whatever stands in their way.
     Complain,
+    /// The names of the classes, and of the routines, the run has bound
+    /// (ext.builtin.classes, ext.builtin.routines).
+    ClassesBound,
+    RoutinesBound,
     /// Whether anything has gone out of the run yet: what is held back
     /// in a piece of output kept aside has not (ext.builtin.output.begun).
     OutBegun,
