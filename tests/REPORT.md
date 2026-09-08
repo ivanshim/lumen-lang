@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 81, differs 5, error 18, skipped 10 | pass 81, differs 5, error 18, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 156, differs 28, error 24, skipped 5 | pass 156, differs 28, error 24, skipped 5 |
+| `php/lang` | 213 | pass 158, differs 27, error 23, skipped 5 | pass 158, differs 27, error 23, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 46, differs 10, error 2, skipped 6 | pass 46, differs 10, error 2, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 309, differs 44, error 44, skipped 25 | pass 309, differs 44, error 44, skipped 25 |
+| all | 422 | pass 311, differs 43, error 43, skipped 25 | pass 311, differs 43, error 43, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 44 |
+| ran, printed something else | 43 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
@@ -58,7 +58,6 @@ is listed, since the full kernels are meant to behave alike.
 | skip Can't find german locale | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_declared_classes in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> | 1 |
-| Fatal error: Uncaught Error: Undefined variable: foo in <file> | 1 |
 | Parse error: Expected identifier after the global keyword, got '$' in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: debug_backtrace in <file> | 1 |
 | Fatal error: Uncaught Error: Function typehint_ref expects 2 arguments, got 1 in <file> | 1 |
@@ -68,6 +67,7 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: include in <file> | 1 |
 | Fatal error: Uncaught TypeError: blah(): Argument #1 ($a) must be of type Foo, stdClass given, called in <file> in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: datetime in <file> | 1 |
+| skip this test is for 32-bit platforms only | 1 |
 
 ### Reserved words: 55 of 68 spelled
 
@@ -385,7 +385,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug22510.phpt` | pass | pass |  |
 | `php/lang/bug22592.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug23279.phpt` | error | error | thrown in <file> |
-| `php/lang/bug23384.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: foo in <file> |
+| `php/lang/bug23384.phpt` | pass | pass |  |
 | `php/lang/bug23489.phpt` | pass | pass |  |
 | `php/lang/bug23524.phpt` | pass | pass |  |
 | `php/lang/bug23584.phpt` | pass | pass |  |
@@ -614,7 +614,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/this_assignment.phpt` | pass | pass |  |
 | `php/lang/throw_variation_001.phpt` | error | error | Fatal error: Uncaught Error: Uncaught Exception: in <file> |
 | `php/lang/type_hints_001.phpt` | error | error | Fatal error: Uncaught TypeError: type_hint_foo(): Argument #1 ($a) must be of type Foo, Bar given, called in <file> in <file> |
-| `php/lang/type_hints_002.phpt` | differs | differs | ran, printed something else |
+| `php/lang/type_hints_002.phpt` | pass | pass |  |
 | `php/lang/type_hints_003.phpt` | differs | differs | ran, printed something else |
 | `php/lang/zend_throw_exception_001.phpt` | pass | pass |  |
 | `python/test_augassign.py` | error | error | Unexpected character '&' |

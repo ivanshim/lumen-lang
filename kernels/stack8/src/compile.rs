@@ -1881,6 +1881,10 @@ impl<'a> Compiler<'a> {
         self.take();
         let close = lang.block_closes[i].clone();
         self.skip_seps();
+        // What a method keeps between calls is set where the class is
+        // declared, and is set after the class is bound, since what it
+        // is set to may name the class itself.
+        let settings = self.mark();
         while !self.at_lexeme(&close) && !self.exhausted() {
             let mut own = false;
             let mut reach = Reach::Open;
@@ -1951,6 +1955,7 @@ impl<'a> Compiler<'a> {
         }
         self.want_lexeme(&close)?;
         self.within = outer;
+        let kept: Vec<Instr> = self.piece().instrs.drain(settings..).collect();
         // The class it stands on first, then a value for every property,
         // every value of its own and every constant, in that order.
         let mut argc = 0;
@@ -1984,6 +1989,10 @@ impl<'a> Compiler<'a> {
         self.act(Action::Forge(Rc::new(plan)), argc);
         let filed = self.class_key(&name);
         self.write_global(&filed);
+        let at = self.mark();
+        for w in relocated(kept, at as i64 - settings as i64) {
+            self.put(w);
+        }
         Ok(())
     }
 
@@ -2003,7 +2012,7 @@ impl<'a> Compiler<'a> {
         self.want_sign(&call.open, "after method name")?;
         let this = lang.this_word.clone().ok_or_else(|| "A class needs ext.stmt.class.this".to_string())?;
         let mut formals = vec![this.clone()];
-        let (params, spares, promoted) = self.parameters(&call)?;
+        let (params, spares, promoted) = self.parameters(name, &call)?;
         formals.extend(params);
         // The object it is for is always given, so the count is one more.
         let least = formals.len() - spares.len();
@@ -2045,14 +2054,17 @@ impl<'a> Compiler<'a> {
     /// The parameters of a function or a method, up to the closing bracket.
     /// A parameter with a class modifier before it names a property as
     /// well, which the maker writes what it was given into.
-    fn parameters(&mut self, call: &Brackets) -> Res<(Vec<String>, Vec<(usize, usize)>, Vec<String>)> {
+    fn parameters(&mut self, named: &str, call: &Brackets) -> Res<(Vec<String>, Vec<(usize, usize)>, Vec<String>)> {
         let lang = self.lang;
         let mut formals = Vec::new();
         // Which parameter, and where its own value is written: it is read
         // again inside the program, where its names mean what they should.
         let mut spares: Vec<(usize, usize)> = Vec::new();
         let mut promoted: Vec<String> = Vec::new();
+        // The kind each parameter was written with, as they are read.
+        let mut kinded: Vec<Option<Rc<str>>> = Vec::new();
         while !self.at_symbol(&call.close) && !self.exhausted() {
+            let mut takes_nothing = false;
             let _by_cell = self.skip_reference();
             let mut names_property = false;
             while self.look().shape == Shape::Instr && Lang::spells(&lang.modifier_words, &self.look().lexeme) {
@@ -2072,12 +2084,14 @@ impl<'a> Compiler<'a> {
                 // taking nothing as well: `?int $x`.
                 if lang.ternary.as_ref().map_or(false, |(q, _)| self.at_symbol(q)) && self.look_ahead(1).shape == Shape::Instr {
                     self.take();
+                    takes_nothing = true;
                 }
                 let mut kind = None;
                 if self.look().shape == Shape::Instr && self.look_ahead(1).shape == Shape::Instr {
                     kind = Some(Rc::from(self.take().lexeme.as_str()));
                 }
-                self.formal_kinds.push(kind);
+                self.formal_kinds.push(kind.clone());
+                kinded.push(kind);
                 formals.push(self.want_name("as a parameter name")?);
                 if self.look().shape == Shape::Sign && Lang::spells(&lang.type_marks, &self.look().lexeme) {
                     self.take();
@@ -2093,7 +2107,25 @@ impl<'a> Compiler<'a> {
                 self.take();
                 spares.push((formals.len() - 1, self.pos));
                 // Read once here only to step over it.
-                self.member_value()?;
+                let spare = self.member_value()?;
+                // A parameter written with a kind and given nothing to
+                // fall back on takes nothing as well as that kind, which
+                // the reference asks to be written out rather than left
+                // to be understood.
+                let nothing = matches!(spare.as_slice(), [Instr::Const(Value::Null)]);
+                if nothing && !takes_nothing && kinded.last().map_or(false, Option::is_some) && lang.tells_place {
+                    let whose = match &self.within {
+                        Some((class, _)) => format!("{}::{}", class, named),
+                        None => named.to_string(),
+                    };
+                    let told = format!(
+                        "{}(): Implicitly marking parameter {} as nullable is deprecated, the explicit nullable type must be used instead",
+                        whose,
+                        formals.last().map_or("", String::as_str)
+                    );
+                    self.act(Action::Remark(Complaint::Deprecated, Rc::from(told.as_str())), 0);
+                    self.put_away();
+                }
             }
             if let Some(sep) = &call.between {
                 if self.at_symbol(sep) {
@@ -2156,7 +2188,7 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
         self.want_sign(&call.open, "after function name")?;
-        let (formals, spares, _) = self.parameters(&call)?;
+        let (formals, spares, _) = self.parameters(&name, &call)?;
         let least = formals.len() - spares.len();
         let given = formals.clone();
         if self.look().shape == Shape::Sign && Lang::spells(&lang.return_marks, &self.look().lexeme) {

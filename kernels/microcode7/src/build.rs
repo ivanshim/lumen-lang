@@ -1395,11 +1395,14 @@ impl<'a> Builder<'a> {
         let bound = self.class_binding(&name);
         let slot = self.global_address(&bound);
         let written = Form::Write(slot, Box::new(made));
-        let mut items: Vec<Form> = self.statics.drain(statics_before..).collect();
-        if items.is_empty() {
+        // What a method keeps between calls is set after the class is
+        // bound, since what it is set to may name the class itself.
+        let kept: Vec<Form> = self.statics.drain(statics_before..).collect();
+        if kept.is_empty() {
             return Ok(written);
         }
-        items.push(written);
+        let mut items = vec![written];
+        items.extend(kept);
         Ok(sequence(items))
     }
 
@@ -1411,7 +1414,8 @@ impl<'a> Builder<'a> {
         self.need_sign(open, "after method name")?;
         let this = table.single("ext.stmt.class.this").ok_or_else(|| "A class needs ext.stmt.class.this".to_string())?.to_string();
         let mut params = vec![this.clone()];
-        let (given, spares, also_property) = self.parameters()?;
+        let (given, spares, also_property, said) = self.parameters(name)?;
+        self.statics.extend(said);
         params.extend(given);
         // The thing it is for is always given, so every place moves by one.
         let least = params.len() - spares.len();
@@ -1975,7 +1979,7 @@ impl<'a> Builder<'a> {
 
 
     /// The parameters of a function or a method, up to the closing bracket.
-    fn parameters(&mut self) -> Res<(Vec<String>, Vec<(usize, usize)>, Vec<String>)> {
+    fn parameters(&mut self, named: &str) -> Res<(Vec<String>, Vec<(usize, usize)>, Vec<String>, Vec<Form>)> {
         let table = self.table;
         let close = table.single("syntax.call.close").unwrap().to_string();
         let typed = table.flag("stmt.let.type_first");
@@ -1986,7 +1990,12 @@ impl<'a> Builder<'a> {
         // A parameter with a class modifier before it names a property
         // of the thing as well, which the maker fills in.
         let mut also_property: Vec<String> = Vec::new();
+        // Words said about how the parameters are written, said where
+        // the routine is declared.
+        let mut said: Vec<Form> = Vec::new();
         while !self.sign(&close) && !self.exhausted() {
+            let mut takes_nothing = false;
+            let mut kinded = false;
             self.skip_reference();
             let mut for_the_thing = false;
             while self.look().shape == Shape::Bare && self.key("ext.stmt.class.modifier") {
@@ -2004,10 +2013,11 @@ impl<'a> Builder<'a> {
             } else {
                 // A type may stand before the name, and may be marked as
                 // taking nothing as well: `?int $x`.
-                self.skip_nothing_mark();
+                takes_nothing = self.skip_nothing_mark();
                 let mut kind = None;
                 if self.look().shape == Shape::Bare && self.glance(1).shape == Shape::Bare {
                     kind = Some(Rc::from(self.advance().lexeme.as_str()));
+                    kinded = true;
                 }
                 self.formal_kinds.push(kind);
                 params.push(self.need_word("as a parameter name")?);
@@ -2022,10 +2032,28 @@ impl<'a> Builder<'a> {
             // A parameter may carry a value of its own for calls that
             // leave it out.
             if self.on_assign() {
+                let row = (self.look().row as u32).saturating_sub(self.before);
                 self.advance();
                 spares.push((params.len() - 1, self.pos));
                 // Read once here only to step over it.
-                self.expr(0)?;
+                let spare = self.expr(0)?;
+                // A parameter written with a kind and nothing to fall
+                // back on takes nothing as well as that kind, which the
+                // reference asks to be written out rather than left to
+                // be understood.
+                let nothing = matches!(spare, Form::Const(Value::Nil));
+                if nothing && !takes_nothing && kinded && self.tells_place {
+                    let whose = match &self.within {
+                        Some((class, _)) => format!("{}::{}", class, named),
+                        None => named.to_string(),
+                    };
+                    let told = format!(
+                        "{}(): Implicitly marking parameter {} as nullable is deprecated, the explicit nullable type must be used instead",
+                        whose,
+                        params.last().map_or("", String::as_str)
+                    );
+                    said.push(Form::Remark("deprecated", Rc::from(told.as_str()), row));
+                }
             }
             if let Some(sep) = table.single("syntax.call.separator") {
                 if self.sign(sep) {
@@ -2037,16 +2065,18 @@ impl<'a> Builder<'a> {
             }
         }
         self.need_sign(&close, "after parameters")?;
-        Ok((params, spares, also_property))
+        Ok((params, spares, also_property, said))
     }
 
     /// Step over the sign saying a type takes nothing as well: `?int`.
-    fn skip_nothing_mark(&mut self) {
+    fn skip_nothing_mark(&mut self) -> bool {
         let marks = self.table.strings("ext.op.ternary");
         let marked = marks.first().map_or(false, |q| self.sign(q));
         if marked && self.glance(1).shape == Shape::Bare {
             self.advance();
+            return true;
         }
+        false
     }
 
     /// Step over the sign saying a name shares a cell: where it stands
@@ -2083,7 +2113,7 @@ impl<'a> Builder<'a> {
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
         self.need_sign(open, "after function name")?;
         let typed = table.flag("stmt.let.type_first");
-        let (params, spares, _) = self.parameters()?;
+        let (params, spares, _, said) = self.parameters(&name)?;
         let least = params.len() - spares.len();
         let formals = params.clone();
         let returns_here = |b: &Self| {
@@ -2112,7 +2142,8 @@ impl<'a> Builder<'a> {
             items.push(r.body()?);
             Ok(sequence(items))
         })?;
-        let mut items: Vec<Form> = self.statics.drain(statics_before..).collect();
+        let mut items: Vec<Form> = said;
+        items.extend(self.statics.drain(statics_before..));
         // A language may bind every routine among the outermost bindings,
         // wherever it is written, so one written inside another is there
         // for the whole run once that one has run.
