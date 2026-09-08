@@ -2432,9 +2432,12 @@ impl<'a> Builder<'a> {
             }
             if table.single("ext.op.otherwise").map_or(false, |m| self.sign(m)) {
                 // `a ?? b`: b is a program, read only when a is nothing.
+                // What stands on the left is read quietly: a name or a
+                // place that is not there is the case the whole is
+                // written for, and nothing to be told of.
                 self.advance();
                 let otherwise = self.limb(Traps::Naught, |r| r.expr(0))?;
-                left = prim_call(Prim::Otherwise, vec![left, otherwise]);
+                left = prim_call(Prim::Otherwise, vec![Form::Muted(Box::new(left)), otherwise]);
                 continue;
             }
             if self.look().shape == Shape::Bare && table.spells("ext.op.instanceof", &text) {

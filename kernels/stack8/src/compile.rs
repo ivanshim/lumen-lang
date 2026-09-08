@@ -2604,8 +2604,18 @@ impl<'a> Compiler<'a> {
                 continue;
             }
             if lang.otherwise_mark.as_ref().map_or(false, |m| self.at_symbol(m)) {
-                // `a ?? b`: b is worked out only when a is nothing.
+                // `a ?? b`: b is worked out only when a is nothing. What
+                // stands on the left is read quietly, since a name or a
+                // place that is not there is the very case the whole is
+                // written for, and is nothing to complain of.
                 self.take();
+                let left: Vec<Instr> = self.piece().instrs.drain(from..).collect();
+                self.put(Instr::Hush(true));
+                let at = self.mark();
+                for w in relocated(left, at as i64 - from as i64) {
+                    self.put(w);
+                }
+                self.put(Instr::Hush(false));
                 self.write(TEMP_CELL);
                 self.read(TEMP_CELL);
                 self.act(Action::Nothing, 1);
