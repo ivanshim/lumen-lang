@@ -479,6 +479,7 @@ impl<'a> Engine<'a> {
             true_word: word(&self.lang.true_words, "true"),
             false_word: word(&self.lang.false_words, "false"),
             null_word: nothing,
+            flag_counts: self.lang.flags_count,
             real_digits: self.lang.real_bits.and(self.lang.real_digits),
         }
     }
@@ -1888,8 +1889,12 @@ impl<'a> Engine<'a> {
     /// since a language may write it as no word at all and a complaint
     /// still has to name it.
     fn kind_named(&self, v: &Value) -> String {
-        if matches!(v, Value::Flag(_)) {
-            return v.display(&self.wording());
+        if let Value::Flag(_) = v {
+            // The word, whatever a flag becomes where text is wanted:
+            // a complaint names what was written, not what it counts as.
+            let mut sp = self.wording();
+            sp.flag_counts = false;
+            return v.display(&sp);
         }
         let Some(kind) = v.sort() else { return "value".to_string() };
         let at = [Sort::Integer, Sort::Rational, Sort::Real, Sort::Text, Sort::Boolean, Sort::Array, Sort::Null]
@@ -2453,7 +2458,7 @@ impl<'a> Engine<'a> {
             }
             Builtin::Layout => {
                 arity(1)?;
-                self.utter(&laid_out(&args[0], 0));
+                self.utter(&laid_out(&args[0], 0, &sp));
                 Value::Flag(true)
             }
             Builtin::External => self.external(name, &args)?,
@@ -2623,23 +2628,23 @@ fn put_key(pairs: &mut Vec<(Value, Value)>, key: Value, value: Value) {
 /// A value over lines, as PHP's print_r writes it: a scalar bare, an
 /// array as `Array` and its places in brackets, each nested array set
 /// eight spaces further in and followed by a blank line.
-fn laid_out(v: &Value, indent: usize) -> String {
+fn laid_out(v: &Value, indent: usize, sp: &Wording) -> String {
     let held;
     let (what, pairs): (String, Vec<(String, &Value)>) = match v {
         Value::Array(items) => ("Array".to_string(), items.iter().enumerate().map(|(i, x)| (i.to_string(), x)).collect()),
-        Value::Map(entries) => ("Array".to_string(), entries.iter().map(|(k, x)| (k.plain(), x)).collect()),
+        Value::Map(entries) => ("Array".to_string(), entries.iter().map(|(k, x)| (k.display(sp), x)).collect()),
         Value::Object(thing) => {
             held = thing.fields.borrow();
             (format!("{} Object", thing.class.name), held.iter().map(|(k, x)| (k.clone(), x)).collect())
         }
-        other => return other.plain(),
+        other => return other.display(sp),
     };
     let pad = " ".repeat(indent);
     let mut out = format!("{what}\n{pad}(\n");
     for (key, item) in pairs {
         // What an array lays out ends its own line, so the newline
         // here is the gap PHP leaves after it; for a scalar it ends the line.
-        let shown = laid_out(item, indent + 8);
+        let shown = laid_out(item, indent + 8, sp);
         out.push_str(&format!("{pad}    [{key}] => {shown}\n"));
     }
     out.push_str(&format!("{pad})\n"));

@@ -108,6 +108,7 @@
     "=>"
   ],
   "syntax.map.close": [],
+  "system.flag.counts": true,
   "literal.true": [
     "true"
   ],

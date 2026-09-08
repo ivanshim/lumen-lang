@@ -66,6 +66,9 @@ pub struct Literals<'a> {
     pub yes: &'a str,
     pub no: &'a str,
     pub none: &'a str,
+    /// Whether a language counts a flag rather than wording it: true
+    /// shows as one, false as nothing at all.
+    pub counted: bool,
 }
 
 impl Value {
@@ -138,6 +141,8 @@ impl Value {
     /// The text `print` shows.
     pub fn show(&self, lit: Literals) -> String {
         match self {
+            Value::Truth(true) if lit.counted => "1".to_string(),
+            Value::Truth(false) if lit.counted => String::new(),
             Value::Truth(true) => lit.yes.to_string(),
             Value::Truth(false) => lit.no.to_string(),
             Value::Nothing | Value::Empty => lit.none.to_string(),
@@ -174,7 +179,7 @@ impl Value {
                 into.push(']');
             }
             Value::Routine(p) => into.push_str(&format!("@{:p}", Rc::as_ptr(p))),
-            other => into.push_str(&other.show(Literals { yes: "true", no: "false", none: "null" })),
+            other => into.push_str(&other.show(Literals { yes: "true", no: "false", none: "null", counted: false })),
         }
         into.push(',');
     }

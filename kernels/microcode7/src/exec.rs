@@ -520,6 +520,7 @@ impl<'a> Machine<'a> {
         Names {
             truth: self.table.single("literal.true").unwrap_or("true"),
             falsity: self.table.single("literal.false").unwrap_or("false"),
+            flag_counted: self.table.flag("system.flag.counts"),
             // A language may show nothing as no text at all, as PHP does,
             // rather than as the word a program writes for it.
             real_figures: self.table.count("ext.system.real.bits").and(self.table.count("ext.system.real.digits")),
@@ -573,8 +574,12 @@ impl<'a> Machine<'a> {
     /// none. Nothing is called by its kind too, since a language may
     /// write it as no word at all.
     fn kind_called(&self, v: &Value) -> String {
-        if matches!(v, Value::Flag(_)) {
-            return v.render(self.wording());
+        if let Value::Flag(_) = v {
+            // The word, whatever a flag becomes where text is wanted: a
+            // complaint names what was written, not what it counts as.
+            let mut w = self.wording();
+            w.flag_counted = false;
+            return v.render(w);
         }
         let Some(kind) = v.kind() else { return "value".to_string() };
         let order = [Kind::Whole, Kind::Fraction, Kind::Decimal, Kind::Chars, Kind::Truth, Kind::Vector, Kind::Nothing];
@@ -1986,7 +1991,7 @@ impl<'a> Machine<'a> {
             }
             Prim::Portray => {
                 n(1)?;
-                self.utter(&over_lines(&v[0], 0));
+                self.utter(&over_lines(&v[0], 0, self.wording()));
                 Value::Flag(true)
             }
             Prim::Invert => Value::Flag(!self.stands_true(&v[0])),
@@ -2641,23 +2646,23 @@ fn set_key(entries: &mut Vec<(Value, Value)>, key: Value, value: Value) {
 /// A value over lines the way PHP's print_r writes it: a scalar on its
 /// own, an array as the word `Array` with its places in brackets, every
 /// array within set eight spaces further along and followed by a gap.
-fn over_lines(v: &Value, along: usize) -> String {
+fn over_lines(v: &Value, along: usize, w: Names) -> String {
     let held;
     let (called, places): (String, Vec<(String, &Value)>) = match v {
         Value::Vector(items) => ("Array".to_string(), items.iter().enumerate().map(|(at, x)| (at.to_string(), x)).collect()),
-        Value::Dict(entries) => ("Array".to_string(), entries.iter().map(|(k, x)| (k.bare(), x)).collect()),
+        Value::Dict(entries) => ("Array".to_string(), entries.iter().map(|(k, x)| (k.render(w), x)).collect()),
         Value::Thing(thing) => {
             held = thing.holds.borrow();
             (format!("{} Object", thing.of.name), held.iter().map(|(k, x)| (k.clone(), x)).collect())
         }
-        other => return other.bare(),
+        other => return other.render(w),
     };
     let lead = " ".repeat(along);
     let mut out = format!("{called}\n{lead}(\n");
     for (key, item) in places {
         // An array within ends its own line, so this newline is the gap
         // that follows it; after a scalar it is the end of the line.
-        let shown = over_lines(item, along + 8);
+        let shown = over_lines(item, along + 8, w);
         out.push_str(&format!("{lead}    [{key}] => {shown}\n"));
     }
     out.push_str(&format!("{lead})\n"));

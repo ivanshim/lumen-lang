@@ -75,6 +75,7 @@ impl<'a> Machine<'a> {
         Literals {
             yes: self.spec.first("literal.true").unwrap_or("true"),
             no: self.spec.first("literal.false").unwrap_or("false"),
+            counted: self.spec.flag("system.flag.counts"),
             // A language may show nothing as no text at all.
             none: match self.spec.flag("literal.null.silent") {
                 true => "",

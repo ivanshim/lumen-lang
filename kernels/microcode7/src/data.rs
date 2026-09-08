@@ -96,6 +96,9 @@ pub struct Names<'a> {
     pub truth: &'a str,
     pub falsity: &'a str,
     pub nil: &'a str,
+    /// Whether a flag becomes text as the number it counts for: one
+    /// holding true becomes `1`, one holding false nothing whatever.
+    pub flag_counted: bool,
     /// Where a language holds its reals to a width of bits, how many
     /// figures one shows when simply written out; where it says
     /// nothing, a real is shown to the precision it carries.
@@ -218,6 +221,8 @@ impl Value {
         match self {
             // A cell that names share is written as what it holds.
             Value::Shared(cell) => cell.borrow().render(w),
+            Value::Flag(true) if w.flag_counted => "1".to_string(),
+            Value::Flag(false) if w.flag_counted => String::new(),
             Value::Flag(true) => w.truth.to_string(),
             Value::Flag(false) => w.falsity.to_string(),
             Value::Nil | Value::Unset => w.nil.to_string(),

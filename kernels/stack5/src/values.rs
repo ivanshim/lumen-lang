@@ -75,6 +75,9 @@ pub struct Spelling<'a> {
     pub yes: &'a str,
     pub no: &'a str,
     pub none: &'a str,
+    /// Whether a language counts a flag rather than spelling it: true
+    /// shows as one, false as nothing at all.
+    pub counted: bool,
 }
 
 impl Value {
@@ -156,6 +159,8 @@ impl Value {
     /// machine's own form for the rest.
     pub fn show(&self, sp: &Spelling) -> String {
         match self {
+            Value::Bool(true) if sp.counted => "1".to_string(),
+            Value::Bool(false) if sp.counted => String::new(),
             Value::Bool(true) => sp.yes.to_string(),
             Value::Bool(false) => sp.no.to_string(),
             Value::Null | Value::Empty | Value::Hole | Value::Mark => sp.none.to_string(),

@@ -299,6 +299,8 @@ pub struct Lang {
     pub spelled_stands: bool,
     /// Whether a class is known by its name however the name is written.
     pub classes_folded: bool,
+    /// Whether a flag becomes text as the number it stands for.
+    pub flags_count: bool,
     /// What a language says when a builtin that reads what the running
     /// call was handed is reached where no call is running, one for each
     /// of the three; and what it says of a place below the first or past
@@ -409,6 +411,7 @@ w builtin.put | w builtin.precision | w builtin.to_string | w builtin.to_int
 w builtin.to_real | w system.args | w system.memoization | w system.real_default_precision
 w system.entry | w system.kind.integer | w system.kind.rational | w system.kind.real
 w system.kind.string | w system.kind.boolean | w system.kind.array | w system.kind.null
+b system.flag.counts
 ";
 
 /// The extension labels a definition may add beyond the core; a
@@ -1101,6 +1104,7 @@ impl Lang {
             do_words: r.strings("ext.stmt.do")?,
             spelled_stands: r.flag("ext.op.spelled")?,
             classes_folded: r.flag("ext.system.class.folded")?,
+            flags_count: r.flag("system.flag.counts")?,
             args_outside_all: r.head("ext.builtin.args.all.outside")?,
             args_outside_count: r.head("ext.builtin.args.count.outside")?,
             args_outside_at: r.head("ext.builtin.args.at.outside")?,

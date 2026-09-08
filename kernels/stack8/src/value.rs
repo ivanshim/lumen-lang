@@ -90,6 +90,9 @@ pub struct Wording<'a> {
     pub true_word: &'a str,
     pub false_word: &'a str,
     pub null_word: &'a str,
+    /// Whether a flag becomes text as the number it stands for: one
+    /// holding true becomes `1`, one holding false nothing at all.
+    pub flag_counts: bool,
     /// Where a language's reals are binary numbers of a fixed width,
     /// how many significant digits one shows when simply written out.
     /// Where it says nothing, a real is shown to its own precision.
@@ -224,8 +227,14 @@ impl Value {
             // A cell two names share is written as what it holds: the
             // sharing is between the names and not in the value.
             Value::Bond(shared) => shared.borrow().display(sp),
-            Value::Flag(true) => sp.true_word.to_string(),
-            Value::Flag(false) => sp.false_word.to_string(),
+            Value::Flag(true) => match sp.flag_counts {
+                true => "1".to_string(),
+                false => sp.true_word.to_string(),
+            },
+            Value::Flag(false) => match sp.flag_counts {
+                true => String::new(),
+                false => sp.false_word.to_string(),
+            },
             Value::Null | Value::Blank | Value::Gap | Value::Fence => sp.null_word.to_string(),
             Value::Array(items) => {
                 let shown: Vec<String> = items.iter().map(|v| v.display(sp)).collect();

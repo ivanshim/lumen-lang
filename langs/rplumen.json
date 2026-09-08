@@ -62,6 +62,7 @@
   "syntax.map.separator": [],
   "syntax.map.pair": [],
   "syntax.map.close": [],
+  "system.flag.counts": false,
   "literal.true": [
     "true"
   ],
