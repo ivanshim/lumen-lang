@@ -466,6 +466,17 @@ only. The extension labels so far, all from PHP:
   whatever happens when text is asked to be a class. It differs from
   `ext.op.name_by_value` in having no mark of its own: the value simply
   stands where the name would.
+- `ext.stmt.terminator.only`: a switch; a statement ends only where the
+  `stmt.terminator` is written, and a line end is no more than space —
+  everywhere, as it already is inside brackets. So an expression may be
+  carried on to the next line: `$a = $b` on one line and `+ $c;` on the
+  next is one statement, as it is in PHP and in every language of that
+  shape. A language that says nothing here ends a statement at a line
+  end too, which is what a language wants when it writes no terminator,
+  and what Lumen wants although it writes one, since a line end is the
+  end of a statement there as well. The reference kernels do not read
+  this label and refuse such a program outright, which is what they do
+  with every other thing only the full kernels know.
 - `ext.op.increment.text` and `ext.op.decrement.text`: what a language
   says when a step onward or back is taken on text that spells no number
   at all. Naming either turns the rule on for that way. A step onward
@@ -1166,6 +1177,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.global` | - | - | - | - | - | - | - | `global` | - | - |
 | `ext.stmt.static` | - | - | - | - | - | - | - | `static` | - | - |
 | `ext.stmt.switch` | - | - | - | - | - | - | - | `switch` | - | - |
+| `ext.stmt.terminator.only` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.stmt.throw` | - | - | - | - | - | - | - | `throw` | - | - |
 | `ext.stmt.try` | - | - | - | - | - | - | - | `try` | - | - |
 | `ext.stmt.unpack` | - | - | - | - | - | - | - | `list` | - | - |

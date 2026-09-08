@@ -494,6 +494,7 @@
   "ext.op.reference.unshared.handed": [
     "Only variables should be passed by reference"
   ],
+  "ext.stmt.terminator.only": true,
   "ext.stmt.block.instead": [
     ":"
   ],

@@ -310,6 +310,9 @@ pub struct Lang {
     pub spelled_stands: bool,
     /// Whether a class is known by its name however the name is written.
     pub classes_folded: bool,
+    /// Whether a statement ends only where the terminator is written,
+    /// a line end being no more than space.
+    pub terminator_only: bool,
     /// Whether a flag becomes text as the number it stands for.
     pub flags_count: bool,
     /// What a language says when a builtin that reads what the running
@@ -461,6 +464,7 @@ w ext.op.name_by_value | b ext.op.cast | w ext.stmt.unpack
 w ext.system.source.routine | w ext.system.source.class | w ext.system.source.method
 b ext.op.member.by_value | b ext.op.index.text | w ext.system.globals
 w ext.op.reference.unshared.written | w ext.op.reference.unshared.given | w ext.op.reference.unshared.handed
+b ext.stmt.terminator.only
 w ext.stmt.block.instead | w ext.stmt.block.instead.close | b ext.op.spelled | b ext.system.class.folded
 w ext.lexical.escape.codepoint | w ext.lexical.escape.codepoint.open | w ext.lexical.escape.codepoint.close
 w ext.lexical.escape.codepoint.amiss | w ext.lexical.escape.codepoint.beyond
@@ -1124,6 +1128,7 @@ impl Lang {
             do_words: r.strings("ext.stmt.do")?,
             spelled_stands: r.flag("ext.op.spelled")?,
             classes_folded: r.flag("ext.system.class.folded")?,
+            terminator_only: r.flag("ext.stmt.terminator.only")?,
             flags_count: r.flag("system.flag.counts")?,
             args_outside_all: r.head("ext.builtin.args.all.outside")?,
             args_outside_count: r.head("ext.builtin.args.count.outside")?,
