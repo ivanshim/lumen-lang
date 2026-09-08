@@ -241,7 +241,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         Some(under) => under.idents,
         None => top.idents.clone(),
     };
-    let program = Routine { ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: top.idents, frameless: false, written_in: r.written_in.clone(), traps: Traps::Naught, body };
+    let program = Routine { ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: top.idents, frameless: false, written_in: r.written_in.clone(), within: None, traps: Traps::Naught, body };
     Ok(Built { program: Rc::new(program), globals, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back })
 }
 
@@ -769,7 +769,7 @@ impl<'a> Builder<'a> {
         let body = body(self)?;
         let scope = self.layers.pop().unwrap();
         self.naming.pop();
-        Ok(constant(Value::Routine(Rc::new(Routine { ident: name.to_string(), least, formals: params, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), traps: catches, body }))))
+        Ok(constant(Value::Routine(Rc::new(Routine { ident: name.to_string(), least, formals: params, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), traps: catches, body }))))
     }
 
     /// A branch arm or a loop body: a program that holds no names.
@@ -786,7 +786,7 @@ impl<'a> Builder<'a> {
     /// that own no names, so the chosen one runs in the frame around it.
     fn choose(&mut self, test: Form, then: Form, otherwise: Form) -> Form {
         let wrap = |name: &str, body: Form| {
-            let program = Routine { ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: Vec::new(), frameless: true, written_in: self.written_in.clone(), traps: Traps::Naught, body };
+            let program = Routine { ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, traps: Traps::Naught, body };
             constant(Value::Routine(Rc::new(program)))
         };
         prim_call(Prim::Choose, vec![test, wrap("<then>", then), wrap("<else>", otherwise)])
@@ -3984,7 +3984,7 @@ impl<'a> Builder<'a> {
             let mut param_slots = scope.formal_slots;
             params.reverse();
             param_slots.reverse();
-            let program = Routine { ident: name, least: 0, formals: params, formal_kinds: Vec::new(), formal_slots: param_slots, idents: scope.idents, frameless: false, written_in: self.written_in.clone(), traps: Traps::Yields, body: sequence(s) };
+            let program = Routine { ident: name, least: 0, formals: params, formal_kinds: Vec::new(), formal_slots: param_slots, idents: scope.idents, frameless: false, written_in: self.written_in.clone(), within: None, traps: Traps::Yields, body: sequence(s) };
             stack.push(constant(Value::Routine(Rc::new(program))));
             return Ok(());
         }

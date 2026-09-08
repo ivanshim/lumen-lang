@@ -266,7 +266,7 @@ pub fn compile_within(
         a.registry.gives_back = a.gives_back.clone();
     }
     let unit = a.pieces.pop().expect("the top unit");
-    Ok(Rc::new(Routine { ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), instrs: peephole(unit.instrs) }))
+    Ok(Rc::new(Routine { ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, instrs: peephole(unit.instrs) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -697,7 +697,8 @@ impl<'a> Compiler<'a> {
         }
         let unit = self.pieces.pop().expect("the unit");
         let instrs = if returns_value && !used { relocated(unit.instrs.into_iter().skip(2).collect(), -2) } else { unit.instrs };
-        Ok(Rc::new(Routine { ident: unit.ident, formals, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), instrs: peephole(instrs) }))
+        let within = self.within.as_ref().map(|(named, _)| Rc::from(named.as_str()));
+        Ok(Rc::new(Routine { ident: unit.ident, formals, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, instrs: peephole(instrs) }))
     }
 
     // ---------- statements ----------

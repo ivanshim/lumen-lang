@@ -435,35 +435,41 @@ impl Class {
         }
     }
 
-    /// Whether a member of that name may be reached by code written
-    /// inside the class named, or outside every class where none is
-    /// named. What no class declares is open to all, as a property
-    /// written onto a thing while the run goes is.
-    pub fn within_reach(&self, name: &str, from: Option<&str>) -> bool {
-        let Some((reach, holder)) = self.reach_of(name) else { return true };
-        match reach {
-            Reach::Open => true,
-            Reach::Hidden => from == Some(holder),
-            // A class standing on the one that declared it reaches it,
-            // and so does the one it stands on.
-            Reach::Guarded => match from {
-                Some(here) => self.named(here, false) || here == holder,
-                None => false,
-            },
-        }
-    }
-
     /// Every property an object of this class begins with, those it
-    /// stands on first, so a class of its own overrides them.
+    /// stands on first, so a class of its own overrides them. A property
+    /// the class keeps to itself is filed under its own name and the
+    /// class's together, so that a class standing on it may declare one
+    /// of the same name without the two becoming one.
     pub fn all_fields(&self) -> Vec<(String, Value)> {
         let mut all = self.base.as_ref().map_or_else(Vec::new, |b| b.all_fields());
-        for (name, value) in &self.fields {
-            match all.iter_mut().find(|(n, _)| n == name) {
+        for (at, (name, value)) in self.fields.iter().enumerate() {
+            let alone = self.reaches.get(at) == Some(&Reach::Hidden);
+            let filed = match alone {
+                true => kept_alone(name, &self.name),
+                false => name.clone(),
+            };
+            match all.iter_mut().find(|(n, _)| *n == filed) {
                 Some(place) => place.1 = value.clone(),
-                None => all.push((name.clone(), value.clone())),
+                None => all.push((filed, value.clone())),
             }
         }
         all
+    }
+}
+
+/// A property a class keeps to itself, filed under its own name and the
+/// class's together, so that two classes along one line may each have a
+/// property of that name and neither be the other's.
+pub fn kept_alone(name: &str, owner: &str) -> String {
+    format!("{}\0{}", name, owner)
+}
+
+/// The name a property is filed under, taken apart: what it is called,
+/// and the class that keeps it to itself where one does.
+pub fn who_keeps(filed: &str) -> (&str, Option<&str>) {
+    match filed.split_once('\0') {
+        Some((name, owner)) => (name, Some(owner)),
+        None => (filed, None),
     }
 }
 

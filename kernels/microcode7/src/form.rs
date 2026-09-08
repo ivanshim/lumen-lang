@@ -424,5 +424,9 @@ pub struct Routine {
     /// complaint names it, and a file it asks for is sought beside it.
     /// Nothing where the program is the run's own.
     pub written_in: Option<Rc<str>>,
+    /// The class this program was written inside, where it was written
+    /// inside one: what a class holds alone is reached from there and
+    /// from nowhere else.
+    pub within: Option<Rc<str>>,
     pub body: Form,
 }

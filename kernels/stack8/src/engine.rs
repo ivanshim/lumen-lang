@@ -51,6 +51,9 @@ pub struct Engine<'a> {
     /// The same for a piece the program silenced outright: nothing at
     /// all is said of it, not even what is said of how it is written.
     muted: std::cell::Cell<usize>,
+    /// The class each call is running inside, innermost last: what a
+    /// class keeps to itself is reached from there and nowhere else.
+    inside: Vec<Option<Rc<str>>>,
     /// What the run has written out while it was being kept rather than
     /// let go, innermost last. A keeping within a keeping writes into
     /// the one around it when it is given up.
@@ -145,6 +148,7 @@ impl<'a> Engine<'a> {
             began: std::cell::Cell::new(None),
             hushed: std::cell::Cell::new(0),
             muted: std::cell::Cell::new(0),
+            inside: Vec::new(),
             holding: RefCell::new(Vec::new()),
             when_done: RefCell::new(Vec::new()),
             things_made: RefCell::new(Vec::new()),
@@ -600,6 +604,40 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
+    /// Whether a class shares what it keeps for itself and those along
+    /// its line with the class the run stands in: the two are along one
+    /// line when either stands on the other.
+    fn shares_with(&self, holder: &str, here: Option<&str>) -> bool {
+        let Some(here) = here else { return false };
+        if here == holder {
+            return true;
+        }
+        let stands_on = |below: &str, above: &str| match self.class_named(below) {
+            Some(Value::Class(c)) => c.named(above, self.lang.classes_folded),
+            _ => false,
+        };
+        stands_on(here, holder) || stands_on(holder, here)
+    }
+
+    /// The class the run stands inside, where it stands inside one.
+    fn standing_in(&self) -> Option<&str> {
+        self.inside.last().and_then(|named| named.as_deref())
+    }
+
+    /// The place a thing holds a property of that name, reached from
+    /// where the run stands: what a class keeps to itself is filed under
+    /// its own name and the class's together, so a program written in
+    /// that class finds it there and every other finds the open one.
+    fn member_at(&self, held: &[(String, Value)], name: &str) -> Option<usize> {
+        if let Some(here) = self.standing_in() {
+            let alone = crate::value::kept_alone(name, here);
+            if let Some(at) = held.iter().position(|(n, v)| *n == alone && standing(v)) {
+                return Some(at);
+            }
+        }
+        held.iter().position(|(n, v)| n == name && standing(v))
+    }
+
     /// The thing that is its own walk, where this value is one.
     fn walker(&self, held: &Value) -> Option<Rc<Instance>> {
         let class = self.lang.walker_class.as_deref()?;
@@ -962,7 +1000,9 @@ impl<'a> Engine<'a> {
             let was = std::mem::replace(&mut self.source, place.to_string());
             (was, self.line)
         });
+        self.inside.push(program.within.clone());
         let outcome = self.run_instrs(program, &mut frame);
+        self.inside.pop();
         if let Some((was, on)) = elsewhere {
             self.source = was;
             self.line = on;
@@ -1476,7 +1516,10 @@ impl<'a> Engine<'a> {
                     Value::Object(o) => {
                         let held = o.fields.borrow();
                         match held.get(at) {
-                            Some((n, v)) => if key { Value::text(n) } else { v.clone() },
+                            // What a member is called, not the name it is
+                            // filed under: a class keeping one to itself
+                            // files it under its own name as well.
+                            Some((n, v)) => if key { Value::text(crate::value::who_keeps(n).0) } else { v.clone() },
                             None => return Err(format!("Array index {} out of bounds (length: {})", at, held.len()).into()),
                         }
                     }
@@ -1548,7 +1591,10 @@ impl<'a> Engine<'a> {
             }
             Action::Grab(name) => match self.drop_top()? {
                 Value::Object(o) => {
-                    let found = o.fields.borrow().iter().find(|(n, v)| n == name.as_ref() && standing(v)).map(|(_, v)| v.clone());
+                    let found = {
+                        let held = o.fields.borrow();
+                        self.member_at(&held, name).map(|at| held[at].1.clone())
+                    };
                     match found {
                         // A property held in a shared cell reads as what
                         // the cell holds, the sharing being between the
@@ -1574,7 +1620,7 @@ impl<'a> Engine<'a> {
                 match self.drop_top()? {
                     Value::Object(o) => {
                         let mut held = o.fields.borrow_mut();
-                        let at = match held.iter().position(|(n, v)| n == name.as_ref() && standing(v)) {
+                        let at = match self.member_at(&held, name) {
                             Some(at) => at,
                             None => {
                                 held.push((name.to_string(), Value::Null));
@@ -1603,10 +1649,9 @@ impl<'a> Engine<'a> {
                         // a walk under way counts places, and closing
                         // one up would move every later member back a
                         // step under its feet.
-                        for (n, v) in o.fields.borrow_mut().iter_mut() {
-                            if n == name.as_ref() {
-                                *v = Value::Blank;
-                            }
+                        let mut held = o.fields.borrow_mut();
+                        if let Some(at) = self.member_at(&held, name) {
+                            held[at].1 = Value::Blank;
                         }
                         Value::Null
                     }
@@ -1619,8 +1664,8 @@ impl<'a> Engine<'a> {
                 match pair.pop().expect("the object") {
                     Value::Object(o) => {
                         let mut fields = o.fields.borrow_mut();
-                        match fields.iter_mut().find(|(n, v)| n == name.as_ref() && standing(v)) {
-                            Some(place) => place.1 = value,
+                        match self.member_at(&fields, name) {
+                            Some(at) => fields[at].1 = value,
                             None => fields.push((name.to_string(), value)),
                         }
                         Value::Null
@@ -1793,7 +1838,16 @@ impl<'a> Engine<'a> {
                     (Value::Object(o), Ok(at)) => {
                         let here = within.as_deref();
                         let held = o.fields.borrow();
-                        Value::Flag(held.get(at).map_or(true, |(n, v)| standing(v) && o.class.within_reach(n, here)))
+                        let reached = |filed: &str| match crate::value::who_keeps(filed) {
+                            // A member a class keeps to itself is the
+                            // business of that class alone.
+                            (_, Some(keeper)) => here == Some(keeper),
+                            (name, None) => match o.class.reach_of(name) {
+                                Some((Reach::Guarded, holder)) => self.shares_with(holder, here),
+                                _ => true,
+                            },
+                        };
+                        Value::Flag(held.get(at).map_or(true, |(n, v)| standing(v) && reached(n)))
                     }
                     _ => Value::Flag(true),
                 }
@@ -3063,8 +3117,9 @@ fn dumped(v: &Value, depth: usize, binary_reals: bool, sp: &Wording) -> String {
             let held = thing.fields.borrow();
             let members: Vec<&(String, Value)> = held.iter().filter(|(_, v)| standing(v)).collect();
             let mut out = format!("object({})#{} ({}) {{\n", thing.class.name, thing.mark, members.len());
-            for (member, item) in members {
-                let how = marked(&thing.class, member, sp);
+            for (filed, item) in members {
+                let how = marked(&thing.class, filed, sp);
+                let member = crate::value::who_keeps(filed).0;
                 out.push_str(&format!("{pad}  [\"{member}\"{how}]=>\n{pad}  {}{}\n", shared(item), dumped(item, depth + 1, binary_reals, sp)));
             }
             out.push_str(&pad);
@@ -3130,14 +3185,17 @@ fn put_key(pairs: &mut Vec<(Value, Value)>, key: Value, value: Value) {
 /// member is open to everything, the word for a member the class shares
 /// with those standing on it, or the class's own name and the word for
 /// a member it keeps to itself.
-fn marked(class: &Class, member: &str, sp: &Wording) -> String {
+fn marked(class: &Class, filed: &str, sp: &Wording) -> String {
+    let (member, keeper) = crate::value::who_keeps(filed);
+    if let Some(holder) = keeper {
+        return match &sp.hidden_word {
+            Some(word) => format!(":\"{holder}\":{word}"),
+            None => String::new(),
+        };
+    }
     match class.reach_of(member) {
         Some((Reach::Guarded, _)) => match &sp.guarded_word {
             Some(word) => format!(":{word}"),
-            None => String::new(),
-        },
-        Some((Reach::Hidden, holder)) => match &sp.hidden_word {
-            Some(word) => format!(":\"{holder}\":{word}"),
             None => String::new(),
         },
         _ => String::new(),
@@ -3161,7 +3219,7 @@ fn laid_out(v: &Value, indent: usize, sp: &Wording) -> String {
         Value::Map(entries) => ("Array".to_string(), entries.iter().map(|(k, x)| (k.display(sp), x)).collect()),
         Value::Object(thing) => {
             held = thing.fields.borrow();
-            let shown = |k: &String| format!("{k}{}", marked(&thing.class, k, sp));
+            let shown = |k: &String| format!("{}{}", crate::value::who_keeps(k).0, marked(&thing.class, k, sp));
             (format!("{} Object", thing.class.name), held.iter().filter(|(_, v)| standing(v)).map(|(k, x)| (shown(k), x)).collect())
         }
         other => return other.display(sp),

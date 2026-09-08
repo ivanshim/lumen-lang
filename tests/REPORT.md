@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 87, differs 2, error 15, skipped 10 | pass 87, differs 2, error 15, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 159, differs 26, error 23, skipped 5 | pass 159, differs 26, error 23, skipped 5 |
+| `php/lang` | 213 | pass 161, differs 24, error 23, skipped 5 | pass 161, differs 24, error 23, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 48, differs 9, error 1, skipped 6 | pass 48, differs 9, error 1, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 320, differs 38, error 39, skipped 25 | pass 320, differs 38, error 39, skipped 25 |
+| all | 422 | pass 322, differs 36, error 39, skipped 25 | pass 322, differs 36, error 39, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 38 |
+| ran, printed something else | 36 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | skip php-cgi not available | 2 |
@@ -356,7 +356,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/033.phpt` | differs | differs | ran, printed something else |
 | `php/lang/034.phpt` | skipped | skipped | skip Can't find german locale |
 | `php/lang/035.phpt` | pass | pass |  |
-| `php/lang/036.phpt` | differs | differs | ran, printed something else |
+| `php/lang/036.phpt` | pass | pass |  |
 | `php/lang/037.phpt` | pass | pass |  |
 | `php/lang/038.phpt` | error | error | thrown in <file> |
 | `php/lang/039.phpt` | pass | pass |  |
@@ -478,7 +478,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/foreachLoopIteratorAggregate.003.phpt` | pass | pass |  |
 | `php/lang/foreachLoopIteratorAggregate.004.phpt` | pass | pass |  |
 | `php/lang/foreachLoopObjects.001.phpt` | pass | pass |  |
-| `php/lang/foreachLoopObjects.002.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoopObjects.002.phpt` | pass | pass |  |
 | `php/lang/foreachLoopObjects.003.phpt` | pass | pass |  |
 | `php/lang/foreachLoopObjects.004.phpt` | pass | pass |  |
 | `php/lang/foreachLoopObjects.005.phpt` | pass | pass |  |
