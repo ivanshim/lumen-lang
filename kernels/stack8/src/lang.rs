@@ -517,7 +517,7 @@ w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at
 w ext.builtin.args.all.outside | w ext.builtin.args.count.outside | w ext.builtin.args.at.outside
 w ext.builtin.args.at.below | w ext.builtin.args.at.beyond | b ext.op.assign.value | b ext.op.index.plain_keys
-w ext.system.source.file | w ext.system.source.directory | w ext.system.source.line
+w ext.system.source.file | w ext.system.source.directory | w ext.system.source.line | w ext.system.runner
 w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.complaint.deprecated | w ext.system.complaint.fatal | w ext.system.complaint.reading
 w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove
@@ -1137,7 +1137,7 @@ impl Lang {
             warns_of_unwritten: r.head("ext.system.complaint.warning")?.is_some(),
             tells_place: tells_complaints,
             source_bindings: {
-                let named = [("file", "ext.system.source.file"), ("directory", "ext.system.source.directory")];
+                let named = [("file", "ext.system.source.file"), ("directory", "ext.system.source.directory"), ("runner", "ext.system.runner")];
                 let mut found = Vec::new();
                 for (part, tag) in named {
                     if let Some(word) = r.head(tag)? {

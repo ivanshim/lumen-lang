@@ -270,6 +270,10 @@ only. The extension labels so far, all from PHP:
   with the names of the classes, and of the routines, the run has bound.
   PHP's `get_declared_classes` and `get_defined_functions` are written on
   them.
+- `ext.system.runner`: a name bound to the file of the program that ran
+  this one, as the system knows it, for a program that wants to find
+  itself again. It stands beside `ext.system.source.file` and comes the
+  same way, from the request the host carried in.
 - `ext.builtin.class.beneath`: a builtin answering with the name of the
   class the one it is given stands on, a thing being asked of the class
   it is of, and nothing where it stands on none. PHP's
@@ -1368,6 +1372,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.request.query` | - | - | - | - | - | - | - | `$_GET` | - | - |
 | `ext.system.request.server` | - | - | - | - | - | - | - | `$_SERVER` | - | - |
 | `ext.system.request.settings` | - | - | - | - | - | - | - | `$__started_with` | - | - |
+| `ext.system.runner` | - | - | - | - | - | - | - | `PHP_BINARY` | - | - |
 | `ext.system.source.class` | - | - | - | - | - | - | - | `__CLASS__` | - | - |
 | `ext.system.source.directory` | - | - | - | - | - | - | - | `__DIR__` | - | - |
 | `ext.system.source.file` | - | - | - | - | - | - | - | `__FILE__` | - | - |
