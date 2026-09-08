@@ -263,15 +263,15 @@ impl<'a> Machine<'a> {
             }
             (x, _) if gathered(x) => false,
             (_, y) if gathered(y) => true,
-            (Value::Text(_), Value::Text(_)) => match (number_spelled_in(a), number_spelled_in(b)) {
+            (Value::Text(_), Value::Text(_)) => match (self.number_said(a), self.number_said(b)) {
                 (Some(x), Some(y)) => plainly(&x, &y)?,
                 _ => a.bare() < b.bare(),
             },
-            (Value::Text(s), other) if counts(other) => match number_spelled_in(a) {
+            (Value::Text(s), other) if counts(other) => match self.number_said(a) {
                 Some(x) => plainly(&x, other)?,
                 None => **s < *other.render(w),
             },
-            (other, Value::Text(s)) if counts(other) => match number_spelled_in(b) {
+            (other, Value::Text(s)) if counts(other) => match self.number_said(b) {
                 Some(y) => plainly(other, &y)?,
                 None => *other.render(w) < **s,
             },
@@ -504,16 +504,15 @@ impl<'a> Machine<'a> {
                 return math::make_number((**n).clone(), BigInt::from(1), Some(self.real_figures()));
             }
         }
-        if !self.holds_reals_to_width() {
-            return v;
-        }
-        let Value::Frac(e) = &v else { return v };
-        match crate::data::binary_worth(crate::data::nearest_binary(&e.above, &e.beneath)) {
-            // A nought under nought holds its minus at any width.
-            Some((above, beneath)) => math::made_number(above, beneath, Some(self.real_figures()), e.under),
-            // Past every number of that width, and so left as it is.
-            None => v,
-        }
+        crate::data::at_binary_width(v, self.table.count("ext.system.real.bits"), self.real_figures())
+    }
+
+    /// The number a piece of text says, brought to the width the
+    /// language holds its numbers in. Without that, a number written
+    /// out and the same number said in text would be told apart, one
+    /// having been brought to the width and the other not.
+    fn number_said(&self, v: &Value) -> Option<Value> {
+        number_spelled_in(v).map(|n| self.at_width(n))
     }
 
     fn wording(&self) -> Names<'a> {
@@ -2137,11 +2136,11 @@ impl<'a> Machine<'a> {
                     (one, Value::Text(s)) | (Value::Text(s), one) if empty(one) => s.is_empty(),
                     (one, Value::Vector(items)) | (Value::Vector(items), one) if empty(one) => items.is_empty(),
                     (one, Value::Dict(pairs)) | (Value::Dict(pairs), one) if empty(one) => pairs.is_empty(),
-                    (Value::Text(_), Value::Text(_)) => match (number_spelled_in(left), number_spelled_in(right)) {
+                    (Value::Text(_), Value::Text(_)) => match (self.number_said(left), self.number_said(right)) {
                         (Some(x), Some(y)) => x.equals(&y),
                         _ => left.equals(right),
                     },
-                    (Value::Text(s), other) | (other, Value::Text(s)) if counts(other) => match number_spelled_in(left).or_else(|| number_spelled_in(right)) {
+                    (Value::Text(s), other) | (other, Value::Text(s)) if counts(other) => match self.number_said(left).or_else(|| self.number_said(right)) {
                         Some(x) => x.equals(other),
                         None => **s == other.bare(),
                     },
@@ -2268,10 +2267,11 @@ impl<'a> Machine<'a> {
                     && matches!(v[1], Value::Small(_) | Value::Huge(_))
                     && matches!(math::compute(Calc::Over, &v[0], &v[1]), Some(Ok(Value::Small(_) | Value::Huge(_)))) =>
             {
-                match math::compute(Calc::Over, &v[0], &v[1]) {
+                let evenly = match math::compute(Calc::Over, &v[0], &v[1]) {
                     Some(r) => r?,
                     None => return Err("Division requires numeric operands".to_string()),
-                }
+                };
+                self.at_width(evenly)
             }
             Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power => {
                 let sum = match op {

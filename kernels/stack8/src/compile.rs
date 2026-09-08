@@ -2234,6 +2234,13 @@ impl<'a> Compiler<'a> {
                 // What the chain stands on is read quietly: it is being
                 // written into, and a place not there yet is made on the
                 // way rather than complained about.
+                // The value is worked out first, while what the chain
+                // stands on is still whole.
+                let value = self.gensym("value");
+                if compound.is_none() {
+                    self.value_written(keep)?;
+                    self.write(&value);
+                }
                 self.put(Instr::Hush(true));
                 let at = self.mark();
                 for w in relocated(base.clone(), at as i64 - from as i64) {
@@ -2247,20 +2254,16 @@ impl<'a> Compiler<'a> {
                     self.act(Action::Nested, 2);
                     self.write(&inner[i + 1]);
                 }
-                let value = self.gensym("value");
-                match compound {
-                    Some(op) => {
-                        self.read(&inner[deep]);
-                        self.read(&held[deep]);
-                        self.act(Action::At, 2);
-                        self.stood_before();
-                        self.addend()?;
-                        self.act(op, 2);
-                        self.kept(keep);
-                    }
-                    None => self.value_written(keep)?,
+                if let Some(op) = compound {
+                    self.read(&inner[deep]);
+                    self.read(&held[deep]);
+                    self.act(Action::At, 2);
+                    self.stood_before();
+                    self.addend()?;
+                    self.act(op, 2);
+                    self.kept(keep);
+                    self.write(&value);
                 }
-                self.write(&value);
                 let made = self.gensym("made");
                 if appending {
                     self.read(&value);
@@ -2304,9 +2307,17 @@ impl<'a> Compiler<'a> {
                     self.write(&held[i]);
                 }
                 // Down through the arrays, keeping each one, as far as
-                // the one the write itself lands in.
+                // the one the write itself lands in. The value comes
+                // first, while the array is still where it stands, since
+                // reading it out to rewrite it would leave the name
+                // holding nothing while the value is worked out.
                 let deep = match appending { true => keys.len(), false => keys.len() - 1 };
                 let inner: Vec<String> = (0..=deep).map(|_| self.gensym("within")).collect();
+                let value = self.gensym("value");
+                if compound.is_none() {
+                    self.value_written(keep)?;
+                    self.write(&value);
+                }
                 self.read_to_rewrite(&name);
                 self.write(&inner[0]);
                 for i in 0..deep {
@@ -2315,21 +2326,18 @@ impl<'a> Compiler<'a> {
                     self.act(Action::Nested, 2);
                     self.write(&inner[i + 1]);
                 }
-                let value = self.gensym("value");
-                match compound {
-                    // x op= e writes what x holds now, taken with e.
-                    Some(op) => {
-                        self.read(&inner[deep]);
-                        self.read(&held[deep]);
-                        self.act(Action::At, 2);
-                        self.stood_before();
-                        self.addend()?;
-                        self.act(op, 2);
-                        self.kept(keep);
-                    }
-                    None => self.value_written(keep)?,
+                // x op= e writes what x holds now, taken with e, which
+                // wants the place read first and so comes after.
+                if let Some(op) = compound {
+                    self.read(&inner[deep]);
+                    self.read(&held[deep]);
+                    self.act(Action::At, 2);
+                    self.stood_before();
+                    self.addend()?;
+                    self.act(op, 2);
+                    self.kept(keep);
+                    self.write(&value);
                 }
-                self.write(&value);
                 // Back out again, each array rewritten in the one above.
                 let made = self.gensym("made");
                 if appending {
@@ -4137,11 +4145,16 @@ fn relocated(instrs: Vec<Instr>, delta: i64) -> Vec<Instr> {
 /// A whole number too wide for the language to hold as one is a real
 /// there, literal or not.
 fn within_width(v: Value, lang: &Lang) -> Value {
-    let (Some(bits), Value::Huge(n)) = (lang.integer_bits, &v) else { return v };
-    if n.bits() < bits as u64 {
-        return v;
+    let places = lang.real_digits.unwrap_or(arith::DEFAULT_PLACES);
+    if let (Some(bits), Value::Huge(n)) = (lang.integer_bits, &v) {
+        if n.bits() >= bits as u64 {
+            return arith::shape_number((**n).clone(), BigInt::from(1), Some(places));
+        }
     }
-    arith::shape_number((**n).clone(), BigInt::from(1), Some(lang.real_digits.unwrap_or(arith::DEFAULT_PLACES)))
+    // A real written in a program is brought to the width the language
+    // holds its reals in, as a real worked out while it runs is, so
+    // that the two are the same number and not merely alike.
+    crate::value::to_binary_width(v, lang.real_bits, places)
 }
 
 fn parse_number(text: &str, lang: &Lang) -> Res<Value> {

@@ -419,26 +419,49 @@ pub fn nearest_binary(above: &BigInt, beneath: &BigInt) -> f64 {
     }
 }
 
-/// What a binary real is worth, held as a ratio: the fewest figures
-/// that read back as the same number say what it stands for.
+/// What a binary real is worth, held as a ratio: so many halves,
+/// quarters and eighths, which is the whole of what such a number is.
+/// Holding it that way is what makes the step after it round as the
+/// width rounds, and not as the shortest way of writing it would.
 pub fn binary_worth(x: f64) -> Option<(BigInt, BigInt)> {
     if !x.is_finite() {
         return None;
     }
-    let shown = format!("{:e}", x);
-    let (front, power) = shown.split_once('e')?;
-    let power: i32 = power.parse().ok()?;
-    let below_nought = front.starts_with('-');
-    let run: String = front.trim_start_matches('-').chars().filter(|c| *c != '.').collect();
-    let step = power - (run.len() as i32 - 1);
-    let mut above: BigInt = run.parse().ok()?;
-    if below_nought {
+    if x == 0.0 {
+        return Some((BigInt::zero(), BigInt::one()));
+    }
+    let held = x.to_bits();
+    let under = held >> 63 == 1;
+    let step = ((held >> 52) & 0x7ff) as i64;
+    let rest = held & 0x000f_ffff_ffff_ffff;
+    // The very smallest of the width carry no leading one.
+    let (run, halvings) = match step {
+        0 => (rest, -1074i64),
+        _ => (rest | (1u64 << 52), step - 1075),
+    };
+    let mut above = BigInt::from(run);
+    if under {
         above = -above;
     }
-    Some(match step >= 0 {
-        true => (above * BigInt::from(10).pow(step as u32), BigInt::one()),
-        false => (above, BigInt::from(10).pow(step.unsigned_abs())),
+    Some(match halvings >= 0 {
+        true => (above << halvings as usize, BigInt::one()),
+        false => (above, BigInt::one() << halvings.unsigned_abs() as usize),
     })
+}
+
+/// A real brought to the nearest of a width of bits, held exactly.
+/// Where the language holds no width, or the number stands past every
+/// one of that width, it is left as it is.
+pub fn at_binary_width(v: Value, bits: Option<usize>, figures: usize) -> Value {
+    if bits.is_none() {
+        return v;
+    }
+    let Value::Frac(e) = &v else { return v };
+    match binary_worth(nearest_binary(&e.above, &e.beneath)) {
+        // A nought under nought holds its minus at any width.
+        Some((above, beneath)) => crate::math::made_number(above, beneath, Some(figures), e.under),
+        None => v,
+    }
 }
 
 /// A binary real written out: the fewest figures that read back as the

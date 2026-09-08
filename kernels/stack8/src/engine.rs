@@ -1520,6 +1520,14 @@ impl<'a> Engine<'a> {
 
     // ---------- operations ----------
 
+    /// The number a piece of text spells, brought to the width the
+    /// language holds its numbers in. Without that a number written out
+    /// and the same number spelled in text would be told apart, since
+    /// one had been brought to the width and the other had not.
+    fn number_of(&self, s: &str) -> Option<Value> {
+        number_spelled(s).map(|n| self.at_real_width(n))
+    }
+
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
@@ -1571,11 +1579,11 @@ impl<'a> Engine<'a> {
                     },
                     // Two pieces of text that both spell numbers stand
                     // for those numbers.
-                    (Value::Text(x), Value::Text(y)) => match (number_spelled(x), number_spelled(y)) {
+                    (Value::Text(x), Value::Text(y)) => match (self.number_of(x), self.number_of(y)) {
                         (Some(m), Some(n)) => m.equals(&n),
                         _ => x == y,
                     },
-                    (Value::Text(s), other) | (other, Value::Text(s)) if numeric(other) => match number_spelled(s) {
+                    (Value::Text(s), other) | (other, Value::Text(s)) if numeric(other) => match self.number_of(s) {
                         Some(n) => n.equals(other),
                         None => s.as_ref() == other.display(&sp),
                     },
@@ -1763,21 +1771,8 @@ impl<'a> Engine<'a> {
     /// A real brought to the nearest one the language can hold. Where
     /// its reals are exact, it is left as it stands.
     fn at_real_width(&self, v: Value) -> Value {
-        if self.lang.real_bits.is_none() {
-            return v;
-        }
         let places = self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES);
-        let (p, q, below) = match &v {
-            Value::Real(r) => (r.p.clone(), r.q.clone(), r.below),
-            Value::Frac(r) => (r.p.clone(), r.q.clone(), false),
-            _ => return v,
-        };
-        match crate::value::from_binary(crate::value::as_binary(&p, &q)) {
-            // A nought below nought keeps its minus at any width.
-            Some((p, q)) => arith::shape_signed(p, q, Some(places), below),
-            // Beyond every number of that width, and so left as it is.
-            None => v,
-        }
+        crate::value::to_binary_width(v, self.lang.real_bits, places)
     }
 
     /// The arithmetic itself, both values already numbers as far as they
@@ -1909,15 +1904,15 @@ impl<'a> Engine<'a> {
             }
             (x, _) if listed(x) => false,
             (_, y) if listed(y) => true,
-            (Value::Text(x), Value::Text(y)) => match (number_spelled(x), number_spelled(y)) {
+            (Value::Text(x), Value::Text(y)) => match (self.number_of(x), self.number_of(y)) {
                 (Some(m), Some(n)) => exactly(&m, &n)?,
                 _ => x.as_ref() < y.as_ref(),
             },
-            (Value::Text(s), other) if numeric(other) => match number_spelled(s) {
+            (Value::Text(s), other) if numeric(other) => match self.number_of(s) {
                 Some(n) => exactly(&n, other)?,
                 None => s.as_ref() < other.display(&sp).as_str(),
             },
-            (other, Value::Text(s)) if numeric(other) => match number_spelled(s) {
+            (other, Value::Text(s)) if numeric(other) => match self.number_of(s) {
                 Some(n) => exactly(other, &n)?,
                 None => other.display(&sp).as_str() < s.as_ref(),
             },

@@ -458,26 +458,53 @@ pub fn as_binary(p: &BigInt, q: &BigInt) -> f64 {
     }
 }
 
-/// What a binary real is worth, held exactly: the fewest digits that
-/// read back as the same number are what the number stands for.
+/// What a binary real is worth, held exactly: a whole number of halves,
+/// quarters and so on, which is all such a number ever is. Holding it
+/// so is what makes the next step round as the width rounds, rather
+/// than as the shortest way of writing it would.
 pub fn from_binary(x: f64) -> Option<(BigInt, BigInt)> {
     if !x.is_finite() {
         return None;
     }
-    let written = format!("{:e}", x);
-    let (mantissa, power) = written.split_once('e')?;
-    let power: i32 = power.parse().ok()?;
-    let negative = mantissa.starts_with('-');
-    let figures: String = mantissa.trim_start_matches('-').chars().filter(|c| *c != '.').collect();
-    let scale = power - (figures.len() as i32 - 1);
-    let mut p: BigInt = figures.parse().ok()?;
-    if negative {
+    if x == 0.0 {
+        return Some((BigInt::zero(), BigInt::one()));
+    }
+    let bits = x.to_bits();
+    let below = bits >> 63 == 1;
+    let power = ((bits >> 52) & 0x7ff) as i64;
+    let part = bits & 0x000f_ffff_ffff_ffff;
+    // The smallest numbers of the width carry no leading one.
+    let (whole, twos) = match power {
+        0 => (part, -1074i64),
+        _ => (part | (1u64 << 52), power - 1075),
+    };
+    let mut p = BigInt::from(whole);
+    if below {
         p = -p;
     }
-    Some(match scale >= 0 {
-        true => (p * BigInt::from(10).pow(scale as u32), BigInt::one()),
-        false => (p, BigInt::from(10).pow(scale.unsigned_abs())),
+    Some(match twos >= 0 {
+        true => (p << twos as usize, BigInt::one()),
+        false => (p, BigInt::one() << twos.unsigned_abs() as usize),
     })
+}
+
+/// A real brought to the nearest one of a width of bits, held exactly.
+/// Where the language holds no width, or the number is past every one
+/// of that width, it is left as it stands.
+pub fn to_binary_width(v: Value, bits: Option<usize>, places: usize) -> Value {
+    if bits.is_none() {
+        return v;
+    }
+    let (p, q, below) = match &v {
+        Value::Real(r) => (r.p.clone(), r.q.clone(), r.below),
+        Value::Frac(r) => (r.p.clone(), r.q.clone(), false),
+        _ => return v,
+    };
+    match from_binary(as_binary(&p, &q)) {
+        // A nought below nought keeps its minus at any width.
+        Some((p, q)) => crate::arith::shape_signed(p, q, Some(places), below),
+        None => v,
+    }
 }
 
 /// A binary real written out the way such a language writes one: the

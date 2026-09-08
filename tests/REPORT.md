@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 77, differs 5, error 22, skipped 10 | pass 77, differs 5, error 22, skipped 10 |
 | `php/func` | 14 | pass 13, differs 0, error 1, skipped 0 | pass 13, differs 0, error 1, skipped 0 |
-| `php/lang` | 213 | pass 118, differs 42, error 48, skipped 5 | pass 119, differs 42, error 47, skipped 5 |
+| `php/lang` | 213 | pass 119, differs 42, error 47, skipped 5 | pass 119, differs 42, error 47, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
-| `php/lang/operators` | 64 | pass 37, differs 19, error 2, skipped 6 | pass 37, differs 19, error 2, skipped 6 |
+| `php/lang/operators` | 64 | pass 42, differs 14, error 2, skipped 6 | pass 42, differs 14, error 2, skipped 6 |
 | `php/lang/string` | 9 | pass 2, differs 1, error 6, skipped 0 | pass 2, differs 1, error 6, skipped 0 |
-| all | 422 | pass 251, differs 67, error 79, skipped 25 | pass 252, differs 67, error 78, skipped 25 |
+| all | 422 | pass 257, differs 62, error 78, skipped 25 | pass 257, differs 62, error 78, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 67 |
+| ran, printed something else | 62 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | Fatal error: Uncaught Error: Undefined variable: iterator in <file> | 5 |
@@ -68,12 +68,6 @@ is listed, since the full kernels are meant to behave alike.
 | skip Can't find german locale | 1 |
 | Fatal error: Uncaught Error: Cannot reach 'b' in null in <file> | 1 |
 | Fatal error: Uncaught Error: Cannot reach 'B' in null in <file> | 1 |
-
-### Kernel disagreements: 1
-
-| Test | stack8 | microcode7 |
-|---|---|---|
-| `php/lang/engine_assignExecutionOrder_007.phpt` | error: Fatal error: Uncaught Error: Only a class can be made into an object in <file> | pass:  |
 
 ### Reserved words: 55 of 68 spelled
 
@@ -457,7 +451,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/engine_assignExecutionOrder_004.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_005.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_006.phpt` | pass | pass |  |
-| `php/lang/engine_assignExecutionOrder_007.phpt` | error | pass | Fatal error: Uncaught Error: Only a class can be made into an object in <file> |
+| `php/lang/engine_assignExecutionOrder_007.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_008.phpt` | error | error | '++' needs a plain variable on its left |
 | `php/lang/engine_assignExecutionOrder_009.phpt` | pass | pass |  |
 | `php/lang/error_2_exception_001.phpt` | pass | pass |  |
@@ -516,7 +510,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/integer_literals/octal_64bit.phpt` | pass | pass |  |
 | `php/lang/invalid_octal.phpt` | error | error | Invalid number: 08 |
 | `php/lang/operators/add_basiclong_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/add_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/add_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseAnd_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseAnd_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseNot_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
@@ -533,12 +527,12 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/bitwiseXor_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseXor_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/coalesce.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/divide_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/divide_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/divide_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/modulus_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/modulus_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/multiply_basiclong_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/multiply_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/multiply_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/nan-comparison-false.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: NAN in <file> |
 | `php/lang/operators/negate_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/negate_variationStr.phpt` | error | error | Fatal error: Uncaught Error: Cannot negate non-numeric value in <file> |
@@ -570,11 +564,11 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/operator_spaceship_basic.phpt` | pass | pass |  |
 | `php/lang/operators/overloaded_property_ref.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/postdec_basiclong_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/postdec_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/postdec_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/postinc_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/postinc_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/predec_basiclong_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/predec_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/predec_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/preinc_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/preinc_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/subtract_basiclong_64bit.phpt` | pass | pass |  |

@@ -3859,12 +3859,16 @@ fn dup_pure(node: &Form) -> Form {
 /// A whole number too wide for the language to hold as one is a real
 /// there, written out as a literal or worked out.
 fn at_language_width(v: Value, table: &Table) -> Value {
-    let (Some(bits), Value::Huge(n)) = (table.count("ext.system.integer.bits"), &v) else { return v };
-    if n.bits() < bits as u64 {
-        return v;
-    }
     let figures = table.count("ext.system.real.digits").unwrap_or(math::DEFAULT_PLACES);
-    math::make_number((**n).clone(), BigInt::from(1), Some(figures))
+    if let (Some(bits), Value::Huge(n)) = (table.count("ext.system.integer.bits"), &v) {
+        if n.bits() >= bits as u64 {
+            return math::make_number((**n).clone(), BigInt::from(1), Some(figures));
+        }
+    }
+    // A real written in a program is brought to the width the language
+    // holds its reals in, as one worked out while it runs is, so that
+    // the two are the one number and not merely near enough.
+    crate::data::at_binary_width(v, table.count("ext.system.real.bits"), figures)
 }
 
 pub fn numeral(text: &str, table: &Table) -> Res<Value> {
