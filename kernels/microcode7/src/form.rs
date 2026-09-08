@@ -444,5 +444,9 @@ pub struct Routine {
     /// inside one: what a class holds alone is reached from there and
     /// from nowhere else.
     pub within: Option<Rc<str>>,
+    /// The line this program was written on, which a fault raised on
+    /// the way into it names: such a fault belongs where the program
+    /// stands and not where the call did.
+    pub declared_on: u32,
     pub body: Form,
 }

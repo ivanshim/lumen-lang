@@ -33,7 +33,20 @@ pub struct Engine<'a> {
     /// Which line of the source is running, for a complaint to name.
     line: u32,
     /// Where the program is written, as the request carried it.
-    source: String,
+    source: Rc<str>,
+    /// The calls under way, innermost last: what each called, where the
+    /// call was written, and where among the arguments kept aside its
+    /// own stand. A fault raised inside them names them all.
+    calls: Vec<Called>,
+    /// The calls a fault was raised under, written out as they stood
+    /// then, since by the time it is told they have all been left. The
+    /// first fault to leave a call writes this; a guard taking one
+    /// clears it again.
+    under: Option<String>,
+    /// Where the routine a fault was raised on the way into is written.
+    /// Such a fault belongs there and not where the call stood, which
+    /// is worth saying only where nothing takes it.
+    entering: Option<(Rc<str>, u32)>,
     /// Nothing at all, to hand back where a binding never written is
     /// read in place and the language only complains about it.
     nothing: Value,
@@ -83,6 +96,16 @@ pub struct Engine<'a> {
     any_waiting: std::cell::Cell<bool>,
     args_cell: Option<usize>,
     memo_cell: Option<usize>,
+}
+
+/// A call under way: what it called, where the call itself was
+/// written, and where among the arguments kept aside its own stand.
+struct Called {
+    named: Rc<str>,
+    within: Option<Rc<str>>,
+    from: Rc<str>,
+    on: u32,
+    given_at: Option<usize>,
 }
 
 type Res<T> = Result<T, String>;
@@ -146,7 +169,10 @@ impl<'a> Engine<'a> {
             given: Vec::new(),
             made: 0,
             line: 0,
-            source: String::new(),
+            source: Rc::from(""),
+            calls: Vec::new(),
+            under: None,
+            entering: None,
             nothing: Value::Null,
             hurled_at: std::cell::Cell::new(0),
             limit: std::cell::Cell::new(0),
@@ -221,7 +247,7 @@ impl<'a> Engine<'a> {
         self.world.resize(self.registry.idents.len(), Value::Blank);
         let (was_written_in, was_on) = (self.source.clone(), self.line);
         if let Some(place) = came_from {
-            self.source = place;
+            self.source = Rc::from(place.as_str());
         }
         let base = self.data.len();
         let ran = self.invoke(&program, Vec::new());
@@ -247,7 +273,7 @@ impl<'a> Engine<'a> {
 
     /// Where the program is written, which a complaint names.
     pub fn written_in(&mut self, place: &str) {
-        self.source = place.to_string();
+        self.source = Rc::from(place);
     }
 
     /// Whether a name never written is worth complaining about rather
@@ -437,6 +463,63 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// Leaving a call: where it is left by a fault and none has been
+    /// written down yet, the calls are written out as they stand, since
+    /// the moment after this they are gone.
+    fn left_the_call(&mut self, amiss: bool, watching: bool, noted: bool) {
+        if amiss && self.under.is_none() {
+            self.under = Some(self.calls_told());
+        }
+        if watching {
+            self.given.pop();
+        }
+        if noted {
+            self.calls.pop();
+        }
+    }
+
+    /// The calls under way, innermost first, each named with where it
+    /// was written and what it was given, and the outermost body last.
+    fn calls_told(&self) -> String {
+        let mut out = String::from("Stack trace:\n");
+        for (at, call) in self.calls.iter().rev().enumerate() {
+            let named = match &call.within {
+                Some(class) => format!("{}::{}", class, call.named),
+                None => call.named.to_string(),
+            };
+            let given = call.given_at.and_then(|i| self.given.get(i));
+            let handed = match given {
+                Some(values) => values.iter().map(|v| self.argument_told(v)).collect::<Vec<_>>().join(", "),
+                None => String::new(),
+            };
+            out.push_str(&format!("#{} {}({}): {}({})\n", at, call.from, call.on, named, handed));
+        }
+        out.push_str(&format!("#{} {{main}}\n", self.calls.len()));
+        out
+    }
+
+    /// An argument as a trace writes it: enough of it to know it by,
+    /// never the whole of it.
+    fn argument_told(&self, v: &Value) -> String {
+        const MOST: usize = 15;
+        match v {
+            Value::Bond(cell) => self.argument_told(&cell.borrow()),
+            Value::Text(s) => {
+                let mut kept: String = s.chars().take(MOST).collect();
+                if s.chars().nth(MOST).is_some() {
+                    kept.push_str("...");
+                }
+                format!("'{}'", kept)
+            }
+            Value::Object(o) => format!("Object({})", o.class.name),
+            Value::Array(_) | Value::Map(_) => "Array".to_string(),
+            Value::Null | Value::Blank | Value::Gap => "NULL".to_string(),
+            Value::Flag(true) => "true".to_string(),
+            Value::Flag(false) => "false".to_string(),
+            other => other.plain(),
+        }
+    }
+
     /// A value raised and never caught, told the way a language that
     /// has a word for the end of a run tells it: what was raised, where
     /// it was raised, and how the run stood when it was. Nothing is
@@ -457,9 +540,14 @@ impl<'a> Engine<'a> {
             // language names for one, where it names any.
             Fault::Note(told) => {
                 let Some(named) = self.class_for(told) else { return };
-                let at = self.line;
-                self.utter(&format!("\n{}: Uncaught {}: {} in {}:{}\n", word, named, told, self.source, at));
-                self.utter(&format!("Stack trace:\n#0 {{main}}\n  thrown in {} on line {}\n", self.source, at));
+                // A fault raised on the way into a routine belongs where
+                // that routine is written, and says so.
+                let (told, place, at) = match &self.entering {
+                    Some((place, on)) => (format!("{} and defined", told), place.clone(), *on),
+                    None => (told.clone(), self.source.clone(), self.line),
+                };
+                self.utter(&format!("\n{}: Uncaught {}: {} in {}:{}\n", word, named, told, place, at));
+                self.utter(&format!("{}  thrown in {} on line {}\n", self.calls_under(), place, at));
                 return;
             }
         };
@@ -475,7 +563,16 @@ impl<'a> Engine<'a> {
         };
         let at = self.hurled_at.get();
         self.utter(&format!("\n{}: {} in {}:{}\n", word, said, self.source, at));
-        self.utter(&format!("Stack trace:\n#0 {{main}}\n  thrown in {} on line {}\n", self.source, at));
+        self.utter(&format!("{}  thrown in {} on line {}\n", self.calls_under(), self.source, at));
+    }
+
+    /// The calls a fault was raised under, where any were written down,
+    /// and the outermost body alone where none were.
+    fn calls_under(&self) -> String {
+        match &self.under {
+            Some(told) => told.clone(),
+            None => "Stack trace:\n#0 {main}\n".to_string(),
+        }
     }
 
     /// A fault of the kernel's own as a value of the class the language
@@ -964,6 +1061,9 @@ impl<'a> Engine<'a> {
                 Value::Object(o) => o.class.name.clone(),
                 other => self.kind_named(other),
             };
+            // A fault of this kind says where the call stood. Where it
+            // is written is kept aside: a guard taking it wants the
+            // words alone, and only a run ended by it says as much.
             let told = format!(
                 "{}(): Argument #{} ({}) must be of type {}, {} given, called in {} on line {}",
                 program.ident,
@@ -974,6 +1074,8 @@ impl<'a> Engine<'a> {
                 self.source,
                 self.line
             );
+            let place = program.written_in.clone().unwrap_or_else(|| self.source.clone());
+            self.entering = Some((place, program.declared_on));
             return Err(told.into());
         }
         Ok(())
@@ -1017,18 +1119,35 @@ impl<'a> Engine<'a> {
         if watching {
             self.given.push(self.data[at..].to_vec());
         }
+        // The call is written down before anything of it runs, so that
+        // a fault raised on the way in names it too. The outermost body
+        // is nobody's call and is not written down: a trace names it as
+        // where everything stands and nothing more.
+        let noted = !program.body_of_all;
+        if noted {
+            self.calls.push(Called {
+                named: Rc::from(program.ident.as_str()),
+                within: program.within.clone(),
+                from: self.source.clone(),
+                on: self.line,
+                given_at: watching.then(|| self.given.len() - 1),
+            });
+        }
         frame.extend(self.data.drain(at..));
         // What the routine does not name stays aside rather than
         // spilling into the slots its own names sit in.
         frame.truncate(program.formals.len());
-        self.of_the_kind_named(program, &frame)?;
+        if let Err(fault) = self.of_the_kind_named(program, &frame) {
+            self.left_the_call(true, watching, noted);
+            return Err(fault);
+        }
         frame.resize(program.idents.len(), Value::Blank);
         let base = self.data.len();
         // A routine written in a file of its own is run as being in it:
         // a complaint names that file, and a file the routine asks for
         // is looked for beside it, wherever the call was made.
         let elsewhere = program.written_in.as_ref().map(|place| {
-            let was = std::mem::replace(&mut self.source, place.to_string());
+            let was = std::mem::replace(&mut self.source, place.clone());
             (was, self.line)
         });
         self.inside.push(program.within.clone());
@@ -1038,9 +1157,7 @@ impl<'a> Engine<'a> {
             self.source = was;
             self.line = on;
         }
-        if watching {
-            self.given.pop();
-        }
+        self.left_the_call(outcome.is_err(), watching, noted);
         outcome?;
         if !program.returns_value {
             return Ok(());
@@ -1110,6 +1227,8 @@ impl<'a> Engine<'a> {
                     // it would take any other.
                     let Fault::Thrown(raised) = fault else { return Err(fault) };
                     let Some((catch, depth, quiet)) = guards.pop() else { return Err(Fault::Thrown(raised)) };
+                    self.under = None;
+                    self.entering = None;
                     self.hushed.set(quiet);
                     self.data.truncate(depth);
                     self.data.push(raised);
@@ -1162,6 +1281,8 @@ impl<'a> Engine<'a> {
                         };
                         let Fault::Thrown(raised) = fault else { return Err(fault) };
                         let Some((catch, depth, quiet)) = guards.pop() else { return Err(Fault::Thrown(raised)) };
+                        self.under = None;
+                        self.entering = None;
                         self.hushed.set(quiet);
                         self.data.truncate(depth);
                         self.data.push(raised);
@@ -1242,7 +1363,14 @@ impl<'a> Engine<'a> {
                     let empty = matches!(self.world[*at], Value::Blank);
                     self.data.push(Value::Flag(empty));
                 }
-                Instr::Line(row) => self.line = *row,
+                Instr::Line(row) => {
+                    self.line = *row;
+                    // A statement reached is a fault gone by: the calls
+                    // an earlier one was raised under are none of its
+                    // business.
+                    self.under = None;
+                    self.entering = None;
+                }
                 Instr::Mute(quiet) => {
                     let deep = self.muted.get();
                     self.muted.set(match quiet {
@@ -2775,7 +2903,7 @@ impl<'a> Engine<'a> {
                     // since a program naming a file beside itself means
                     // the one beside itself.
                     _ => {
-                        let beside = std::path::Path::new(&self.source).parent().map(|near| near.join(&given));
+                        let beside = std::path::Path::new(self.source.as_ref()).parent().map(|near| near.join(&given));
                         let near = beside.filter(|near| near.exists());
                         came_from = Some(match &near {
                             Some(place) => place.to_string_lossy().into_owned(),

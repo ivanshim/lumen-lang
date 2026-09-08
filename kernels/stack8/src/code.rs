@@ -433,6 +433,10 @@ pub struct Routine {
     /// inside one: what a class keeps to itself is reached from here and
     /// nowhere else.
     pub within: Option<Rc<str>>,
+    /// The line the program was written on, which a fault raised on the
+    /// way into it names: such a fault belongs where the program is
+    /// written and not where the call stood.
+    pub declared_on: u32,
     pub instrs: Vec<Instr>,
 }
 

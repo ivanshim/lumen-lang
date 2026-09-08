@@ -19,12 +19,12 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 87, differs 2, error 15, skipped 10 | pass 87, differs 2, error 15, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 172, differs 20, error 16, skipped 5 | pass 172, differs 20, error 16, skipped 5 |
+| `php/lang` | 213 | pass 174, differs 20, error 14, skipped 5 | pass 174, differs 20, error 14, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 49, differs 8, error 1, skipped 6 | pass 49, differs 8, error 1, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 334, differs 31, error 32, skipped 25 | pass 334, differs 31, error 32, skipped 25 |
+| all | 422 | pass 336, differs 31, error 30, skipped 25 | pass 336, differs 31, error 30, skipped 25 |
 
 | Reason | Tests |
 |---|---|
@@ -35,7 +35,6 @@ is listed, since the full kernels are meant to behave alike.
 | timeout | 2 |
 | Parse error: Unexpected token: { in <file> | 2 |
 | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> | 2 |
-| thrown in <file> | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> | 1 |
@@ -53,21 +52,21 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Unexpected token: ; in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: mktime in <file> | 1 |
 | skip Can't find german locale | 1 |
+| #0 /home/user/lumen-lang/tests/php/lang/038.php(28): Error2Exception(2, 'Undefined array...', '/home/user/lume...', 28) | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_declared_classes in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> | 1 |
 | Fatal error: Uncaught Error: 'foo' is not a function in <file> | 1 |
+| thrown in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: debug_backtrace in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: array_walk in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: debug_print_backtrace in <file> | 1 |
 | skip setlocale() failed | 1 |
 | skip only for Windows | 1 |
-| Fatal error: Uncaught TypeError: blah(): Argument #1 ($a) must be of type Foo, stdClass given, called in <file> in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: datetime in <file> | 1 |
 | skip this test is for 32-bit platforms only | 1 |
 | Fatal error: Uncaught Error: Cannot use a scalar value as an array in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: NAN in <file> | 1 |
 | Fatal error: Uncaught Error: Expected ')' to close a group, got ';' in <file> | 1 |
-| Fatal error: Uncaught TypeError: type_hint_foo(): Argument #1 ($a) must be of type Foo, Bar given, called in <file> in <file> | 1 |
 
 ### Reserved words: 55 of 68 spelled
 
@@ -358,7 +357,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/035.phpt` | pass | pass |  |
 | `php/lang/036.phpt` | pass | pass |  |
 | `php/lang/037.phpt` | pass | pass |  |
-| `php/lang/038.phpt` | error | error | thrown in <file> |
+| `php/lang/038.phpt` | error | error | #0 /home/user/lumen-lang/tests/php/lang/038.php(28): Error2Exception(2, 'Undefined array...', '/home/user/lume...', 28) |
 | `php/lang/039.phpt` | pass | pass |  |
 | `php/lang/040.phpt` | pass | pass |  |
 | `php/lang/041.phpt` | pass | pass |  |
@@ -436,7 +435,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug73172.phpt` | pass | pass |  |
 | `php/lang/bug73329.phpt` | pass | pass |  |
 | `php/lang/bug7515.phpt` | pass | pass |  |
-| `php/lang/catchable_error_001.phpt` | error | error | Fatal error: Uncaught TypeError: blah(): Argument #1 ($a) must be of type Foo, stdClass given, called in <file> in <file> |
+| `php/lang/catchable_error_001.phpt` | pass | pass |  |
 | `php/lang/catchable_error_002.phpt` | pass | pass |  |
 | `php/lang/comments.phpt` | pass | pass |  |
 | `php/lang/comments2.phpt` | skipped | skipped | no --FILE-- section |
@@ -613,7 +612,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/syntax_errors.phpt` | error | error | Fatal error: Uncaught Error: Expected ')' to close a group, got ';' in <file> |
 | `php/lang/this_assignment.phpt` | pass | pass |  |
 | `php/lang/throw_variation_001.phpt` | pass | pass |  |
-| `php/lang/type_hints_001.phpt` | error | error | Fatal error: Uncaught TypeError: type_hint_foo(): Argument #1 ($a) must be of type Foo, Bar given, called in <file> in <file> |
+| `php/lang/type_hints_001.phpt` | pass | pass |  |
 | `php/lang/type_hints_002.phpt` | pass | pass |  |
 | `php/lang/type_hints_003.phpt` | differs | differs | ran, printed something else |
 | `php/lang/zend_throw_exception_001.phpt` | pass | pass |  |
