@@ -2331,6 +2331,29 @@ impl<'a> Compiler<'a> {
                 Ok(())
             }
             _ if compound.is_some() => Err(format!("'{}' needs a plain variable on its left", assign)),
+            // `$GLOBALS['n'][] = v`: the binding the name spells is read
+            // quietly, since a write makes what is not there yet, the
+            // value put after its last place, and the whole written back
+            // under the same name.
+            [rest @ .., Instr::Act(Action::Named, 1), Instr::Act(Action::AtEnd, 1)] if compound.is_none() => {
+                let rest = rest.to_vec();
+                let named = self.gensym("named");
+                let at = self.mark();
+                for w in relocated(rest, at as i64 - from as i64) {
+                    self.put(w);
+                }
+                self.write(&named);
+                self.read(&named);
+                self.value_written(keep)?;
+                self.put(Instr::Hush(true));
+                self.read(&named);
+                self.act(Action::Named, 1);
+                self.put(Instr::Hush(false));
+                self.act(Action::Builtin(Builtin::Append, Rc::from("push")), 2);
+                self.act(Action::WriteNamed, 2);
+                self.put_away();
+                Ok(())
+            }
             // A read of the binding a value names turns into a write
             // of it: the text stays where it is and the value follows.
             [rest @ .., Instr::Act(Action::Named, 1)] if compound.is_none() => {
@@ -2796,6 +2819,19 @@ impl<'a> Compiler<'a> {
                                 let argc = self.arguments_of(&tok.lexeme, &call)?;
                                 self.call(&tok.lexeme, argc)?;
                             }
+                        }
+                        // A word standing for all the outermost bindings
+                        // taken as an array: a place in it is the binding
+                        // whose name that place spells, which is how a
+                        // language reaches a global from inside a routine.
+                        _ if Lang::spells(&lang.globals_words, &tok.lexeme)
+                            && lang.index_brackets.as_ref().map_or(false, |b| self.at_symbol(&b.open)) =>
+                        {
+                            let index = lang.index_brackets.clone().expect("the index brackets");
+                            self.take();
+                            self.expr(0)?;
+                            self.want_sign(&index.close, "after the name of the binding")?;
+                            self.act(Action::Named, 1);
                         }
                         _ => self.read(&tok.lexeme),
                     }

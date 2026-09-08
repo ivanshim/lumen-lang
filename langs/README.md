@@ -419,6 +419,16 @@ only. The extension labels so far, all from PHP:
   still there to be looked up while the run goes; the mark written
   inside a unit of its own is turned down rather than quietly meaning
   another binding.
+- `ext.system.globals`: the words standing for all the outermost
+  bindings taken as an array, so that a place in that array is the
+  binding whose name the place spells — `$GLOBALS['a']` is the
+  outermost `$a`. It is `ext.op.name_by_value` written another way and
+  reaches the same bindings, but it is written *inside* a routine and
+  not turned down there, since reaching an outermost binding from
+  within one is the whole of what it is for. Reading, writing and
+  putting a value after the last place of what it holds all go through
+  it, and a place in it may be reached into further
+  (`$GLOBALS['a']['k']`).
 - `ext.op.cast`: a switch; a kind's word written within the grouping
   marks before a value makes the value that kind — `(int) $x`. The
   words are the ones the language already gives its kinds, under
@@ -939,6 +949,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class.arithmetic` | - | - | - | - | - | - | - | `ArithmeticError` | - | - |
 | `ext.system.fault.class.division` | - | - | - | - | - | - | - | `DivisionByZeroError` | - | - |
 | `ext.system.fault.class.kind` | - | - | - | - | - | - | - | `TypeError` | - | - |
+| `ext.system.globals` | - | - | - | - | - | - | - | `$GLOBALS` | - | - |
 | `ext.system.integer.bits` | - | - | - | - | - | - | - | `64` | - | - |
 | `ext.system.kind.brief` | - | - | - | - | - | - | - | `int` `-` `float` `string` `bool` `array` `null` | - | - |
 | `ext.system.kind.spelled` | - | - | - | - | - | - | - | `true` | - | - |

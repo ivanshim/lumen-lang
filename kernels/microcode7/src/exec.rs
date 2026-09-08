@@ -1458,6 +1458,15 @@ impl<'a> Machine<'a> {
                     other => return Err(format!("{} has no class name", other.bare())),
                 }
             }
+            // A language that makes a place on writing into it finds an
+            // array where nothing at all was there.
+            Prim::Added | Prim::Placed
+                if self.builds_places && matches!(v.first(), Some(Value::Nil) | Some(Value::Unset)) =>
+            {
+                let mut made = v.to_vec();
+                made[0] = Value::Vector(Rc::new(Vec::new()));
+                self.prim(op, name, &made)?
+            }
             Prim::Added => {
                 n(2)?;
                 match &v[0] {

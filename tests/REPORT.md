@@ -19,19 +19,18 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 47, differs 31, error 26, skipped 10 | pass 47, differs 31, error 26, skipped 10 |
 | `php/func` | 14 | pass 9, differs 3, error 2, skipped 0 | pass 9, differs 3, error 2, skipped 0 |
-| `php/lang` | 213 | pass 83, differs 55, error 70, skipped 5 | pass 83, differs 55, error 70, skipped 5 |
+| `php/lang` | 213 | pass 83, differs 59, error 66, skipped 5 | pass 83, differs 59, error 66, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 21, error 3, skipped 6 | pass 34, differs 21, error 3, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 178, differs 118, error 101, skipped 25 | pass 178, differs 118, error 101, skipped 25 |
+| all | 422 | pass 178, differs 122, error 97, skipped 25 | pass 178, differs 122, error 97, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 118 |
+| ran, printed something else | 122 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
-| Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> | 6 |
 | skip Windows only test | 5 |
 | Fatal error: Uncaught Error: Undefined variable: Iterator in <file> | 5 |
 | Fatal error: Uncaught Error: Cannot index non-array value in <file> | 4 |
@@ -45,10 +44,12 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> | 2 |
 | Fatal error: Maximum execution time of 1 second exceeded in <file> | 2 |
 | Fatal error: Uncaught Error: Undefined variable: ob_get_contents in <file> | 2 |
+| Unexpected token: & | 2 |
 | Unexpected token: } | 2 |
 | Fatal error: Uncaught Error: Only a class can be made into an object in <file> | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Undefined variable: StdClass in <file> | 2 |
+| Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> | 2 |
 | Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> | 2 |
 | Fatal error: Uncaught Error: '$name' is not a function in <file> | 2 |
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
@@ -67,7 +68,6 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: INF in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: InfiniteIterator in <file> | 1 |
 | Fatal error: Uncaught Error: Unexpected token: ; in <file> | 1 |
-| Fatal error: Uncaught Error: Unexpected token: += in <file> | 1 |
 
 ### Reserved words: 48 of 68 spelled
 
@@ -351,7 +351,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/026.phpt` | pass | pass |  |
 | `php/lang/027.phpt` | error | error | Expected an expression |
 | `php/lang/028.phpt` | error | error | Unexpected token: : |
-| `php/lang/030.phpt` | error | error | Fatal error: Uncaught Error: Cannot call method 'echoName' on a value that is not an object in <file> |
+| `php/lang/030.phpt` | error | error | Unexpected token: & |
 | `php/lang/032.phpt` | pass | pass |  |
 | `php/lang/033.phpt` | error | error | Unexpected token: : |
 | `php/lang/034.phpt` | skipped | skipped | skip Can't find german locale |
@@ -381,7 +381,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug21820.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug21849.phpt` | pass | pass |  |
 | `php/lang/bug21961.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> |
-| `php/lang/bug22231.phpt` | error | error | Fatal error: Uncaught Error: 'foo' is not a function in <file> |
+| `php/lang/bug22231.phpt` | error | error | Unexpected token: & |
 | `php/lang/bug22510.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug22592.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug23279.phpt` | error | error | thrown in <file> |
@@ -586,12 +586,12 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/passByReference_012.phpt` | differs | differs | ran, printed something else |
 | `php/lang/returnByReference.001.phpt` | pass | pass |  |
 | `php/lang/returnByReference.002.phpt` | differs | differs | ran, printed something else |
-| `php/lang/returnByReference.003.phpt` | error | error | Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> |
-| `php/lang/returnByReference.004.phpt` | error | error | Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> |
-| `php/lang/returnByReference.005.phpt` | error | error | Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> |
+| `php/lang/returnByReference.003.phpt` | differs | differs | ran, printed something else |
+| `php/lang/returnByReference.004.phpt` | differs | differs | ran, printed something else |
+| `php/lang/returnByReference.005.phpt` | differs | differs | ran, printed something else |
 | `php/lang/returnByReference.006.phpt` | error | error | Fatal error: Uncaught Error: '$name' is not a function in <file> |
 | `php/lang/returnByReference.007.phpt` | error | error | Fatal error: Uncaught Error: Call to undefined method C::$functionToCall() in <file> |
-| `php/lang/returnByReference.008.phpt` | error | error | Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> |
+| `php/lang/returnByReference.008.phpt` | differs | differs | ran, printed something else |
 | `php/lang/returnByReference.009.phpt` | differs | differs | ran, printed something else |
 | `php/lang/short_tags.001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/short_tags.002.phpt` | pass | pass |  |

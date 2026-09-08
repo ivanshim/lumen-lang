@@ -2281,6 +2281,19 @@ impl<'a> Builder<'a> {
                     let target = self.read_to_write(&slot.ident);
                     prim_call(Prim::Append, vec![target, value])
                 }
+                // The binding the name spells is read quietly, since a
+                // write makes what is not there yet, the value put after
+                // its last place, and the whole written back under the
+                // same name.
+                Form::Called(spells) => {
+                    self.gensyms += 1;
+                    let named = format!("#named{}", self.gensyms);
+                    let hold = self.write(&named, *spells);
+                    let held = Form::Muted(Box::new(Form::Called(Box::new(self.read(&named)))));
+                    let grown = prim_call(Prim::Added, vec![held, value]);
+                    let put = Form::CallWrite(Box::new(self.read(&named)), Box::new(grown));
+                    sequence(vec![hold, put])
+                }
                 _ => return Err("Invalid assignment target".to_string()),
             },
             Form::Apply(Callee::Prim(Prim::At, _), mut args) if args.len() == 2 => {
@@ -2561,6 +2574,17 @@ impl<'a> Builder<'a> {
                     } else {
                         self.named_call(&t.lexeme, args)?
                     }
+                } else if table.spells("ext.system.globals", &t.lexeme)
+                    && table.single("op.index.open").map_or(false, |o| self.sign(o))
+                {
+                    // A word standing for all the outermost bindings
+                    // taken as an array: a place in it is the binding
+                    // whose name that place spells, which is how a
+                    // language reaches a global from within a routine.
+                    self.advance();
+                    let spells = self.expr(0)?;
+                    self.need_sign(table.single("op.index.close").unwrap(), "after the name of the binding")?;
+                    return self.subscript(Form::Called(Box::new(spells)));
                 } else {
                     self.read(&t.lexeme)
                 }
