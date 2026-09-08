@@ -548,9 +548,18 @@ $__told_of_args = ini_get('register_argc_argv');
 $__groups = ini_get('variables_order');
 if ($__groups === false) { $__groups = 'EGPCS'; }
 $__knows_itself = strpos($__groups, 'S') !== false;
-if ($__knows_itself && (!$__over_the_web || ($__told_of_args !== false && $__told_of_args !== '0' && $__told_of_args !== 'off'))) {
+$__told_on = $__told_of_args !== false && $__told_of_args !== '0' && $__told_of_args !== 'off';
+if ($__knows_itself && !$__over_the_web) {
     $_SERVER['argv'] = $argv;
     $_SERVER['argc'] = $argc;
+} elseif ($__knows_itself && $__told_on) {
+    // A run reached over the web has no arguments of its own, so where
+    // it is told to know some it takes the words of the query, which the
+    // reference says is a thing to be leaving behind.
+    __complain(E_DEPRECATED, "Deriving \$_SERVER['argv'] from the query string is deprecated. Configure register_argc_argv=0 to turn this message off");
+    $__query = isset($_SERVER['QUERY_STRING']) ? $_SERVER['QUERY_STRING'] : '';
+    $_SERVER['argv'] = $__query === '' ? array() : explode('+', $__query);
+    $_SERVER['argc'] = count($_SERVER['argv']);
 }
 // What the run writes out may be kept aside and let go again. The
 // kernel holds the text; the handlers a program hands over are kept
