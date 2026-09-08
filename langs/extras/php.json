@@ -739,8 +739,10 @@
   ],
   "ext.builtin.include": [
     "include",
+    "require"
+  ],
+  "ext.builtin.include.once": [
     "include_once",
-    "require",
     "require_once"
   ]
 }

@@ -199,6 +199,10 @@ pub enum Builtin {
     /// and run where it stands, and what it gives back is its answer.
     Eval,
     Include,
+    /// The same, but only where that file has not been read before in
+    /// this run (ext.builtin.include.once); a file read already answers
+    /// with truth and is not read again.
+    IncludeOnce,
     /// What a file holds, all of it at once; what to write into one;
     /// whether a file is there at all; and taking one away
     /// (ext.builtin.file.*). Only a language that spells these reaches

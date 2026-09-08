@@ -107,6 +107,9 @@ pub struct Machine<'a> {
     /// The routines to run once the program's last statement is done,
     /// each with what it is to be handed, in the order they were named.
     afterward: RefCell<Vec<(Value, Vec<Value>)>>,
+    /// The files already read where the program asked that they be read
+    /// only once, under the whole name each stands by.
+    read_before: RefCell<std::collections::HashSet<String>>,
     /// The routine every complaint is handed to, where the program has
     /// put one in the way of them; the complaints still to be handed
     /// over, since one may be raised where the run is only reading; and
@@ -167,6 +170,7 @@ impl<'a> Machine<'a> {
             quieted: 0,
             holding: RefCell::new(Vec::new()),
             afterward: RefCell::new(Vec::new()),
+            read_before: RefCell::new(std::collections::HashSet::new()),
             hearer: RefCell::new(None),
             unheard: RefCell::new(Vec::new()),
             any_unheard: std::cell::Cell::new(false),
@@ -1724,7 +1728,7 @@ impl<'a> Machine<'a> {
             // Source read while the program runs, built against the
             // globals it already has and run where it stands. A file
             // that cannot be read answers false, as such a language says.
-            Prim::Weigh | Prim::Bring => {
+            Prim::Weigh | Prim::Bring | Prim::BringOnce => {
                 n(1)?;
                 let w = self.wording();
                 let given = v[0].render(w);
@@ -1751,6 +1755,17 @@ impl<'a> Machine<'a> {
                             Some(place) => std::fs::read(place),
                             None => std::fs::read(&given),
                         };
+                        // A file asked for once only is read the first
+                        // time and passed over after, under whatever
+                        // name it was asked for, since it is the file
+                        // and not the name that stands.
+                        if op == Prim::BringOnce {
+                            let place = came_out_of.clone().unwrap_or_else(|| given.clone());
+                            let whole = std::fs::canonicalize(&place).map(|p| p.to_string_lossy().into_owned()).unwrap_or(place);
+                            if !self.read_before.borrow_mut().insert(whole) {
+                                return Ok(Value::Flag(true));
+                            }
+                        }
                         match held {
                             Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
                             Err(_) => return Ok(Value::Flag(false)),

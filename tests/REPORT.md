@@ -17,18 +17,18 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 48, differs 30, error 26, skipped 10 | pass 48, differs 30, error 26, skipped 10 |
+| `php/basic` | 114 | pass 49, differs 29, error 26, skipped 10 | pass 49, differs 29, error 26, skipped 10 |
 | `php/func` | 14 | pass 13, differs 0, error 1, skipped 0 | pass 13, differs 0, error 1, skipped 0 |
-| `php/lang` | 213 | pass 111, differs 40, error 57, skipped 5 | pass 111, differs 40, error 57, skipped 5 |
+| `php/lang` | 213 | pass 112, differs 39, error 57, skipped 5 | pass 112, differs 39, error 57, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 21, error 3, skipped 6 | pass 34, differs 21, error 3, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 211, differs 99, error 87, skipped 25 | pass 211, differs 99, error 87, skipped 25 |
+| all | 422 | pass 213, differs 97, error 87, skipped 25 | pass 213, differs 97, error 87, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 99 |
+| ran, printed something else | 97 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
@@ -229,7 +229,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/031.phpt` | pass | pass |  |
 | `php/basic/032.phpt` | pass | pass |  |
 | `php/basic/GHSA-9pqp-7h25-4f32.phpt` | skipped | skipped | skip php-cgi not available |
-| `php/basic/array_key_exists_null_deprecation.phpt` | differs | differs | ran, printed something else |
+| `php/basic/array_key_exists_null_deprecation.phpt` | pass | pass |  |
 | `php/basic/array_null_offset_deprecation.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug20539.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: session_id in <file> |
 | `php/basic/bug29971.phpt` | differs | differs | ran, printed something else |
@@ -423,7 +423,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug30726.phpt` | pass | pass |  |
 | `php/lang/bug30862.phpt` | pass | pass |  |
 | `php/lang/bug32828.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug32924.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug32924.phpt` | pass | pass |  |
 | `php/lang/bug35176.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug35382.phpt` | skipped | skipped | no --FILE-- section |
 | `php/lang/bug38579.phpt` | skipped | skipped | skip only for Windows |

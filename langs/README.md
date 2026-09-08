@@ -559,6 +559,11 @@ only. The extension labels so far, all from PHP:
   that language opens with, since a program written out is a program;
   what it leaves behind is what the call gives back, and a name it
   writes is a name the rest of the run can read.
+- `ext.builtin.include.once`: the same as the one below, but only where
+  that file has not been read before in this run. A file read already
+  answers with truth and is not read again, under whatever name it was
+  asked for the second time, since it is the file that stands and not
+  the name.
 - `ext.builtin.include`: builtins naming a file whose text is read and
   run in the same way, as though it had been written where the call
   stands. A file that cannot be read answers false rather than stopping
@@ -974,7 +979,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.file.read` | - | - | - | - | - | - | - | `file_get_contents` | - | - |
 | `ext.builtin.file.remove` | - | - | - | - | - | - | - | `unlink` | - | - |
 | `ext.builtin.file.write` | - | - | - | - | - | - | - | `file_put_contents` | - | - |
-| `ext.builtin.include` | - | - | - | - | - | - | - | `include` `include_once` `require` `require_once` | - | - |
+| `ext.builtin.include` | - | - | - | - | - | - | - | `include` `require` | - | - |
+| `ext.builtin.include.once` | - | - | - | - | - | - | - | `include_once` `require_once` | - | - |
 | `ext.builtin.isset` | - | - | - | - | - | - | - | `isset` | - | - |
 | `ext.builtin.output.depth` | - | - | - | - | - | - | - | `__output_depth` | - | - |
 | `ext.builtin.output.drop` | - | - | - | - | - | - | - | `__output_drop` | - | - |

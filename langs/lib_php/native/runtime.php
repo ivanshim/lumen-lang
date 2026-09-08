@@ -222,7 +222,12 @@ function gc_collect_cycles() { return 0; }
 function memory_get_usage($real = false) { return 0; }
 
 // A key is taken as the array takes one, so 7 and "7" name one place.
+// Nothing standing where a key should is still read as the empty piece
+// of text, which is on its way out and said to be.
 function array_key_exists($key, $array) {
+    if ($key === null) {
+        __complain(E_DEPRECATED, "Using null as the key parameter for array_key_exists() is deprecated, use an empty string instead");
+    }
     foreach ($array as $k => $v) {
         if ($k == $key) { return true; }
     }

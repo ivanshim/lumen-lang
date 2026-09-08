@@ -89,6 +89,10 @@ pub enum Prim {
     /// what it gives back.
     Weigh,
     Bring,
+    /// The same as the one above, but only where that file has not been
+    /// read before in this run (ext.builtin.include.once); one read
+    /// already answers with truth and is not read again.
+    BringOnce,
     /// What a file holds, all at once; what to put into one; whether a
     /// file is there; and taking one away (ext.builtin.file.*). A
     /// language reaches outside its run only by spelling these.

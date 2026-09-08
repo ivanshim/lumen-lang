@@ -56,6 +56,9 @@ pub struct Engine<'a> {
     /// done, each with what it is to be handed, in the order they were
     /// named.
     when_done: RefCell<Vec<(Value, Vec<Value>)>>,
+    /// The files already read where the program asked for them to be
+    /// read only once, by the whole name each stands under.
+    read_already: RefCell<std::collections::HashSet<String>>,
     /// The routine every complaint is handed to, where the program has
     /// put one in the way of them; the complaints waiting to be handed
     /// over, since one may be raised where the run cannot reach back
@@ -137,6 +140,7 @@ impl<'a> Engine<'a> {
             hushed: std::cell::Cell::new(0),
             holding: RefCell::new(Vec::new()),
             when_done: RefCell::new(Vec::new()),
+            read_already: RefCell::new(std::collections::HashSet::new()),
             complainer: RefCell::new(None),
             waiting: RefCell::new(Vec::new()),
             any_waiting: std::cell::Cell::new(false),
@@ -1986,7 +1990,7 @@ impl<'a> Engine<'a> {
             // Source read while the program runs, assembled against
             // the same globals and run where it stands. A file that
             // cannot be read gives false back, as such a language says.
-            Builtin::Eval | Builtin::Include => {
+            Builtin::Eval | Builtin::Include | Builtin::IncludeOnce => {
                 arity(1)?;
                 let sp = self.wording();
                 let given = args[0].display(&sp);
@@ -2015,6 +2019,17 @@ impl<'a> Engine<'a> {
                             Some(place) => std::fs::read(place),
                             None => std::fs::read(&given),
                         };
+                        // A file asked for only once is read the first
+                        // time and passed over after, whichever name it
+                        // was asked for under, since it is the file and
+                        // not the name that stands.
+                        if builtin == Builtin::IncludeOnce {
+                            let place = came_from.clone().unwrap_or_else(|| given.clone());
+                            let whole = std::fs::canonicalize(&place).map(|p| p.to_string_lossy().into_owned()).unwrap_or(place);
+                            if !self.read_already.borrow_mut().insert(whole) {
+                                return Ok(Value::Flag(true));
+                            }
+                        }
                         match found {
                             Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
                             Err(_) => return Ok(Value::Flag(false)),
