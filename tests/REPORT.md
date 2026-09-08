@@ -17,18 +17,18 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 65, differs 13, error 26, skipped 10 | pass 65, differs 13, error 26, skipped 10 |
+| `php/basic` | 114 | pass 68, differs 10, error 26, skipped 10 | pass 68, differs 10, error 26, skipped 10 |
 | `php/func` | 14 | pass 13, differs 0, error 1, skipped 0 | pass 13, differs 0, error 1, skipped 0 |
 | `php/lang` | 213 | pass 114, differs 42, error 52, skipped 5 | pass 114, differs 42, error 52, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 21, error 3, skipped 6 | pass 34, differs 21, error 3, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 231, differs 84, error 82, skipped 25 | pass 231, differs 84, error 82, skipped 25 |
+| all | 422 | pass 234, differs 81, error 82, skipped 25 | pass 234, differs 81, error 82, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 84 |
+| ran, printed something else | 81 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
@@ -256,7 +256,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/enable_post_data_reading_05.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
 | `php/basic/enable_post_data_reading_06.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
 | `php/basic/enable_post_data_reading_07.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
-| `php/basic/encoding.phpt` | differs | differs | ran, printed something else |
+| `php/basic/encoding.phpt` | pass | pass |  |
 | `php/basic/errorlog_permission.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: umask in <file> |
 | `php/basic/gh15905.phpt` | pass | pass |  |
 | `php/basic/gh16998.phpt` | skipped | skipped | skip php-cgi not available |
@@ -271,7 +271,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/gh17951_runtime_change_4.phpt` | pass | pass |  |
 | `php/basic/gh17951_runtime_change_5.phpt` | pass | pass |  |
 | `php/basic/gh17951_runtime_change_6.phpt` | pass | pass |  |
-| `php/basic/gh20858.phpt` | differs | differs | ran, printed something else |
+| `php/basic/gh20858.phpt` | pass | pass |  |
 | `php/basic/gh20964.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
 | `php/basic/gh7896.phpt` | skipped | skipped | skip for Windows only |
 | `php/basic/header_register_callback.phpt` | error | error | Unexpected token: { |
@@ -280,7 +280,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/header_register_callback_trampoline_after_headers_sent.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> |
 | `php/basic/ini_directive_deprecated_report_memleaks.phpt` | differs | differs | ran, printed something else |
 | `php/basic/ini_parse_quantity_basic.phpt` | pass | pass |  |
-| `php/basic/ini_parse_quantity_warnings.phpt` | differs | differs | ran, printed something else |
+| `php/basic/ini_parse_quantity_warnings.phpt` | pass | pass |  |
 | `php/basic/precision.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: serialize in <file> |
 | `php/basic/req44164.phpt` | pass | pass |  |
 | `php/basic/req60524-win.phpt` | skipped | skipped | skip Run only on Windows |

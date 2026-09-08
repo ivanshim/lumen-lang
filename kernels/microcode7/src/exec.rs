@@ -1829,6 +1829,21 @@ impl<'a> Machine<'a> {
                 self.started = Some(std::time::Instant::now());
                 Value::Flag(true)
             }
+            // Words said as a complaint of a kind the language names,
+            // where the run stands.
+            Prim::Complain => {
+                n(2)?;
+                let w = self.wording();
+                let named = v[0].render(w).to_string();
+                let said = v[1].render(w).to_string();
+                match self.complaint_words.iter().find(|(_, word)| *word == named).map(|(k, _)| k.to_string()) {
+                    Some(kind) => {
+                        self.grumble(&kind, &said);
+                        Value::Flag(true)
+                    }
+                    None => Value::Flag(false),
+                }
+            }
             // The routine every complaint is to be handed to, or none.
             Prim::Hearer => {
                 let put = v.first().cloned().unwrap_or(Value::Nil);

@@ -518,6 +518,13 @@ only. The extension labels so far, all from PHP:
   companion of that one and asks the looser question, since nothing at
   all is untrue. Like it, it is a shape and not a call: it reads one
   thing, and every look within it is a glance.
+- `ext.builtin.complaint.say`: a builtin saying words as a complaint of
+  the kind the first thing given names, where the run stands. It is how
+  a language makes a complaint of its own and has it told as the run's
+  own are: in the place the run had reached, kept quiet where quiet was
+  asked for, and through whatever the program put in their way. Words
+  said from a language's own library name the line of the program that
+  was running, not a line of the library.
 - `ext.builtin.complaint.handler`: a builtin naming a routine to be
   handed every complaint the run makes, instead of the complaint being
   written out. It takes the word for the kind, what was said, where the
@@ -994,6 +1001,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.array` | - | - | - | - | - | - | - | `array` | - | - |
 | `ext.builtin.at_end` | - | - | - | - | - | - | - | `__at_end` | - | - |
 | `ext.builtin.complaint.handler` | - | - | - | - | - | - | - | `__complaint_handler` | - | - |
+| `ext.builtin.complaint.say` | - | - | - | - | - | - | - | `__complaint_say` | - | - |
 | `ext.builtin.define` | - | - | - | - | - | - | - | `define` | - | - |
 | `ext.builtin.echo` | - | - | - | - | - | - | - | `echo` | - | - |
 | `ext.builtin.empty` | - | - | - | - | - | - | - | `empty` | - | - |

@@ -236,6 +236,11 @@ pub enum Builtin {
     /// leaves the complaint to be written out as it would have been;
     /// giving nothing takes the routine away again.
     Complainer,
+    /// Say these words as a complaint of the kind the first names, where
+    /// the run stands (ext.builtin.complaint.say): how a language writes
+    /// a complaint of its own and has it told as the run's own are, in
+    /// its place and through whatever stands in their way.
+    Complain,
     /// What the running call was given, however much of it the routine
     /// named: all of it as an array, how much there was, or the one at a
     /// position (ext.builtin.args.*).

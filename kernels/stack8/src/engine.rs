@@ -2094,6 +2094,21 @@ impl<'a> Engine<'a> {
                 self.began.set(Some(std::time::Instant::now()));
                 Value::Flag(true)
             }
+            // Words said as a complaint of a kind the language names,
+            // where the run stands.
+            Builtin::Complain => {
+                arity(2)?;
+                let sp = self.wording();
+                let said = args.pop().expect("what to say").display(&sp);
+                let named = args.pop().expect("the kind").display(&sp);
+                match self.lang.complaint_words.iter().find(|(_, word)| *word == named) {
+                    Some((kind, _)) => {
+                        self.complain(*kind, &said);
+                        Value::Flag(true)
+                    }
+                    None => Value::Flag(false),
+                }
+            }
             // The routine every complaint is to be handed to, or none.
             Builtin::Complainer => {
                 let put = args.first().cloned().unwrap_or(Value::Null);

@@ -99,6 +99,15 @@ function __hook_as_needed() {
 // is kept beside them and answered from there afterwards.
 $__settings = array();
 __room_at_start();
+// What a setting stands at where the run was started with nothing said
+// about it. A name not among these has no value at all until one is set.
+function __ini_default($name) {
+    if ($name === "default_charset") { return "UTF-8"; }
+    if ($name === "input_encoding") { return ""; }
+    if ($name === "internal_encoding") { return ""; }
+    if ($name === "output_encoding") { return ""; }
+    return false;
+}
 function ini_get($name) {
     global $__settings;
     if (array_key_exists($name, $__settings)) { return $__settings[$name]; }
@@ -110,7 +119,7 @@ function ini_get($name) {
         if ($name === "error_reporting") { return (string)__ini_number($held); }
         return $held;
     }
-    return false;
+    return __ini_default($name);
 }
 // Only a setting the language has may be written to; a name that is
 // none of its own is refused, whatever the run was started with. These
@@ -143,7 +152,9 @@ function ini_restore($name) {
 // read: a sign, then figures counted in sixteens after 0x, in twos
 // after 0b, in eights after a lone nought, and in tens otherwise.
 // Anything that is not a figure ends the number.
+$__whole_used = 0;
 function leading_whole($text) {
+    global $__whole_used;
     $sign = 1;
     $at = 0;
     if (strlen($text) > 0 && ($text[0] === "-" || $text[0] === "+")) {
@@ -158,6 +169,7 @@ function leading_whole($text) {
     $figures = substr(base_digits(), 0, $base);
     $end = 0;
     while ($end < strlen($rest) && strpos($figures, $rest[$end]) !== false) { $end = $end + 1; }
+    $__whole_used = strlen($text) - strlen($rest) + $end;
     if ($end == 0) { return 0; }
     return $sign * base_to_number(substr($rest, 0, $end), $base);
 }
@@ -167,15 +179,33 @@ function leading_whole($text) {
 // many times over again for m, and once more for g; any other letter
 // stands for nothing, and the number is read without it.
 function ini_parse_quantity($text) {
-    $text = trim($text);
-    if ($text === "") { return 0; }
-    $last = strtolower($text[strlen($text) - 1]);
+    global $__whole_used;
+    $whole = trim($text);
+    if ($whole === "") { return 0; }
+    $last = strtolower($whole[strlen($whole) - 1]);
     $times = 1;
     if ($last === "k") { $times = 1024; }
     if ($last === "m") { $times = 1048576; }
     if ($last === "g") { $times = 1073741824; }
-    if ($times > 1) { $text = substr($text, 0, strlen($text) - 1); }
-    return leading_whole($text) * $times;
+    $body = ($times > 1) ? substr($whole, 0, strlen($whole) - 1) : $whole;
+    $found = leading_whole($body);
+    $over = trim(substr($body, $__whole_used));
+    // Anything past the number that is not the letter standing for a
+    // multiplier is read past, and said to be read past, since a run
+    // that once took such a setting still takes it.
+    if ($times > 1) {
+        if ($over !== "") {
+            __complain(E_WARNING, 'Invalid quantity "' . $text . '", interpreting as "' . $found . ' ' . $last . '" for backwards compatibility');
+        }
+    } elseif ($over !== "") {
+        $mark = ord($last);
+        if ($mark >= 97 && $mark <= 122) {
+            __complain(E_WARNING, 'Invalid quantity "' . $text . '": unknown multiplier "' . $last . '", interpreting as "' . $found . '" for backwards compatibility');
+        } else {
+            __complain(E_WARNING, 'Invalid quantity "' . $text . '", interpreting as "' . $found . '" for backwards compatibility');
+        }
+    }
+    return $found * $times;
 }
 
 // How much room a run may take is held down to the most it may be given.
@@ -261,11 +291,18 @@ function __complain($level, $message) {
         return true;
     }
     if (($__reporting & $level) == 0) { return true; }
-    echo "\n" . __complaint_word($level) . ": " . $message . " in " . __FILE__ . " on line " . __LINE__ . "\n";
-    return true;
+    // Said as the run's own complaints are, so it names the line the
+    // program was on and not one of the library's.
+    return __complaint_say(__complaint_word($level), $message);
 }
 function set_exception_handler($handler) { return null; }
-function error_log($message) { return true; }
+// A message put where the run keeps them. Sending one on as mail is not
+// something a run of this kind does, so saying to send one with nowhere
+// to send it to is turned down.
+function error_log($message, $sort = 0, $where = null, $headers = null) {
+    if ($sort == 1) { return $where !== null; }
+    return true;
+}
 function extension_loaded($name) { return false; }
 function function_exists($name) { return false; }
 function gc_collect_cycles() { return 0; }

@@ -444,6 +444,9 @@
   "ext.builtin.complaint.handler": [
     "__complaint_handler"
   ],
+  "ext.builtin.complaint.say": [
+    "__complaint_say"
+  ],
   "ext.system.fault.class.value": [
     "ValueError"
   ],

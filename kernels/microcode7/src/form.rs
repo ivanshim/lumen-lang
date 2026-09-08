@@ -125,6 +125,11 @@ pub enum Prim {
     /// the complaint to be written out as it would have been; giving
     /// nothing takes the routine away again.
     Hearer,
+    /// Say these words as a complaint of the kind the first names, where
+    /// the run stands (ext.builtin.complaint.say): how a language makes
+    /// a complaint of its own and has it told as the run's own are, in
+    /// its place and through whatever stands in their way.
+    Complain,
     /// What the running call was handed, whatever of it the routine
     /// gave names to: the whole of it, how much there was, or the one
     /// standing at a place (ext.builtin.args.*).
