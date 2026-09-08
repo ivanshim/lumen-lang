@@ -2214,8 +2214,15 @@ impl<'a> Compiler<'a> {
                     takes_nothing = true;
                 }
                 let mut kind = None;
-                if self.look().shape == Shape::Instr && self.look_ahead(1).shape == Shape::Instr {
+                // The mark handing a cell over may stand between the
+                // kind and the name: `foo &$a`.
+                let marked = lang.reference_mark.as_ref().map_or(false, |m| self.look_ahead(1).is_lexeme(Shape::Sign, m))
+                    && self.look_ahead(2).shape == Shape::Instr;
+                if self.look().shape == Shape::Instr && (self.look_ahead(1).shape == Shape::Instr || marked) {
                     kind = Some(Rc::from(self.take().lexeme.as_str()));
+                    if marked {
+                        self.skip_reference();
+                    }
                 }
                 self.formal_kinds.push(kind.clone());
                 kinded.push(kind);

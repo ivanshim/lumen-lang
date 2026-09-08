@@ -57,7 +57,7 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> | 1 |
 | Fatal error: Uncaught Error: 'foo' is not a function in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: debug_backtrace in <file> | 1 |
-| Fatal error: Uncaught Error: Function typehint_ref expects 2 arguments, got 1 in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: array_walk in <file> | 1 |
 | skip setlocale() failed | 1 |
 | skip only for Windows | 1 |
 | Fatal error: Uncaught Error: Undefined variable: include in <file> | 1 |
@@ -397,7 +397,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug24573.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: debug_backtrace in <file> |
 | `php/lang/bug24640.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug24652.phpt` | pass | pass |  |
-| `php/lang/bug24658.phpt` | error | error | Fatal error: Uncaught Error: Function typehint_ref expects 2 arguments, got 1 in <file> |
+| `php/lang/bug24658.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: array_walk in <file> |
 | `php/lang/bug24783.phpt` | pass | pass |  |
 | `php/lang/bug24908.phpt` | pass | pass |  |
 | `php/lang/bug24951.phpt` | pass | pass |  |

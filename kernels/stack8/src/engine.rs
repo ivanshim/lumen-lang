@@ -935,6 +935,12 @@ impl<'a> Engine<'a> {
         for (at, named) in program.formal_kinds.iter().enumerate() {
             let Some(named) = named else { continue };
             let Some(held) = frame.get(at) else { continue };
+            // A parameter handed a cell holds the cell; what it was
+            // given is what the cell holds, and that is what has a kind.
+            let held = &match held {
+                Value::Bond(cell) => cell.borrow().clone(),
+                other => other.clone(),
+            };
             if matches!(held, Value::Null | Value::Blank) {
                 continue;
             }

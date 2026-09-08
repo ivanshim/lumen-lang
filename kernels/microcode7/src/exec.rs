@@ -1968,6 +1968,16 @@ impl<'a> Machine<'a> {
     /// value of its own may be handed nothing.
     fn of_the_class_written(&mut self, program: &Rc<Routine>, at: usize, x: &Value) -> Result<(), Escape> {
         let Some(Some(written)) = program.formal_kinds.get(at) else { return Ok(()) };
+        // A parameter handed a cell holds that cell; what was given is
+        // what the cell holds, and that is what has a class.
+        let held;
+        let x = match x {
+            Value::Shared(cell) => {
+                held = cell.borrow().clone();
+                &held
+            }
+            other => other,
+        };
         if matches!(x, Value::Nil | Value::Unset) {
             return Ok(());
         }

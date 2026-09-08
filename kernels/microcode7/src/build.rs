@@ -2118,9 +2118,18 @@ impl<'a> Builder<'a> {
                 // taking nothing as well: `?int $x`.
                 takes_nothing = self.skip_nothing_mark();
                 let mut kind = None;
-                if self.look().shape == Shape::Bare && self.glance(1).shape == Shape::Bare {
+                // The mark that hands a cell over may stand between the
+                // kind and the name: `foo &$a`.
+                let next = self.glance(1);
+                let between = next.shape == Shape::Sign
+                    && table.single("ext.op.reference").map_or(false, |m| next.lexeme == m)
+                    && self.glance(2).shape == Shape::Bare;
+                if self.look().shape == Shape::Bare && (self.glance(1).shape == Shape::Bare || between) {
                     kind = Some(Rc::from(self.advance().lexeme.as_str()));
                     kinded = true;
+                    if between {
+                        self.skip_reference();
+                    }
                 }
                 self.formal_kinds.push(kind);
                 params.push(self.need_word("as a parameter name")?);
