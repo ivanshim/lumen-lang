@@ -109,6 +109,13 @@ pub enum Prim {
     /// the order they were named, after the program's last statement and
     /// before what is still kept is let go.
     Afterward,
+    /// A routine to be handed every complaint the run makes, instead of
+    /// the complaint being written out (ext.builtin.complaint.handler).
+    /// It takes the word for the kind, what was said, where the program
+    /// is written and the line that was running. Answering false leaves
+    /// the complaint to be written out as it would have been; giving
+    /// nothing takes the routine away again.
+    Hearer,
     /// What the running call was handed, whatever of it the routine
     /// gave names to: the whole of it, how much there was, or the one
     /// standing at a place (ext.builtin.args.*).

@@ -19,32 +19,32 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 47, differs 31, error 26, skipped 10 | pass 47, differs 31, error 26, skipped 10 |
 | `php/func` | 14 | pass 11, differs 2, error 1, skipped 0 | pass 11, differs 2, error 1, skipped 0 |
-| `php/lang` | 213 | pass 104, differs 43, error 61, skipped 5 | pass 104, differs 43, error 61, skipped 5 |
+| `php/lang` | 213 | pass 107, differs 40, error 61, skipped 5 | pass 107, differs 40, error 61, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 21, error 3, skipped 6 | pass 34, differs 21, error 3, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 201, differs 105, error 91, skipped 25 | pass 201, differs 105, error 91, skipped 25 |
+| all | 422 | pass 204, differs 102, error 91, skipped 25 | pass 204, differs 102, error 91, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 105 |
+| ran, printed something else | 102 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
 | Fatal error: Uncaught Error: Undefined variable: Iterator in <file> | 5 |
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
+| Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
 | Expected an expression | 3 |
 | Fatal error: Uncaught Error: Undefined variable: current in <file> | 3 |
-| Fatal error: Uncaught Error: Cannot index non-array value in <file> | 3 |
-| Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> | 3 |
 | skip php-cgi not available | 2 |
 | Unexpected token: { | 2 |
 | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> | 2 |
 | Unexpected token: & | 2 |
 | Unexpected token: } | 2 |
 | Fatal error: Uncaught Error: Only a class can be made into an object in <file> | 2 |
+| Fatal error: Uncaught Error: Undefined variable: empty in <file> | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Undefined variable: StdClass in <file> | 2 |
 | Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> | 2 |
@@ -329,7 +329,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/004.phpt` | pass | pass |  |
 | `php/lang/005.phpt` | pass | pass |  |
 | `php/lang/006.phpt` | pass | pass |  |
-| `php/lang/007.phpt` | differs | differs | ran, printed something else |
+| `php/lang/007.phpt` | pass | pass |  |
 | `php/lang/008.phpt` | pass | pass |  |
 | `php/lang/009.phpt` | pass | pass |  |
 | `php/lang/010.phpt` | pass | pass |  |
@@ -392,7 +392,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug23624.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: current in <file> |
 | `php/lang/bug24054.phpt` | pass | pass |  |
 | `php/lang/bug24396.phpt` | error | error | Expected identifier after the global keyword, got '$' |
-| `php/lang/bug24436.phpt` | error | error | Fatal error: Uncaught Error: Cannot index non-array value in <file> |
+| `php/lang/bug24436.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: empty in <file> |
 | `php/lang/bug24499.phpt` | pass | pass |  |
 | `php/lang/bug24573.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: debug_backtrace in <file> |
 | `php/lang/bug24640.phpt` | differs | differs | ran, printed something else |
@@ -402,9 +402,9 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug24908.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug24951.phpt` | pass | pass |  |
 | `php/lang/bug25145.phpt` | pass | pass |  |
-| `php/lang/bug25547.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug25547.phpt` | pass | pass |  |
 | `php/lang/bug25652.phpt` | pass | pass |  |
-| `php/lang/bug25922.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug25922.phpt` | pass | pass |  |
 | `php/lang/bug26182.phpt` | pass | pass |  |
 | `php/lang/bug26696.phpt` | pass | pass |  |
 | `php/lang/bug26866.phpt` | error | error | Fatal error: Uncaught Error: Cannot call method 'get_name' on a value that is not an object in <file> |
@@ -575,7 +575,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/subtract_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/passByReference_001.phpt` | pass | pass |  |
 | `php/lang/passByReference_002.phpt` | differs | differs | ran, printed something else |
-| `php/lang/passByReference_003.phpt` | error | error | Fatal error: Uncaught Error: Cannot index non-array value in <file> |
+| `php/lang/passByReference_003.phpt` | error | error | Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> |
 | `php/lang/passByReference_004.phpt` | pass | pass |  |
 | `php/lang/passByReference_005.phpt` | pass | pass |  |
 | `php/lang/passByReference_006.phpt` | error | error | Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> |

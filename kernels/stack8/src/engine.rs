@@ -56,6 +56,14 @@ pub struct Engine<'a> {
     /// done, each with what it is to be handed, in the order they were
     /// named.
     when_done: RefCell<Vec<(Value, Vec<Value>)>>,
+    /// The routine every complaint is handed to, where the program has
+    /// put one in the way of them; the complaints waiting to be handed
+    /// over, since one may be raised where the run cannot reach back
+    /// into the program; and whether any are waiting, which the word
+    /// loop asks before every word.
+    complainer: RefCell<Option<Value>>,
+    waiting: RefCell<Vec<(Complaint, String, u32)>>,
+    any_waiting: std::cell::Cell<bool>,
     args_cell: Option<usize>,
     memo_cell: Option<usize>,
 }
@@ -129,6 +137,9 @@ impl<'a> Engine<'a> {
             hushed: std::cell::Cell::new(0),
             holding: RefCell::new(Vec::new()),
             when_done: RefCell::new(Vec::new()),
+            complainer: RefCell::new(None),
+            waiting: RefCell::new(Vec::new()),
+            any_waiting: std::cell::Cell::new(false),
             args_cell: find(&lang.args_binding),
             memo_cell: find(&lang.memo_binding),
             registry,
@@ -269,8 +280,55 @@ impl<'a> Engine<'a> {
         if self.hushed.get() > 0 {
             return;
         }
+        // A program may put a routine in the way of every complaint. A
+        // complaint is often raised where the run is only reading and
+        // cannot reach back into the program, so it waits here and is
+        // handed over before the next word runs.
+        if self.complainer.borrow().is_some() {
+            self.waiting.borrow_mut().push((kind, message.to_string(), self.line));
+            self.any_waiting.set(true);
+            return;
+        }
+        self.say_complaint(kind, message, self.line);
+    }
+
+    fn say_complaint(&self, kind: Complaint, message: &str, line: u32) {
         let Some((_, word)) = self.lang.complaint_words.iter().find(|(k, _)| *k == kind) else { return };
-        self.utter(&format!("\n{}: {} in {} on line {}\n", word, message, self.source, self.line));
+        self.utter(&format!("\n{}: {} in {} on line {}\n", word, message, self.source, line));
+    }
+
+    /// The complaints waiting are handed to the routine the program put
+    /// in their way, oldest first. A routine answering false leaves its
+    /// complaint to be written out as it would have been.
+    fn hand_over_complaints(&mut self) -> Flow<()> {
+        self.any_waiting.set(false);
+        loop {
+            let next = {
+                let mut waiting = self.waiting.borrow_mut();
+                if waiting.is_empty() {
+                    return Ok(());
+                }
+                waiting.remove(0)
+            };
+            let (kind, message, line) = next;
+            let hook = self.complainer.borrow().clone();
+            let Some(Value::Routine(p)) = hook.map(|v| self.what_it_spells(v)) else {
+                self.say_complaint(kind, &message, line);
+                continue;
+            };
+            let word = self.lang.complaint_words.iter().find(|(k, _)| *k == kind).map(|(_, w)| w.clone());
+            let told = vec![
+                Value::text(&word.unwrap_or_default()),
+                Value::text(&message),
+                Value::text(&self.source),
+                Value::Small(line as i64),
+            ];
+            self.invoke(&p, told)?;
+            let answered = self.drop_top().unwrap_or(Value::Null);
+            if !answered.is_true() {
+                self.say_complaint(kind, &message, line);
+            }
+        }
     }
 
     /// A value raised and never caught, told the way a language that
@@ -712,7 +770,12 @@ impl<'a> Engine<'a> {
         // so how much quiet stood when the piece began is what stands
         // again once it has gone.
         let quiet = self.hushed.get();
-        let outcome = self.run_body(frame, instrs);
+        let mut outcome = self.run_body(frame, instrs);
+        // A complaint raised by the last word of a body would have
+        // nowhere left to be handed over, so it is handed over here.
+        if outcome.is_ok() && self.any_waiting.get() {
+            outcome = self.hand_over_complaints();
+        }
         if outcome.is_err() {
             self.hushed.set(quiet);
         }
@@ -726,6 +789,23 @@ impl<'a> Engine<'a> {
         // the guard was set, and how much quiet was asked for then.
         let mut guards: Vec<(usize, usize, usize)> = Vec::new();
         while pc < instrs.len() {
+            // A complaint raised where the run could only read waits to
+            // be handed over; here, before the next word, is where the
+            // run can reach back into the program to hand it on.
+            if self.any_waiting.get() {
+                if let Err(fault) = self.hand_over_complaints() {
+                    // A routine in the way of a complaint may raise
+                    // something of its own, which a guard here takes as
+                    // it would take any other.
+                    let Fault::Thrown(raised) = fault else { return Err(fault) };
+                    let Some((catch, depth, quiet)) = guards.pop() else { return Err(Fault::Thrown(raised)) };
+                    self.hushed.set(quiet);
+                    self.data.truncate(depth);
+                    self.data.push(raised);
+                    pc = catch;
+                    continue;
+                }
+            }
             counted = counted.wrapping_add(1);
             if counted % 4096 == 0 {
                 if let Some(over) = self.out_of_time() {
@@ -1819,6 +1899,12 @@ impl<'a> Engine<'a> {
             self.complain(Complaint::Warning, &format!("Undefined array key {}", self.key_named(key)));
             Ok(Value::Null)
         };
+        // Looking into nothing at all is told apart from looking for a
+        // place an array does not hold: there is no array to hold it.
+        if self.lang.absent_index && matches!(target, Value::Null | Value::Blank | Value::Gap) {
+            self.complain(Complaint::Warning, "Trying to access array offset on null");
+            return Ok(Value::Null);
+        }
         if let Value::Map(pairs) = target {
             let at = &self.key(at);
             let found = pairs.iter().find(|(k, _)| k.equals(at));
@@ -1974,6 +2060,13 @@ impl<'a> Engine<'a> {
                 let seconds = as_index(&args[0])?;
                 self.limit.set(seconds);
                 self.began.set(Some(std::time::Instant::now()));
+                Value::Flag(true)
+            }
+            // The routine every complaint is to be handed to, or none.
+            Builtin::Complainer => {
+                let put = args.first().cloned().unwrap_or(Value::Null);
+                let held = matches!(put, Value::Null | Value::Blank);
+                *self.complainer.borrow_mut() = if held { None } else { Some(put) };
                 Value::Flag(true)
             }
             // A routine to run when the run is over, with whatever else

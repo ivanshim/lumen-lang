@@ -107,6 +107,13 @@ pub struct Machine<'a> {
     /// The routines to run once the program's last statement is done,
     /// each with what it is to be handed, in the order they were named.
     afterward: RefCell<Vec<(Value, Vec<Value>)>>,
+    /// The routine every complaint is handed to, where the program has
+    /// put one in the way of them; the complaints still to be handed
+    /// over, since one may be raised where the run is only reading; and
+    /// whether any wait, which each step asks before it runs.
+    hearer: RefCell<Option<Value>>,
+    unheard: RefCell<Vec<(String, String, u32)>>,
+    any_unheard: std::cell::Cell<bool>,
     /// Whether writing into a place makes what is needed to hold it: an
     /// array where a name holds nothing, and one at each place along the
     /// way that is not there yet.
@@ -160,6 +167,9 @@ impl<'a> Machine<'a> {
             quieted: 0,
             holding: RefCell::new(Vec::new()),
             afterward: RefCell::new(Vec::new()),
+            hearer: RefCell::new(None),
+            unheard: RefCell::new(Vec::new()),
+            any_unheard: std::cell::Cell::new(false),
             builds_places: table.flag("ext.op.index.makes"),
             letter_places: table.flag("ext.op.index.text"),
             spelled_stands: table.flag("ext.op.spelled"),
@@ -382,8 +392,53 @@ impl<'a> Machine<'a> {
         if self.quieted > 0 {
             return;
         }
+        // A program may put a routine in the way of every complaint. One
+        // is often raised where the run is only reading and cannot reach
+        // back into the program, so it waits here and is handed over
+        // before the next step runs.
+        if self.hearer.borrow().is_some() {
+            self.unheard.borrow_mut().push((kind.to_string(), about.to_string(), self.row));
+            self.any_unheard.set(true);
+            return;
+        }
+        self.said_plainly(kind, about, self.row);
+    }
+
+    fn said_plainly(&self, kind: &str, about: &str, row: u32) {
         let Some((_, word)) = self.complaint_words.iter().find(|(k, _)| *k == kind) else { return };
-        self.utter(&format!("\n{}: {} in {} on line {}\n", word, about, self.written_in, self.row));
+        self.utter(&format!("\n{}: {} in {} on line {}\n", word, about, self.written_in, row));
+    }
+
+    /// The complaints still waiting go to the routine the program put in
+    /// their way, oldest first. One that answers false is left to be
+    /// written out as it would have been.
+    fn hand_over_unheard(&mut self) -> Res<()> {
+        self.any_unheard.set(false);
+        loop {
+            let next = {
+                let mut unheard = self.unheard.borrow_mut();
+                if unheard.is_empty() {
+                    return Ok(());
+                }
+                unheard.remove(0)
+            };
+            let (kind, about, row) = next;
+            let hook = self.hearer.borrow().clone();
+            let Some(Value::Bound(p, env)) = hook.map(|v| self.what_it_spells(v)) else {
+                self.said_plainly(&kind, &about, row);
+                continue;
+            };
+            let word = self.complaint_words.iter().find(|(k, _)| *k == kind).map(|(_, w)| w.clone());
+            let told = vec![
+                Value::text(&word.unwrap_or_default()),
+                Value::text(&about),
+                Value::text(&self.written_in.clone()),
+                Value::Small(row as i64),
+            ];
+            if !self.invoke(p, env, told)?.is_true() {
+                self.said_plainly(&kind, &about, row);
+            }
+        }
     }
 
     pub fn define(&mut self, name: &str, value: Value) {
@@ -717,6 +772,12 @@ impl<'a> Machine<'a> {
     }
 
     fn value_of(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        // A complaint raised where the run was only reading waits to be
+        // handed over; here, before the next step, is where the run can
+        // reach back into the program to hand it on.
+        if self.any_unheard.get() {
+            self.hand_over_unheard()?;
+        }
         match node {
             Form::Const(Value::Routine(p)) => Ok(Value::Bound(p.clone(), frame.clone())),
             Form::Const(v) => Ok(v.clone()),
@@ -1200,7 +1261,14 @@ impl<'a> Machine<'a> {
                 }
                 op => {
                     let values = self.value_list(args, frame)?;
-                    Ok(self.prim(*op, name, &values)?)
+                    let made = self.prim(*op, name, &values)?;
+                    // A complaint the operation itself raised is handed
+                    // over here, before whatever holds it goes on, so
+                    // that it is said where it happened.
+                    if self.any_unheard.get() {
+                        self.hand_over_unheard()?;
+                    }
+                    Ok(made)
                 }
             },
         }
@@ -1718,6 +1786,13 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 self.allowed = as_index(&v[0])?;
                 self.started = Some(std::time::Instant::now());
+                Value::Flag(true)
+            }
+            // The routine every complaint is to be handed to, or none.
+            Prim::Hearer => {
+                let put = v.first().cloned().unwrap_or(Value::Nil);
+                let none = matches!(put, Value::Nil | Value::Unset);
+                *self.hearer.borrow_mut() = if none { None } else { Some(put) };
                 Value::Flag(true)
             }
             // A routine to run once the run is over, with whatever else
@@ -2309,6 +2384,13 @@ impl<'a> Machine<'a> {
             self.grumble("warning", &format!("Undefined array key {}", named));
             Ok(Value::Nil)
         };
+        // Reaching into nothing at all is said differently from reaching
+        // for a place an array does not hold: there is no array to hold
+        // it in the first place.
+        if self.table.flag("ext.op.index.absent") && matches!(target, Value::Nil | Value::Unset) {
+            self.grumble("warning", "Trying to access array offset on null");
+            return Ok(Value::Nil);
+        }
         if let Value::Dict(entries) = target {
             let at = &self.as_key(at);
             let found = entries.iter().find(|(k, _)| k.equals(at));

@@ -58,8 +58,22 @@ $__error_handler = null;
 function error_reporting($level = null) {
     global $__reporting;
     $was = $__reporting;
-    if ($level !== null) { $__reporting = whole_of($level); }
+    if ($level !== null) {
+        $__reporting = whole_of($level);
+        __hook_as_needed();
+    }
     return $was;
+}
+// The run's own complaints come this way only where the program wants
+// something done with them: a routine of its own in their way, or some
+// kinds not to be said at all.
+function __hook_as_needed() {
+    global $__error_handler, $__reporting;
+    if ($__error_handler !== null || $__reporting != E_ALL) {
+        __complaint_handler('__from_the_run');
+    } else {
+        __complaint_handler(null);
+    }
 }
 // The settings a run was started with are carried in the environment,
 // each under the name it has with PHP_INI_ before it, which is how the
@@ -137,12 +151,36 @@ function set_error_handler($handler, $levels = 32767) {
     global $__error_handler;
     $was = $__error_handler;
     $__error_handler = $handler;
+    __hook_as_needed();
     return $was;
 }
 function restore_error_handler() {
     global $__error_handler;
     $__error_handler = null;
+    __hook_as_needed();
     return true;
+}
+// The number a program knows a kind of complaint by, from the word the
+// run writes it under.
+function __complaint_number($word) {
+    if ($word === "Warning") { return E_WARNING; }
+    if ($word === "Deprecated") { return E_DEPRECATED; }
+    if ($word === "Fatal error") { return E_ERROR; }
+    return E_NOTICE;
+}
+// A complaint the run itself made. The program's routine takes it; where
+// there is none, or where its kind is one being said, answering false
+// leaves the run to write it out in its own words.
+function __from_the_run($word, $message, $file, $line) {
+    global $__error_handler, $__reporting;
+    $level = __complaint_number($word);
+    if ($__error_handler !== null) {
+        $handler = $__error_handler;
+        $handler($level, $message, $file, $line);
+        return true;
+    }
+    if (($__reporting & $level) == 0) { return true; }
+    return false;
 }
 // The word each kind of complaint is written under, and the number a
 // program knows it by.

@@ -479,6 +479,19 @@ only. The extension labels so far, all from PHP:
   written in the language itself, since giving up what was kept hands it
   back as an ordinary value, and writing it out again writes it into
   whatever keeping now stands.
+- `ext.builtin.complaint.handler`: a builtin naming a routine to be
+  handed every complaint the run makes, instead of the complaint being
+  written out. It takes the word for the kind, what was said, where the
+  program is written and the line that was running; answering false
+  leaves the complaint to be written out as it would have been, and
+  giving nothing takes the routine away again. Together with the four
+  `ext.system.complaint.*` words, that is enough for a language to write
+  the whole of its own diagnostics — which kinds are said at all, and
+  what a program may put in their way — in its own terms.
+
+  A complaint is usually raised where the run is only reading and cannot
+  reach back into the program, so it waits and is handed over before the
+  next step, which keeps it in step with what the program writes out.
 - `ext.builtin.at_end`: a builtin naming a routine to run once the run
   is over, with whatever else is given standing as its arguments. They
   run in the order they were named, after the program's last statement
@@ -936,6 +949,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.args.count.outside` | - | - | - | - | - | - | - | `func_num_args() must be called from a function context` | - | - |
 | `ext.builtin.array` | - | - | - | - | - | - | - | `array` | - | - |
 | `ext.builtin.at_end` | - | - | - | - | - | - | - | `__at_end` | - | - |
+| `ext.builtin.complaint.handler` | - | - | - | - | - | - | - | `__complaint_handler` | - | - |
 | `ext.builtin.define` | - | - | - | - | - | - | - | `define` | - | - |
 | `ext.builtin.echo` | - | - | - | - | - | - | - | `echo` | - | - |
 | `ext.builtin.eval` | - | - | - | - | - | - | - | `eval` | - | - |
