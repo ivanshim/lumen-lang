@@ -2386,27 +2386,39 @@ impl<'a> Builder<'a> {
 
     /// Whether what stands after the member mark is a value and not a
     /// word written out: a variable, or a piece within the block marks.
-    fn member_named_by_value(&mut self) -> bool {
+    fn member_named_by_value(&mut self, member: bool) -> bool {
         if self.table.single("block.open").map_or(false, |open| self.sign(open)) {
             return true;
         }
         if self.table.spells("ext.op.name_by_value", &self.look().lexeme) {
             return true;
         }
+        // A bare variable names a member of a thing by what it keeps,
+        // but written after the mark reaching into a class it names
+        // that class's own value outright, mark and all. Only the mark
+        // saying a value spells a name serves there.
         let here = self.look();
-        here.shape == Shape::Bare && self.table.letter("identifier.variable_prefix").map_or(false, |mark| here.lexeme.starts_with(mark))
+        member && here.shape == Shape::Bare && self.table.letter("identifier.variable_prefix").map_or(false, |mark| here.lexeme.starts_with(mark))
     }
 
     /// The value spelling a member's name: a piece within the block
     /// marks, or a bare variable — bare, since a call bracket after it
     /// opens the method's arguments and not a call of the variable.
-    fn member_value_name(&mut self) -> Res<Form> {
-        // `$o->${e}`: the mark says the piece spells a name, so the
-        // member is named by what that binding keeps, not by the piece.
+    fn member_value_name(&mut self, member: bool) -> Res<Form> {
+        // After the mark reaching into a class, the mark is the one a
+        // class's own values are written with, and what follows spells
+        // the name outright: `C::$$n` is the value named by what `$n`
+        // keeps. After the mark reaching into a thing there is no such
+        // mark in the writing, so one standing there says the piece
+        // spells a name and the member is named by what *that* binding
+        // keeps: `$o->${e}` is a step further in.
         if self.table.spells("ext.op.name_by_value", &self.look().lexeme) {
             self.advance();
             let spells = self.spelling()?;
-            return Ok(Form::Called(Box::new(spells)));
+            return Ok(match member {
+                true => Form::Called(Box::new(spells)),
+                false => spells,
+            });
         }
         let opens = self.table.single("block.open").map(str::to_string);
         let closes = self.table.single("block.close").map(str::to_string);
@@ -2606,9 +2618,16 @@ impl<'a> Builder<'a> {
             // Nothing else changes — the name is already an argument of
             // the reading or the calling, so a value serves where a word
             // written out would.
-            if !owning && table.flag("ext.op.member.by_value") && self.member_named_by_value() {
-                let spells = self.member_value_name()?;
+            if table.flag("ext.op.member.by_value") && self.member_named_by_value(!owning) {
+                let spells = self.member_value_name(!owning)?;
                 let calling = table.single("syntax.call.open").map_or(false, |o| self.sign(o));
+                if owning {
+                    if calling {
+                        return Err("A method of a class named by a value is not reached this way".to_string());
+                    }
+                    node = prim_call(Prim::Within, vec![node, spells]);
+                    continue;
+                }
                 let mut given = vec![node, spells];
                 if calling {
                     self.advance();

@@ -130,6 +130,10 @@ pub enum Action {
     /// Call the method of the object, named by the text above it, with
     /// the arguments above that. The count is of the arguments alone.
     SendNamed(usize),
+    /// A class's own value, named by the text above the class.
+    ReachNamed,
+    /// Write a class's own value: the class, the name, then the value.
+    SowNamed,
     /// Call that method of the object below the arguments.
     Send(Rc<str>),
     /// A constant or a class's own value, of the class above.

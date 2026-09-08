@@ -2191,6 +2191,18 @@ impl<'a> Compiler<'a> {
                 self.act(Action::WriteNamed, 2);
                 Ok(())
             }
+            // The read of a class's own value named by a value turns
+            // into a write of it, the class and the name staying put.
+            [rest @ .., Instr::Act(Action::ReachNamed, 2)] => {
+                let rest = rest.to_vec();
+                let at = self.mark();
+                for w in relocated(rest, at as i64 - from as i64) {
+                    self.put(w);
+                }
+                self.value_written(keep)?;
+                self.act(Action::SowNamed, 3);
+                Ok(())
+            }
             // The read of a member named by a value turns into a write
             // of it: what it belongs to and the name both stay where
             // they are, and the value follows them.
@@ -2716,14 +2728,21 @@ impl<'a> Compiler<'a> {
     /// the block marks, or a bare variable — bare, since a call bracket
     /// after it opens the method's arguments and not a call of the
     /// variable itself.
-    fn member_value_name(&mut self) -> Res<()> {
+    fn member_value_name(&mut self, member: bool) -> Res<()> {
         let lang = self.lang;
-        // `$o->${e}`: the mark says the piece spells a name, so the
-        // member is named by what that binding holds, not by the piece.
+        // After the mark that reaches into a class, the mark is the one
+        // a class's own values are written with, and what follows it
+        // spells the name outright: `C::$$n` is the value named by what
+        // `$n` holds. After the mark that reaches into a thing there is
+        // no such mark in the writing, so one standing there says the
+        // piece spells a name and the member is named by what *that*
+        // binding holds: `$o->${e}` is one step further in.
         if Lang::spells(&lang.naming_words, &self.look().lexeme) {
             self.take();
             self.naming()?;
-            self.act(Action::Named, 1);
+            if member {
+                self.act(Action::Named, 1);
+            }
             return Ok(());
         }
         if let (Some(open), Some(close)) = (lang.block_opens.first().cloned(), lang.block_closes.first().cloned()) {
@@ -2742,7 +2761,7 @@ impl<'a> Compiler<'a> {
     /// Whether what stands after the member mark is a value rather than
     /// a name written out: a variable, or a piece written within the
     /// block marks.
-    fn member_named_by_value(&mut self) -> bool {
+    fn member_named_by_value(&mut self, member: bool) -> bool {
         let lang = self.lang;
         if lang.block_opens.first().map_or(false, |open| self.at_symbol(open)) {
             return true;
@@ -2750,8 +2769,12 @@ impl<'a> Compiler<'a> {
         if Lang::spells(&lang.naming_words, &self.look().lexeme) {
             return true;
         }
+        // A bare variable names a member of a thing by what it holds,
+        // but the same written after the mark that reaches into a class
+        // names that class's own value outright, mark and all. Only the
+        // mark that says a value spells a name works there.
         let here = self.look();
-        here.shape == Shape::Instr && lang.sigil.map_or(false, |mark| here.lexeme.starts_with(mark))
+        member && here.shape == Shape::Instr && lang.sigil.map_or(false, |mark| here.lexeme.starts_with(mark))
     }
 
     /// What follows the mark that says a value spells a name: a piece
@@ -2940,9 +2963,18 @@ impl<'a> Compiler<'a> {
             // A value may stand where a member's name stands: the
             // member is the one that value spells, worked out while the
             // program runs.
-            if member && lang.members_by_value && self.member_named_by_value() {
-                self.member_value_name()?;
+            if lang.members_by_value && self.member_named_by_value(member) {
+                self.member_value_name(member)?;
                 let call = lang.calling.clone().filter(|c| self.at_symbol(&c.open));
+                if !member {
+                    // A class's own value, named by what the value
+                    // spells. A call of one is not reached this way.
+                    if call.is_some() {
+                        return Err("A method of a class named by a value is not reached this way".to_string());
+                    }
+                    self.act(Action::ReachNamed, 2);
+                    continue;
+                }
                 match call {
                     Some(call) => {
                         // The name is worked out before the arguments,

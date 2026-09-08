@@ -445,7 +445,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/constants/PHP_INT_32bit.phpt` | skipped | skipped | skip this test is for 32-bit platforms only |
 | `php/lang/constants/PHP_INT_64bit.phpt` | pass | pass |  |
 | `php/lang/empty_variation.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: empty in <file> |
-| `php/lang/engine_assignExecutionOrder_001.phpt` | error | error | Expected identifier after the member mark, got '$' |
+| `php/lang/engine_assignExecutionOrder_001.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'a' in null in <file> |
 | `php/lang/engine_assignExecutionOrder_002.phpt` | error | error | Fatal error: Uncaught Error: Cannot index non-array value in <file> |
 | `php/lang/engine_assignExecutionOrder_003.phpt` | error | error | Unexpected token: ) |
 | `php/lang/engine_assignExecutionOrder_004.phpt` | pass | pass |  |

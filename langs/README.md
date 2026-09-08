@@ -434,6 +434,15 @@ only. The extension labels so far, all from PHP:
   that binding holds and not by the piece itself, so `$o->${e}` reads
   the binding `e` spells and names the member by what it holds.
   Reading and writing both go through it.
+
+  The mark that reaches into a class takes a value the same way, but
+  one step less far in, because a class's own values already carry the
+  variable mark in the writing: `C::$$n` is the value named by what
+  `$n` holds, and `C::${e}` the one named by what `e` comes to, while
+  `C::$n` names `n` outright. After the mark that reaches into a thing
+  there is no such mark in the writing, so one standing there says the
+  piece spells a name and the member is named by what *that* binding
+  holds.
 - `ext.builtin.eval`: builtins taking a piece of the language written
   out as text, reading it as the run's own language and running it
   where the call stands. The text is read with whatever a program of

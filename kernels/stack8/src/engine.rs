@@ -1142,6 +1142,20 @@ impl<'a> Engine<'a> {
                 self.data.push(value);
                 return self.perform(&Action::Plant(name), 2);
             }
+            Action::ReachNamed => {
+                let spelled = self.drop_top()?;
+                let sp = self.wording();
+                let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
+                return self.perform(&Action::Reach(name), 1);
+            }
+            Action::SowNamed => {
+                let value = self.drop_top()?;
+                let spelled = self.drop_top()?;
+                let sp = self.wording();
+                let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
+                self.data.push(value);
+                return self.perform(&Action::Sow(name), 2);
+            }
             Action::SendNamed(count) => {
                 let spelled = self.drop_top()?;
                 let sp = self.wording();
