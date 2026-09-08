@@ -211,13 +211,26 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
             machine.let_go_all();
             return done.map_err(|f| f.told(&machine.names()));
         }
-        machine.ended_uncaught(&fault);
-        let _ = machine.run_when_done();
+        // A program may put a routine in the way of a value nobody
+        // took; the run says nothing of its own where one took it up.
+        if !machine.taken_up(&fault) {
+            machine.ended_uncaught(&fault);
+        }
+        // What a program named to run at the end may itself be stopped,
+        // and that is told as the run's own ending was.
+        if let Err(after) = machine.run_when_done() {
+            machine.ended_uncaught(&after);
+        }
         machine.let_things_go();
         machine.let_go_all();
         return Err(fault.told(&machine.names()));
     }
-    machine.run_when_done().map_err(|f| f.told(&machine.names()))?;
+    if let Err(after) = machine.run_when_done() {
+        machine.ended_uncaught(&after);
+        machine.let_things_go();
+        machine.let_go_all();
+        return Err(after.told(&machine.names()));
+    }
 
     // A language with an entry function (Rust's `main`) runs it once the
     // program body has defined it.

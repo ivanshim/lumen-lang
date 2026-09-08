@@ -10,18 +10,36 @@ class Throwable {
     public $previous = null;
     public $file = "";
     public $line = 0;
+    public $trace = array();
     public function __construct($message = "", $code = 0, $previous = null) {
         $this->message = $message;
         $this->code = $code;
         $this->previous = $previous;
+        // The calls a fault was raised under are the calls as they stood
+        // before it was made: the making itself, and the making of every
+        // class it is built on, are none of them.
+        $under = __calls();
+        while (count($under) > 0 && $under[0]['function'] === '__construct') {
+            array_shift($under);
+        }
+        $this->trace = $under;
     }
     public function getMessage() { return $this->message; }
     public function getCode() { return $this->code; }
     public function getPrevious() { return $this->previous; }
     public function getFile() { return $this->file; }
     public function getLine() { return $this->line; }
-    public function getTrace() { return array(); }
-    public function getTraceAsString() { return "#0 {main}"; }
+    public function getTrace() { return $this->trace; }
+    public function getTraceAsString() {
+        $lines = array();
+        $at = 0;
+        foreach ($this->trace as $frame) {
+            $lines[] = '#' . $at . ' ' . __frame_told($frame);
+            $at = $at + 1;
+        }
+        $lines[] = '#' . $at . ' {main}';
+        return implode("\n", $lines);
+    }
     public function __toString() { return $this->message; }
 }
 

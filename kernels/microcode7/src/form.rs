@@ -133,6 +133,25 @@ pub enum Prim {
     /// a complaint of its own and has it told as the run's own are, in
     /// its place and through whatever stands in their way.
     Complain,
+    /// The names of the classes, and of the routines, the run has bound
+    /// (ext.builtin.classes, ext.builtin.routines).
+    ClassesBound,
+    RoutinesBound,
+    /// The name of the class the one above stands on, where it stands on
+    /// any: a thing is asked of its own class (ext.builtin.class.beneath).
+    ClassBeneath,
+    /// Whether anything has gone out of the run yet: what is held back
+    /// in a piece of output kept aside has not (ext.builtin.output.begun).
+    OutBegun,
+    /// A routine to be handed a value nobody took, rather than the run
+    /// telling it in its own words (ext.builtin.uncaught). Giving
+    /// nothing takes the routine away again.
+    Untaken,
+    /// The calls under way, innermost first, each a table telling what
+    /// was called, the class it was written in where it was written in
+    /// one, the file and line the call itself stands on, and what it was
+    /// handed (ext.builtin.calls).
+    Under,
     /// What the running call was handed, whatever of it the routine
     /// gave names to: the whole of it, how much there was, or the one
     /// standing at a place (ext.builtin.args.*).
@@ -252,6 +271,14 @@ pub enum Prim {
     Negate,
     Join,
     At,
+    /// What a value holds at that place, read while the value is being
+    /// taken apart: the same as the above, save that a value with no
+    /// places at all is spoken of in a taking-apart's own words.
+    Apart,
+    /// What a value holds at that place, read so that what comes of it
+    /// may be written back there. A value with no places at all is no
+    /// place to write, so it is turned down as a write to one is.
+    Toward,
     MakeArray,
     // control
     Seq,
@@ -444,5 +471,9 @@ pub struct Routine {
     /// inside one: what a class holds alone is reached from there and
     /// from nowhere else.
     pub within: Option<Rc<str>>,
+    /// The line this program was written on, which a fault raised on
+    /// the way into it names: such a fault belongs where the program
+    /// stands and not where the call did.
+    pub declared_on: u32,
     pub body: Form,
 }

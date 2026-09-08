@@ -92,16 +92,16 @@ ext.stmt.class.constructor:L ext.stmt.class.modifier:L ext.stmt.class.hidden:L e
 ext.op.instanceof:L ext.stmt.class.parent:L ext.stmt.class.self:L ext.lexical.name_lead:L ext.stmt.try:L \
 ext.stmt.catch:L ext.stmt.finally:L ext.stmt.throw:L ext.stmt.catch.separator:L ext.op.reference:L \
 ext.system.request.query:L ext.system.request.form:L ext.system.request.cookies:L ext.system.request.server:L \
-ext.system.request.env:L ext.system.request.files:L ext.system.request.all:L ext.system.request.settings:L ext.op.index.absent:B ext.op.index.scalar:L ext.op.index.nothing:L ext.stmt.class.destructor:L ext.stmt.class.reader:L ext.stmt.class.writer:L \
+ext.system.request.env:L ext.system.request.files:L ext.system.request.all:L ext.system.request.settings:L ext.op.index.absent:B ext.op.index.scalar:L ext.op.index.nothing:L ext.stmt.class.destructor:L ext.stmt.class.reader:L ext.stmt.class.writer:L ext.stmt.class.caller:L \
 ext.system.args.list:L ext.system.args.count:L ext.op.walk.class:L ext.op.walk.rewind:L ext.op.walk.more:L ext.op.walk.this:L ext.op.walk.key:L \
 ext.op.walk.onward:L ext.op.walk.giver.class:L ext.op.walk.giver:L ext.op.walk.no_cell:L ext.op.walk.key.no_cell:L ext.stmt.case.mark.instead:L \
 ext.stmt.class.interface:L ext.stmt.class.implements:L ext.op.compare:L ext.builtin.unset:L ext.lexical.template:B ext.lexical.prologue.echo:L \
 ext.op.otherwise:L ext.op.bit.and:L ext.op.bit.or:L ext.op.bit.xor:L ext.op.bit.not:L \
 ext.op.bit.left:L ext.op.bit.right:L ext.op.identical:L ext.op.not_identical:L ext.system.kind.spelled:B ext.builtin.args.all:L \
 ext.builtin.args.count:L ext.builtin.args.at:L ext.builtin.args.all.outside:L ext.builtin.args.count.outside:L ext.builtin.args.at.outside:L ext.builtin.args.at.below:L ext.builtin.args.at.beyond:L ext.op.assign.value:B ext.op.index.plain_keys:B \
-ext.system.source.file:L ext.system.source.directory:L ext.system.source.line:L ext.system.source.routine:L ext.system.source.class:L ext.system.source.method:L \
+ext.system.runner:L ext.system.source.file:L ext.system.source.directory:L ext.system.source.line:L ext.system.source.routine:L ext.system.source.class:L ext.system.source.method:L \
 ext.system.complaint.warning:L ext.system.complaint.notice:L ext.system.complaint.deprecated:L ext.system.complaint.fatal:L ext.system.complaint.reading:L ext.system.fault.class:L ext.system.fault.operands:L ext.op.increment.text:L ext.op.decrement.text:L ext.system.fault.class.arithmetic:L ext.system.fault.class.division:L ext.system.fault.class.kind:L ext.system.fault.class.value:L ext.builtin.time_limit:L ext.system.kind.brief:L ext.builtin.file.read:L ext.builtin.file.write:L \
-ext.builtin.file.exists:L ext.builtin.file.remove:L ext.builtin.eval:L ext.builtin.include:L ext.builtin.include.once:L ext.builtin.output.hold:L ext.builtin.output.held:L ext.builtin.output.drop:L ext.builtin.output.depth:L ext.builtin.at_end:L ext.builtin.complaint.handler:L ext.builtin.complaint.say:L ext.op.hush:L ext.op.name_by_value:L ext.op.cast:B ext.op.member.by_value:B ext.op.index.text:B ext.system.globals:L ext.op.reference.unshared.written:L ext.op.reference.unshared.given:L ext.op.reference.unshared.handed:L ext.stmt.terminator.only:B ext.stmt.block.instead:L ext.stmt.block.instead.close:L ext.op.spelled:B ext.system.class.folded:B ext.stmt.unpack:L ext.builtin.isset:L ext.builtin.empty:L ext.stmt.do:L ext.op.index.makes:B ext.system.untrue.text:L ext.system.untrue.empty_array:B ext.builtin.exit:L \
+ext.builtin.file.exists:L ext.builtin.file.remove:L ext.builtin.eval:L ext.builtin.include:L ext.builtin.include.once:L ext.builtin.output.hold:L ext.builtin.output.held:L ext.builtin.output.drop:L ext.builtin.output.depth:L ext.builtin.output.begun:L ext.builtin.at_end:L ext.builtin.complaint.handler:L ext.builtin.complaint.say:L ext.builtin.calls:L ext.system.kind.object:L ext.builtin.uncaught:L ext.builtin.classes:L ext.builtin.routines:L ext.builtin.class.beneath:L ext.builtin.write.operator:B ext.op.hush:L ext.op.name_by_value:L ext.op.cast:B ext.op.member.by_value:B ext.op.index.text:B ext.system.globals:L ext.op.reference.unshared.written:L ext.op.reference.unshared.given:L ext.op.reference.unshared.handed:L ext.stmt.terminator.only:B ext.stmt.block.instead:L ext.stmt.block.instead.close:L ext.op.spelled:B ext.system.class.folded:B ext.stmt.unpack:L ext.builtin.isset:L ext.builtin.empty:L ext.stmt.do:L ext.op.index.makes:B ext.system.untrue.text:L ext.system.untrue.empty_array:B ext.builtin.exit:L \
 ext.lexical.escape.codepoint:L ext.lexical.escape.codepoint.open:L ext.lexical.escape.codepoint.close:L ext.lexical.escape.codepoint.amiss:L ext.lexical.escape.codepoint.beyond:L ext.lexical.number.amiss:L \
 ext.lexical.number.binary_prefix:L ext.lexical.number.octal_prefix:L ext.lexical.number.octal_lead:B \
 ext.lexical.number.separator:L ext.system.integer.bits:N ext.system.real.bits:N ext.system.real.digits:N \
@@ -136,7 +136,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 48] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 54] = [
     ("builtin.emit", Prim::Echo), ("builtin.print", Prim::Say), ("builtin.write", Prim::Out), ("builtin.len", Prim::Length),
     ("builtin.char_at", Prim::CharAtIndex), ("builtin.ord", Prim::CodeOf), ("builtin.chr", Prim::CharOf), ("builtin.typeof", Prim::SortOf),
     ("builtin.error", Prim::Raise), ("builtin.extern", Prim::External), ("builtin.range", Prim::Span), ("builtin.real", Prim::MakeReal),
@@ -150,7 +150,12 @@ pub const BUILTIN_LABELS: [(&str, Prim); 48] = [
     ("ext.builtin.eval", Prim::Weigh), ("ext.builtin.include", Prim::Bring), ("ext.builtin.include.once", Prim::BringOnce),
     ("ext.builtin.output.hold", Prim::KeepOut), ("ext.builtin.output.held", Prim::KeptOut),
     ("ext.builtin.output.drop", Prim::LooseOut), ("ext.builtin.output.depth", Prim::DeepOut),
+    ("ext.builtin.output.begun", Prim::OutBegun),
     ("ext.builtin.at_end", Prim::Afterward), ("ext.builtin.complaint.handler", Prim::Hearer), ("ext.builtin.complaint.say", Prim::Complain),
+    ("ext.builtin.calls", Prim::Under),
+    ("ext.builtin.uncaught", Prim::Untaken),
+    ("ext.builtin.classes", Prim::ClassesBound), ("ext.builtin.routines", Prim::RoutinesBound),
+    ("ext.builtin.class.beneath", Prim::ClassBeneath),
     ("ext.builtin.file.read", Prim::Slurp), ("ext.builtin.file.write", Prim::Spill),
     ("ext.builtin.file.exists", Prim::There), ("ext.builtin.file.remove", Prim::Gone),
 ];

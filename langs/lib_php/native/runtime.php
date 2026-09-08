@@ -145,7 +145,7 @@ function ini_set($name, $value) {
     $was = ini_get($name);
     if ($name === 'memory_limit') {
         $held = __room_allowed((string)$value);
-        if ($held[1]) { __complain(E_WARNING, __room_said((string)$value, $held[0])); }
+        if ($held[1]) { __complaint_say(__complaint_word(E_WARNING), __room_said((string)$value, $held[0])); }
         $__settings[$name] = $held[0];
         return $was;
     }
@@ -209,14 +209,14 @@ function ini_parse_quantity($text) {
     // that once took such a setting still takes it.
     if ($times > 1) {
         if ($over !== "") {
-            __complain(E_WARNING, 'Invalid quantity "' . $text . '", interpreting as "' . $found . ' ' . $last . '" for backwards compatibility');
+            __complaint_say(__complaint_word(E_WARNING), 'Invalid quantity "' . $text . '", interpreting as "' . $found . ' ' . $last . '" for backwards compatibility');
         }
     } elseif ($over !== "") {
         $mark = ord($last);
         if ($mark >= 97 && $mark <= 122) {
-            __complain(E_WARNING, 'Invalid quantity "' . $text . '": unknown multiplier "' . $last . '", interpreting as "' . $found . '" for backwards compatibility');
+            __complaint_say(__complaint_word(E_WARNING), 'Invalid quantity "' . $text . '": unknown multiplier "' . $last . '", interpreting as "' . $found . '" for backwards compatibility');
         } else {
-            __complain(E_WARNING, 'Invalid quantity "' . $text . '", interpreting as "' . $found . '" for backwards compatibility');
+            __complaint_say(__complaint_word(E_WARNING), 'Invalid quantity "' . $text . '", interpreting as "' . $found . '" for backwards compatibility');
         }
     }
     return $found * $times;
@@ -293,22 +293,22 @@ function __complaint_word($level) {
     if ($level == E_USER_DEPRECATED || $level == E_DEPRECATED) { return "Deprecated"; }
     return "Notice";
 }
-// A complaint the program itself makes: the routine a program put in
-// the way of them takes it, and where there is none it is written out
-// as the run's own complaints are, if its kind is one being said.
-function __complain($level, $message) {
-    global $__error_handler, $__reporting;
-    if ($__error_handler !== null) {
-        $handler = $__error_handler;
-        $handler($level, $message, __FILE__, __LINE__);
-        return true;
-    }
-    if (($__reporting & $level) == 0) { return true; }
-    // Said as the run's own complaints are, so it names the line the
-    // program was on and not one of the library's.
-    return __complaint_say(__complaint_word($level), $message);
+// A routine put in the way of a value nobody took: the run hands it
+// over rather than telling it in its own words.
+$__exception_handler = null;
+function set_exception_handler($handler) {
+    global $__exception_handler;
+    $was = $__exception_handler;
+    $__exception_handler = $handler;
+    __uncaught_handler($handler);
+    return $was;
 }
-function set_exception_handler($handler) { return null; }
+function restore_exception_handler() {
+    global $__exception_handler;
+    $__exception_handler = null;
+    __uncaught_handler(null);
+    return true;
+}
 // A message put where the run keeps them. Sending one on as mail is not
 // something a run of this kind does, so saying to send one with nowhere
 // to send it to is turned down.
@@ -317,6 +317,23 @@ function error_log($message, $sort = 0, $where = null, $headers = null) {
     return true;
 }
 function extension_loaded($name) { return false; }
+// The classes this run has bound, and the routines. Everything this PHP
+// has of its own is written in PHP, so there are no functions from
+// outside the language to list beside them.
+function get_declared_classes() { return __classes_bound(); }
+// The class a thing's class stands on, or that a class named stands on;
+// false where it stands on none, as the reference answers.
+function get_parent_class($of = null) {
+    $under = __class_beneath($of);
+    return $under === null ? false : $under;
+}
+function get_class($of) { return $of::class; }
+function get_defined_functions($exclude_disabled = true) {
+    if (func_num_args() > 0) {
+        __complaint_say(__complaint_word(E_DEPRECATED), 'get_defined_functions(): The $exclude_disabled parameter has no effect since PHP 8.0');
+    }
+    return array("internal" => array(), "user" => __routines_bound());
+}
 function function_exists($name) { return false; }
 function gc_collect_cycles() { return 0; }
 function memory_get_usage($real = false) { return 0; }
@@ -326,7 +343,7 @@ function memory_get_usage($real = false) { return 0; }
 // of text, which is on its way out and said to be.
 function array_key_exists($key, $array) {
     if ($key === null) {
-        __complain(E_DEPRECATED, "Using null as the key parameter for array_key_exists() is deprecated, use an empty string instead");
+        __complaint_say(__complaint_word(E_DEPRECATED), "Using null as the key parameter for array_key_exists() is deprecated, use an empty string instead");
     }
     foreach ($array as $k => $v) {
         if ($k == $key) { return true; }
@@ -337,6 +354,19 @@ function array_key_exists($key, $array) {
 function in_array($needle, $haystack, $strict = false) {
     foreach ($haystack as $v) {
         if ($v == $needle) { return true; }
+    }
+    return false;
+}
+// Where the value stands, or false where it stands nowhere. Text and a
+// number are alike where the strict form is not asked for, as they are
+// for `in_array`.
+function array_search($needle, $haystack, $strict = false) {
+    foreach ($haystack as $k => $v) {
+        if ($strict) {
+            if ($v === $needle) { return $k; }
+        } elseif ($v == $needle) {
+            return $k;
+        }
     }
     return false;
 }
@@ -374,14 +404,13 @@ function array_reverse($array) {
     return $out;
 }
 
+// The last place goes and the rest stay as they are, cells and all: a
+// name tied to one of them is tied to it still.
 function array_pop(&$array) {
     $n = count($array);
     if ($n == 0) { return null; }
     $last = $array[$n - 1];
-    $kept = array();
-    $i = 0;
-    while ($i < $n - 1) { $kept[] = $array[$i]; $i = $i + 1; }
-    $array = $kept;
+    unset($array[$n - 1]);
     return $last;
 }
 
@@ -525,7 +554,7 @@ function real_of($value) {
     if (is_string($value) && is_numeric($value)) { return floatval(0 + trim($value)); }
     return 0.0;
 }
-function is_object($value) { return false; }
+function is_object($value) { return gettype($value) === "object"; }
 function is_callable($value) { return false; }
 
 // What a run from a command line has nothing to answer with, and the
@@ -536,8 +565,30 @@ function sys_get_temp_dir() {
     return "/tmp";
 }
 function header($line, $replace = true, $code = 0) { return null; }
-function headers_sent() { return false; }
+// Headers go out with the first thing written, so anything written at
+// all means they are gone.
+function headers_sent() { return __output_begun(); }
 function headers_list() { return array(); }
+// A routine to run as the headers go out. Where they are already gone
+// there is nothing left to run it for; where they are not, they go out
+// when the run ends and nothing has sent them before.
+$__header_callback = null;
+$__headers_gone = false;
+function header_register_callback($callback) {
+    global $__header_callback;
+    if (__output_begun()) { return false; }
+    $__header_callback = $callback;
+    __at_end('__headers_going');
+    return true;
+}
+function __headers_going() {
+    global $__header_callback, $__headers_gone;
+    if ($__headers_gone) { return true; }
+    $__headers_gone = true;
+    $callback = $__header_callback;
+    if ($callback !== null) { $callback(); }
+    return true;
+}
 // The arguments the run was started with are part of what the run knows
 // about itself, under the host's names for them as well as their own.
 // A run reached over the web knows them only where it is told to; one
@@ -556,7 +607,7 @@ if ($__knows_itself && !$__over_the_web) {
     // A run reached over the web has no arguments of its own, so where
     // it is told to know some it takes the words of the query, which the
     // reference says is a thing to be leaving behind.
-    __complain(E_DEPRECATED, "Deriving \$_SERVER['argv'] from the query string is deprecated. Configure register_argc_argv=0 to turn this message off");
+    __complaint_say(__complaint_word(E_DEPRECATED), "Deriving \$_SERVER['argv'] from the query string is deprecated. Configure register_argc_argv=0 to turn this message off");
     $__query = isset($_SERVER['QUERY_STRING']) ? $_SERVER['QUERY_STRING'] : '';
     $_SERVER['argv'] = $__query === '' ? array() : explode('+', $__query);
     $_SERVER['argc'] = count($_SERVER['argv']);
@@ -840,7 +891,20 @@ function register_shutdown_function($work, $a = null, $b = null, $c = null) {
     if ($a !== null) { return __at_end($work, $a); }
     return __at_end($work);
 }
-function trigger_error($message, $level = 1024) { return __complain($level, $message); }
+// A complaint the program itself makes, which names its own kind: the
+// kinds a program raises are told apart from the kinds a run raises,
+// and only the number says which, so the routine in their way is handed
+// the number and not the word the run would use.
+function trigger_error($message, $level = 1024) {
+    global $__error_handler, $__reporting;
+    if ($__error_handler !== null) {
+        $handler = $__error_handler;
+        $handler($level, $message, __FILE__, __LINE__);
+        return true;
+    }
+    if (($__reporting & $level) == 0) { return true; }
+    return __complaint_say(__complaint_word($level), $message);
+}
 function user_error($message, $level = 1024) { return trigger_error($message, $level); }
 // What a file holds. The body of the request the run was started with
 // is a file a program may name, and reads the same however often it is
@@ -861,7 +925,7 @@ function realpath($path) { return $path; }
 function rename($from, $to) {
     $held = __file_read($from);
     if ($held === false) {
-        __complain(E_WARNING, "rename(" . $from . "," . $to . "): No such file or directory");
+        __complaint_say(__complaint_word(E_WARNING), "rename(" . $from . "," . $to . "): No such file or directory");
         return false;
     }
     file_put_contents($to, $held);
@@ -891,6 +955,43 @@ function assert($claim, $told = null) {
     if ($told !== null && !is_string($told)) { throw $told; }
     if ($told !== null) { throw new AssertionError($told); }
     throw new AssertionError("assert(false)");
+}
+// One call of a trace written out the way PHP writes it: where the call
+// stands, what it named, and enough of each argument to know it by.
+function __frame_told($frame) {
+    $named = isset($frame['class']) ? $frame['class'] . '::' . $frame['function'] : $frame['function'];
+    $pieces = array();
+    foreach ($frame['args'] as $given) {
+        $pieces[] = __argument_told($given);
+    }
+    return $frame['file'] . '(' . $frame['line'] . '): ' . $named . '(' . implode(', ', $pieces) . ')';
+}
+function __argument_told($given) {
+    if (is_string($given)) {
+        $kept = substr($given, 0, 15);
+        return "'" . $kept . (strlen($given) > 15 ? "...'" : "'");
+    }
+    if (is_bool($given)) { return $given ? 'true' : 'false'; }
+    if ($given === null) { return 'NULL'; }
+    if (is_array($given)) { return 'Array'; }
+    if (is_object($given)) { return 'Object(' . $given::class . ')'; }
+    return (string) $given;
+}
+// The calls under way where the asking itself is left out, since a
+// program asking for them is not one of the calls it wants to hear of.
+function debug_backtrace() {
+    $under = __calls();
+    array_shift($under);
+    return $under;
+}
+function debug_print_backtrace() {
+    $under = __calls();
+    array_shift($under);
+    $at = 0;
+    foreach ($under as $frame) {
+        echo '#' . $at . ' ' . __frame_told($frame) . "\n";
+        $at = $at + 1;
+    }
 }
 // Calling what a value names, with whatever else was handed over. The
 // value may be the name of a routine or a thing paired with the name of

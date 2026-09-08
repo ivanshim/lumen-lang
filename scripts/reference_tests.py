@@ -67,7 +67,10 @@ def run(kernel, args, source, suffix, request=None, beside=None, given=()):
         with tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False, encoding="utf-8") as f:
             f.write(source)
             path = f.name
-    setting = {**os.environ, **(request or {}).get("env", {})}
+    # php-src's own run-tests.php tells a test where the binary under
+    # test stands, and a few tests ask the run to name itself and
+    # compare the two.
+    setting = {**os.environ, "TEST_PHP_EXECUTABLE": str(BINARY), **(request or {}).get("env", {})}
     body = (request or {}).get("body", "")
     try:
         p = subprocess.run([str(BINARY), "--kernel", kernel] + args + [path] + list(given), input=body, capture_output=True,

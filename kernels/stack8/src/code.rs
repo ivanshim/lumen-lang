@@ -70,6 +70,14 @@ pub enum Action {
     /// walks an array or a map.
     KeyAt,
     ValueAt,
+    /// What a value holds at that place, read while the value is being
+    /// taken apart. The same as the above, save that a value with no
+    /// places at all is spoken of in the words a taking-apart uses.
+    Apart,
+    /// What a value holds at that place, read so that what comes of it
+    /// may be written back there. A value with no places at all is no
+    /// place to write, so it is refused as a write to one is.
+    Toward,
     /// `a[]`, which only an assignment may write to.
     AtEnd,
     /// How many places an array or a map holds.
@@ -303,6 +311,25 @@ pub enum Builtin {
     /// a complaint of its own and has it told as the run's own are, in
     /// its place and through whatever stands in their way.
     Complain,
+    /// The names of the classes, and of the routines, the run has bound
+    /// (ext.builtin.classes, ext.builtin.routines).
+    ClassesBound,
+    RoutinesBound,
+    /// The name of the class the one above stands on, where it stands on
+    /// any: a thing is asked of its own class (ext.builtin.class.beneath).
+    ClassBeneath,
+    /// Whether anything has gone out of the run yet: what is held back
+    /// in a piece of output kept aside has not (ext.builtin.output.begun).
+    OutBegun,
+    /// A routine to be handed a value nobody took, rather than the run
+    /// telling it in its own words (ext.builtin.uncaught). Giving
+    /// nothing takes the routine away again.
+    Untaken,
+    /// The calls under way, innermost first, each an array telling the
+    /// name called, the class it was written in where it was written in
+    /// one, the file and line the call itself stands on, and what it was
+    /// handed (ext.builtin.calls).
+    Calls,
     /// What the running call was given, however much of it the routine
     /// named: all of it as an array, how much there was, or the one at a
     /// position (ext.builtin.args.*).
@@ -433,6 +460,10 @@ pub struct Routine {
     /// inside one: what a class keeps to itself is reached from here and
     /// nowhere else.
     pub within: Option<Rc<str>>,
+    /// The line the program was written on, which a fault raised on the
+    /// way into it names: such a fault belongs where the program is
+    /// written and not where the call stood.
+    pub declared_on: u32,
     pub instrs: Vec<Instr>,
 }
 

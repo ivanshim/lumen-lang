@@ -165,6 +165,9 @@ pub struct Lang {
     /// fraction, real, text, flag, array, nothing. A lone dash says the
     /// kind has no shorter name and the usual one stands.
     pub brief_kinds: Vec<String>,
+    /// The word this language calls a thing's kind by, where it has
+    /// one: a thing is of no kind the core knows.
+    pub object_kind: Option<String>,
     /// Whether the kind of a value is given as text spelled by the
     /// `system.kind.*` names, rather than as a value of its own. Where
     /// it is, those names are not bound to anything.
@@ -238,6 +241,10 @@ pub struct Lang {
     /// out where it stands: PHP's `<?=`.
     pub prologue_echo: Option<String>,
     pub bare_calls: bool,
+    /// Whether the writer is written as an operator and not as a call:
+    /// brackets after it group what follows rather than holding its
+    /// argument, so it takes the whole of the piece it stands before.
+    pub writes_as_operator: bool,
     pub increments: Vec<String>,
     pub decrements: Vec<String>,
     pub interpolating: Vec<char>,
@@ -380,6 +387,9 @@ pub struct Lang {
     /// the name that was asked for, the writer the value as well.
     pub reader: Option<String>,
     pub writer: Option<String>,
+    /// The method a class answers a call it does not have with, given
+    /// the name called and the arguments as an array.
+    pub caller: Option<String>,
     /// A thing may be its own walk. The class of method names saying so,
     /// and the five methods of the walk: wind back, whether there is
     /// more, what stands here, what it is called, and step on.
@@ -498,7 +508,7 @@ w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.
 w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
 w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
-w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.destructor | w ext.stmt.class.reader | w ext.stmt.class.writer
+w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.destructor | w ext.stmt.class.reader | w ext.stmt.class.writer | w ext.stmt.class.caller
 w ext.op.walk.class | w ext.op.walk.rewind | w ext.op.walk.more | w ext.op.walk.this | w ext.op.walk.key
 w ext.op.walk.onward | w ext.op.walk.giver.class | w ext.op.walk.giver | w ext.op.walk.no_cell | w ext.op.walk.key.no_cell | w ext.stmt.class.modifier | w ext.stmt.class.hidden | w ext.stmt.class.guarded | w ext.stmt.class.shared
 w ext.op.member | w ext.op.scope | w ext.op.instanceof | w ext.stmt.class.parent
@@ -511,12 +521,12 @@ w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at
 w ext.builtin.args.all.outside | w ext.builtin.args.count.outside | w ext.builtin.args.at.outside
 w ext.builtin.args.at.below | w ext.builtin.args.at.beyond | b ext.op.assign.value | b ext.op.index.plain_keys
-w ext.system.source.file | w ext.system.source.directory | w ext.system.source.line
+w ext.system.source.file | w ext.system.source.directory | w ext.system.source.line | w ext.system.runner
 w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.complaint.deprecated | w ext.system.complaint.fatal | w ext.system.complaint.reading
 w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
-w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes
+w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.class.beneath | b ext.builtin.write.operator
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
 w ext.system.fault.operands | w ext.op.increment.text | w ext.op.decrement.text
 w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind | w ext.system.fault.class.value
@@ -939,7 +949,12 @@ impl Lang {
             ("ext.builtin.eval", Builtin::Eval), ("ext.builtin.include", Builtin::Include), ("ext.builtin.include.once", Builtin::IncludeOnce),
             ("ext.builtin.output.hold", Builtin::HoldOut), ("ext.builtin.output.held", Builtin::HeldOut),
             ("ext.builtin.output.drop", Builtin::DropOut), ("ext.builtin.output.depth", Builtin::DeepOut),
+            ("ext.builtin.output.begun", Builtin::OutBegun),
             ("ext.builtin.at_end", Builtin::WhenDone), ("ext.builtin.complaint.handler", Builtin::Complainer), ("ext.builtin.complaint.say", Builtin::Complain),
+            ("ext.builtin.calls", Builtin::Calls),
+            ("ext.builtin.uncaught", Builtin::Untaken),
+            ("ext.builtin.classes", Builtin::ClassesBound), ("ext.builtin.routines", Builtin::RoutinesBound),
+            ("ext.builtin.class.beneath", Builtin::ClassBeneath),
             ("ext.builtin.file.read", Builtin::FileRead), ("ext.builtin.file.write", Builtin::FileWrite),
             ("ext.builtin.file.exists", Builtin::FileThere), ("ext.builtin.file.remove", Builtin::FileGone),
         ] {
@@ -1088,6 +1103,7 @@ impl Lang {
             entry_binding: entry_name,
             sort_bindings: kind_names,
             brief_kinds: r.strings("ext.system.kind.brief")?,
+            object_kind: r.head("ext.system.kind.object")?,
             kind_spelled: r.flag("ext.system.kind.spelled")?,
             spare_args: reads_arguments,
             assign_gives_value: r.flag("ext.op.assign.value")?,
@@ -1125,7 +1141,7 @@ impl Lang {
             warns_of_unwritten: r.head("ext.system.complaint.warning")?.is_some(),
             tells_place: tells_complaints,
             source_bindings: {
-                let named = [("file", "ext.system.source.file"), ("directory", "ext.system.source.directory")];
+                let named = [("file", "ext.system.source.file"), ("directory", "ext.system.source.directory"), ("runner", "ext.system.runner")];
                 let mut found = Vec::new();
                 for (part, tag) in named {
                     if let Some(word) = r.head(tag)? {
@@ -1137,6 +1153,7 @@ impl Lang {
             epilogue: r.strings("ext.lexical.epilogue")?,
             prologue_echo: r.head("ext.lexical.prologue.echo")?,
             bare_calls: r.flag("ext.syntax.call.bare")?,
+            writes_as_operator: r.flag("ext.builtin.write.operator")?,
             increments: r.strings("ext.op.increment")?,
             decrements: r.strings("ext.op.decrement")?,
             interpolating: r.letters("ext.lexical.interpolating_quotes")?,
@@ -1218,6 +1235,7 @@ impl Lang {
             destructor: r.head("ext.stmt.class.destructor")?,
             reader: r.head("ext.stmt.class.reader")?,
             writer: r.head("ext.stmt.class.writer")?,
+            caller: r.head("ext.stmt.class.caller")?,
             walker_class: r.head("ext.op.walk.class")?,
             walk_rewind: r.head("ext.op.walk.rewind")?,
             walk_more: r.head("ext.op.walk.more")?,

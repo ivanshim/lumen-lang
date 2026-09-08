@@ -64,6 +64,9 @@ pub struct Builder<'a> {
     /// Whether the reading stopped over a thing the language calls a
     /// fault of the run rather than a program it could not read.
     stopped_fatally: bool,
+    /// The line the routine now being read was written on, which a
+    /// fault raised on the way into it names.
+    declared_at: u32,
     /// Remarks the reading itself raised, which belong ahead of anything
     /// the program prints because they were noticed before it ran.
     noted_when_read: Vec<Form>,
@@ -147,14 +150,14 @@ pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMa
 pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32, bool)> {
     let at = std::cell::Cell::new(0u32);
     let hard = std::cell::Cell::new(false);
-    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard)), None)
+    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard)), None, None)
         .map_err(|said| (said, at.get(), hard.get()))
 }
 
 /// The same, said besides which file the text came out of, where it was
 /// read as the run went.
 pub fn build_from(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>) -> Res<Built> {
-    build_marking(tokens, table, seeded, assumed, strict, before, written_in, None, None)
+    build_marking(tokens, table, seeded, assumed, strict, before, written_in, None, None, None)
 }
 
 /// The same, save that the text stands inside a routine already running:
@@ -170,14 +173,15 @@ pub fn build_within(
     inside: &[String],
     knows: Knows,
     before: u32,
+    within: Option<(String, Option<String>)>,
 ) -> Res<Built> {
-    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, None, Some((inside, knows)))
+    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, None, Some((inside, knows)), within)
 }
 
 type Knows<'w> = (&'w HashMap<String, Vec<bool>>, &'w HashMap<String, Vec<String>>, &'w HashSet<String>);
 type Within<'w> = (&'w [String], Knows<'w>);
 
-fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>) -> Res<Built> {
+fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>) -> Res<Built> {
     let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, table);
     let mut layers = vec![top];
@@ -191,7 +195,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         gives_back.extend(backs.iter().cloned());
         layers.push(Layer { holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
-    let mut r = Builder { within: None, shared_args, arg_names, gives_back, stopped_fatally: false, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(),
+    let mut r = Builder { within: standing_in, shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(),
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
@@ -261,7 +265,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         Some(under) => under.idents,
         None => top.idents.clone(),
     };
-    let program = Routine { ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: top.idents, frameless: false, written_in: r.written_in.clone(), within: None, traps: Traps::Naught, body };
+    let program = Routine { ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: top.idents, frameless: false, written_in: r.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, body };
     Ok(Built { program: Rc::new(program), globals, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back })
 }
 
@@ -338,6 +342,10 @@ fn shared_parameters(tokens: &[Token], table: &Table) -> (HashMap<String, Vec<bo
 
 // ---------- node builders
 
+
+/// What a routine written where a value stands is called, being
+/// bound to no name of its own.
+const ANONYMOUS: &str = "{closure}";
 
 fn constant(v: Value) -> Form {
     Form::Const(v)
@@ -775,6 +783,7 @@ impl<'a> Builder<'a> {
 
     /// A program value: its body reduced in a scope of its own.
     fn routine(&mut self, name: &str, holds: Holds, catches: Traps, params: Vec<String>, least: usize, body: impl FnOnce(&mut Self) -> Res<Form>) -> Res<Form> {
+        let declared_on = self.declared_at;
         self.naming.push(name.to_string());
         // The classes the parameters were written to take, gathered as
         // they were read. A method is handed the thing it is for before
@@ -789,7 +798,7 @@ impl<'a> Builder<'a> {
         let body = body(self)?;
         let scope = self.layers.pop().unwrap();
         self.naming.pop();
-        Ok(constant(Value::Routine(Rc::new(Routine { ident: name.to_string(), least, formals: params, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), traps: catches, body }))))
+        Ok(constant(Value::Routine(Rc::new(Routine { ident: name.to_string(), least, formals: params, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, traps: catches, body }))))
     }
 
     /// A branch arm or a loop body: a program that holds no names.
@@ -806,7 +815,7 @@ impl<'a> Builder<'a> {
     /// that own no names, so the chosen one runs in the frame around it.
     fn choose(&mut self, test: Form, then: Form, otherwise: Form) -> Form {
         let wrap = |name: &str, body: Form| {
-            let program = Routine { ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, traps: Traps::Naught, body };
+            let program = Routine { ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, body };
             constant(Value::Routine(Rc::new(program)))
         };
         prim_call(Prim::Choose, vec![test, wrap("<then>", then), wrap("<else>", otherwise)])
@@ -1069,7 +1078,7 @@ impl<'a> Builder<'a> {
                 let gives_cell = self.skip_reference();
                 let name = self.need_word("after the function keyword")?;
                 self.giving_cells.push(gives_cell);
-                let built = self.func(name);
+                let built = self.func(name, true);
                 self.giving_cells.pop();
                 return built;
             }
@@ -1442,6 +1451,7 @@ impl<'a> Builder<'a> {
     /// under the name the definition gives it (`$this`).
     fn method(&mut self, name: &str) -> Res<Rc<Routine>> {
         let table = self.table;
+        self.declared_at = (self.look().row as u32).saturating_sub(self.before);
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
         self.need_sign(open, "after method name")?;
         let this = table.single("ext.stmt.class.this").ok_or_else(|| "A class needs ext.stmt.class.this".to_string())?.to_string();
@@ -1893,6 +1903,10 @@ impl<'a> Builder<'a> {
             let bracketed = self.table.single("syntax.call.open").map_or(false, |o| next.shape == Shape::Sign && next.lexeme == o);
             let bare = match op {
                 Some(Prim::Tell) => true,
+                // A writer written as an operator takes the whole of
+                // what follows however it is written, so brackets after
+                // it group rather than hold what it is given.
+                Some(Prim::Out) if self.table.flag("ext.builtin.write.operator") => true,
                 Some(Prim::Append | Prim::Replace | Prim::Define | Prim::Gather | Prim::Erase | Prim::Standing | Prim::Hollow) | None => false,
                 Some(_) => !bracketed,
             };
@@ -2035,7 +2049,7 @@ impl<'a> Builder<'a> {
             let name = self.need_word("after the type")?;
             if let Some(open) = self.table.single("syntax.call.open") {
                 if self.sign(open) {
-                    return self.func(name);
+                    return self.func(name, true);
                 }
             }
             let value = if self.on_stmt_end() || self.exhausted() {
@@ -2220,8 +2234,9 @@ impl<'a> Builder<'a> {
         Ok(first)
     }
 
-    fn func(&mut self, name: String) -> Res<Form> {
+    fn func(&mut self, name: String, bound: bool) -> Res<Form> {
         let table = self.table;
+        self.declared_at = (self.look().row as u32).saturating_sub(self.before);
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
         self.need_sign(open, "after function name")?;
         let typed = table.flag("stmt.let.type_first");
@@ -2256,15 +2271,20 @@ impl<'a> Builder<'a> {
         })?;
         let mut items: Vec<Form> = said;
         items.extend(self.statics.drain(statics_before..));
-        // A language may bind every routine among the outermost bindings,
-        // wherever it is written, so one written inside another is there
-        // for the whole run once that one has run.
-        items.push(match self.table.flag("ext.stmt.function.outermost") {
-            true => {
-                let slot = self.global_address(&name);
-                Form::Write(slot, Box::new(program))
-            }
-            false => self.write(&name, program),
+        // A routine written where a value stands is bound to no name and
+        // stands for itself; one written out is bound to its name.
+        items.push(match bound {
+            false => program,
+            // A language may bind every routine among the outermost
+            // bindings, wherever it is written, so one written inside
+            // another is there for the whole run once that one has run.
+            true => match self.table.flag("ext.stmt.function.outermost") {
+                true => {
+                    let slot = self.global_address(&name);
+                    Form::Write(slot, Box::new(program))
+                }
+                false => self.write(&name, program),
+            },
         });
         Ok(sequence(items))
     }
@@ -2341,6 +2361,15 @@ impl<'a> Builder<'a> {
         if let Form::Muted(inner) = expr {
             let written = self.write_into(*inner, gives_back, compound, assign)?;
             return Ok(Form::Muted(Box::new(written)));
+        }
+        // The name a method knows its own thing by is bound by the call
+        // and by nothing else: a language naming one turns a write to it
+        // down outright, and calls that a fault of the run.
+        if let (Some(this), Form::Read(slot)) = (self.table.single("ext.stmt.class.this"), &expr) {
+            if slot.ident.as_ref() == this {
+                self.stopped_fatally = true;
+                return Err(format!("Cannot re-assign {}", this));
+            }
         }
         let plain = compound.is_none();
         // `b = &a`: b is tied to a's cell rather than given a copy.
@@ -2468,7 +2497,7 @@ impl<'a> Builder<'a> {
                 }
                 if let (Some(op), Some(value)) = (compound, afterward) {
                     let (lands_in, key) = (self.read(&in_cells[deep]), self.read(&at_cells[deep]));
-                    let now = self.kept_before(prim_call(Prim::At, vec![lands_in, key]));
+                    let now = self.kept_before(prim_call(Prim::Toward, vec![lands_in, key]));
                     let combined = self.kept_after(prim_call(op, vec![now, value]));
                     steps.push(self.write(&holding, combined));
                 }
@@ -2550,7 +2579,7 @@ impl<'a> Builder<'a> {
                 }
                 if let (Some(op), Some(value)) = (compound, afterward) {
                     let (lands_in, key) = (self.read(&in_cells[deep]), self.read(&at_cells[deep]));
-                    let now = self.kept_before(prim_call(Prim::At, vec![lands_in, key]));
+                    let now = self.kept_before(prim_call(Prim::Toward, vec![lands_in, key]));
                     let combined = self.kept_after(prim_call(op, vec![now, value]));
                     steps.push(self.write(&holding, combined));
                 }
@@ -2649,7 +2678,7 @@ impl<'a> Builder<'a> {
                 self.gensyms += 1;
                 let key = format!("#key{}", self.gensyms);
                 let hold = self.write(&key, index);
-                let now = prim_call(Prim::At, vec![self.read(&held), self.read(&key)]);
+                let now = prim_call(Prim::Toward, vec![self.read(&held), self.read(&key)]);
                 let now = self.kept_before(now);
                 let made = self.kept_after(prim_call(op, vec![now, value]));
                 let (made, landed) = self.kept_landing(gives_back, made);
@@ -2989,6 +3018,21 @@ impl<'a> Builder<'a> {
                     constant(Value::Flag(false))
                 } else if table.spells("literal.null", &t.lexeme) {
                     constant(Value::Nil)
+                } else if table.spells("stmt.function", &t.lexeme)
+                    && table.single("syntax.call.open").map_or(false, |o| {
+                        self.sign(o)
+                            || (table.single("ext.op.reference").map_or(false, |m| self.sign(m)) && self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == o)
+                    })
+                {
+                    // A routine written where a value stands is bound to
+                    // no name and stands for itself. It reaches none of
+                    // the names around it, only the outermost ones, as a
+                    // routine written out does.
+                    let gives_cell = self.skip_reference();
+                    self.giving_cells.push(gives_cell);
+                    let built = self.func(ANONYMOUS.to_string(), false);
+                    self.giving_cells.pop();
+                    return self.subscript(built?);
                 } else if table.single("syntax.call.open").map_or(false, |o| self.sign(o)) {
                     self.advance();
                     if table.prims.get(&t.lexeme) == Some(&Prim::Erase) {
@@ -3425,7 +3469,7 @@ impl<'a> Builder<'a> {
                 self.gensyms += 1;
                 let held = format!("#place{}", self.gensyms);
                 let from = self.read(holding);
-                let there = prim_call(Prim::At, vec![from, constant(Value::Small(at as i64))]);
+                let there = prim_call(Prim::Apart, vec![from, constant(Value::Small(at as i64))]);
                 steps.push(self.write(&held, there));
                 if table.spells("ext.stmt.unpack", &self.look().lexeme) {
                     self.advance();
@@ -4182,7 +4226,7 @@ impl<'a> Builder<'a> {
             let mut param_slots = scope.formal_slots;
             params.reverse();
             param_slots.reverse();
-            let program = Routine { ident: name, least: 0, formals: params, formal_kinds: Vec::new(), formal_slots: param_slots, idents: scope.idents, frameless: false, written_in: self.written_in.clone(), within: None, traps: Traps::Yields, body: sequence(s) };
+            let program = Routine { ident: name, least: 0, formals: params, formal_kinds: Vec::new(), formal_slots: param_slots, idents: scope.idents, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Yields, body: sequence(s) };
             stack.push(constant(Value::Routine(Rc::new(program))));
             return Ok(());
         }

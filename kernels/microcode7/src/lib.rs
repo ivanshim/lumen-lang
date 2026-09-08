@@ -57,7 +57,8 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
 /// what the query, the form and the cookies carry together.
 /// What a program calls the file it is written in and the place that
 /// file lies in, where it has words for them.
-const OWN_PLACE: [(&str, &str); 2] = [("file", "ext.system.source.file"), ("directory", "ext.system.source.directory")];
+const OWN_PLACE: [(&str, &str); 3] =
+    [("file", "ext.system.source.file"), ("directory", "ext.system.source.directory"), ("runner", "ext.system.runner")];
 
 /// What the host may find amiss in a request before the program runs.
 /// The host names only which of them it found; the words for each are

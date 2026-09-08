@@ -318,6 +318,7 @@
   "builtin.write": [
     "print"
   ],
+  "ext.builtin.write.operator": true,
   "builtin.print.placeholder": [],
   "builtin.len": [
     "count",
@@ -469,6 +470,9 @@
   "ext.builtin.output.depth": [
     "__output_depth"
   ],
+  "ext.builtin.output.begun": [
+    "__output_begun"
+  ],
   "ext.builtin.at_end": [
     "__at_end"
   ],
@@ -556,6 +560,9 @@
   ],
   "ext.stmt.class.writer": [
     "__set"
+  ],
+  "ext.stmt.class.caller": [
+    "__call"
   ],
   "ext.op.walk.class": [
     "Iterator"
@@ -755,6 +762,9 @@
   ],
   "ext.op.assign.value": true,
   "ext.op.index.plain_keys": true,
+  "ext.system.runner": [
+    "PHP_BINARY"
+  ],
   "ext.system.source.file": [
     "__FILE__"
   ],
@@ -864,5 +874,23 @@
   "ext.builtin.include.once": [
     "include_once",
     "require_once"
+  ],
+  "ext.builtin.calls": [
+    "__calls"
+  ],
+  "ext.system.kind.object": [
+    "object"
+  ],
+  "ext.builtin.uncaught": [
+    "__uncaught_handler"
+  ],
+  "ext.builtin.classes": [
+    "__classes_bound"
+  ],
+  "ext.builtin.routines": [
+    "__routines_bound"
+  ],
+  "ext.builtin.class.beneath": [
+    "__class_beneath"
   ]
 }

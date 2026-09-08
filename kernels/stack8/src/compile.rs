@@ -124,6 +124,9 @@ pub struct Compiler<'a> {
     gives_back: std::collections::HashSet<String>,
     /// The parameters of the method just read that name properties too.
     promoted: Vec<String>,
+    /// The line the routine now being read was written on, which a
+    /// fault raised on the way into it names.
+    declared_at: u32,
     /// How many lines stand before the program's own text.
     before: u32,
     /// Where each key of the index chain just read begins, so that a
@@ -168,6 +171,10 @@ enum Span {
 
 const RESULT_CELL: &str = "#result";
 const TEMP_CELL: &str = "#t";
+/// What a routine written where a value stands is called, since it
+/// is bound to no name of its own.
+const ANONYMOUS: &str = "{closure}";
+
 const SPARE_CELLS: [&str; 3] = ["#a", "#b", "#c"];
 
 /// `before` is how many lines were put before the program's own text,
@@ -179,7 +186,7 @@ pub fn compile(tokens: &[Token], lang: &Lang, table: &mut Registry, before: u32)
 /// The same, told besides which file the text came out of, where it was
 /// read while the run was going.
 pub fn compile_from(tokens: &[Token], lang: &Lang, table: &mut Registry, before: u32, written_in: Option<Rc<str>>) -> Res<Rc<Routine>> {
-    compile_within(tokens, lang, table, before, written_in, None)
+    compile_within(tokens, lang, table, before, written_in, None, None)
 }
 
 /// The same, save that the text may be read as standing inside a
@@ -193,6 +200,7 @@ pub fn compile_within(
     before: u32,
     written_in: Option<Rc<str>>,
     inside: Option<Vec<String>>,
+    within: Option<(String, Option<String>)>,
 ) -> Res<Rc<Routine>> {
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
@@ -222,7 +230,7 @@ pub fn compile_within(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new() };
+    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, declared_at: 0, within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new() };
     if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;
@@ -291,7 +299,7 @@ pub fn compile_within(
         a.piece().instrs.extend(shifted);
     }
     let unit = a.pieces.pop().expect("the top unit");
-    Ok(Rc::new(Routine { ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, instrs: peephole(unit.instrs) }))
+    Ok(Rc::new(Routine { ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, declared_on: 0, instrs: peephole(unit.instrs) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -682,6 +690,7 @@ impl<'a> Compiler<'a> {
     /// slot: null at first, each expression statement's value after, and
     /// its value is left on the stack at the end.
     fn routine(&mut self, name: &str, formals: Vec<String>, least: usize, returns_value: bool, body: impl FnOnce(&mut Self) -> Res<()>) -> Res<Rc<Routine>> {
+        let declared_on = self.declared_at;
         // The classes the parameters were declared to take, gathered as
         // they were read. A method is given the object it is for before
         // them, so the list is brought level with the names.
@@ -723,7 +732,7 @@ impl<'a> Compiler<'a> {
         let unit = self.pieces.pop().expect("the unit");
         let instrs = if returns_value && !used { relocated(unit.instrs.into_iter().skip(2).collect(), -2) } else { unit.instrs };
         let within = self.within.as_ref().map(|(named, _)| Rc::from(named.as_str()));
-        Ok(Rc::new(Routine { ident: unit.ident, formals, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, instrs: peephole(instrs) }))
+        Ok(Rc::new(Routine { ident: unit.ident, formals, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, instrs: peephole(instrs) }))
     }
 
     // ---------- statements ----------
@@ -921,6 +930,10 @@ impl<'a> Compiler<'a> {
             let bracketed = lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).is_lexeme(Shape::Sign, &c.open));
             match lang.builtins.get(&w) {
                 Some(Builtin::Tell) => return self.bare_call(w),
+                // A writer written as an operator takes the whole of
+                // what follows however it is written, so brackets after
+                // it group rather than hold what it is given.
+                Some(Builtin::Out) if lang.writes_as_operator => return self.bare_call(w),
                 Some(Builtin::Append) | Some(Builtin::Replace) | Some(Builtin::Define) | Some(Builtin::Pack) | Some(Builtin::Erase) | None => {}
                 Some(_) if !bracketed => return self.bare_call(w),
                 Some(_) => {}
@@ -2134,6 +2147,7 @@ impl<'a> Compiler<'a> {
     /// A method: a program whose first parameter is the object it is for,
     /// under the name the definition gives (`$this`).
     fn method(&mut self, name: &str) -> Res<Rc<Routine>> {
+        self.declared_at = (self.look().row as u32).saturating_sub(self.before);
         let lang = self.lang;
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
         self.want_sign(&call.open, "after method name")?;
@@ -2318,8 +2332,12 @@ impl<'a> Compiler<'a> {
         built
     }
 
-    fn function_body(&mut self, name: String) -> Res<()> {
+    /// A routine read and left standing as a value. A name written
+    /// before its brackets binds it; one written where a value stands
+    /// has none, and stands for itself.
+    fn function_value(&mut self, name: &str) -> Res<()> {
         let lang = self.lang;
+        self.declared_at = (self.look().row as u32).saturating_sub(self.before);
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
         self.want_sign(&call.open, "after function name")?;
         let (formals, spares, _) = self.parameters(&name, &call)?;
@@ -2331,7 +2349,7 @@ impl<'a> Compiler<'a> {
             self.want_name("as a return type")?;
         }
         let declarations = self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme);
-        let program = self.routine(&name, formals, least, true, |a| {
+        let program = self.routine(name, formals, least, true, |a| {
             a.spare_values(&spares, &given)?;
             if declarations {
                 loop {
@@ -2346,6 +2364,11 @@ impl<'a> Compiler<'a> {
             a.body()
         })?;
         self.constant(Value::Routine(program));
+        Ok(())
+    }
+
+    fn function_body(&mut self, name: String) -> Res<()> {
+        self.function_value(&name)?;
         // A language may bind every routine among the outermost
         // bindings, wherever it is written, so one written inside
         // another is there for the whole run once that one has run.
@@ -2452,6 +2475,15 @@ impl<'a> Compiler<'a> {
             });
             from += 1;
         }
+        // The name a method knows its own thing by is bound by the call
+        // and by nothing else: a language naming one refuses a write to
+        // it outright, and calls that a fault of the run.
+        if let (Some(this), [Instr::Read(slot)]) = (&self.lang.this_word, target.as_slice()) {
+            if slot.ident.as_ref() == this.as_str() {
+                self.registry.stopped_fatally = true;
+                return Err(format!("Cannot re-assign {}", this));
+            }
+        }
         // Where the target read its way into a place within a place,
         // the keys are taken apart, each with where it began, so that
         // the store may work each of them out once and in order.
@@ -2543,7 +2575,7 @@ impl<'a> Compiler<'a> {
                 if let Some(op) = compound {
                     self.read(&inner[deep]);
                     self.read(&held[deep]);
-                    self.act(Action::At, 2);
+                    self.act(Action::Toward, 2);
                     self.stood_before();
                     self.addend()?;
                     self.act(op, 2);
@@ -2617,7 +2649,7 @@ impl<'a> Compiler<'a> {
                 if let Some(op) = compound {
                     self.read(&inner[deep]);
                     self.read(&held[deep]);
-                    self.act(Action::At, 2);
+                    self.act(Action::Toward, 2);
                     self.stood_before();
                     self.addend()?;
                     self.act(op, 2);
@@ -3198,6 +3230,21 @@ impl<'a> Compiler<'a> {
                     self.constant(Value::Flag(false));
                 } else if Lang::spells(&lang.null_words, &tok.lexeme) {
                     self.constant(Value::Null);
+                } else if Lang::spells(&lang.function_words, &tok.lexeme)
+                    && lang
+                        .calling
+                        .as_ref()
+                        .map_or(false, |c| self.at_symbol(&c.open) || (lang.reference_mark.as_ref().map_or(false, |m| self.at_symbol(m)) && self.look_ahead(1).is_lexeme(Shape::Sign, &c.open)))
+                {
+                    // A routine written where a value stands has no
+                    // name to be bound to and stands for itself. It
+                    // reaches none of the names around it, only the
+                    // outermost ones, as a routine written out does.
+                    let gives_cell = self.skip_reference();
+                    self.giving_cells.push(gives_cell);
+                    let built = self.function_value(ANONYMOUS);
+                    self.giving_cells.pop();
+                    built?;
                 } else {
                     match lang.calling.clone() {
                         Some(call) if self.at_symbol(&call.open) => {
@@ -3802,7 +3849,7 @@ impl<'a> Compiler<'a> {
                 let held = self.gensym("place");
                 self.read(holding);
                 self.constant(Value::Small(at as i64));
-                self.act(Action::At, 2);
+                self.act(Action::Apart, 2);
                 self.write(&held);
                 if Lang::spells(&lang.unpack_words, &self.look().lexeme) {
                     self.take();

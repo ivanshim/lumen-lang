@@ -209,6 +209,11 @@ fn main() {
     let held = whole.parent().map_or_else(|| ".".to_string(), |p| p.to_string_lossy().into_owned());
     request.push(("SELF".to_string(), "file".to_string(), whole.to_string_lossy().into_owned(), false));
     request.push(("SELF".to_string(), "directory".to_string(), held, false));
+    // The program running this one, as the system knows it, which a
+    // language may name for a program that wants to find itself again.
+    if let Ok(runner) = std::env::current_exe() {
+        request.push(("SELF".to_string(), "runner".to_string(), runner.to_string_lossy().into_owned(), false));
+    }
     request.push(("SELF".to_string(), "lines_before".to_string(), lines_before.to_string(), true));
 
     // Serving runs the program once for each request that arrives, with

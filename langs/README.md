@@ -229,6 +229,12 @@ only. The extension labels so far, all from PHP:
   and running to the end of the statement (`print "x";`). `echo` is read
   this way even with a bracket after it, since `echo ($a) . "b", $c;` is
   a group and then more arguments, not a call.
+- `ext.builtin.write.operator`: a switch; the writer (`builtin.write`) is
+  read the same way, as an operator and not as a call, so a bracket after
+  it groups what follows rather than holding its argument. It takes the
+  whole of the piece it stands before, which is why PHP's
+  `print ($a == $b) ? 'yes' : 'no';` writes one word or the other and not
+  the answer to the comparison.
 - `ext.op.increment`, `ext.op.decrement`: `++` and `--`, as statements
   and in expressions, before or after the name (`++$i` is the stepped
   value, `$i++` the value before).
@@ -266,12 +272,48 @@ only. The extension labels so far, all from PHP:
   a statement is closed rather than with `ext.stmt.case.mark`. The
   section still reads; the words are raised as a deprecation while the
   program is read, so they come out ahead of anything it prints.
+- `ext.builtin.classes` and `ext.builtin.routines`: builtins answering
+  with the names of the classes, and of the routines, the run has bound.
+  PHP's `get_declared_classes` and `get_defined_functions` are written on
+  them.
+- `ext.system.runner`: a name bound to the file of the program that ran
+  this one, as the system knows it, for a program that wants to find
+  itself again. It stands beside `ext.system.source.file` and comes the
+  same way, from the request the host carried in.
+- `ext.builtin.class.beneath`: a builtin answering with the name of the
+  class the one it is given stands on, a thing being asked of the class
+  it is of, and nothing where it stands on none. PHP's
+  `get_parent_class` is written on it.
+- `ext.builtin.output.begun`: a builtin answering whether anything has
+  gone out of the run yet. What is held back in a piece of output kept
+  aside has not gone out. PHP's `headers_sent` and
+  `header_register_callback` are written on it.
+- `ext.builtin.uncaught`: a builtin naming a routine to be handed a
+  value nobody took, rather than the run telling it in its own words.
+  Giving nothing takes the routine away again. PHP's
+  `set_exception_handler` is written on it.
+- `ext.builtin.calls`: a builtin answering with the calls under way,
+  innermost first and the outermost body left out. Each is an array
+  saying what was called (`function`), the class it was written in where
+  it was written in one (`class`), the file and line the call itself
+  stands on (`file`, `line`), and what it was handed (`args`) — a
+  method's own thing is not among them. A language writes its own
+  `debug_backtrace` and its exceptions' traces on top of this.
+- `ext.system.kind.object`: the word this language calls a thing's kind
+  by (`object`), since a thing is of no kind the core knows. Without it,
+  asking a thing its kind is a fault.
 - `ext.op.ternary`: the two signs of `test ? a : b`, at the bottom of the
   precedence order.
 - `ext.block.lone_statement`: a switch; a single statement may stand
   where a block is expected (`if ($x) echo "y";`, `for (...) $n++;`).
 - `ext.stmt.function.hoisted`: a switch; a function defined at the top
   level is bound before anything else runs, so a call above it finds it.
+  Wherever `stmt.function` is spelled, a routine may also be written
+  where a value stands — `$f = function ($x) { return $x; }` — with the
+  brackets standing straight after the word and no name between. Such a
+  routine is bound to no name and stands for itself; it reaches the
+  outermost bindings, as a routine written out does, and none of the
+  names around where it was written.
 - `ext.lexical.number.exponent`: the letters that open a decimal exponent
   in a number (`1e9`, `2.5E-3`), always a real.
 - `ext.op.plus`: a sign that leaves its operand as it is (`+5`), bound as
@@ -304,6 +346,8 @@ only. The extension labels so far, all from PHP:
   its things do not hold, given the name asked for, and the one that
   takes such a write, given the name and the value; a class written
   without them reads and writes the property as before),
+  `ext.stmt.class.caller` (the method a class answers a call it does not
+  have with, given the name called and the arguments as an array),
   `ext.stmt.class.modifier` (words before a member
   that this kernel reads past: `public`, `final`), `ext.stmt.class.shared`
   (the modifier for a member the class keeps rather than its objects),
@@ -915,7 +959,10 @@ body.
 
 Two more labels come with it, both PHP's way of reading what is not
 there: `ext.op.index.absent` says that reading a place an array does not
-hold gives nothing rather than stopping, and the core label
+hold gives nothing rather than stopping — as does reading a place of a
+value with no places at all, which is spoken of by the kind it was asked
+of, and in a taking-apart's own words where that is what asked — and the
+core label
 `literal.null.silent` says that nothing shows as no text at all rather
 than as the word a program writes for it.
 
@@ -1163,6 +1210,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.args.count.outside` | - | - | - | - | - | - | - | `func_num_args() must be called from a function context` | - | - |
 | `ext.builtin.array` | - | - | - | - | - | - | - | `array` | - | - |
 | `ext.builtin.at_end` | - | - | - | - | - | - | - | `__at_end` | - | - |
+| `ext.builtin.calls` | - | - | - | - | - | - | - | `__calls` | - | - |
+| `ext.builtin.class.beneath` | - | - | - | - | - | - | - | `__class_beneath` | - | - |
+| `ext.builtin.classes` | - | - | - | - | - | - | - | `__classes_bound` | - | - |
 | `ext.builtin.complaint.handler` | - | - | - | - | - | - | - | `__complaint_handler` | - | - |
 | `ext.builtin.complaint.say` | - | - | - | - | - | - | - | `__complaint_say` | - | - |
 | `ext.builtin.define` | - | - | - | - | - | - | - | `define` | - | - |
@@ -1177,14 +1227,18 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.include` | - | - | - | - | - | - | - | `include` `require` | - | - |
 | `ext.builtin.include.once` | - | - | - | - | - | - | - | `include_once` `require_once` | - | - |
 | `ext.builtin.isset` | - | - | - | - | - | - | - | `isset` | - | - |
+| `ext.builtin.output.begun` | - | - | - | - | - | - | - | `__output_begun` | - | - |
 | `ext.builtin.output.depth` | - | - | - | - | - | - | - | `__output_depth` | - | - |
 | `ext.builtin.output.drop` | - | - | - | - | - | - | - | `__output_drop` | - | - |
 | `ext.builtin.output.held` | - | - | - | - | - | - | - | `__output_held` | - | - |
 | `ext.builtin.output.hold` | - | - | - | - | - | - | - | `__output_hold` | - | - |
 | `ext.builtin.print_r` | - | - | - | - | - | - | - | `print_r` | - | - |
+| `ext.builtin.routines` | - | - | - | - | - | - | - | `__routines_bound` | - | - |
 | `ext.builtin.time_limit` | - | - | - | - | - | - | - | `set_time_limit` | - | - |
+| `ext.builtin.uncaught` | - | - | - | - | - | - | - | `__uncaught_handler` | - | - |
 | `ext.builtin.unset` | - | - | - | - | - | - | - | `unset` | - | - |
 | `ext.builtin.var_dump` | - | - | - | - | - | - | - | `var_dump` | - | - |
+| `ext.builtin.write.operator` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.lexical.epilogue` | - | - | - | - | - | - | - | `?>` | - | - |
 | `ext.lexical.escape.codepoint` | - | - | - | - | - | - | - | `u` | - | - |
 | `ext.lexical.escape.codepoint.amiss` | - | - | - | - | - | - | - | `Invalid UTF-8 codepoint escape sequence` | - | - |
@@ -1257,6 +1311,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.catch` | - | - | - | - | - | - | - | `catch` | - | - |
 | `ext.stmt.catch.separator` | - | - | - | - | - | - | - | `\|` | - | - |
 | `ext.stmt.class` | - | - | - | - | - | - | - | `class` | - | - |
+| `ext.stmt.class.caller` | - | - | - | - | - | - | - | `__call` | - | - |
 | `ext.stmt.class.constructor` | - | - | - | - | - | - | - | `__construct` | - | - |
 | `ext.stmt.class.destructor` | - | - | - | - | - | - | - | `__destruct` | - | - |
 | `ext.stmt.class.extends` | - | - | - | - | - | - | - | `extends` | - | - |
@@ -1306,6 +1361,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.globals` | - | - | - | - | - | - | - | `$GLOBALS` | - | - |
 | `ext.system.integer.bits` | - | - | - | - | - | - | - | `64` | - | - |
 | `ext.system.kind.brief` | - | - | - | - | - | - | - | `int` `-` `float` `string` `bool` `array` `null` | - | - |
+| `ext.system.kind.object` | - | - | - | - | - | - | - | `object` | - | - |
 | `ext.system.kind.spelled` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.system.real.bits` | - | - | - | - | - | - | - | `64` | - | - |
 | `ext.system.real.digits` | - | - | - | - | - | - | - | `14` | - | - |
@@ -1323,6 +1379,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.request.query` | - | - | - | - | - | - | - | `$_GET` | - | - |
 | `ext.system.request.server` | - | - | - | - | - | - | - | `$_SERVER` | - | - |
 | `ext.system.request.settings` | - | - | - | - | - | - | - | `$__started_with` | - | - |
+| `ext.system.runner` | - | - | - | - | - | - | - | `PHP_BINARY` | - | - |
 | `ext.system.source.class` | - | - | - | - | - | - | - | `__CLASS__` | - | - |
 | `ext.system.source.directory` | - | - | - | - | - | - | - | `__DIR__` | - | - |
 | `ext.system.source.file` | - | - | - | - | - | - | - | `__FILE__` | - | - |
