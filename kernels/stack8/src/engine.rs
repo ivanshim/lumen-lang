@@ -1703,7 +1703,16 @@ impl<'a> Engine<'a> {
                 None => absent(format!("Undefined array key {}", at.plain()), at),
             };
         }
-        let i = match as_index(at) {
+        // Where text is a row of places, a place named by text is the
+        // number that text opens with, as text counts as a number
+        // anywhere else it is asked to.
+        let named = match (target, at) {
+            (Value::Text(_), Value::Text(spelling)) if self.lang.text_places => {
+                number_opening(spelling).0.unwrap_or_else(|| at.clone())
+            }
+            _ => at.clone(),
+        };
+        let i = match as_index(&named) {
             Ok(i) => i,
             Err(told) => return absent(told, at),
         };
@@ -2034,6 +2043,40 @@ impl<'a> Engine<'a> {
                     Value::Null | Value::Blank if self.lang.makes_places => Value::Array(std::rc::Rc::new(Vec::new())),
                     held => held,
                 };
+                // A place in a piece of text holds one letter, and
+                // writing there puts a letter in its stead. A place past
+                // the end is reached by filling the way to it with
+                // spaces, as a language that writes into text does.
+                if let (Value::Text(held), true) = (&target, self.lang.text_places) {
+                    let put = v.display(&sp);
+                    let Some(letter) = put.chars().next() else {
+                        return Err("Cannot write nothing into a place in text".to_string());
+                    };
+                    let mut letters: Vec<char> = held.chars().collect();
+                    // A place named by text is the number that text
+                    // opens with, as a language that reads a number out
+                    // of text does.
+                    let at = match &at {
+                        Value::Text(spelling) => match number_opening(spelling).0 {
+                            Some(counted) => counted,
+                            None => return Err("A place in text is named by a whole number".to_string()),
+                        },
+                        _ => at,
+                    };
+                    let at = match as_index(&at) {
+                        Ok(at) => at,
+                        Err(_) => match arith::parts(&at).map(|(p, q)| &p / &q).and_then(|n| n.to_i64()) {
+                            // A place counted from the end.
+                            Some(back) if back < 0 && (-back as usize) <= letters.len() => letters.len() - (-back as usize),
+                            _ => return Err("A place in text is named by a whole number".to_string()),
+                        },
+                    };
+                    while letters.len() <= at {
+                        letters.push(' ');
+                    }
+                    letters[at] = letter;
+                    return Ok(Value::text(&letters.into_iter().collect::<String>()));
+                }
                 match target {
                     // A list written at a place it already holds stays a list.
                     Value::Array(mut items) if as_index(&at).map_or(false, |i| i < items.len()) => {

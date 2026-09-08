@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 46, differs 30, error 28, skipped 10 | pass 46, differs 30, error 28, skipped 10 |
 | `php/func` | 14 | pass 7, differs 3, error 4, skipped 0 | pass 7, differs 3, error 4, skipped 0 |
-| `php/lang` | 213 | pass 78, differs 51, error 79, skipped 5 | pass 78, differs 51, error 79, skipped 5 |
+| `php/lang` | 213 | pass 80, differs 52, error 76, skipped 5 | pass 80, differs 52, error 76, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 31, differs 21, error 6, skipped 6 | pass 31, differs 21, error 6, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 167, differs 113, error 117, skipped 25 | pass 167, differs 113, error 117, skipped 25 |
+| all | 422 | pass 169, differs 114, error 114, skipped 25 | pass 169, differs 114, error 114, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 113 |
+| ran, printed something else | 114 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> | 6 |
@@ -37,7 +37,6 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
 | Unexpected token: : | 3 |
-| Fatal error: Uncaught Error: put() requires an array in <file> | 3 |
 | Fatal error: Uncaught Error: Undefined variable: current in <file> | 3 |
 | Unexpected token: ++ | 3 |
 | skip php-cgi not available | 2 |
@@ -68,6 +67,7 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: umask in <file> | 1 |
 | skip for Windows only | 1 |
 | Fatal error: Uncaught Error: Undefined variable: join in <file> | 1 |
+| skip Run only on Windows | 1 |
 
 ### Reserved words: 48 of 68 spelled
 
@@ -373,7 +373,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bison1.phpt` | pass | pass |  |
 | `php/lang/bug18872.phpt` | pass | pass |  |
 | `php/lang/bug19566.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_declared_classes in <file> |
-| `php/lang/bug19943.phpt` | error | error | Fatal error: Uncaught Error: put() requires an array in <file> |
+| `php/lang/bug19943.phpt` | pass | pass |  |
 | `php/lang/bug20175.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: zend_version in <file> |
 | `php/lang/bug21094.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug21600.phpt` | differs | differs | ran, printed something else |
@@ -383,7 +383,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug21961.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> |
 | `php/lang/bug22231.phpt` | error | error | Fatal error: Uncaught Error: 'foo' is not a function in <file> |
 | `php/lang/bug22510.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug22592.phpt` | error | error | Fatal error: Uncaught Error: put() requires an array in <file> |
+| `php/lang/bug22592.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug23279.phpt` | error | error | thrown in <file> |
 | `php/lang/bug23384.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: Foo in <file> |
 | `php/lang/bug23489.phpt` | differs | differs | ran, printed something else |
@@ -445,7 +445,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/constants/PHP_INT_32bit.phpt` | skipped | skipped | skip this test is for 32-bit platforms only |
 | `php/lang/constants/PHP_INT_64bit.phpt` | pass | pass |  |
 | `php/lang/empty_variation.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: empty in <file> |
-| `php/lang/engine_assignExecutionOrder_001.phpt` | error | error | Fatal error: Uncaught Error: put() requires an array in <file> |
+| `php/lang/engine_assignExecutionOrder_001.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_002.phpt` | error | error | Fatal error: Uncaught Error: Cannot index non-array value in <file> |
 | `php/lang/engine_assignExecutionOrder_003.phpt` | error | error | Unexpected token: ) |
 | `php/lang/engine_assignExecutionOrder_004.phpt` | pass | pass |  |

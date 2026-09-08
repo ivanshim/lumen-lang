@@ -104,6 +104,10 @@ pub struct Machine<'a> {
     /// array where a name holds nothing, and one at each place along the
     /// way that is not there yet.
     builds_places: bool,
+    /// Whether text is a row of places holding one letter each. Where it
+    /// is, such a place takes a letter as well as giving one, and a place
+    /// named by text is the number that text opens with.
+    letter_places: bool,
     /// Pieces of text this language holds untrue past text with nothing
     /// in it, and whether an array with nothing in it is untrue.
     false_words: Vec<String>,
@@ -145,6 +149,7 @@ impl<'a> Machine<'a> {
             written_in: String::new(),
             quieted: 0,
             builds_places: table.flag("ext.op.index.makes"),
+            letter_places: table.flag("ext.op.index.text"),
             false_words: table.strings("ext.system.untrue.text").to_vec(),
             hollow_is_false: table.flag("ext.system.untrue.empty_array"),
             complaint_words: COMPLAINT_LABELS
@@ -1072,6 +1077,9 @@ impl<'a> Machine<'a> {
                     let mut values = values;
                     let value = values.pop().unwrap();
                     let key = values.pop().map(|k| self.as_key(&k));
+                    // Worked out before the place is reached, since
+                    // reaching it holds the frame the name lives in.
+                    let letter = self.letter_places.then(|| value.render(self.wording()));
                     // Through the shared cell when the name stands for one.
                     let shared = match &f.cells.borrow()[i] {
                         Value::Shared(cell) => Some(cell.clone()),
@@ -1079,11 +1087,11 @@ impl<'a> Machine<'a> {
                     };
                     if let Some(cell) = shared {
                         let mut held = cell.borrow_mut();
-                        written_into(&mut held, key, value, &slot.ident, self.builds_places)?;
+                        written_into(&mut held, key, value, &slot.ident, self.builds_places, letter)?;
                         return Ok(Value::Nil);
                     }
                     let mut slots = f.cells.borrow_mut();
-                    written_into(&mut slots[i], key, value, &slot.ident, self.builds_places)?;
+                    written_into(&mut slots[i], key, value, &slot.ident, self.builds_places, letter)?;
                     Ok(Value::Nil)
                 }
                 // A language may say the run is over where it stands.
@@ -1470,6 +1478,7 @@ impl<'a> Machine<'a> {
             Prim::Placed => {
                 n(3)?;
                 match &v[0] {
+                    Value::Text(had) if self.letter_places => letter_put(had, &v[1], &v[2].render(w))?,
                     Value::Vector(items) if as_index(&v[1]).map_or(false, |at| at < items.len()) => {
                         let mut all = items.as_ref().clone();
                         all[as_index(&v[1])?] = v[2].clone();
@@ -2100,7 +2109,13 @@ impl<'a> Machine<'a> {
                 None => missing(format!("Undefined array key {}", at.bare()), at),
             };
         }
-        let i = match as_index(at) {
+        // Text naming a place in text counts for the number it opens
+        // with, since text counts as a number wherever one is wanted.
+        let spelled = match (target, at) {
+            (Value::Text(_), Value::Text(_)) if self.letter_places => number_opening_in(at).0,
+            _ => None,
+        };
+        let i = match as_index(spelled.as_ref().unwrap_or(at)) {
             Ok(i) => i,
             Err(told) => return missing(told, at),
         };
@@ -2277,7 +2292,45 @@ fn over_lines(v: &Value, along: usize) -> String {
 /// end when no key is given. A list written where it already reaches
 /// stays a list; any other key turns it into a map, its places becoming
 /// the keys.
-fn written_into(held: &mut Value, key: Option<Value>, value: Value, ident: &str, builds: bool) -> Result<(), String> {
+/// Text with one of its places holding a different letter, given the
+/// text a language lets a program write into. Only the first letter of
+/// what is handed over is put there; a place beyond the end is reached
+/// over spaces, and one counted from the end reaches back from it.
+fn letter_put(had: &str, at: &Value, put: &str) -> Result<Value, String> {
+    let Some(letter) = put.chars().next() else {
+        return Err("Cannot write nothing into a place in text".to_string());
+    };
+    let mut letters: Vec<char> = had.chars().collect();
+    // Text standing for a place counts as the number it opens with,
+    // the way text counts as a number anywhere else.
+    let named = match at {
+        Value::Text(_) => match number_opening_in(at).0 {
+            Some(counted) => counted,
+            None => return Err("A place in text is named by a whole number".to_string()),
+        },
+        other => other.clone(),
+    };
+    let step = match &named {
+        Value::Small(n) if *n < 0 => letters.len().checked_sub(n.unsigned_abs() as usize),
+        other => as_index(other).ok(),
+    };
+    let Some(step) = step else {
+        return Err("A place in text is named by a whole number".to_string());
+    };
+    if letters.len() <= step {
+        letters.resize(step + 1, ' ');
+    }
+    letters[step] = letter;
+    Ok(Value::text(&letters.into_iter().collect::<String>()))
+}
+
+fn written_into(held: &mut Value, key: Option<Value>, value: Value, ident: &str, builds: bool, letter: Option<String>) -> Result<(), String> {
+    // Where a language writes into text, a named place in text takes a
+    // letter and the name goes on holding text.
+    if let (Value::Text(had), Some(put), Some(at)) = (&*held, &letter, &key) {
+        *held = letter_put(had, at, put)?;
+        return Ok(());
+    }
     if builds && matches!(held, Value::Nil | Value::Unset) {
         *held = Value::Vector(Rc::new(Vec::new()));
     }

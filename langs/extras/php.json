@@ -420,6 +420,7 @@
   ],
   "ext.op.index.append": true,
   "ext.op.index.makes": true,
+  "ext.op.index.text": true,
   "ext.builtin.exit": [
     "exit",
     "die"

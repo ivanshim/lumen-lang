@@ -238,6 +238,11 @@ pub struct Lang {
     /// Whether a value may stand where a member's name stands, so that
     /// the member is the one the value spells.
     pub members_by_value: bool,
+    /// Whether a piece of text is a row of places, each holding one
+    /// letter: a place may be written to as well as read, and one named
+    /// by text is the number that text opens with. Text that may be read
+    /// letter by letter is not always text with places in this sense.
+    pub text_places: bool,
     /// The words that open a taking-apart: a list of places written on
     /// the left of a write, each taking the matching place of the value.
     pub unpack_words: Vec<String>,
@@ -370,7 +375,7 @@ w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
 w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind
 w ext.op.name_by_value | b ext.op.cast | w ext.stmt.unpack
 w ext.system.source.routine | w ext.system.source.class | w ext.system.source.method
-b ext.op.member.by_value
+b ext.op.member.by_value | b ext.op.index.text
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 ";
@@ -986,6 +991,7 @@ impl Lang {
             naming_words: r.strings("ext.op.name_by_value")?,
             casts_kinds: r.flag("ext.op.cast")?,
             members_by_value: r.flag("ext.op.member.by_value")?,
+            text_places: r.flag("ext.op.index.text")?,
             unpack_words: r.strings("ext.stmt.unpack")?,
             makes_places: r.flag("ext.op.index.makes")?,
             untrue_text: r.strings("ext.system.untrue.text")?,

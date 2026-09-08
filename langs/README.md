@@ -384,6 +384,18 @@ only. The extension labels so far, all from PHP:
   is not there yet, so `$x[0][1] = 'deep'` builds what it needs and
   says nothing about what was not there. It is the writing counterpart
   of `ext.op.index.absent`, which says how a place not there reads.
+- `ext.op.index.text`: a switch; a piece of text is a row of places,
+  each holding one letter. Such a place takes a letter as well as
+  giving one: only the first letter of what is written there is put
+  there, and what comes out is text again, not an array of letters, so
+  `$s[0] = 'j'` turns `"hello"` into `"jello"`. A place counted from the
+  end reaches back from it, and a place past the end is reached over
+  spaces, so writing at the fifth place of `"ab"` gives `"ab   z"`. A
+  place named by text is the number that text opens with, reading and
+  writing alike, as text counts as a number wherever one is wanted. It
+  is said apart from `op.index.strings`, which only says that text may
+  be read letter by letter: a language may let a program read letters
+  without letting it write them.
 - `ext.system.untrue.text` and `ext.system.untrue.empty_array`: what a
   language counts as untrue past nought and nothing. The first names
   pieces of text held untrue besides text with nothing in it — PHP
@@ -878,6 +890,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.index.append` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.index.makes` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.index.plain_keys` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.op.index.text` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.instanceof` | - | - | - | - | - | - | - | `instanceof` | - | - |
 | `ext.op.member` | - | - | - | - | - | - | - | `->` | - | - |
 | `ext.op.member.by_value` | - | - | - | - | - | - | - | `true` | - | - |
