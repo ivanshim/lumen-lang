@@ -1346,6 +1346,15 @@ impl<'a> Engine<'a> {
             Action::Negate => {
                 // 0 - x, so a real keeps its precision.
                 let v = self.drop_top()?;
+                // Text turned about is text taken times minus one, which
+                // is how a language that reads a number out of text does
+                // it: the number the text opens with is turned about, and
+                // text opening with none is a pair no such step can take.
+                if matches!(v, Value::Text(_)) && self.lang.warns_of_unwritten {
+                    let worth = self.dyadic(&Action::Mul, &v, &Value::Small(-1))?;
+                    self.data.push(worth);
+                    return Ok(());
+                }
                 let turned = match arith::calculate(Operation::Minus, &Value::Small(0), &v) {
                     Some(r) => r?,
                     None => return Err("Cannot negate non-numeric value".to_string().into()),
@@ -2116,7 +2125,7 @@ impl<'a> Engine<'a> {
                     None => held.clone(),
                     Some((Some(n), true)) => n,
                     Some((Some(n), false)) => {
-                        self.complain(Complaint::Warning, "A non-well-formed numeric value encountered");
+                        self.complain(Complaint::Warning, "A non-numeric value encountered");
                         n
                     }
                     Some((None, _)) => {

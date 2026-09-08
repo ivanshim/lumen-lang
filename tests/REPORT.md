@@ -22,9 +22,9 @@ is listed, since the full kernels are meant to behave alike.
 | `php/lang` | 213 | pass 158, differs 27, error 23, skipped 5 | pass 158, differs 27, error 23, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
-| `php/lang/operators` | 64 | pass 46, differs 10, error 2, skipped 6 | pass 46, differs 10, error 2, skipped 6 |
+| `php/lang/operators` | 64 | pass 47, differs 10, error 1, skipped 6 | pass 47, differs 10, error 1, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 317, differs 40, error 40, skipped 25 | pass 317, differs 40, error 40, skipped 25 |
+| all | 422 | pass 318, differs 40, error 39, skipped 25 | pass 318, differs 40, error 39, skipped 25 |
 
 | Reason | Tests |
 |---|---|
@@ -535,7 +535,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/multiply_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/nan-comparison-false.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: NAN in <file> |
 | `php/lang/operators/negate_basiclong_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/negate_variationStr.phpt` | error | error | Fatal error: Uncaught Error: Cannot negate non-numeric value in <file> |
+| `php/lang/operators/negate_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/operator_equals_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_equals_variation.phpt` | skipped | skipped | skip this test is for 32bit platform only |
 | `php/lang/operators/operator_equals_variation_64bit.phpt` | pass | pass |  |

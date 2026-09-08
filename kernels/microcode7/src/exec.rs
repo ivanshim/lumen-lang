@@ -2471,6 +2471,16 @@ impl<'a> Machine<'a> {
                     bits.checked_shr(far).unwrap_or(if bits < 0 { -1 } else { 0 })
                 })
             }
+            // Text turned about is text taken times minus one, the way a
+            // language reading a number out of text does it: the number
+            // the text opens with is turned about, and text opening with
+            // none is a pair no such step can take.
+            Prim::Negate
+                if matches!(v[0], Value::Text(_)) && self.complaint_words.iter().any(|(k, _)| *k == "warning") =>
+            {
+                let pair = [v[0].clone(), Value::Small(-1)];
+                return self.prim(Prim::Times, name, &pair);
+            }
             Prim::Negate => {
                 let turned = match math::compute(Calc::Minus, &Value::Small(0), &v[0]) {
                     Some(r) => r?,
@@ -2627,7 +2637,7 @@ impl<'a> Machine<'a> {
                         (Some(n), true) => n,
                         (Some(n), false) => {
                             if warns {
-                                self.grumble("warning", "A non-well-formed numeric value encountered");
+                                self.grumble("warning", "A non-numeric value encountered");
                                 return n;
                             }
                             x.clone()
