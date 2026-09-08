@@ -1334,7 +1334,63 @@ function one_conversion($letter, $value, $places) {
     if ($letter === "o") { return decoct(whole_of($value)); }
     if ($letter === "b") { return decbin(whole_of($value)); }
     if ($letter === "c") { return chr(whole_of($value)); }
+    if ($letter === "e" || $letter === "E") { return __in_powers(real_of($value), $places, $letter === "E"); }
+    if ($letter === "g" || $letter === "G") { return __shortest_of($value, $places, $letter === "G"); }
     return strval($value);
+}
+
+// A real written as one figure, a point, so many more, and the power of
+// ten it stands at. Rounding the figures may carry them up to ten, and
+// then the power goes up by one.
+function __in_powers($x, $places, $capital) {
+    if ($places === null) { $places = 6; }
+    $under = $x < 0;
+    if ($under) { $x = -$x; }
+    $power = $x == 0.0 ? 0 : __log10_floor($x);
+    $body = $x == 0.0 ? 0.0 : $x / (10 ** $power);
+    $body = round($body, $places);
+    if ($body >= 10.0) { $body = $body / 10.0; $power = $power + 1; }
+    $written = rounded_string($body, $places);
+    $mark = $capital ? "E" : "e";
+    $sign = $power < 0 ? "-" : "+";
+    $away = $power < 0 ? -$power : $power;
+    return ($under ? "-" : "") . $written . $mark . $sign . strval($away);
+}
+
+// The shorter of the two ways of writing a real: plainly where the power
+// of ten it stands at is small, and with the power spelled out
+// otherwise. Figures of nought at the end count for nothing either way.
+function __shortest_of($value, $places, $capital) {
+    $x = real_of($value);
+    if ($places === null) { $places = 6; }
+    if ($places === 0) { $places = 1; }
+    $power = $x == 0.0 ? 0 : __log10_floor($x);
+    if ($power < -4 || $power >= $places) {
+        // Written with its power, PHP keeps a figure after the point
+        // even where it is a nought, so that what is written reads as a
+        // real and not as a whole number.
+        $held = __pared_of_noughts(__in_powers($x, $places - 1, $capital), true);
+        if (strpos($held, ".") === false) {
+            $at = strpos($held, $capital ? "E" : "e");
+            if ($at !== false) { $held = substr($held, 0, $at) . ".0" . substr($held, $at); }
+        }
+        return $held;
+    }
+    return __pared_of_noughts(rounded_string($x, $places - 1 - $power), false);
+}
+function __pared_of_noughts($written, $in_powers) {
+    $body = $written;
+    $tail = "";
+    if ($in_powers) {
+        $at = strpos($body, "e");
+        if ($at === false) { $at = strpos($body, "E"); }
+        if ($at !== false) { $tail = substr($body, $at); $body = substr($body, 0, $at); }
+    }
+    if (strpos($body, ".") !== false) {
+        while (strlen($body) > 0 && $body[strlen($body) - 1] === "0") { $body = substr($body, 0, strlen($body) - 1); }
+        if (strlen($body) > 0 && $body[strlen($body) - 1] === ".") { $body = substr($body, 0, strlen($body) - 1); }
+    }
+    return $body . $tail;
 }
 
 function sprintf_over($pattern, $values) {
