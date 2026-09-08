@@ -76,8 +76,25 @@ pub enum Action {
     Extent,
     /// Whether the place a walk has reached still holds a member. A
     /// property taken off a thing leaves its place behind, and the walk
-    /// steps over it rather than handing it out.
+    /// steps over it rather than handing it out. The thing walked is
+    /// below the place.
     Standing,
+    /// What a walk walks. A thing that hands another over to be walked
+    /// in its stead answers with that one; a thing that is its own walk
+    /// is wound back and answers with itself; anything else is itself.
+    WalkFrom,
+    /// Whether a walk has more to hand out, what stands at the place it
+    /// has reached and what that is called, and the step onward. A thing
+    /// that is its own walk is asked; anything else is counted through,
+    /// as an array is.
+    WalkMore,
+    WalkThis,
+    WalkKey,
+    WalkOnward,
+    /// A walk that hands out the items' own cells asks for this first: a
+    /// thing that is its own walk has no such cells, and a language with
+    /// words for that says so and stops.
+    WalkAlone,
     /// Which of two values comes first: below, alike, or above.
     Rank,
     /// Whether two values are the very same: of one kind, and alike
@@ -336,6 +353,10 @@ pub enum Instr {
     BondPlace(Cell, usize),
     /// Leave this binding as though nothing were ever written to it.
     Forget(Cell),
+    /// Make this global stand ready: where nothing was ever written to
+    /// it, nothing is written to it now, so that a name bound to it is
+    /// a name written to and not one never written.
+    Ready(Cell),
     /// From here to the matching Unguard, a raised value is caught: the
     /// stack goes back to its depth here, the value is pushed, and the
     /// run goes on at the index.

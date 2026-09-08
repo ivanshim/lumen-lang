@@ -543,6 +543,33 @@
   "ext.stmt.class.destructor": [
     "__destruct"
   ],
+  "ext.op.walk.class": [
+    "Iterator"
+  ],
+  "ext.op.walk.rewind": [
+    "rewind"
+  ],
+  "ext.op.walk.more": [
+    "valid"
+  ],
+  "ext.op.walk.this": [
+    "current"
+  ],
+  "ext.op.walk.key": [
+    "key"
+  ],
+  "ext.op.walk.onward": [
+    "next"
+  ],
+  "ext.op.walk.giver.class": [
+    "IteratorAggregate"
+  ],
+  "ext.op.walk.giver": [
+    "getIterator"
+  ],
+  "ext.op.walk.no_cell": [
+    "An iterator cannot be used with foreach by reference"
+  ],
   "ext.stmt.class.modifier": [
     "public",
     "private",

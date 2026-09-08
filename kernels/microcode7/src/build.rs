@@ -1059,11 +1059,19 @@ impl<'a> Builder<'a> {
 
     /// `global a, b;`: the names mean the globals inside this function.
     fn global_names(&mut self) -> Res<Form> {
-        self.listed_names("after the global keyword", |r, name| {
+        let mut ready = Vec::new();
+        let listed = self.listed_names("after the global keyword", |r, name| {
+            // A name bound to a global names it whether or not anything
+            // was ever written there, so the global is made to hold
+            // nothing where it held nothing at all: reading it is then
+            // reading a binding written to.
+            ready.push(Form::Ready(r.global_address(&name)));
             let owner = r.layers.iter_mut().rev().find(|s| s.holds == Holds::Every).expect("the top layer");
             owner.aliases.push((name.clone(), name));
             Ok(())
-        })
+        })?;
+        ready.push(listed);
+        Ok(sequence(ready))
     }
 
     /// `static x = e;`: x means a hidden global, set where the function
@@ -1474,46 +1482,45 @@ impl<'a> Builder<'a> {
     fn walk(&mut self, source: Form, key: Option<String>, item: String, shares: Option<String>, place: Option<usize>) -> Res<Form> {
         let bag = self.gensym("bag");
         let bag_name = bag.ident.to_string();
-        let hold = Form::Write(bag, Box::new(source));
+        // A walk over the copy takes the copy here; one handing out the
+        // items' own cells walks the array itself, so what the body adds
+        // or takes away lengthens or shortens the walk. Either way a
+        // thing that is its own walk, or that hands another over to be
+        // walked for it, is settled here and once: a thing is a handle,
+        // so holding it again holds the same thing.
+        let taken = match shares.is_some() {
+            true => source,
+            false => prim_call(Prim::Walked, vec![source]),
+        };
+        let hold = Form::Write(bag, Box::new(taken));
         let at = self.gensym("at");
         let at_name = at.ident.to_string();
         let start = Form::Write(at, Box::new(constant(Value::Small(0))));
-        let extent = self.gensym("extent");
-        let extent_name = extent.ident.to_string();
-        let reach = self.read(&bag_name);
-        let size = Form::Write(extent, Box::new(prim_call(Prim::Extent, vec![reach])));
         if let Some(k) = &key {
             self.address_to_write(k);
         }
         self.address_to_write(&item);
-        // Handing out an item's own cell means walking the array itself
-        // and not the copy: its keys and how far it reaches are asked of
-        // it afresh each pass, so that what the body adds or takes away
-        // shortens or lengthens the walk. A walk over the copy asks once.
         let over = shares.clone().unwrap_or_else(|| bag_name.clone());
         let alive = shares.is_some();
-        let (test_at, test_end, test_over) = (at_name.clone(), extent_name, over.clone());
-        let (walk, walk_at) = (over, at_name.clone());
-        let step_at = at_name;
+        // A thing that is its own walk keeps no cells of its own to hand
+        // out, and a language with words for that says so.
+        let alone = alive.then(|| {
+            let walked = self.read(&over);
+            prim_call(Prim::AloneWalk, vec![walked])
+        });
+        let (test_at, test_over) = (at_name.clone(), over.clone());
+        let (walk, walk_at) = (over.clone(), at_name.clone());
+        let (step_at, step_over) = (at_name, over);
         // Only a language with things to take members off need ask
         // whether the place a pass has reached still holds one.
         let things = self.table.single("ext.stmt.class").is_some();
         let looped = self.cycle(
             move |r| {
-                let here = r.read(&test_at);
-                let end = match alive {
-                    true => prim_call(Prim::Extent, vec![r.read(&test_over)]),
-                    false => r.read(&test_end),
-                };
-                Ok(prim_call(Prim::Lt, vec![here, end]))
+                let (walking, here) = (r.read(&test_over), r.read(&test_at));
+                Ok(prim_call(Prim::MoreYet, vec![walking, here]))
             },
             move |r| {
                 let mut items = Vec::new();
-                if let Some(k) = key {
-                    let (bag, at) = (r.read(&walk), r.read(&walk_at));
-                    let found = prim_call(Prim::KeyAt, vec![bag, at]);
-                    items.push(r.write(&k, found));
-                }
                 match &shares {
                     // The name is tied to the item's own cell.
                     Some(named) => {
@@ -1527,9 +1534,17 @@ impl<'a> Builder<'a> {
                     }
                     None => {
                         let (bag, at) = (r.read(&walk), r.read(&walk_at));
-                        let found = prim_call(Prim::ItemAt, vec![bag, at]);
+                        let found = prim_call(Prim::AtHand, vec![bag, at]);
                         items.push(r.write(&item, found));
                     }
+                }
+                // What is at hand is asked for before what it is named,
+                // since a thing that is its own walk answers in that
+                // order when it is asked both.
+                if let Some(k) = key {
+                    let (bag, at) = (r.read(&walk), r.read(&walk_at));
+                    let found = prim_call(Prim::NamedHere, vec![bag, at]);
+                    items.push(r.write(&k, found));
                 }
                 // Where the walk hands its items to a place, the place
                 // is read again here, the item waiting in the walk's
@@ -1555,19 +1570,21 @@ impl<'a> Builder<'a> {
                 // were. Such a place is passed over: the walk goes
                 // straight on to the next.
                 let (bag, at) = (r.read(&walk), r.read(&walk_at));
-                let there = prim_call(Prim::Kept, vec![prim_call(Prim::ItemAt, vec![bag, at])]);
+                let there = prim_call(Prim::Kept, vec![bag, at]);
                 Ok(r.choose(there, pass, constant(Value::Nil)))
             },
             Some(move |r: &mut Self| {
                 let here = r.read(&step_at);
                 let next = prim_call(Prim::Plus, vec![here, constant(Value::Small(1))]);
-                Ok(r.write(&step_at, next))
+                let counted = r.write(&step_at, next);
+                let walking = r.read(&step_over);
+                Ok(sequence(vec![counted, prim_call(Prim::StepOn, vec![walking])]))
             }),
         )?;
-        match alive {
-            true => Ok(sequence(vec![hold, start, looped])),
-            false => Ok(sequence(vec![hold, start, size, looped])),
-        }
+        Ok(match alone {
+            Some(asked) => sequence(vec![asked, hold, start, looped]),
+            None => sequence(vec![hold, start, looped]),
+        })
     }
 
     /// `for (init; test; step) body`: the init, then a cycle whose step

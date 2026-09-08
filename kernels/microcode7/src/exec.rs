@@ -309,6 +309,128 @@ impl<'a> Machine<'a> {
     /// Where a name written out stands for the class it names, text
     /// that names no class says so by name: the class wanted is the one
     /// there is none of, not a piece of text put where a class belongs.
+    /// The steps of a walk that a thing may answer for itself. Each is
+    /// asked of the thing where it is one, and counted through as an
+    /// array is where it is not.
+    fn walking(&mut self, op: &Prim, name: &str, v: &[Value]) -> Result<Value, Escape> {
+        let n = |want: usize| match v.len() == want {
+            true => Ok(()),
+            false => Err(Escape::Error(format!("{}() expects {} argument(s), got {}", name, want, v.len()))),
+        };
+        Ok(match op {
+            // A thing may be its own walk, or may hand another over to
+            // be walked for it. Either way a walk begins here.
+            Prim::Walked => {
+                n(1)?;
+                let mut walking = v[0].clone();
+                while let Some(further) = self.walk_handed(&walking)? {
+                    walking = further;
+                }
+                match self.walks_itself(&walking) {
+                    Some(_) => {
+                        self.walk_asked(&walking, self.table.single("ext.op.walk.rewind").map(str::to_string))?;
+                    }
+                    None => self.can_be_walked(&walking)?,
+                }
+                walking
+            }
+            Prim::AloneWalk => {
+                n(1)?;
+                let said = self.table.single("ext.op.walk.no_cell").map(str::to_string);
+                match (self.walks_itself(&v[0]), said) {
+                    (Some(_), Some(words)) => return Err(words.into()),
+                    (Some(_), None) => {}
+                    (None, _) => self.can_be_walked(&v[0])?,
+                }
+                Value::Nil
+            }
+            Prim::MoreYet => {
+                n(2)?;
+                match self.walk_asked(&v[0], self.table.single("ext.op.walk.more").map(str::to_string))? {
+                    Some(answer) => Value::Flag(self.stands_true(&answer)),
+                    None => {
+                        let far = match &v[0] {
+                            Value::Vector(items) => items.len(),
+                            Value::Dict(pairs) => pairs.len(),
+                            Value::Thing(thing) => thing.holds.borrow().len(),
+                            _ => 0,
+                        };
+                        Value::Flag(as_index(&v[1]).map_or(false, |at| at < far))
+                    }
+                }
+            }
+            Prim::AtHand | Prim::NamedHere => {
+                let names = matches!(op, Prim::NamedHere);
+                let asked = match names {
+                    true => "ext.op.walk.key",
+                    false => "ext.op.walk.this",
+                };
+                match self.walk_asked(&v[0], self.table.single(asked).map(str::to_string))? {
+                    Some(answer) => answer,
+                    None => self.prim(if names { Prim::KeyAt } else { Prim::ItemAt }, name, v).map_err(Escape::Error)?,
+                }
+            }
+            Prim::StepOn => {
+                n(1)?;
+                self.walk_asked(&v[0], self.table.single("ext.op.walk.onward").map(str::to_string))?;
+                Value::Nil
+            }
+            _ => return Err(Escape::Error(format!("{}() is no step of a walk", name))),
+        })
+    }
+
+    /// A value with no places at all cannot be walked. A language with
+    /// a word for a warning is told so and walks it no times, instead of
+    /// having the run stopped over it.
+    fn can_be_walked(&mut self, x: &Value) -> Result<(), Escape> {
+        if matches!(x, Value::Vector(_) | Value::Dict(_) | Value::Thing(_)) {
+            return Ok(());
+        }
+        if !self.complaint_words.iter().any(|(k, _)| *k == "warning") {
+            return Err(Escape::Error("Cannot walk a value that is not an array".to_string()));
+        }
+        let told = format!("foreach() argument must be of type array|object, {} given", self.kind_called(x));
+        self.grumble("warning", &told);
+        Ok(())
+    }
+
+    /// The thing that is its own walk, where this value is one.
+    fn walks_itself(&self, x: &Value) -> Option<Rc<Thing>> {
+        let class = self.table.single("ext.op.walk.class")?;
+        match x {
+            Value::Thing(thing) if thing.of.goes_by(class, self.classes_either_way) => Some(thing.clone()),
+            _ => None,
+        }
+    }
+
+    /// What a thing hands over to be walked for it, where it is a thing
+    /// that hands one over and what comes back is not the thing itself.
+    fn walk_handed(&mut self, x: &Value) -> Result<Option<Value>, Escape> {
+        let (Some(class), Some(gives)) = (self.table.single("ext.op.walk.giver.class"), self.table.single("ext.op.walk.giver")) else {
+            return Ok(None);
+        };
+        let Value::Thing(thing) = x else { return Ok(None) };
+        if !thing.of.goes_by(class, self.classes_either_way) {
+            return Ok(None);
+        }
+        let Some(program) = thing.of.program(gives).cloned() else { return Ok(None) };
+        let handed = self.invoke(program, self.outermost.clone(), vec![x.clone()])?;
+        let itself = matches!((&handed, x), (Value::Thing(a), Value::Thing(b)) if Rc::ptr_eq(a, b));
+        Ok(match itself {
+            true => None,
+            false => Some(handed),
+        })
+    }
+
+    /// Ask a thing that is its own walk one of the walk's questions.
+    /// Nothing where it is no such thing, so that the caller counts it
+    /// through instead.
+    fn walk_asked(&mut self, x: &Value, named: Option<String>) -> Result<Option<Value>, Escape> {
+        let (Some(thing), Some(named)) = (self.walks_itself(x), named) else { return Ok(None) };
+        let Some(program) = thing.of.program(&named).cloned() else { return Ok(None) };
+        Ok(Some(self.invoke(program, self.outermost.clone(), vec![x.clone()])?))
+    }
+
     fn class_lacking(&self, x: &Value) -> Option<String> {
         if !self.spelled_stands {
             return None;
@@ -1096,6 +1218,14 @@ impl<'a> Machine<'a> {
                 }
                 Ok(Value::Shared(shared_deep(held, &keys, makes)?))
             }
+            Form::Ready(slot) => {
+                let f = ascend(frame, slot.up);
+                let mut cells = f.cells.borrow_mut();
+                if matches!(cells[slot.at], Value::Unset) {
+                    cells[slot.at] = Value::Nil;
+                }
+                Ok(Value::Nil)
+            }
             Form::Forget(slot) => {
                 let f = ascend(frame, slot.up);
                 f.cells.borrow_mut()[slot.at] = Value::Unset;
@@ -1261,6 +1391,11 @@ impl<'a> Machine<'a> {
                     let (p, env) = self.pick(args, frame)?;
                     self.invoke(p, env, Vec::new())
                 }
+                Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn => {
+                    let v = self.value_list(args, frame)?;
+                    self.walking(op, name, &v)
+                }
+
                 Prim::Both | Prim::Either => {
                     let seen = self.value_of(&args[0], frame)?;
                     let left = self.stands_true(&seen);
@@ -1741,9 +1876,17 @@ impl<'a> Machine<'a> {
                 }
             }
             Prim::AtEnd => return Err("An empty index belongs on the left of an assignment".to_string()),
+            // The steps of a walk that a thing may answer for itself are
+            // worked out where a call can be made, not here.
+            Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn => {
+                return Err(format!("{}() is worked out where a call can be made", name))
+            }
             Prim::Kept => {
-                n(1)?;
-                Value::Flag(kept(&v[0]))
+                n(2)?;
+                match (&v[0], as_index(&v[1])) {
+                    (Value::Thing(thing), Ok(at)) => Value::Flag(thing.holds.borrow().get(at).map_or(true, |(_, x)| kept(x))),
+                    _ => Value::Flag(true),
+                }
             }
             Prim::Of => {
                 n(2)?;

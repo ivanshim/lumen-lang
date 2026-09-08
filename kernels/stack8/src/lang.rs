@@ -363,6 +363,23 @@ pub struct Lang {
     /// The method run when an object is let go, at the latest when the
     /// run ends.
     pub destructor: Option<String>,
+    /// A thing may be its own walk. The class of method names saying so,
+    /// and the five methods of the walk: wind back, whether there is
+    /// more, what stands here, what it is called, and step on.
+    pub walker_class: Option<String>,
+    pub walk_rewind: Option<String>,
+    pub walk_more: Option<String>,
+    pub walk_this: Option<String>,
+    pub walk_key: Option<String>,
+    pub walk_onward: Option<String>,
+    /// A thing may instead hand over another to be walked in its stead:
+    /// the class of method names saying so, and the method that hands
+    /// the walk over.
+    pub giver_class: Option<String>,
+    pub walk_giver: Option<String>,
+    /// The words for asking a thing that is its own walk to hand out
+    /// the items' own cells, which it has none of.
+    pub walk_no_cell: Option<String>,
     /// Words that may stand before a member and say nothing this kernel reads.
     pub modifier_words: Vec<String>,
     /// The modifier marking a member the class keeps for itself.
@@ -453,7 +470,9 @@ w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.
 w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
 w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
-w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.destructor | w ext.stmt.class.modifier | w ext.stmt.class.shared
+w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.destructor
+w ext.op.walk.class | w ext.op.walk.rewind | w ext.op.walk.more | w ext.op.walk.this | w ext.op.walk.key
+w ext.op.walk.onward | w ext.op.walk.giver.class | w ext.op.walk.giver | w ext.op.walk.no_cell | w ext.stmt.class.modifier | w ext.stmt.class.shared
 w ext.op.member | w ext.op.scope | w ext.op.instanceof | w ext.stmt.class.parent
 w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.try | w ext.stmt.catch
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
@@ -1165,6 +1184,15 @@ impl Lang {
             this_word: r.head("ext.stmt.class.this")?,
             constructor: r.head("ext.stmt.class.constructor")?,
             destructor: r.head("ext.stmt.class.destructor")?,
+            walker_class: r.head("ext.op.walk.class")?,
+            walk_rewind: r.head("ext.op.walk.rewind")?,
+            walk_more: r.head("ext.op.walk.more")?,
+            walk_this: r.head("ext.op.walk.this")?,
+            walk_key: r.head("ext.op.walk.key")?,
+            walk_onward: r.head("ext.op.walk.onward")?,
+            giver_class: r.head("ext.op.walk.giver.class")?,
+            walk_giver: r.head("ext.op.walk.giver")?,
+            walk_no_cell: r.head("ext.op.walk.no_cell")?,
             modifier_words: r.strings("ext.stmt.class.modifier")?,
             shared_words: r.strings("ext.stmt.class.shared")?,
             member_mark: r.head("ext.op.member")?,

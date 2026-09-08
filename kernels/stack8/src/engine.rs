@@ -480,6 +480,58 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// What a thing hands over to be walked in its stead, where it is a
+    /// thing that hands one over and what it hands back is not itself.
+    fn walk_handed(&mut self, held: &Value) -> Result<Option<Value>, Fault> {
+        let (Some(class), Some(gives)) = (self.lang.giver_class.clone(), self.lang.walk_giver.clone()) else { return Ok(None) };
+        let Value::Object(o) = held else { return Ok(None) };
+        if !o.class.named(&class, self.lang.classes_folded) {
+            return Ok(None);
+        }
+        let Some(method) = o.class.method(&gives).cloned() else { return Ok(None) };
+        self.invoke(&method, vec![held.clone()])?;
+        let handed = self.drop_top()?;
+        let itself = matches!((&handed, held), (Value::Object(a), Value::Object(b)) if Rc::ptr_eq(a, b));
+        Ok(match itself {
+            true => None,
+            false => Some(handed),
+        })
+    }
+
+    /// A value with no places at all cannot be walked. A language with
+    /// a word for a warning is told so and walks it no times, rather
+    /// than having the run stopped over it.
+    fn walkable(&mut self, held: &Value) -> Result<(), Fault> {
+        if matches!(held, Value::Array(_) | Value::Map(_) | Value::Object(_)) {
+            return Ok(());
+        }
+        if !self.lang.warns_of_unwritten {
+            return Err("Cannot walk a value that is not an array".to_string().into());
+        }
+        let told = format!("foreach() argument must be of type array|object, {} given", self.kind_named(held));
+        self.complain(Complaint::Warning, &told);
+        Ok(())
+    }
+
+    /// The thing that is its own walk, where this value is one.
+    fn walker(&self, held: &Value) -> Option<Rc<Instance>> {
+        let class = self.lang.walker_class.as_deref()?;
+        match held {
+            Value::Object(o) if o.class.named(class, self.lang.classes_folded) => Some(o.clone()),
+            _ => None,
+        }
+    }
+
+    /// Ask a thing that is its own walk one of the walk's questions.
+    /// Nothing where the value is not such a thing, so that the caller
+    /// counts it through instead.
+    fn walk_asked(&mut self, held: &Value, named: Option<String>) -> Result<Option<Value>, Fault> {
+        let (Some(thing), Some(named)) = (self.walker(held), named) else { return Ok(None) };
+        let Some(method) = thing.class.method(&named).cloned() else { return Ok(None) };
+        self.invoke(&method, vec![held.clone()])?;
+        Ok(Some(self.drop_top()?))
+    }
+
     fn what_it_spells(&self, v: Value) -> Value {
         let Value::Text(name) = &v else { return v };
         if !self.lang.spelled_stands {
@@ -970,6 +1022,12 @@ impl<'a> Engine<'a> {
                     }
                     if slot.near.is_empty() {
                         self.world[slot.far] = Value::Blank;
+                    }
+                }
+                Instr::Ready(slot) => {
+                    self.world.resize(self.registry.idents.len(), Value::Blank);
+                    if matches!(self.world[slot.far], Value::Blank) {
+                        self.world[slot.far] = Value::Null;
                     }
                 }
                 Instr::Missing(slot) => {
@@ -1565,7 +1623,77 @@ impl<'a> Engine<'a> {
                     Value::Bond(Rc::new(RefCell::new(held)))
                 }
             },
-            Action::Standing => Value::Flag(standing(&self.drop_top()?)),
+            Action::Standing => {
+                let pair = self.drop_many(2)?;
+                match (&pair[0], as_index(&pair[1])) {
+                    (Value::Object(o), Ok(at)) => Value::Flag(o.fields.borrow().get(at).map_or(true, |(_, v)| standing(v))),
+                    _ => Value::Flag(true),
+                }
+            }
+            // A thing may be its own walk, or may hand another over to
+            // be walked in its stead. Either way the walk begins here.
+            Action::WalkFrom => {
+                let mut handed = self.drop_top()?;
+                // One thing may hand over another that hands over a
+                // third, so the asking goes on until what comes back is
+                // no longer a thing that hands one over. A thing that
+                // hands back itself hands back nothing further.
+                while let Some(next) = self.walk_handed(&handed)? {
+                    handed = next;
+                }
+                match self.walker(&handed) {
+                    Some(_) => {
+                        self.walk_asked(&handed, self.lang.walk_rewind.clone())?;
+                    }
+                    None => self.walkable(&handed)?,
+                }
+                handed
+            }
+            Action::WalkAlone => {
+                let held = self.drop_top()?;
+                match (self.walker(&held), self.lang.walk_no_cell.clone()) {
+                    (Some(_), Some(said)) => return Err(said.into()),
+                    (Some(_), None) => {}
+                    (None, _) => self.walkable(&held)?,
+                }
+                Value::Null
+            }
+            Action::WalkMore => {
+                let pair = self.drop_many(2)?;
+                match self.walk_asked(&pair[0], self.lang.walk_more.clone())? {
+                    Some(answer) => Value::Flag(self.truth(&answer)),
+                    None => {
+                        let reach = match &pair[0] {
+                            Value::Array(items) => items.len(),
+                            Value::Map(pairs) => pairs.len(),
+                            Value::Object(o) => o.fields.borrow().len(),
+                            _ => 0,
+                        };
+                        Value::Flag(as_index(&pair[1]).map_or(false, |at| at < reach))
+                    }
+                }
+            }
+            Action::WalkThis | Action::WalkKey => {
+                let key = matches!(op, Action::WalkKey);
+                let named = match key {
+                    true => self.lang.walk_key.clone(),
+                    false => self.lang.walk_this.clone(),
+                };
+                let pair = self.drop_many(2)?;
+                match self.walk_asked(&pair[0], named)? {
+                    Some(answer) => answer,
+                    None => {
+                        self.data.push(pair[0].clone());
+                        self.data.push(pair[1].clone());
+                        return self.perform(if key { &Action::KeyAt } else { &Action::ValueAt }, 2);
+                    }
+                }
+            }
+            Action::WalkOnward => {
+                let held = self.drop_top()?;
+                self.walk_asked(&held, self.lang.walk_onward.clone())?;
+                Value::Null
+            }
             Action::Extent => match self.drop_top()? {
                 Value::Array(items) => Value::Small(items.len() as i64),
                 Value::Map(pairs) => Value::Small(pairs.len() as i64),

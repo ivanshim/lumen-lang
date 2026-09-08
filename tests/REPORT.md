@@ -19,19 +19,18 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 81, differs 5, error 18, skipped 10 | pass 81, differs 5, error 18, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 143, differs 33, error 32, skipped 5 | pass 143, differs 33, error 32, skipped 5 |
+| `php/lang` | 213 | pass 146, differs 36, error 26, skipped 5 | pass 146, differs 36, error 26, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 46, differs 10, error 2, skipped 6 | pass 46, differs 10, error 2, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 296, differs 49, error 52, skipped 25 | pass 296, differs 49, error 52, skipped 25 |
+| all | 422 | pass 299, differs 52, error 46, skipped 25 | pass 299, differs 52, error 46, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 49 |
+| ran, printed something else | 52 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
-| Fatal error: Uncaught Error: Undefined variable: iterator in <file> | 5 |
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
 | skip php-cgi not available | 2 |
@@ -68,6 +67,7 @@ is listed, since the full kernels are meant to behave alike.
 | skip setlocale() failed | 1 |
 | skip only for Windows | 1 |
 | Fatal error: Uncaught Error: Undefined variable: include in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: datetime in <file> | 1 |
 
 ### Reserved words: 55 of 68 spelled
 
@@ -93,7 +93,7 @@ Not spelled: `callable`, `clone`, `declare`, `enddeclare`, `fn`, `goto`, `instea
 | `__construct` | 24 | yes |
 | `print_r` | 21 | yes |
 | `file_get_contents` | 21 | no |
-| `current` | 13 | no |
+| `current` | 13 | yes |
 | `var_export` | 12 | no |
 | `ob_start` | 12 | no |
 | `doForEach` | 12 | no |
@@ -108,12 +108,12 @@ Not spelled: `callable`, `clone`, `declare`, `enddeclare`, `fn`, `goto`, `instea
 | `bin2hex` | 9 | no |
 | `fgetc` | 9 | no |
 | `fseek` | 9 | no |
-| `rewind` | 9 | no |
+| `rewind` | 9 | yes |
 | `set_error_handler` | 9 | no |
 | `bar` | 9 | no |
 | `func_get_args` | 9 | yes |
 | `array_push` | 9 | yes |
-| `getIterator` | 9 | no |
+| `getIterator` | 9 | yes |
 | `returnConstantByValue` | 9 | no |
 | `returnConstantByRef` | 9 | no |
 | `returnVariableByRef` | 9 | no |
@@ -471,12 +471,12 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/foreachLoop.015.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
 | `php/lang/foreachLoop.016.phpt` | error | error | Parse error: A foreach that hands out its items for writing needs a named array in <file> |
 | `php/lang/foreachLoop.017.phpt` | pass | pass |  |
-| `php/lang/foreachLoopIterator.001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: iterator in <file> |
-| `php/lang/foreachLoopIterator.002.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: iterator in <file> |
-| `php/lang/foreachLoopIteratorAggregate.001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: iterator in <file> |
-| `php/lang/foreachLoopIteratorAggregate.002.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: iteratoraggregate in <file> |
-| `php/lang/foreachLoopIteratorAggregate.003.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: iterator in <file> |
-| `php/lang/foreachLoopIteratorAggregate.004.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: iterator in <file> |
+| `php/lang/foreachLoopIterator.001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoopIterator.002.phpt` | pass | pass |  |
+| `php/lang/foreachLoopIteratorAggregate.001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoopIteratorAggregate.002.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoopIteratorAggregate.003.phpt` | pass | pass |  |
+| `php/lang/foreachLoopIteratorAggregate.004.phpt` | pass | pass |  |
 | `php/lang/foreachLoopObjects.001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/foreachLoopObjects.002.phpt` | differs | differs | ran, printed something else |
 | `php/lang/foreachLoopObjects.003.phpt` | differs | differs | ran, printed something else |

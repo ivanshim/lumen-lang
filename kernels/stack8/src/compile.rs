@@ -860,6 +860,12 @@ impl<'a> Compiler<'a> {
         let sep = self.lang.calling.as_ref().and_then(|c| c.between.clone());
         loop {
             let name = self.want_name("after the global keyword")?;
+            // A name bound to a global stands for that global whether or
+            // not anything was ever written to it, so the global is made
+            // to hold nothing where it held nothing at all: reading it
+            // is then reading a name written to.
+            let cell = Cell { ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false };
+            self.put(Instr::Ready(cell));
             self.piece().globals.push((name.clone(), name));
             match &sep {
                 Some(s) if self.at_symbol(s) => {
@@ -1043,19 +1049,33 @@ impl<'a> Compiler<'a> {
     /// the value bound from it at the head of each pass.
     fn walk(&mut self, bag: &str, key: Option<&str>, value: &str, shared: bool, place: Option<usize>) -> Res<()> {
         let lang = self.lang;
+        // A walk that hands out the items' own cells goes over the array
+        // as it stands: what the body does to the array it does to the
+        // walk. One that walks a copy takes the copy here, and what the
+        // body does to the array is nothing to it — save where what is
+        // walked is a thing, which is a handle and so is walked itself.
+        // A thing that is its own walk, or that hands another over to be
+        // walked in its stead, is also settled here, once.
+        if shared {
+            // A thing that is its own walk holds no cells of its own to
+            // hand out, and a language with words for that says so.
+            self.read(bag);
+            self.act(Action::WalkAlone, 1);
+            self.put_away();
+        }
+        let over = match shared {
+            true => bag.to_string(),
+            false => {
+                let copy = self.gensym("walk");
+                self.read(bag);
+                self.act(Action::WalkFrom, 1);
+                self.write(&copy);
+                copy
+            }
+        };
         let at = self.gensym("at");
         self.constant(Value::Small(0));
         self.write(&at);
-        // A walk that hands out the items' own cells goes over the array
-        // as it stands, so how far it reaches is asked afresh at the foot
-        // of every pass; one that walks a copy asks once, before it
-        // begins, and what the body does to the array is nothing to it.
-        let extent = self.gensym("extent");
-        if !shared {
-            self.read(bag);
-            self.act(Action::Extent, 1);
-            self.write(&extent);
-        }
         let to_test = self.leap();
         let top = self.mark();
         self.enter_cycle(None);
@@ -1065,20 +1085,16 @@ impl<'a> Compiler<'a> {
         // of that pass had gone straight on to the next. Only a language
         // with things to take members off asks the question at all.
         if !lang.class_words.is_empty() {
-            self.read(bag);
+            self.read(&over);
             self.read(&at);
-            self.act(Action::ValueAt, 2);
-            self.act(Action::Standing, 1);
+            self.act(Action::Standing, 2);
             let step_over = self.skip();
             let deep = self.piece().cycles.len() - 1;
             self.piece().cycles[deep].resumes.push(step_over);
         }
-        if let Some(key) = key {
-            self.read(bag);
-            self.read(&at);
-            self.act(Action::KeyAt, 2);
-            self.write(key);
-        }
+        // What stands here is asked for before what it is called, since
+        // a thing that is its own walk is asked both and answers in that
+        // order.
         if shared {
             // The name is fastened to the item's own cell.
             self.read(&at);
@@ -1087,10 +1103,16 @@ impl<'a> Compiler<'a> {
             let name = self.cell_to_write(value);
             self.put(Instr::Fasten(name));
         } else {
-            self.read(bag);
+            self.read(&over);
             self.read(&at);
-            self.act(Action::ValueAt, 2);
+            self.act(Action::WalkThis, 2);
             self.write(value);
+        }
+        if let Some(key) = key {
+            self.read(&over);
+            self.read(&at);
+            self.act(Action::WalkKey, 2);
+            self.write(key);
         }
         // Where the walk hands its items to a place, the place is read
         // again here, with the item waiting in the walk's own cell.
@@ -1111,15 +1133,13 @@ impl<'a> Compiler<'a> {
         self.constant(Value::Small(1));
         self.act(Action::Add, 2);
         self.write(&at);
+        self.read(&over);
+        self.act(Action::WalkOnward, 1);
+        self.put_away();
         self.land(to_test);
+        self.read(&over);
         self.read(&at);
-        if shared {
-            self.read(bag);
-            self.act(Action::Extent, 1);
-        } else {
-            self.read(&extent);
-        }
-        self.act(Action::Lt, 2);
+        self.act(Action::WalkMore, 2);
         self.loop_back(top);
         self.leave_cycle(again);
         Ok(())

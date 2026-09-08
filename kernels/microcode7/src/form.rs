@@ -184,8 +184,25 @@ pub enum Prim {
     /// How many places an array or a map holds.
     Extent,
     /// Whether a thing still keeps a member at the place a walk has
-    /// reached. Where it does not, the pass is passed over.
+    /// reached. Where it does not, the pass is passed over. The thing
+    /// comes first, the place after it.
     Kept,
+    /// What a walk walks. A thing handing another over to be walked in
+    /// its stead answers with that one, and so on until one does not; a
+    /// thing that is its own walk is wound back and answers with itself;
+    /// anything else answers with itself.
+    Walked,
+    /// Whether a walk has more to hand out, what is at hand, what it is
+    /// named, and the step onward. A thing that is its own walk is
+    /// asked; anything else is counted through, as an array is.
+    MoreYet,
+    AtHand,
+    NamedHere,
+    StepOn,
+    /// Asked before a walk that hands out the items' own cells: a thing
+    /// that is its own walk keeps no such cells, and a language with
+    /// words for that says so and stops.
+    AloneWalk,
     /// `a[]`, a place only a store reaches.
     AtEnd,
     /// A thing of the class given, its maker run over the rest.
@@ -294,6 +311,10 @@ pub enum Form {
     ShareCalled(Box<Form>),
     /// Leave this binding as though nothing were ever written to it.
     Forget(Address),
+    /// Make this global ready: where nothing was ever written to it,
+    /// nothing is written to it now, so that a name bound to it names
+    /// a binding written to and not one never written.
+    Ready(Address),
     /// Find this value with whatever it has to say about itself kept
     /// quiet: how a language that lets a program silence one piece of
     /// itself says which piece.

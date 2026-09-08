@@ -314,6 +314,23 @@ only. The extension labels so far, all from PHP:
   block may be opened in one run and closed in another, which is how a
   page is written around a loop. One line end straight after the closing
   marker belongs to it.
+- `ext.op.walk.class` and its family: a thing may be its own walk.
+  `ext.op.walk.class` is the class of method names saying so (PHP's
+  `Iterator`), and `ext.op.walk.rewind`, `.more`, `.this`, `.key` and
+  `.onward` are the five methods of the walk: wind back, whether there
+  is more, what stands here, what it is called, and the step onward. A
+  walk winds the thing back once, then asks whether there is more, what
+  stands here and — only where the walk names its keys — what that is
+  called; the step onward comes before the next asking and not after
+  the first. `ext.op.walk.giver.class` and `ext.op.walk.giver` are for a
+  thing that hands another over to be walked in its stead (PHP's
+  `IteratorAggregate` and `getIterator`); one so handed over may hand
+  over a third, and the asking goes on until what comes back hands over
+  nothing further. `ext.op.walk.no_cell` is the words for asking such a
+  thing to hand out the items' own cells, which it has none of. The
+  classes themselves are declared in the language's own library, not
+  here: the kernel is told only which class stands for each and what the
+  methods are called.
 - `ext.op.index.scalar`: the words for using a value with no places at
   all as though it had them, PHP's `Cannot use a scalar value as an
   array`. Without them the kernel says so in its own words.
@@ -1171,6 +1188,15 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.scope` | - | - | - | - | - | - | - | `::` | - | - |
 | `ext.op.spelled` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.ternary` | - | - | - | - | - | - | - | `?` `:` | - | - |
+| `ext.op.walk.class` | - | - | - | - | - | - | - | `Iterator` | - | - |
+| `ext.op.walk.giver` | - | - | - | - | - | - | - | `getIterator` | - | - |
+| `ext.op.walk.giver.class` | - | - | - | - | - | - | - | `IteratorAggregate` | - | - |
+| `ext.op.walk.key` | - | - | - | - | - | - | - | `key` | - | - |
+| `ext.op.walk.more` | - | - | - | - | - | - | - | `valid` | - | - |
+| `ext.op.walk.no_cell` | - | - | - | - | - | - | - | `An iterator cannot be used with foreach by reference` | - | - |
+| `ext.op.walk.onward` | - | - | - | - | - | - | - | `next` | - | - |
+| `ext.op.walk.rewind` | - | - | - | - | - | - | - | `rewind` | - | - |
+| `ext.op.walk.this` | - | - | - | - | - | - | - | `current` | - | - |
 | `ext.stmt.block.instead` | - | - | - | - | - | - | - | `:` | - | - |
 | `ext.stmt.block.instead.close` | - | - | - | - | - | - | - | `endif` `endwhile` `endfor` `endforeach` `endswitch` | - | - |
 | `ext.stmt.break.levels` | - | - | - | - | - | - | - | `true` | - | - |
