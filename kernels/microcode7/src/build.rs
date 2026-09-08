@@ -2126,6 +2126,17 @@ impl<'a> Builder<'a> {
                 let mut in_cells = Vec::new();
                 self.gensyms += 1;
                 let root = format!("#in{}", self.gensyms);
+                self.gensyms += 1;
+                let holding = format!("#value{}", self.gensyms);
+                // The value is worked out while what the chain stands on
+                // is still whole, since working it out may change that
+                // very thing. A compound write cannot: it wants the
+                // place read first, and so comes after the way in.
+                let mut afterward = None;
+                match compound {
+                    None => steps.push(self.write(&holding, value)),
+                    Some(_) => afterward = Some(value),
+                }
                 // What the chain stands on is taken as a cell, so that
                 // rewriting the arrays within it lands where it lives
                 // and nothing need be written back afterwards.
@@ -2143,17 +2154,12 @@ impl<'a> Builder<'a> {
                     steps.push(self.write(&cell, further));
                     in_cells.push(cell);
                 }
-                self.gensyms += 1;
-                let holding = format!("#value{}", self.gensyms);
-                let written = match compound {
-                    Some(op) => {
-                        let (lands_in, key) = (self.read(&in_cells[deep]), self.read(&at_cells[deep]));
-                        let now = self.kept_before(prim_call(Prim::At, vec![lands_in, key]));
-                        self.kept_after(prim_call(op, vec![now, value]))
-                    }
-                    None => value,
-                };
-                steps.push(self.write(&holding, written));
+                if let (Some(op), Some(value)) = (compound, afterward) {
+                    let (lands_in, key) = (self.read(&in_cells[deep]), self.read(&at_cells[deep]));
+                    let now = self.kept_before(prim_call(Prim::At, vec![lands_in, key]));
+                    let combined = self.kept_after(prim_call(op, vec![now, value]));
+                    steps.push(self.write(&holding, combined));
+                }
                 let lands_in = self.read(&in_cells[deep]);
                 let put = self.read(&holding);
                 steps.push(match after {
@@ -2201,6 +2207,18 @@ impl<'a> Builder<'a> {
                 let mut in_cells = Vec::new();
                 self.gensyms += 1;
                 let root = format!("#in{}", self.gensyms);
+                self.gensyms += 1;
+                let holding = format!("#value{}", self.gensyms);
+                // The value comes first, while the name still holds what
+                // it held: reading the array out to rewrite it would
+                // leave the name empty while the value is worked out,
+                // and working it out may change the array itself. A
+                // compound write wants the place read first, and waits.
+                let mut afterward = None;
+                match compound {
+                    None => steps.push(self.write(&holding, value)),
+                    Some(_) => afterward = Some(value),
+                }
                 // Where a write makes the places it needs, the name it
                 // starts from has nothing to say about being empty.
                 let start = self.read_to_write(&name);
@@ -2218,17 +2236,12 @@ impl<'a> Builder<'a> {
                     steps.push(self.write(&cell, further));
                     in_cells.push(cell);
                 }
-                self.gensyms += 1;
-                let holding = format!("#value{}", self.gensyms);
-                let written = match compound {
-                    Some(op) => {
-                        let (lands_in, key) = (self.read(&in_cells[deep]), self.read(&at_cells[deep]));
-                        let now = self.kept_before(prim_call(Prim::At, vec![lands_in, key]));
-                        self.kept_after(prim_call(op, vec![now, value]))
-                    }
-                    None => value,
-                };
-                steps.push(self.write(&holding, written));
+                if let (Some(op), Some(value)) = (compound, afterward) {
+                    let (lands_in, key) = (self.read(&in_cells[deep]), self.read(&at_cells[deep]));
+                    let now = self.kept_before(prim_call(Prim::At, vec![lands_in, key]));
+                    let combined = self.kept_after(prim_call(op, vec![now, value]));
+                    steps.push(self.write(&holding, combined));
+                }
                 // Writing into a place changes the array the name holds
                 // where it stands, so each array along the way is written
                 // into the one above it, from the innermost outwards.

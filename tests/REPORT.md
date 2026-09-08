@@ -19,12 +19,12 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 81, differs 5, error 18, skipped 10 | pass 81, differs 5, error 18, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 124, differs 42, error 42, skipped 5 | pass 124, differs 42, error 42, skipped 5 |
+| `php/lang` | 213 | pass 125, differs 42, error 41, skipped 5 | pass 125, differs 42, error 41, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 46, differs 10, error 2, skipped 6 | pass 46, differs 10, error 2, skipped 6 |
 | `php/lang/string` | 9 | pass 2, differs 1, error 6, skipped 0 | pass 2, differs 1, error 6, skipped 0 |
-| all | 422 | pass 271, differs 58, error 68, skipped 25 | pass 271, differs 58, error 68, skipped 25 |
+| all | 422 | pass 272, differs 58, error 67, skipped 25 | pass 272, differs 58, error 67, skipped 25 |
 
 | Reason | Tests |
 |---|---|
@@ -36,7 +36,6 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
 | skip php-cgi not available | 2 |
-| Expected an expression | 2 |
 | timeout | 2 |
 | Unexpected token: { | 2 |
 | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> | 2 |
@@ -47,6 +46,7 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: PHP_BINARY in <file> | 1 |
+| Unexpected token: << | 1 |
 | Fatal error: Uncaught Error: Undefined variable: ENT_HTML5 in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> | 1 |
 | Expected identifier as the property name, got '{' | 1 |
@@ -57,7 +57,7 @@ is listed, since the full kernels are meant to behave alike.
 | skip Run only on Windows | 1 |
 | Fatal error: Uncaught Error: Undefined variable: infiniteiterator in <file> | 1 |
 | Fatal error: Uncaught Error: Unexpected token: ; in <file> | 1 |
-| Fatal error: Uncaught Error: Unexpected token: += in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: mktime in <file> | 1 |
 | Fatal error: Uncaught Error: Cannot call method 'GetMyName' on a value that is not an object in <file> | 1 |
 | skip Can't find german locale | 1 |
 | Fatal error: Uncaught Error: Cannot reach 'b' in B in <file> | 1 |
@@ -239,7 +239,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/bug54514.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: PHP_BINARY in <file> |
 | `php/basic/bug55500.phpt` | pass | pass |  |
 | `php/basic/bug61000.phpt` | pass | pass |  |
-| `php/basic/bug67198.phpt` | error | error | Expected an expression |
+| `php/basic/bug67198.phpt` | error | error | Unexpected token: << |
 | `php/basic/bug67988.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ENT_HTML5 in <file> |
 | `php/basic/bug71273.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> |
 | `php/basic/bug73969.phpt` | error | error | Expected identifier as the property name, got '{' |
@@ -345,7 +345,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/020.phpt` | pass | pass |  |
 | `php/lang/021.phpt` | pass | pass |  |
 | `php/lang/022.phpt` | pass | pass |  |
-| `php/lang/023.phpt` | error | error | Fatal error: Uncaught Error: Unexpected token: += in <file> |
+| `php/lang/023.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: mktime in <file> |
 | `php/lang/024.phpt` | pass | pass |  |
 | `php/lang/025.phpt` | pass | pass |  |
 | `php/lang/026.phpt` | pass | pass |  |
@@ -447,7 +447,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/empty_variation.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_001.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_002.phpt` | error | error | Fatal error: Uncaught Error: Cannot index non-array value in <file> |
-| `php/lang/engine_assignExecutionOrder_003.phpt` | error | error | Expected an expression |
+| `php/lang/engine_assignExecutionOrder_003.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_004.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_005.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_006.phpt` | pass | pass |  |
