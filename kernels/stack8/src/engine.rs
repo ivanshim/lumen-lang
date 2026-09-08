@@ -2675,7 +2675,14 @@ fn place_within<'a>(held: &'a mut Value, at: &Value, makes: bool) -> Res<&'a mut
     if makes && matches!(held, Value::Null | Value::Blank | Value::Gap) {
         *held = Value::Array(Rc::new(Vec::new()));
     }
-    if matches!(held, Value::Array(_)) && as_index(at).is_err() {
+    // A list holds only the places it already has: a key that is no
+    // whole number, or one past the last, makes it a map, which is what
+    // a plain write into such a place does too.
+    let beyond = match (&*held, as_index(at)) {
+        (Value::Array(items), Ok(i)) => i >= items.len(),
+        _ => true,
+    };
+    if matches!(held, Value::Array(_)) && beyond {
         let Value::Array(items) = &*held else { unreachable!("a list") };
         let spread = items.iter().enumerate().map(|(i, v)| (Value::Small(i as i64), v.clone())).collect();
         *held = Value::Map(Rc::new(spread));
@@ -2684,11 +2691,6 @@ fn place_within<'a>(held: &'a mut Value, at: &Value, makes: bool) -> Res<&'a mut
         Value::Array(items) => {
             let i = as_index(at)?;
             let items = Rc::make_mut(items);
-            if makes {
-                while items.len() <= i {
-                    items.push(Value::Null);
-                }
-            }
             let reach = items.len();
             match items.get_mut(i) {
                 Some(place) => place,

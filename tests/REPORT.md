@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 49, differs 29, error 26, skipped 10 | pass 49, differs 29, error 26, skipped 10 |
 | `php/func` | 14 | pass 13, differs 0, error 1, skipped 0 | pass 13, differs 0, error 1, skipped 0 |
-| `php/lang` | 213 | pass 113, differs 40, error 55, skipped 5 | pass 113, differs 40, error 55, skipped 5 |
+| `php/lang` | 213 | pass 114, differs 39, error 55, skipped 5 | pass 114, differs 39, error 55, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 21, error 3, skipped 6 | pass 34, differs 21, error 3, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 214, differs 98, error 85, skipped 25 | pass 214, differs 98, error 85, skipped 25 |
+| all | 422 | pass 215, differs 97, error 85, skipped 25 | pass 215, differs 97, error 85, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 98 |
+| ran, printed something else | 97 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
@@ -578,7 +578,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/passByReference_003.phpt` | pass | pass |  |
 | `php/lang/passByReference_004.phpt` | pass | pass |  |
 | `php/lang/passByReference_005.phpt` | pass | pass |  |
-| `php/lang/passByReference_006.phpt` | differs | differs | ran, printed something else |
+| `php/lang/passByReference_006.phpt` | pass | pass |  |
 | `php/lang/passByReference_007.phpt` | differs | differs | ran, printed something else |
 | `php/lang/passByReference_008.phpt` | pass | pass |  |
 | `php/lang/passByReference_009.phpt` | pass | pass |  |
