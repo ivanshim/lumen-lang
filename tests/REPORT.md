@@ -19,12 +19,12 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 91, differs 2, error 11, skipped 10 | pass 91, differs 2, error 11, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 178, differs 21, error 9, skipped 5 | pass 178, differs 21, error 9, skipped 5 |
+| `php/lang` | 213 | pass 179, differs 21, error 8, skipped 5 | pass 179, differs 21, error 8, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 49, differs 8, error 1, skipped 6 | pass 49, differs 8, error 1, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 344, differs 32, error 21, skipped 25 | pass 344, differs 32, error 21, skipped 25 |
+| all | 422 | pass 345, differs 32, error 20, skipped 25 | pass 345, differs 32, error 20, skipped 25 |
 
 | Reason | Tests |
 |---|---|
@@ -32,7 +32,6 @@ is listed, since the full kernels are meant to behave alike.
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | skip php-cgi not available | 2 |
-| timeout | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> | 1 |
@@ -41,6 +40,7 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: ENT_HTML5 in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> | 1 |
 | Parse error: Expected identifier as the property name, got '{' in <file> | 1 |
+| timeout | 1 |
 | skip locale needed for this test is not supported on this platform | 1 |
 | Fatal error: Uncaught Error: Undefined variable: umask in <file> | 1 |
 | skip for Windows only | 1 |
@@ -357,7 +357,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/042.phpt` | pass | pass |  |
 | `php/lang/043.phpt` | pass | pass |  |
 | `php/lang/044.phpt` | pass | pass |  |
-| `php/lang/045.phpt` | error | error | timeout |
+| `php/lang/045.phpt` | pass | pass |  |
 | `php/lang/array_shortcut_001.phpt` | pass | pass |  |
 | `php/lang/array_shortcut_002.phpt` | pass | pass |  |
 | `php/lang/array_shortcut_003.phpt` | pass | pass |  |

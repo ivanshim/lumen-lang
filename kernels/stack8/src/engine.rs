@@ -365,11 +365,13 @@ impl<'a> Engine<'a> {
     /// they were named. One that raises something stops the rest, as a
     /// fault anywhere else does.
     pub fn run_when_done(&mut self) -> Result<(), Fault> {
-        // The clock the run was timed against is put away first: what a
+        // The clock the run was timed against starts afresh: what a
         // program named to run at the end runs even where the run was
-        // stopped for taking too long, and stopping it again would be
-        // stopping something that has not been given its own time.
-        self.began.set(None);
+        // stopped for taking too long, and is given the whole of the
+        // time the run was allowed rather than what was left of it.
+        if self.limit.get() > 0 {
+            self.began.set(Some(std::time::Instant::now()));
+        }
         loop {
             let next = {
                 let mut waiting = self.when_done.borrow_mut();

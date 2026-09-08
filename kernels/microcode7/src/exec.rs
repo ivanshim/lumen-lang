@@ -659,11 +659,13 @@ impl<'a> Machine<'a> {
     /// they were named. One that raises something stops the rest, as a
     /// fault anywhere else does.
     pub fn run_afterward(&mut self) -> Result<(), String> {
-        // The clock the run was timed against is put away first: what a
+        // The clock the run was timed against starts afresh: what a
         // program named to run afterward runs even where the run was
-        // stopped for taking too long, and stopping it again would stop
-        // something that was never given time of its own.
-        self.started = None;
+        // stopped for taking too long, and is given the whole of the
+        // time the run was allowed rather than what was left of it.
+        if self.allowed > 0 {
+            self.started = Some(std::time::Instant::now());
+        }
         loop {
             let next = {
                 let mut waiting = self.afterward.borrow_mut();
@@ -674,10 +676,21 @@ impl<'a> Machine<'a> {
             };
             let (work, given) = next;
             if let Value::Bound(p, env) = self.what_it_spells(work) {
-                self.invoke(p, env, given).map_err(|e| match e {
-                    Escape::Error(m) => m,
-                    _ => String::new(),
-                })?;
+                if let Err(over) = self.invoke(p, env, given) {
+                    // What a program named to run afterward may itself
+                    // be stopped, and that is told as the ending of the
+                    // run it was named by is told.
+                    return Err(match over {
+                        Escape::Error(m) => m,
+                        Escape::Stopped(told) => {
+                            if let Some((_, word)) = self.complaint_words.iter().find(|(k, _)| *k == "fatal") {
+                                self.utter(&format!("\n{}: {} in {} on line {}\n", word, told, self.written_in, self.row));
+                            }
+                            told
+                        }
+                        _ => String::new(),
+                    });
+                }
             }
         }
     }
