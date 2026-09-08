@@ -19,12 +19,12 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 44, differs 32, error 28, skipped 10 | pass 44, differs 32, error 28, skipped 10 |
 | `php/func` | 14 | pass 7, differs 3, error 4, skipped 0 | pass 7, differs 3, error 4, skipped 0 |
-| `php/lang` | 213 | pass 72, differs 53, error 83, skipped 5 | pass 72, differs 53, error 83, skipped 5 |
+| `php/lang` | 213 | pass 74, differs 53, error 81, skipped 5 | pass 74, differs 53, error 81, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 31, differs 21, error 6, skipped 6 | pass 31, differs 21, error 6, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 159, differs 117, error 121, skipped 25 | pass 159, differs 117, error 121, skipped 25 |
+| all | 422 | pass 161, differs 117, error 119, skipped 25 | pass 161, differs 117, error 119, skipped 25 |
 
 | Reason | Tests |
 |---|---|
@@ -50,7 +50,6 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Maximum execution time of 1 second exceeded in <file> | 2 |
 | Fatal error: Uncaught Error: Undefined variable: ob_get_contents in <file> | 2 |
 | Invalid assignment target before '=' | 2 |
-| Expected ')' after the foreach names, got '[' | 2 |
 | Unexpected token: } | 2 |
 | Fatal error: Uncaught Error: Only a class can be made into an object in <file> | 2 |
 | no --FILE-- section | 2 |
@@ -68,6 +67,7 @@ is listed, since the full kernels are meant to behave alike.
 | Expected identifier as the property name, got '{' | 1 |
 | Fatal error: Uncaught Error: Undefined variable: PHP_BUILD_DATE in <file> | 1 |
 | skip locale needed for this test is not supported on this platform | 1 |
+| Fatal error: Uncaught Error: Undefined variable: umask in <file> | 1 |
 
 ### Reserved words: 48 of 68 spelled
 
@@ -360,7 +360,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/037.phpt` | pass | pass |  |
 | `php/lang/038.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
 | `php/lang/039.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
-| `php/lang/040.phpt` | error | error | Expected ')' after the foreach names, got '[' |
+| `php/lang/040.phpt` | pass | pass |  |
 | `php/lang/041.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'b' in A in <file> |
 | `php/lang/042.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'B' in A in <file> |
 | `php/lang/043.phpt` | error | error | Fatal error: Uncaught Error: Cannot call 'foo' on a value that is not a class in <file> |
@@ -459,7 +459,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/foreachLoop.001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: current in <file> |
 | `php/lang/foreachLoop.002.phpt` | error | error | Fatal error: Uncaught Error: Array index 2 out of bounds (length: 1) in <file> |
 | `php/lang/foreachLoop.003.phpt` | pass | pass |  |
-| `php/lang/foreachLoop.004.phpt` | error | error | Expected ')' after the foreach names, got '[' |
+| `php/lang/foreachLoop.004.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.005.phpt` | differs | differs | ran, printed something else |
 | `php/lang/foreachLoop.006.phpt` | differs | differs | ran, printed something else |
 | `php/lang/foreachLoop.009.phpt` | error | error | Fatal error: Uncaught Error: Array index 2 out of bounds (length: 1) in <file> |

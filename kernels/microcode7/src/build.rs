@@ -1209,30 +1209,74 @@ impl<'a> Builder<'a> {
         if shares {
             self.advance();
         }
+        // A walk may hand its items to a place and not only to a name:
+        // `foreach ($a as $b[0])`. Where the name is followed by more,
+        // where it began is kept and read again at the head of every
+        // pass, the item waiting in a cell of the walk's own.
+        let first_at = self.pos;
         let first = self.need_word("as the foreach variable")?;
         let coupled = table.single("syntax.map.pair").map_or(false, |m| self.sign(m));
-        let (key, item) = if coupled {
+        let mut place: Option<usize> = None;
+        let (key, mut item) = if coupled {
             self.advance();
             if table.single("ext.op.reference").map_or(false, |m| self.sign(m)) {
                 self.advance();
                 shares = true;
             }
-            (Some(first), self.need_word("as the foreach value")?)
+            let began = self.pos;
+            let held = self.need_word("as the foreach value")?;
+            if !self.sign(&close) {
+                place = Some(began);
+            }
+            (Some(first), held)
         } else {
+            if !self.sign(&close) {
+                place = Some(first_at);
+            }
             (None, first)
         };
+        if place.is_some() {
+            if shares {
+                return Err("A walk hands its items for writing to a name, not to a place".to_string());
+            }
+            self.step_to_close(&close)?;
+            self.gensyms += 1;
+            item = format!("#item{}", self.gensyms);
+        }
         let shares = match (shares, &named) {
             (true, Some(name)) => Some(name.clone()),
             (true, None) => return Err("A foreach that hands out its items for writing needs a named array".to_string()),
             (false, _) => None,
         };
         self.need_sign(&close, "after the foreach names")?;
-        self.walk(source, key, item, shares)
+        self.walk(source, key, item, shares, place)
+    }
+
+    /// Step to the mark closing a grouping, reading nothing on the way,
+    /// so what stands within may be read later.
+    fn step_to_close(&mut self, close: &str) -> Res<()> {
+        let open = self.table.single("syntax.group.open").unwrap_or("(").to_string();
+        let mut deep = 1usize;
+        while deep > 0 {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", close));
+            }
+            if self.sign(&open) {
+                deep += 1;
+            } else if self.sign(close) {
+                deep -= 1;
+                if deep == 0 {
+                    break;
+                }
+            }
+            self.advance();
+        }
+        Ok(())
     }
 
     /// The walk itself: a place counted to the extent, the key and the
     /// item read from it at the head of every pass.
-    fn walk(&mut self, source: Form, key: Option<String>, item: String, shares: Option<String>) -> Res<Form> {
+    fn walk(&mut self, source: Form, key: Option<String>, item: String, shares: Option<String>, place: Option<usize>) -> Res<Form> {
         let bag = self.gensym("bag");
         let bag_name = bag.ident.to_string();
         let hold = Form::Write(bag, Box::new(source));
@@ -1278,6 +1322,20 @@ impl<'a> Builder<'a> {
                         let found = prim_call(Prim::ItemAt, vec![bag, at]);
                         items.push(r.write(&item, found));
                     }
+                }
+                // Where the walk hands its items to a place, the place
+                // is read again here, the item waiting in the walk's
+                // own cell.
+                if let Some(began) = place {
+                    let after = r.pos;
+                    r.pos = began;
+                    let target = r.expr_at(0, false)?;
+                    let was = r.waiting.replace(item.clone());
+                    let stood = r.look().clone();
+                    let done = r.write_into(target, false, None, stood);
+                    r.waiting = was;
+                    r.pos = after;
+                    items.push(done?);
                 }
                 items.push(r.body()?);
                 Ok(sequence(items))
@@ -1543,7 +1601,7 @@ impl<'a> Builder<'a> {
                     return Err("A for loop needs a range: start..end".to_string());
                 }
                 self.address_to_write(&var);
-                return self.walk(start, None, var, None);
+                return self.walk(start, None, var, None, None);
             }
             self.advance();
             let end = self.expr(tier + 1)?;

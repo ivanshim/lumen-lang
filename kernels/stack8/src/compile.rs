@@ -905,28 +905,70 @@ impl<'a> Compiler<'a> {
         if shared {
             self.take();
         }
+        // A walk may hand its items to a place and not only to a name:
+        // `foreach ($a as $b[0])`. Where the name is followed by more,
+        // where it began is kept and read again at the top of each
+        // pass, the item waiting in a cell of the walk's own.
+        let first_at = self.pos;
         let first = self.want_name("as the foreach variable")?;
         let paired = lang.pair_mark.as_ref().map_or(false, |m| self.at_symbol(m));
-        let (key, value) = if paired {
+        let mut place: Option<usize> = None;
+        let (key, mut value) = if paired {
             self.take();
             if self.lang.reference_mark.as_ref().map_or(false, |m| self.at_symbol(m)) {
                 self.take();
                 shared = true;
             }
-            (Some(first), self.want_name("as the foreach value")?)
+            let began = self.pos;
+            let held = self.want_name("as the foreach value")?;
+            if !self.at_symbol(&group.close) {
+                place = Some(began);
+            }
+            (Some(first), held)
         } else {
+            if !self.at_symbol(&group.close) {
+                place = Some(first_at);
+            }
             (None, first)
         };
+        if place.is_some() {
+            if shared {
+                return Err("A walk hands its items for writing to a name, not to a place".to_string());
+            }
+            self.skip_to_close(&group)?;
+            value = self.gensym("item");
+        }
         if shared && named.is_none() {
             return Err("A foreach that hands out its items for writing needs a named array".to_string());
         }
         self.want_sign(&group.close, "after the foreach names")?;
-        self.walk(&bag, key.as_deref(), &value, shared)
+        self.walk(&bag, key.as_deref(), &value, shared, place)
+    }
+
+    /// Step to the mark that closes a grouping, reading nothing on the
+    /// way, so that what stands within it may be read later.
+    fn skip_to_close(&mut self, group: &Brackets) -> Res<()> {
+        let mut deep = 1usize;
+        while deep > 0 {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", group.close));
+            }
+            if self.at_symbol(&group.open) {
+                deep += 1;
+            } else if self.at_symbol(&group.close) {
+                deep -= 1;
+                if deep == 0 {
+                    break;
+                }
+            }
+            self.take();
+        }
+        Ok(())
     }
 
     /// The walk itself: a place counted up to the extent, the key and
     /// the value bound from it at the head of each pass.
-    fn walk(&mut self, bag: &str, key: Option<&str>, value: &str, shared: bool) -> Res<()> {
+    fn walk(&mut self, bag: &str, key: Option<&str>, value: &str, shared: bool, place: Option<usize>) -> Res<()> {
         let at = self.gensym("at");
         self.constant(Value::Small(0));
         self.write(&at);
@@ -955,6 +997,19 @@ impl<'a> Compiler<'a> {
             self.read(&at);
             self.act(Action::ValueAt, 2);
             self.write(value);
+        }
+        // Where the walk hands its items to a place, the place is read
+        // again here, with the item waiting in the walk's own cell.
+        if let Some(began) = place {
+            let after = self.pos;
+            self.pos = began;
+            let from = self.mark();
+            self.expr_at(0, false)?;
+            let was = self.waiting.replace(value.to_string());
+            let done = self.store_into(from, None, None, "=");
+            self.waiting = was;
+            self.pos = after;
+            done?;
         }
         self.body()?;
         let again = self.mark();
@@ -1402,7 +1457,7 @@ impl<'a> Compiler<'a> {
                     self.put(w);
                 }
                 self.write(&bag);
-                return self.walk(&bag, None, &var, false);
+                return self.walk(&bag, None, &var, false, None);
             }
             self.take();
             self.write(&var);
