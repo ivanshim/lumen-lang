@@ -56,6 +56,9 @@ pub struct Engine<'a> {
     /// done, each with what it is to be handed, in the order they were
     /// named.
     when_done: RefCell<Vec<(Value, Vec<Value>)>>,
+    /// Every object made, held loosely, in the order they were made, so
+    /// that those still standing when the run ends can be let go.
+    things_made: RefCell<Vec<std::rc::Weak<Instance>>>,
     /// The files already read where the program asked for them to be
     /// read only once, by the whole name each stands under.
     read_already: RefCell<std::collections::HashSet<String>>,
@@ -140,6 +143,7 @@ impl<'a> Engine<'a> {
             hushed: std::cell::Cell::new(0),
             holding: RefCell::new(Vec::new()),
             when_done: RefCell::new(Vec::new()),
+            things_made: RefCell::new(Vec::new()),
             read_already: RefCell::new(std::collections::HashSet::new()),
             complainer: RefCell::new(None),
             waiting: RefCell::new(Vec::new()),
@@ -271,6 +275,28 @@ impl<'a> Engine<'a> {
                 self.invoke(&p, given)?;
             }
         }
+    }
+
+    /// Every object still standing when the run ends is let go, in the
+    /// order the objects were made, each by the method its class names
+    /// for it. An object made by one of those is let go in its turn.
+    pub fn let_things_go(&mut self) {
+        let Some(named) = self.lang.destructor.clone() else { return };
+        let mut at = 0;
+        loop {
+            let standing = {
+                let made = self.things_made.borrow();
+                match made.get(at) {
+                    Some(loosely) => loosely.upgrade(),
+                    None => break,
+                }
+            };
+            at += 1;
+            let Some(thing) = standing else { continue };
+            let Some(method) = thing.class.method(&named).cloned() else { continue };
+            let _ = self.invoke(&method, vec![Value::Object(thing)]);
+        }
+        self.things_made.borrow_mut().clear();
     }
 
     /// What is still being kept when the run ends is let go, outermost
@@ -1293,6 +1319,9 @@ impl<'a> Engine<'a> {
                 };
                 self.made += 1;
                 let object = Rc::new(Instance { class: class.clone(), fields: RefCell::new(class.all_fields()), mark: self.made });
+                if self.lang.destructor.is_some() {
+                    self.things_made.borrow_mut().push(Rc::downgrade(&object));
+                }
                 let maker = self.lang.constructor.as_deref().and_then(|m| class.method(m)).cloned();
                 match maker {
                     Some(maker) => {
@@ -2121,7 +2150,16 @@ impl<'a> Engine<'a> {
                 .nth(i)
                 .map(|c| Value::text(&c.to_string()))
                 .ok_or_else(|| format!("String index {} out of bounds (length: {})", i, s.chars().count())),
-            _ => Err("Cannot index non-array value".to_string()),
+            _ => Err(self.not_an_array()),
+        }
+    }
+
+    /// What a language calls using a value with no places at all as
+    /// though it had them.
+    fn not_an_array(&self) -> String {
+        match &self.lang.scalar_index {
+            Some(said) => said.clone(),
+            None => "Cannot index non-array value".to_string(),
         }
     }
 
@@ -2500,7 +2538,7 @@ impl<'a> Engine<'a> {
                         Rc::make_mut(&mut pairs).push((Value::Small(key), v));
                         Value::Map(pairs)
                     }
-                    _ => return Err(format!("{}() requires an array", name)),
+                    _ => return Err(self.not_an_array()),
                 }
             }
             Builtin::Replace => {
@@ -2572,7 +2610,7 @@ impl<'a> Engine<'a> {
                         put_key(Rc::make_mut(&mut pairs), at, v);
                         Value::Map(pairs)
                     }
-                    _ => return Err(format!("{}() requires an array", name)),
+                    _ => return Err(self.not_an_array()),
                 }
             }
             Builtin::Pack => return Err(format!("{}() is a literal, not a call", name)),

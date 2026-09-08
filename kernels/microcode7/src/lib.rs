@@ -202,10 +202,12 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     }
     if let Err(told) = machine.run_main(&reduced.program.body) {
         let _ = machine.run_afterward();
+        machine.let_things_go();
         machine.let_go_all();
         return Err(told);
     }
     if let Err(told) = machine.run_afterward() {
+        machine.let_things_go();
         machine.let_go_all();
         return Err(told);
     }
@@ -215,12 +217,14 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
                 exec::Escape::Error(m) => m,
                 _ => String::new(),
             });
+            machine.let_things_go();
             machine.let_go_all();
             done?;
             return Ok(());
         }
     }
     // Whatever the run was still keeping goes out when it ends.
+    machine.let_things_go();
     machine.let_go_all();
     Ok(())
 }

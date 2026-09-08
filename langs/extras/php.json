@@ -540,6 +540,9 @@
   "ext.stmt.class.constructor": [
     "__construct"
   ],
+  "ext.stmt.class.destructor": [
+    "__destruct"
+  ],
   "ext.stmt.class.modifier": [
     "public",
     "private",
@@ -761,6 +764,9 @@
   ],
   "ext.system.fault.operands": [
     "Unsupported operand types"
+  ],
+  "ext.op.index.scalar": [
+    "Cannot use a scalar value as an array"
   ],
   "ext.system.fault.class.arithmetic": [
     "ArithmeticError"

@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 81, differs 5, error 18, skipped 10 | pass 81, differs 5, error 18, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 140, differs 36, error 32, skipped 5 | pass 140, differs 36, error 32, skipped 5 |
+| `php/lang` | 213 | pass 143, differs 33, error 32, skipped 5 | pass 143, differs 33, error 32, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 46, differs 10, error 2, skipped 6 | pass 46, differs 10, error 2, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 293, differs 52, error 52, skipped 25 | pass 293, differs 52, error 52, skipped 25 |
+| all | 422 | pass 296, differs 49, error 52, skipped 25 | pass 296, differs 49, error 52, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 52 |
+| ran, printed something else | 49 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | Fatal error: Uncaught Error: Undefined variable: iterator in <file> | 5 |
@@ -399,7 +399,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug24652.phpt` | pass | pass |  |
 | `php/lang/bug24658.phpt` | error | error | Fatal error: Uncaught Error: Function typehint_ref expects 2 arguments, got 1 in <file> |
 | `php/lang/bug24783.phpt` | pass | pass |  |
-| `php/lang/bug24908.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug24908.phpt` | pass | pass |  |
 | `php/lang/bug24951.phpt` | pass | pass |  |
 | `php/lang/bug25145.phpt` | pass | pass |  |
 | `php/lang/bug25547.phpt` | pass | pass |  |
@@ -416,9 +416,9 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug28213.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug28800.phpt` | pass | pass |  |
 | `php/lang/bug29566.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug29893.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug29893.phpt` | pass | pass |  |
 | `php/lang/bug29944.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug30578.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug30578.phpt` | pass | pass |  |
 | `php/lang/bug30638.phpt` | skipped | skipped | skip setlocale() failed |
 | `php/lang/bug30726.phpt` | pass | pass |  |
 | `php/lang/bug30862.phpt` | pass | pass |  |
@@ -446,7 +446,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/constants/PHP_INT_64bit.phpt` | pass | pass |  |
 | `php/lang/empty_variation.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_001.phpt` | pass | pass |  |
-| `php/lang/engine_assignExecutionOrder_002.phpt` | error | error | Fatal error: Uncaught Error: Cannot index non-array value in <file> |
+| `php/lang/engine_assignExecutionOrder_002.phpt` | error | error | Fatal error: Uncaught Error: Cannot use a scalar value as an array in <file> |
 | `php/lang/engine_assignExecutionOrder_003.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_004.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_005.phpt` | pass | pass |  |

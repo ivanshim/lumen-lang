@@ -546,9 +546,10 @@ $__flushing = false;
 $__started = array();
 function ob_start($handler = null) {
     global $__handlers, $__started, $__flushing;
-    // What is still being kept when the run ends is let go then, each
-    // keeping through its own handler, which only the language can do.
-    if (!$__flushing) { $__flushing = true; __at_end('__let_go_all'); }
+    // What is still being kept when the run ends is let go then. The
+    // kernel lets go of what it holds by itself; a handler is the one
+    // part it cannot run, so only a keeping given one is let go by hand.
+    if ($handler !== null && !$__flushing) { $__flushing = true; __at_end('__let_go_all'); }
     __output_hold();
     $__handlers[] = $handler;
     $__started[] = false;

@@ -190,11 +190,13 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
         // what was named to run at the end runs even then.
         if matches!(fault, engine::Fault::Finished) {
             let done = machine.run_when_done();
+            machine.let_things_go();
             machine.let_go_all();
             return done.map_err(|f| f.told(&machine.names()));
         }
         machine.ended_uncaught(&fault);
         let _ = machine.run_when_done();
+        machine.let_things_go();
         machine.let_go_all();
         return Err(fault.told(&machine.names()));
     }
@@ -205,12 +207,14 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     if let Some(entry) = &lang.entry_binding {
         if let Some(Value::Routine(main)) = machine.lookup(entry).cloned() {
             let done = machine.invoke(&main, Vec::new()).map_err(|f| f.told(&machine.names()));
+            machine.let_things_go();
             machine.let_go_all();
             done?;
             return Ok(());
         }
     }
     // Whatever the run was still keeping goes out when it ends.
+    machine.let_things_go();
     machine.let_go_all();
     Ok(())
 }

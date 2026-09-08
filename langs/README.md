@@ -285,7 +285,10 @@ only. The extension labels so far, all from PHP:
 - `ext.stmt.class` and its family: `ext.stmt.class.extends`,
   `ext.stmt.class.new`, `ext.stmt.class.this` (the name a method knows
   its own object by), `ext.stmt.class.constructor` (the method run when
-  an object is made), `ext.stmt.class.modifier` (words before a member
+  an object is made), `ext.stmt.class.destructor` (the method run when an
+  object is let go, at the latest when the run ends, every object still
+  standing then being let go in the order they were made, before what the
+  run is still keeping goes out), `ext.stmt.class.modifier` (words before a member
   that this kernel reads past: `public`, `final`), `ext.stmt.class.shared`
   (the modifier for a member the class keeps rather than its objects),
   `ext.stmt.class.parent` and `ext.stmt.class.self`. A class is a value
@@ -311,6 +314,9 @@ only. The extension labels so far, all from PHP:
   block may be opened in one run and closed in another, which is how a
   page is written around a loop. One line end straight after the closing
   marker belongs to it.
+- `ext.op.index.scalar`: the words for using a value with no places at
+  all as though it had them, PHP's `Cannot use a scalar value as an
+  array`. Without them the kernel says so in its own words.
 - `ext.lexical.prologue.echo`: a second opening marker, PHP's `<?=`,
   opening a run of code whose value is written out where it stands: the
   word that writes is put before the run, so `<?= $a ?>` says what
@@ -1149,6 +1155,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.index.append` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.index.makes` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.index.plain_keys` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.op.index.scalar` | - | - | - | - | - | - | - | `Cannot use a scalar value as an array` | - | - |
 | `ext.op.index.text` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.instanceof` | - | - | - | - | - | - | - | `instanceof` | - | - |
 | `ext.op.member` | - | - | - | - | - | - | - | `->` | - | - |
@@ -1173,6 +1180,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.catch.separator` | - | - | - | - | - | - | - | `\|` | - | - |
 | `ext.stmt.class` | - | - | - | - | - | - | - | `class` | - | - |
 | `ext.stmt.class.constructor` | - | - | - | - | - | - | - | `__construct` | - | - |
+| `ext.stmt.class.destructor` | - | - | - | - | - | - | - | `__destruct` | - | - |
 | `ext.stmt.class.extends` | - | - | - | - | - | - | - | `extends` | - | - |
 | `ext.stmt.class.implements` | - | - | - | - | - | - | - | `implements` | - | - |
 | `ext.stmt.class.interface` | - | - | - | - | - | - | - | `interface` | - | - |

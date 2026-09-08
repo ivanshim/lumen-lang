@@ -107,6 +107,9 @@ pub struct Machine<'a> {
     /// The routines to run once the program's last statement is done,
     /// each with what it is to be handed, in the order they were named.
     afterward: RefCell<Vec<(Value, Vec<Value>)>>,
+    /// Every thing made, held loosely and in the order they were made,
+    /// so that any still standing at the end can be let go.
+    things: RefCell<Vec<std::rc::Weak<Thing>>>,
     /// The files already read where the program asked that they be read
     /// only once, under the whole name each stands by.
     read_before: RefCell<std::collections::HashSet<String>>,
@@ -172,6 +175,7 @@ impl<'a> Machine<'a> {
             quieted: 0,
             holding: RefCell::new(Vec::new()),
             afterward: RefCell::new(Vec::new()),
+            things: RefCell::new(Vec::new()),
             read_before: RefCell::new(std::collections::HashSet::new()),
             hearer: RefCell::new(None),
             unheard: RefCell::new(Vec::new()),
@@ -315,6 +319,15 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// How a language names using a value with no places at all as
+    /// though it had them.
+    fn no_places(&self) -> String {
+        match self.table.single("ext.op.index.scalar") {
+            Some(said) => said.to_string(),
+            None => "Cannot index non-array value".to_string(),
+        }
+    }
+
     fn what_it_spells(&self, v: Value) -> Value {
         let Value::Text(name) = &v else { return v };
         if !self.spelled_stands {
@@ -412,6 +425,21 @@ impl<'a> Machine<'a> {
                 })?;
             }
         }
+    }
+
+    /// Each thing still standing at the end is let go by the method its
+    /// class names for that, in the order the things were made. One made
+    /// while another is being let go is let go in its own turn.
+    pub fn let_things_go(&mut self) {
+        let Some(named) = self.table.single("ext.stmt.class.destructor").map(str::to_string) else { return };
+        let mut reached = 0;
+        while let Some(loosely) = { let all = self.things.borrow(); all.get(reached).cloned() } {
+            reached += 1;
+            let Some(thing) = loosely.upgrade() else { continue };
+            let Some(program) = thing.of.program(&named).cloned() else { continue };
+            let _ = self.invoke(program, self.outermost.clone(), vec![Value::Thing(thing)]);
+        }
+        self.things.borrow_mut().clear();
     }
 
     /// Whatever is still being kept when the run ends is let go,
@@ -1292,6 +1320,9 @@ impl<'a> Machine<'a> {
                     };
                     self.made += 1;
                     let thing = Rc::new(Thing { of: class.clone(), holds: RefCell::new(class.every_field()), turn: self.made });
+                    if self.table.single("ext.stmt.class.destructor").is_some() {
+                        self.things.borrow_mut().push(Rc::downgrade(&thing));
+                    }
                     let maker = self.table.single("ext.stmt.class.constructor").and_then(|m| class.program(m)).cloned();
                     match maker {
                         Some(maker) => {
@@ -1844,7 +1875,7 @@ impl<'a> Machine<'a> {
                         all.push((key, v[1].clone()));
                         Value::Dict(Rc::new(all))
                     }
-                    _ => return Err(format!("{}() requires an array", name)),
+                    _ => return Err(self.no_places()),
                 }
             }
             Prim::Placed => {
@@ -1867,7 +1898,7 @@ impl<'a> Machine<'a> {
                         set_key(&mut all, v[1].clone(), v[2].clone());
                         Value::Dict(Rc::new(all))
                     }
-                    _ => return Err(format!("{}() requires an array", name)),
+                    _ => return Err(self.no_places()),
                 }
             }
             Prim::Gather => return Err(format!("{}() is a literal, not a call", name)),
@@ -2636,7 +2667,7 @@ impl<'a> Machine<'a> {
                 .nth(i)
                 .map(|c| Value::text(&c.to_string()))
                 .ok_or_else(|| format!("String index {} out of bounds (length: {})", i, s.chars().count())),
-            _ => Err("Cannot index non-array value".to_string()),
+            _ => Err(self.no_places()),
         }
     }
 

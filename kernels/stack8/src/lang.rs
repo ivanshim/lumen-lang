@@ -360,6 +360,9 @@ pub struct Lang {
     pub this_word: Option<String>,
     /// The method run when an object is made.
     pub constructor: Option<String>,
+    /// The method run when an object is let go, at the latest when the
+    /// run ends.
+    pub destructor: Option<String>,
     /// Words that may stand before a member and say nothing this kernel reads.
     pub modifier_words: Vec<String>,
     /// The modifier marking a member the class keeps for itself.
@@ -389,6 +392,9 @@ pub struct Lang {
     /// Reading a place an array does not hold gives nothing, rather
     /// than stopping the program.
     pub absent_index: bool,
+    /// The words for using a value that is neither an array nor
+    /// anything with places as though it had them.
+    pub scalar_index: Option<String>,
     /// What the language calls the parts of a web request: the name for
     /// each group the host gathers, and one for all of them together.
     pub request_bindings: Vec<(String, String)>,
@@ -447,12 +453,12 @@ w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.
 w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
 w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
-w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.modifier | w ext.stmt.class.shared
+w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.destructor | w ext.stmt.class.modifier | w ext.stmt.class.shared
 w ext.op.member | w ext.op.scope | w ext.op.instanceof | w ext.stmt.class.parent
 w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.try | w ext.stmt.catch
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
-w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | w ext.system.request.settings | b ext.op.index.absent | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
+w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | w ext.system.request.settings | b ext.op.index.absent | w ext.op.index.scalar | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
 w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right
 w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at
@@ -1158,6 +1164,7 @@ impl Lang {
             new_words: r.strings("ext.stmt.class.new")?,
             this_word: r.head("ext.stmt.class.this")?,
             constructor: r.head("ext.stmt.class.constructor")?,
+            destructor: r.head("ext.stmt.class.destructor")?,
             modifier_words: r.strings("ext.stmt.class.modifier")?,
             shared_words: r.strings("ext.stmt.class.shared")?,
             member_mark: r.head("ext.op.member")?,
@@ -1176,6 +1183,7 @@ impl Lang {
             catch_between: r.head("ext.stmt.catch.separator")?,
             reference_mark: r.head("ext.op.reference")?,
             absent_index: r.flag("ext.op.index.absent")?,
+            scalar_index: r.head("ext.op.index.scalar")?,
             request_bindings: {
                 let groups = [
                     ("GET", "ext.system.request.query"), ("POST", "ext.system.request.form"),
