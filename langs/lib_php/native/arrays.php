@@ -455,3 +455,34 @@ function __naturally($a, $b, $fold) {
     return $left < $right ? -1 : 1;
 }
 function __is_digit($c) { return $c >= '0' && $c <= '9'; }
+
+// Every value from one to another, counted by a step. Two single
+// letters count through the letters between them; anything else counts
+// through the numbers. A range that runs downward is given back that
+// way round.
+function range($start, $end, $step = 1) {
+    $by = $step < 0 ? -$step : $step;
+    if ($by == 0) { throw new ValueError('range(): Argument #3 ($step) cannot be 0'); }
+    $letters = is_string($start) && is_string($end) && strlen($start) === 1 && strlen($end) === 1
+        && !is_numeric($start) && !is_numeric($end);
+    if ($letters) {
+        $from = ord($start);
+        $to = ord($end);
+        $out = array();
+        if ($from <= $to) {
+            while ($from <= $to) { $out[] = chr($from); $from = $from + (int) $by; }
+        } else {
+            while ($from >= $to) { $out[] = chr($from); $from = $from - (int) $by; }
+        }
+        return $out;
+    }
+    $from = is_string($start) ? (is_numeric($start) ? $start + 0 : ord($start)) : $start;
+    $to = is_string($end) ? (is_numeric($end) ? $end + 0 : ord($end)) : $end;
+    $out = array();
+    if ($from <= $to) {
+        while ($from <= $to) { $out[] = $from; $from = $from + $by; }
+    } else {
+        while ($from >= $to) { $out[] = $from; $from = $from - $by; }
+    }
+    return $out;
+}

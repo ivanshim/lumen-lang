@@ -336,9 +336,7 @@
   ],
   "builtin.error": [],
   "builtin.extern": [],
-  "builtin.range": [
-    "range"
-  ],
+  "builtin.range": [],
   "builtin.real": [],
   "builtin.num": [],
   "builtin.den": [],
