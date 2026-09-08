@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 49, differs 29, error 26, skipped 10 | pass 49, differs 29, error 26, skipped 10 |
 | `php/func` | 14 | pass 13, differs 0, error 1, skipped 0 | pass 13, differs 0, error 1, skipped 0 |
-| `php/lang` | 213 | pass 114, differs 39, error 55, skipped 5 | pass 114, differs 39, error 55, skipped 5 |
+| `php/lang` | 213 | pass 114, differs 40, error 54, skipped 5 | pass 114, differs 40, error 54, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 21, error 3, skipped 6 | pass 34, differs 21, error 3, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 215, differs 97, error 85, skipped 25 | pass 215, differs 97, error 85, skipped 25 |
+| all | 422 | pass 215, differs 98, error 84, skipped 25 | pass 215, differs 98, error 84, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 97 |
+| ran, printed something else | 98 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
@@ -45,7 +45,6 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Only a class can be made into an object in <file> | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Undefined variable: StdClass in <file> | 2 |
-| Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> | 2 |
 | Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> | 2 |
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> | 1 |
@@ -68,6 +67,7 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: call_user_func in <file> | 1 |
 | skip Can't find german locale | 1 |
 | Fatal error: Uncaught Error: Cannot reach 'b' in B in <file> | 1 |
+| Fatal error: Uncaught Error: Cannot reach 'B' in B in <file> | 1 |
 
 ### Reserved words: 55 of 68 spelled
 
@@ -478,8 +478,8 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/foreachLoopIteratorAggregate.003.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: Iterator in <file> |
 | `php/lang/foreachLoopIteratorAggregate.004.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: Iterator in <file> |
 | `php/lang/foreachLoopObjects.001.phpt` | differs | differs | ran, printed something else |
-| `php/lang/foreachLoopObjects.002.phpt` | error | error | Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> |
-| `php/lang/foreachLoopObjects.003.phpt` | error | error | Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> |
+| `php/lang/foreachLoopObjects.002.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoopObjects.003.phpt` | error | error | Fatal error: Uncaught Error: Array index 2 out of bounds (length: 2) in <file> |
 | `php/lang/foreachLoopObjects.004.phpt` | error | error | Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> |
 | `php/lang/foreachLoopObjects.005.phpt` | error | error | Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> |
 | `php/lang/foreachLoopObjects.006.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: stdclass in <file> |

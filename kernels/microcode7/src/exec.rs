@@ -2716,6 +2716,21 @@ fn written_into(held: &mut Value, key: Option<Value>, value: Value, ident: &str,
 /// reached by its position as a vector is.
 fn shared_item(held: &mut Value, at: &Value) -> Result<Rc<RefCell<Value>>, String> {
     let i = as_index(at)?;
+    // A thing's members are counted as an array's places are, but they
+    // are kept behind a shared holding, so the cell is made within it.
+    if let Value::Thing(thing) = held {
+        let mut holds = thing.holds.borrow_mut();
+        let reach = holds.len();
+        let Some((_, place)) = holds.get_mut(i) else {
+            return Err(format!("Array index {} out of bounds (length: {})", i, reach));
+        };
+        if let Value::Shared(cell) = place {
+            return Ok(cell.clone());
+        }
+        let cell = Rc::new(RefCell::new(std::mem::replace(place, Value::Nil)));
+        *place = Value::Shared(cell.clone());
+        return Ok(cell);
+    }
     let place: &mut Value = match held {
         Value::Vector(items) => {
             let items = Rc::make_mut(items);

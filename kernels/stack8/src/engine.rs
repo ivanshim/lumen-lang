@@ -2621,6 +2621,22 @@ fn laid_out(v: &Value, indent: usize) -> String {
 /// The place an array holds, made a shared cell so that a name fastened
 /// to it writes into the array itself.
 fn shared_item(held: &mut Value, at: &Value) -> Res<Rc<RefCell<Value>>> {
+    // A thing's members are counted as an array's places are, but they
+    // live behind a shared holding, so the cell is made within it.
+    if let Value::Object(thing) = held {
+        let i = as_index(at)?;
+        let mut fields = thing.fields.borrow_mut();
+        let reach = fields.len();
+        let Some((_, place)) = fields.get_mut(i) else {
+            return Err(format!("Array index {} out of bounds (length: {})", i, reach));
+        };
+        if let Value::Bond(shared) = place {
+            return Ok(shared.clone());
+        }
+        let shared = Rc::new(RefCell::new(std::mem::replace(place, Value::Null)));
+        *place = Value::Bond(shared.clone());
+        return Ok(shared);
+    }
     let place: &mut Value = match held {
         Value::Array(items) => {
             let i = as_index(at)?;
