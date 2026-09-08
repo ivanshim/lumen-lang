@@ -3211,6 +3211,16 @@ impl<'a> Compiler<'a> {
                 }
                 self.act(Action::BondField(member), 1);
             }
+            // A binding named as the run goes has a cell as any binding
+            // does, and asking for it is asking for that one.
+            [rest @ .., Instr::Act(Action::Named, 1)] => {
+                let rest = rest.to_vec();
+                let at = self.mark();
+                for w in relocated(rest, at as i64 - from as i64) {
+                    self.put(w);
+                }
+                self.act(Action::BondNamed, 1);
+            }
             [Instr::Read(slot), .., Instr::Act(Action::At, 2)] if !slot.moving => {
                 let name = slot.ident.to_string();
                 // The keys are taken apart so that each is worked out

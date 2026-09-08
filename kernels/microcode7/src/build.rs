@@ -2971,6 +2971,9 @@ impl<'a> Builder<'a> {
                 let stands_on = args.pop().expect("what holds it");
                 self.shared_at(place, stands_on)?
             }
+            // A binding named as the run goes has a cell as any binding
+            // does, and asking for it asks for that very one.
+            Form::Called(spells) => Form::ShareCalled(spells),
             // Anything else is read as it stands: a call of a routine
             // giving back a cell answers with one already, and what has
             // no cell to share is written plainly, which is what a

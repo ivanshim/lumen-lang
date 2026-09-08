@@ -1051,6 +1051,27 @@ impl<'a> Engine<'a> {
             // A name worked out while the run goes stands for the
             // binding of that name among the outermost ones, since only
             // those have names the run can still see.
+            // The cell of the outermost binding a value names, so that a
+            // name may be fastened to it, one handed over, or one given
+            // back: a binding named as the run goes has a cell like any
+            // other, and this is how it is asked for.
+            Action::BondNamed => {
+                let spelled = self.drop_top()?;
+                let name = self.name_spelled(&spelled);
+                let at = self.registry.slot(&name);
+                self.world.resize(self.registry.idents.len(), Value::Blank);
+                if let Value::Bond(shared) = &self.world[at] {
+                    Value::Bond(shared.clone())
+                } else {
+                    let held = match std::mem::replace(&mut self.world[at], Value::Null) {
+                        Value::Blank => Value::Null,
+                        other => other,
+                    };
+                    let shared = Rc::new(RefCell::new(held));
+                    self.world[at] = Value::Bond(shared.clone());
+                    Value::Bond(shared)
+                }
+            }
             Action::Named => {
                 let spelled = self.drop_top()?;
                 let name = self.name_spelled(&spelled);

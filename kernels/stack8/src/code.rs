@@ -92,6 +92,9 @@ pub enum Action {
     /// The value of the binding whose name the text above spells: how a
     /// language reads a name worked out while the program runs.
     Named,
+    /// The cell of the outermost binding a value names, made where
+    /// that binding has none yet.
+    BondNamed,
     /// Write the value above into the binding whose name the text under
     /// it spells.
     WriteNamed,

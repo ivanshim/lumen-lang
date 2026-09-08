@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 81, differs 5, error 18, skipped 10 | pass 81, differs 5, error 18, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 126, differs 42, error 40, skipped 5 | pass 126, differs 42, error 40, skipped 5 |
+| `php/lang` | 213 | pass 127, differs 41, error 40, skipped 5 | pass 127, differs 41, error 40, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 46, differs 10, error 2, skipped 6 | pass 46, differs 10, error 2, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 279, differs 58, error 60, skipped 25 | pass 279, differs 58, error 60, skipped 25 |
+| all | 422 | pass 280, differs 57, error 60, skipped 25 | pass 280, differs 57, error 60, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 58 |
+| ran, printed something else | 57 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | Fatal error: Uncaught Error: Undefined variable: iterator in <file> | 5 |
@@ -586,7 +586,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/passByReference_012.phpt` | pass | pass |  |
 | `php/lang/returnByReference.001.phpt` | pass | pass |  |
 | `php/lang/returnByReference.002.phpt` | pass | pass |  |
-| `php/lang/returnByReference.003.phpt` | differs | differs | ran, printed something else |
+| `php/lang/returnByReference.003.phpt` | pass | pass |  |
 | `php/lang/returnByReference.004.phpt` | differs | differs | ran, printed something else |
 | `php/lang/returnByReference.005.phpt` | differs | differs | ran, printed something else |
 | `php/lang/returnByReference.006.phpt` | differs | differs | ran, printed something else |
