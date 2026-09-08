@@ -270,6 +270,9 @@ impl<'a> Engine<'a> {
     /// stands.
     fn class_for(&self, told: &str) -> Option<String> {
         let named = match told {
+            // Words the definition itself gave for a place outside the
+            // range a value may take are known by being those very words.
+            _ if self.lang.args_below.as_deref() == Some(told) || self.lang.args_beyond.as_deref() == Some(told) => &self.lang.fault_value,
             _ if told.starts_with("Division by zero") => &self.lang.fault_division,
             _ if told.starts_with("Bit shift by") => &self.lang.fault_arithmetic,
             _ if told.starts_with("Cannot coerce") => &self.lang.fault_kind,
@@ -1894,8 +1897,16 @@ impl<'a> Engine<'a> {
                 Value::Flag(true)
             }
             Builtin::Given | Builtin::GivenCount | Builtin::GivenAt => {
-                let Some(given) = self.given.last() else {
-                    return Err(format!("{}() belongs inside a function", name));
+                let Some(given) = self.given.last().cloned() else {
+                    // What a language says when one of these is reached
+                    // where no call is running, in its own words where
+                    // it has them.
+                    let said = match builtin {
+                        Builtin::Given => &self.lang.args_outside_all,
+                        Builtin::GivenCount => &self.lang.args_outside_count,
+                        _ => &self.lang.args_outside_at,
+                    };
+                    return Err(said.clone().unwrap_or_else(|| format!("{}() belongs inside a function", name)));
                 };
                 match builtin {
                     Builtin::Given => {
@@ -1908,10 +1919,20 @@ impl<'a> Engine<'a> {
                     }
                     _ => {
                         arity(1)?;
+                        // A place below the first and a place past the
+                        // last are each told in the language's own words
+                        // where it has them.
+                        if matches!(&args[0], Value::Small(n) if *n < 0) {
+                            let said = self.lang.args_below.clone();
+                            return Err(said.unwrap_or_else(|| format!("{}(): the place asked for comes before the first", name)));
+                        }
                         let at = as_index(&args[0])?;
                         match given.get(at) {
                             Some(v) => v.clone(),
-                            None => return Err(format!("{}(): the call was given no argument {}", name, at)),
+                            None => {
+                                let said = self.lang.args_beyond.clone();
+                                return Err(said.unwrap_or_else(|| format!("{}(): the call was given no argument {}", name, at)));
+                            }
                         }
                     }
                 }

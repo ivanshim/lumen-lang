@@ -574,6 +574,17 @@ only. The extension labels so far, all from PHP:
   these, a call may hand over more than the routine names; the rest is
   kept aside rather than bound. Outside a routine there is nothing to
   read, and asking is an error.
+
+  Five more labels give a language its own words for the errors:
+  `ext.builtin.args.all.outside`, `.count.outside` and `.at.outside` for
+  asking where no call is running — one for each, since a language need
+  not word them alike — and `ext.builtin.args.at.below` and
+  `.at.beyond` for a place before the first or past the last. Where a
+  language leaves them out, the kernel's own words are used. Words the
+  definition gave for a place outside the range are known again by being
+  those very words, and take the class `ext.system.fault.class.value`
+  names, which is the class of a fault about a value standing outside
+  the range it may take.
 - `ext.op.identical` and `ext.op.not_identical`: whether two values are
   one and the same (`===`, `!==`), which asks more than being equal.
   Spelling them also makes being equal (`op.eq`, `op.ne`) the looser
@@ -891,8 +902,13 @@ Extension labels, optional and read by the full kernels only (absent means empty
 |---|---|---|---|---|---|---|---|---|---|---|
 | `ext.block.lone_statement` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.builtin.args.all` | - | - | - | - | - | - | - | `func_get_args` | - | - |
+| `ext.builtin.args.all.outside` | - | - | - | - | - | - | - | `func_get_args() cannot be called from the global scope` | - | - |
 | `ext.builtin.args.at` | - | - | - | - | - | - | - | `func_get_arg` | - | - |
+| `ext.builtin.args.at.below` | - | - | - | - | - | - | - | `func_get_arg(): Argument #1 ($position) must be greater than or equal to 0` | - | - |
+| `ext.builtin.args.at.beyond` | - | - | - | - | - | - | - | `func_get_arg(): Argument #1 ($position) must be less than the number of the arguments passed to the currently executed function` | - | - |
+| `ext.builtin.args.at.outside` | - | - | - | - | - | - | - | `func_get_arg() cannot be called from the global scope` | - | - |
 | `ext.builtin.args.count` | - | - | - | - | - | - | - | `func_num_args` | - | - |
+| `ext.builtin.args.count.outside` | - | - | - | - | - | - | - | `func_num_args() must be called from a function context` | - | - |
 | `ext.builtin.array` | - | - | - | - | - | - | - | `array` | - | - |
 | `ext.builtin.define` | - | - | - | - | - | - | - | `define` | - | - |
 | `ext.builtin.echo` | - | - | - | - | - | - | - | `echo` | - | - |
@@ -990,6 +1006,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class.arithmetic` | - | - | - | - | - | - | - | `ArithmeticError` | - | - |
 | `ext.system.fault.class.division` | - | - | - | - | - | - | - | `DivisionByZeroError` | - | - |
 | `ext.system.fault.class.kind` | - | - | - | - | - | - | - | `TypeError` | - | - |
+| `ext.system.fault.class.value` | - | - | - | - | - | - | - | `ValueError` | - | - |
 | `ext.system.globals` | - | - | - | - | - | - | - | `$GLOBALS` | - | - |
 | `ext.system.integer.bits` | - | - | - | - | - | - | - | `64` | - | - |
 | `ext.system.kind.brief` | - | - | - | - | - | - | - | `int` `-` `float` `string` `bool` `array` `null` | - | - |

@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 47, differs 31, error 26, skipped 10 | pass 47, differs 31, error 26, skipped 10 |
 | `php/func` | 14 | pass 9, differs 3, error 2, skipped 0 | pass 9, differs 3, error 2, skipped 0 |
-| `php/lang` | 213 | pass 93, differs 52, error 63, skipped 5 | pass 93, differs 52, error 63, skipped 5 |
+| `php/lang` | 213 | pass 98, differs 47, error 63, skipped 5 | pass 98, differs 47, error 63, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 21, error 3, skipped 6 | pass 34, differs 21, error 3, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 188, differs 115, error 94, skipped 25 | pass 188, differs 115, error 94, skipped 25 |
+| all | 422 | pass 193, differs 110, error 94, skipped 25 | pass 193, differs 110, error 94, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 115 |
+| ran, printed something else | 110 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
@@ -487,17 +487,17 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/foreach_with_references_001.phpt` | pass | pass |  |
 | `php/lang/func_get_arg.001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/func_get_arg.002.phpt` | pass | pass |  |
-| `php/lang/func_get_arg.003.phpt` | differs | differs | ran, printed something else |
-| `php/lang/func_get_arg.004.phpt` | differs | differs | ran, printed something else |
+| `php/lang/func_get_arg.003.phpt` | pass | pass |  |
+| `php/lang/func_get_arg.004.phpt` | pass | pass |  |
 | `php/lang/func_get_arg.005.phpt` | pass | pass |  |
-| `php/lang/func_get_arg_variation.phpt` | differs | differs | ran, printed something else |
+| `php/lang/func_get_arg_variation.phpt` | pass | pass |  |
 | `php/lang/func_get_args.001.phpt` | pass | pass |  |
 | `php/lang/func_get_args.002.phpt` | pass | pass |  |
-| `php/lang/func_get_args.003.phpt` | differs | differs | ran, printed something else |
+| `php/lang/func_get_args.003.phpt` | pass | pass |  |
 | `php/lang/func_get_args.004.phpt` | differs | differs | ran, printed something else |
 | `php/lang/func_num_args.001.phpt` | pass | pass |  |
 | `php/lang/func_num_args.002.phpt` | pass | pass |  |
-| `php/lang/func_num_args.003.phpt` | differs | differs | ran, printed something else |
+| `php/lang/func_num_args.003.phpt` | pass | pass |  |
 | `php/lang/func_num_args.004.phpt` | pass | pass |  |
 | `php/lang/include_variation1.phpt` | pass | pass |  |
 | `php/lang/include_variation2.phpt` | pass | pass |  |

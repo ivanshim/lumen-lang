@@ -185,6 +185,9 @@ pub struct Lang {
     pub fault_arithmetic: Option<String>,
     pub fault_division: Option<String>,
     pub fault_kind: Option<String>,
+    /// The class of a fault about a value standing outside the range it
+    /// may take.
+    pub fault_value: Option<String>,
     /// Whether a binding never written is a complaint rather than a stop.
     pub warns_of_unwritten: bool,
     /// Whether the language says where a complaint happened, so that
@@ -269,6 +272,15 @@ pub struct Lang {
     /// those being the only ones still there to be looked up as the run
     /// goes.
     pub spelled_stands: bool,
+    /// What a language says when a builtin that reads what the running
+    /// call was handed is reached where no call is running, one for each
+    /// of the three; and what it says of a place below the first or past
+    /// the last. Nothing where the kernel's own words will do.
+    pub args_outside_all: Option<String>,
+    pub args_outside_count: Option<String>,
+    pub args_outside_at: Option<String>,
+    pub args_below: Option<String>,
+    pub args_beyond: Option<String>,
     /// The words that open a taking-apart: a list of places written on
     /// the left of a write, each taking the matching place of the value.
     pub unpack_words: Vec<String>,
@@ -391,14 +403,16 @@ w ext.system.request.query | w ext.system.request.form | w ext.system.request.co
 w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | b ext.op.index.absent | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
 w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right
 w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
-w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at | b ext.op.assign.value | b ext.op.index.plain_keys
+w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at
+w ext.builtin.args.all.outside | w ext.builtin.args.count.outside | w ext.builtin.args.at.outside
+w ext.builtin.args.at.below | w ext.builtin.args.at.beyond | b ext.op.assign.value | b ext.op.index.plain_keys
 w ext.system.source.file | w ext.system.source.directory | w ext.system.source.line
 w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.complaint.deprecated | w ext.system.complaint.fatal
 w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove
 w ext.builtin.eval | w ext.builtin.include | w ext.op.hush | w ext.builtin.isset | b ext.op.index.makes
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
-w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind
+w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind | w ext.system.fault.class.value
 w ext.op.name_by_value | b ext.op.cast | w ext.stmt.unpack
 w ext.system.source.routine | w ext.system.source.class | w ext.system.source.method
 b ext.op.member.by_value | b ext.op.index.text | w ext.system.globals
@@ -977,6 +991,7 @@ impl Lang {
             fault_arithmetic: r.head("ext.system.fault.class.arithmetic")?,
             fault_division: r.head("ext.system.fault.class.division")?,
             fault_kind: r.head("ext.system.fault.class.kind")?,
+            fault_value: r.head("ext.system.fault.class.value")?,
             warns_of_unwritten: r.head("ext.system.complaint.warning")?.is_some(),
             tells_place: tells_complaints,
             source_bindings: {
@@ -1027,6 +1042,11 @@ impl Lang {
             instead_mark: r.head("ext.stmt.block.instead")?,
             instead_closes: r.strings("ext.stmt.block.instead.close")?,
             spelled_stands: r.flag("ext.op.spelled")?,
+            args_outside_all: r.head("ext.builtin.args.all.outside")?,
+            args_outside_count: r.head("ext.builtin.args.count.outside")?,
+            args_outside_at: r.head("ext.builtin.args.at.outside")?,
+            args_below: r.head("ext.builtin.args.at.below")?,
+            args_beyond: r.head("ext.builtin.args.at.beyond")?,
             unpack_words: r.strings("ext.stmt.unpack")?,
             makes_places: r.flag("ext.op.index.makes")?,
             untrue_text: r.strings("ext.system.untrue.text")?,

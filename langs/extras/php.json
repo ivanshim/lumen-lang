@@ -426,6 +426,24 @@
   "ext.op.index.makes": true,
   "ext.op.index.text": true,
   "ext.op.spelled": true,
+  "ext.system.fault.class.value": [
+    "ValueError"
+  ],
+  "ext.builtin.args.all.outside": [
+    "func_get_args() cannot be called from the global scope"
+  ],
+  "ext.builtin.args.count.outside": [
+    "func_num_args() must be called from a function context"
+  ],
+  "ext.builtin.args.at.outside": [
+    "func_get_arg() cannot be called from the global scope"
+  ],
+  "ext.builtin.args.at.below": [
+    "func_get_arg(): Argument #1 ($position) must be greater than or equal to 0"
+  ],
+  "ext.builtin.args.at.beyond": [
+    "func_get_arg(): Argument #1 ($position) must be less than the number of the arguments passed to the currently executed function"
+  ],
   "ext.system.globals": [
     "$GLOBALS"
   ],

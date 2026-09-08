@@ -407,7 +407,11 @@ impl<'a> Machine<'a> {
     /// its own faults are of which kind, being the one that words them.
     /// Where the language names none for the kind, the plain class does.
     fn class_of_fault(&self, told: &str) -> Option<String> {
+        let told_of = |label: &str| self.table.single(label) == Some(told);
         let by_kind = match told {
+            // Words the definition itself gave for a place outside the
+            // range a value may take are known by being those very words.
+            _ if told_of("ext.builtin.args.at.below") || told_of("ext.builtin.args.at.beyond") => Some("ext.system.fault.class.value"),
             _ if told.starts_with("Division by zero") => Some("ext.system.fault.class.division"),
             _ if told.starts_with("Bit shift by") => Some("ext.system.fault.class.arithmetic"),
             _ if told.starts_with("Cannot coerce") => Some("ext.system.fault.class.kind"),
@@ -1616,8 +1620,17 @@ impl<'a> Machine<'a> {
                 Value::Flag(true)
             }
             Prim::Handed | Prim::HowMany | Prim::HandedAt => {
-                let Some(handed) = self.handed.last() else {
-                    return Err(format!("{}() belongs inside a function", name));
+                let Some(handed) = self.handed.last().cloned() else {
+                    // What a language says when one of these is reached
+                    // where no call is running, in its own words where it
+                    // has them.
+                    let label = match op {
+                        Prim::Handed => "ext.builtin.args.all.outside",
+                        Prim::HowMany => "ext.builtin.args.count.outside",
+                        _ => "ext.builtin.args.at.outside",
+                    };
+                    let said = self.table.single(label).map(str::to_string);
+                    return Err(said.unwrap_or_else(|| format!("{}() belongs inside a function", name)));
                 };
                 match op {
                     Prim::Handed => {
@@ -1630,10 +1643,20 @@ impl<'a> Machine<'a> {
                     }
                     _ => {
                         n(1)?;
+                        // A place before the first and one past the last
+                        // are each told in the language's own words where
+                        // it has them.
+                        if matches!(&v[0], Value::Small(k) if *k < 0) {
+                            let said = self.table.single("ext.builtin.args.at.below").map(str::to_string);
+                            return Err(said.unwrap_or_else(|| format!("{}(): the place asked for comes before the first", name)));
+                        }
                         let at = as_index(&v[0])?;
                         match handed.get(at) {
                             Some(x) => x.clone(),
-                            None => return Err(format!("{}(): nothing was handed over at {}", name, at)),
+                            None => {
+                                let said = self.table.single("ext.builtin.args.at.beyond").map(str::to_string);
+                                return Err(said.unwrap_or_else(|| format!("{}(): nothing was handed over at {}", name, at)))
+                            }
                         }
                     }
                 }
