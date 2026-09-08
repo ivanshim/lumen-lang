@@ -400,6 +400,10 @@ pub struct Routine {
     pub least: usize,
     pub ident: String,
     pub formals: Vec<String>,
+    /// The class each parameter is written to take, where one was
+    /// written and it names a class. Nothing for a parameter with none,
+    /// or with a kind that is no class.
+    pub formal_kinds: Vec<Option<Rc<str>>>,
     pub formal_slots: Vec<usize>,
     pub idents: Vec<String>,
     /// Holds no idents: runs in the frame it closed over, making none.

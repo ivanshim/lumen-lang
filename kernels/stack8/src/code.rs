@@ -380,6 +380,10 @@ pub enum Instr {
 pub struct Routine {
     pub ident: String,
     pub formals: Vec<String>,
+    /// The class each parameter is declared to take, where one was
+    /// written and it names a class. Nothing for a parameter written
+    /// without one, or with a kind that is not a class.
+    pub formal_kinds: Vec<Option<Rc<str>>>,
     /// How many arguments must be given; the rest have a value of their
     /// own, written by the program's own first instrs.
     pub least: usize,

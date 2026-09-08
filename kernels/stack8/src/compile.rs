@@ -129,6 +129,10 @@ pub struct Compiler<'a> {
     /// copy, the innermost last, so that what it answers with is made a
     /// cell where it should be.
     giving_cells: Vec<bool>,
+    /// The class each parameter of the routine being read is declared to
+    /// take, gathered as the parameters are read and taken by the
+    /// routine they belong to.
+    formal_kinds: Vec<Option<Rc<str>>>,
 }
 
 type Res<T> = Result<T, String>;
@@ -172,7 +176,7 @@ pub fn compile_from(tokens: &[Token], lang: &Lang, table: &mut Registry, before:
         instrs: Vec::new(),
     };
     let (shared_args, gives_back) = shared_parameters(tokens, lang);
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None, stepping: None, stood: None, giving_cells: Vec::new() };
+    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new() };
     if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;
@@ -219,7 +223,7 @@ pub fn compile_from(tokens: &[Token], lang: &Lang, table: &mut Registry, before:
         a.piece().instrs[at] = Instr::Skip(end);
     }
     let unit = a.pieces.pop().expect("the top unit");
-    Ok(Rc::new(Routine { ident: unit.ident, formals: Vec::new(), least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), instrs: peephole(unit.instrs) }))
+    Ok(Rc::new(Routine { ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), instrs: peephole(unit.instrs) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -610,6 +614,14 @@ impl<'a> Compiler<'a> {
     /// slot: null at first, each expression statement's value after, and
     /// its value is left on the stack at the end.
     fn routine(&mut self, name: &str, formals: Vec<String>, least: usize, returns_value: bool, body: impl FnOnce(&mut Self) -> Res<()>) -> Res<Rc<Routine>> {
+        // The classes the parameters were declared to take, gathered as
+        // they were read. A method is given the object it is for before
+        // them, so the list is brought level with the names.
+        let mut formal_kinds = std::mem::take(&mut self.formal_kinds);
+        while formal_kinds.len() < formals.len() {
+            formal_kinds.insert(0, None);
+        }
+        formal_kinds.truncate(formals.len());
         self.pieces.push(Piece {
             outermost: false,
             ident: name.to_string(),
@@ -642,7 +654,7 @@ impl<'a> Compiler<'a> {
         }
         let unit = self.pieces.pop().expect("the unit");
         let instrs = if returns_value && !used { relocated(unit.instrs.into_iter().skip(2).collect(), -2) } else { unit.instrs };
-        Ok(Rc::new(Routine { ident: unit.ident, formals, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), instrs: peephole(instrs) }))
+        Ok(Rc::new(Routine { ident: unit.ident, formals, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), instrs: peephole(instrs) }))
     }
 
     // ---------- statements ----------
@@ -2018,9 +2030,11 @@ impl<'a> Compiler<'a> {
                 if lang.ternary.as_ref().map_or(false, |(q, _)| self.at_symbol(q)) && self.look_ahead(1).shape == Shape::Instr {
                     self.take();
                 }
+                let mut kind = None;
                 if self.look().shape == Shape::Instr && self.look_ahead(1).shape == Shape::Instr {
-                    self.take();
+                    kind = Some(Rc::from(self.take().lexeme.as_str()));
                 }
+                self.formal_kinds.push(kind);
                 formals.push(self.want_name("as a parameter name")?);
                 if self.look().shape == Shape::Sign && Lang::spells(&lang.type_marks, &self.look().lexeme) {
                     self.take();

@@ -99,6 +99,10 @@ pub struct Builder<'a> {
     /// copy, the innermost last, so what it answers with is made a cell
     /// where it should be.
     giving_cells: Vec<bool>,
+    /// The class each parameter of the routine being read is written to
+    /// take, gathered as the parameters are read and taken up by the
+    /// routine they belong to.
+    formal_kinds: Vec<Option<Rc<str>>>,
     tells_place: bool,
 }
 
@@ -138,7 +142,7 @@ pub fn build_from(tokens: &[Token], table: &Table, seeded: &[String], assumed: H
 fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<&std::cell::Cell<u32>>) -> Res<Built> {
     let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let (shared_args, gives_back) = shared_parameters(tokens, table);
-    let mut r = Builder { within: None, shared_args, gives_back, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(),
+    let mut r = Builder { within: None, shared_args, gives_back, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(),
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
@@ -190,7 +194,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         sequence(ahead)
     };
     let top = r.layers.pop().unwrap();
-    let program = Routine { ident: "<program>".into(), least: 0, formals: Vec::new(), formal_slots: Vec::new(), idents: top.idents.clone(), frameless: false, written_in: r.written_in.clone(), traps: Traps::Naught, body };
+    let program = Routine { ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: top.idents.clone(), frameless: false, written_in: r.written_in.clone(), traps: Traps::Naught, body };
     Ok(Built { program: Rc::new(program), globals: top.idents, seen: r.seen })
 }
 
@@ -698,12 +702,20 @@ impl<'a> Builder<'a> {
     /// A program value: its body reduced in a scope of its own.
     fn routine(&mut self, name: &str, holds: Holds, catches: Traps, params: Vec<String>, least: usize, body: impl FnOnce(&mut Self) -> Res<Form>) -> Res<Form> {
         self.naming.push(name.to_string());
+        // The classes the parameters were written to take, gathered as
+        // they were read. A method is handed the thing it is for before
+        // them, so the list is brought level with the names.
+        let mut formal_kinds = std::mem::take(&mut self.formal_kinds);
+        while formal_kinds.len() < params.len() {
+            formal_kinds.insert(0, None);
+        }
+        formal_kinds.truncate(params.len());
         let param_slots = (0..params.len()).collect();
         self.layers.push(Layer { holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new() });
         let body = body(self)?;
         let scope = self.layers.pop().unwrap();
         self.naming.pop();
-        Ok(constant(Value::Routine(Rc::new(Routine { ident: name.to_string(), least, formals: params, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), traps: catches, body }))))
+        Ok(constant(Value::Routine(Rc::new(Routine { ident: name.to_string(), least, formals: params, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), traps: catches, body }))))
     }
 
     /// A branch arm or a loop body: a program that holds no names.
@@ -720,7 +732,7 @@ impl<'a> Builder<'a> {
     /// that own no names, so the chosen one runs in the frame around it.
     fn choose(&mut self, test: Form, then: Form, otherwise: Form) -> Form {
         let wrap = |name: &str, body: Form| {
-            let program = Routine { ident: name.to_string(), least: 0, formals: Vec::new(), formal_slots: Vec::new(), idents: Vec::new(), frameless: true, written_in: self.written_in.clone(), traps: Traps::Naught, body };
+            let program = Routine { ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: Vec::new(), frameless: true, written_in: self.written_in.clone(), traps: Traps::Naught, body };
             constant(Value::Routine(Rc::new(program)))
         };
         prim_call(Prim::Choose, vec![test, wrap("<then>", then), wrap("<else>", otherwise)])
@@ -1939,9 +1951,11 @@ impl<'a> Builder<'a> {
                 // A type may stand before the name, and may be marked as
                 // taking nothing as well: `?int $x`.
                 self.skip_nothing_mark();
+                let mut kind = None;
                 if self.look().shape == Shape::Bare && self.glance(1).shape == Shape::Bare {
-                    self.advance();
+                    kind = Some(Rc::from(self.advance().lexeme.as_str()));
                 }
+                self.formal_kinds.push(kind);
                 params.push(self.need_word("as a parameter name")?);
                 if self.look().shape == Shape::Sign && table.spells("stmt.let.annotation", &self.look().lexeme) {
                     self.advance();
@@ -3842,7 +3856,7 @@ impl<'a> Builder<'a> {
             let mut param_slots = scope.formal_slots;
             params.reverse();
             param_slots.reverse();
-            let program = Routine { ident: name, least: 0, formals: params, formal_slots: param_slots, idents: scope.idents, frameless: false, written_in: self.written_in.clone(), traps: Traps::Yields, body: sequence(s) };
+            let program = Routine { ident: name, least: 0, formals: params, formal_kinds: Vec::new(), formal_slots: param_slots, idents: scope.idents, frameless: false, written_in: self.written_in.clone(), traps: Traps::Yields, body: sequence(s) };
             stack.push(constant(Value::Routine(Rc::new(program))));
             return Ok(());
         }

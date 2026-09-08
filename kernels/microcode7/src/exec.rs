@@ -726,6 +726,8 @@ impl<'a> Machine<'a> {
             _ if told.starts_with("Division by zero") => Some("ext.system.fault.class.division"),
             _ if told.starts_with("Bit shift by") => Some("ext.system.fault.class.arithmetic"),
             _ if told.starts_with("Cannot coerce") => Some("ext.system.fault.class.kind"),
+            // An argument that is not of the class its parameter takes.
+            _ if told.contains(" must be of type ") => Some("ext.system.fault.class.kind"),
             // Words the definition gave for an operand that can take no
             // part are known by the message opening with them.
             _ if self.table.single("ext.system.fault.operands").map_or(false, |w| told.starts_with(w)) => {
@@ -1668,6 +1670,9 @@ impl<'a> Machine<'a> {
         // is worked out, even one the routine gives no name to.
         if self.reads_handed {
             let all = self.value_list(args, caller)?;
+            for (at, v) in all.iter().enumerate() {
+                self.of_the_class_written(program, at, v)?;
+            }
             let frame = if program.frameless { env } else { Env::make(program.idents.len(), Some(env)) };
             if !program.frameless {
                 let mut cells = frame.cells.borrow_mut();
@@ -1682,11 +1687,42 @@ impl<'a> Machine<'a> {
             return Ok(env);
         }
         let frame = Env::make(program.idents.len(), Some(env));
-        for (i, a) in program.formal_slots.iter().zip(args) {
+        for (at, (i, a)) in program.formal_slots.iter().zip(args).enumerate() {
             let v = self.value_of(a, caller)?;
+            self.of_the_class_written(program, at, &v)?;
             frame.cells.borrow_mut()[*i] = v;
         }
         Ok(frame)
+    }
+
+    /// An argument is of the class its parameter was written to take. A
+    /// parameter written with a kind naming no class is let be, since a
+    /// language may bring such a value to the kind rather than refusing
+    /// it, and nothing at all is let through, since a parameter with no
+    /// value of its own may be handed nothing.
+    fn of_the_class_written(&mut self, program: &Rc<Routine>, at: usize, x: &Value) -> Result<(), Escape> {
+        let Some(Some(written)) = program.formal_kinds.get(at) else { return Ok(()) };
+        if matches!(x, Value::Nil | Value::Unset) {
+            return Ok(());
+        }
+        let Some(Value::Blueprint(_)) = self.class_bound(written) else { return Ok(()) };
+        if matches!(x, Value::Thing(t) if t.of.goes_by(written, self.classes_either_way)) {
+            return Ok(());
+        }
+        let handed = match x {
+            Value::Thing(t) => t.of.name.clone(),
+            other => self.kind_called(other),
+        };
+        Err(Escape::Error(format!(
+            "{}(): Argument #{} ({}) must be of type {}, {} given, called in {} on line {}",
+            program.ident,
+            at + 1,
+            program.formals.get(at).map_or("", String::as_str),
+            written,
+            handed,
+            self.written_in,
+            self.row
+        )))
     }
 
     pub fn invoke(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {

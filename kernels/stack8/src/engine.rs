@@ -423,6 +423,8 @@ impl<'a> Engine<'a> {
             _ if told.starts_with("Division by zero") => &self.lang.fault_division,
             _ if told.starts_with("Bit shift by") => &self.lang.fault_arithmetic,
             _ if told.starts_with("Cannot coerce") => &self.lang.fault_kind,
+            // An argument that is not of the class its parameter takes.
+            _ if told.contains(" must be of type ") => &self.lang.fault_kind,
             // Words the definition gave for an operand that can take no
             // part are known by the message opening with them.
             _ if self.lang.operand_fault.as_ref().map_or(false, |w| told.starts_with(w.as_str())) => &self.lang.fault_kind,
@@ -788,6 +790,41 @@ impl<'a> Engine<'a> {
     /// returned or the last expression statement's, or what it assigned to
     /// its own name where the language says so, is pushed; a postfix
     /// program leaves what it pushed.
+    /// Every argument is of the class its parameter was declared to
+    /// take. A parameter declared with a kind that names no class is
+    /// left alone, since a language may bring such a value to the kind
+    /// rather than refusing it, and nothing at all is let through, since
+    /// a parameter with nothing of its own may be given nothing.
+    fn of_the_kind_named(&mut self, program: &Rc<Routine>, frame: &[Value]) -> Flow<()> {
+        for (at, named) in program.formal_kinds.iter().enumerate() {
+            let Some(named) = named else { continue };
+            let Some(held) = frame.get(at) else { continue };
+            if matches!(held, Value::Null | Value::Blank) {
+                continue;
+            }
+            let Some(Value::Class(_)) = self.class_named(named) else { continue };
+            if matches!(held, Value::Object(o) if o.class.named(named, self.lang.classes_folded)) {
+                continue;
+            }
+            let given = match held {
+                Value::Object(o) => o.class.name.clone(),
+                other => self.kind_named(other),
+            };
+            let told = format!(
+                "{}(): Argument #{} ({}) must be of type {}, {} given, called in {} on line {}",
+                program.ident,
+                at + 1,
+                program.formals[at],
+                named,
+                given,
+                self.source,
+                self.line
+            );
+            return Err(told.into());
+        }
+        Ok(())
+    }
+
     pub fn invoke(&mut self, program: &Rc<Routine>, args: Vec<Value>) -> Flow<()> {
         let n = args.len();
         self.data.extend(args);
@@ -830,6 +867,7 @@ impl<'a> Engine<'a> {
         // What the routine does not name stays aside rather than
         // spilling into the slots its own names sit in.
         frame.truncate(program.formals.len());
+        self.of_the_kind_named(program, &frame)?;
         frame.resize(program.idents.len(), Value::Blank);
         let base = self.data.len();
         // A routine written in a file of its own is run as being in it:

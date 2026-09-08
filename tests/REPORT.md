@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 81, differs 5, error 18, skipped 10 | pass 81, differs 5, error 18, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 150, differs 32, error 26, skipped 5 | pass 150, differs 32, error 26, skipped 5 |
+| `php/lang` | 213 | pass 152, differs 28, error 28, skipped 5 | pass 152, differs 28, error 28, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 46, differs 10, error 2, skipped 6 | pass 46, differs 10, error 2, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 303, differs 48, error 46, skipped 25 | pass 303, differs 48, error 46, skipped 25 |
+| all | 422 | pass 305, differs 44, error 48, skipped 25 | pass 305, differs 44, error 48, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 48 |
+| ran, printed something else | 44 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
@@ -67,7 +67,7 @@ is listed, since the full kernels are meant to behave alike.
 | skip setlocale() failed | 1 |
 | skip only for Windows | 1 |
 | Fatal error: Uncaught Error: Undefined variable: include in <file> | 1 |
-| Fatal error: Uncaught Error: Undefined variable: datetime in <file> | 1 |
+| Fatal error: Uncaught TypeError: blah(): Argument #1 ($a) must be of type Foo, stdClass given, called in <file> in <file> | 1 |
 
 ### Reserved words: 55 of 68 spelled
 
@@ -388,7 +388,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug23384.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: foo in <file> |
 | `php/lang/bug23489.phpt` | pass | pass |  |
 | `php/lang/bug23524.phpt` | pass | pass |  |
-| `php/lang/bug23584.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug23584.phpt` | pass | pass |  |
 | `php/lang/bug23624.phpt` | pass | pass |  |
 | `php/lang/bug24054.phpt` | pass | pass |  |
 | `php/lang/bug24396.phpt` | error | error | Parse error: Expected identifier after the global keyword, got '$' in <file> |
@@ -436,8 +436,8 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug73172.phpt` | pass | pass |  |
 | `php/lang/bug73329.phpt` | pass | pass |  |
 | `php/lang/bug7515.phpt` | pass | pass |  |
-| `php/lang/catchable_error_001.phpt` | differs | differs | ran, printed something else |
-| `php/lang/catchable_error_002.phpt` | differs | differs | ran, printed something else |
+| `php/lang/catchable_error_001.phpt` | error | error | Fatal error: Uncaught TypeError: blah(): Argument #1 ($a) must be of type Foo, stdClass given, called in <file> in <file> |
+| `php/lang/catchable_error_002.phpt` | pass | pass |  |
 | `php/lang/comments.phpt` | pass | pass |  |
 | `php/lang/comments2.phpt` | skipped | skipped | no --FILE-- section |
 | `php/lang/compare_objects_basic1.phpt` | pass | pass |  |
@@ -613,7 +613,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/syntax_errors.phpt` | error | error | Fatal error: Uncaught Error: Expected ')' to close a group, got ';' in <file> |
 | `php/lang/this_assignment.phpt` | pass | pass |  |
 | `php/lang/throw_variation_001.phpt` | error | error | Fatal error: Uncaught Error: Uncaught Exception: in <file> |
-| `php/lang/type_hints_001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/type_hints_001.phpt` | error | error | Fatal error: Uncaught TypeError: type_hint_foo(): Argument #1 ($a) must be of type Foo, Bar given, called in <file> in <file> |
 | `php/lang/type_hints_002.phpt` | differs | differs | ran, printed something else |
 | `php/lang/type_hints_003.phpt` | differs | differs | ran, printed something else |
 | `php/lang/zend_throw_exception_001.phpt` | pass | pass |  |
