@@ -68,6 +68,11 @@ pub struct Engine<'a> {
     /// The files already read where the program asked for them to be
     /// read only once, by the whole name each stands under.
     read_already: RefCell<std::collections::HashSet<String>>,
+    /// A fault raised inside a source read in, carried out past the
+    /// reading: what the reading answers with is a note and no fault of
+    /// its own, so a throw or an ending is kept here and raised again
+    /// where the reading stood.
+    carried: Option<Fault>,
     /// The routine every complaint is handed to, where the program has
     /// put one in the way of them; the complaints waiting to be handed
     /// over, since one may be raised where the run cannot reach back
@@ -153,6 +158,7 @@ impl<'a> Engine<'a> {
             when_done: RefCell::new(Vec::new()),
             things_made: RefCell::new(Vec::new()),
             read_already: RefCell::new(std::collections::HashSet::new()),
+            carried: None,
             complainer: RefCell::new(None),
             waiting: RefCell::new(Vec::new()),
             any_waiting: std::cell::Cell::new(false),
@@ -224,7 +230,13 @@ impl<'a> Engine<'a> {
         match ran {
             Ok(()) => {}
             Err(Fault::Note(told)) => return Err(told),
-            Err(other) => return Err(other.told(&self.names())),
+            // A throw, or an ending, belongs to whatever stands around
+            // the reading and not to the reading, so it is carried out
+            // and raised again there.
+            Err(other) => {
+                self.carried = Some(other);
+                return Err("the source read in did not finish".to_string());
+            }
         }
         // What it left behind is its answer; nothing left is a plain yes.
         Ok(match self.data.len() > base {
@@ -2111,7 +2123,10 @@ impl<'a> Engine<'a> {
                 args.extend(self.data.drain(at..));
                 let result = self.builtin(*builtin, name, &mut args);
                 self.buffer = args;
-                result?
+                match self.carried.take() {
+                    Some(fled) => return Err(fled),
+                    None => result?,
+                }
             }
             dyadic => {
                 let b = self.drop_top()?;
@@ -2776,7 +2791,16 @@ impl<'a> Engine<'a> {
                         }
                         match found {
                             Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-                            Err(_) => return Ok(Value::Flag(false)),
+                            // A file that cannot be read is not there as
+                            // far as the run is concerned: it says so
+                            // twice, once of the file and once of the
+                            // reading in, and answers false.
+                            Err(_) => {
+                                self.complain(Complaint::Warning, &format!("{}(): Failed to open stream: No such file or directory", name));
+                                let told = format!("{}(): Failed opening '{}' for inclusion (include_path='.')", name, given);
+                                self.complain(Complaint::Warning, &told);
+                                return Ok(Value::Flag(false));
+                            }
                         }
                     }
                 };

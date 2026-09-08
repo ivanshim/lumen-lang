@@ -3032,6 +3032,15 @@ impl<'a> Builder<'a> {
                     // A name written before the scope mark names a
                     // class, so it is read as one.
                     self.read_class(&t.lexeme)?
+                } else if table.flag("ext.syntax.call.bare")
+                    && matches!(table.prims.get(&t.lexeme), Some(Prim::Bring) | Some(Prim::BringOnce))
+                {
+                    // A source read in stands where a value does as much
+                    // as where a statement does, brackets or none:
+                    // `return include $p`. The whole of what follows is
+                    // its own, nothing written after binding looser.
+                    let named = self.expr(0)?;
+                    self.named_call(&t.lexeme, vec![named])?
                 } else {
                     self.read(&t.lexeme)
                 }

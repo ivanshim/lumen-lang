@@ -119,6 +119,10 @@ pub struct Machine<'a> {
     /// The files already read where the program asked that they be read
     /// only once, under the whole name each stands by.
     read_before: RefCell<std::collections::HashSet<String>>,
+    /// What a source read in got away with: the reading answers with a
+    /// value or a note, so a throw or an ending is kept here and let
+    /// go again where the reading stood.
+    got_away: Option<Escape>,
     /// What the program already read declared about cells: which
     /// parameters take one and which routines hand one back. Text read
     /// while the run goes is a piece of the same program and is built
@@ -193,6 +197,7 @@ impl<'a> Machine<'a> {
             afterward: RefCell::new(Vec::new()),
             things: RefCell::new(Vec::new()),
             read_before: RefCell::new(std::collections::HashSet::new()),
+            got_away: None,
             knows_cells: (HashMap::new(), HashMap::new(), std::collections::HashSet::new()),
             frames_named: Vec::new(),
             hearer: RefCell::new(None),
@@ -959,12 +964,13 @@ impl<'a> Machine<'a> {
             }),
             Err(Escape::Error(told)) => Err(told),
             Err(Escape::Yield(answer)) => Ok(answer),
-            Err(other) => Err(match other {
-                Escape::Done => return Ok(Value::Nil),
-                Escape::Stopped(told) => told,
-                Escape::Thrown(raised) => format!("Uncaught {}", raised.bare()),
-                _ => "A run of source ended oddly".to_string(),
-            }),
+            // A throw, or an ending, is whatever stands around the
+            // reading to answer for and not the reading itself, so it
+            // is kept and let go again there.
+            Err(other) => {
+                self.got_away = Some(other);
+                Err("the source read in did not finish".to_string())
+            }
         }
     }
 
@@ -1776,7 +1782,11 @@ impl<'a> Machine<'a> {
                     if let Some(done) = self.stands_for_property(*op, &values)? {
                         return Ok(done);
                     }
-                    let made = self.prim(*op, name, &values)?;
+                    let made = self.prim(*op, name, &values);
+                    if let Some(away) = self.got_away.take() {
+                        return Err(away);
+                    }
+                    let made = made?;
                     // A complaint the operation itself raised is handed
                     // over here, before whatever holds it goes on, so
                     // that it is said where it happened.
@@ -2457,7 +2467,16 @@ impl<'a> Machine<'a> {
                         }
                         match held {
                             Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-                            Err(_) => return Ok(Value::Flag(false)),
+                            // A file that will not be read is not there
+                            // as far as the run can tell: it says so
+                            // twice, of the file and of the reading in,
+                            // and answers false.
+                            Err(_) => {
+                                self.grumble("warning", &format!("{}(): Failed to open stream: No such file or directory", name));
+                                let told = format!("{}(): Failed opening '{}' for inclusion (include_path='.')", name, given);
+                                self.grumble("warning", &told);
+                                return Ok(Value::Flag(false));
+                            }
                         }
                     }
                 };

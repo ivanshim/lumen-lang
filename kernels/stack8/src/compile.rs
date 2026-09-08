@@ -3263,6 +3263,18 @@ impl<'a> Compiler<'a> {
                         _ if lang.scope_mark.as_ref().map_or(false, |m| self.at_symbol(m)) => {
                             self.read_class(&tok.lexeme)?;
                         }
+                        // A source read in stands where a value does as
+                        // well as where a statement does, brackets or
+                        // none: `return include $p`. What follows is the
+                        // whole of an expression, since nothing written
+                        // after it binds more loosely.
+                        _ if lang.bare_calls
+                            && matches!(lang.builtins.get(&tok.lexeme), Some(Builtin::Include) | Some(Builtin::IncludeOnce)) =>
+                        {
+                            let named = tok.lexeme.clone();
+                            self.expr(0)?;
+                            self.call(&named, 1)?;
+                        }
                         _ => self.read(&tok.lexeme),
                     }
                 }

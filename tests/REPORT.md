@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 87, differs 2, error 15, skipped 10 | pass 87, differs 2, error 15, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 169, differs 22, error 17, skipped 5 | pass 169, differs 22, error 17, skipped 5 |
+| `php/lang` | 213 | pass 171, differs 21, error 16, skipped 5 | pass 171, differs 21, error 16, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 49, differs 8, error 1, skipped 6 | pass 49, differs 8, error 1, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 331, differs 33, error 33, skipped 25 | pass 331, differs 33, error 33, skipped 25 |
+| all | 422 | pass 333, differs 32, error 32, skipped 25 | pass 333, differs 32, error 32, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 33 |
+| ran, printed something else | 32 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | skip php-cgi not available | 2 |
@@ -58,16 +58,16 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: 'foo' is not a function in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: debug_backtrace in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: array_walk in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: debug_print_backtrace in <file> | 1 |
 | skip setlocale() failed | 1 |
 | skip only for Windows | 1 |
-| Fatal error: Uncaught Error: Undefined variable: include in <file> | 1 |
 | Fatal error: Uncaught TypeError: blah(): Argument #1 ($a) must be of type Foo, stdClass given, called in <file> in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: datetime in <file> | 1 |
 | skip this test is for 32-bit platforms only | 1 |
 | Fatal error: Uncaught Error: Cannot use a scalar value as an array in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: NAN in <file> | 1 |
 | Fatal error: Uncaught Error: Expected ')' to close a group, got ';' in <file> | 1 |
-| Fatal error: Uncaught Error: Uncaught Exception: in <file> | 1 |
+| Fatal error: Uncaught TypeError: type_hint_foo(): Argument #1 ($a) must be of type Foo, Bar given, called in <file> in <file> | 1 |
 
 ### Reserved words: 55 of 68 spelled
 
@@ -413,7 +413,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug27439.phpt` | pass | pass |  |
 | `php/lang/bug27443.phpt` | pass | pass |  |
 | `php/lang/bug27535.phpt` | pass | pass |  |
-| `php/lang/bug28213.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug28213.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: debug_print_backtrace in <file> |
 | `php/lang/bug28800.phpt` | pass | pass |  |
 | `php/lang/bug29566.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug29893.phpt` | pass | pass |  |
@@ -427,7 +427,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug35176.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug35382.phpt` | skipped | skipped | no --FILE-- section |
 | `php/lang/bug38579.phpt` | skipped | skipped | skip only for Windows |
-| `php/lang/bug43958.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: include in <file> |
+| `php/lang/bug43958.phpt` | pass | pass |  |
 | `php/lang/bug44654.phpt` | pass | pass |  |
 | `php/lang/bug44827.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug45392.phpt` | differs | differs | ran, printed something else |
@@ -612,7 +612,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/string_decimals_001.phpt` | pass | pass |  |
 | `php/lang/syntax_errors.phpt` | error | error | Fatal error: Uncaught Error: Expected ')' to close a group, got ';' in <file> |
 | `php/lang/this_assignment.phpt` | pass | pass |  |
-| `php/lang/throw_variation_001.phpt` | error | error | Fatal error: Uncaught Error: Uncaught Exception: in <file> |
+| `php/lang/throw_variation_001.phpt` | pass | pass |  |
 | `php/lang/type_hints_001.phpt` | error | error | Fatal error: Uncaught TypeError: type_hint_foo(): Argument #1 ($a) must be of type Foo, Bar given, called in <file> in <file> |
 | `php/lang/type_hints_002.phpt` | pass | pass |  |
 | `php/lang/type_hints_003.phpt` | differs | differs | ran, printed something else |
