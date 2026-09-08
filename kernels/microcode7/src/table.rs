@@ -85,7 +85,7 @@ const EXT_TAGS: &str = "\
 ext.lexical.epilogue:L ext.builtin.echo:L ext.syntax.call.bare:B ext.op.increment:L ext.op.decrement:L \
 ext.lexical.interpolating_quotes:L ext.stmt.for.c:L ext.op.assign.compound:B ext.stmt.static:L ext.stmt.global:L \
 ext.stmt.const:L ext.builtin.define:L ext.builtin.var_dump:L ext.stmt.switch:L ext.stmt.case:L \
-ext.stmt.default:L ext.stmt.case.mark:L ext.op.ternary:L ext.block.lone_statement:B ext.stmt.function.hoisted:B ext.stmt.function.outermost:B ext.system.request.amiss:L ext.system.request.amiss.boundary:L ext.system.request.amiss.boundary.wrong:L ext.system.request.amiss.part:L \
+ext.stmt.default:L ext.stmt.case.mark:L ext.op.ternary:L ext.block.lone_statement:B ext.stmt.function.hoisted:B ext.stmt.function.outermost:B ext.system.request.amiss:L ext.system.request.amiss.boundary:L ext.system.request.amiss.boundary.wrong:L ext.system.request.amiss.part:L ext.system.request.amiss.body.large:L \
 ext.lexical.number.exponent:L ext.op.plus:L ext.stmt.break.levels:B ext.builtin.array:L ext.op.index.append:B ext.stmt.for.collection:B ext.builtin.print_r:L \
 ext.stmt.function.returns:L ext.stmt.class:L ext.stmt.class.extends:L ext.stmt.class.new:L ext.stmt.class.this:L \
 ext.stmt.class.constructor:L ext.stmt.class.modifier:L ext.stmt.class.shared:L ext.op.member:L ext.op.scope:L \

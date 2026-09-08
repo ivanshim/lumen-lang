@@ -17,18 +17,18 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 57, differs 21, error 26, skipped 10 | pass 57, differs 21, error 26, skipped 10 |
+| `php/basic` | 114 | pass 61, differs 17, error 26, skipped 10 | pass 61, differs 17, error 26, skipped 10 |
 | `php/func` | 14 | pass 13, differs 0, error 1, skipped 0 | pass 13, differs 0, error 1, skipped 0 |
 | `php/lang` | 213 | pass 114, differs 42, error 52, skipped 5 | pass 114, differs 42, error 52, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 21, error 3, skipped 6 | pass 34, differs 21, error 3, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 223, differs 92, error 82, skipped 25 | pass 223, differs 92, error 82, skipped 25 |
+| all | 422 | pass 227, differs 88, error 82, skipped 25 | pass 227, differs 88, error 82, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 92 |
+| ran, printed something else | 88 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
@@ -222,7 +222,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/021.phpt` | pass | pass |  |
 | `php/basic/022.phpt` | differs | differs | ran, printed something else |
 | `php/basic/023.phpt` | pass | pass |  |
-| `php/basic/025.phpt` | differs | differs | ran, printed something else |
+| `php/basic/025.phpt` | pass | pass |  |
 | `php/basic/028.phpt` | pass | pass |  |
 | `php/basic/029.phpt` | differs | differs | ran, printed something else |
 | `php/basic/030.phpt` | pass | pass |  |
@@ -290,7 +290,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/rfc1867_boundary_1.phpt` | pass | pass |  |
 | `php/basic/rfc1867_boundary_2.phpt` | pass | pass |  |
 | `php/basic/rfc1867_empty_upload.phpt` | pass | pass |  |
-| `php/basic/rfc1867_file_upload_disabled.phpt` | differs | differs | ran, printed something else |
+| `php/basic/rfc1867_file_upload_disabled.phpt` | pass | pass |  |
 | `php/basic/rfc1867_garbled_mime_headers.phpt` | pass | pass |  |
 | `php/basic/rfc1867_invalid_boundary.phpt` | pass | pass |  |
 | `php/basic/rfc1867_malicious_input.phpt` | pass | pass |  |
@@ -299,8 +299,8 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/rfc1867_missing_boundary.phpt` | pass | pass |  |
 | `php/basic/rfc1867_missing_boundary_2.phpt` | differs | differs | ran, printed something else |
 | `php/basic/rfc1867_multiple_webkitdirectory.phpt` | pass | pass |  |
-| `php/basic/rfc1867_post_max_filesize.phpt` | differs | differs | ran, printed something else |
-| `php/basic/rfc1867_post_max_size.phpt` | differs | differs | ran, printed something else |
+| `php/basic/rfc1867_post_max_filesize.phpt` | pass | pass |  |
+| `php/basic/rfc1867_post_max_size.phpt` | pass | pass |  |
 | `php/basic/timeout_variation_0.phpt` | error | error | Fatal error: Maximum execution time of 1 second exceeded in <file> |
 | `php/basic/timeout_variation_1.phpt` | skipped | skipped | skip Windows only test |
 | `php/basic/timeout_variation_10.phpt` | skipped | skipped | skip Windows only test |

@@ -617,6 +617,9 @@
   "ext.system.request.amiss.part": [
     "PHP Request Startup: File Upload Mime headers garbled"
   ],
+  "ext.system.request.amiss.body.large": [
+    "PHP Request Startup: POST Content-Length of %s bytes exceeds the limit of %s bytes"
+  ],
   "ext.lexical.template": true,
   "ext.op.otherwise": [
     "??"

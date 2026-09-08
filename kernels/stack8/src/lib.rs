@@ -115,11 +115,19 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     // in the language's own words: the host names only which of them it
     // found, since the wording is the language's and not the host's.
     if let Some(name) = &lang.amiss_binding {
+        // Each is the kind the host found, and after it whatever counts
+        // the kind is told with; the words come with places for them.
         let said: Vec<Value> = request
             .iter()
             .filter(|(from, key, ..)| from == "SELF" && key == "amiss")
-            .filter_map(|(.., kind, _)| lang.amiss_words.iter().find(|(k, _)| k == kind))
-            .map(|(_, words)| Value::text(words))
+            .filter_map(|(.., told, _)| {
+                let mut steps = told.split('\u{1f}');
+                let kind = steps.next().unwrap_or_default();
+                let (_, words) = lang.amiss_words.iter().find(|(k, _)| *k == kind)?;
+                let mut whole = vec![Value::text(words)];
+                whole.extend(steps.map(|n| Value::text(n)));
+                Some(Value::array(whole))
+            })
             .collect();
         machine.define(name, Value::array(said));
     }

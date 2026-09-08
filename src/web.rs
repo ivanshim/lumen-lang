@@ -48,7 +48,7 @@ pub fn gathered() -> Request {
     }
     let (posted, sent, amiss) = body_given();
     for kind in amiss {
-        request.push(("SELF".to_string(), "amiss".to_string(), kind.to_string(), false));
+        request.push(("SELF".to_string(), "amiss".to_string(), kind, false));
     }
     for (key, value) in &posted {
         request.push(("POST".to_string(), key.clone(), value.clone(), false));
@@ -71,11 +71,45 @@ pub fn gathered() -> Request {
     request
 }
 
+/// A setting counted in bytes, as PHP counts one: the number the text
+/// opens with, times what the last letter of the whole stands for.
+fn quantity(text: &str) -> Option<i64> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let last = text.chars().last().unwrap_or(' ').to_ascii_lowercase();
+    let times: i64 = match last {
+        'k' => 1024,
+        'm' => 1024 * 1024,
+        'g' => 1024 * 1024 * 1024,
+        _ => 1,
+    };
+    let digits = match times > 1 {
+        true => &text[..text.len() - last.len_utf8()],
+        false => text,
+    };
+    let digits = digits.trim();
+    let (sign, rest) = match digits.strip_prefix('-') {
+        Some(rest) => (-1, rest),
+        None => (1, digits.strip_prefix('+').unwrap_or(digits)),
+    };
+    let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+    let opening: i64 = rest[..end].parse().unwrap_or(0);
+    Some(sign * opening * times)
+}
+
+/// What a setting the run was started with says, as the runner hands it
+/// over: every one carries the name it has with PHP_INI_ before it.
+fn setting(name: &str) -> Option<String> {
+    env::var(format!("PHP_INI_{}", name)).ok()
+}
+
 /// What the body carries: the fields of a form, and the files sent with
 /// it. A body written as one piece is read as a form; a body written in
 /// parts is cut at its boundary, and a part naming a file is written out
 /// where the program can read it.
-fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>, Vec<&'static str>) {
+fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>, Vec<String>) {
     let kind = env::var("CONTENT_TYPE").unwrap_or_default();
     let plain = kind.starts_with("application/x-www-form-urlencoded");
     // What a part is cut at runs from `boundary=` to the first comma, as
@@ -91,15 +125,22 @@ fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>, Vec<&'st
     // says nothing of parts is only left unread.
     let in_parts_said = kind.starts_with("multipart/");
     if !plain && boundary.is_none() {
-        return (Vec::new(), Vec::new(), if in_parts_said { vec!["boundary"] } else { Vec::new() });
+        return (Vec::new(), Vec::new(), if in_parts_said { vec!["boundary".to_string()] } else { Vec::new() });
     }
     let ragged = boundary
         .as_deref()
         .map_or(false, |mark| mark.starts_with('"') && !mark.ends_with('"'));
     if ragged {
-        return (Vec::new(), Vec::new(), vec!["boundary.wrong"]);
+        return (Vec::new(), Vec::new(), vec!["boundary.wrong".to_string()]);
     }
     let length: usize = env::var("CONTENT_LENGTH").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
+    // A body larger than the run was told to take is not read at all,
+    // and how large it was and how large it might have been are told.
+    if let Some(most) = setting("post_max_size").and_then(|said| quantity(&said)).filter(|most| *most > 0) {
+        if length as i64 > most {
+            return (Vec::new(), Vec::new(), vec![format!("body.large{}{}{}{}", BETWEEN_STEPS, length, BETWEEN_STEPS, most)]);
+        }
+    }
     let mut body = vec![0u8; length];
     if std::io::stdin().read_exact(&mut body).is_err() {
         return (Vec::new(), Vec::new(), Vec::new());
@@ -113,9 +154,13 @@ fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>, Vec<&'st
 /// A body written in parts: each part says what it is called, and a part
 /// that names a file is written out to a place of its own, which the
 /// program is told about the way PHP tells it.
-fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String, String, bool)>, Vec<&'static str>) {
+fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String, String, bool)>, Vec<String>) {
     let (mut posted, mut sent) = (Vec::new(), Vec::new());
-    let mut amiss: Vec<&'static str> = Vec::new();
+    let mut amiss: Vec<String> = Vec::new();
+    // A run may be told to take no files at all, and to take none larger
+    // than so much.
+    let takes_files = setting("file_uploads").map_or(true, |said| !matches!(said.trim(), "0" | "" | "off" | "Off" | "false"));
+    let file_limit = setting("upload_max_filesize").and_then(|said| quantity(&said)).filter(|most| *most > 0);
     let mut files = 0usize;
     // A part written before the files may say how large a file the form
     // will take; one larger than that is turned away.
@@ -160,7 +205,7 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
         }
         match (named("name"), named("filename")) {
             (None, None) => {
-                amiss.push("part");
+                amiss.push("part".to_string());
                 continue;
             }
             (Some(name), None) => {
@@ -170,6 +215,7 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
                 }
                 posted.push((steps_of(&name), said));
             }
+            (_, Some(_)) if !takes_files => continue,
             (given, Some(filename)) => {
                 // A part naming no file at all sent none: it is counted
                 // among the files, and everything said of it is empty
@@ -178,6 +224,10 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
                 // A file larger than the form said it would take is
                 // turned away, and nothing of it is kept.
                 let too_large = form_limit.map_or(false, |most| content.len() > most);
+                // One larger than the run was told to take is turned
+                // away too, and said to be turned away for that reason.
+                let past_limit = file_limit.map_or(false, |most| content.len() as i64 > most);
+                let too_large = too_large || past_limit;
                 // The file is written out, since a program is given the
                 // place it lies in rather than what it holds.
                 let held = env::temp_dir().join(format!("lumenup{}{}", std::process::id(), files));
@@ -210,6 +260,7 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
                     // not be put anywhere.
                     ("error", match (none_sent, too_large, written) {
                         (true, ..) => "4".to_string(),
+                        (_, true, _) if past_limit => "1".to_string(),
                         (_, true, _) => "2".to_string(),
                         (.., true) => "0".to_string(),
                         _ => "1".to_string(),

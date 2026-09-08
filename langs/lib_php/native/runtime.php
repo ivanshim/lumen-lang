@@ -61,7 +61,10 @@ define("PHP_OUTPUT_HANDLER_CONT", 0);
 function __say_request_amiss() {
     global $__request_amiss;
     if (!is_array($__request_amiss)) { return null; }
-    foreach ($__request_amiss as $said) {
+    foreach ($__request_amiss as $told) {
+        $said = $told[0];
+        if (count($told) == 3) { $said = sprintf($told[0], $told[1], $told[2]); }
+        elseif (count($told) == 2) { $said = sprintf($told[0], $told[1]); }
         echo "\nWarning: " . $said . " in Unknown on line 0\n";
     }
     return null;

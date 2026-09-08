@@ -62,10 +62,11 @@ const OWN_PLACE: [(&str, &str); 2] = [("file", "ext.system.source.file"), ("dire
 /// What the host may find amiss in a request before the program runs.
 /// The host names only which of them it found; the words for each are
 /// the language's own.
-const REQUEST_AMISS: [(&str, &str); 3] = [
+const REQUEST_AMISS: [(&str, &str); 4] = [
     ("boundary", "ext.system.request.amiss.boundary"),
     ("boundary.wrong", "ext.system.request.amiss.boundary.wrong"),
     ("part", "ext.system.request.amiss.part"),
+    ("body.large", "ext.system.request.amiss.body.large"),
 ];
 
 const REQUEST_PARTS: [(&str, &str); 7] = [
@@ -129,12 +130,20 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     // What the host found amiss in the request before the program ran,
     // told in the language's own words.
     if let Some(name) = table.single("ext.system.request.amiss") {
+        // Each is the kind the host found, and after it whatever counts
+        // the kind is told with; the words come with places for them.
         let said: Vec<Value> = request
             .iter()
             .filter(|(from, key, ..)| from == "SELF" && key == "amiss")
-            .filter_map(|(.., kind, _)| REQUEST_AMISS.iter().find(|(k, _)| k == kind))
-            .filter_map(|(_, key)| table.single(key))
-            .map(Value::text)
+            .filter_map(|(.., told, _)| {
+                let mut steps = told.split('\u{1f}');
+                let kind = steps.next().unwrap_or_default();
+                let (_, key) = REQUEST_AMISS.iter().find(|(k, _)| *k == kind)?;
+                let words = table.single(key)?;
+                let mut whole = vec![Value::text(words)];
+                whole.extend(steps.map(Value::text));
+                Some(Value::Vector(std::rc::Rc::new(whole)))
+            })
             .collect();
         machine.define(name, Value::Vector(std::rc::Rc::new(said)));
     }

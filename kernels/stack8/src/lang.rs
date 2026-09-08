@@ -405,7 +405,7 @@ w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.stmt.for.c | b e
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.const | w ext.builtin.define
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
 w ext.stmt.case.mark | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
-w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.request.amiss.boundary.wrong | w ext.system.request.amiss.part
+w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.request.amiss.boundary.wrong | w ext.system.request.amiss.part | w ext.system.request.amiss.body.large
 w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
 w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
@@ -1053,6 +1053,7 @@ impl Lang {
                     ("boundary", "ext.system.request.amiss.boundary"),
                     ("boundary.wrong", "ext.system.request.amiss.boundary.wrong"),
                     ("part", "ext.system.request.amiss.part"),
+                    ("body.large", "ext.system.request.amiss.body.large"),
                 ];
                 let mut said = Vec::new();
                 for (kind, tag) in kinds {

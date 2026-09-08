@@ -1097,6 +1097,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.real.digits` | - | - | - | - | - | - | - | `14` | - | - |
 | `ext.system.request.all` | - | - | - | - | - | - | - | `$_REQUEST` | - | - |
 | `ext.system.request.amiss` | - | - | - | - | - | - | - | `$__request_amiss` | - | - |
+| `ext.system.request.amiss.body.large` | - | - | - | - | - | - | - | `PHP Request Startup: POST Content-Length of %s bytes exceeds the limit of %s bytes` | - | - |
 | `ext.system.request.amiss.boundary` | - | - | - | - | - | - | - | `PHP Request Startup: Missing boundary in multipart/form-data POST data` | - | - |
 | `ext.system.request.amiss.boundary.wrong` | - | - | - | - | - | - | - | `PHP Request Startup: Invalid boundary in multipart/form-data POST data` | - | - |
 | `ext.system.request.amiss.part` | - | - | - | - | - | - | - | `PHP Request Startup: File Upload Mime headers garbled` | - | - |
