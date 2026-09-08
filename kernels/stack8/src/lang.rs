@@ -246,6 +246,9 @@ pub struct Lang {
     /// A second prologue, opening a run of code whose value is written
     /// out where it stands: PHP's `<?=`.
     pub prologue_echo: Option<String>,
+    /// Whether the marker opening a run of code is found however it is
+    /// written: PHP's `<?php` is `<?PHP` just as well.
+    pub prologue_folded: bool,
     pub bare_calls: bool,
     /// Whether the writer is written as an operator and not as a call:
     /// brackets after it group what follows rather than holding its
@@ -522,7 +525,7 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
-w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
+w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.stmt.for.c | b ext.op.assign.compound
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.const | w ext.builtin.define
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
@@ -1178,6 +1181,7 @@ impl Lang {
             },
             epilogue: r.strings("ext.lexical.epilogue")?,
             prologue_echo: r.head("ext.lexical.prologue.echo")?,
+            prologue_folded: r.flag("ext.lexical.prologue.folded")?,
             bare_calls: r.flag("ext.syntax.call.bare")?,
             writes_as_operator: r.flag("ext.builtin.write.operator")?,
             increments: r.strings("ext.op.increment")?,

@@ -409,6 +409,10 @@ pub enum Instr {
     /// lets a program hush what one piece of it has to say about
     /// itself says where the quiet begins and ends.
     Hush(bool),
+    /// Read this binding as it stands, saying nothing about it: where it
+    /// holds nothing at all, nothing at all is what is read, so that
+    /// writing it somewhere else leaves that place unwritten too.
+    Glance(Cell),
     /// Make this binding a shared cell if it is not one already, and
     /// push that cell, so another name can be fastened to it.
     Bond(Cell),

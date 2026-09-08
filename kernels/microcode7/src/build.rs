@@ -2550,7 +2550,12 @@ impl<'a> Builder<'a> {
                 r.carrying.push(slot.at);
             }
             let mut items = r.spare_values(spares, &formals)?;
-            items.push(r.expr(0)?);
+            // The one expression stands where it is written, so whatever
+            // is said while it runs names that line and not the line the
+            // call was made from.
+            let row = (r.look().row as u32).saturating_sub(r.before);
+            let body = r.expr(0)?;
+            items.push(Form::OnLine(row, Box::new(body)));
             Ok(sequence(items))
         })?;
         let program = match carried.is_empty() {
@@ -2558,12 +2563,12 @@ impl<'a> Builder<'a> {
             false => {
                 let mut given = vec![program];
                 for (named, _) in &carried {
-                    // A name never written to is taken as nothing at
-                    // all, and quietly: such a routine cannot say what
-                    // it wants of the names around it, so it is not for
-                    // it to complain of any of them.
-                    let read = self.read(named);
-                    given.push(Form::Muted(Box::new(read)));
+                    // A name never written to goes with it as nothing at
+                    // all: the routine was never told to want it, so the
+                    // taking says nothing of it, and reading it inside is
+                    // what says it was never written.
+                    let slot = self.address_to_read(named);
+                    given.push(Form::Glance(slot));
                 }
                 prim_call(Prim::Carry, given)
             }

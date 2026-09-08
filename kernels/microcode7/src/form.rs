@@ -312,6 +312,10 @@ pub enum Prim {
 pub enum Form {
     Const(Value),
     Read(Address),
+    /// The same, read as it stands and with nothing said about it: a
+    /// binding that holds nothing at all reads as nothing at all, so
+    /// that writing it elsewhere leaves that place unwritten too.
+    Glance(Address),
     Write(Address, Box<Form>),
     Apply(Callee, Vec<Form>),
     /// A loop as a form, run in the frame it appears in, instead

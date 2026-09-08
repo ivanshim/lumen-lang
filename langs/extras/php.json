@@ -51,6 +51,7 @@
   "lexical.prologue": [
     "<?php"
   ],
+  "ext.lexical.prologue.folded": true,
   "ext.lexical.prologue.echo": [
     "<?="
   ],

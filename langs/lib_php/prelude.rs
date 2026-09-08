@@ -12,6 +12,7 @@ pub static FILES: &[(&str, &str)] = &[
     ("langs/lib_php/native/iterators.php", include_str!("native/iterators.php")),
     ("langs/lib_php/native/json.php", include_str!("native/json.php")),
     ("langs/lib_php/native/random.php", include_str!("native/random.php")),
+    ("langs/lib_php/native/regex.php", include_str!("native/regex.php")),
     ("langs/lib_php/native/runtime.php", include_str!("native/runtime.php")),
     ("langs/lib_php/native/streams.php", include_str!("native/streams.php")),
     ("langs/lib_php/native/strings.php", include_str!("native/strings.php")),

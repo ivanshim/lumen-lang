@@ -37,10 +37,25 @@ impl Token {
     }
 }
 
+/// Where a marker stands in some text, found however it is written
+/// where the language says its markers are known that way. Markers are
+/// written in letters that have a case, so lowering them leaves every
+/// place in the text where it was.
+fn marker_at(text: &str, marker: &str, folded: bool) -> Option<usize> {
+    match folded {
+        true => text.to_ascii_lowercase().find(&marker.to_ascii_lowercase()),
+        false => text.find(marker),
+    }
+}
+
 fn drop_prologue<'a>(source: &'a str, lang: &Lang) -> &'a str {
     let Some(prologue) = &lang.prologue else { return source };
     let lead = source.len() - source.trim_start().len();
-    if !source[..lead].contains('\n') && source[lead..].starts_with(prologue.as_str()) {
+    let opens = match lang.prologue_folded {
+        true => source[lead..].to_ascii_lowercase().starts_with(&prologue.to_ascii_lowercase()),
+        false => source[lead..].starts_with(prologue.as_str()),
+    };
+    if !source[..lead].contains('\n') && opens {
         &source[lead + prologue.len()..]
     } else {
         source
@@ -628,8 +643,8 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
         // Either marker may open a run of code, whichever stands first.
         // The short one says the run is a thing to be written out, and
         // the word that writes it is put before it.
-        let plainly = rest.find(opening.as_str());
-        let briefly = lang.prologue_echo.as_ref().and_then(|mark| rest.find(mark.as_str()));
+        let plainly = marker_at(rest, &opening, lang.prologue_folded);
+        let briefly = lang.prologue_echo.as_ref().and_then(|mark| marker_at(rest, mark, lang.prologue_folded));
         let (at, mark, writes) = match (plainly, briefly) {
             (Some(a), Some(b)) if b < a => (b, lang.prologue_echo.clone().expect("the short marker"), true),
             (Some(a), _) => (a, opening.clone(), false),

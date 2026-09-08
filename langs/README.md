@@ -726,6 +726,10 @@ only. The extension labels so far, all from PHP:
   another is there for the whole run once the routine holding it has
   run. Without it a routine written inside another is that one's own,
   as it is in a language where a nested routine closes over its place.
+- `ext.lexical.prologue.folded`: a switch; the marker opening a run of
+  code is found however it is written, so PHP's `<?php` is `<?PHP` just
+  as well. Markers are written in letters that have a case, so nothing
+  else is affected.
 - `ext.stmt.function.carries`: the word a routine written where a value
   stands says, after its parameters, before the names it takes away from
   around it — PHP's `function ($x) use ($k, &$n) { … }`. The names
@@ -1310,6 +1314,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.number.octal_prefix` | - | - | - | - | - | - | - | `0o` `0O` | - | - |
 | `ext.lexical.number.separator` | - | - | - | - | - | - | - | `_` | - | - |
 | `ext.lexical.prologue.echo` | - | - | - | - | - | - | - | `<?=` | - | - |
+| `ext.lexical.prologue.folded` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.lexical.template` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.assign.compound` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.assign.value` | - | - | - | - | - | - | - | `true` | - | - |

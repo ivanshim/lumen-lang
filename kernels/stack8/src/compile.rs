@@ -2598,20 +2598,23 @@ impl<'a> Compiler<'a> {
                 a.carrying.push(cell.near[0]);
             }
             a.spare_values(&spares, &given)?;
+            // The one expression stands where it is written, so anything
+            // said while it runs names that line and not the one the
+            // call was made from.
+            let row = (a.look().row as u32).saturating_sub(a.before);
+            a.put(Instr::Line(row));
             a.expr(0)?;
             a.piece().result_touched = true;
             a.write(RESULT_CELL);
             Ok(())
         })?;
-        // A name never written to is taken as nothing at all, quietly:
-        // what such a routine wants of the names around it cannot be
-        // said, so it is not for it to complain of any of them.
-        if !carried.is_empty() {
-            self.put(Instr::Mute(true));
-            for (named, _) in &carried {
-                self.read(named);
-            }
-            self.put(Instr::Mute(false));
+        // A name never written to goes with it as nothing at all: the
+        // routine was never told to want it, so the taking says nothing
+        // of it, and reading it inside is what says it was never
+        // written, as reading it here would have been.
+        for (named, _) in &carried {
+            let cell = self.cell_to_read(named, false);
+            self.put(Instr::Glance(cell));
         }
         self.constant(Value::Routine(program));
         if !carried.is_empty() {

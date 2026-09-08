@@ -1408,6 +1408,18 @@ impl<'a> Engine<'a> {
                         None => return Err(told.into()),
                     },
                 },
+                Instr::Glance(slot) => {
+                    let held = slot
+                        .near
+                        .iter()
+                        .map(|&s| frame[s].clone())
+                        .find(|v| !matches!(v, Value::Blank))
+                        .unwrap_or_else(|| self.world[slot.far].clone());
+                    self.data.push(match held {
+                        Value::Bond(shared) => shared.borrow().clone(),
+                        other => other,
+                    });
+                }
                 Instr::Write(slot) => {
                     let v = self.drop_top()?;
                     self.store_cell(slot, frame, v)?;

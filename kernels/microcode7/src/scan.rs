@@ -26,11 +26,27 @@ pub struct Token {
     pub row: u32,
 }
 
+/// Where a marker stands in a piece of text, found however it is
+/// written where the table says such markers are known that way. A
+/// marker is written in letters that have a case, so lowering them
+/// leaves every place in the text where it already was.
+fn marker_at(text: &str, marker: &str, folded: bool) -> Option<usize> {
+    match folded {
+        true => text.to_ascii_lowercase().find(&marker.to_ascii_lowercase()),
+        false => text.find(marker),
+    }
+}
+
 fn drop_comments(source: &str, table: &Table) -> String {
     let mut text = source;
+    let folded = table.flag("ext.lexical.prologue.folded");
     if let Some(p) = table.single("lexical.prologue") {
         let lead = text.len() - text.trim_start().len();
-        if !text[..lead].contains('\n') && text[lead..].starts_with(p) {
+        let opens = match folded {
+            true => text[lead..].to_ascii_lowercase().starts_with(&p.to_ascii_lowercase()),
+            false => text[lead..].starts_with(p),
+        };
+        if !text[..lead].contains('\n') && opens {
             text = &text[lead + p.len()..];
         }
     }
@@ -112,11 +128,12 @@ pub fn scan_at(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)>
     // a run of code says of itself names the page's own lines.
     let mut row: u32 = 1;
     let briefly = table.single("ext.lexical.prologue.echo");
+    let folded = table.flag("ext.lexical.prologue.folded");
     loop {
         // A run of code may be opened by either marker, whichever comes
         // first. The brief one asks for what the run comes to be
         // written out, so the word that writes stands before it.
-        let (at, mark, writes) = match (rest.find(opening), briefly.and_then(|m| rest.find(m))) {
+        let (at, mark, writes) = match (marker_at(rest, opening, folded), briefly.and_then(|m| marker_at(rest, m, folded))) {
             (Some(a), Some(b)) if b < a => (b, briefly.expect("the brief marker"), true),
             (Some(a), _) => (a, opening, false),
             (None, Some(b)) => (b, briefly.expect("the brief marker"), true),

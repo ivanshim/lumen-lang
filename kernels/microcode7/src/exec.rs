@@ -1298,6 +1298,18 @@ impl<'a> Machine<'a> {
             Form::Const(Value::Routine(p)) => Ok(Value::Bound(p.clone(), frame.clone())),
             Form::Const(v) => Ok(v.clone()),
             Form::Read(slot) => Ok(self.fetch(slot, frame)?),
+            Form::Glance(slot) => {
+                let f = ascend(frame, slot.up);
+                let held = f.cells.borrow()[slot.at].clone();
+                let held = match (&held, slot.fallback) {
+                    (Value::Unset, Some(g)) => self.outermost.cells.borrow()[g].clone(),
+                    _ => held,
+                };
+                Ok(match held {
+                    Value::Shared(cell) => cell.borrow().clone(),
+                    other => other,
+                })
+            }
             Form::Bump { slot, by } => {
                 let v = self.fetch(slot, frame)?;
                 // A step down subtracts, so a string of digits counts
