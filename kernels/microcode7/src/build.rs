@@ -2541,7 +2541,11 @@ impl<'a> Builder<'a> {
                 let mut given = vec![self.read_class(&named)?];
                 if table.single("syntax.call.open").map_or(false, |o| self.sign(o)) {
                     self.advance();
-                    given.extend(self.args("syntax.call.close", "syntax.call.separator")?);
+                    // A maker takes its arguments as any other routine
+                    // does, so one of its parameters that takes a cell
+                    // is handed one.
+                    let maker = table.single("ext.stmt.class.constructor").unwrap_or_default().to_string();
+                    given.extend(self.arguments_of(&maker, "syntax.call.close", "syntax.call.separator")?);
                 }
                 prim_call(Prim::Spawn, given)
             }
@@ -2800,7 +2804,10 @@ impl<'a> Builder<'a> {
         // Where the asking stands, so that words said about it name that
         // line and not one a call along the way left behind.
         let row = (self.look().row as u32).saturating_sub(self.before);
-        let read = self.expr_at(0, false)?;
+        // Read as any expression is, a write among them: what is asked
+        // to share a cell may be a write, and a write is not a place, so
+        // its value is handed over and the language says so.
+        let read = self.expr_at(0, true)?;
         Ok(match read {
             Form::Read(slot) => {
                 let shared = self.address_to_write(&slot.ident.to_string());
@@ -3087,14 +3094,13 @@ impl<'a> Builder<'a> {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", close));
             }
-            let next = self.glance(1);
-            let lone = self.look().shape == Shape::Bare
-                && next.shape == Shape::Sign
-                && (next.lexeme == close || sep.as_ref().map_or(false, |s| next.lexeme == *s));
-            if shared.get(items.len()).copied().unwrap_or(false) && lone {
-                let name = self.advance().lexeme;
-                let slot = self.address_to_write(&name);
-                items.push(Form::Share(slot));
+            // A parameter taking a cell is handed the cell of whatever
+            // names one: a binding, a place in an array, a property.
+            // What names none is handed its value, and the language says
+            // so where it has words for it.
+            if shared.get(items.len()).copied().unwrap_or(false) {
+                let words = self.table.strings("ext.op.reference.unshared.handed").to_vec();
+                items.push(self.a_shared_cell(&words)?);
             } else {
                 items.push(self.expr(0)?);
             }

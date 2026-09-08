@@ -2757,10 +2757,13 @@ impl<'a> Compiler<'a> {
                 self.take();
                 let named = self.want_name("as the class to make")?;
                 self.read_class(&named)?;
+                // A maker takes its arguments as any other routine does,
+                // so a parameter of it that takes a cell is handed one.
+                let maker = lang.constructor.clone().unwrap_or_default();
                 let argc = match lang.calling.clone() {
                     Some(call) if self.at_symbol(&call.open) => {
                         self.take();
-                        self.arguments(&call)?
+                        self.arguments_of(&maker, &call)?
                     }
                     _ => 0,
                 };
@@ -3040,7 +3043,10 @@ impl<'a> Compiler<'a> {
         // Where the asking stands, so that words said about it name that
         // line and not whatever line a call along the way ran last.
         let row = (self.look().row as u32).saturating_sub(self.before);
-        self.expr_at(0, false)?;
+        // Read as any expression is, a write among them: what is asked
+        // to share a cell may be a write, and a write is not a place, so
+        // its value is handed over and the language says so.
+        self.expr_at(0, true)?;
         let read: Vec<Instr> = self.piece().instrs.drain(from..).collect();
         match read.as_slice() {
             [Instr::Read(slot)] if !slot.moving => {
@@ -3348,13 +3354,12 @@ impl<'a> Compiler<'a> {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", pair.close));
             }
-            let lone = self.look().shape == Shape::Instr
-                && (self.look_ahead(1).is_lexeme(Shape::Sign, &pair.close)
-                    || pair.between.as_ref().map_or(false, |s| self.look_ahead(1).is_lexeme(Shape::Sign, s)));
-            if shared.get(count).copied().unwrap_or(false) && lone {
-                let name = self.take().lexeme;
-                let cell = self.cell_to_write(&name);
-                self.put(Instr::Bond(cell));
+            // A parameter that takes a cell is handed the cell of
+            // whatever names one: a binding, a place in an array, a
+            // property. What has none is handed its value, and the
+            // language says so where it has words for it.
+            if shared.get(count).copied().unwrap_or(false) {
+                self.a_cell(&self.lang.unshared_handed.clone())?;
             } else {
                 self.expr(0)?;
             }

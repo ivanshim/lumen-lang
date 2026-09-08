@@ -19,25 +19,26 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 47, differs 31, error 26, skipped 10 | pass 47, differs 31, error 26, skipped 10 |
 | `php/func` | 14 | pass 9, differs 3, error 2, skipped 0 | pass 9, differs 3, error 2, skipped 0 |
-| `php/lang` | 213 | pass 88, differs 54, error 66, skipped 5 | pass 88, differs 54, error 66, skipped 5 |
+| `php/lang` | 213 | pass 92, differs 50, error 66, skipped 5 | pass 92, differs 50, error 66, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 21, error 3, skipped 6 | pass 34, differs 21, error 3, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 183, differs 117, error 97, skipped 25 | pass 183, differs 117, error 97, skipped 25 |
+| all | 422 | pass 187, differs 113, error 97, skipped 25 | pass 187, differs 113, error 97, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 117 |
+| ran, printed something else | 113 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
 | Fatal error: Uncaught Error: Undefined variable: Iterator in <file> | 5 |
-| Fatal error: Uncaught Error: Cannot index non-array value in <file> | 4 |
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
 | Unexpected token: : | 3 |
 | Fatal error: Uncaught Error: Undefined variable: current in <file> | 3 |
+| Fatal error: Uncaught Error: Cannot index non-array value in <file> | 3 |
+| Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> | 3 |
 | skip php-cgi not available | 2 |
 | Expected an expression | 2 |
 | Unexpected token: { | 2 |
@@ -49,7 +50,6 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Only a class can be made into an object in <file> | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Undefined variable: StdClass in <file> | 2 |
-| Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> | 2 |
 | Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> | 2 |
 | Fatal error: Uncaught Error: '$name' is not a function in <file> | 2 |
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
@@ -573,17 +573,17 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/preinc_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/subtract_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/subtract_variationStr.phpt` | differs | differs | ran, printed something else |
-| `php/lang/passByReference_001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/passByReference_001.phpt` | pass | pass |  |
 | `php/lang/passByReference_002.phpt` | differs | differs | ran, printed something else |
 | `php/lang/passByReference_003.phpt` | error | error | Fatal error: Uncaught Error: Cannot index non-array value in <file> |
-| `php/lang/passByReference_004.phpt` | differs | differs | ran, printed something else |
-| `php/lang/passByReference_005.phpt` | differs | differs | ran, printed something else |
-| `php/lang/passByReference_006.phpt` | error | error | Fatal error: Uncaught Error: Cannot index non-array value in <file> |
+| `php/lang/passByReference_004.phpt` | pass | pass |  |
+| `php/lang/passByReference_005.phpt` | pass | pass |  |
+| `php/lang/passByReference_006.phpt` | error | error | Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> |
 | `php/lang/passByReference_007.phpt` | differs | differs | ran, printed something else |
 | `php/lang/passByReference_008.phpt` | pass | pass |  |
 | `php/lang/passByReference_009.phpt` | pass | pass |  |
 | `php/lang/passByReference_010.phpt` | differs | differs | ran, printed something else |
-| `php/lang/passByReference_012.phpt` | differs | differs | ran, printed something else |
+| `php/lang/passByReference_012.phpt` | pass | pass |  |
 | `php/lang/returnByReference.001.phpt` | pass | pass |  |
 | `php/lang/returnByReference.002.phpt` | pass | pass |  |
 | `php/lang/returnByReference.003.phpt` | differs | differs | ran, printed something else |

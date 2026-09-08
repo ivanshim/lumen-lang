@@ -434,6 +434,9 @@
   "ext.op.reference.unshared.given": [
     "Only variable references should be returned by reference"
   ],
+  "ext.op.reference.unshared.handed": [
+    "Only variables should be passed by reference"
+  ],
   "ext.builtin.exit": [
     "exit",
     "die"

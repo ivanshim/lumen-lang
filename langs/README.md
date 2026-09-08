@@ -922,6 +922,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.plus` | - | - | - | - | - | - | - | `+` | - | - |
 | `ext.op.reference` | - | - | - | - | - | - | - | `&` | - | - |
 | `ext.op.reference.unshared.given` | - | - | - | - | - | - | - | `Only variable references should be returned by reference` | - | - |
+| `ext.op.reference.unshared.handed` | - | - | - | - | - | - | - | `Only variables should be passed by reference` | - | - |
 | `ext.op.reference.unshared.written` | - | - | - | - | - | - | - | `Only variables should be assigned by reference` | - | - |
 | `ext.op.scope` | - | - | - | - | - | - | - | `::` | - | - |
 | `ext.op.ternary` | - | - | - | - | - | - | - | `?` `:` | - | - |
