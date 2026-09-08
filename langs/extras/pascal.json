@@ -126,6 +126,7 @@
     "/"
   ],
   "op.div.result": "real",
+  "op.mod.whole": false,
   "op.quot": [
     "div"
   ],

@@ -208,6 +208,10 @@ pub struct Lang {
     pub operand_fault: Option<String>,
     /// Whether dividing two whole numbers evenly gives a whole one.
     pub div_stays_whole: bool,
+    /// The remainder is taken between whole numbers, whatever it is
+    /// given: a real is brought to the whole number nearest nothing
+    /// first, as a language whose remainder is a whole one does.
+    pub mod_whole: bool,
     /// What a language says when a step onward or back is taken on text
     /// that spells no number. Naming either turns the rule on for that
     /// way: onward moves the last letter along, carrying; back leaves
@@ -446,7 +450,7 @@ w syntax.array.open | w syntax.array.separator | w syntax.array.close | w syntax
 w syntax.map.separator | w syntax.map.pair | w syntax.map.close | w literal.true
 w literal.false | w literal.null | b literal.null.silent | t op.precedence | w op.right_associative
 w op.add | w op.sub | w op.mul | w op.div
-o op.div.result | w op.quot | w op.rem | w op.pow
+o op.div.result | b op.mod.whole | w op.quot | w op.rem | w op.pow
 w op.eq | w op.ne | w op.lt | w op.le
 w op.gt | w op.ge | w op.and | w op.or
 w op.not | w op.negate | w op.concat | w op.range
@@ -1103,6 +1107,7 @@ impl Lang {
             fault_value: r.head("ext.system.fault.class.value")?,
             operand_fault: r.head("ext.system.fault.operands")?,
             div_stays_whole,
+            mod_whole: r.flag("op.mod.whole")?,
             step_up_text: r.head("ext.op.increment.text")?,
             step_down_text: r.head("ext.op.decrement.text")?,
             warns_of_unwritten: r.head("ext.system.complaint.warning")?.is_some(),

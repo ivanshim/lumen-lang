@@ -152,6 +152,7 @@
     "/"
   ],
   "op.div.result": "rational",
+  "op.mod.whole": false,
   "op.quot": [
     "//"
   ],

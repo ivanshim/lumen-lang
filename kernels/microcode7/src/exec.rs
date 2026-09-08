@@ -2681,6 +2681,16 @@ impl<'a> Machine<'a> {
                 let pair = [worth(&v[0]), worth(&v[1])];
                 return self.prim(op, name, &pair);
             }
+            // A language whose remainder is taken between whole numbers
+            // brings what it is given to one first, the way it brings a
+            // value to the bits it works on.
+            Prim::Mod
+                if self.table.flag("op.mod.whole")
+                    && (matches!(v[0], Value::Frac(_)) || matches!(v[1], Value::Frac(_))) =>
+            {
+                let pair = [Value::Small(self.bits_told(&v[0])?), Value::Small(self.bits_told(&v[1])?)];
+                return self.prim(op, name, &pair);
+            }
             // Two whole numbers dividing evenly leave a whole one, in a
             // language whose division says as much rather than always
             // leaving a real behind.

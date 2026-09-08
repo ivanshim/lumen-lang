@@ -2209,6 +2209,13 @@ impl<'a> Engine<'a> {
             }
         }
         let real_here = |v: &Value| matches!(v, Value::Real(_) | Value::Frac(_));
+        // A language whose remainder is taken between whole numbers
+        // brings what it is given to one first, the way it brings a
+        // value to the bits it works on.
+        if self.lang.mod_whole && matches!(op, Action::Mod) && (real_here(a) || real_here(b)) {
+            let (x, y) = (self.bits_said(a)?, self.bits_said(b)?);
+            return self.dyadic_numbers(op, &Value::Small(x), &Value::Small(y));
+        }
         if self.lang.real_bits.is_some() && (real_here(a) || real_here(b)) {
             let places = self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES);
             let widened = |v: &Value| match arith::to_real(v, places) {

@@ -23,7 +23,7 @@ pub enum Arith {
     Pow,
     Concat,
 }
-use crate::kernel::runtime::{Env, Value};
+use crate::kernel::runtime::{Env, RuntimeValue, Value};
 use crate::language::values::{LumenNumber, LumenRational, LumenReal, as_number, as_rational, as_real};
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -119,6 +119,17 @@ pub fn apply(op: Arith, l: Value, r: Value) -> LumenResult<Value> {
                 result_is_real = false;
             }
         }
+    }
+
+    // A language whose remainder is taken between whole numbers brings
+    // what it is given to one first, cutting away whatever lies past the
+    // point, as such a language does.
+    if op == Arith::Rem && def().rem_whole && (left_is_real || right_is_real) {
+        let cut = |v: &dyn RuntimeValue| -> Result<Value, String> {
+            let (num, den) = exact_parts(v, "Operand must be a number")?;
+            Ok(Box::new(LumenNumber::new(&num / &den)))
+        };
+        return apply(Arith::Rem, cut(l.as_ref())?, cut(r.as_ref())?);
     }
 
     // The remainder is derived: a - b * (a // b), so the identity

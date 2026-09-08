@@ -205,6 +205,7 @@
     "/"
   ],
   "op.div.result": "whole_or_real",
+  "op.mod.whole": true,
   "op.quot": [],
   "op.rem": [
     "%"

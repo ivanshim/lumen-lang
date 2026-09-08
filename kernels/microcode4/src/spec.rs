@@ -60,7 +60,7 @@ syntax.array.open:L syntax.array.separator:L syntax.array.close:L \
 syntax.map.open:L syntax.map.separator:L syntax.map.pair:L syntax.map.close:L \
 literal.true:L literal.false:L literal.null:L literal.null.silent:B system.flag.counts:B \
 op.precedence:T op.right_associative:L \
-op.add:L op.sub:L op.mul:L op.div:L op.div.result:O op.quot:L op.rem:L op.pow:L \
+op.add:L op.sub:L op.mul:L op.div:L op.div.result:O op.mod.whole:B op.quot:L op.rem:L op.pow:L \
 op.eq:L op.ne:L op.lt:L op.le:L op.gt:L op.ge:L \
 op.and:L op.or:L op.not:L op.negate:L op.concat:L op.range:L \
 op.index.open:L op.index.close:L op.index.strings:B op.pipe:L \

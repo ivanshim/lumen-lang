@@ -297,6 +297,21 @@ impl<'a> Machine<'a> {
             Op::Concat => joined(),
             Op::Index => self.index(a, b)?,
             Op::Add if matches!(a, Value::Str(_)) || matches!(b, Value::Str(_)) => joined(),
+            // A language whose remainder is taken between whole numbers
+            // brings what it is given to one first, cutting away
+            // whatever lies past the point.
+            Op::Rem
+                if self.def.rem_whole && (matches!(a, Value::Ratio(_) | Value::Real(_)) || matches!(b, Value::Ratio(_) | Value::Real(_))) =>
+            {
+                let cut = |x: &Value| match numbers::split(x) {
+                    Some((p, q)) => Value::whole(&p / &q),
+                    None => x.clone(),
+                };
+                match numbers::compute(Calc::Rem, &cut(a), &cut(b)) {
+                    Some(r) => r?,
+                    None => return Err("Modulo requires numeric operands".to_string()),
+                }
+            }
             // Two whole numbers dividing evenly make a whole one, in a
             // language whose division says so rather than always
             // making a real of it.

@@ -77,6 +77,10 @@ pub struct Def {
     pub flag_counts: bool,
     /// Whether two whole numbers dividing evenly make a whole one.
     pub div_stays_whole: bool,
+    /// The remainder is taken between whole numbers, whatever it is
+    /// given: a real is brought to the whole number nearest nothing
+    /// first, as a language whose remainder is a whole one does.
+    pub rem_whole: bool,
     pub binary: HashMap<String, Infix>,
     pub unary: HashMap<String, Infix>,
     pub pipes: Vec<String>,
@@ -139,7 +143,7 @@ w syntax.array.open | w syntax.array.separator | w syntax.array.close
 x syntax.map.open | x syntax.map.separator | x syntax.map.pair | x syntax.map.close
 w literal.true | w literal.false | w literal.null | b literal.null.silent | b system.flag.counts
 t op.precedence | w op.right_associative
-w op.add | w op.sub | w op.mul | w op.div | o op.div.result | w op.quot | w op.rem | w op.pow
+w op.add | w op.sub | w op.mul | w op.div | o op.div.result | b op.mod.whole | w op.quot | w op.rem | w op.pow
 w op.eq | w op.ne | w op.lt | w op.le | w op.gt | w op.ge
 w op.and | w op.or | w op.not | w op.negate | w op.concat | w op.range
 w op.index.open | w op.index.close | b op.index.strings | w op.pipe
@@ -596,6 +600,7 @@ impl Def {
             none_silent: r.switch("literal.null.silent")?,
             flag_counts: r.switch("system.flag.counts")?,
             div_stays_whole,
+            rem_whole: r.switch("op.mod.whole")?,
             binary,
             unary,
             pipes,

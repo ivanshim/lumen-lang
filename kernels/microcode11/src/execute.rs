@@ -380,6 +380,22 @@ impl<'a> Machine<'a> {
                             _ => !below(&a, &b)?,
                         })
                     }
+                    // A language whose remainder is taken between whole
+                    // numbers brings what it is given to one first,
+                    // cutting away whatever lies past the point.
+                    Op::Rem
+                        if self.spec.flag("op.mod.whole")
+                            && (matches!(a, Value::Fraction(_)) || matches!(b, Value::Fraction(_))) =>
+                    {
+                        let cut = |v: &Value| match numeric::ratio(v) {
+                            Some(r) => numeric::value(&r.num / &r.den, num_bigint::BigInt::from(1), None),
+                            None => v.clone(),
+                        };
+                        match numeric::compute(Arith::Rem, &cut(&a), &cut(&b)) {
+                            Some(r) => r?,
+                            None => return Err("Modulo requires numeric operands".to_string().into()),
+                        }
+                    }
                     // Two whole numbers dividing evenly give a whole
                     // one, where the language says its division does
                     // that rather than always yielding a real.
