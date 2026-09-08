@@ -152,6 +152,10 @@ pub struct Lang {
     pub builtins: HashMap<String, Builtin>,
     pub holes: Vec<String>,
     pub args_binding: Option<String>,
+    /// The same arguments as a list, the file the run was started with
+    /// first, and how many there are in it.
+    pub args_list: Option<String>,
+    pub args_count: Option<String>,
     pub memo_binding: Option<String>,
     pub precision_binding: Option<String>,
     pub entry_binding: Option<String>,
@@ -466,7 +470,7 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
-w ext.lexical.epilogue | w ext.lexical.prologue.echo | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
+w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.stmt.for.c | b ext.op.assign.compound
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.const | w ext.builtin.define
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
@@ -1058,6 +1062,8 @@ impl Lang {
             builtins: natives,
             holes: r.strings("builtin.print.placeholder")?,
             args_binding: args_name,
+            args_list: r.head("ext.system.args.list")?,
+            args_count: r.head("ext.system.args.count")?,
             memo_binding: memo_name,
             precision_binding: precision_name,
             entry_binding: entry_name,

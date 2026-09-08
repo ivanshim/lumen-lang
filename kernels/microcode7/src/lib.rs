@@ -104,7 +104,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     let ahead = lines_before(request);
     let read = scan::scan_at(source, table).map_err(|(said, row)| cannot_read(table, &said, row, request, ahead));
     let tokens = indent::indent(read?, table)?;
-    let system = ["system.args", "system.memoization", "system.real_default_precision", "system.entry", "system.kind.integer",
+    let system = ["system.args", "ext.system.args.list", "ext.system.args.count", "system.memoization", "system.real_default_precision", "system.entry", "system.kind.integer",
         "system.kind.rational", "system.kind.real", "system.kind.string", "system.kind.boolean", "system.kind.array", "system.kind.null"];
     let mut seeded: Vec<String> = system.iter().filter_map(|k| table.single(k).map(str::to_string)).collect();
     seeded.extend(REQUEST_PARTS.iter().filter_map(|(_, key)| table.single(key).map(str::to_string)));
@@ -141,6 +141,19 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     machine.knows_cells = (reduced.shared_args.clone(), reduced.arg_names.clone(), reduced.gives_back.clone());
     if let Some(n) = table.single("system.args") {
         machine.define(n, Value::text(&program_args.join(" ")));
+    }
+    // The same arguments as a list. The file the run was started with
+    // stands first in it, as the system that started the run counts it.
+    if table.single("ext.system.args.list").is_some() || table.single("ext.system.args.count").is_some() {
+        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == "file").map(|(.., v, _)| v.clone());
+        let mut all: Vec<Value> = vec![Value::text(&file.unwrap_or_default())];
+        all.extend(program_args.iter().map(|a| Value::text(a)));
+        if let Some(n) = table.single("ext.system.args.count") {
+            machine.define(n, Value::Small(all.len() as i64));
+        }
+        if let Some(n) = table.single("ext.system.args.list") {
+            machine.define(n, Value::Vector(std::rc::Rc::new(all)));
+        }
     }
     // What the request carries, each group a map under the name the
     // definition gives it.

@@ -538,6 +538,20 @@ function sys_get_temp_dir() {
 function header($line, $replace = true, $code = 0) { return null; }
 function headers_sent() { return false; }
 function headers_list() { return array(); }
+// The arguments the run was started with are part of what the run knows
+// about itself, under the host's names for them as well as their own.
+// A run reached over the web knows them only where it is told to; one
+// started from the command line always does. Where the run was not to
+// be told about itself at all, nothing is put here either.
+$__over_the_web = isset($_SERVER['REQUEST_METHOD']);
+$__told_of_args = ini_get('register_argc_argv');
+$__groups = ini_get('variables_order');
+if ($__groups === false) { $__groups = 'EGPCS'; }
+$__knows_itself = strpos($__groups, 'S') !== false;
+if ($__knows_itself && (!$__over_the_web || ($__told_of_args !== false && $__told_of_args !== '0' && $__told_of_args !== 'off'))) {
+    $_SERVER['argv'] = $argv;
+    $_SERVER['argc'] = $argc;
+}
 // What the run writes out may be kept aside and let go again. The
 // kernel holds the text; the handlers a program hands over are kept
 // here, one for each keeping, and run over the text as it is let go.

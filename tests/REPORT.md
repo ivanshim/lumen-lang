@@ -17,21 +17,20 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 81, differs 5, error 18, skipped 10 | pass 81, differs 5, error 18, skipped 10 |
+| `php/basic` | 114 | pass 83, differs 6, error 15, skipped 10 | pass 83, differs 6, error 15, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
 | `php/lang` | 213 | pass 158, differs 27, error 23, skipped 5 | pass 158, differs 27, error 23, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 46, differs 10, error 2, skipped 6 | pass 46, differs 10, error 2, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 311, differs 43, error 43, skipped 25 | pass 311, differs 43, error 43, skipped 25 |
+| all | 422 | pass 313, differs 44, error 40, skipped 25 | pass 313, differs 44, error 40, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 43 |
+| ran, printed something else | 44 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
-| Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
 | skip php-cgi not available | 2 |
 | timeout | 2 |
 | Parse error: Unexpected token: { in <file> | 2 |
@@ -68,6 +67,7 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught TypeError: blah(): Argument #1 ($a) must be of type Foo, stdClass given, called in <file> in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: datetime in <file> | 1 |
 | skip this test is for 32-bit platforms only | 1 |
+| Fatal error: Uncaught Error: Cannot use a scalar value as an array in <file> | 1 |
 
 ### Reserved words: 55 of 68 spelled
 
@@ -205,12 +205,12 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/008.phpt` | pass | pass |  |
 | `php/basic/009.phpt` | pass | pass |  |
 | `php/basic/010.phpt` | pass | pass |  |
-| `php/basic/011.phpt` | error | error | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> |
+| `php/basic/011.phpt` | differs | differs | ran, printed something else |
 | `php/basic/011_empty_query.phpt` | differs | differs | ran, printed something else |
 | `php/basic/011_register_argc_argv_disabled.phpt` | pass | pass |  |
-| `php/basic/011_windows.phpt` | error | error | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> |
-| `php/basic/012.phpt` | error | error | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> |
-| `php/basic/012_register_argc_argv_disabled.phpt` | differs | differs | ran, printed something else |
+| `php/basic/011_windows.phpt` | differs | differs | ran, printed something else |
+| `php/basic/012.phpt` | pass | pass |  |
+| `php/basic/012_register_argc_argv_disabled.phpt` | pass | pass |  |
 | `php/basic/013.phpt` | pass | pass |  |
 | `php/basic/014.phpt` | pass | pass |  |
 | `php/basic/015.phpt` | pass | pass |  |

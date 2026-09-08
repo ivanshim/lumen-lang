@@ -355,8 +355,12 @@
   "builtin.to_real": [
     "floatval"
   ],
-  "system.args": [
+  "system.args": [],
+  "ext.system.args.list": [
     "$argv"
+  ],
+  "ext.system.args.count": [
+    "$argc"
   ],
   "system.memoization": [],
   "system.real_default_precision": [],

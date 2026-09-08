@@ -91,7 +91,7 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     let tokens = layout::layout(read?, lang)?;
     let mut registry = compile::Registry::default();
     // The system names are globals whether or not the program mentions them.
-    let system = [&lang.args_binding, &lang.memo_binding, &lang.precision_binding, &lang.entry_binding];
+    let system = [&lang.args_binding, &lang.args_list, &lang.args_count, &lang.memo_binding, &lang.precision_binding, &lang.entry_binding];
     for name in system.into_iter().flatten() {
         registry.slot(name);
     }
@@ -120,6 +120,19 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     let mut machine = engine::Engine::new(lang, registry);
     if let Some(name) = &lang.args_binding {
         machine.define(name, Value::text(&program_args.join(" ")));
+    }
+    // The same arguments as a list. The file the run was started with
+    // stands first in it, as the system that started the run counts it.
+    if lang.args_list.is_some() || lang.args_count.is_some() {
+        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == "file").map(|(.., v, _)| v.clone());
+        let mut all: Vec<Value> = vec![Value::text(&file.unwrap_or_default())];
+        all.extend(program_args.iter().map(|a| Value::text(a)));
+        if let Some(name) = &lang.args_count {
+            machine.define(name, Value::Small(all.len() as i64));
+        }
+        if let Some(name) = &lang.args_list {
+            machine.define(name, Value::array(all));
+        }
     }
     // Every part of the request is a map of what it carries, under the
     // name the definition gives it; the one for all of them holds what
