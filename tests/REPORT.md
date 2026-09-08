@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 94, differs 2, error 8, skipped 10 | pass 94, differs 2, error 8, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 185, differs 17, error 6, skipped 5 | pass 185, differs 17, error 6, skipped 5 |
+| `php/lang` | 213 | pass 187, differs 16, error 5, skipped 5 | pass 187, differs 16, error 5, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 49, differs 8, error 1, skipped 6 | pass 49, differs 8, error 1, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 354, differs 28, error 15, skipped 25 | pass 354, differs 28, error 15, skipped 25 |
+| all | 422 | pass 356, differs 27, error 14, skipped 25 | pass 356, differs 27, error 14, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 28 |
+| ran, printed something else | 27 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | skip php-cgi not available | 2 |
@@ -48,7 +48,6 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: mktime in <file> | 1 |
 | skip Can't find german locale | 1 |
 | Fatal error: Uncaught Error: 'foo' is not a function in <file> | 1 |
-| Fatal error: Uncaught Error: Undefined variable: array_walk in <file> | 1 |
 | skip setlocale() failed | 1 |
 | skip only for Windows | 1 |
 | Fatal error: Uncaught Error: Undefined variable: datetime in <file> | 1 |
@@ -384,7 +383,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug24573.phpt` | pass | pass |  |
 | `php/lang/bug24640.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug24652.phpt` | pass | pass |  |
-| `php/lang/bug24658.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: array_walk in <file> |
+| `php/lang/bug24658.phpt` | pass | pass |  |
 | `php/lang/bug24783.phpt` | pass | pass |  |
 | `php/lang/bug24908.phpt` | pass | pass |  |
 | `php/lang/bug24951.phpt` | pass | pass |  |
@@ -409,7 +408,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug30638.phpt` | skipped | skipped | skip setlocale() failed |
 | `php/lang/bug30726.phpt` | pass | pass |  |
 | `php/lang/bug30862.phpt` | pass | pass |  |
-| `php/lang/bug32828.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug32828.phpt` | pass | pass |  |
 | `php/lang/bug32924.phpt` | pass | pass |  |
 | `php/lang/bug35176.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug35382.phpt` | skipped | skipped | no --FILE-- section |

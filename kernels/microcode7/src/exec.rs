@@ -70,6 +70,13 @@ struct Called {
     from: Rc<str>,
     on: u32,
     handed_at: Option<usize>,
+    /// Whether what was called belongs to the language's own library,
+    /// standing before the program's own text, and whether the call was
+    /// made from within it. A call the library made has no line of the
+    /// program's to name, and one it made of its own is no business of
+    /// the program's at all.
+    of_library: bool,
+    from_library: bool,
 }
 
 /// How a place is being read: plainly, while a value is being taken
@@ -125,7 +132,7 @@ pub struct Machine<'a> {
     /// Where the program a fault was raised on the way into is written.
     /// Such a fault belongs there and not where the call stood, which
     /// is worth saying only where nothing takes it.
-    entering: Option<(Rc<str>, u32)>,
+    entering: Option<(Rc<str>, u32, bool)>,
     /// The words this language has for the kinds of complaint.
     complaint_words: Vec<(&'static str, String)>,
     /// How many seconds the run may take and when the count began;
@@ -976,7 +983,13 @@ impl<'a> Machine<'a> {
         // A fault raised on the way into a program belongs where that
         // program is written, and says as much.
         let (said, place, at) = match &self.entering {
-            Some((place, on)) => (format!("{} and defined", said), place.clone(), *on),
+            // Where the words named where the call stood, the place
+            // that follows is where the program itself is written, and
+            // is said to be.
+            Some((place, on, defined)) => match defined {
+                true => (format!("{} and defined", said), place.clone(), *on),
+                false => (said.to_string(), place.clone(), *on),
+            },
             None => (said.to_string(), self.written_in.clone(), self.raised_on),
         };
         self.utter(&format!("\n{}: {} in {}:{}\n", word, said, place, at));
@@ -2177,43 +2190,74 @@ impl<'a> Machine<'a> {
         // program is written is kept aside: a trap taking it wants the
         // words alone, and only a run ended by it says as much. The
         // call being entered stands in the trace all the same.
-        let told = format!(
-            "{}(): Argument #{} ({}) must be of type {}, {} given, called in {} on line {}",
+        let from_library = self.calls.last().map_or(false, |c| c.of_library && !self.stands_for_the_run(&c.named));
+        let head = format!(
+            "{}(): Argument #{} ({}) must be of type {}, {} given",
             program.ident,
             at + 1,
             program.formals.get(at).map_or("", String::as_str),
             written,
-            handed,
-            self.written_in,
-            self.row
+            handed
         );
+        // Where the call was made from inside the language itself there
+        // is no line of the program's to name, so the words say only
+        // what was given and where the routine stands.
+        let told = match from_library {
+            true => head,
+            false => format!("{}, called in {} on line {}", head, self.written_in, self.row),
+        };
         if self.under.is_none() {
-            self.under = Some(self.calls_told_entering(program, given));
+            self.under = Some(self.calls_told_entering(program, given, from_library));
         }
         let place = program.written_in.clone().unwrap_or_else(|| self.written_in.clone());
-        self.entering = Some((place, program.declared_on));
+        self.entering = Some((place, program.declared_on, !from_library));
         Err(Escape::Error(told))
     }
 
     /// The same, with one more call about to be entered: a fault raised
     /// on the way in stands inside it, though it never began to run.
-    fn calls_told_entering(&self, program: &Rc<Routine>, given: &[Value]) -> String {
+    fn calls_told_entering(&self, program: &Rc<Routine>, given: &[Value], entered: bool) -> String {
         let named = match &program.within {
             Some(class) => format!("{}::{}", class, program.ident),
             None => program.ident.clone(),
         };
         let handed = given.iter().map(|v| self.handed_told(v)).collect::<Vec<_>>().join(", ");
-        let mut out = format!("Stack trace:\n#0 {}({}): {}({})\n", self.written_in, self.row, named, handed);
-        for (at, call) in self.calls.iter().rev().enumerate() {
-            out.push_str(&format!("#{} {}({}): {}({})\n", at + 1, call.from, call.on, self.call_named(call), self.call_handed(call)));
+        let stood = match entered {
+            true => "[internal function]".to_string(),
+            false => format!("{}({})", self.written_in, self.row),
+        };
+        let mut out = format!("Stack trace:\n#0 {}: {}({})\n", stood, named, handed);
+        let mut at = 1;
+        for call in self.calls.iter().rev() {
+            if self.stands_for_the_run(&call.named) || self.library_alone(call) {
+                continue;
+            }
+            out.push_str(&format!("#{} {}: {}({})\n", at, self.call_stood(call), self.call_named(call), self.call_handed(call)));
+            at += 1;
         }
-        out.push_str(&format!("#{} {{main}}\n", self.calls.len() + 1));
+        out.push_str(&format!("#{} {{main}}\n", at));
         out
     }
 
     /// Whether a call stands for the run and not for the program: the
     /// routine the run hands its complaints to is the run's own doing,
     /// so a trace looks past it to whatever raised the complaint.
+    /// Whether a call is the library's own doing from end to end: what
+    /// the language's own library does among itself is no part of the
+    /// program's calls and stands in no trace of them.
+    fn library_alone(&self, call: &Called) -> bool {
+        call.of_library && call.from_library
+    }
+
+    /// Where a call stands, as a trace tells it: a call the library made
+    /// has no line of the program's to name.
+    fn call_stood(&self, call: &Called) -> String {
+        match call.from_library {
+            true => "[internal function]".to_string(),
+            false => format!("{}({})", call.from, call.on),
+        }
+    }
+
     fn stands_for_the_run(&self, named: &str) -> bool {
         match self.hearer.borrow().as_ref() {
             Some(Value::Bound(p, _)) => p.ident == named,
@@ -2229,10 +2273,10 @@ impl<'a> Machine<'a> {
         let mut out = String::from("Stack trace:\n");
         let mut at = 0;
         for call in self.calls.iter().rev() {
-            if self.stands_for_the_run(&call.named) {
+            if self.stands_for_the_run(&call.named) || self.library_alone(call) {
                 continue;
             }
-            out.push_str(&format!("#{} {}({}): {}({})\n", at, call.from, call.on, self.call_named(call), self.call_handed(call)));
+            out.push_str(&format!("#{} {}: {}({})\n", at, self.call_stood(call), self.call_named(call), self.call_handed(call)));
             at += 1;
         }
         out.push_str(&format!("#{} {{main}}\n", at));
@@ -2371,12 +2415,15 @@ impl<'a> Machine<'a> {
         // it is not written down as one.
         let noted = !program.frameless;
         if noted {
+            let from_library = self.calls.last().map_or(false, |c| c.of_library && !self.stands_for_the_run(&c.named));
             self.calls.push(Called {
                 named: Rc::from(program.ident.as_str()),
                 within: program.within.clone(),
                 from: was_written_in.clone(),
                 on: was_on_row,
                 handed_at: watching.then(|| self.handed.len() - 1),
+                of_library: program.declared_on == 0,
+                from_library,
             });
         }
         let outcome: Res = loop {
@@ -2754,12 +2801,15 @@ impl<'a> Machine<'a> {
                 // A source read in stands as a call of its own, so that
                 // a fault raised in the reading, or by what it reads,
                 // names the reading among the calls it stood under.
+                let from_library = self.calls.last().map_or(false, |c| c.of_library && !self.stands_for_the_run(&c.named));
                 self.calls.push(Called {
                     named: Rc::from(name),
                     within: None,
                     from: self.written_in.clone(),
                     on: self.row,
                     handed_at: None,
+                    of_library: false,
+                    from_library,
                 });
                 let done = self.read_in(op, name, v);
                 // A complaint the reading raised is handed over while
@@ -2818,14 +2868,17 @@ impl<'a> Machine<'a> {
                 n(0)?;
                 let mut told = Vec::new();
                 for call in self.calls.iter().rev() {
-                    if self.stands_for_the_run(&call.named) {
+                    if self.stands_for_the_run(&call.named) || self.library_alone(call) {
                         continue;
                     }
-                    let mut pairs = vec![
-                        (Value::text("file"), Value::text(&call.from)),
-                        (Value::text("line"), Value::Small(call.on as i64)),
-                        (Value::text("function"), Value::text(&call.named)),
-                    ];
+                    // A call the library made stands nowhere the program
+                    // was written, so it is told without a place.
+                    let mut pairs = Vec::new();
+                    if !call.from_library {
+                        pairs.push((Value::text("file"), Value::text(&call.from)));
+                        pairs.push((Value::text("line"), Value::Small(call.on as i64)));
+                    }
+                    pairs.push((Value::text("function"), Value::text(&call.named)));
                     if let Some(class) = &call.within {
                         pairs.push((Value::text("class"), Value::text(class)));
                     }

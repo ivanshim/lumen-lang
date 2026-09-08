@@ -52,7 +52,7 @@ pub struct Engine<'a> {
     /// Where the routine a fault was raised on the way into is written.
     /// Such a fault belongs there and not where the call stood, which
     /// is worth saying only where nothing takes it.
-    entering: Option<(Rc<str>, u32)>,
+    entering: Option<(Rc<str>, u32, bool)>,
     /// Nothing at all, to hand back where a binding never written is
     /// read in place and the language only complains about it.
     nothing: Value,
@@ -112,6 +112,13 @@ struct Called {
     from: Rc<str>,
     on: u32,
     given_at: Option<usize>,
+    /// Whether what was called belongs to the language's own library,
+    /// which stands before the program's own text, and whether the call
+    /// was made from within it. A call the library made has no line of
+    /// the program's to name, and one the library made of its own is no
+    /// business of the program's at all.
+    of_library: bool,
+    from_library: bool,
 }
 
 /// How a place is being read: plainly, while a value is being taken
@@ -516,6 +523,13 @@ impl<'a> Engine<'a> {
     /// the routine the run hands its complaints to is the run's own
     /// doing, so a trace looks past it to whatever raised the
     /// complaint.
+    /// Whether a call is the library's own doing from end to end: what
+    /// the language's own library does among itself is no part of the
+    /// program's calls and stands in no trace of them.
+    fn library_alone(&self, call: &Called) -> bool {
+        call.of_library && call.from_library
+    }
+
     fn stands_for_the_run(&self, named: &str) -> bool {
         let put = self.complainer.borrow();
         match put.as_ref() {
@@ -531,7 +545,7 @@ impl<'a> Engine<'a> {
         let mut out = String::from("Stack trace:\n");
         let mut at = 0;
         for call in self.calls.iter().rev() {
-            if self.stands_for_the_run(&call.named) {
+            if self.stands_for_the_run(&call.named) || self.library_alone(call) {
                 continue;
             }
             let named = match &call.within {
@@ -542,7 +556,14 @@ impl<'a> Engine<'a> {
                 Some(values) => values.iter().map(|v| self.argument_told(v)).collect::<Vec<_>>().join(", "),
                 None => String::new(),
             };
-            out.push_str(&format!("#{} {}({}): {}({})\n", at, call.from, call.on, named, handed));
+            // A call the library made has no line of the program's to
+            // name, so where it stands is told as being nowhere the
+            // program was written.
+            let stood = match call.from_library {
+                true => "[internal function]".to_string(),
+                false => format!("{}({})", call.from, call.on),
+            };
+            out.push_str(&format!("#{} {}: {}({})\n", at, stood, named, handed));
             at += 1;
         }
         out.push_str(&format!("#{} {{main}}\n", at));
@@ -624,7 +645,13 @@ impl<'a> Engine<'a> {
                 // A fault raised on the way into a routine belongs where
                 // that routine is written, and says so.
                 let (told, place, at) = match &self.entering {
-                    Some((place, on)) => (format!("{} and defined", told), place.clone(), *on),
+                    // Where the words named where the call stood, the
+                    // place that follows is where the routine itself is
+                    // written, and is said to be.
+                    Some((place, on, defined)) => match defined {
+                        true => (format!("{} and defined", told), place.clone(), *on),
+                        false => (told.clone(), place.clone(), *on),
+                    },
                     None => (told.clone(), self.source.clone(), self.line),
                 };
                 self.utter(&format!("\n{}: Uncaught {}: {} in {}:{}\n", word, named, told, place, at));
@@ -1142,21 +1169,19 @@ impl<'a> Engine<'a> {
                 Value::Object(o) => o.class.name.clone(),
                 other => self.kind_named(other),
             };
-            // A fault of this kind says where the call stood. Where it
-            // is written is kept aside: a guard taking it wants the
-            // words alone, and only a run ended by it says as much.
-            let told = format!(
-                "{}(): Argument #{} ({}) must be of type {}, {} given, called in {} on line {}",
-                program.ident,
-                at + 1,
-                program.formals[at],
-                named,
-                given,
-                self.source,
-                self.line
-            );
+            // A fault of this kind says where the call stood, unless the
+            // call was made from inside the language itself, which has
+            // no line of the program's to name. Where the routine is
+            // written is kept aside: a guard taking it wants the words
+            // alone, and only a run ended by it says as much.
+            let from_library = self.calls.last().map_or(false, |c| c.from_library);
+            let head = format!("{}(): Argument #{} ({}) must be of type {}, {} given", program.ident, at + 1, program.formals[at], named, given);
+            let told = match from_library {
+                true => head,
+                false => format!("{}, called in {} on line {}", head, self.source, self.line),
+            };
             let place = program.written_in.clone().unwrap_or_else(|| self.source.clone());
-            self.entering = Some((place, program.declared_on));
+            self.entering = Some((place, program.declared_on, !from_library));
             return Err(told.into());
         }
         Ok(())
@@ -1206,12 +1231,15 @@ impl<'a> Engine<'a> {
         // where everything stands and nothing more.
         let noted = !program.body_of_all;
         if noted {
+            let from_library = self.calls.last().map_or(false, |c| c.of_library && !self.stands_for_the_run(&c.named));
             self.calls.push(Called {
                 named: Rc::from(program.ident.as_str()),
                 within: program.within.clone(),
                 from: self.source.clone(),
                 on: self.line,
                 given_at: watching.then(|| self.given.len() - 1),
+                of_library: program.declared_on == 0,
+                from_library,
             });
         }
         frame.extend(self.data.drain(at..));
@@ -3080,12 +3108,15 @@ impl<'a> Engine<'a> {
                 // A source read in stands as a call of its own, so that
                 // a fault raised in the reading, or by what it reads,
                 // names the reading among the calls it stood under.
+                let from_library = self.calls.last().map_or(false, |c| c.of_library && !self.stands_for_the_run(&c.named));
                 self.calls.push(Called {
                     named: Rc::from(name),
                     within: None,
                     from: self.source.clone(),
                     on: self.line,
                     given_at: None,
+                    of_library: false,
+                    from_library,
                 });
                 let done = self.read_in(builtin, name, args);
                 // A complaint the reading raised is handed over while
@@ -3147,14 +3178,17 @@ impl<'a> Engine<'a> {
                 arity(0)?;
                 let mut told = Vec::new();
                 for call in self.calls.iter().rev() {
-                    if self.stands_for_the_run(&call.named) {
+                    if self.stands_for_the_run(&call.named) || self.library_alone(call) {
                         continue;
                     }
-                    let mut pairs = vec![
-                        (Value::text("file"), Value::text(&call.from)),
-                        (Value::text("line"), Value::Small(call.on as i64)),
-                        (Value::text("function"), Value::text(&call.named)),
-                    ];
+                    // A call the library made stands nowhere the program
+                    // was written, so it is told without a place.
+                    let mut pairs = Vec::new();
+                    if !call.from_library {
+                        pairs.push((Value::text("file"), Value::text(&call.from)));
+                        pairs.push((Value::text("line"), Value::Small(call.on as i64)));
+                    }
+                    pairs.push((Value::text("function"), Value::text(&call.named)));
                     if let Some(class) = &call.within {
                         pairs.push((Value::text("class"), Value::text(class)));
                     }

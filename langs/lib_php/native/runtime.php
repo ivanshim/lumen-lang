@@ -351,6 +351,16 @@ function array_key_exists($key, $array) {
     return false;
 }
 
+// Every place of an array handed to a routine, with its key beside it
+// and whatever else was given after that. The value is handed over as a
+// cell, so a routine taking one writes the array in place.
+function array_walk(&$array, $what, $given = null) {
+    $handed = func_num_args() > 2;
+    foreach ($array as $key => &$value) {
+        if ($handed) { $what($value, $key, $given); } else { $what($value, $key); }
+    }
+    return true;
+}
 function in_array($needle, $haystack, $strict = false) {
     foreach ($haystack as $v) {
         if ($v == $needle) { return true; }
@@ -654,14 +664,19 @@ function __forget_handler() {
     array_pop($__handlers);
     array_pop($__started);
 }
+// Letting a keeping go without writing it out. The handler is told the
+// keeping is being emptied and let go for good, as the reference tells
+// it, and what it answers with is thrown away with the rest.
 function ob_end_clean() {
     if (__output_depth() == 0) { return false; }
+    __run_handler(__output_held(), true, PHP_OUTPUT_HANDLER_CLEAN | PHP_OUTPUT_HANDLER_FINAL);
     __forget_handler();
     return __output_drop();
 }
 function ob_get_clean() {
     if (__output_depth() == 0) { return false; }
     $held = __output_held();
+    __run_handler($held, true, PHP_OUTPUT_HANDLER_CLEAN | PHP_OUTPUT_HANDLER_FINAL);
     __forget_handler();
     __output_drop();
     return $held;
@@ -964,7 +979,10 @@ function __frame_told($frame) {
     foreach ($frame['args'] as $given) {
         $pieces[] = __argument_told($given);
     }
-    return $frame['file'] . '(' . $frame['line'] . '): ' . $named . '(' . implode(', ', $pieces) . ')';
+    // A call made from inside the language itself stands nowhere the
+    // program was written, and is written down as standing nowhere.
+    $stood = isset($frame['file']) ? $frame['file'] . '(' . $frame['line'] . ')' : '[internal function]';
+    return $stood . ': ' . $named . '(' . implode(', ', $pieces) . ')';
 }
 function __argument_told($given) {
     if (is_string($given)) {
