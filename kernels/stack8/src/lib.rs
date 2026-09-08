@@ -59,8 +59,36 @@ fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, St
     go_inner(lang, source, program_args, request).map_err(|e| format!("{}: {}", lang.banner, e))
 }
 
+/// A program that could not be read, told the way this language tells a
+/// complaint: written where the run would have written, naming the file
+/// and the line the reading stopped on. Where the language has no word
+/// for such a stopping, nothing is written here and the fault goes back
+/// as it came, for the host to tell in its own way.
+fn cannot_read(lang: &Lang, said: &str, row: usize, request: &[(String, String, String, bool)], before: u32) -> String {
+    let Some(word) = lang.reading_word.as_deref() else { return said.to_string() };
+    let named = |key: &str| request.iter().find(|(from, k, ..)| from == "SELF" && k == key).map(|(.., v, _)| v.clone());
+    let file = named("file").unwrap_or_default();
+    let line = (row as u32).saturating_sub(before);
+    print!("\n{}: {} in {} on line {}\n", word, said, file, line);
+    // The run ends straight after this, and ending does not empty what
+    // is waiting to be written, so it is emptied here.
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    said.to_string()
+}
+
+fn lines_before(request: &[(String, String, String, bool)]) -> u32 {
+    request
+        .iter()
+        .find(|(from, key, ..)| from == "SELF" && key == "lines_before")
+        .and_then(|(.., n, _)| n.parse().ok())
+        .unwrap_or(0)
+}
+
 fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
-    let tokens = layout::layout(lex::lex(source, lang)?, lang)?;
+    let before = lines_before(request);
+    let read = lex::lex_at(source, lang).map_err(|(said, row)| cannot_read(lang, &said, row, request, before));
+    let tokens = layout::layout(read?, lang)?;
     let mut registry = compile::Registry::default();
     // The system names are globals whether or not the program mentions them.
     let system = [&lang.args_binding, &lang.memo_binding, &lang.precision_binding, &lang.entry_binding];
@@ -84,12 +112,10 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     for (_, name) in &lang.source_bindings {
         registry.slot(name);
     }
-    let before = request
-        .iter()
-        .find(|(from, key, ..)| from == "SELF" && key == "lines_before")
-        .and_then(|(.., n, _)| n.parse().ok())
-        .unwrap_or(0);
-    let program = compile::compile(&tokens, lang, &mut registry, before)?;
+    let program = match compile::compile(&tokens, lang, &mut registry, before) {
+        Ok(program) => program,
+        Err(said) => return Err(cannot_read(lang, &said, registry.stopped_at, request, before)),
+    };
 
     let mut machine = engine::Engine::new(lang, registry);
     if let Some(name) = &lang.args_binding {

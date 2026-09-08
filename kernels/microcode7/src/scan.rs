@@ -81,49 +81,76 @@ fn drop_comments(source: &str, table: &Table) -> String {
 /// lies between the prologue and the epilogue is code, and everything
 /// else is written out as it stands, as though the program said so.
 pub fn scan(source: &str, table: &Table) -> Result<Vec<Token>, String> {
+    scan_at(source, table).map_err(|(said, _)| said)
+}
+
+/// The same, saying besides which row the reading stopped on.
+pub fn scan_at(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)> {
     if !table.flag("ext.lexical.template") {
-        return scan_code(source, table);
+        return scan_code_marking(source, table, 1);
     }
-    let opening = table.single("lexical.prologue").ok_or_else(|| "A template needs lexical.prologue".to_string())?;
+    let opening = table.single("lexical.prologue").ok_or_else(|| ("A template needs lexical.prologue".to_string(), 0))?;
     let closing = table.single("ext.lexical.epilogue");
     let telling = table
         .prims
         .iter()
         .find(|(_, op)| **op == crate::form::Prim::Tell)
         .map(|(word, _)| word.clone())
-        .ok_or_else(|| "A template needs a builtin that writes what it is given".to_string())?;
+        .ok_or_else(|| ("A template needs a builtin that writes what it is given".to_string(), 0))?;
     let ending = table.single("stmt.terminator").unwrap_or(";").to_string();
     let mut out: Vec<Token> = Vec::new();
-    let says = |text: &str, out: &mut Vec<Token>| {
+    let says = |text: &str, row: u32, out: &mut Vec<Token>| {
         if text.is_empty() {
             return;
         }
-        out.push(Token { shape: Shape::Bare, lexeme: telling.clone(), span: 0, row: 1 });
-        out.push(Token { shape: Shape::Quote, lexeme: text.to_string(), span: 0, row: 1 });
-        out.push(Token { shape: Shape::Sign, lexeme: ending.clone(), span: 0, row: 1 });
+        out.push(Token { shape: Shape::Bare, lexeme: telling.clone(), span: 0, row });
+        out.push(Token { shape: Shape::Quote, lexeme: text.to_string(), span: 0, row });
+        out.push(Token { shape: Shape::Sign, lexeme: ending.clone(), span: 0, row });
     };
     let mut rest = source;
+    // The rows of the page are counted through the weave, so that what
+    // a run of code says of itself names the page's own lines.
+    let mut row: u32 = 1;
     while let Some(at) = rest.find(opening) {
-        says(&rest[..at], &mut out);
+        says(&rest[..at], row, &mut out);
+        row += rest[..at].matches('\n').count() as u32;
         let after = &rest[at + opening.len()..];
         let (code, tail) = match closing.and_then(|e| after.find(e)) {
             Some(end) => (&after[..end], &after[end + closing.map_or(0, str::len)..]),
             None => (after, ""),
         };
-        let mut inside = scan_code(code, table)?;
+        let mut inside = scan_code_marking(code, table, row)?;
         inside.pop();
+        let ended = inside.last().map_or(row, |t| t.row);
         out.append(&mut inside);
         // Each run of code stands as a statement, however it ended.
-        out.push(Token { shape: Shape::Sign, lexeme: ending.clone(), span: 0, row: 1 });
+        out.push(Token { shape: Shape::Sign, lexeme: ending.clone(), span: 0, row: ended });
+        row += code.matches('\n').count() as u32;
         // One line end straight after the closing marker belongs to it.
-        rest = tail.strip_prefix('\n').unwrap_or_else(|| tail.strip_prefix("\r\n").unwrap_or(tail));
+        let shorter = tail.strip_prefix('\n').unwrap_or_else(|| tail.strip_prefix("\r\n").unwrap_or(tail));
+        if shorter.len() != tail.len() {
+            row += 1;
+        }
+        rest = shorter;
     }
-    says(rest, &mut out);
-    out.push(Token { shape: Shape::Finish, lexeme: "EOF".into(), span: 0, row: 1 });
+    says(rest, row, &mut out);
+    out.push(Token { shape: Shape::Finish, lexeme: "EOF".into(), span: 0, row });
     Ok(out)
 }
 
 fn scan_code(source: &str, table: &Table) -> Result<Vec<Token>, String> {
+    let mut ended = 1;
+    scan_code_from(source, table, 1, &mut ended)
+}
+
+/// The same, begun at a given row, so that a run of code woven into a
+/// page names the rows of the page and not its own.
+fn scan_code_marking(source: &str, table: &Table, first: u32) -> Result<Vec<Token>, (String, u32)> {
+    let mut ended = first;
+    scan_code_from(source, table, first, &mut ended).map_err(|said| (said, ended))
+}
+
+fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> Result<Vec<Token>, String> {
     let text = drop_comments(source, table);
     let src: Vec<char> = text.chars().collect();
     let quotes = table.letters("lexical.string_quotes");
@@ -176,8 +203,11 @@ fn scan_code(source: &str, table: &Table) -> Result<Vec<Token>, String> {
     let fold_id = table.flag("identifier.case_insensitive");
     let mut tokens: Vec<Token> = Vec::new();
     let tok = |kind: Shape, text: String, row: u32| Token { shape: kind, lexeme: text, span: 0, row: row };
-    let (mut pos, mut row, mut at_bol) = (0usize, 1u32, true);
+    let (mut pos, mut row, mut at_bol) = (0usize, first, true);
     while pos < src.len() {
+        // The row the reading has reached is kept where the caller can
+        // see it, so that a reading that stops names the right line.
+        *ended = row;
         if at_bol {
             at_bol = false;
             let mut width = 0;

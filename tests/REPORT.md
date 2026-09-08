@@ -19,12 +19,12 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 81, differs 5, error 18, skipped 10 | pass 81, differs 5, error 18, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 125, differs 42, error 41, skipped 5 | pass 125, differs 42, error 41, skipped 5 |
+| `php/lang` | 213 | pass 126, differs 42, error 40, skipped 5 | pass 126, differs 42, error 40, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 46, differs 10, error 2, skipped 6 | pass 46, differs 10, error 2, skipped 6 |
-| `php/lang/string` | 9 | pass 2, differs 1, error 6, skipped 0 | pass 2, differs 1, error 6, skipped 0 |
-| all | 422 | pass 272, differs 58, error 67, skipped 25 | pass 272, differs 58, error 67, skipped 25 |
+| `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
+| all | 422 | pass 279, differs 58, error 60, skipped 25 | pass 279, differs 58, error 60, skipped 25 |
 
 | Reason | Tests |
 |---|---|
@@ -32,24 +32,23 @@ is listed, since the full kernels are meant to behave alike.
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | Fatal error: Uncaught Error: Undefined variable: iterator in <file> | 5 |
-| Invalid UTF-8 codepoint escape sequence | 5 |
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
 | skip php-cgi not available | 2 |
 | timeout | 2 |
-| Unexpected token: { | 2 |
+| Parse error: Unexpected token: { in <file> | 2 |
 | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> | 2 |
-| Unexpected token: & | 2 |
+| Parse error: Unexpected token: & in <file> | 2 |
 | thrown in <file> | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> | 2 |
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: PHP_BINARY in <file> | 1 |
-| Unexpected token: << | 1 |
+| Parse error: Unexpected token: << in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: ENT_HTML5 in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> | 1 |
-| Expected identifier as the property name, got '{' | 1 |
+| Parse error: Expected identifier as the property name, got '{' in <file> | 1 |
 | skip locale needed for this test is not supported on this platform | 1 |
 | Fatal error: Uncaught Error: Undefined variable: umask in <file> | 1 |
 | skip for Windows only | 1 |
@@ -67,7 +66,8 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: get_declared_classes in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: foo in <file> | 1 |
-| Expected identifier after the global keyword, got '$' | 1 |
+| Parse error: Expected identifier after the global keyword, got '$' in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: debug_backtrace in <file> | 1 |
 
 ### Reserved words: 55 of 68 spelled
 
@@ -239,10 +239,10 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/bug54514.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: PHP_BINARY in <file> |
 | `php/basic/bug55500.phpt` | pass | pass |  |
 | `php/basic/bug61000.phpt` | pass | pass |  |
-| `php/basic/bug67198.phpt` | error | error | Unexpected token: << |
+| `php/basic/bug67198.phpt` | error | error | Parse error: Unexpected token: << in <file> |
 | `php/basic/bug67988.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ENT_HTML5 in <file> |
 | `php/basic/bug71273.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> |
-| `php/basic/bug73969.phpt` | error | error | Expected identifier as the property name, got '{' |
+| `php/basic/bug73969.phpt` | error | error | Parse error: Expected identifier as the property name, got '{' in <file> |
 | `php/basic/bug78236.phpt` | pass | pass |  |
 | `php/basic/bug78929.phpt` | pass | pass |  |
 | `php/basic/bug79699.phpt` | pass | pass |  |
@@ -274,8 +274,8 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/gh20858.phpt` | pass | pass |  |
 | `php/basic/gh20964.phpt` | pass | pass |  |
 | `php/basic/gh7896.phpt` | skipped | skipped | skip for Windows only |
-| `php/basic/header_register_callback.phpt` | error | error | Unexpected token: { |
-| `php/basic/header_register_callback_after_output.phpt` | error | error | Unexpected token: { |
+| `php/basic/header_register_callback.phpt` | error | error | Parse error: Unexpected token: { in <file> |
+| `php/basic/header_register_callback_after_output.phpt` | error | error | Parse error: Unexpected token: { in <file> |
 | `php/basic/header_register_callback_trampoline.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> |
 | `php/basic/header_register_callback_trampoline_after_headers_sent.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> |
 | `php/basic/ini_directive_deprecated_report_memleaks.phpt` | pass | pass |  |
@@ -351,7 +351,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/026.phpt` | pass | pass |  |
 | `php/lang/027.phpt` | pass | pass |  |
 | `php/lang/028.phpt` | error | error | Fatal error: Uncaught Error: Cannot call method 'GetMyName' on a value that is not an object in <file> |
-| `php/lang/030.phpt` | error | error | Unexpected token: & |
+| `php/lang/030.phpt` | error | error | Parse error: Unexpected token: & in <file> |
 | `php/lang/032.phpt` | pass | pass |  |
 | `php/lang/033.phpt` | differs | differs | ran, printed something else |
 | `php/lang/034.phpt` | skipped | skipped | skip Can't find german locale |
@@ -381,7 +381,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug21820.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug21849.phpt` | pass | pass |  |
 | `php/lang/bug21961.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> |
-| `php/lang/bug22231.phpt` | error | error | Unexpected token: & |
+| `php/lang/bug22231.phpt` | error | error | Parse error: Unexpected token: & in <file> |
 | `php/lang/bug22510.phpt` | pass | pass |  |
 | `php/lang/bug22592.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug23279.phpt` | error | error | thrown in <file> |
@@ -391,7 +391,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug23584.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug23624.phpt` | pass | pass |  |
 | `php/lang/bug24054.phpt` | pass | pass |  |
-| `php/lang/bug24396.phpt` | error | error | Expected identifier after the global keyword, got '$' |
+| `php/lang/bug24396.phpt` | error | error | Parse error: Expected identifier after the global keyword, got '$' in <file> |
 | `php/lang/bug24436.phpt` | pass | pass |  |
 | `php/lang/bug24499.phpt` | pass | pass |  |
 | `php/lang/bug24573.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: debug_backtrace in <file> |
@@ -452,7 +452,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/engine_assignExecutionOrder_005.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_006.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_007.phpt` | pass | pass |  |
-| `php/lang/engine_assignExecutionOrder_008.phpt` | error | error | '++' needs a plain variable on its left |
+| `php/lang/engine_assignExecutionOrder_008.phpt` | error | error | Parse error: '++' needs a plain variable on its left in <file> |
 | `php/lang/engine_assignExecutionOrder_009.phpt` | pass | pass |  |
 | `php/lang/error_2_exception_001.phpt` | pass | pass |  |
 | `php/lang/execution_order.phpt` | differs | differs | ran, printed something else |
@@ -469,7 +469,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/foreachLoop.013.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
 | `php/lang/foreachLoop.014.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
 | `php/lang/foreachLoop.015.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
-| `php/lang/foreachLoop.016.phpt` | error | error | A foreach that hands out its items for writing needs a named array |
+| `php/lang/foreachLoop.016.phpt` | error | error | Parse error: A foreach that hands out its items for writing needs a named array in <file> |
 | `php/lang/foreachLoop.017.phpt` | pass | pass |  |
 | `php/lang/foreachLoopIterator.001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: iterator in <file> |
 | `php/lang/foreachLoopIterator.002.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: iterator in <file> |
@@ -508,7 +508,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/integer_literals/hexadecimal_64bit.phpt` | pass | pass |  |
 | `php/lang/integer_literals/octal_32bit.phpt` | skipped | skipped | skip this test is for 32bit platform only |
 | `php/lang/integer_literals/octal_64bit.phpt` | pass | pass |  |
-| `php/lang/invalid_octal.phpt` | error | error | Invalid number: 08 |
+| `php/lang/invalid_octal.phpt` | pass | pass |  |
 | `php/lang/operators/add_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/add_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseAnd_basiclong_64bit.phpt` | pass | pass |  |
@@ -601,14 +601,14 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/static_variation_001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/static_variation_002.phpt` | differs | differs | ran, printed something else |
 | `php/lang/string/unicode_escape.phpt` | pass | pass |  |
-| `php/lang/string/unicode_escape_empty.phpt` | error | error | Invalid UTF-8 codepoint escape sequence |
-| `php/lang/string/unicode_escape_incomplete.phpt` | error | error | Invalid UTF-8 codepoint escape sequence |
-| `php/lang/string/unicode_escape_large_codepoint.phpt` | error | error | Invalid UTF-8 codepoint escape sequence: Codepoint too large |
+| `php/lang/string/unicode_escape_empty.phpt` | pass | pass |  |
+| `php/lang/string/unicode_escape_incomplete.phpt` | pass | pass |  |
+| `php/lang/string/unicode_escape_large_codepoint.phpt` | pass | pass |  |
 | `php/lang/string/unicode_escape_legacy.phpt` | pass | pass |  |
-| `php/lang/string/unicode_escape_sign.phpt` | error | error | Invalid UTF-8 codepoint escape sequence |
-| `php/lang/string/unicode_escape_sign2.phpt` | error | error | Invalid UTF-8 codepoint escape sequence |
+| `php/lang/string/unicode_escape_sign.phpt` | pass | pass |  |
+| `php/lang/string/unicode_escape_sign2.phpt` | pass | pass |  |
 | `php/lang/string/unicode_escape_surrogates.phpt` | differs | differs | ran, printed something else |
-| `php/lang/string/unicode_escape_whitespace.phpt` | error | error | Invalid UTF-8 codepoint escape sequence |
+| `php/lang/string/unicode_escape_whitespace.phpt` | pass | pass |  |
 | `php/lang/string_decimals_001.phpt` | pass | pass |  |
 | `php/lang/syntax_errors.phpt` | error | error | Fatal error: Uncaught Error: Expected ')' to close a group, got ';' in <file> |
 | `php/lang/this_assignment.phpt` | pass | pass |  |

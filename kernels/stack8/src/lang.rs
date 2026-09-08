@@ -58,6 +58,8 @@ pub struct Lang {
     /// beyond the last character there is.
     pub codepoint_amiss: Option<String>,
     pub codepoint_beyond: Option<String>,
+    /// What a language says of a number it cannot read.
+    pub number_amiss: Option<String>,
     pub prologue: Option<String>,
     pub point: Option<char>,
     pub base_mark: Option<char>,
@@ -313,6 +315,8 @@ pub struct Lang {
     /// Whether a statement ends only where the terminator is written,
     /// a line end being no more than space.
     pub terminator_only: bool,
+    /// The word a language puts before a program it cannot read.
+    pub reading_word: Option<String>,
     /// Whether a flag becomes text as the number it stands for.
     pub flags_count: bool,
     /// What a language says when a builtin that reads what the running
@@ -452,7 +456,7 @@ w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at
 w ext.builtin.args.all.outside | w ext.builtin.args.count.outside | w ext.builtin.args.at.outside
 w ext.builtin.args.at.below | w ext.builtin.args.at.beyond | b ext.op.assign.value | b ext.op.index.plain_keys
 w ext.system.source.file | w ext.system.source.directory | w ext.system.source.line
-w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.complaint.deprecated | w ext.system.complaint.fatal
+w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.complaint.deprecated | w ext.system.complaint.fatal | w ext.system.complaint.reading
 w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
@@ -467,7 +471,7 @@ w ext.op.reference.unshared.written | w ext.op.reference.unshared.given | w ext.
 b ext.stmt.terminator.only
 w ext.stmt.block.instead | w ext.stmt.block.instead.close | b ext.op.spelled | b ext.system.class.folded
 w ext.lexical.escape.codepoint | w ext.lexical.escape.codepoint.open | w ext.lexical.escape.codepoint.close
-w ext.lexical.escape.codepoint.amiss | w ext.lexical.escape.codepoint.beyond
+w ext.lexical.escape.codepoint.amiss | w ext.lexical.escape.codepoint.beyond | w ext.lexical.number.amiss
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 ";
@@ -948,6 +952,7 @@ impl Lang {
             codepoint_close: r.letter("ext.lexical.escape.codepoint.close")?,
             codepoint_amiss: r.head("ext.lexical.escape.codepoint.amiss")?,
             codepoint_beyond: r.head("ext.lexical.escape.codepoint.beyond")?,
+            number_amiss: r.head("ext.lexical.number.amiss")?,
             prologue: r.head("lexical.prologue")?,
             point: r.letter("lexical.number.decimal_point")?,
             base_mark: r.letter("lexical.number.base_marker")?,
@@ -1129,6 +1134,7 @@ impl Lang {
             spelled_stands: r.flag("ext.op.spelled")?,
             classes_folded: r.flag("ext.system.class.folded")?,
             terminator_only: r.flag("ext.stmt.terminator.only")?,
+            reading_word: r.head("ext.system.complaint.reading")?,
             flags_count: r.flag("system.flag.counts")?,
             args_outside_all: r.head("ext.builtin.args.all.outside")?,
             args_outside_count: r.head("ext.builtin.args.count.outside")?,

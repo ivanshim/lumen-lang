@@ -490,6 +490,17 @@ only. The extension labels so far, all from PHP:
   fully and with nothing after it, is stepped as the number it spells;
   text that spells one and then says more is not, since that is the very
   case the letters are for.
+- `ext.system.complaint.reading`: the word a language puts before a
+  program it cannot read at all. Where it names one, a reading that
+  stops is told the way every other complaint is told — written where
+  the run would have written, naming the file and the line the reading
+  stopped on — rather than handed back to the host to say in its own
+  way. What is said after the word is whatever the kernel found: the
+  words a definition gave for it where it gave any, and the kernel's own
+  naming otherwise.
+- `ext.lexical.number.amiss`: what a language says of a run of digits it
+  cannot read, `08` where noughts do not lead an eight-fold number among
+  them. Sister to `ext.lexical.escape.codepoint.amiss`.
 - `ext.system.fault.operands`: the words a language puts before naming
   what an arithmetic step was handed, where one of them can take no part
   in it. Text spelling no number at all is the case that matters: a
@@ -1106,6 +1117,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.escape.codepoint.open` | - | - | - | - | - | - | - | `{` | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | - | - | - | `"` | - | - |
 | `ext.lexical.name_lead` | - | - | - | - | - | - | - | `\` | - | - |
+| `ext.lexical.number.amiss` | - | - | - | - | - | - | - | `Invalid numeric literal` | - | - |
 | `ext.lexical.number.binary_prefix` | - | - | - | - | - | - | - | `0b` `0B` | - | - |
 | `ext.lexical.number.exponent` | - | - | - | - | - | - | - | `e` `E` | - | - |
 | `ext.lexical.number.octal_lead` | - | - | - | - | - | - | - | `true` | - | - |
@@ -1186,6 +1198,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.complaint.deprecated` | - | - | - | - | - | - | - | `Deprecated` | - | - |
 | `ext.system.complaint.fatal` | - | - | - | - | - | - | - | `Fatal error` | - | - |
 | `ext.system.complaint.notice` | - | - | - | - | - | - | - | `Notice` | - | - |
+| `ext.system.complaint.reading` | - | - | - | - | - | - | - | `Parse error` | - | - |
 | `ext.system.complaint.warning` | - | - | - | - | - | - | - | `Warning` | - | - |
 | `ext.system.fault.class` | - | - | - | - | - | - | - | `Error` | - | - |
 | `ext.system.fault.class.arithmetic` | - | - | - | - | - | - | - | `ArithmeticError` | - | - |

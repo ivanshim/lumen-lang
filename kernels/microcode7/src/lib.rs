@@ -75,9 +75,35 @@ const REQUEST_PARTS: [(&str, &str); 8] = [
     ("ALL", "ext.system.request.all"), ("SETTINGS", "ext.system.request.settings"),
 ];
 
+/// A program that could not be read, told the way this language tells a
+/// complaint: written where the run would have written, naming the file
+/// and the row the reading stopped on. Where the language has no word
+/// for such a stopping, nothing is written and the fault goes back as
+/// it came, for the host to tell in its own way.
+fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, String, bool)], before: u32) -> String {
+    let Some(word) = table.single("ext.system.complaint.reading") else { return said.to_string() };
+    let named = |key: &str| request.iter().find(|(from, k, ..)| from == "SELF" && k == key).map(|(.., v, _)| v.clone());
+    let file = named("file").unwrap_or_default();
+    print!("\n{}: {} in {} on line {}\n", word, said, file, row.saturating_sub(before));
+    // The run ends straight after this, and ending does not empty what
+    // waits to be written, so it is emptied here.
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    said.to_string()
+}
+
+fn lines_before(request: &[(String, String, String, bool)]) -> u32 {
+    request
+        .iter()
+        .find(|(from, key, ..)| from == "SELF" && key == "lines_before")
+        .and_then(|(.., n, _)| n.parse().ok())
+        .unwrap_or(0)
+}
+
 fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
-    let tokens = scan::scan(source, table)?;
-    let tokens = indent::indent(tokens, table)?;
+    let ahead = lines_before(request);
+    let read = scan::scan_at(source, table).map_err(|(said, row)| cannot_read(table, &said, row, request, ahead));
+    let tokens = indent::indent(read?, table)?;
     let system = ["system.args", "system.memoization", "system.real_default_precision", "system.entry", "system.kind.integer",
         "system.kind.rational", "system.kind.real", "system.kind.string", "system.kind.boolean", "system.kind.array", "system.kind.null"];
     let mut seeded: Vec<String> = system.iter().filter_map(|k| table.single(k).map(str::to_string)).collect();
@@ -92,7 +118,8 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         .and_then(|(.., n, _)| n.parse().ok())
         .unwrap_or(0);
     let reduced = if !table.rpn {
-        build::build(&tokens, table, &seeded, HashMap::new(), true, before)?
+        build::build_at(&tokens, table, &seeded, HashMap::new(), true, before)
+            .map_err(|(said, row)| cannot_read(table, &said, row, request, ahead))?
     } else {
         // Read leniently until the named programs' arities settle, then strictly.
         let mut assumed: HashMap<String, build::Signature> = HashMap::new();

@@ -578,12 +578,20 @@ impl<'a> Cursor<'a> {
 }
 
 pub fn lex(source: &str, lang: &Lang) -> Result<Vec<Token>, String> {
+    lex_at(source, lang).map_err(|(said, _)| said)
+}
+
+/// The same, telling besides which line the reading stopped on, which a
+/// language with a word for such a stopping names.
+pub fn lex_at(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)> {
     let mut out = match lang.template {
         true => woven_source(source, lang)?,
         false => {
             let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
             let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new() };
-            cur.run(true)?;
+            if let Err(said) = cur.run(true) {
+                return Err((said, cur.row));
+            }
             cur.out
         }
     };
@@ -595,15 +603,15 @@ pub fn lex(source: &str, lang: &Lang) -> Result<Vec<Token>, String> {
 /// stands between the prologue and the epilogue is read as code, and
 /// everything else is written out as it stands, as though the program
 /// had said so itself.
-fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, String> {
-    let opening = lang.prologue.clone().ok_or_else(|| "A template needs lexical.prologue".to_string())?;
+fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)> {
+    let opening = lang.prologue.clone().ok_or_else(|| ("A template needs lexical.prologue".to_string(), 0))?;
     let closing = lang.epilogue.first().cloned();
     let telling = lang
         .builtins
         .iter()
         .find(|(_, native)| **native == crate::code::Builtin::Tell)
         .map(|(word, _)| word.clone())
-        .ok_or_else(|| "A template needs a builtin that writes what it is given".to_string())?;
+        .ok_or_else(|| ("A template needs a builtin that writes what it is given".to_string(), 0))?;
     let ending = lang.stmt_ends.first().cloned().unwrap_or_else(|| ";".to_string());
     let mut out: Vec<Token> = Vec::new();
     let told = |text: &str, out: &mut Vec<Token>| {
@@ -626,7 +634,9 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, String> {
         };
         let text = drop_comments(code, lang);
         let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row, column: 1, out: Vec::new() };
-        cur.run(true)?;
+        if let Err(said) = cur.run(true) {
+            return Err((said, cur.row));
+        }
         // A run of code stands as its own statement, however it ended.
         out.append(&mut cur.out);
         out.push(Token { shape: Shape::Sign, lexeme: ending.clone(), width: 0, row: cur.row, column: 1 });

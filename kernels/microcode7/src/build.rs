@@ -122,9 +122,20 @@ pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMa
     build_from(tokens, table, seeded, assumed, strict, before, None)
 }
 
+/// The same, saying besides which row the reading had reached when it
+/// stopped, for a language that tells such a stopping in its own words.
+pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32)> {
+    let at = std::cell::Cell::new(0u32);
+    build_marking(tokens, table, seeded, assumed, strict, before, None, Some(&at)).map_err(|said| (said, at.get()))
+}
+
 /// The same, said besides which file the text came out of, where it was
 /// read as the run went.
 pub fn build_from(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>) -> Res<Built> {
+    build_marking(tokens, table, seeded, assumed, strict, before, written_in, None)
+}
+
+fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<&std::cell::Cell<u32>>) -> Res<Built> {
     let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let (shared_args, gives_back) = shared_parameters(tokens, table);
     let mut r = Builder { within: None, shared_args, gives_back, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(),
@@ -132,8 +143,19 @@ pub fn build_from(tokens: &[Token], table: &Table, seeded: &[String], assumed: H
             .iter()
             .any(|key| table.single(key).is_some()) };
     let body = if table.rpn {
-        let (mut stmts, rest) = r.rpn_body(&[], Mode::Body)?;
+        let (mut stmts, rest) = match r.rpn_body(&[], Mode::Body) {
+            Ok(got) => got,
+            Err(said) => {
+                if let Some(mark) = mark {
+                    mark.set(r.look().row);
+                }
+                return Err(said);
+            }
+        };
         if !r.exhausted() {
+            if let Some(mark) = mark {
+                mark.set(r.look().row);
+            }
             return Err(format!("Unexpected '{}'", r.look().lexeme));
         }
         stmts.extend(rest.into_iter().filter(|n| !inert(n)));
@@ -146,7 +168,17 @@ pub fn build_from(tokens: &[Token], table: &Table, seeded: &[String], assumed: H
         r.skip_line_ends();
         while !r.exhausted() {
             let defines = table.flag("ext.stmt.function.hoisted") && r.key("stmt.function");
-            let stmt = r.stmt()?;
+            // Where the reading stops, the row it had reached is kept,
+            // so a language with a word for such a stopping names it.
+            let stmt = match r.stmt() {
+                Ok(stmt) => stmt,
+                Err(said) => {
+                    if let Some(mark) = mark {
+                        mark.set(r.look().row);
+                    }
+                    return Err(said);
+                }
+            };
             if defines {
                 ahead.push(stmt);
             } else {
@@ -3892,6 +3924,15 @@ fn at_language_width(v: Value, table: &Table) -> Value {
     crate::data::at_binary_width(v, table.count("ext.system.real.bits"), figures)
 }
 
+/// What a language says of a run of digits it cannot read, where it
+/// gives words for that, and the kernel's own naming otherwise.
+fn unreadable_numeral(text: &str, table: &Table) -> String {
+    match table.single("ext.lexical.number.amiss") {
+        Some(said) => said.to_string(),
+        None => format!("Invalid number: {}", text),
+    }
+}
+
 pub fn numeral(text: &str, table: &Table) -> Res<Value> {
     Ok(at_language_width(read_numeral(text, table)?, table))
 }
@@ -3909,14 +3950,14 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
     ] {
         for p in table.strings(key) {
             if let Some(d) = text.strip_prefix(p.as_str()) {
-                return BigInt::parse_bytes(d.as_bytes(), radix).map(Value::from_big).ok_or_else(|| format!("Invalid number: {}", text));
+                return BigInt::parse_bytes(d.as_bytes(), radix).map(Value::from_big).ok_or_else(|| unreadable_numeral(text, table));
             }
         }
     }
     // Where a language says so, a nought before more digits means those
     // digits are read in base eight.
     if table.flag("ext.lexical.number.octal_lead") && text.len() > 1 && text.starts_with('0') && text.bytes().all(|b| b.is_ascii_digit()) {
-        return BigInt::parse_bytes(text[1..].as_bytes(), 8).map(Value::from_big).ok_or_else(|| format!("Invalid number: {}", text));
+        return BigInt::parse_bytes(text[1..].as_bytes(), 8).map(Value::from_big).ok_or_else(|| unreadable_numeral(text, table));
     }
     let point = table.letter("lexical.number.decimal_point");
     if let Some(mark) = table.letter("lexical.number.base_marker").filter(|m| text.contains(*m)) {
@@ -3927,12 +3968,12 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
     let powers = table.letters("ext.lexical.number.exponent");
     if let Some(at) = text.find(|c| powers.contains(&c)) {
         let (before, power) = (&text[..at], &text[at + 1..]);
-        let power: i32 = power.parse().map_err(|_| format!("Invalid number: {}", text))?;
+        let power: i32 = power.parse().map_err(|_| unreadable_numeral(text, table))?;
         let (above, beneath) = match read_numeral(before, table)? {
             Value::Frac(e) => (e.above.clone(), e.beneath.clone()),
             Value::Small(n) => (BigInt::from(n), BigInt::from(1)),
             Value::Huge(n) => ((*n).clone(), BigInt::from(1)),
-            _ => return Err(format!("Invalid number: {}", text)),
+            _ => return Err(unreadable_numeral(text, table)),
         };
         let ten = BigInt::from(10).pow(power.unsigned_abs());
         let (above, beneath) = if power < 0 { (above, beneath * ten) } else { (above * ten, beneath) };
@@ -3942,12 +3983,12 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
         if let Some(dot) = text.find(p) {
             let (w, f) = (&text[..dot], &text[dot + p.len_utf8()..]);
             let scale = BigInt::from(10).pow(f.len() as u32);
-            let w: BigInt = if w.is_empty() { BigInt::from(0) } else { w.parse().map_err(|_| format!("Invalid number: {}", text))? };
-            let f: BigInt = f.parse().map_err(|_| format!("Invalid number: {}", text))?;
+            let w: BigInt = if w.is_empty() { BigInt::from(0) } else { w.parse().map_err(|_| unreadable_numeral(text, table))? };
+            let f: BigInt = f.parse().map_err(|_| unreadable_numeral(text, table))?;
             return Ok(math::make_number(w * &scale + f, scale, Some(digit_run(text))));
         }
     }
-    text.parse::<BigInt>().map(Value::from_big).map_err(|_| format!("Invalid number: {}", text))
+    text.parse::<BigInt>().map(Value::from_big).map_err(|_| unreadable_numeral(text, table))
 }
 
 fn digit_run(text: &str) -> usize {

@@ -39,6 +39,9 @@
   "ext.lexical.escape.codepoint.close": [
     "}"
   ],
+  "ext.lexical.number.amiss": [
+    "Invalid numeric literal"
+  ],
   "ext.lexical.escape.codepoint.amiss": [
     "Invalid UTF-8 codepoint escape sequence"
   ],
@@ -738,6 +741,9 @@
   "ext.system.integer.bits": 64,
   "ext.system.real.bits": 64,
   "ext.system.real.digits": 14,
+  "ext.system.complaint.reading": [
+    "Parse error"
+  ],
   "ext.system.complaint.fatal": [
     "Fatal error"
   ],

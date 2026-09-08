@@ -39,6 +39,9 @@ use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr, Plan};
 pub struct Registry {
     index: HashMap<String, usize>,
     pub idents: Vec<String>,
+    /// The line the reading had reached when it stopped, for a language
+    /// that tells such a stopping in its own words to name.
+    pub stopped_at: usize,
 }
 
 impl Registry {
@@ -171,8 +174,12 @@ pub fn compile_from(tokens: &[Token], lang: &Lang, table: &mut Registry, before:
     let (shared_args, gives_back) = shared_parameters(tokens, lang);
     let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None, stepping: None, stood: None, giving_cells: Vec::new() };
     if lang.rpn {
-        a.rpn_body(&[], Span::Block)?;
+        if let Err(said) = a.rpn_body(&[], Span::Block) {
+            a.registry.stopped_at = a.look().row;
+            return Err(said);
+        }
         if !a.exhausted() {
+            a.registry.stopped_at = a.look().row;
             return Err(format!("Unexpected '{}'", a.look().lexeme));
         }
     } else {
@@ -183,7 +190,13 @@ pub fn compile_from(tokens: &[Token], lang: &Lang, table: &mut Registry, before:
         while !a.exhausted() {
             let defines = lang.hoisted && a.on_keyword(&lang.function_words);
             let from = a.mark();
-            a.stmt()?;
+            // Where the reading stops, the line it had reached is kept,
+            // so that a language with a word for such a stopping may
+            // name the line as it names any other.
+            if let Err(said) = a.stmt() {
+                a.registry.stopped_at = a.look().row;
+                return Err(said);
+            }
             if defines {
                 lifted.extend(a.piece().instrs.drain(from..));
             }
@@ -4171,6 +4184,15 @@ fn within_width(v: Value, lang: &Lang) -> Value {
     crate::value::to_binary_width(v, lang.real_bits, places)
 }
 
+/// What a language says of a run of digits it cannot read, where it
+/// gives words for that; the kernel's own naming of it otherwise.
+fn unreadable_number(text: &str, lang: &Lang) -> String {
+    match &lang.number_amiss {
+        Some(said) => said.clone(),
+        None => format!("Invalid number: {}", text),
+    }
+}
+
 fn parse_number(text: &str, lang: &Lang) -> Res<Value> {
     Ok(within_width(read_number(text, lang)?, lang))
 }
@@ -4185,7 +4207,7 @@ fn read_number(text: &str, lang: &Lang) -> Res<Value> {
         if let Some(digits) = text.strip_prefix(prefix.as_str()) {
             return BigInt::parse_bytes(digits.as_bytes(), *base)
                 .map(Value::of_big)
-                .ok_or_else(|| format!("Invalid number: {}", text));
+                .ok_or_else(|| unreadable_number(text, lang));
         }
     }
     // A nought before more digits, where a language says so, means the
@@ -4193,7 +4215,7 @@ fn read_number(text: &str, lang: &Lang) -> Res<Value> {
     if lang.octal_lead && text.len() > 1 && text.starts_with('0') && text.bytes().all(|b| b.is_ascii_digit()) {
         return BigInt::parse_bytes(text[1..].as_bytes(), 8)
             .map(Value::of_big)
-            .ok_or_else(|| format!("Invalid number: {}", text));
+            .ok_or_else(|| unreadable_number(text, lang));
     }
     if let Some(mark) = lang.base_mark.filter(|m| text.contains(*m)) {
         let (p, q) = in_given_base(text, mark, lang.point, lang.exponent_mark)?;
@@ -4202,12 +4224,12 @@ fn read_number(text: &str, lang: &Lang) -> Res<Value> {
     // 1e9, 2.5E-3: the part before the letter, scaled by a power of ten; always a real.
     if let Some(at) = text.find(|c| lang.exponent_letters.contains(&c)) {
         let (mantissa, power) = (&text[..at], &text[at + 1..]);
-        let power: i32 = power.parse().map_err(|_| format!("Invalid number: {}", text))?;
+        let power: i32 = power.parse().map_err(|_| unreadable_number(text, lang))?;
         let (p, q) = match read_number(mantissa, lang)? {
             Value::Real(r) => (r.p.clone(), r.q.clone()),
             Value::Small(n) => (BigInt::from(n), BigInt::from(1)),
             Value::Huge(n) => ((*n).clone(), BigInt::from(1)),
-            _ => return Err(format!("Invalid number: {}", text)),
+            _ => return Err(unreadable_number(text, lang)),
         };
         let scale = BigInt::from(10).pow(power.unsigned_abs());
         let (p, q) = if power < 0 { (p, q * scale) } else { (p * scale, q) };
