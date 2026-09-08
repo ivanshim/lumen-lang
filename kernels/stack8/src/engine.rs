@@ -253,6 +253,11 @@ impl<'a> Engine<'a> {
     /// they were named. One that raises something stops the rest, as a
     /// fault anywhere else does.
     pub fn run_when_done(&mut self) -> Result<(), Fault> {
+        // The clock the run was timed against is put away first: what a
+        // program named to run at the end runs even where the run was
+        // stopped for taking too long, and stopping it again would be
+        // stopping something that has not been given its own time.
+        self.began.set(None);
         loop {
             let next = {
                 let mut waiting = self.when_done.borrow_mut();

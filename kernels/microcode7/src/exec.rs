@@ -378,6 +378,11 @@ impl<'a> Machine<'a> {
     /// they were named. One that raises something stops the rest, as a
     /// fault anywhere else does.
     pub fn run_afterward(&mut self) -> Result<(), String> {
+        // The clock the run was timed against is put away first: what a
+        // program named to run afterward runs even where the run was
+        // stopped for taking too long, and stopping it again would stop
+        // something that was never given time of its own.
+        self.started = None;
         loop {
             let next = {
                 let mut waiting = self.afterward.borrow_mut();
@@ -1142,6 +1147,13 @@ impl<'a> Machine<'a> {
             }
             Form::Cycle { test, body, step, after } => {
                 loop {
+                    // A pass of a loop is a fair place to look at the
+                    // clock as well as a statement is, since a loop whose
+                    // body holds no statement at all — `for (;;) {}` —
+                    // would otherwise never be looked at again.
+                    if let Some(over) = self.past_its_time() {
+                        return Err(over);
+                    }
                     // The test is worked out where it is looked at and
                     // nowhere else: a test that changes something as it
                     // is read must change it once a pass, not twice.
