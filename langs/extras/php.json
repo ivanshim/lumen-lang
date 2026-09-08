@@ -428,6 +428,12 @@
   "ext.system.globals": [
     "$GLOBALS"
   ],
+  "ext.op.reference.unshared.written": [
+    "Only variables should be assigned by reference"
+  ],
+  "ext.op.reference.unshared.given": [
+    "Only variable references should be returned by reference"
+  ],
   "ext.builtin.exit": [
     "exit",
     "die"

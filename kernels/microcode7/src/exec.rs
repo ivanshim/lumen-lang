@@ -707,6 +707,16 @@ impl<'a> Machine<'a> {
                     other => other,
                 });
             }
+            // Words a definition holds ready for a shape it still allows.
+            // The line is set to where the shape stands, so that a call
+            // worked out on the way does not leave its own line behind.
+            Form::Remark(kind, said, row) => {
+                if *row > 0 {
+                    self.row = *row;
+                }
+                self.grumble(kind, said);
+                return Ok(Value::Nil);
+            }
             Form::CallWrite(spells, worth) => {
                 let spelled = self.value_of(spells, frame)?;
                 let name = self.name_it_spells(&spelled);

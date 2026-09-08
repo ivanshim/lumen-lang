@@ -28,7 +28,7 @@ use std::rc::Rc;
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 
-use crate::lang::{Lang, Brackets, Blocks};
+use crate::lang::{Lang, Brackets, Blocks, Complaint};
 use crate::arith;
 use crate::lex::{Shape, Token};
 use crate::value::Value;
@@ -98,6 +98,9 @@ pub struct Compiler<'a> {
     /// Which parameters of each program take a name's own cell rather
     /// than a copy of what it holds, found before anything is read.
     shared_args: HashMap<String, Vec<bool>>,
+    /// The routines the text declares as giving back a cell rather than
+    /// a copy, so that a call of one is known to have a cell to share.
+    gives_back: std::collections::HashSet<String>,
     /// The parameters of the method just read that name properties too.
     promoted: Vec<String>,
     /// How many lines stand before the program's own text.
@@ -165,8 +168,8 @@ pub fn compile_from(tokens: &[Token], lang: &Lang, table: &mut Registry, before:
         line: 0,
         instrs: Vec::new(),
     };
-    let shared_args = shared_parameters(tokens, lang);
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None, stepping: None, stood: None, giving_cells: Vec::new() };
+    let (shared_args, gives_back) = shared_parameters(tokens, lang);
+    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None, stepping: None, stood: None, giving_cells: Vec::new() };
     if lang.rpn {
         a.rpn_body(&[], Span::Block)?;
         if !a.exhausted() {
@@ -1514,7 +1517,7 @@ impl<'a> Compiler<'a> {
         if self.on_sep() || self.exhausted() || self.on_any(&self.lang.block_closes) {
             self.constant(Value::Null);
         } else if by_cell {
-            self.a_cell()?;
+            self.a_cell(&self.lang.unshared_given.clone())?;
         } else {
             self.expr(0)?;
         }
@@ -2114,7 +2117,7 @@ impl<'a> Compiler<'a> {
             {
                 let name = slot.ident.to_string();
                 self.take();
-                self.a_cell()?;
+                self.a_cell(&self.lang.unshared_written.clone())?;
                 let held = self.cell_to_write(&name);
                 self.put(Instr::Fasten(held));
                 if keep.is_some() {
@@ -2459,7 +2462,7 @@ impl<'a> Compiler<'a> {
                     self.put(w);
                 }
                 self.take();
-                self.a_cell()?;
+                self.a_cell(&self.lang.unshared_written.clone())?;
                 self.read_to_rewrite(&name);
                 self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
                 self.rewritten(&name);
@@ -3032,8 +3035,11 @@ impl<'a> Compiler<'a> {
     /// an array, or a property. Whichever it is, a cell is made of it
     /// where it is not one already and left on the stack, so a name may
     /// be fastened to it.
-    fn a_cell(&mut self) -> Res<()> {
+    fn a_cell(&mut self, unshared: &[String]) -> Res<()> {
         let from = self.mark();
+        // Where the asking stands, so that words said about it name that
+        // line and not whatever line a call along the way ran last.
+        let row = (self.look().row as u32).saturating_sub(self.before);
         self.expr_at(0, false)?;
         let read: Vec<Instr> = self.piece().instrs.drain(from..).collect();
         match read.as_slice() {
@@ -3067,6 +3073,22 @@ impl<'a> Compiler<'a> {
                 let at = self.mark();
                 for w in relocated(read.clone(), at as i64 - from as i64) {
                     self.put(w);
+                }
+                // A call of a routine that gives back a cell answers
+                // with one, so nothing is said of it. Where a language
+                // has words for the rest, they are said here, once the
+                // value has been worked out.
+                let shares = match read.last() {
+                    Some(Instr::Act(Action::Invoke(name), _)) => self.gives_back.contains(name.as_ref()),
+                    _ => false,
+                };
+                if let (Some(said), false) = (unshared.first(), shares) {
+                    if self.lang.tells_place && row > 0 {
+                        self.put(Instr::Line(row));
+                        self.piece().line = row;
+                    }
+                    self.act(Action::Remark(Complaint::Notice, Rc::from(said.as_str())), 0);
+                    self.put_away();
                 }
             }
         }
@@ -3843,9 +3865,10 @@ fn peephole(instrs: Vec<Instr>) -> Vec<Instr> {
 /// found by reading the tokens before anything is compiled: a call has to
 /// know before it works out its arguments, and a program may be called
 /// above where it is written.
-fn shared_parameters(tokens: &[Token], lang: &Lang) -> HashMap<String, Vec<bool>> {
+fn shared_parameters(tokens: &[Token], lang: &Lang) -> (HashMap<String, Vec<bool>>, std::collections::HashSet<String>) {
     let mut found = HashMap::new();
-    let (Some(mark), Some(call)) = (&lang.reference_mark, &lang.calling) else { return found };
+    let mut gives = std::collections::HashSet::new();
+    let (Some(mark), Some(call)) = (&lang.reference_mark, &lang.calling) else { return (found, gives) };
     let sign = |t: &Token, text: &str| t.is_lexeme(Shape::Sign, text);
     let mut i = 0;
     while i + 2 < tokens.len() {
@@ -3855,7 +3878,8 @@ fn shared_parameters(tokens: &[Token], lang: &Lang) -> HashMap<String, Vec<bool>
             continue;
         }
         let mut j = i + 1;
-        if sign(&tokens[j], mark) {
+        let hands_back = sign(&tokens[j], mark);
+        if hands_back {
             j += 1;
         }
         if tokens[j].shape != Shape::Instr || !sign(&tokens[j + 1], &call.open) {
@@ -3863,6 +3887,9 @@ fn shared_parameters(tokens: &[Token], lang: &Lang) -> HashMap<String, Vec<bool>
             continue;
         }
         let name = tokens[j].lexeme.clone();
+        if hands_back {
+            gives.insert(name.clone());
+        }
         j += 2;
         let (mut marks, mut shared, mut anything, mut defaulting, mut depth) = (Vec::new(), false, false, false, 1usize);
         while j < tokens.len() {
@@ -3893,7 +3920,7 @@ fn shared_parameters(tokens: &[Token], lang: &Lang) -> HashMap<String, Vec<bool>
         found.insert(name, marks);
         i = j;
     }
-    found
+    (found, gives)
 }
 
 /// The keys of an index chain, each with where it began, taken out of

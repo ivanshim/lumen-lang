@@ -257,6 +257,11 @@ pub enum Form {
     Called(Box<Form>),
     /// Write the second into the binding whose name the first spells.
     CallWrite(Box<Form>, Box<Form>),
+    /// Words a definition holds ready for a shape it still allows, said
+    /// where the shape is reached and nowhere else, under the language's
+    /// own word for that kind of remark. The line is the one the shape
+    /// was written on, so that a call along the way does not move it.
+    Remark(&'static str, Rc<str>, u32),
 }
 
 /// One catch: the classes it takes, where it holds what it caught, and

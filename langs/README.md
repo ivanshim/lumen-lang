@@ -429,6 +429,18 @@ only. The extension labels so far, all from PHP:
   putting a value after the last place of what it holds all go through
   it, and a place in it may be reached into further
   (`$GLOBALS['a']['k']`).
+- `ext.op.reference.unshared.written` and
+  `ext.op.reference.unshared.given`: what a language has to say when a
+  program asks to share a cell from something that has none — once
+  where the asking is a write (`$b = &f()`), and once where it is a
+  routine that gives back a cell answering with something that has none
+  (`return 100` inside `function &f()`). The words are said as a notice
+  where the definition names one, once the value has been worked out and
+  under the line the asking was written on, and the value itself is
+  answered with, as such a language does rather than stopping. A call of
+  a routine the text declares as giving back a cell has one to share, so
+  nothing is said of it. Both are left out by a language that holds its
+  peace.
 - `ext.op.cast`: a switch; a kind's word written within the grouping
   marks before a value makes the value that kind — `(int) $x`. The
   words are the ones the language already gives its kinds, under
@@ -909,6 +921,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.otherwise` | - | - | - | - | - | - | - | `??` | - | - |
 | `ext.op.plus` | - | - | - | - | - | - | - | `+` | - | - |
 | `ext.op.reference` | - | - | - | - | - | - | - | `&` | - | - |
+| `ext.op.reference.unshared.given` | - | - | - | - | - | - | - | `Only variable references should be returned by reference` | - | - |
+| `ext.op.reference.unshared.written` | - | - | - | - | - | - | - | `Only variables should be assigned by reference` | - | - |
 | `ext.op.scope` | - | - | - | - | - | - | - | `::` | - | - |
 | `ext.op.ternary` | - | - | - | - | - | - | - | `?` `:` | - | - |
 | `ext.stmt.break.levels` | - | - | - | - | - | - | - | `true` | - | - |

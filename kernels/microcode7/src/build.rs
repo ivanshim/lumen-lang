@@ -3,7 +3,7 @@
 // holding names, arms and loop bodies holding none and making no frame.
 // RPLumen is read with a symbolic stack of forms.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use num_bigint::BigInt;
@@ -89,6 +89,9 @@ pub struct Builder<'a> {
     /// it, and what it holds after.
     stood: Option<String>,
     stands: Option<String>,
+    /// The routines the text declares as giving back a cell and not a
+    /// copy, so that a call of one is known to have a cell to share.
+    gives_back: HashSet<String>,
     /// The routines being built, the innermost last, so a word standing
     /// for the one a piece is written in knows which that is.
     naming: Vec<String>,
@@ -123,8 +126,8 @@ pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMa
 /// read as the run went.
 pub fn build_from(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>) -> Res<Built> {
     let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
-    let shared_args = shared_parameters(tokens, table);
-    let mut r = Builder { within: None, shared_args, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(),
+    let (shared_args, gives_back) = shared_parameters(tokens, table);
+    let mut r = Builder { within: None, shared_args, gives_back, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(),
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
@@ -162,9 +165,10 @@ pub fn build_from(tokens: &[Token], table: &Table, seeded: &[String], assumed: H
 /// Which parameters of each program are written with the reference sign.
 /// A call must know before it works out its arguments, and a program may
 /// be called above where it is written, so the tokens are read first.
-fn shared_parameters(tokens: &[Token], table: &Table) -> HashMap<String, Vec<bool>> {
+fn shared_parameters(tokens: &[Token], table: &Table) -> (HashMap<String, Vec<bool>>, HashSet<String>) {
     let mut found = HashMap::new();
-    let (Some(mark), Some(open)) = (table.single("ext.op.reference"), table.single("syntax.call.open")) else { return found };
+    let mut gives = HashSet::new();
+    let (Some(mark), Some(open)) = (table.single("ext.op.reference"), table.single("syntax.call.open")) else { return (found, gives) };
     let close = table.single("syntax.call.close").unwrap_or(")");
     let sep = table.single("syntax.call.separator");
     let is = |t: &Token, text: &str| t.shape == Shape::Sign && t.lexeme == text;
@@ -176,7 +180,8 @@ fn shared_parameters(tokens: &[Token], table: &Table) -> HashMap<String, Vec<boo
             continue;
         }
         let mut j = i + 1;
-        if is(&tokens[j], mark) {
+        let hands_back = is(&tokens[j], mark);
+        if hands_back {
             j += 1;
         }
         if tokens[j].shape != Shape::Bare || !is(&tokens[j + 1], open) {
@@ -184,6 +189,9 @@ fn shared_parameters(tokens: &[Token], table: &Table) -> HashMap<String, Vec<boo
             continue;
         }
         let name = tokens[j].lexeme.clone();
+        if hands_back {
+            gives.insert(name.clone());
+        }
         j += 2;
         let (mut marks, mut shares, mut any, mut defaulting, mut depth) = (Vec::new(), false, false, false, 1usize);
         while j < tokens.len() {
@@ -215,7 +223,7 @@ fn shared_parameters(tokens: &[Token], table: &Table) -> HashMap<String, Vec<boo
         found.insert(name, marks);
         i = j;
     }
-    found
+    (found, gives)
 }
 
 // ---------- node builders
@@ -878,7 +886,7 @@ impl<'a> Builder<'a> {
                 let value = if self.on_stmt_end() || self.exhausted() || self.on_any("block.close") {
                     Vec::new()
                 } else if by_cell {
-                    vec![self.a_shared_cell()?]
+                    vec![self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.given").to_vec())?]
                 } else {
                     vec![self.expr(0)?]
                 };
@@ -1965,13 +1973,13 @@ impl<'a> Builder<'a> {
         let mut shared_value: Option<Form> = None;
         if tied_to_a_cell && matches!(expr, Form::Apply(Callee::Prim(Prim::At, _), _)) {
             self.advance();
-            shared_value = Some(self.a_shared_cell()?);
+            shared_value = Some(self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.written").to_vec())?);
         }
         if self.table.single("ext.op.reference").map_or(false, |m| self.sign(m)) && plain {
             if let Form::Read(slot) = &expr {
                 let held = slot.ident.to_string();
                 self.advance();
-                let shared = self.a_shared_cell()?;
+                let shared = self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.written").to_vec())?;
                 let tied = self.address_to_write(&held);
                 let tie = Form::Tie(tied, Box::new(shared));
                 return Ok(match gives_back {
@@ -2788,7 +2796,10 @@ impl<'a> Builder<'a> {
     /// What stands after the mark that shares a cell: a name, a place in
     /// an array, or a property. Whichever it is, a cell is made of it
     /// where it is not one already, so a name may be tied to it.
-    fn a_shared_cell(&mut self) -> Res<Form> {
+    fn a_shared_cell(&mut self, unshared: &[String]) -> Res<Form> {
+        // Where the asking stands, so that words said about it name that
+        // line and not one a call along the way left behind.
+        let row = (self.look().row as u32).saturating_sub(self.before);
         let read = self.expr_at(0, false)?;
         Ok(match read {
             Form::Read(slot) => {
@@ -2817,8 +2828,27 @@ impl<'a> Builder<'a> {
             // giving back a cell answers with one already, and what has
             // no cell to share is written plainly, which is what a
             // language asking to share one from something without one
-            // does rather than stopping.
-            found => found,
+            // does rather than stopping. Where a language has words for
+            // that, they are said once the value is worked out.
+            found => {
+                let shares = match &found {
+                    Form::Apply(Callee::Code(target), _) => match target.as_ref() {
+                        Form::Read(slot) => self.gives_back.contains(slot.ident.as_ref()),
+                        _ => false,
+                    },
+                    _ => false,
+                };
+                match (unshared.first(), shares) {
+                    (Some(said), false) => {
+                        self.gensyms += 1;
+                        let held = format!("#shared{}", self.gensyms);
+                        let kept = self.write(&held, found);
+                        let told = Form::Remark("notice", Rc::from(said.as_str()), row);
+                        sequence(vec![kept, told, self.read(&held)])
+                    }
+                    _ => found,
+                }
+            }
         })
     }
 

@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 47, differs 31, error 26, skipped 10 | pass 47, differs 31, error 26, skipped 10 |
 | `php/func` | 14 | pass 9, differs 3, error 2, skipped 0 | pass 9, differs 3, error 2, skipped 0 |
-| `php/lang` | 213 | pass 83, differs 59, error 66, skipped 5 | pass 83, differs 59, error 66, skipped 5 |
+| `php/lang` | 213 | pass 88, differs 54, error 66, skipped 5 | pass 88, differs 54, error 66, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 21, error 3, skipped 6 | pass 34, differs 21, error 3, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 178, differs 122, error 97, skipped 25 | pass 178, differs 122, error 97, skipped 25 |
+| all | 422 | pass 183, differs 117, error 97, skipped 25 | pass 183, differs 117, error 97, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 122 |
+| ran, printed something else | 117 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
@@ -374,15 +374,15 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug18872.phpt` | pass | pass |  |
 | `php/lang/bug19566.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_declared_classes in <file> |
 | `php/lang/bug19943.phpt` | pass | pass |  |
-| `php/lang/bug20175.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug20175.phpt` | pass | pass |  |
 | `php/lang/bug21094.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug21600.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug21600.phpt` | pass | pass |  |
 | `php/lang/bug21669.phpt` | error | error | Fatal error: Uncaught Error: Only a class can be made into an object in <file> |
 | `php/lang/bug21820.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug21849.phpt` | pass | pass |  |
 | `php/lang/bug21961.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> |
 | `php/lang/bug22231.phpt` | error | error | Unexpected token: & |
-| `php/lang/bug22510.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug22510.phpt` | pass | pass |  |
 | `php/lang/bug22592.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug23279.phpt` | error | error | thrown in <file> |
 | `php/lang/bug23384.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: Foo in <file> |
@@ -585,14 +585,14 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/passByReference_010.phpt` | differs | differs | ran, printed something else |
 | `php/lang/passByReference_012.phpt` | differs | differs | ran, printed something else |
 | `php/lang/returnByReference.001.phpt` | pass | pass |  |
-| `php/lang/returnByReference.002.phpt` | differs | differs | ran, printed something else |
+| `php/lang/returnByReference.002.phpt` | pass | pass |  |
 | `php/lang/returnByReference.003.phpt` | differs | differs | ran, printed something else |
 | `php/lang/returnByReference.004.phpt` | differs | differs | ran, printed something else |
 | `php/lang/returnByReference.005.phpt` | differs | differs | ran, printed something else |
 | `php/lang/returnByReference.006.phpt` | error | error | Fatal error: Uncaught Error: '$name' is not a function in <file> |
 | `php/lang/returnByReference.007.phpt` | error | error | Fatal error: Uncaught Error: Call to undefined method C::$functionToCall() in <file> |
 | `php/lang/returnByReference.008.phpt` | differs | differs | ran, printed something else |
-| `php/lang/returnByReference.009.phpt` | differs | differs | ran, printed something else |
+| `php/lang/returnByReference.009.phpt` | pass | pass |  |
 | `php/lang/short_tags.001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/short_tags.002.phpt` | pass | pass |  |
 | `php/lang/short_tags.004.phpt` | differs | differs | ran, printed something else |

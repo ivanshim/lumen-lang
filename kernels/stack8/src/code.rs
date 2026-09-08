@@ -96,6 +96,10 @@ pub enum Action {
     Cast(crate::value::Sort),
     /// Whether the value above is nothing at all.
     Nothing,
+    /// Say these words about the piece standing here, in the language's
+    /// own word for that kind of remark, and go on: how a definition
+    /// that has something to say about a shape it still allows says it.
+    Remark(crate::lang::Complaint, Rc<str>),
     /// What an array holds at that place, answering nothing where it
     /// holds nothing there, or where what is asked is not an array at
     /// all, and saying nothing about it either way: how a language asks

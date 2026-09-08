@@ -247,6 +247,12 @@ pub struct Lang {
     /// array, so that a place in it is the binding whose name the place
     /// spells: how a language reaches a global from inside a routine.
     pub globals_words: Vec<String>,
+    /// What a language has to say when a program asks to share a cell
+    /// from something that has none: once where the asking is a write,
+    /// and once where it is a routine giving back what it answers with.
+    /// Nothing where a language holds its peace.
+    pub unshared_written: Vec<String>,
+    pub unshared_given: Vec<String>,
     /// The words that open a taking-apart: a list of places written on
     /// the left of a write, each taking the matching place of the value.
     pub unpack_words: Vec<String>,
@@ -380,6 +386,7 @@ w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.
 w ext.op.name_by_value | b ext.op.cast | w ext.stmt.unpack
 w ext.system.source.routine | w ext.system.source.class | w ext.system.source.method
 b ext.op.member.by_value | b ext.op.index.text | w ext.system.globals
+w ext.op.reference.unshared.written | w ext.op.reference.unshared.given
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 ";
@@ -997,6 +1004,8 @@ impl Lang {
             members_by_value: r.flag("ext.op.member.by_value")?,
             text_places: r.flag("ext.op.index.text")?,
             globals_words: r.strings("ext.system.globals")?,
+            unshared_written: r.strings("ext.op.reference.unshared.written")?,
+            unshared_given: r.strings("ext.op.reference.unshared.given")?,
             unpack_words: r.strings("ext.stmt.unpack")?,
             makes_places: r.flag("ext.op.index.makes")?,
             untrue_text: r.strings("ext.system.untrue.text")?,

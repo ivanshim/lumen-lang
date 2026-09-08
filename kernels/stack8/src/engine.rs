@@ -1239,6 +1239,12 @@ impl<'a> Engine<'a> {
                 v => return Err(format!("{} has no class name", v.plain()).into()),
             },
             Action::Nothing => Value::Flag(matches!(self.drop_top()?, Value::Null | Value::Blank | Value::Gap)),
+            // Words a definition has ready for a shape it still allows,
+            // said where the shape is reached and nowhere else.
+            Action::Remark(kind, said) => {
+                self.complain(*kind, said);
+                Value::Null
+            }
             Action::Extent => match self.drop_top()? {
                 Value::Array(items) => Value::Small(items.len() as i64),
                 Value::Map(pairs) => Value::Small(pairs.len() as i64),
