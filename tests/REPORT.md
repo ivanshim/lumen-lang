@@ -19,12 +19,12 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 47, differs 31, error 26, skipped 10 | pass 47, differs 31, error 26, skipped 10 |
 | `php/func` | 14 | pass 11, differs 2, error 1, skipped 0 | pass 11, differs 2, error 1, skipped 0 |
-| `php/lang` | 213 | pass 109, differs 40, error 59, skipped 5 | pass 109, differs 40, error 59, skipped 5 |
+| `php/lang` | 213 | pass 111, differs 40, error 57, skipped 5 | pass 111, differs 40, error 57, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 21, error 3, skipped 6 | pass 34, differs 21, error 3, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 206, differs 102, error 89, skipped 25 | pass 206, differs 102, error 89, skipped 25 |
+| all | 422 | pass 208, differs 102, error 87, skipped 25 | pass 208, differs 102, error 87, skipped 25 |
 
 | Reason | Tests |
 |---|---|
@@ -36,13 +36,13 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
-| Expected an expression | 3 |
 | Fatal error: Uncaught Error: Undefined variable: current in <file> | 3 |
 | skip php-cgi not available | 2 |
+| Expected an expression | 2 |
 | Unexpected token: { | 2 |
 | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> | 2 |
+| Fatal error: Maximum execution time of 1 second exceeded in <file> | 2 |
 | Unexpected token: & | 2 |
-| Unexpected token: } | 2 |
 | Fatal error: Uncaught Error: Only a class can be made into an object in <file> | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Undefined variable: StdClass in <file> | 2 |
@@ -60,7 +60,6 @@ is listed, since the full kernels are meant to behave alike.
 | skip for Windows only | 1 |
 | Fatal error: Uncaught Error: Undefined variable: serialize in <file> | 1 |
 | skip Run only on Windows | 1 |
-| Fatal error: Maximum execution time of 1 second exceeded in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: INF in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: InfiniteIterator in <file> | 1 |
 | Shutdown | 1 |
@@ -68,12 +67,13 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Unexpected token: += in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: call_user_func in <file> | 1 |
 | skip Can't find german locale | 1 |
+| Fatal error: Uncaught Error: Cannot reach 'b' in B in <file> | 1 |
 
-### Reserved words: 54 of 68 spelled
+### Reserved words: 55 of 68 spelled
 
-Spelled: `abstract`, `and`, `array`, `as`, `break`, `case`, `catch`, `class`, `const`, `continue`, `default`, `echo`, `else`, `elseif`, `empty`, `endfor`, `endforeach`, `endif`, `endswitch`, `endwhile`, `eval`, `exit`, `extends`, `final`, `finally`, `for`, `foreach`, `function`, `global`, `if`, `implements`, `include`, `include_once`, `instanceof`, `interface`, `isset`, `list`, `new`, `or`, `print`, `private`, `protected`, `public`, `readonly`, `require`, `require_once`, `return`, `static`, `switch`, `throw`, `try`, `unset`, `var`, `while`
+Spelled: `abstract`, `and`, `array`, `as`, `break`, `case`, `catch`, `class`, `const`, `continue`, `default`, `do`, `echo`, `else`, `elseif`, `empty`, `endfor`, `endforeach`, `endif`, `endswitch`, `endwhile`, `eval`, `exit`, `extends`, `final`, `finally`, `for`, `foreach`, `function`, `global`, `if`, `implements`, `include`, `include_once`, `instanceof`, `interface`, `isset`, `list`, `new`, `or`, `print`, `private`, `protected`, `public`, `readonly`, `require`, `require_once`, `return`, `static`, `switch`, `throw`, `try`, `unset`, `var`, `while`
 
-Not spelled: `callable`, `clone`, `declare`, `do`, `enddeclare`, `fn`, `goto`, `insteadof`, `match`, `namespace`, `trait`, `use`, `xor`, `yield`
+Not spelled: `callable`, `clone`, `declare`, `enddeclare`, `fn`, `goto`, `insteadof`, `match`, `namespace`, `trait`, `use`, `xor`, `yield`
 
 ### Most-called functions in the suite, and whether the definition spells them
 
@@ -349,7 +349,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/024.phpt` | pass | pass |  |
 | `php/lang/025.phpt` | pass | pass |  |
 | `php/lang/026.phpt` | pass | pass |  |
-| `php/lang/027.phpt` | error | error | Expected an expression |
+| `php/lang/027.phpt` | pass | pass |  |
 | `php/lang/028.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: call_user_func in <file> |
 | `php/lang/030.phpt` | error | error | Unexpected token: & |
 | `php/lang/032.phpt` | pass | pass |  |
@@ -365,7 +365,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/042.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'B' in B in <file> |
 | `php/lang/043.phpt` | error | error | Fatal error: Uncaught Error: Cannot call 'foo' on a value that is not a class in <file> |
 | `php/lang/044.phpt` | error | error | Fatal error: Uncaught Error: Call to undefined method A::$methodname() in <file> |
-| `php/lang/045.phpt` | error | error | Unexpected token: } |
+| `php/lang/045.phpt` | error | error | Fatal error: Maximum execution time of 1 second exceeded in <file> |
 | `php/lang/array_shortcut_001.phpt` | pass | pass |  |
 | `php/lang/array_shortcut_002.phpt` | pass | pass |  |
 | `php/lang/array_shortcut_003.phpt` | pass | pass |  |
@@ -410,7 +410,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug26866.phpt` | error | error | Fatal error: Uncaught Error: Cannot call method 'get_name' on a value that is not an object in <file> |
 | `php/lang/bug26869.phpt` | pass | pass |  |
 | `php/lang/bug27354.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug27439.phpt` | error | error | Unexpected token: } |
+| `php/lang/bug27439.phpt` | pass | pass |  |
 | `php/lang/bug27443.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: defined in <file> |
 | `php/lang/bug27535.phpt` | pass | pass |  |
 | `php/lang/bug28213.phpt` | differs | differs | ran, printed something else |

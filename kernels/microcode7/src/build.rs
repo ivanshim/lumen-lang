@@ -769,6 +769,16 @@ impl<'a> Builder<'a> {
     }
 
     fn body(&mut self) -> Res<Form> {
+        // A loop with nothing to do may be written with the mark that
+        // ends a statement standing where its block would: the mark is
+        // the whole body, and nothing runs each pass.
+        if self.table.flag("ext.block.lone_statement")
+            && self.look().shape == Shape::Sign
+            && self.table.spells("stmt.terminator", &self.look().lexeme)
+        {
+            self.advance();
+            return Ok(constant(Value::Nil));
+        }
         self.skip_lead_word();
         self.skip_line_ends();
         match self.table.blocks {
@@ -855,6 +865,23 @@ impl<'a> Builder<'a> {
             }
             if self.key("stmt.if") {
                 return self.if_stmt();
+            }
+            // `do body while (c);`: the body runs before its test is
+            // asked, so it runs at least once. Said as a loop that stops
+            // once the test does not hold, tested after the body.
+            if self.key("ext.stmt.do") {
+                self.advance();
+                let body = self.body()?;
+                if !self.key("stmt.while") {
+                    return Err(format!("Expected '{}' after the body, got '{}'", self.table.strings("stmt.while").first().map_or("while", |w| w.as_str()), self.look().lexeme));
+                }
+                self.advance();
+                let open = self.table.single("syntax.group.open").ok_or_else(|| "A do loop needs syntax.group".to_string())?;
+                self.need_sign(open, "after while")?;
+                let test = self.expr(0)?;
+                self.need_sign(self.table.single("syntax.group.close").unwrap(), "after the condition")?;
+                let stops = prim_call(Prim::Invert, vec![test]);
+                return Ok(Form::Cycle { test: Box::new(stops), body: Box::new(body), step: None, after: true });
             }
             if self.key("stmt.while") {
                 self.advance();

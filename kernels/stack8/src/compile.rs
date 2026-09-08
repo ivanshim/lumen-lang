@@ -645,6 +645,13 @@ impl<'a> Compiler<'a> {
 
     /// The block after a statement head, in the language's style.
     fn body(&mut self) -> Res<()> {
+        // A loop with nothing to do may be written with the mark that
+        // ends a statement standing where its block would: the mark is
+        // the whole body, and nothing runs each pass.
+        if self.lang.lone_stmt && self.look().shape == Shape::Sign && self.lang.ends_stmt(&self.look().lexeme) {
+            self.take();
+            return Ok(());
+        }
         self.skip_intro();
         self.skip_seps();
         match self.lang.blocks {
@@ -720,6 +727,9 @@ impl<'a> Compiler<'a> {
             let w = self.look().lexeme.clone();
             if !lang.let_words.is_empty() && Lang::spells(&lang.let_words, &w) {
                 return self.binding();
+            }
+            if !lang.do_words.is_empty() && Lang::spells(&lang.do_words, &w) {
+                return self.do_stmt();
             }
             if Lang::spells(&lang.if_words, &w) {
                 return self.branch();
@@ -1411,6 +1421,29 @@ impl<'a> Compiler<'a> {
             }
         }
         self.land(over);
+        Ok(())
+    }
+
+    /// `do body while (c);`: the body runs before the test is asked, so
+    /// it runs at least once. A continue goes to the test, as it goes to
+    /// the step of a counted loop.
+    fn do_stmt(&mut self) -> Res<()> {
+        let lang = self.lang;
+        self.take();
+        let top = self.mark();
+        self.enter_cycle(None);
+        self.body()?;
+        let again = self.mark();
+        if !self.on_keyword(&lang.while_words) {
+            return Err(format!("Expected '{}' after the body, got '{}'", lang.while_words.first().map_or("while", |w| w.as_str()), self.look().lexeme));
+        }
+        self.take();
+        let group = lang.grouping.clone().ok_or_else(|| "A do loop needs syntax.group".to_string())?;
+        self.want_sign(&group.open, "after while")?;
+        self.expr(0)?;
+        self.want_sign(&group.close, "after the condition")?;
+        self.loop_back(top);
+        self.leave_cycle(again);
         Ok(())
     }
 

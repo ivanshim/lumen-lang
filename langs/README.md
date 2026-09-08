@@ -479,6 +479,14 @@ only. The extension labels so far, all from PHP:
   written in the language itself, since giving up what was kept hands it
   back as an ordinary value, and writing it out again writes it into
   whatever keeping now stands.
+- `ext.stmt.do`: the words opening a body that runs before its test is
+  asked, the test standing after it — `do { … } while (c);`. The body
+  runs at least once, and a `continue` within it goes to the test, as it
+  goes to the step of a counted loop.
+- A loop with nothing to do may be written with the mark that ends a
+  statement standing where its block would (`while ($i++ < 3);`), where
+  the language lets a lone statement stand for a block. The mark is the
+  whole body, and nothing runs each pass.
 - `ext.builtin.empty`: a builtin asking whether what a name or a place
   holds is untrue, asked as gently as `ext.builtin.isset` asks whether
   it is there at all — a name never written and a place an array does
@@ -1038,6 +1046,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.this` | - | - | - | - | - | - | - | `$this` | - | - |
 | `ext.stmt.const` | - | - | - | - | - | - | - | `const` | - | - |
 | `ext.stmt.default` | - | - | - | - | - | - | - | `default` | - | - |
+| `ext.stmt.do` | - | - | - | - | - | - | - | `do` | - | - |
 | `ext.stmt.finally` | - | - | - | - | - | - | - | `finally` | - | - |
 | `ext.stmt.for.c` | - | - | - | - | - | - | - | `for` | - | - |
 | `ext.stmt.for.collection` | - | - | `true` | - | - | - | - | - | - | - |

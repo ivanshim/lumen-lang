@@ -1066,9 +1066,14 @@ impl<'a> Machine<'a> {
             }
             Form::Cycle { test, body, step, after } => {
                 loop {
-                    let told = self.value_of(test, frame)?;
-                    if !after && !self.stands_true(&told) {
-                        break;
+                    // The test is worked out where it is looked at and
+                    // nowhere else: a test that changes something as it
+                    // is read must change it once a pass, not twice.
+                    if !after {
+                        let told = self.value_of(test, frame)?;
+                        if !self.stands_true(&told) {
+                            break;
+                        }
                     }
                     match self.value_of(body, frame) {
                         Ok(_) | Err(Escape::Resume(1)) => {}
@@ -1080,9 +1085,11 @@ impl<'a> Machine<'a> {
                     if let Some(step) = step {
                         self.value_of(step, frame)?;
                     }
-                    let told = self.value_of(test, frame)?;
-                    if *after && self.stands_true(&told) {
-                        break;
+                    if *after {
+                        let told = self.value_of(test, frame)?;
+                        if self.stands_true(&told) {
+                            break;
+                        }
                     }
                 }
                 Ok(Value::Nil)

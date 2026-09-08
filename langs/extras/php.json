@@ -601,6 +601,9 @@
   "ext.builtin.empty": [
     "empty"
   ],
+  "ext.stmt.do": [
+    "do"
+  ],
   "ext.lexical.template": true,
   "ext.op.otherwise": [
     "??"

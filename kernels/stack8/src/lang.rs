@@ -266,6 +266,9 @@ pub struct Lang {
     /// arm of it is left standing.
     pub instead_mark: Option<String>,
     pub instead_closes: Vec<String>,
+    /// The words opening a body that runs before its test is asked, the
+    /// test standing after it: `do { … } while (c);`.
+    pub do_words: Vec<String>,
     /// Whether a piece of text spelling the name of a routine or a class
     /// may stand where the routine or the class itself would: `$f()`,
     /// `new $c`, `$c::m()`. The name is one of the outermost bindings,
@@ -411,7 +414,7 @@ w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.co
 w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove
 w ext.builtin.eval | w ext.builtin.include
-w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | b ext.op.index.makes
+w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
 w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind | w ext.system.fault.class.value
 w ext.op.name_by_value | b ext.op.cast | w ext.stmt.unpack
@@ -1045,6 +1048,7 @@ impl Lang {
             unshared_handed: r.strings("ext.op.reference.unshared.handed")?,
             instead_mark: r.head("ext.stmt.block.instead")?,
             instead_closes: r.strings("ext.stmt.block.instead.close")?,
+            do_words: r.strings("ext.stmt.do")?,
             spelled_stands: r.flag("ext.op.spelled")?,
             args_outside_all: r.head("ext.builtin.args.all.outside")?,
             args_outside_count: r.head("ext.builtin.args.count.outside")?,
