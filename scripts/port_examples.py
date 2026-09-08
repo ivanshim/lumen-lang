@@ -1821,6 +1821,16 @@ def write_mirror(lang, d, files, reasons):
     # for what it has and Lumen has not: PHP's exception classes. The
     # porter never writes there; it only puts those files first.
     native = sorted(q.name for q in (out / "native").glob(f"*.{ext}")) if (out / "native").is_dir() else []
+    # A name written twice in the language's own library is a name one
+    # file quietly takes from another, so it is refused outright.
+    seen = {}
+    for name in native:
+        # Only a routine written out on its own: one written inside a
+        # class is that class's own and clashes with nothing.
+        for called in re.findall(r"(?m)^function\s+&?([^\W\d]\w*)\s*\(", (out / "native" / name).read_text(encoding="utf-8")):
+            if called in seen:
+                raise SystemExit(f"lib_{lang}/native: {called}() is written in both {seen[called]} and {name}")
+            seen[called] = name
     comment = d["lexical.comment_line"][0] if d["lexical.comment_line"] else None
     written = []
     for name in LIB_FILES:

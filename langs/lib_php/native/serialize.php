@@ -219,9 +219,9 @@ function hash_algos() { return array("md5", "sha1", "crc32b"); }
 // A piece of text brought up to a whole number of blocks: a bit set,
 // noughts, and how long it was in bits at the end. One writes that
 // length with the least of it first and the other with the most.
-function __padded_little($string) { return __padded($string, true); }
-function __padded_big($string) { return __padded($string, false); }
-function __padded($string, $little) {
+function __padded_little($string) { return __filled_out($string, true); }
+function __padded_big($string) { return __filled_out($string, false); }
+function __filled_out($string, $little) {
     $bits = strlen($string) * 8;
     $out = $string . chr(128);
     while (strlen($out) % 64 !== 56) { $out = $out . chr(0); }
