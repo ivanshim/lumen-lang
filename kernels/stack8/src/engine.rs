@@ -43,6 +43,9 @@ pub struct Engine<'a> {
     /// first fault to leave a call writes this; a guard taking one
     /// clears it again.
     under: Option<String>,
+    /// The routine a value nobody took is handed to, where the program
+    /// put one in its way.
+    untaken: RefCell<Option<Value>>,
     /// Where the routine a fault was raised on the way into is written.
     /// Such a fault belongs there and not where the call stood, which
     /// is worth saying only where nothing takes it.
@@ -184,6 +187,7 @@ impl<'a> Engine<'a> {
             calls: Vec::new(),
             under: None,
             entering: None,
+            untaken: RefCell::new(None),
             nothing: Value::Null,
             hurled_at: std::cell::Cell::new(0),
             limit: std::cell::Cell::new(0),
@@ -557,6 +561,25 @@ impl<'a> Engine<'a> {
             Value::Flag(false) => "false".to_string(),
             other => other.plain(),
         }
+    }
+
+    /// A value nobody took, handed to the routine the program put in
+    /// its way. Answers whether it was taken up, since a run whose
+    /// fault was handed over says nothing more of it in its own words.
+    pub fn taken_up(&mut self, fault: &Fault) -> bool {
+        let put = self.untaken.borrow().clone();
+        let Some(v) = put else { return false };
+        let Value::Routine(p) = self.what_it_spells(v) else { return false };
+        let raised = match fault {
+            Fault::Thrown(raised) => raised.clone(),
+            Fault::Note(told) => match self.as_fault(told) {
+                Some(made) => made,
+                None => return false,
+            },
+            _ => return false,
+        };
+        let _ = self.invoke(&p, vec![raised]);
+        true
     }
 
     /// A value raised and never caught, told the way a language that
@@ -3074,6 +3097,12 @@ impl<'a> Engine<'a> {
                 }
             }
             // The routine every complaint is to be handed to, or none.
+            Builtin::Untaken => {
+                let put = args.first().cloned().unwrap_or(Value::Null);
+                let held = matches!(put, Value::Null | Value::Blank);
+                *self.untaken.borrow_mut() = if held { None } else { Some(put) };
+                Value::Flag(true)
+            }
             Builtin::Complainer => {
                 let put = args.first().cloned().unwrap_or(Value::Null);
                 let held = matches!(put, Value::Null | Value::Blank);

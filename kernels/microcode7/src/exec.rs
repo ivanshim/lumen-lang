@@ -171,6 +171,9 @@ pub struct Machine<'a> {
     /// over, since one may be raised where the run is only reading; and
     /// whether any wait, which each step asks before it runs.
     hearer: RefCell<Option<Value>>,
+    /// The routine a value nobody took is handed to, where the program
+    /// put one in its way.
+    untaken: RefCell<Option<Value>>,
     unheard: RefCell<Vec<(String, String, u32)>>,
     any_unheard: std::cell::Cell<bool>,
     /// Whether writing into a place makes what is needed to hold it: an
@@ -239,6 +242,7 @@ impl<'a> Machine<'a> {
             knows_cells: (HashMap::new(), HashMap::new(), std::collections::HashSet::new()),
             frames_named: Vec::new(),
             hearer: RefCell::new(None),
+            untaken: RefCell::new(None),
             unheard: RefCell::new(Vec::new()),
             any_unheard: std::cell::Cell::new(false),
             builds_places: table.flag("ext.op.index.makes"),
@@ -1018,9 +1022,38 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// A value nobody took, handed to the routine the program put in
+    /// its way. Answers whether it was taken up, since a run whose
+    /// fault was handed over says nothing more of it in its own words.
+    fn taken_up(&mut self, over: &Escape) -> bool {
+        let put = self.untaken.borrow().clone();
+        let Some(v) = put else { return false };
+        let raised = match over {
+            Escape::Thrown(raised) => raised.clone(),
+            Escape::Error(told) => match self.as_raised(told) {
+                Some(made) => made,
+                None => return false,
+            },
+            _ => return false,
+        };
+        let Value::Bound(p, env) = self.what_it_spells(v) else { return false };
+        let _ = self.invoke(p, env, vec![raised]);
+        true
+    }
+
     pub fn run_main(&mut self, body: &Form) -> Result<(), String> {
         let top = self.outermost.clone();
-        match self.value_of(body, &top) {
+        let ran = self.value_of(body, &top);
+        // A program may put a routine in the way of a value nobody took;
+        // the run says nothing of its own where one took it up.
+        if matches!(ran, Err(Escape::Thrown(_)) | Err(Escape::Error(_))) && self.taken_up(ran.as_ref().unwrap_err()) {
+            return match ran {
+                Err(Escape::Thrown(v)) => Err(format!("Uncaught {}", v.bare())),
+                Err(Escape::Error(told)) => Err(told),
+                _ => Ok(()),
+            };
+        }
+        match ran {
             // A run the program itself said was over came out right.
             Ok(_) | Err(Escape::Done) | Err(Escape::Yield(_)) | Err(Escape::Leave(_)) | Err(Escape::Resume(_)) => Ok(()),
             // A value nobody took is a fault, told the way PHP tells it.
@@ -2757,6 +2790,12 @@ impl<'a> Machine<'a> {
                 }
             }
             // The routine every complaint is to be handed to, or none.
+            Prim::Untaken => {
+                let put = v.first().cloned().unwrap_or(Value::Nil);
+                let none = matches!(put, Value::Nil | Value::Unset);
+                *self.untaken.borrow_mut() = if none { None } else { Some(put) };
+                Value::Flag(true)
+            }
             Prim::Hearer => {
                 let put = v.first().cloned().unwrap_or(Value::Nil);
                 let none = matches!(put, Value::Nil | Value::Unset);

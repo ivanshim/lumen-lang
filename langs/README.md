@@ -266,6 +266,10 @@ only. The extension labels so far, all from PHP:
   a statement is closed rather than with `ext.stmt.case.mark`. The
   section still reads; the words are raised as a deprecation while the
   program is read, so they come out ahead of anything it prints.
+- `ext.builtin.uncaught`: a builtin naming a routine to be handed a
+  value nobody took, rather than the run telling it in its own words.
+  Giving nothing takes the routine away again. PHP's
+  `set_exception_handler` is written on it.
 - `ext.builtin.calls`: a builtin answering with the calls under way,
   innermost first and the outermost body left out. Each is an array
   saying what was called (`function`), the class it was written in where
@@ -1197,6 +1201,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.output.hold` | - | - | - | - | - | - | - | `__output_hold` | - | - |
 | `ext.builtin.print_r` | - | - | - | - | - | - | - | `print_r` | - | - |
 | `ext.builtin.time_limit` | - | - | - | - | - | - | - | `set_time_limit` | - | - |
+| `ext.builtin.uncaught` | - | - | - | - | - | - | - | `__uncaught_handler` | - | - |
 | `ext.builtin.unset` | - | - | - | - | - | - | - | `unset` | - | - |
 | `ext.builtin.var_dump` | - | - | - | - | - | - | - | `var_dump` | - | - |
 | `ext.lexical.epilogue` | - | - | - | - | - | - | - | `?>` | - | - |

@@ -311,6 +311,10 @@ pub enum Builtin {
     /// a complaint of its own and has it told as the run's own are, in
     /// its place and through whatever stands in their way.
     Complain,
+    /// A routine to be handed a value nobody took, rather than the run
+    /// telling it in its own words (ext.builtin.uncaught). Giving
+    /// nothing takes the routine away again.
+    Untaken,
     /// The calls under way, innermost first, each an array telling the
     /// name called, the class it was written in where it was written in
     /// one, the file and line the call itself stands on, and what it was

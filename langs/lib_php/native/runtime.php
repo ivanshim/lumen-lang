@@ -293,7 +293,22 @@ function __complaint_word($level) {
     if ($level == E_USER_DEPRECATED || $level == E_DEPRECATED) { return "Deprecated"; }
     return "Notice";
 }
-function set_exception_handler($handler) { return null; }
+// A routine put in the way of a value nobody took: the run hands it
+// over rather than telling it in its own words.
+$__exception_handler = null;
+function set_exception_handler($handler) {
+    global $__exception_handler;
+    $was = $__exception_handler;
+    $__exception_handler = $handler;
+    __uncaught_handler($handler);
+    return $was;
+}
+function restore_exception_handler() {
+    global $__exception_handler;
+    $__exception_handler = null;
+    __uncaught_handler(null);
+    return true;
+}
 // A message put where the run keeps them. Sending one on as mail is not
 // something a run of this kind does, so saying to send one with nowhere
 // to send it to is turned down.

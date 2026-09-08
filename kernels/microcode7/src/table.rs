@@ -101,7 +101,7 @@ ext.op.bit.left:L ext.op.bit.right:L ext.op.identical:L ext.op.not_identical:L e
 ext.builtin.args.count:L ext.builtin.args.at:L ext.builtin.args.all.outside:L ext.builtin.args.count.outside:L ext.builtin.args.at.outside:L ext.builtin.args.at.below:L ext.builtin.args.at.beyond:L ext.op.assign.value:B ext.op.index.plain_keys:B \
 ext.system.source.file:L ext.system.source.directory:L ext.system.source.line:L ext.system.source.routine:L ext.system.source.class:L ext.system.source.method:L \
 ext.system.complaint.warning:L ext.system.complaint.notice:L ext.system.complaint.deprecated:L ext.system.complaint.fatal:L ext.system.complaint.reading:L ext.system.fault.class:L ext.system.fault.operands:L ext.op.increment.text:L ext.op.decrement.text:L ext.system.fault.class.arithmetic:L ext.system.fault.class.division:L ext.system.fault.class.kind:L ext.system.fault.class.value:L ext.builtin.time_limit:L ext.system.kind.brief:L ext.builtin.file.read:L ext.builtin.file.write:L \
-ext.builtin.file.exists:L ext.builtin.file.remove:L ext.builtin.eval:L ext.builtin.include:L ext.builtin.include.once:L ext.builtin.output.hold:L ext.builtin.output.held:L ext.builtin.output.drop:L ext.builtin.output.depth:L ext.builtin.at_end:L ext.builtin.complaint.handler:L ext.builtin.complaint.say:L ext.builtin.calls:L ext.system.kind.object:L ext.op.hush:L ext.op.name_by_value:L ext.op.cast:B ext.op.member.by_value:B ext.op.index.text:B ext.system.globals:L ext.op.reference.unshared.written:L ext.op.reference.unshared.given:L ext.op.reference.unshared.handed:L ext.stmt.terminator.only:B ext.stmt.block.instead:L ext.stmt.block.instead.close:L ext.op.spelled:B ext.system.class.folded:B ext.stmt.unpack:L ext.builtin.isset:L ext.builtin.empty:L ext.stmt.do:L ext.op.index.makes:B ext.system.untrue.text:L ext.system.untrue.empty_array:B ext.builtin.exit:L \
+ext.builtin.file.exists:L ext.builtin.file.remove:L ext.builtin.eval:L ext.builtin.include:L ext.builtin.include.once:L ext.builtin.output.hold:L ext.builtin.output.held:L ext.builtin.output.drop:L ext.builtin.output.depth:L ext.builtin.at_end:L ext.builtin.complaint.handler:L ext.builtin.complaint.say:L ext.builtin.calls:L ext.system.kind.object:L ext.builtin.uncaught:L ext.op.hush:L ext.op.name_by_value:L ext.op.cast:B ext.op.member.by_value:B ext.op.index.text:B ext.system.globals:L ext.op.reference.unshared.written:L ext.op.reference.unshared.given:L ext.op.reference.unshared.handed:L ext.stmt.terminator.only:B ext.stmt.block.instead:L ext.stmt.block.instead.close:L ext.op.spelled:B ext.system.class.folded:B ext.stmt.unpack:L ext.builtin.isset:L ext.builtin.empty:L ext.stmt.do:L ext.op.index.makes:B ext.system.untrue.text:L ext.system.untrue.empty_array:B ext.builtin.exit:L \
 ext.lexical.escape.codepoint:L ext.lexical.escape.codepoint.open:L ext.lexical.escape.codepoint.close:L ext.lexical.escape.codepoint.amiss:L ext.lexical.escape.codepoint.beyond:L ext.lexical.number.amiss:L \
 ext.lexical.number.binary_prefix:L ext.lexical.number.octal_prefix:L ext.lexical.number.octal_lead:B \
 ext.lexical.number.separator:L ext.system.integer.bits:N ext.system.real.bits:N ext.system.real.digits:N \
@@ -136,7 +136,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 49] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 50] = [
     ("builtin.emit", Prim::Echo), ("builtin.print", Prim::Say), ("builtin.write", Prim::Out), ("builtin.len", Prim::Length),
     ("builtin.char_at", Prim::CharAtIndex), ("builtin.ord", Prim::CodeOf), ("builtin.chr", Prim::CharOf), ("builtin.typeof", Prim::SortOf),
     ("builtin.error", Prim::Raise), ("builtin.extern", Prim::External), ("builtin.range", Prim::Span), ("builtin.real", Prim::MakeReal),
@@ -152,6 +152,7 @@ pub const BUILTIN_LABELS: [(&str, Prim); 49] = [
     ("ext.builtin.output.drop", Prim::LooseOut), ("ext.builtin.output.depth", Prim::DeepOut),
     ("ext.builtin.at_end", Prim::Afterward), ("ext.builtin.complaint.handler", Prim::Hearer), ("ext.builtin.complaint.say", Prim::Complain),
     ("ext.builtin.calls", Prim::Under),
+    ("ext.builtin.uncaught", Prim::Untaken),
     ("ext.builtin.file.read", Prim::Slurp), ("ext.builtin.file.write", Prim::Spill),
     ("ext.builtin.file.exists", Prim::There), ("ext.builtin.file.remove", Prim::Gone),
 ];

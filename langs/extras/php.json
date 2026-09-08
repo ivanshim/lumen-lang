@@ -870,5 +870,8 @@
   ],
   "ext.system.kind.object": [
     "object"
+  ],
+  "ext.builtin.uncaught": [
+    "__uncaught_handler"
   ]
 }

@@ -211,7 +211,11 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
             machine.let_go_all();
             return done.map_err(|f| f.told(&machine.names()));
         }
-        machine.ended_uncaught(&fault);
+        // A program may put a routine in the way of a value nobody
+        // took; the run says nothing of its own where one took it up.
+        if !machine.taken_up(&fault) {
+            machine.ended_uncaught(&fault);
+        }
         let _ = machine.run_when_done();
         machine.let_things_go();
         machine.let_go_all();
