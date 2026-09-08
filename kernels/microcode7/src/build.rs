@@ -64,6 +64,9 @@ pub struct Builder<'a> {
     /// Whether the reading stopped over a thing the language calls a
     /// fault of the run rather than a program it could not read.
     stopped_fatally: bool,
+    /// Remarks the reading itself raised, which belong ahead of anything
+    /// the program prints because they were noticed before it ran.
+    noted_when_read: Vec<Form>,
     table: &'a Table,
     forks: Vec<Fork>,
     tokens: &'a [Token],
@@ -188,7 +191,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         gives_back.extend(backs.iter().cloned());
         layers.push(Layer { holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
-    let mut r = Builder { within: None, shared_args, arg_names, gives_back, stopped_fatally: false, table, forks: Vec::new(), tokens, pos: 0, layers, gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(),
+    let mut r = Builder { within: None, shared_args, arg_names, gives_back, stopped_fatally: false, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(),
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
@@ -241,6 +244,15 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         }
         ahead.extend(stmts);
         sequence(ahead)
+    };
+    // What the reading itself remarked on was noticed before a single
+    // statement ran, so it is said ahead of the whole body.
+    let body = if r.noted_when_read.is_empty() {
+        body
+    } else {
+        let mut first = std::mem::take(&mut r.noted_when_read);
+        first.push(body);
+        sequence(first)
     };
     let top = r.layers.pop().unwrap();
     // Where the text stands inside a routine, the layer just popped is
@@ -1771,6 +1783,16 @@ impl<'a> Builder<'a> {
             };
             if !(self.on_any("ext.stmt.case.mark") || self.on_stmt_end()) {
                 return Err(format!("Expected '{}' after the case, got '{}'", table.single("ext.stmt.case.mark").unwrap(), self.look().lexeme));
+            }
+            // Closing a case the way a statement is closed still reads,
+            // and where the language has words for it the reader asks
+            // for the other mark instead.
+            if !self.on_any("ext.stmt.case.mark") {
+                if let Some(instead) = table.single("ext.stmt.case.mark.instead") {
+                    let row = (self.look().row as u32).saturating_sub(self.before);
+                    let told = Form::Remark("deprecated", Rc::from(instead), row);
+                    self.noted_when_read.push(told);
+                }
             }
             self.advance();
             let body = self.limb(Traps::Naught, |r| r.stmts_until(&stops))?;

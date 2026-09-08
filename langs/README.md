@@ -262,6 +262,10 @@ only. The extension labels so far, all from PHP:
   section runs on into the next unless it breaks; when no case matches,
   the default's section runs, wherever it stands. A switch counts as a
   loop to `break` and `continue`.
+- `ext.stmt.case.mark.instead`: what to say when a case is closed the way
+  a statement is closed rather than with `ext.stmt.case.mark`. The
+  section still reads; the words are raised as a deprecation while the
+  program is read, so they come out ahead of anything it prints.
 - `ext.op.ternary`: the two signs of `test ? a : b`, at the bottom of the
   precedence order.
 - `ext.block.lone_statement`: a switch; a single statement may stand
@@ -1244,6 +1248,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.break.levels` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.stmt.case` | - | - | - | - | - | - | - | `case` | - | - |
 | `ext.stmt.case.mark` | - | - | - | - | - | - | - | `:` | - | - |
+| `ext.stmt.case.mark.instead` | - | - | - | - | - | - | - | `Case statements followed by a semicolon (;) are deprecated, use a colon (:) instead` | - | - |
 | `ext.stmt.catch` | - | - | - | - | - | - | - | `catch` | - | - |
 | `ext.stmt.catch.separator` | - | - | - | - | - | - | - | `\|` | - | - |
 | `ext.stmt.class` | - | - | - | - | - | - | - | `class` | - | - |

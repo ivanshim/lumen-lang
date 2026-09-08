@@ -254,6 +254,10 @@ pub struct Lang {
     pub case_words: Vec<String>,
     pub default_words: Vec<String>,
     pub case_marks: Vec<String>,
+    /// The words for closing a case with the mark that ends a statement
+    /// rather than with the case's own, which a language may allow and
+    /// still ask to be written the other way.
+    pub case_mark_instead: Option<String>,
     /// The two signs of `test ? a : b`.
     pub ternary: Option<(String, String)>,
     /// A lone statement may stand where a block is expected.
@@ -484,7 +488,7 @@ w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ex
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.stmt.for.c | b ext.op.assign.compound
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.const | w ext.builtin.define
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
-w ext.stmt.case.mark | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
+w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
 w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.request.amiss.boundary.wrong | w ext.system.request.amiss.part | w ext.system.request.amiss.body.large | w ext.system.request.body
 w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
@@ -1143,6 +1147,7 @@ impl Lang {
             case_words: r.strings("ext.stmt.case")?,
             default_words: r.strings("ext.stmt.default")?,
             case_marks: r.strings("ext.stmt.case.mark")?,
+            case_mark_instead: r.head("ext.stmt.case.mark.instead")?,
             ternary: match r.strings("ext.op.ternary")?.as_slice() {
                 [] => None,
                 [q, m] => Some((q.clone(), m.clone())),

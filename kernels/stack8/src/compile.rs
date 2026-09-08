@@ -46,6 +46,10 @@ pub struct Registry {
     /// fault of the run rather than a program it could not read: the
     /// words are the same either way, but the kind is not.
     pub stopped_fatally: bool,
+    /// Words the language has about how a program is written rather than
+    /// about what it does. They are found while reading and said before
+    /// the run, since that is when the reference says them.
+    pub said_while_reading: Vec<(Complaint, String, u32)>,
     /// Which parameters of which routines take a cell rather than a
     /// value, and which routines give a cell back. Kept here because
     /// text read while the run goes is a piece of the same program and
@@ -268,6 +272,23 @@ pub fn compile_within(
         a.registry.shared_args = a.shared_args.clone();
         a.registry.arg_names = a.arg_names.clone();
         a.registry.gives_back = a.gives_back.clone();
+    }
+    // What the language had to say about how the program is written is
+    // said before the program runs, which is when the reference says it.
+    let said = std::mem::take(&mut a.registry.said_while_reading);
+    if !said.is_empty() {
+        let mut head: Vec<Instr> = Vec::new();
+        let spare = Cell { ident: Rc::from(SPARE_CELLS[0]), near: Vec::new(), far: a.registry.slot(SPARE_CELLS[0]), moving: false };
+        for (kind, words, row) in said {
+            head.push(Instr::Line(row));
+            head.push(Instr::Act(Action::Remark(kind, Rc::from(words.as_str())), 0));
+            head.push(Instr::Write(spare.clone()));
+        }
+        let rest = std::mem::take(&mut a.piece().instrs);
+        let moved = head.len() as i64;
+        a.piece().instrs = head;
+        let shifted = relocated(rest, moved);
+        a.piece().instrs.extend(shifted);
     }
     let unit = a.pieces.pop().expect("the top unit");
     Ok(Rc::new(Routine { ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, instrs: peephole(unit.instrs) }))
@@ -1354,6 +1375,14 @@ impl<'a> Compiler<'a> {
             }
             if !(self.on_any(&lang.case_marks) || self.on_sep()) {
                 return Err(format!("Expected '{}' after the case, got '{}'", lang.case_marks[0], self.look().lexeme));
+            }
+            // A case closed the way a statement is closed is allowed and
+            // asked to be written the other way, where the language has
+            // words for it.
+            if let (false, Some(said)) = (self.on_any(&lang.case_marks), &lang.case_mark_instead) {
+                let row = (self.look().row as u32).saturating_sub(self.before);
+                let words = (Complaint::Deprecated, said.clone(), row);
+                self.registry.said_while_reading.push(words);
             }
             self.take();
             if let Some(at) = fell.take() {
