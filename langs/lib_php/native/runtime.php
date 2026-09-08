@@ -321,6 +321,13 @@ function extension_loaded($name) { return false; }
 // has of its own is written in PHP, so there are no functions from
 // outside the language to list beside them.
 function get_declared_classes() { return __classes_bound(); }
+// The class a thing's class stands on, or that a class named stands on;
+// false where it stands on none, as the reference answers.
+function get_parent_class($of = null) {
+    $under = __class_beneath($of);
+    return $under === null ? false : $under;
+}
+function get_class($of) { return $of::class; }
 function get_defined_functions($exclude_disabled = true) {
     if (func_num_args() > 0) {
         __complaint_say(__complaint_word(E_DEPRECATED), 'get_defined_functions(): The $exclude_disabled parameter has no effect since PHP 8.0');

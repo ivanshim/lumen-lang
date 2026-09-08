@@ -315,6 +315,9 @@ pub enum Builtin {
     /// (ext.builtin.classes, ext.builtin.routines).
     ClassesBound,
     RoutinesBound,
+    /// The name of the class the one above stands on, where it stands on
+    /// any: a thing is asked of its own class (ext.builtin.class.beneath).
+    ClassBeneath,
     /// Whether anything has gone out of the run yet: what is held back
     /// in a piece of output kept aside has not (ext.builtin.output.begun).
     OutBegun,

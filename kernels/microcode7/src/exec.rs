@@ -998,7 +998,18 @@ impl<'a> Machine<'a> {
         let tokens = crate::indent::indent(tokens, self.table).map_err(Escape::Error)?;
         let held: Vec<String> = self.frames_named.last().map_or_else(Vec::new, |p| p.idents.clone());
         let knows = (&self.knows_cells.0, &self.knows_cells.1, &self.knows_cells.2);
-        let built = crate::build::build_within(&tokens, self.table, &self.idents, &held, knows, 0).map_err(Escape::Error)?;
+        // Text read inside a method is read as standing in that
+        // method's class: what the class keeps to itself is reached
+        // from there, and a call written through a class is a call
+        // from within it.
+        let within = self.standing_in().map(str::to_string).map(|named| {
+            let under = match self.class_bound(&named) {
+                Some(Value::Blueprint(c)) => c.under.as_ref().map(|b| b.name.clone()),
+                _ => None,
+            };
+            (named, under)
+        });
+        let built = crate::build::build_within(&tokens, self.table, &self.idents, &held, knows, 0, within).map_err(Escape::Error)?;
         self.idents = built.globals;
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         frame.cells.borrow_mut().resize(built.program.idents.len().max(held.len()), Value::Unset);
@@ -2859,6 +2870,20 @@ impl<'a> Machine<'a> {
                     }
                 }
                 Value::Vector(Rc::new(named))
+            }
+            // The class a class stands on, by name: a thing is asked of
+            // the class it is of. Nothing where it stands on none.
+            Prim::ClassBeneath => {
+                n(1)?;
+                let of = match self.what_it_spells(v[0].clone()) {
+                    Value::Thing(thing) => Some(thing.of.clone()),
+                    Value::Blueprint(class) => Some(class),
+                    _ => None,
+                };
+                match of.and_then(|c| c.under.clone()) {
+                    Some(under) => Value::text(&under.name),
+                    None => Value::Nil,
+                }
             }
             Prim::OutBegun => {
                 n(0)?;

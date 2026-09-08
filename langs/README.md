@@ -270,6 +270,10 @@ only. The extension labels so far, all from PHP:
   with the names of the classes, and of the routines, the run has bound.
   PHP's `get_declared_classes` and `get_defined_functions` are written on
   them.
+- `ext.builtin.class.beneath`: a builtin answering with the name of the
+  class the one it is given stands on, a thing being asked of the class
+  it is of, and nothing where it stands on none. PHP's
+  `get_parent_class` is written on it.
 - `ext.builtin.output.begun`: a builtin answering whether anything has
   gone out of the run yet. What is held back in a piece of output kept
   aside has not gone out. PHP's `headers_sent` and
@@ -1197,6 +1201,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.array` | - | - | - | - | - | - | - | `array` | - | - |
 | `ext.builtin.at_end` | - | - | - | - | - | - | - | `__at_end` | - | - |
 | `ext.builtin.calls` | - | - | - | - | - | - | - | `__calls` | - | - |
+| `ext.builtin.class.beneath` | - | - | - | - | - | - | - | `__class_beneath` | - | - |
 | `ext.builtin.classes` | - | - | - | - | - | - | - | `__classes_bound` | - | - |
 | `ext.builtin.complaint.handler` | - | - | - | - | - | - | - | `__complaint_handler` | - | - |
 | `ext.builtin.complaint.say` | - | - | - | - | - | - | - | `__complaint_say` | - | - |

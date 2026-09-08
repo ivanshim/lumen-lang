@@ -186,7 +186,7 @@ pub fn compile(tokens: &[Token], lang: &Lang, table: &mut Registry, before: u32)
 /// The same, told besides which file the text came out of, where it was
 /// read while the run was going.
 pub fn compile_from(tokens: &[Token], lang: &Lang, table: &mut Registry, before: u32, written_in: Option<Rc<str>>) -> Res<Rc<Routine>> {
-    compile_within(tokens, lang, table, before, written_in, None)
+    compile_within(tokens, lang, table, before, written_in, None, None)
 }
 
 /// The same, save that the text may be read as standing inside a
@@ -200,6 +200,7 @@ pub fn compile_within(
     before: u32,
     written_in: Option<Rc<str>>,
     inside: Option<Vec<String>>,
+    within: Option<(String, Option<String>)>,
 ) -> Res<Rc<Routine>> {
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
@@ -229,7 +230,7 @@ pub fn compile_within(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, declared_at: 0, within: None, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new() };
+    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, declared_at: 0, within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new() };
     if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;

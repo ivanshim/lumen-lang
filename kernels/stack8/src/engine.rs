@@ -234,7 +234,17 @@ impl<'a> Engine<'a> {
         };
         let tokens = crate::layout::layout(crate::lex::lex(&source, self.lang)?, self.lang)?;
         let names = program.idents.clone();
-        let read = crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, None, Some(names))?;
+        // Text read inside a method is read as standing in that method's
+        // class: what the class keeps to itself is reached from there,
+        // and a call written through a class is a call from within it.
+        let within = self.standing_in().map(str::to_string).map(|named| {
+            let base = match self.class_named(&named) {
+                Some(Value::Class(c)) => c.base.as_ref().map(|b| b.name.clone()),
+                _ => None,
+            };
+            (named, base)
+        });
+        let read = crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, None, Some(names), within)?;
         self.world.resize(self.registry.idents.len(), Value::Blank);
         let mut mine: Vec<Value> = frame.to_vec();
         mine.resize(read.idents.len().max(frame.len()), Value::Blank);
@@ -3134,6 +3144,20 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Value::array(named)
+            }
+            // The class a class stands on, by name: a thing is asked of
+            // the class it is of. Nothing where it stands on none.
+            Builtin::ClassBeneath => {
+                arity(1)?;
+                let of = match self.what_it_spells(args[0].clone()) {
+                    Value::Object(o) => Some(o.class.clone()),
+                    Value::Class(c) => Some(c),
+                    _ => None,
+                };
+                match of.and_then(|c| c.base.clone()) {
+                    Some(under) => Value::text(&under.name),
+                    None => Value::Null,
+                }
             }
             Builtin::OutBegun => {
                 arity(0)?;

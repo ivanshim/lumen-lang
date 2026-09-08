@@ -885,5 +885,8 @@
   ],
   "ext.builtin.routines": [
     "__routines_bound"
+  ],
+  "ext.builtin.class.beneath": [
+    "__class_beneath"
   ]
 }

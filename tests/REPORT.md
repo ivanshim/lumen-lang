@@ -19,12 +19,12 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 93, differs 2, error 9, skipped 10 | pass 93, differs 2, error 9, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 180, differs 21, error 7, skipped 5 | pass 180, differs 21, error 7, skipped 5 |
+| `php/lang` | 213 | pass 181, differs 21, error 6, skipped 5 | pass 181, differs 21, error 6, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 49, differs 8, error 1, skipped 6 | pass 49, differs 8, error 1, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 348, differs 32, error 17, skipped 25 | pass 348, differs 32, error 17, skipped 25 |
+| all | 422 | pass 349, differs 32, error 16, skipped 25 | pass 349, differs 32, error 16, skipped 25 |
 
 | Reason | Tests |
 |---|---|
@@ -48,7 +48,6 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Unexpected token: ; in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: mktime in <file> | 1 |
 | skip Can't find german locale | 1 |
-| Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> | 1 |
 | Fatal error: Uncaught Error: 'foo' is not a function in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: array_walk in <file> | 1 |
 | skip setlocale() failed | 1 |
@@ -369,7 +368,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug21669.phpt` | pass | pass |  |
 | `php/lang/bug21820.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug21849.phpt` | pass | pass |  |
-| `php/lang/bug21961.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> |
+| `php/lang/bug21961.phpt` | pass | pass |  |
 | `php/lang/bug22231.phpt` | error | error | Fatal error: Uncaught Error: 'foo' is not a function in <file> |
 | `php/lang/bug22510.phpt` | pass | pass |  |
 | `php/lang/bug22592.phpt` | differs | differs | ran, printed something else |
