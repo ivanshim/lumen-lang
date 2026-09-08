@@ -1273,6 +1273,20 @@ impl<'a> Engine<'a> {
         Some(Fault::Stopped(format!("Maximum execution time of {} {} exceeded", seconds, ending)))
     }
 
+    /// What a call was given, brought level with what its parameters
+    /// hold now. The reference reads back the values, not the cells, so
+    /// a parameter handed one reads as what that cell holds.
+    fn as_they_stand(&mut self, program: &Rc<Routine>, frame: &[Value]) {
+        let Some(given) = self.given.last_mut() else { return };
+        for (at, held) in frame.iter().take(program.formals.len()).enumerate() {
+            let Some(place) = given.get_mut(at) else { break };
+            *place = match held {
+                Value::Bond(cell) => cell.borrow().clone(),
+                other => other.clone(),
+            };
+        }
+    }
+
     fn run_instrs(&mut self, program: &Rc<Routine>, frame: &mut [Value]) -> Flow<()> {
         let instrs = &program.instrs;
         // A raised value leaves the marks that end a quiet piece unrun,
@@ -1346,6 +1360,14 @@ impl<'a> Engine<'a> {
                     // outermost body has none but the globals.
                     let done = match op {
                         Action::Builtin(Builtin::Eval, _) if !program.body_of_all && *argc == 1 => self.run_text_here(program, frame),
+                        // What a call was given is read back as it
+                        // stands now: a parameter written to since holds
+                        // what was written, and one handed a cell reads
+                        // as what the cell holds.
+                        Action::Builtin(Builtin::Given | Builtin::GivenCount | Builtin::GivenAt, _) if !program.body_of_all => {
+                            self.as_they_stand(program, frame);
+                            self.perform(op, *argc)
+                        }
                         _ => self.perform(op, *argc),
                     };
                     if let Err(fault) = done {

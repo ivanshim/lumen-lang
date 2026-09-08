@@ -1903,6 +1903,13 @@ impl<'a> Machine<'a> {
                 }
                 op => {
                     let values = self.value_list(args, frame)?;
+                    // What a call was handed is read back as it stands
+                    // now: a parameter written to since holds what was
+                    // written, and one handed a cell reads as what the
+                    // cell holds.
+                    if matches!(op, Prim::Handed | Prim::HowMany | Prim::HandedAt) {
+                        self.as_they_stand(frame);
+                    }
                     // A class may answer for a property the thing does
                     // not hold, and take the write of one: where the
                     // language names such methods and the class is
@@ -1960,6 +1967,28 @@ impl<'a> Machine<'a> {
             all.push(written.clone());
         }
         self.invoke(program, self.outermost.clone(), all).map(Some)
+    }
+
+    /// What a call was handed, brought level with what its parameters
+    /// hold now. The reference reads back the values, not the cells, so
+    /// a parameter handed one reads as what that cell holds.
+    fn as_they_stand(&mut self, frame: &Rc<Env>) {
+        let Some(program) = self.frames_named.last().cloned() else { return };
+        let cells = frame.cells.borrow();
+        let mut held = Vec::with_capacity(program.formal_slots.len());
+        for at in &program.formal_slots {
+            match cells.get(*at) {
+                Some(Value::Shared(cell)) => held.push(cell.borrow().clone()),
+                Some(other) => held.push(other.clone()),
+                None => break,
+            }
+        }
+        drop(cells);
+        let Some(handed) = self.handed.last_mut() else { return };
+        for (at, worth) in held.into_iter().enumerate() {
+            let Some(place) = handed.get_mut(at) else { break };
+            *place = worth;
+        }
     }
 
     fn value_list(&mut self, args: &[Form], frame: &Rc<Env>) -> Res<Vec<Value>> {
