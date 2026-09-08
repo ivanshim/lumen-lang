@@ -121,6 +121,15 @@ pub enum Action {
     /// not one already, and push the cell, so another name may be
     /// fastened to it.
     BondField(Rc<str>),
+    /// The property of the object, named by the text above it: how a
+    /// language reads a property whose name is worked out while the
+    /// program runs.
+    GrabNamed,
+    /// Write that property: the object, the name, then the value.
+    PlantNamed,
+    /// Call the method of the object, named by the text above it, with
+    /// the arguments above that. The count is of the arguments alone.
+    SendNamed(usize),
     /// Call that method of the object below the arguments.
     Send(Rc<str>),
     /// A constant or a class's own value, of the class above.

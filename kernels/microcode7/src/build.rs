@@ -2384,6 +2384,44 @@ impl<'a> Builder<'a> {
         Ok(sequence(items))
     }
 
+    /// Whether what stands after the member mark is a value and not a
+    /// word written out: a variable, or a piece within the block marks.
+    fn member_named_by_value(&mut self) -> bool {
+        if self.table.single("block.open").map_or(false, |open| self.sign(open)) {
+            return true;
+        }
+        if self.table.spells("ext.op.name_by_value", &self.look().lexeme) {
+            return true;
+        }
+        let here = self.look();
+        here.shape == Shape::Bare && self.table.letter("identifier.variable_prefix").map_or(false, |mark| here.lexeme.starts_with(mark))
+    }
+
+    /// The value spelling a member's name: a piece within the block
+    /// marks, or a bare variable — bare, since a call bracket after it
+    /// opens the method's arguments and not a call of the variable.
+    fn member_value_name(&mut self) -> Res<Form> {
+        // `$o->${e}`: the mark says the piece spells a name, so the
+        // member is named by what that binding keeps, not by the piece.
+        if self.table.spells("ext.op.name_by_value", &self.look().lexeme) {
+            self.advance();
+            let spells = self.spelling()?;
+            return Ok(Form::Called(Box::new(spells)));
+        }
+        let opens = self.table.single("block.open").map(str::to_string);
+        let closes = self.table.single("block.close").map(str::to_string);
+        if let (Some(open), Some(close)) = (opens, closes) {
+            if self.sign(&open) {
+                self.advance();
+                let named = self.expr(0)?;
+                self.need_sign(&close, "after the member's name")?;
+                return Ok(named);
+            }
+        }
+        let named = self.advance().lexeme;
+        Ok(self.read(&named))
+    }
+
     /// What comes after the mark saying a value spells a name: a piece
     /// written within the block marks, or else whatever binds as
     /// tightly as a negation, so `$$$a` is read from the inside out.
@@ -2563,6 +2601,25 @@ impl<'a> Builder<'a> {
                 return Ok(node);
             }
             self.advance();
+            // A value may stand where a member's name stands: the member
+            // is the one that value spells, worked out as the run goes.
+            // Nothing else changes — the name is already an argument of
+            // the reading or the calling, so a value serves where a word
+            // written out would.
+            if !owning && table.flag("ext.op.member.by_value") && self.member_named_by_value() {
+                let spells = self.member_value_name()?;
+                let calling = table.single("syntax.call.open").map_or(false, |o| self.sign(o));
+                let mut given = vec![node, spells];
+                if calling {
+                    self.advance();
+                    given.extend(self.arguments_of("the method", "syntax.call.close", "syntax.call.separator")?);
+                }
+                node = match calling {
+                    false => prim_call(Prim::Of, given),
+                    true => prim_call(Prim::Ask, given),
+                };
+                continue;
+            }
             let named = self.need_word("after the member mark")?;
             let calling = table.single("syntax.call.open").map_or(false, |o| self.sign(o));
             let mut given = vec![node];

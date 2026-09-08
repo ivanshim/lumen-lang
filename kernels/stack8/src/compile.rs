@@ -2191,6 +2191,19 @@ impl<'a> Compiler<'a> {
                 self.act(Action::WriteNamed, 2);
                 Ok(())
             }
+            // The read of a member named by a value turns into a write
+            // of it: what it belongs to and the name both stay where
+            // they are, and the value follows them.
+            [rest @ .., Instr::Act(Action::GrabNamed, 2)] => {
+                let rest = rest.to_vec();
+                let at = self.mark();
+                for w in relocated(rest, at as i64 - from as i64) {
+                    self.put(w);
+                }
+                self.value_written(keep)?;
+                self.act(Action::PlantNamed, 3);
+                Ok(())
+            }
             // The read of a member turns into a write of it.
             [rest @ .., Instr::Act(Action::Grab(member), 1)] => {
                 let (member, rest) = (member.clone(), rest.to_vec());
@@ -2699,6 +2712,48 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// The value that spells a member's name: a piece written within
+    /// the block marks, or a bare variable — bare, since a call bracket
+    /// after it opens the method's arguments and not a call of the
+    /// variable itself.
+    fn member_value_name(&mut self) -> Res<()> {
+        let lang = self.lang;
+        // `$o->${e}`: the mark says the piece spells a name, so the
+        // member is named by what that binding holds, not by the piece.
+        if Lang::spells(&lang.naming_words, &self.look().lexeme) {
+            self.take();
+            self.naming()?;
+            self.act(Action::Named, 1);
+            return Ok(());
+        }
+        if let (Some(open), Some(close)) = (lang.block_opens.first().cloned(), lang.block_closes.first().cloned()) {
+            if self.at_symbol(&open) {
+                self.take();
+                self.expr(0)?;
+                self.want_sign(&close, "after the member's name")?;
+                return Ok(());
+            }
+        }
+        let named = self.take().lexeme;
+        self.read(&named);
+        Ok(())
+    }
+
+    /// Whether what stands after the member mark is a value rather than
+    /// a name written out: a variable, or a piece written within the
+    /// block marks.
+    fn member_named_by_value(&mut self) -> bool {
+        let lang = self.lang;
+        if lang.block_opens.first().map_or(false, |open| self.at_symbol(open)) {
+            return true;
+        }
+        if Lang::spells(&lang.naming_words, &self.look().lexeme) {
+            return true;
+        }
+        let here = self.look();
+        here.shape == Shape::Instr && lang.sigil.map_or(false, |mark| here.lexeme.starts_with(mark))
+    }
+
     /// What follows the mark that says a value spells a name: a piece
     /// written within the block marks, or whatever binds as tightly as
     /// a negation, so that `$$$a` reads from the inside out.
@@ -2882,6 +2937,28 @@ impl<'a> Compiler<'a> {
                 break;
             }
             self.take();
+            // A value may stand where a member's name stands: the
+            // member is the one that value spells, worked out while the
+            // program runs.
+            if member && lang.members_by_value && self.member_named_by_value() {
+                self.member_value_name()?;
+                let call = lang.calling.clone().filter(|c| self.at_symbol(&c.open));
+                match call {
+                    Some(call) => {
+                        // The name is worked out before the arguments,
+                        // and the call wants it on top, so it is kept
+                        // aside while they are read.
+                        let held = self.gensym("called");
+                        self.write(&held);
+                        self.take();
+                        let argc = self.arguments_of("the method", &call)?;
+                        self.read(&held);
+                        self.act(Action::SendNamed(argc), argc + 2);
+                    }
+                    None => self.act(Action::GrabNamed, 2),
+                }
+                continue;
+            }
             let named = self.want_name("after the member mark")?;
             let call = lang.calling.clone().filter(|c| self.at_symbol(&c.open));
             if member {

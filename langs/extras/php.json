@@ -561,6 +561,7 @@
     "$"
   ],
   "ext.op.cast": true,
+  "ext.op.member.by_value": true,
   "ext.stmt.unpack": [
     "list"
   ],

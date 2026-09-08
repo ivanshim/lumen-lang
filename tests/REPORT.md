@@ -31,8 +31,8 @@ is listed, since the full kernels are meant to behave alike.
 | ran, printed something else | 113 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
+| Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> | 6 |
 | skip Windows only test | 5 |
-| Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> | 5 |
 | Fatal error: Uncaught Error: Cannot index non-array value in <file> | 4 |
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
@@ -56,7 +56,6 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> | 2 |
 | Unexpected token: > | 2 |
 | Fatal error: Uncaught Error: '$name' is not a function in <file> | 2 |
-| Fatal error: Uncaught Error: Call to undefined method C::$functionToCall() in <file> | 2 |
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: rename in <file> | 1 |
@@ -68,6 +67,7 @@ is listed, since the full kernels are meant to behave alike.
 | skip locale needed for this test is not supported on this platform | 1 |
 | Fatal error: Uncaught Error: Undefined variable: umask in <file> | 1 |
 | skip for Windows only | 1 |
+| Fatal error: Uncaught Error: Undefined variable: join in <file> | 1 |
 
 ### Reserved words: 48 of 68 spelled
 
@@ -591,7 +591,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/returnByReference.005.phpt` | error | error | Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> |
 | `php/lang/returnByReference.006.phpt` | error | error | Fatal error: Uncaught Error: '$name' is not a function in <file> |
 | `php/lang/returnByReference.007.phpt` | error | error | Fatal error: Uncaught Error: Call to undefined method C::$functionToCall() in <file> |
-| `php/lang/returnByReference.008.phpt` | error | error | Fatal error: Uncaught Error: Call to undefined method C::$functionToCall() in <file> |
+| `php/lang/returnByReference.008.phpt` | error | error | Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> |
 | `php/lang/returnByReference.009.phpt` | differs | differs | ran, printed something else |
 | `php/lang/short_tags.001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/short_tags.002.phpt` | pass | pass |  |

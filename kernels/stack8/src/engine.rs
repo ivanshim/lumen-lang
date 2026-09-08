@@ -1125,6 +1125,29 @@ impl<'a> Engine<'a> {
                     v => return Err(format!("Cannot write property '{}' of {}", name, v.plain()).into()),
                 }
             }
+            // The property or method a value names, worked out while
+            // the program runs. The name is on top; what it belongs to
+            // is under it, with any arguments under that.
+            Action::GrabNamed => {
+                let spelled = self.drop_top()?;
+                let sp = self.wording();
+                let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
+                return self.perform(&Action::Grab(name), 1);
+            }
+            Action::PlantNamed => {
+                let value = self.drop_top()?;
+                let spelled = self.drop_top()?;
+                let sp = self.wording();
+                let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
+                self.data.push(value);
+                return self.perform(&Action::Plant(name), 2);
+            }
+            Action::SendNamed(count) => {
+                let spelled = self.drop_top()?;
+                let sp = self.wording();
+                let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
+                return self.perform(&Action::Send(name), count + 1);
+            }
             Action::Send(name) => {
                 let mut args = self.drop_many(argc)?;
                 let Value::Object(o) = args.remove(0) else {

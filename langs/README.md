@@ -425,6 +425,15 @@ only. The extension labels so far, all from PHP:
   into, not only a name, and they are worked out in the order they are
   written, after the value they take from. The whole comes to that
   value, as any other write does.
+- `ext.op.member.by_value`: a switch; a value may stand where a
+  member's name stands, and the member is the one that value spells
+  (`$o->$name`, `$o->{e}`, `$o->$name()`). A bare variable there is
+  read as itself, since a call bracket after it opens the method's
+  arguments and not a call of the variable. Where the mark of
+  `ext.op.name_by_value` stands instead, the member is named by what
+  that binding holds and not by the piece itself, so `$o->${e}` reads
+  the binding `e` spells and names the member by what it holds.
+  Reading and writing both go through it.
 - `ext.builtin.eval`: builtins taking a piece of the language written
   out as text, reading it as the run's own language and running it
   where the call stands. The text is read with whatever a program of
@@ -862,6 +871,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.index.plain_keys` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.instanceof` | - | - | - | - | - | - | - | `instanceof` | - | - |
 | `ext.op.member` | - | - | - | - | - | - | - | `->` | - | - |
+| `ext.op.member.by_value` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.name_by_value` | - | - | - | - | - | - | - | `$` | - | - |
 | `ext.op.not_identical` | - | - | - | - | - | - | - | `!==` | - | - |
 | `ext.op.otherwise` | - | - | - | - | - | - | - | `??` | - | - |
