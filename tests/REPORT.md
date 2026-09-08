@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 47, differs 31, error 26, skipped 10 | pass 47, differs 31, error 26, skipped 10 |
 | `php/func` | 14 | pass 11, differs 2, error 1, skipped 0 | pass 11, differs 2, error 1, skipped 0 |
-| `php/lang` | 213 | pass 101, differs 45, error 62, skipped 5 | pass 101, differs 45, error 62, skipped 5 |
+| `php/lang` | 213 | pass 104, differs 43, error 61, skipped 5 | pass 104, differs 43, error 61, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 21, error 3, skipped 6 | pass 34, differs 21, error 3, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 198, differs 107, error 92, skipped 25 | pass 198, differs 107, error 92, skipped 25 |
+| all | 422 | pass 201, differs 105, error 91, skipped 25 | pass 201, differs 105, error 91, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 107 |
+| ran, printed something else | 105 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
@@ -375,7 +375,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug19566.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_declared_classes in <file> |
 | `php/lang/bug19943.phpt` | pass | pass |  |
 | `php/lang/bug20175.phpt` | pass | pass |  |
-| `php/lang/bug21094.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug21094.phpt` | pass | pass |  |
 | `php/lang/bug21600.phpt` | pass | pass |  |
 | `php/lang/bug21669.phpt` | error | error | Fatal error: Uncaught Error: Only a class can be made into an object in <file> |
 | `php/lang/bug21820.phpt` | differs | differs | ran, printed something else |
@@ -400,7 +400,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug24658.phpt` | error | error | Fatal error: Uncaught Error: Function typehint_ref expects 2 arguments, got 1 in <file> |
 | `php/lang/bug24783.phpt` | pass | pass |  |
 | `php/lang/bug24908.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug24951.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: PHP_OUTPUT_HANDLER_START in <file> |
+| `php/lang/bug24951.phpt` | pass | pass |  |
 | `php/lang/bug25145.phpt` | pass | pass |  |
 | `php/lang/bug25547.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug25652.phpt` | pass | pass |  |
@@ -454,7 +454,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/engine_assignExecutionOrder_007.phpt` | error | error | Fatal error: Uncaught Error: Only a class can be made into an object in <file> |
 | `php/lang/engine_assignExecutionOrder_008.phpt` | error | error | '++' needs a plain variable on its left |
 | `php/lang/engine_assignExecutionOrder_009.phpt` | pass | pass |  |
-| `php/lang/error_2_exception_001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/error_2_exception_001.phpt` | pass | pass |  |
 | `php/lang/execution_order.phpt` | differs | differs | ran, printed something else |
 | `php/lang/foreachLoop.001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: current in <file> |
 | `php/lang/foreachLoop.002.phpt` | pass | pass |  |

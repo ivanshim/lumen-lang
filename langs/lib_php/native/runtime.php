@@ -41,9 +41,26 @@ define("SORT_NUMERIC", 1);
 define("SORT_STRING", 2);
 define("COUNT_NORMAL", 0);
 define("COUNT_RECURSIVE", 1);
+define("PHP_OUTPUT_HANDLER_START", 1);
+define("PHP_OUTPUT_HANDLER_WRITE", 0);
+define("PHP_OUTPUT_HANDLER_CLEAN", 2);
+define("PHP_OUTPUT_HANDLER_FLUSH", 4);
+define("PHP_OUTPUT_HANDLER_FINAL", 8);
+define("PHP_OUTPUT_HANDLER_END", 8);
+define("PHP_OUTPUT_HANDLER_CONT", 0);
 
 // The settings a kernel run from a command line has nothing to change.
-function error_reporting($level = null) { return E_ALL; }
+// Which kinds of complaint are to be said at all, and the routine a
+// program has put in the way of them. A run starts saying all of them
+// and with no routine of its own in the way.
+$__reporting = 32767;
+$__error_handler = null;
+function error_reporting($level = null) {
+    global $__reporting;
+    $was = $__reporting;
+    if ($level !== null) { $__reporting = whole_of($level); }
+    return $was;
+}
 // The settings a run was started with are carried in the environment,
 // each under the name it has with PHP_INI_ before it, which is how the
 // host tells the run about them. A setting written while the run goes
@@ -116,8 +133,39 @@ function ini_parse_quantity($text) {
     return leading_whole($text) * $times;
 }
 
-function set_error_handler($handler, $levels = 32767) { return null; }
-function restore_error_handler() { return true; }
+function set_error_handler($handler, $levels = 32767) {
+    global $__error_handler;
+    $was = $__error_handler;
+    $__error_handler = $handler;
+    return $was;
+}
+function restore_error_handler() {
+    global $__error_handler;
+    $__error_handler = null;
+    return true;
+}
+// The word each kind of complaint is written under, and the number a
+// program knows it by.
+function __complaint_word($level) {
+    if ($level == E_USER_ERROR || $level == E_ERROR) { return "Fatal error"; }
+    if ($level == E_USER_WARNING || $level == E_WARNING) { return "Warning"; }
+    if ($level == E_USER_DEPRECATED || $level == E_DEPRECATED) { return "Deprecated"; }
+    return "Notice";
+}
+// A complaint the program itself makes: the routine a program put in
+// the way of them takes it, and where there is none it is written out
+// as the run's own complaints are, if its kind is one being said.
+function __complain($level, $message) {
+    global $__error_handler, $__reporting;
+    if ($__error_handler !== null) {
+        $handler = $__error_handler;
+        $handler($level, $message, __FILE__, __LINE__);
+        return true;
+    }
+    if (($__reporting & $level) == 0) { return true; }
+    echo "\n" . __complaint_word($level) . ": " . $message . " in " . __FILE__ . " on line " . __LINE__ . "\n";
+    return true;
+}
 function set_exception_handler($handler) { return null; }
 function error_log($message) { return true; }
 function extension_loaded($name) { return false; }
@@ -320,13 +368,15 @@ function headers_list() { return array(); }
 // here, one for each keeping, and run over the text as it is let go.
 $__handlers = array();
 $__flushing = false;
+$__started = array();
 function ob_start($handler = null) {
-    global $__handlers, $__flushing;
+    global $__handlers, $__started, $__flushing;
     // What is still being kept when the run ends is let go then, each
     // keeping through its own handler, which only the language can do.
     if (!$__flushing) { $__flushing = true; __at_end('__let_go_all'); }
     __output_hold();
     $__handlers[] = $handler;
+    $__started[] = false;
     return true;
 }
 function __let_go_all() {
@@ -334,31 +384,43 @@ function __let_go_all() {
 }
 function ob_get_contents() { return __output_held(); }
 function ob_get_level() { return __output_depth(); }
-function __output_handler() {
-    global $__handlers;
-    if (count($__handlers) == 0) { return null; }
-    $last = $__handlers[count($__handlers) - 1];
+// What the innermost keeping holds, run through the handler the program
+// gave for it. The handler is told whether this is the first it has seen
+// of this keeping and whether it is the last.
+function __run_handler($held, $final, $why = 0) {
+    global $__handlers, $__started;
+    $at = count($__handlers) - 1;
+    if ($at < 0) { return $held; }
+    $handler = $__handlers[$at];
+    if ($handler === null) { return $held; }
+    $mode = $why;
+    if ($why == 0) { $mode = $final ? PHP_OUTPUT_HANDLER_FINAL : PHP_OUTPUT_HANDLER_FLUSH; }
+    if (!$__started[$at]) { $mode = $mode | PHP_OUTPUT_HANDLER_START; }
+    $__started[$at] = true;
+    return $handler($held, $mode);
+}
+function __forget_handler() {
+    global $__handlers, $__started;
     array_pop($__handlers);
-    return $last;
+    array_pop($__started);
 }
 function ob_end_clean() {
     if (__output_depth() == 0) { return false; }
-    __output_handler();
+    __forget_handler();
     return __output_drop();
 }
 function ob_get_clean() {
     if (__output_depth() == 0) { return false; }
     $held = __output_held();
-    __output_handler();
+    __forget_handler();
     __output_drop();
     return $held;
 }
 function ob_end_flush() {
     if (__output_depth() == 0) { return false; }
-    $held = __output_held();
-    $handler = __output_handler();
+    $held = __run_handler(__output_held(), true);
+    __forget_handler();
     __output_drop();
-    if ($handler !== null) { $held = $handler($held, 8); }
     echo $held;
     return true;
 }
@@ -370,7 +432,7 @@ function ob_get_flush() {
 }
 function ob_flush() {
     if (__output_depth() == 0) { return false; }
-    $held = __output_held();
+    $held = __run_handler(__output_held(), false);
     __output_drop();
     echo $held;
     __output_hold();
@@ -378,6 +440,9 @@ function ob_flush() {
 }
 function ob_clean() {
     if (__output_depth() == 0) { return false; }
+    // The handler is told the keeping was emptied, and what it answers
+    // with is thrown away with the rest; it has still seen this keeping.
+    __run_handler(__output_held(), false, PHP_OUTPUT_HANDLER_CLEAN);
     __output_drop();
     __output_hold();
     return true;
@@ -576,7 +641,8 @@ function register_shutdown_function($work, $a = null, $b = null, $c = null) {
     if ($a !== null) { return __at_end($work, $a); }
     return __at_end($work);
 }
-function trigger_error($message, $level = 1024) { return true; }
+function trigger_error($message, $level = 1024) { return __complain($level, $message); }
+function user_error($message, $level = 1024) { return trigger_error($message, $level); }
 function realpath($path) { return $path; }
 function basename($path) {
     $at = strlen($path) - 1;
