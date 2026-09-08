@@ -1300,7 +1300,7 @@ impl<'a> Engine<'a> {
             }
             Action::Grab(name) => match self.drop_top()? {
                 Value::Object(o) => {
-                    let found = o.fields.borrow().iter().find(|(n, _)| n == name.as_ref()).map(|(_, v)| v.clone());
+                    let found = o.fields.borrow().iter().find(|(n, v)| n == name.as_ref() && standing(v)).map(|(_, v)| v.clone());
                     match found {
                         // A property held in a shared cell reads as what
                         // the cell holds, the sharing being between the
@@ -1326,7 +1326,7 @@ impl<'a> Engine<'a> {
                 match self.drop_top()? {
                     Value::Object(o) => {
                         let mut held = o.fields.borrow_mut();
-                        let at = match held.iter().position(|(n, _)| n == name.as_ref()) {
+                        let at = match held.iter().position(|(n, v)| n == name.as_ref() && standing(v)) {
                             Some(at) => at,
                             None => {
                                 held.push((name.to_string(), Value::Null));
@@ -1351,7 +1351,15 @@ impl<'a> Engine<'a> {
             Action::Uproot(name) => {
                 match self.drop_top()? {
                     Value::Object(o) => {
-                        o.fields.borrow_mut().retain(|(n, _)| n != name.as_ref());
+                        // The place stays where it was, holding nothing:
+                        // a walk under way counts places, and closing
+                        // one up would move every later member back a
+                        // step under its feet.
+                        for (n, v) in o.fields.borrow_mut().iter_mut() {
+                            if n == name.as_ref() {
+                                *v = Value::Blank;
+                            }
+                        }
                         Value::Null
                     }
                     v => return Err(format!("Cannot take property '{}' off {}", name, v.plain()).into()),
@@ -1363,7 +1371,7 @@ impl<'a> Engine<'a> {
                 match pair.pop().expect("the object") {
                     Value::Object(o) => {
                         let mut fields = o.fields.borrow_mut();
-                        match fields.iter_mut().find(|(n, _)| n == name.as_ref()) {
+                        match fields.iter_mut().find(|(n, v)| n == name.as_ref() && standing(v)) {
                             Some(place) => place.1 = value,
                             None => fields.push((name.to_string(), value)),
                         }
@@ -1494,6 +1502,7 @@ impl<'a> Engine<'a> {
                 self.complain(*kind, said);
                 Value::Null
             }
+            Action::Standing => Value::Flag(standing(&self.drop_top()?)),
             Action::Extent => match self.drop_top()? {
                 Value::Array(items) => Value::Small(items.len() as i64),
                 Value::Map(pairs) => Value::Small(pairs.len() as i64),
@@ -2666,8 +2675,9 @@ fn dumped(v: &Value, depth: usize, binary_reals: bool) -> String {
         }
         Value::Object(thing) => {
             let held = thing.fields.borrow();
-            let mut out = format!("object({})#{} ({}) {{\n", thing.class.name, thing.mark, held.len());
-            for (member, item) in held.iter() {
+            let members: Vec<&(String, Value)> = held.iter().filter(|(_, v)| standing(v)).collect();
+            let mut out = format!("object({})#{} ({}) {{\n", thing.class.name, thing.mark, members.len());
+            for (member, item) in members {
                 out.push_str(&format!("{pad}  [\"{member}\"]=>\n{pad}  {}{}\n", shared(item), dumped(item, depth + 1, binary_reals)));
             }
             out.push_str(&pad);
@@ -2728,6 +2738,13 @@ fn put_key(pairs: &mut Vec<(Value, Value)>, key: Value, value: Value) {
     }
 }
 
+/// Whether a thing still holds the member at a place: one taken off
+/// leaves its place behind, holding nothing, so that a walk under way
+/// keeps its footing.
+fn standing(v: &Value) -> bool {
+    !matches!(v, Value::Blank)
+}
+
 /// A value over lines, as PHP's print_r writes it: a scalar bare, an
 /// array as `Array` and its places in brackets, each nested array set
 /// eight spaces further in and followed by a blank line.
@@ -2738,7 +2755,7 @@ fn laid_out(v: &Value, indent: usize, sp: &Wording) -> String {
         Value::Map(entries) => ("Array".to_string(), entries.iter().map(|(k, x)| (k.display(sp), x)).collect()),
         Value::Object(thing) => {
             held = thing.fields.borrow();
-            (format!("{} Object", thing.class.name), held.iter().map(|(k, x)| (k.clone(), x)).collect())
+            (format!("{} Object", thing.class.name), held.iter().filter(|(_, v)| standing(v)).map(|(k, x)| (k.clone(), x)).collect())
         }
         other => return other.display(sp),
     };

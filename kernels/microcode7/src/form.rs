@@ -183,6 +183,9 @@ pub enum Prim {
     ItemAt,
     /// How many places an array or a map holds.
     Extent,
+    /// Whether a thing still keeps a member at the place a walk has
+    /// reached. Where it does not, the pass is passed over.
+    Kept,
     /// `a[]`, a place only a store reaches.
     AtEnd,
     /// A thing of the class given, its maker run over the rest.

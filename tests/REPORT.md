@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 81, differs 5, error 18, skipped 10 | pass 81, differs 5, error 18, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 127, differs 41, error 40, skipped 5 | pass 127, differs 41, error 40, skipped 5 |
+| `php/lang` | 213 | pass 129, differs 42, error 37, skipped 5 | pass 129, differs 42, error 37, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 46, differs 10, error 2, skipped 6 | pass 46, differs 10, error 2, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 280, differs 57, error 60, skipped 25 | pass 280, differs 57, error 60, skipped 25 |
+| all | 422 | pass 282, differs 58, error 57, skipped 25 | pass 282, differs 58, error 57, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 57 |
+| ran, printed something else | 58 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | Fatal error: Uncaught Error: Undefined variable: iterator in <file> | 5 |
@@ -41,7 +41,6 @@ is listed, since the full kernels are meant to behave alike.
 | Parse error: Unexpected token: & in <file> | 2 |
 | thrown in <file> | 2 |
 | no --FILE-- section | 2 |
-| Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> | 2 |
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: PHP_BINARY in <file> | 1 |
@@ -68,6 +67,7 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: foo in <file> | 1 |
 | Parse error: Expected identifier after the global keyword, got '$' in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: debug_backtrace in <file> | 1 |
+| Fatal error: Uncaught Error: Function typehint_ref expects 2 arguments, got 1 in <file> | 1 |
 
 ### Reserved words: 55 of 68 spelled
 
@@ -479,9 +479,9 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/foreachLoopIteratorAggregate.004.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: iterator in <file> |
 | `php/lang/foreachLoopObjects.001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/foreachLoopObjects.002.phpt` | differs | differs | ran, printed something else |
-| `php/lang/foreachLoopObjects.003.phpt` | error | error | Fatal error: Uncaught Error: Array index 2 out of bounds (length: 2) in <file> |
-| `php/lang/foreachLoopObjects.004.phpt` | error | error | Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> |
-| `php/lang/foreachLoopObjects.005.phpt` | error | error | Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> |
+| `php/lang/foreachLoopObjects.003.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoopObjects.004.phpt` | pass | pass |  |
+| `php/lang/foreachLoopObjects.005.phpt` | pass | pass |  |
 | `php/lang/foreachLoopObjects.006.phpt` | pass | pass |  |
 | `php/lang/foreach_with_object_001.phpt` | pass | pass |  |
 | `php/lang/foreach_with_references_001.phpt` | pass | pass |  |

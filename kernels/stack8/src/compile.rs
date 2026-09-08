@@ -1042,6 +1042,7 @@ impl<'a> Compiler<'a> {
     /// The walk itself: a place counted up to the extent, the key and
     /// the value bound from it at the head of each pass.
     fn walk(&mut self, bag: &str, key: Option<&str>, value: &str, shared: bool, place: Option<usize>) -> Res<()> {
+        let lang = self.lang;
         let at = self.gensym("at");
         self.constant(Value::Small(0));
         self.write(&at);
@@ -1058,6 +1059,20 @@ impl<'a> Compiler<'a> {
         let to_test = self.leap();
         let top = self.mark();
         self.enter_cycle(None);
+        // A member taken off a thing while the walk is under way leaves
+        // its place behind, so that the members after it keep the places
+        // they had. The walk steps over such a place, as though the body
+        // of that pass had gone straight on to the next. Only a language
+        // with things to take members off asks the question at all.
+        if !lang.class_words.is_empty() {
+            self.read(bag);
+            self.read(&at);
+            self.act(Action::ValueAt, 2);
+            self.act(Action::Standing, 1);
+            let step_over = self.skip();
+            let deep = self.piece().cycles.len() - 1;
+            self.piece().cycles[deep].resumes.push(step_over);
+        }
         if let Some(key) = key {
             self.read(bag);
             self.read(&at);

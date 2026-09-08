@@ -1495,6 +1495,9 @@ impl<'a> Builder<'a> {
         let (test_at, test_end, test_over) = (at_name.clone(), extent_name, over.clone());
         let (walk, walk_at) = (over, at_name.clone());
         let step_at = at_name;
+        // Only a language with things to take members off need ask
+        // whether the place a pass has reached still holds one.
+        let things = self.table.single("ext.stmt.class").is_some();
         let looped = self.cycle(
             move |r| {
                 let here = r.read(&test_at);
@@ -1543,7 +1546,17 @@ impl<'a> Builder<'a> {
                     items.push(done?);
                 }
                 items.push(r.body()?);
-                Ok(sequence(items))
+                let pass = sequence(items);
+                if !things {
+                    return Ok(pass);
+                }
+                // A member taken off a thing mid-walk leaves its place
+                // empty, so that the members past it stay where they
+                // were. Such a place is passed over: the walk goes
+                // straight on to the next.
+                let (bag, at) = (r.read(&walk), r.read(&walk_at));
+                let there = prim_call(Prim::Kept, vec![prim_call(Prim::ItemAt, vec![bag, at])]);
+                Ok(r.choose(there, pass, constant(Value::Nil)))
             },
             Some(move |r: &mut Self| {
                 let here = r.read(&step_at);

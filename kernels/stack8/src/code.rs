@@ -74,6 +74,10 @@ pub enum Action {
     AtEnd,
     /// How many places an array or a map holds.
     Extent,
+    /// Whether the place a walk has reached still holds a member. A
+    /// property taken off a thing leaves its place behind, and the walk
+    /// steps over it rather than handing it out.
+    Standing,
     /// Which of two values comes first: below, alike, or above.
     Rank,
     /// Whether two values are the very same: of one kind, and alike

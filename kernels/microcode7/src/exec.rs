@@ -947,7 +947,7 @@ impl<'a> Machine<'a> {
                     return Err(format!("Cannot share property '{}' of {}", called, thing.bare()).into());
                 };
                 let mut holds = thing.holds.borrow_mut();
-                let at = match holds.iter().position(|(k, _)| k.as_str() == called.as_ref()) {
+                let at = match holds.iter().position(|(k, x)| k.as_str() == called.as_ref() && kept(x)) {
                     Some(at) => at,
                     None => {
                         holds.push((called.to_string(), Value::Nil));
@@ -1685,12 +1685,16 @@ impl<'a> Machine<'a> {
                 }
             }
             Prim::AtEnd => return Err("An empty index belongs on the left of an assignment".to_string()),
+            Prim::Kept => {
+                n(1)?;
+                Value::Flag(kept(&v[0]))
+            }
             Prim::Of => {
                 n(2)?;
                 let called = v[1].bare();
                 match &v[0] {
                     Value::Thing(thing) => {
-                        let found = thing.holds.borrow().iter().find(|(k, _)| *k == called).map(|(_, x)| x.clone());
+                        let found = thing.holds.borrow().iter().find(|(k, x)| *k == called && kept(x)).map(|(_, x)| x.clone());
                         match found {
                             // A property kept in a shared cell reads as
                             // what the cell holds; the sharing lies
@@ -1714,7 +1718,14 @@ impl<'a> Machine<'a> {
                 let called = v[1].bare();
                 match &v[0] {
                     Value::Thing(thing) => {
-                        thing.holds.borrow_mut().retain(|(k, _)| *k != called);
+                        // The place itself stays, emptied. A walk under
+                        // way counts places, and closing one up would
+                        // draw every later member back a step beneath it.
+                        for (k, x) in thing.holds.borrow_mut().iter_mut() {
+                            if *k == called {
+                                *x = Value::Unset;
+                            }
+                        }
                         Value::Nil
                     }
                     other => return Err(format!("Cannot take property '{}' off {}", called, other.bare())),
@@ -1726,7 +1737,7 @@ impl<'a> Machine<'a> {
                 match &v[0] {
                     Value::Thing(thing) => {
                         let mut holds = thing.holds.borrow_mut();
-                        match holds.iter_mut().find(|(k, _)| *k == called) {
+                        match holds.iter_mut().find(|(k, x)| *k == called && kept(x)) {
                             Some(place) => place.1 = v[2].clone(),
                             None => holds.push((called, v[2].clone())),
                         }
@@ -2640,6 +2651,13 @@ fn as_index(v: &Value) -> Result<usize, String> {
 /// A value shown with its kind the way PHP's var_dump does: numbers as
 /// `int(n)` and `float(x)`, text with its length in bytes, a vector
 /// one entry per line, each nested level two spaces further in.
+/// Whether a thing still keeps a member at a place. Taking one off
+/// empties its place and leaves it there, so that a walk already under
+/// way finds the rest of the members where it left them.
+pub fn kept(x: &Value) -> bool {
+    !matches!(x, Value::Unset)
+}
+
 fn with_kind(v: &Value, level: usize, binary_reals: bool) -> String {
     let lead = "  ".repeat(level);
     // Something standing inside a value is marked as shared when its
@@ -2684,9 +2702,10 @@ fn with_kind(v: &Value, level: usize, binary_reals: bool) -> String {
             let held = thing.holds.borrow();
             let shown: Vec<String> = held
                 .iter()
+                .filter(|(_, x)| kept(x))
                 .map(|(member, x)| format!("{lead}  [\"{member}\"]=>\n{lead}  {}{}\n", tied(x), with_kind(x, level + 1, binary_reals)))
                 .collect();
-            format!("object({})#{} ({}) {{\n{}{lead}}}", thing.of.name, thing.turn, held.len(), shown.concat())
+            format!("object({})#{} ({}) {{\n{}{lead}}}", thing.of.name, thing.turn, shown.len(), shown.concat())
         }
         _ => "NULL".to_string(),
     }
@@ -2751,7 +2770,7 @@ fn over_lines(v: &Value, along: usize, w: Names) -> String {
         Value::Dict(entries) => ("Array".to_string(), entries.iter().map(|(k, x)| (k.render(w), x)).collect()),
         Value::Thing(thing) => {
             held = thing.holds.borrow();
-            (format!("{} Object", thing.of.name), held.iter().map(|(k, x)| (k.clone(), x)).collect())
+            (format!("{} Object", thing.of.name), held.iter().filter(|(_, x)| kept(x)).map(|(k, x)| (k.clone(), x)).collect())
         }
         other => return other.render(w),
     };
