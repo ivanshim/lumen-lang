@@ -1785,6 +1785,19 @@ impl<'a> Engine<'a> {
     /// whole number meeting a real is brought to that width first, so
     /// that the two are added as such a language adds them.
     fn dyadic_numbers(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        // A language whose division gives a real may still give a whole
+        // number where two whole ones divide evenly, which is what the
+        // exact division answers with when they do.
+        if self.lang.div_stays_whole && matches!(op, Action::DivReal) {
+            let whole = |v: &Value| matches!(v, Value::Small(_) | Value::Huge(_));
+            if whole(a) && whole(b) {
+                if let Some(Ok(exact)) = arith::calculate(Operation::Over, a, b) {
+                    if whole(&exact) {
+                        return Ok(self.within_width(exact));
+                    }
+                }
+            }
+        }
         let real_here = |v: &Value| matches!(v, Value::Real(_) | Value::Frac(_));
         if self.lang.real_bits.is_some() && (real_here(a) || real_here(b)) {
             let places = self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES);
@@ -2985,6 +2998,22 @@ fn number_opening(s: &str) -> (Option<Value>, bool) {
             end += 1;
         } else {
             break;
+        }
+    }
+    // A power of ten belongs to the number it follows, so long as
+    // digits do follow it: `123e5xyz` opens with a number, `123exyz`
+    // opens with 123.
+    if end > 0 && matches!(bytes.get(end), Some(b'e') | Some(b'E')) {
+        let mut after = end + 1;
+        if matches!(bytes.get(after), Some(b'-') | Some(b'+')) {
+            after += 1;
+        }
+        let digits = after;
+        while bytes.get(after).map_or(false, u8::is_ascii_digit) {
+            after += 1;
+        }
+        if after > digits {
+            end = after;
         }
     }
     match number_spelled(&text[..end]) {

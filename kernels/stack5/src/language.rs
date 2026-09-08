@@ -75,6 +75,8 @@ pub struct Def {
     pub none_silent: bool,
     /// Whether a flag shows as the number it counts for.
     pub flag_counts: bool,
+    /// Whether two whole numbers dividing evenly make a whole one.
+    pub div_stays_whole: bool,
     pub binary: HashMap<String, Infix>,
     pub unary: HashMap<String, Infix>,
     pub pipes: Vec<String>,
@@ -397,11 +399,16 @@ impl Def {
             return Err("a postfix language takes no op.precedence".to_string());
         }
         let rights = r.list("op.right_associative")?;
-        let div = match r.text_or_null("op.div.result")?.as_deref() {
+        let said = r.text_or_null("op.div.result")?;
+        let div = match said.as_deref() {
             None | Some("rational") => Op::Div,
-            Some("real") => Op::RealDiv,
-            Some(other) => return Err(format!("op.div.result must be 'rational', 'real' or null, got '{other}'")),
+            Some("real") | Some("whole_or_real") => Op::RealDiv,
+            Some(other) => {
+                return Err(format!("op.div.result must be 'rational', 'real', 'whole_or_real' or null, got '{other}'"))
+            }
         };
+        // Two whole numbers dividing evenly make a whole one.
+        let div_stays_whole = said.as_deref() == Some("whole_or_real");
         let tier_of = |lex: &str, from_top: bool| -> Option<u32> {
             if postfix {
                 return Some(0);
@@ -588,6 +595,7 @@ impl Def {
             none: r.list("literal.null")?,
             none_silent: r.switch("literal.null.silent")?,
             flag_counts: r.switch("system.flag.counts")?,
+            div_stays_whole,
             binary,
             unary,
             pipes,

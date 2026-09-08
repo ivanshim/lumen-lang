@@ -93,6 +93,8 @@ pub struct Definition {
     pub type_first: bool,
     /// `op.div` yields a real (Python's `/`) rather than an exact rational.
     pub div_real: bool,
+    /// Whether dividing two whole numbers evenly gives a whole one.
+    pub div_whole_when_even: bool,
     /// Indexing a string yields the character at that position.
     pub index_strings: bool,
     /// A function's result is the value last assigned to its own name
@@ -170,6 +172,7 @@ impl Definition {
             keywords_case_insensitive: false,
             type_first: false,
             div_real: false,
+            div_whole_when_even: false,
             index_strings: false,
             result_by_name: false,
             block_style: BlockStyle::Indentation,
@@ -207,10 +210,13 @@ impl Definition {
                 ("system.flag.counts", Json::Bool(flag)) => definition.flag_counts = *flag,
                 ("stmt.function.result_by_name", Json::Bool(flag)) => definition.result_by_name = *flag,
                 ("op.div.result", Json::String(result)) => {
+                    definition.div_whole_when_even = result == "whole_or_real";
                     definition.div_real = match result.as_str() {
-                        "real" => true,
+                        "real" | "whole_or_real" => true,
                         "rational" => false,
-                        other => return Err(format!("op.div.result must be 'rational', 'real' or null, got '{other}'")),
+                        other => {
+                            return Err(format!("op.div.result must be 'rational', 'real', 'whole_or_real' or null, got '{other}'"))
+                        }
                     };
                 }
                 ("block.style", Json::String(style)) => {

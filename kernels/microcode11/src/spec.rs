@@ -394,8 +394,8 @@ impl Spec {
         if self.flag("op.index.strings") && !self.has("op.index.open") {
             return Err("op.index.strings needs op.index.open".to_string());
         }
-        if !matches!(self.text("op.div.result"), None | Some("rational") | Some("real")) {
-            return Err("op.div.result must be 'rational', 'real' or null".to_string());
+        if !matches!(self.text("op.div.result"), None | Some("rational") | Some("real") | Some("whole_or_real")) {
+            return Err("op.div.result must be 'rational', 'real', 'whole_or_real' or null".to_string());
         }
         if !self.has("stmt.let") && (self.has("stmt.let.mutable") || self.has("stmt.let.annotation") || self.flag("stmt.let.type_first")) {
             return Err("stmt.let.mutable, stmt.let.annotation and stmt.let.type_first need stmt.let".to_string());
@@ -453,7 +453,7 @@ impl Spec {
             };
             found.map(|i| i as u32 + 1)
         };
-        let real_div = self.text("op.div.result") == Some("real");
+        let real_div = matches!(self.text("op.div.result"), Some("real") | Some("whole_or_real"));
         for (label, op) in BINARY {
             let op = if *label == "op.div" && real_div { Op::DivReal } else { *op };
             for lex in self.words(label).to_vec() {

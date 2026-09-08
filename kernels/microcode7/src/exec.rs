@@ -2259,6 +2259,20 @@ impl<'a> Machine<'a> {
                 let pair = [worth(&v[0]), worth(&v[1])];
                 return self.prim(op, name, &pair);
             }
+            // Two whole numbers dividing evenly leave a whole one, in a
+            // language whose division says as much rather than always
+            // leaving a real behind.
+            Prim::OverReal
+                if self.table.lone("op.div.result") == Some("whole_or_real")
+                    && matches!(v[0], Value::Small(_) | Value::Huge(_))
+                    && matches!(v[1], Value::Small(_) | Value::Huge(_))
+                    && matches!(math::compute(Calc::Over, &v[0], &v[1]), Some(Ok(Value::Small(_) | Value::Huge(_)))) =>
+            {
+                match math::compute(Calc::Over, &v[0], &v[1]) {
+                    Some(r) => r?,
+                    None => return Err("Division requires numeric operands".to_string()),
+                }
+            }
             Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power => {
                 let sum = match op {
                     Prim::Plus => Calc::Plus,
@@ -3082,6 +3096,22 @@ fn number_opening_in(v: &Value) -> (Option<Value>, bool) {
             end += 1;
         } else {
             break;
+        }
+    }
+    // A power of ten goes with the number before it, so long as digits
+    // come after it: `123e5xyz` opens with a number, `123exyz` opens
+    // with 123.
+    if end > 0 && matches!(letters.get(end), Some(b'e') | Some(b'E')) {
+        let mut past = end + 1;
+        if matches!(letters.get(past), Some(b'-') | Some(b'+')) {
+            past += 1;
+        }
+        let first = past;
+        while letters.get(past).map_or(false, u8::is_ascii_digit) {
+            past += 1;
+        }
+        if past > first {
+            end = past;
         }
     }
     match number_spelled_in(&Value::text(&text[..end])) {

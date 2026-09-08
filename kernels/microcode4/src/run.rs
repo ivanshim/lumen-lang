@@ -424,6 +424,20 @@ impl<'a> Runner<'a> {
             Op::Concat => Value::str(&format!("{}{}", v[0].text(w), v[1].text(w))),
             Op::Index => self.index(&v[0], &v[1])?,
             Op::Add if matches!(v[0], Value::Str(_)) || matches!(v[1], Value::Str(_)) => Value::str(&format!("{}{}", v[0].text(w), v[1].text(w))),
+            // Two whole numbers dividing evenly make a whole one, in a
+            // language that says its division does so rather than always
+            // making a real.
+            Op::DivReal
+                if self.spec.word("op.div.result") == Some("whole_or_real")
+                    && matches!(v[0], Value::Int(_) | Value::Big(_))
+                    && matches!(v[1], Value::Int(_) | Value::Big(_))
+                    && matches!(arith::apply(Sum::Div, &v[0], &v[1]), Some(Ok(Value::Int(_) | Value::Big(_)))) =>
+            {
+                match arith::apply(Sum::Div, &v[0], &v[1]) {
+                    Some(r) => r?,
+                    None => return Err("Division requires numeric operands".to_string()),
+                }
+            }
             Op::Add | Op::Sub | Op::Mul | Op::Div | Op::DivReal | Op::Quot | Op::Rem | Op::Pow => {
                 let sum = match op {
                     Op::Add => Sum::Add,

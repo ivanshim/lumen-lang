@@ -198,7 +198,7 @@
   "op.div": [
     "/"
   ],
-  "op.div.result": "real",
+  "op.div.result": "whole_or_real",
   "op.quot": [],
   "op.rem": [
     "%"

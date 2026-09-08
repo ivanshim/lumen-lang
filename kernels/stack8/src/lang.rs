@@ -200,6 +200,8 @@ pub struct Lang {
     /// The words a language puts before naming what an arithmetic step
     /// was handed, where one of them can take no part in it.
     pub operand_fault: Option<String>,
+    /// Whether dividing two whole numbers evenly gives a whole one.
+    pub div_stays_whole: bool,
     /// What a language says when a step onward or back is taken on text
     /// that spells no number. Naming either turns the rule on for that
     /// way: onward moves the last letter along, carrying; back leaves
@@ -738,11 +740,15 @@ impl Lang {
             return Err("a postfix language takes no op.precedence".to_string());
         }
         let rights = r.strings("op.right_associative")?;
-        let div = match r.string_or_null("op.div.result")?.as_deref() {
+        let told = r.string_or_null("op.div.result")?;
+        let div = match told.as_deref() {
             None | Some("rational") => Action::Div,
-            Some("real") => Action::DivReal,
-            Some(other) => return Err(format!("op.div.result must be 'rational', 'real' or null, got '{other}'")),
+            Some("real") | Some("whole_or_real") => Action::DivReal,
+            Some(other) => return Err(format!("op.div.result must be 'rational', 'real', 'whole_or_real' or null, got '{other}'")),
         };
+        // Dividing one whole number by another gives a whole one where
+        // it comes out even, and a real only where it does not.
+        let div_stays_whole = told.as_deref() == Some("whole_or_real");
         let tier_of = |lex: &str, from_top: bool| -> Option<u32> {
             if postfix {
                 return Some(0);
@@ -1045,6 +1051,7 @@ impl Lang {
             fault_kind: r.head("ext.system.fault.class.kind")?,
             fault_value: r.head("ext.system.fault.class.value")?,
             operand_fault: r.head("ext.system.fault.operands")?,
+            div_stays_whole,
             step_up_text: r.head("ext.op.increment.text")?,
             step_down_text: r.head("ext.op.decrement.text")?,
             warns_of_unwritten: r.head("ext.system.complaint.warning")?.is_some(),

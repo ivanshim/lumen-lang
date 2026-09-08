@@ -380,6 +380,20 @@ impl<'a> Machine<'a> {
                             _ => !below(&a, &b)?,
                         })
                     }
+                    // Two whole numbers dividing evenly give a whole
+                    // one, where the language says its division does
+                    // that rather than always yielding a real.
+                    Op::DivReal
+                        if self.spec.text("op.div.result") == Some("whole_or_real")
+                            && matches!(a, Value::Small(_) | Value::Large(_))
+                            && matches!(b, Value::Small(_) | Value::Large(_))
+                            && matches!(numeric::compute(Arith::Div, &a, &b), Some(Ok(Value::Small(_) | Value::Large(_)))) =>
+                    {
+                        match numeric::compute(Arith::Div, &a, &b) {
+                            Some(r) => r?,
+                            None => return Err("Division requires numeric operands".to_string().into()),
+                        }
+                    }
                     _ => {
                         let kind = match op {
                             Op::Add => Arith::Add,

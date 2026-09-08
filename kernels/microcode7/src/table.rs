@@ -385,8 +385,8 @@ impl Table {
         if self.flag("op.index.strings") && !self.has_any("op.index.open") {
             return Err("op.index.strings needs op.index.open".to_string());
         }
-        if !matches!(self.lone("op.div.result"), None | Some("rational") | Some("real")) {
-            return Err("op.div.result must be 'rational', 'real' or null".to_string());
+        if !matches!(self.lone("op.div.result"), None | Some("rational") | Some("real") | Some("whole_or_real")) {
+            return Err("op.div.result must be 'rational', 'real', 'whole_or_real' or null".to_string());
         }
         if !self.has_any("stmt.let") && (self.has_any("stmt.let.mutable") || self.has_any("stmt.let.annotation") || self.flag("stmt.let.type_first")) {
             return Err("stmt.let.mutable, stmt.let.annotation and stmt.let.type_first need stmt.let".to_string());
@@ -433,7 +433,7 @@ impl Table {
             let at = if last { table.iter().rposition(|t| t.contains(&lex.to_string())) } else { table.iter().position(|t| t.contains(&lex.to_string())) };
             at.map(|i| i as u32 + 1)
         };
-        let real_division = self.lone("op.div.result") == Some("real");
+        let real_division = matches!(self.lone("op.div.result"), Some("real") | Some("whole_or_real"));
         for (label, op) in BINARY_LABELS {
             let op = if label == "op.div" && real_division { Prim::OverReal } else { op };
             for lex in self.strings(label).to_vec() {
