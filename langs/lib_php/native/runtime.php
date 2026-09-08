@@ -911,8 +911,8 @@ function zend_version() { return "4.0.0"; }
 function php_sapi_name() { return "cli"; }
 function php_uname($mode = "a") { return PHP_OS; }
 function setlocale($category, $locale) { return false; }
-function date_default_timezone_set($zone) { return true; }
-function date_default_timezone_get() { return "UTC"; }
+function date_default_timezone_set($timezoneId) { __zone_named($timezoneId); return true; }
+function date_default_timezone_get() { return __zone_named(null); }
 // The clock and the calendar. The kernel is asked only how far the clock
 // has come since the start of 1970; turning that into a date, and a date
 // back into it, is arithmetic and belongs here. Everything is reckoned
