@@ -83,6 +83,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     let mut seeded: Vec<String> = system.iter().filter_map(|k| table.single(k).map(str::to_string)).collect();
     seeded.extend(REQUEST_PARTS.iter().filter_map(|(_, key)| table.single(key).map(str::to_string)));
     seeded.extend(table.single("ext.system.request.amiss").map(str::to_string));
+    seeded.extend(table.single("ext.system.request.body").map(str::to_string));
     seeded.extend(OWN_PLACE.iter().filter_map(|(_, key)| table.single(key).map(str::to_string)));
     seeded.extend(table.single("ext.system.source.line").map(str::to_string));
     let before: u32 = request
@@ -126,6 +127,11 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
             written_at(&mut carried, &steps, held);
         }
         machine.define(name, Value::Dict(std::rc::Rc::new(carried)));
+    }
+    // The body as it came, for a program that would read it itself.
+    if let Some(name) = table.single("ext.system.request.body") {
+        let found = request.iter().find(|(from, key, ..)| from == "SELF" && key == "body");
+        machine.define(name, found.map_or(Value::Nil, |(.., raw, _)| Value::text(raw)));
     }
     // What the host found amiss in the request before the program ran,
     // told in the language's own words.

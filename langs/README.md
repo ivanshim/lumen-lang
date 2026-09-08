@@ -479,6 +479,10 @@ only. The extension labels so far, all from PHP:
   written in the language itself, since giving up what was kept hands it
   back as an ordinary value, and writing it out again writes it into
   whatever keeping now stands.
+- `ext.system.request.body`: the binding holding the request's body as
+  it came, so a program may read it for itself however the run reads it —
+  and read it again, since it is held rather than drawn from. A run told
+  not to take anything out of the body still has it here.
 - `ext.system.request.amiss`, and `.amiss.boundary`,
   `.amiss.boundary.wrong` and `.amiss.part`: the binding holding what the
   host found amiss in the request before the program ran, as a list of
@@ -996,7 +1000,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.eval` | - | - | - | - | - | - | - | `eval` | - | - |
 | `ext.builtin.exit` | - | - | - | - | - | - | - | `exit` `die` | - | - |
 | `ext.builtin.file.exists` | - | - | - | - | - | - | - | `file_exists` | - | - |
-| `ext.builtin.file.read` | - | - | - | - | - | - | - | `file_get_contents` | - | - |
+| `ext.builtin.file.read` | - | - | - | - | - | - | - | `__file_read` | - | - |
 | `ext.builtin.file.remove` | - | - | - | - | - | - | - | `unlink` | - | - |
 | `ext.builtin.file.write` | - | - | - | - | - | - | - | `file_put_contents` | - | - |
 | `ext.builtin.include` | - | - | - | - | - | - | - | `include` `require` | - | - |
@@ -1107,6 +1111,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.request.amiss.boundary` | - | - | - | - | - | - | - | `PHP Request Startup: Missing boundary in multipart/form-data POST data` | - | - |
 | `ext.system.request.amiss.boundary.wrong` | - | - | - | - | - | - | - | `PHP Request Startup: Invalid boundary in multipart/form-data POST data` | - | - |
 | `ext.system.request.amiss.part` | - | - | - | - | - | - | - | `PHP Request Startup: File Upload Mime headers garbled` | - | - |
+| `ext.system.request.body` | - | - | - | - | - | - | - | `$__request_body` | - | - |
 | `ext.system.request.cookies` | - | - | - | - | - | - | - | `$_COOKIE` | - | - |
 | `ext.system.request.env` | - | - | - | - | - | - | - | `$_ENV` | - | - |
 | `ext.system.request.files` | - | - | - | - | - | - | - | `$_FILES` | - | - |

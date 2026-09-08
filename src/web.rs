@@ -46,7 +46,10 @@ pub fn gathered() -> Request {
     for (key, value) in fields(&query) {
         request.push(("GET".to_string(), key, value, false));
     }
-    let (posted, sent, amiss) = body_given();
+    let (posted, sent, amiss, raw) = body_given();
+    if let Some(raw) = raw {
+        request.push(("SELF".to_string(), "body".to_string(), raw, false));
+    }
     for kind in amiss {
         request.push(("SELF".to_string(), "amiss".to_string(), kind, false));
     }
@@ -109,7 +112,7 @@ fn setting(name: &str) -> Option<String> {
 /// it. A body written as one piece is read as a form; a body written in
 /// parts is cut at its boundary, and a part naming a file is written out
 /// where the program can read it.
-fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>, Vec<String>) {
+fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>, Vec<String>, Option<String>) {
     let kind = env::var("CONTENT_TYPE").unwrap_or_default();
     let plain = kind.starts_with("application/x-www-form-urlencoded");
     // What a part is cut at runs from `boundary=` to the first comma, as
@@ -120,35 +123,44 @@ fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>, Vec<Stri
         .map(str::trim)
         .find_map(|part| part.strip_prefix("boundary="))
         .map(|mark| mark.split(',').next().unwrap_or(mark).trim().to_string());
-    // A body said to be written in parts must say what they are cut at,
-    // and say it whole: one opening a quote must close it. A body that
-    // says nothing of parts is only left unread.
     let in_parts_said = kind.starts_with("multipart/");
-    if !plain && boundary.is_none() {
-        return (Vec::new(), Vec::new(), if in_parts_said { vec!["boundary".to_string()] } else { Vec::new() });
-    }
-    let ragged = boundary
-        .as_deref()
-        .map_or(false, |mark| mark.starts_with('"') && !mark.ends_with('"'));
-    if ragged {
-        return (Vec::new(), Vec::new(), vec!["boundary.wrong".to_string()]);
-    }
     let length: usize = env::var("CONTENT_LENGTH").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
     // A body larger than the run was told to take is not read at all,
     // and how large it was and how large it might have been are told.
     if let Some(most) = setting("post_max_size").and_then(|said| quantity(&said)).filter(|most| *most > 0) {
         if length as i64 > most {
-            return (Vec::new(), Vec::new(), vec![format!("body.large{}{}{}{}", BETWEEN_STEPS, length, BETWEEN_STEPS, most)]);
+            return (Vec::new(), Vec::new(), vec![format!("body.large{}{}{}{}", BETWEEN_STEPS, length, BETWEEN_STEPS, most)], None);
         }
     }
     let mut body = vec![0u8; length];
     if std::io::stdin().read_exact(&mut body).is_err() {
-        return (Vec::new(), Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new(), None);
     }
-    match boundary {
-        Some(mark) => in_parts(&body, mark.trim_matches('"')),
-        None => (fields(&String::from_utf8_lossy(&body)), Vec::new(), Vec::new()),
+    // Whatever the body holds is kept as it came, so a program may read
+    // it for itself however the run reads it.
+    let raw = Some(String::from_utf8_lossy(&body).into_owned());
+    // A run may be told not to take anything out of the body; it is
+    // still there to be read as it came.
+    let reads_body = setting("enable_post_data_reading").map_or(true, |said| !matches!(said.trim(), "0" | "" | "off" | "Off" | "false"));
+    if !reads_body {
+        return (Vec::new(), Vec::new(), Vec::new(), raw);
     }
+    // A body said to be written in parts must say what they are cut at,
+    // and say it whole: one opening a quote must close it. A body that
+    // never claimed to be written in parts is only left unread.
+    if boundary.is_none() {
+        let amiss = if in_parts_said { vec!["boundary".to_string()] } else { Vec::new() };
+        return match plain {
+            true => (fields(raw.as_deref().unwrap_or_default()), Vec::new(), amiss, raw),
+            false => (Vec::new(), Vec::new(), amiss, raw),
+        };
+    }
+    let mark = boundary.expect("a boundary");
+    if mark.starts_with('"') && !mark.ends_with('"') {
+        return (Vec::new(), Vec::new(), vec!["boundary.wrong".to_string()], raw);
+    }
+    let (posted, sent, amiss) = in_parts(&body, mark.trim_matches('"'));
+    (posted, sent, amiss, raw)
 }
 
 /// A body written in parts: each part says what it is called, and a part

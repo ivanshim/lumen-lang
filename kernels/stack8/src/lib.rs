@@ -78,6 +78,9 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     if let Some(name) = &lang.amiss_binding {
         registry.slot(name);
     }
+    if let Some(name) = &lang.body_binding {
+        registry.slot(name);
+    }
     for (_, name) in &lang.source_bindings {
         registry.slot(name);
     }
@@ -110,6 +113,11 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
             put_step(&mut carried, &steps, held);
         }
         machine.define(name, Value::Map(std::rc::Rc::new(carried)));
+    }
+    // The body as it came, for a program that would read it itself.
+    if let Some(name) = &lang.body_binding {
+        let found = request.iter().find(|(from, key, ..)| from == "SELF" && key == "body");
+        machine.define(name, found.map_or(Value::Null, |(.., raw, _)| Value::text(raw)));
     }
     // What the host found amiss in the request before the program ran,
     // in the language's own words: the host names only which of them it

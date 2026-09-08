@@ -608,6 +608,9 @@
   "ext.system.request.amiss": [
     "$__request_amiss"
   ],
+  "ext.system.request.body": [
+    "$__request_body"
+  ],
   "ext.system.request.amiss.boundary": [
     "PHP Request Startup: Missing boundary in multipart/form-data POST data"
   ],
@@ -739,7 +742,7 @@
     "null"
   ],
   "ext.builtin.file.read": [
-    "file_get_contents"
+    "__file_read"
   ],
   "ext.builtin.file.write": [
     "file_put_contents"

@@ -750,6 +750,17 @@ function register_shutdown_function($work, $a = null, $b = null, $c = null) {
 }
 function trigger_error($message, $level = 1024) { return __complain($level, $message); }
 function user_error($message, $level = 1024) { return trigger_error($message, $level); }
+// What a file holds. The body of the request the run was started with
+// is a file a program may name, and reads the same however often it is
+// read, since it is held as it came rather than drawn from.
+function file_get_contents($path) {
+    global $__request_body;
+    if ($path === "php://input") {
+        if (!is_string($__request_body)) { return ""; }
+        return $__request_body;
+    }
+    return __file_read($path);
+}
 function realpath($path) { return $path; }
 function basename($path) {
     $at = strlen($path) - 1;

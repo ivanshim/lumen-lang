@@ -17,18 +17,18 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 61, differs 17, error 26, skipped 10 | pass 61, differs 17, error 26, skipped 10 |
+| `php/basic` | 114 | pass 65, differs 13, error 26, skipped 10 | pass 65, differs 13, error 26, skipped 10 |
 | `php/func` | 14 | pass 13, differs 0, error 1, skipped 0 | pass 13, differs 0, error 1, skipped 0 |
 | `php/lang` | 213 | pass 114, differs 42, error 52, skipped 5 | pass 114, differs 42, error 52, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 21, error 3, skipped 6 | pass 34, differs 21, error 3, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 227, differs 88, error 82, skipped 25 | pass 227, differs 88, error 82, skipped 25 |
+| all | 422 | pass 231, differs 84, error 82, skipped 25 | pass 231, differs 84, error 82, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 88 |
+| ran, printed something else | 84 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
@@ -92,7 +92,7 @@ Not spelled: `callable`, `clone`, `declare`, `enddeclare`, `fn`, `goto`, `instea
 | `ini_set` | 30 | no |
 | `__construct` | 24 | yes |
 | `print_r` | 21 | yes |
-| `file_get_contents` | 21 | yes |
+| `file_get_contents` | 21 | no |
 | `current` | 13 | no |
 | `var_export` | 12 | no |
 | `ob_start` | 12 | no |
@@ -249,10 +249,10 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/bug80384.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
 | `php/basic/build_date.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: PHP_BUILD_DATE in <file> |
 | `php/basic/consistent_float_string_casts.phpt` | skipped | skipped | skip locale needed for this test is not supported on this platform |
-| `php/basic/enable_post_data_reading_01.phpt` | differs | differs | ran, printed something else |
-| `php/basic/enable_post_data_reading_02.phpt` | differs | differs | ran, printed something else |
-| `php/basic/enable_post_data_reading_03.phpt` | differs | differs | ran, printed something else |
-| `php/basic/enable_post_data_reading_04.phpt` | differs | differs | ran, printed something else |
+| `php/basic/enable_post_data_reading_01.phpt` | pass | pass |  |
+| `php/basic/enable_post_data_reading_02.phpt` | pass | pass |  |
+| `php/basic/enable_post_data_reading_03.phpt` | pass | pass |  |
+| `php/basic/enable_post_data_reading_04.phpt` | pass | pass |  |
 | `php/basic/enable_post_data_reading_05.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
 | `php/basic/enable_post_data_reading_06.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
 | `php/basic/enable_post_data_reading_07.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
