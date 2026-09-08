@@ -240,6 +240,12 @@ pub enum Form {
     /// Make that property of the thing a shared cell if it is not one
     /// already, and give the cell back, so a name may be tied to it.
     ShareField(Box<Form>, Rc<str>),
+    /// Make that value of the class a shared cell if it is not one
+    /// already, and give the cell back.
+    ShareOwn(Box<Form>, Rc<str>),
+    /// Make the outermost binding this value spells a shared cell if it
+    /// is not one already, and give the cell back.
+    ShareCalled(Box<Form>),
     /// Leave this binding as though nothing were ever written to it.
     Forget(Address),
     /// Find this value with whatever it has to say about itself kept

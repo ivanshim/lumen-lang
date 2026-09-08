@@ -19,12 +19,12 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 46, differs 30, error 28, skipped 10 | pass 46, differs 30, error 28, skipped 10 |
 | `php/func` | 14 | pass 7, differs 3, error 4, skipped 0 | pass 7, differs 3, error 4, skipped 0 |
-| `php/lang` | 213 | pass 77, differs 51, error 80, skipped 5 | pass 77, differs 51, error 80, skipped 5 |
+| `php/lang` | 213 | pass 78, differs 51, error 79, skipped 5 | pass 78, differs 51, error 79, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 31, differs 21, error 6, skipped 6 | pass 31, differs 21, error 6, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 166, differs 113, error 118, skipped 25 | pass 166, differs 113, error 118, skipped 25 |
+| all | 422 | pass 167, differs 113, error 117, skipped 25 | pass 167, differs 113, error 117, skipped 25 |
 
 | Reason | Tests |
 |---|---|
@@ -37,6 +37,7 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
 | Unexpected token: : | 3 |
+| Fatal error: Uncaught Error: put() requires an array in <file> | 3 |
 | Fatal error: Uncaught Error: Undefined variable: current in <file> | 3 |
 | Unexpected token: ++ | 3 |
 | skip php-cgi not available | 2 |
@@ -47,7 +48,6 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Maximum execution time of 1 second exceeded in <file> | 2 |
 | Fatal error: Uncaught Error: Undefined variable: ob_get_contents in <file> | 2 |
 | Unexpected token: } | 2 |
-| Fatal error: Uncaught Error: put() requires an array in <file> | 2 |
 | Fatal error: Uncaught Error: Only a class can be made into an object in <file> | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Undefined variable: StdClass in <file> | 2 |
@@ -346,7 +346,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/021.phpt` | pass | pass |  |
 | `php/lang/022.phpt` | pass | pass |  |
 | `php/lang/023.phpt` | error | error | Fatal error: Uncaught Error: Unexpected token: += in <file> |
-| `php/lang/024.phpt` | error | error | Invalid assignment target before '=' |
+| `php/lang/024.phpt` | pass | pass |  |
 | `php/lang/025.phpt` | pass | pass |  |
 | `php/lang/026.phpt` | pass | pass |  |
 | `php/lang/027.phpt` | error | error | Expected an expression |
@@ -445,7 +445,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/constants/PHP_INT_32bit.phpt` | skipped | skipped | skip this test is for 32-bit platforms only |
 | `php/lang/constants/PHP_INT_64bit.phpt` | pass | pass |  |
 | `php/lang/empty_variation.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: empty in <file> |
-| `php/lang/engine_assignExecutionOrder_001.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'a' in null in <file> |
+| `php/lang/engine_assignExecutionOrder_001.phpt` | error | error | Fatal error: Uncaught Error: put() requires an array in <file> |
 | `php/lang/engine_assignExecutionOrder_002.phpt` | error | error | Fatal error: Uncaught Error: Cannot index non-array value in <file> |
 | `php/lang/engine_assignExecutionOrder_003.phpt` | error | error | Unexpected token: ) |
 | `php/lang/engine_assignExecutionOrder_004.phpt` | pass | pass |  |

@@ -254,6 +254,53 @@ fn glancing(form: Form) -> Form {
 /// outside in, and whether the write lands after the last place rather
 /// than at one of them. A chain standing on anything but a name is
 /// given back untouched, since it is written into another way.
+/// A chain of looks standing on something other than a bare name: what
+/// it stands on, the keys from the outside in, and whether the write
+/// lands after the last place. A chain on a bare name is given back
+/// untouched, since that one is written into a shorter way.
+fn footing_apart(form: Form) -> Result<(Form, Vec<Form>, bool), Form> {
+    let (mut walk, after) = match form {
+        Form::Apply(Callee::Prim(Prim::AtEnd, name), mut args) if args.len() == 1 => match args.pop() {
+            Some(only) => (only, true),
+            None => return Err(Form::Apply(Callee::Prim(Prim::AtEnd, name), Vec::new())),
+        },
+        other => (other, false),
+    };
+    let mut keys = Vec::new();
+    let mut peeled: Vec<Form> = Vec::new();
+    loop {
+        match walk {
+            Form::Apply(Callee::Prim(Prim::At, name), mut args) if args.len() == 2 => {
+                let key = args.pop().expect("the key");
+                let held = args.pop().expect("what holds it");
+                keys.push(key);
+                peeled.push(Form::Apply(Callee::Prim(Prim::At, name), Vec::new()));
+                walk = held;
+            }
+            // A bare name is written into the shorter way; anything
+            // else stands under the chain and is written back into.
+            Form::Read(slot) => return Err(put_back(Form::Read(slot), peeled, keys, after)),
+            other if keys.is_empty() => return Err(put_back(other, peeled, keys, after)),
+            other => {
+                keys.reverse();
+                return Ok((other, keys, after));
+            }
+        }
+    }
+}
+
+/// A chain taken apart and put back as it was.
+fn put_back(mut back: Form, peeled: Vec<Form>, mut keys: Vec<Form>, after: bool) -> Form {
+    for shell in peeled.into_iter().rev() {
+        let Form::Apply(callee, _) = shell else { unreachable!("a look") };
+        back = Form::Apply(callee, vec![back, keys.pop().expect("its key")]);
+    }
+    match after {
+        true => prim_call(Prim::AtEnd, vec![back]),
+        false => back,
+    }
+}
+
 fn chain_apart(form: Form) -> Result<(String, Vec<Form>, bool), Form> {
     let (mut walk, after) = match form {
         Form::Apply(Callee::Prim(Prim::AtEnd, name), mut args) if args.len() == 1 => match args.pop() {
@@ -1918,6 +1965,15 @@ impl<'a> Builder<'a> {
             Ok(found) => (Some(found), Form::Const(Value::Nil)),
             Err(back) => (None, back),
         };
+        // A chain of looks standing on something other than a bare name
+        // is rebuilt whole and written back into what it stood on.
+        let (footing, expr) = match chain {
+            Some(_) => (None, expr),
+            None => match footing_apart(expr) {
+                Ok(found) => (Some(found), Form::Const(Value::Nil)),
+                Err(back) => (None, back),
+            },
+        };
         let made = match expr {
             // x op= e is x = x op e.
             Form::Read(slot) => match compound {
@@ -1932,6 +1988,71 @@ impl<'a> Builder<'a> {
                 }
                 None => self.write(&slot.ident, value),
             },
+            // A chain standing on something other than a bare name: the
+            // keys are worked out once and in order, the arrays along
+            // the way rewritten from the innermost outwards, and the
+            // whole written back into what it stood on.
+            _ if footing.is_some() => {
+                let (stands_on, keys, after) = footing.expect("what the chain stands on");
+                let mut steps = Vec::new();
+                let mut at_cells = Vec::new();
+                for key in keys {
+                    self.gensyms += 1;
+                    let cell = format!("#key{}", self.gensyms);
+                    let stored = self.write(&cell, key);
+                    steps.push(stored);
+                    at_cells.push(cell);
+                }
+                let deep = match after { true => at_cells.len(), false => at_cells.len() - 1 };
+                let mut in_cells = Vec::new();
+                self.gensyms += 1;
+                let root = format!("#in{}", self.gensyms);
+                // What the chain stands on is taken as a cell, so that
+                // rewriting the arrays within it lands where it lives
+                // and nothing need be written back afterwards.
+                let start = self.cell_of(stands_on)?;
+                // Tied, not written: a plain write of a cell writes what
+                // it holds, and here the cell itself is wanted.
+                let tied = self.address_to_write(&root);
+                steps.push(Form::Tie(tied, Box::new(start)));
+                in_cells.push(root);
+                for i in 0..deep {
+                    self.gensyms += 1;
+                    let cell = format!("#in{}", self.gensyms);
+                    let (so_far, key) = (self.read(&in_cells[i]), self.read(&at_cells[i]));
+                    let further = prim_call(Prim::Inward, vec![so_far, key]);
+                    steps.push(self.write(&cell, further));
+                    in_cells.push(cell);
+                }
+                self.gensyms += 1;
+                let holding = format!("#value{}", self.gensyms);
+                let written = match compound {
+                    Some(op) => {
+                        let (lands_in, key) = (self.read(&in_cells[deep]), self.read(&at_cells[deep]));
+                        let now = prim_call(Prim::At, vec![lands_in, key]);
+                        prim_call(op, vec![now, value])
+                    }
+                    None => value,
+                };
+                steps.push(self.write(&holding, written));
+                let lands_in = self.read(&in_cells[deep]);
+                let put = self.read(&holding);
+                steps.push(match after {
+                    true => prim_call(Prim::Append, vec![lands_in, put]),
+                    false => {
+                        let key = self.read(&at_cells[deep]);
+                        prim_call(Prim::Replace, vec![lands_in, key, put])
+                    }
+                });
+                for i in (0..deep).rev() {
+                    let (holds, key, done) = (self.read(&in_cells[i]), self.read(&at_cells[i]), self.read(&in_cells[i + 1]));
+                    steps.push(prim_call(Prim::Replace, vec![holds, key, done]));
+                }
+                if gives_back {
+                    steps.push(self.read(&holding));
+                }
+                sequence(steps)
+            }
             // `a[i][j] = v` and `a[i][] = v`: the keys are worked out
             // once and in order, the arrays along the way kept, and each
             // rewritten in the one above it. A place not there yet is
@@ -2473,6 +2594,46 @@ impl<'a> Builder<'a> {
             self.advance();
         }
         Ok(())
+    }
+
+    /// A cell for something already built: a name, a place in an array
+    /// or a property. Anything else is left as it stands, which serves
+    /// for reading though not for writing back.
+    fn cell_of(&mut self, form: Form) -> Res<Form> {
+        Ok(match form {
+            Form::Read(slot) => {
+                let shared = self.address_to_write(&slot.ident.to_string());
+                Form::Share(shared)
+            }
+            Form::Apply(Callee::Prim(Prim::Of, _), mut args) if args.len() == 2 => {
+                let named = args.pop().expect("the property");
+                let thing = args.pop().expect("what holds it");
+                match named {
+                    Form::Const(Value::Text(called)) => Form::ShareField(Box::new(thing), called),
+                    _ => return Err("Only a property named outright has a cell to share".to_string()),
+                }
+            }
+            Form::Apply(Callee::Prim(Prim::At, _), mut args) if args.len() == 2 => {
+                let place = args.pop().expect("the place");
+                match args.pop().expect("what holds it") {
+                    Form::Read(slot) => {
+                        let held = self.address_to_read(&slot.ident.to_string());
+                        Form::ShareItem(held, Box::new(place))
+                    }
+                    _ => return Err("Only a place in a named array has a cell to share".to_string()),
+                }
+            }
+            Form::Apply(Callee::Prim(Prim::Within, _), mut args) if args.len() == 2 => {
+                let named = args.pop().expect("the value's name");
+                let class = args.pop().expect("the class");
+                match named {
+                    Form::Const(Value::Text(called)) => Form::ShareOwn(Box::new(class), called),
+                    _ => return Err("Only a class's own value named outright has a cell to share".to_string()),
+                }
+            }
+            Form::Called(spells) => Form::ShareCalled(spells),
+            other => other,
+        })
     }
 
     /// What stands after the mark that shares a cell: a name, a place in

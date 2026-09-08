@@ -750,6 +750,52 @@ impl<'a> Machine<'a> {
                 drop(holds);
                 return Ok(Value::Shared(cell));
             }
+            // A class's own value, and a binding named as the run goes,
+            // each made a cell that names may share.
+            Form::ShareOwn(of, called) => {
+                let class = self.value_of(of, frame)?;
+                let Value::Blueprint(class) = class else {
+                    return Err(format!("Cannot share '{}' in {}", called, class.bare()).into());
+                };
+                let keeper = class.keeper(called).unwrap_or(&class);
+                let mut shared = keeper.shared.borrow_mut();
+                let at = match shared.iter().position(|(k, _)| k.as_str() == called.as_ref()) {
+                    Some(at) => at,
+                    None => {
+                        shared.push((called.to_string(), Value::Nil));
+                        shared.len() - 1
+                    }
+                };
+                if let Value::Shared(cell) = &shared[at].1 {
+                    let cell = cell.clone();
+                    drop(shared);
+                    return Ok(Value::Shared(cell));
+                }
+                let was = std::mem::replace(&mut shared[at].1, Value::Nil);
+                let cell = Rc::new(RefCell::new(was));
+                shared[at].1 = Value::Shared(cell.clone());
+                drop(shared);
+                return Ok(Value::Shared(cell));
+            }
+            Form::ShareCalled(spells) => {
+                let spelled = self.value_of(spells, frame)?;
+                let name = self.name_it_spells(&spelled);
+                let at = self.place_called(&name);
+                let mut cells = self.outermost.cells.borrow_mut();
+                if let Value::Shared(cell) = &cells[at] {
+                    let cell = cell.clone();
+                    drop(cells);
+                    return Ok(Value::Shared(cell));
+                }
+                let was = std::mem::replace(&mut cells[at], Value::Nil);
+                let cell = Rc::new(RefCell::new(match was {
+                    Value::Unset => Value::Nil,
+                    held => held,
+                }));
+                cells[at] = Value::Shared(cell.clone());
+                drop(cells);
+                return Ok(Value::Shared(cell));
+            }
             Form::ShareItem(slot, place) => {
                 let at = self.value_of(place, frame)?;
                 let f = ascend(frame, slot.up);

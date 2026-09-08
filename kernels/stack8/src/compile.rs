@@ -2083,6 +2083,13 @@ impl<'a> Compiler<'a> {
         // the keys are taken apart, each with where it began, so that
         // the store may work each of them out once and in order.
         let (keys, key_at) = keys_apart(&target, from, &self.keyed);
+        // What the chain stands on, where it is anything but the one
+        // instr that reads a name: then the whole chain is rebuilt and
+        // written back into whatever it stood on.
+        let footing: Option<Vec<Instr>> = match key_at.first() {
+            Some(at) if *at > from + 1 => Some(target[..at - from].to_vec()),
+            _ => None,
+        };
         let appending = matches!(target.last(), Some(Instr::Act(Action::AtEnd, 1)));
         let done = match target.as_slice() {
             // `b = &a`: b is fastened to a's cell, not given a copy.
@@ -2120,6 +2127,81 @@ impl<'a> Compiler<'a> {
             // and in order, then the arrays along the way are rewritten
             // from the innermost outwards. A place not there yet is made
             // on the way, since that is what writing into it means.
+            // A chain standing on something other than a bare name:
+            // the keys are worked out once and in order, the arrays
+            // along the way rewritten from the innermost outwards, and
+            // the whole written back into what it stood on.
+            _ if footing.is_some() => {
+                let base = footing.clone().expect("what the chain stands on");
+                let held: Vec<String> = (0..keys.len()).map(|_| self.gensym("key")).collect();
+                for (i, key) in keys.iter().enumerate() {
+                    let at = self.mark();
+                    for w in relocated(key.clone(), at as i64 - key_at[i] as i64) {
+                        self.put(w);
+                    }
+                    self.write(&held[i]);
+                }
+                let deep = match appending { true => keys.len(), false => keys.len() - 1 };
+                let inner: Vec<String> = (0..=deep).map(|_| self.gensym("within")).collect();
+                // What the chain stands on is read quietly: it is being
+                // written into, and a place not there yet is made on the
+                // way rather than complained about.
+                self.put(Instr::Hush(true));
+                let at = self.mark();
+                for w in relocated(base.clone(), at as i64 - from as i64) {
+                    self.put(w);
+                }
+                self.put(Instr::Hush(false));
+                self.write(&inner[0]);
+                for i in 0..deep {
+                    self.read(&inner[i]);
+                    self.read(&held[i]);
+                    self.act(Action::Nested, 2);
+                    self.write(&inner[i + 1]);
+                }
+                let value = self.gensym("value");
+                match compound {
+                    Some(op) => {
+                        self.read(&inner[deep]);
+                        self.read(&held[deep]);
+                        self.act(Action::At, 2);
+                        self.expr(0)?;
+                        self.act(op, 2);
+                        self.kept(keep);
+                    }
+                    None => self.value_written(keep)?,
+                }
+                self.write(&value);
+                let made = self.gensym("made");
+                if appending {
+                    self.read(&value);
+                    self.read(&inner[deep]);
+                    self.act(Action::Builtin(Builtin::Append, Rc::from("push")), 2);
+                } else {
+                    self.read(&held[deep]);
+                    self.read(&value);
+                    self.read(&inner[deep]);
+                    self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
+                }
+                self.write(&made);
+                for i in (0..deep).rev() {
+                    self.read(&held[i]);
+                    self.read(&made);
+                    self.read(&inner[i]);
+                    self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
+                    self.write(&made);
+                }
+                // What it stood on is written back into, read again as
+                // the store it is.
+                let footing_at = self.mark();
+                for w in relocated(base, footing_at as i64 - from as i64) {
+                    self.put(w);
+                }
+                let was = self.waiting.replace(made);
+                let stored = self.store_into(footing_at, None, None, "=");
+                self.waiting = was;
+                stored
+            }
             [Instr::Read(slot), ..] if !slot.moving && (keys.len() > 1 || (keys.len() == 1 && appending)) => {
                 let name = slot.ident.to_string();
                 let held: Vec<String> = (0..keys.len()).map(|_| self.gensym("key")).collect();
@@ -3694,8 +3776,10 @@ fn keys_apart(target: &[Instr], from: usize, keyed: &[usize]) -> (Vec<Vec<Instr>
     if keyed.is_empty() || reach == 0 || !matches!(target[reach - 1], Instr::Act(Action::At, 2)) {
         return nothing;
     }
-    // The chain must stand on the one instr that reads the name.
-    if keyed[0] != from + 1 || keyed.windows(2).any(|w| w[0] >= w[1]) || keyed[keyed.len() - 1] >= from + reach {
+    // The chain stands on whatever comes before its first key, which
+    // may be a name, a property, a class's own value or anything else
+    // that can be read and written.
+    if keyed[0] <= from || keyed.windows(2).any(|w| w[0] >= w[1]) || keyed[keyed.len() - 1] >= from + reach {
         return nothing;
     }
     let mut keys = Vec::new();
