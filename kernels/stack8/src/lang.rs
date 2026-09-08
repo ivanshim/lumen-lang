@@ -229,6 +229,9 @@ pub struct Lang {
     /// Whether a kind's name written within the grouping marks, before
     /// a value, makes the value that kind.
     pub casts_kinds: bool,
+    /// The words that open a taking-apart: a list of places written on
+    /// the left of a write, each taking the matching place of the value.
+    pub unpack_words: Vec<String>,
     /// Whether writing into a place makes what is needed to hold it:
     /// an array where a name holds nothing, and one at each place along
     /// the way that is not there yet.
@@ -356,7 +359,7 @@ w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists |
 w ext.builtin.eval | w ext.builtin.include | w ext.op.hush | w ext.builtin.isset | b ext.op.index.makes
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
 w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind
-w ext.op.name_by_value | b ext.op.cast
+w ext.op.name_by_value | b ext.op.cast | w ext.stmt.unpack
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 ";
@@ -968,6 +971,7 @@ impl Lang {
             hush_words: hushes,
             naming_words: r.strings("ext.op.name_by_value")?,
             casts_kinds: r.flag("ext.op.cast")?,
+            unpack_words: r.strings("ext.stmt.unpack")?,
             makes_places: r.flag("ext.op.index.makes")?,
             untrue_text: r.strings("ext.system.untrue.text")?,
             untrue_empty: r.flag("ext.system.untrue.empty_array")?,

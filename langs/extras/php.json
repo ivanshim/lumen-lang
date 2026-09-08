@@ -561,6 +561,9 @@
     "$"
   ],
   "ext.op.cast": true,
+  "ext.stmt.unpack": [
+    "list"
+  ],
   "ext.op.identical": [
     "==="
   ],

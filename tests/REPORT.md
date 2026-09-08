@@ -19,12 +19,12 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 39, differs 37, error 28, skipped 10 | pass 39, differs 37, error 28, skipped 10 |
 | `php/func` | 14 | pass 7, differs 3, error 4, skipped 0 | pass 7, differs 3, error 4, skipped 0 |
-| `php/lang` | 213 | pass 71, differs 53, error 84, skipped 5 | pass 71, differs 53, error 84, skipped 5 |
+| `php/lang` | 213 | pass 72, differs 53, error 83, skipped 5 | pass 72, differs 53, error 83, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 31, differs 21, error 6, skipped 6 | pass 31, differs 21, error 6, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 153, differs 122, error 122, skipped 25 | pass 153, differs 122, error 122, skipped 25 |
+| all | 422 | pass 154, differs 122, error 121, skipped 25 | pass 154, differs 122, error 121, skipped 25 |
 
 | Reason | Tests |
 |---|---|
@@ -34,12 +34,12 @@ is listed, since the full kernels are meant to behave alike.
 | skip Windows only test | 5 |
 | Unexpected token: ) | 4 |
 | Unexpected token: -> | 4 |
+| Fatal error: Uncaught Error: Cannot index non-array value in <file> | 4 |
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
 | Unexpected token: : | 3 |
 | Unexpected token: & | 3 |
 | Fatal error: Uncaught Error: Undefined variable: current in <file> | 3 |
-| Fatal error: Uncaught Error: Cannot index non-array value in <file> | 3 |
 | Unexpected token: ++ | 3 |
 | Only a name or a place in an array can be forgotten | 3 |
 | skip php-cgi not available | 2 |
@@ -55,7 +55,6 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Only a class can be made into an object in <file> | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Undefined variable: StdClass in <file> | 2 |
-| Unexpected token: , | 2 |
 | Fatal error: Uncaught Error: Array index 2 out of bounds (length: 1) in <file> | 2 |
 | Expected ']' after array index, got '++' | 2 |
 | Unexpected token: > | 2 |
@@ -68,12 +67,13 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> | 1 |
 | Expected identifier as the property name, got '{' | 1 |
 | Fatal error: Uncaught Error: Undefined variable: PHP_BUILD_DATE in <file> | 1 |
+| skip locale needed for this test is not supported on this platform | 1 |
 
-### Reserved words: 47 of 68 spelled
+### Reserved words: 48 of 68 spelled
 
-Spelled: `abstract`, `and`, `array`, `as`, `break`, `case`, `catch`, `class`, `const`, `continue`, `default`, `echo`, `else`, `elseif`, `eval`, `exit`, `extends`, `final`, `finally`, `for`, `foreach`, `function`, `global`, `if`, `implements`, `include`, `include_once`, `instanceof`, `interface`, `isset`, `new`, `or`, `print`, `private`, `protected`, `public`, `readonly`, `require`, `require_once`, `return`, `static`, `switch`, `throw`, `try`, `unset`, `var`, `while`
+Spelled: `abstract`, `and`, `array`, `as`, `break`, `case`, `catch`, `class`, `const`, `continue`, `default`, `echo`, `else`, `elseif`, `eval`, `exit`, `extends`, `final`, `finally`, `for`, `foreach`, `function`, `global`, `if`, `implements`, `include`, `include_once`, `instanceof`, `interface`, `isset`, `list`, `new`, `or`, `print`, `private`, `protected`, `public`, `readonly`, `require`, `require_once`, `return`, `static`, `switch`, `throw`, `try`, `unset`, `var`, `while`
 
-Not spelled: `callable`, `clone`, `declare`, `do`, `empty`, `enddeclare`, `endfor`, `endforeach`, `endif`, `endswitch`, `endwhile`, `fn`, `goto`, `insteadof`, `list`, `match`, `namespace`, `trait`, `use`, `xor`, `yield`
+Not spelled: `callable`, `clone`, `declare`, `do`, `empty`, `enddeclare`, `endfor`, `endforeach`, `endif`, `endswitch`, `endwhile`, `fn`, `goto`, `insteadof`, `match`, `namespace`, `trait`, `use`, `xor`, `yield`
 
 ### Most-called functions in the suite, and whether the definition spells them
 
@@ -446,9 +446,9 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/constants/PHP_INT_64bit.phpt` | pass | pass |  |
 | `php/lang/empty_variation.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: empty in <file> |
 | `php/lang/engine_assignExecutionOrder_001.phpt` | error | error | Expected identifier after the member mark, got '$' |
-| `php/lang/engine_assignExecutionOrder_002.phpt` | error | error | Unexpected token: , |
+| `php/lang/engine_assignExecutionOrder_002.phpt` | error | error | Fatal error: Uncaught Error: Cannot index non-array value in <file> |
 | `php/lang/engine_assignExecutionOrder_003.phpt` | error | error | Unexpected token: ) |
-| `php/lang/engine_assignExecutionOrder_004.phpt` | error | error | Unexpected token: , |
+| `php/lang/engine_assignExecutionOrder_004.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_005.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_006.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_007.phpt` | error | error | Fatal error: Uncaught Error: Only a class can be made into an object in <file> |

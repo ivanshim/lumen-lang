@@ -109,6 +109,9 @@ pub struct Compiler<'a> {
     /// The file this text came out of, where it was read while the run
     /// was going, so that every program built from it carries it.
     written_in: Option<Rc<str>>,
+    /// Where the value a store is to write is already waiting, which a
+    /// taking-apart sets before each of its places.
+    waiting: Option<String>,
 }
 
 type Res<T> = Result<T, String>;
@@ -152,7 +155,7 @@ pub fn compile_from(tokens: &[Token], lang: &Lang, table: &mut Registry, before:
         instrs: Vec::new(),
     };
     let shared_args = shared_parameters(tokens, lang);
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, promoted: Vec::new(), before, keyed: Vec::new(), written_in };
+    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None };
     if lang.rpn {
         a.rpn_body(&[], Span::Block)?;
         if !a.exhausted() {
@@ -1933,7 +1936,14 @@ impl<'a> Compiler<'a> {
     /// itself an expression, the value is kept in a cell of its own so
     /// that it can be read again once the writing is done.
     fn value_written(&mut self, keep: Option<&str>) -> Res<()> {
-        self.expr(0)?;
+        // Where the value is already worked out and waiting in a cell,
+        // the store reads it from there instead of reading the source
+        // after the sign, since a taking-apart has no sign of its own
+        // before each of its places.
+        match self.waiting.clone() {
+            Some(cell) => self.read(&cell),
+            None => self.expr(0)?,
+        }
         self.kept(keep);
         Ok(())
     }
@@ -1950,6 +1960,11 @@ impl<'a> Compiler<'a> {
     fn assignment(&mut self, from: usize, keep: Option<&str>) -> Res<()> {
         let compound = self.lang.compound.get(&self.look().lexeme).filter(|_| self.look().shape == Shape::Sign).cloned();
         let assign = self.take().lexeme;
+        self.store_into(from, keep, compound, &assign)
+    }
+
+    /// The store itself, the sign that asked for it already read.
+    fn store_into(&mut self, from: usize, keep: Option<&str>, compound: Option<Action>, assign: &str) -> Res<()> {
         // The target came out as a load; turn it into a store.
         let target: Vec<Instr> = self.piece().instrs.drain(from..).collect();
         // Where the target read its way into a place within a place,
@@ -2277,6 +2292,27 @@ impl<'a> Compiler<'a> {
             self.read(&name);
             return Ok(());
         }
+        // `list($a, $b) = v`: the places named on the left each take
+        // the matching place of the value on the right.
+        if Lang::spells(&lang.unpack_words, &tok.lexeme) && matches!(tok.shape, Shape::Instr | Shape::Sign) {
+            self.take();
+            // The value is worked out first and kept, since every place
+            // reads from the one value.
+            let holding = self.gensym("taken");
+            let places = self.pos;
+            self.skip_past_call()?;
+            let sign = self.take();
+            if !self.lang.assign_words.iter().any(|w| *w == sign.lexeme) {
+                return Err(format!("A taking-apart must be written on the left of a write, not '{}'", sign.lexeme));
+            }
+            self.expr(0)?;
+            self.write(&holding);
+            let after = self.pos;
+            self.pos = places;
+            self.unpack(&holding)?;
+            self.pos = after;
+            return Ok(());
+        }
         // `(int) x`: a kind's name written within the grouping marks
         // before a value makes the value that kind. Only a word the
         // language names a kind by counts, so a plain grouping of a
@@ -2531,6 +2567,77 @@ impl<'a> Compiler<'a> {
         }
         let tier = lang.monadic.values().map(|m| m.level).max().unwrap_or(0);
         self.expr(tier)
+    }
+
+    /// Step past a bracketed piece without reading it, so that what
+    /// follows may be read first: the places a taking-apart names are
+    /// read only after the value they take from is worked out.
+    fn skip_past_call(&mut self) -> Res<()> {
+        let call = self.lang.calling.clone().ok_or("A taking-apart needs the call brackets")?;
+        self.want_sign(&call.open, "after the word that takes a value apart")?;
+        let mut deep = 1usize;
+        while deep > 0 {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", call.close));
+            }
+            if self.at_symbol(&call.open) {
+                deep += 1;
+            } else if self.at_symbol(&call.close) {
+                deep -= 1;
+            }
+            self.take();
+        }
+        Ok(())
+    }
+
+    /// `list($a, , $b) = v`: each place named takes the matching place
+    /// of the value. A place left out is skipped and still counts, and
+    /// a taking-apart within a taking-apart takes the place holding it.
+    /// The whole comes to the value, as any other write does.
+    fn unpack(&mut self, holding: &str) -> Res<()> {
+        let lang = self.lang;
+        let call = lang.calling.clone().ok_or("A taking-apart needs the call brackets")?;
+        self.want_sign(&call.open, "after the word that takes a value apart")?;
+        let mut at = 0usize;
+        while !self.at_symbol(&call.close) {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", call.close));
+            }
+            let sep = call.between.clone();
+            let skipped = sep.as_ref().map_or(false, |s| self.at_symbol(s)) || self.at_symbol(&call.close);
+            if !skipped {
+                // What this place of the value holds, kept aside so the
+                // store may read it once.
+                let held = self.gensym("place");
+                self.read(holding);
+                self.constant(Value::Small(at as i64));
+                self.act(Action::At, 2);
+                self.write(&held);
+                if Lang::spells(&lang.unpack_words, &self.look().lexeme) {
+                    self.take();
+                    self.unpack(&held)?;
+                    self.discard();
+                } else {
+                    let from = self.mark();
+                    self.expr_at(0, false)?;
+                    let was = self.waiting.replace(held);
+                    let done = self.store_into(from, None, None, "=");
+                    self.waiting = was;
+                    done?;
+                }
+            }
+            at += 1;
+            if let Some(s) = &sep {
+                if self.at_symbol(s) {
+                    self.take();
+                    continue;
+                }
+            }
+            break;
+        }
+        self.want_sign(&call.close, "after the places to take apart")?;
+        self.read(holding);
+        Ok(())
     }
 
     /// `isset(a, b[k])`: whether every one of them holds something other

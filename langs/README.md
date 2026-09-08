@@ -416,6 +416,15 @@ only. The extension labels so far, all from PHP:
   past the point, text is read for the number it opens with, a flag is
   one or nought, and anything that is not an array becomes an array
   holding only itself.
+- `ext.stmt.unpack`: the words that open a taking-apart — a list of
+  places written on the left of a write, each taking the matching place
+  of the value on the right (`list($a, $b) = $v`). A place left out is
+  stepped over and still counts, so `list($a, , $b)` takes the first
+  and the third. A taking-apart written within one takes what the place
+  holding it holds. Every place may be anything that can be written
+  into, not only a name, and they are worked out in the order they are
+  written, after the value they take from. The whole comes to that
+  value, as any other write does.
 - `ext.builtin.eval`: builtins taking a piece of the language written
   out as text, reading it as the run's own language and running it
   where the call stands. The text is read with whatever a program of
@@ -869,6 +878,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.switch` | - | - | - | - | - | - | - | `switch` | - | - |
 | `ext.stmt.throw` | - | - | - | - | - | - | - | `throw` | - | - |
 | `ext.stmt.try` | - | - | - | - | - | - | - | `try` | - | - |
+| `ext.stmt.unpack` | - | - | - | - | - | - | - | `list` | - | - |
 | `ext.syntax.call.bare` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.system.complaint.deprecated` | - | - | - | - | - | - | - | `Deprecated` | - | - |
 | `ext.system.complaint.fatal` | - | - | - | - | - | - | - | `Fatal error` | - | - |

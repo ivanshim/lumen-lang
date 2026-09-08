@@ -79,6 +79,9 @@ pub struct Builder<'a> {
     /// The file this text came out of, where it was read as the run
     /// went, so that every program built from it carries it.
     written_in: Option<Rc<str>>,
+    /// Where the value a write is to put is already waiting, which a
+    /// taking-apart sets before each of its places.
+    waiting: Option<String>,
     tells_place: bool,
 }
 
@@ -107,7 +110,7 @@ pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMa
 pub fn build_from(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>) -> Res<Built> {
     let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let shared_args = shared_parameters(tokens, table);
-    let mut r = Builder { within: None, shared_args, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in,
+    let mut r = Builder { within: None, shared_args, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None,
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
@@ -1759,8 +1762,13 @@ impl<'a> Builder<'a> {
     /// in a cell of its own and given back once the writing is done.
     fn written(&mut self, expr: Form, gives_back: bool) -> Res<Form> {
         let compound = if self.look().shape == Shape::Sign { self.table.compound.get(&self.look().lexeme).copied() } else { None };
-        let plain = compound.is_none();
         let assign = self.advance();
+        self.write_into(expr, gives_back, compound, assign)
+    }
+
+    /// The write itself, the sign that called for it already read.
+    fn write_into(&mut self, expr: Form, gives_back: bool, compound: Option<Prim>, assign: Token) -> Res<Form> {
+        let plain = compound.is_none();
         // `b = &a`: b is tied to a's cell rather than given a copy.
         if self.table.single("ext.op.reference").map_or(false, |m| self.sign(m)) && plain {
             if let Form::Read(slot) = &expr {
@@ -1776,7 +1784,13 @@ impl<'a> Builder<'a> {
                 });
             }
         }
-        let mut value = self.expr(0)?;
+        // Where the value is already worked out and waiting in a cell,
+        // the write reads it from there rather than reading what comes
+        // after the sign: a taking-apart has no sign before each place.
+        let mut value = match self.waiting.clone() {
+            Some(cell) => self.read(&cell),
+            None => self.expr(0)?,
+        };
         let keep = (gives_back && plain).then(|| {
             self.gensyms += 1;
             format!("#written{}", self.gensyms)
@@ -2030,6 +2044,28 @@ impl<'a> Builder<'a> {
             let step = self.stepped(&name, by);
             return Ok(sequence(vec![step, self.read(&name)]));
         }
+        // `list($a, $b) = v`: the places named on the left each take
+        // the matching place of the value on the right.
+        if table.spells("ext.stmt.unpack", &t.lexeme) && matches!(t.shape, Shape::Sign | Shape::Bare) {
+            self.advance();
+            let places = self.pos;
+            self.step_past_call()?;
+            let sign = self.advance();
+            if !table.strings("stmt.assign").iter().any(|w| *w == sign.lexeme) {
+                return Err(format!("A taking-apart must be written on the left of a write, not '{}'", sign.lexeme));
+            }
+            let worth = self.expr(0)?;
+            self.gensyms += 1;
+            let holding = format!("#taken{}", self.gensyms);
+            let kept = self.write(&holding, worth);
+            let after = self.pos;
+            self.pos = places;
+            let mut steps = vec![kept];
+            steps.extend(self.taken_apart(&holding)?);
+            self.pos = after;
+            steps.push(self.read(&holding));
+            return Ok(sequence(steps));
+        }
         // `(int) x`: a kind's word written within the grouping marks
         // before a value makes the value that kind. Only a word the
         // language names a kind by counts, so grouping a plain name is
@@ -2235,6 +2271,75 @@ impl<'a> Builder<'a> {
         }
         let tier = table.monadic.values().map(|m| m.level).max().unwrap_or(0);
         self.expr(tier)
+    }
+
+    /// Step past a bracketed piece without reading it, so what follows
+    /// may be read first: the places a taking-apart names are read only
+    /// once the value they take from is worked out.
+    fn step_past_call(&mut self) -> Res<()> {
+        let open = self.table.single("syntax.call.open").ok_or("A taking-apart needs the call brackets")?.to_string();
+        let close = self.table.single("syntax.call.close").ok_or("A taking-apart needs the call brackets")?.to_string();
+        self.need_sign(&open, "after the word that takes a value apart")?;
+        let mut deep = 1usize;
+        while deep > 0 {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", close));
+            }
+            if self.sign(&open) {
+                deep += 1;
+            } else if self.sign(&close) {
+                deep -= 1;
+            }
+            self.advance();
+        }
+        Ok(())
+    }
+
+    /// `list($a, , $b) = v`: each place named takes the matching place
+    /// of the value. A place left out is stepped over and still counts,
+    /// and a taking-apart within one takes the place holding it.
+    fn taken_apart(&mut self, holding: &str) -> Res<Vec<Form>> {
+        let table = self.table;
+        let open = table.single("syntax.call.open").unwrap().to_string();
+        let close = table.single("syntax.call.close").unwrap().to_string();
+        let sep = table.single("syntax.call.separator").map(str::to_string);
+        self.need_sign(&open, "after the word that takes a value apart")?;
+        let mut steps = Vec::new();
+        let mut at = 0usize;
+        while !self.sign(&close) {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", close));
+            }
+            let stepped = sep.as_ref().map_or(false, |s| self.sign(s)) || self.sign(&close);
+            if !stepped {
+                self.gensyms += 1;
+                let held = format!("#place{}", self.gensyms);
+                let from = self.read(holding);
+                let there = prim_call(Prim::At, vec![from, constant(Value::Small(at as i64))]);
+                steps.push(self.write(&held, there));
+                if table.spells("ext.stmt.unpack", &self.look().lexeme) {
+                    self.advance();
+                    steps.extend(self.taken_apart(&held)?);
+                } else {
+                    let target = self.expr_at(0, false)?;
+                    let was = self.waiting.replace(held);
+                    let stood = self.look().clone();
+                    let done = self.write_into(target, false, None, stood);
+                    self.waiting = was;
+                    steps.push(done?);
+                }
+            }
+            at += 1;
+            if let Some(s) = &sep {
+                if self.sign(s) {
+                    self.advance();
+                    continue;
+                }
+            }
+            break;
+        }
+        self.need_sign(&close, "after the places to take apart")?;
+        Ok(steps)
     }
 
     /// `isset(a, b[k])`: whether every one of them is something other
