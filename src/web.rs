@@ -282,7 +282,7 @@ fn steps_of(name: &str) -> String {
         Some((head, rest)) => (head, rest),
         None => (name, ""),
     };
-    let mut steps = vec![head.replace(['.', ' '], "_")];
+    let mut steps = vec![head.replace(['.', ' ', '['], "_")];
     loop {
         match rest.split_once(']') {
             Some((step, tail)) => {
@@ -293,8 +293,11 @@ fn steps_of(name: &str) -> String {
                 };
             }
             None => {
-                // Brackets that never close are part of the name itself.
-                return name.replace(['.', ' '], "_");
+                // A bracket that never closes opens nothing, so it is
+                // part of the name; and a name may hold none of the
+                // marks that would make it hard to read, so each of
+                // them stands as an underscore.
+                return name.replace(['.', ' ', '['], "_");
             }
         }
     }
@@ -314,7 +317,7 @@ fn crumbs(text: &str) -> Vec<(String, String)> {
             continue;
         }
         let (name, value) = match part.split_once('=') {
-            Some((name, value)) => (steps_of(name), unescaped(value)),
+            Some((name, value)) => (steps_of(name), unescaped_plainly(value)),
             None => (steps_of(part), String::new()),
         };
         if !found.iter().any(|(had, _)| *had == name) {
@@ -325,14 +328,24 @@ fn crumbs(text: &str) -> Vec<(String, String)> {
 }
 
 /// A part of a URL as the text it stands for: `%41` is `A`, and a plus
-/// is a space.
+/// is a space where the piece was written as a form writes one.
 fn unescaped(text: &str) -> String {
+    undone(text, true)
+}
+
+/// The same, save that a plus stands for itself: what a cookie carries
+/// is written plainly and a plus in it is a plus.
+fn unescaped_plainly(text: &str) -> String {
+    undone(text, false)
+}
+
+fn undone(text: &str, plus_is_space: bool) -> String {
     let bytes = text.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
-            b'+' => out.push(b' '),
+            b'+' if plus_is_space => out.push(b' '),
             b'%' if i + 2 < bytes.len() => {
                 let digits = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("");
                 match u8::from_str_radix(digits, 16) {
