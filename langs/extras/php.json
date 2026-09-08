@@ -426,6 +426,18 @@
   "ext.op.index.makes": true,
   "ext.op.index.text": true,
   "ext.op.spelled": true,
+  "ext.builtin.output.hold": [
+    "__output_hold"
+  ],
+  "ext.builtin.output.held": [
+    "__output_held"
+  ],
+  "ext.builtin.output.drop": [
+    "__output_drop"
+  ],
+  "ext.builtin.output.depth": [
+    "__output_depth"
+  ],
   "ext.system.fault.class.value": [
     "ValueError"
   ],

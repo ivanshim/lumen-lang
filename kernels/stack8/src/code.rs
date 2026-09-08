@@ -205,6 +205,16 @@ pub enum Builtin {
     /// How long the run may take from here, in seconds; nought lifts
     /// the limit (ext.builtin.time_limit).
     TimeLimit,
+    /// Keeping what the run writes out rather than letting it go
+    /// (ext.builtin.output.*): begin keeping, what has been kept since
+    /// the last beginning, stop keeping and give up what was kept, and
+    /// how many keepings are in force. What a keeping gives up may be
+    /// written out again by whoever asked for it, so a language builds
+    /// flushing and filtering out of these four.
+    HoldOut,
+    HeldOut,
+    DropOut,
+    DeepOut,
     /// What the running call was given, however much of it the routine
     /// named: all of it as an array, how much there was, or the one at a
     /// position (ext.builtin.args.*).

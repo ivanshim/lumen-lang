@@ -100,6 +100,10 @@ pub struct Machine<'a> {
     /// How many pieces now being found asked to be quiet. Counted, not
     /// flagged, because a quiet piece may hold another.
     quieted: usize,
+    /// What the run has written out while it was being kept rather than
+    /// let go, innermost last. A keeping within a keeping writes into
+    /// the one around it when it is given up.
+    holding: RefCell<Vec<String>>,
     /// Whether writing into a place makes what is needed to hold it: an
     /// array where a name holds nothing, and one at each place along the
     /// way that is not there yet.
@@ -151,6 +155,7 @@ impl<'a> Machine<'a> {
             started: None,
             written_in: String::new(),
             quieted: 0,
+            holding: RefCell::new(Vec::new()),
             builds_places: table.flag("ext.op.index.makes"),
             letter_places: table.flag("ext.op.index.text"),
             spelled_stands: table.flag("ext.op.spelled"),
@@ -322,12 +327,37 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// Everything the run writes out passes through here, so a language
+    /// able to keep its own output has one place that keeps it.
+    fn utter(&self, text: &str) {
+        let mut holding = self.holding.borrow_mut();
+        match holding.last_mut() {
+            Some(kept) => kept.push_str(text),
+            None => {
+                drop(holding);
+                print!("{}", text);
+            }
+        }
+    }
+
+    /// Whatever is still being kept when the run ends is let go,
+    /// outermost last, as a language that keeps its output does.
+    pub fn let_go_all(&self) {
+        loop {
+            let held = self.holding.borrow_mut().pop();
+            match held {
+                Some(text) => self.utter(&text),
+                None => break,
+            }
+        }
+    }
+
     fn grumble(&self, kind: &str, about: &str) {
         if self.quieted > 0 {
             return;
         }
         let Some((_, word)) = self.complaint_words.iter().find(|(k, _)| *k == kind) else { return };
-        println!("\n{}: {} in {} on line {}", word, about, self.written_in, self.row);
+        self.utter(&format!("\n{}: {} in {} on line {}\n", word, about, self.written_in, self.row));
     }
 
     pub fn define(&mut self, name: &str, value: Value) {
@@ -478,8 +508,8 @@ impl<'a> Machine<'a> {
     /// Nothing is written where a language has no word for it.
     fn end_of_run(&self, said: &str) {
         let Some((_, word)) = self.complaint_words.iter().find(|(k, _)| *k == "fatal") else { return };
-        println!("\n{}: {} in {}:{}", word, said, self.written_in, self.raised_on);
-        println!("Stack trace:\n#0 {{main}}\n  thrown in {} on line {}", self.written_in, self.raised_on);
+        self.utter(&format!("\n{}: {} in {}:{}\n", word, said, self.written_in, self.raised_on));
+        self.utter(&format!("Stack trace:\n#0 {{main}}\n  thrown in {} on line {}\n", self.written_in, self.raised_on));
     }
 
     /// Build source against the globals this run already has and run it
@@ -543,7 +573,7 @@ impl<'a> Machine<'a> {
             // A limit passed is told plainly, since nothing was raised.
             Err(Escape::Stopped(told)) => {
                 if let Some((_, word)) = self.complaint_words.iter().find(|(k, _)| *k == "fatal") {
-                    println!("\n{}: {} in {} on line {}", word, told, self.written_in, self.row);
+                    self.utter(&format!("\n{}: {} in {} on line {}\n", word, told, self.written_in, self.row));
                 }
                 Err(told)
             }
@@ -1133,7 +1163,7 @@ impl<'a> Machine<'a> {
                 Prim::Quit => {
                     let values = self.value_list(args, frame)?;
                     if let Some(Value::Text(said)) = values.first() {
-                        print!("{}", said);
+                        self.utter(said);
                     }
                     Err(Escape::Done)
                 }
@@ -1619,6 +1649,20 @@ impl<'a> Machine<'a> {
                 self.started = Some(std::time::Instant::now());
                 Value::Flag(true)
             }
+            // Keeping what the run writes out, and giving it up again.
+            Prim::KeepOut => {
+                self.holding.borrow_mut().push(String::new());
+                Value::Flag(true)
+            }
+            Prim::KeptOut => match self.holding.borrow().last() {
+                Some(kept) => Value::text(kept),
+                None => Value::Flag(false),
+            },
+            Prim::LooseOut => {
+                let held = self.holding.borrow_mut().pop();
+                Value::Flag(held.is_some())
+            }
+            Prim::DeepOut => Value::Small(self.holding.borrow().len() as i64),
             Prim::Handed | Prim::HowMany | Prim::HandedAt => {
                 let Some(handed) = self.handed.last().cloned() else {
                     // What a language says when one of these is reached
@@ -1711,7 +1755,7 @@ impl<'a> Machine<'a> {
             }
             Prim::Portray => {
                 n(1)?;
-                print!("{}", over_lines(&v[0], 0));
+                self.utter(&over_lines(&v[0], 0));
                 Value::Flag(true)
             }
             Prim::Invert => Value::Flag(!self.stands_true(&v[0])),
@@ -1973,29 +2017,29 @@ impl<'a> Machine<'a> {
             Prim::Echo => {
                 n(1)?;
                 match &v[0] {
-                    Value::Text(s) => print!("{}", s),
+                    Value::Text(s) => self.utter(s),
                     _ => return Err(format!("{}() requires a string argument", name)),
                 }
                 Value::Nil
             }
             Prim::Say => {
-                println!("{}", self.show(v));
+                self.utter(&format!("{}\n", self.show(v)));
                 Value::Nil
             }
             Prim::Out => {
-                print!("{}", self.show(v));
+                self.utter(&self.show(v));
                 Value::Nil
             }
             Prim::Tell => {
                 let w = self.wording();
                 let text: String = v.iter().map(|x| x.render(w)).collect();
-                print!("{}", text);
+                self.utter(&text);
                 Value::Nil
             }
             Prim::Define => return Err(format!("{}() needs a quoted name as its first argument", name)),
             Prim::Dump => {
                 for x in v {
-                    println!("{}", with_kind(x, 0, self.table.count("ext.system.real.bits").is_some()));
+                    self.utter(&format!("{}\n", with_kind(x, 0, self.table.count("ext.system.real.bits").is_some())));
                 }
                 Value::Nil
             }
@@ -2131,7 +2175,7 @@ impl<'a> Machine<'a> {
                 }
                 let x = &v[1];
                 match target.as_str() {
-                    "print_native" => println!("{}", x.render(w)),
+                    "print_native" => self.utter(&format!("{}\n", x.render(w))),
                     "debug_info" => eprintln!("[DEBUG] {}", x.render(w)),
                     _ => {
                         return match x.kind() {

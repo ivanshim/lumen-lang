@@ -136,15 +136,23 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     if let Some(n) = table.single("system.real_default_precision") {
         machine.define(n, Value::Small(math::DEFAULT_PLACES as i64));
     }
-    machine.run_main(&reduced.program.body)?;
+    if let Err(told) = machine.run_main(&reduced.program.body) {
+        machine.let_go_all();
+        return Err(told);
+    }
     if let Some(entry) = table.single("system.entry") {
         if let Some(Value::Bound(p, env)) = machine.lookup(entry) {
-            machine.invoke(p, env, Vec::new()).map_err(|e| match e {
+            let done = machine.invoke(p, env, Vec::new()).map_err(|e| match e {
                 exec::Escape::Error(m) => m,
                 _ => String::new(),
-            })?;
+            });
+            machine.let_go_all();
+            done?;
+            return Ok(());
         }
     }
+    // Whatever the run was still keeping goes out when it ends.
+    machine.let_go_all();
     Ok(())
 }
 

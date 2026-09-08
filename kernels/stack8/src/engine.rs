@@ -48,6 +48,10 @@ pub struct Engine<'a> {
     /// Counted rather than flagged, since one hushed piece may hold
     /// another.
     hushed: std::cell::Cell<usize>,
+    /// What the run has written out while it was being kept rather than
+    /// let go, innermost last. A keeping within a keeping writes into
+    /// the one around it when it is given up.
+    holding: RefCell<Vec<String>>,
     args_cell: Option<usize>,
     memo_cell: Option<usize>,
 }
@@ -119,6 +123,7 @@ impl<'a> Engine<'a> {
             limit: std::cell::Cell::new(0),
             began: std::cell::Cell::new(None),
             hushed: std::cell::Cell::new(0),
+            holding: RefCell::new(Vec::new()),
             args_cell: find(&lang.args_binding),
             memo_cell: find(&lang.memo_binding),
             registry,
@@ -211,12 +216,37 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// Everything the run writes out goes through here, so that a
+    /// language which can keep its own output has one place to keep it.
+    fn utter(&self, text: &str) {
+        let mut holding = self.holding.borrow_mut();
+        match holding.last_mut() {
+            Some(kept) => kept.push_str(text),
+            None => {
+                drop(holding);
+                print!("{}", text);
+            }
+        }
+    }
+
+    /// What is still being kept when the run ends is let go, outermost
+    /// last, as a language that keeps its output does at the end.
+    pub fn let_go_all(&self) {
+        loop {
+            let held = self.holding.borrow_mut().pop();
+            match held {
+                Some(text) => self.utter(&text),
+                None => break,
+            }
+        }
+    }
+
     fn complain(&self, kind: Complaint, message: &str) {
         if self.hushed.get() > 0 {
             return;
         }
         let Some((_, word)) = self.lang.complaint_words.iter().find(|(k, _)| *k == kind) else { return };
-        println!("\n{}: {} in {} on line {}", word, message, self.source, self.line);
+        self.utter(&format!("\n{}: {} in {} on line {}\n", word, message, self.source, self.line));
     }
 
     /// A value raised and never caught, told the way a language that
@@ -231,7 +261,7 @@ impl<'a> Engine<'a> {
             Fault::Finished => return,
             // A limit passed is told plainly, since nothing was raised.
             Fault::Stopped(told) => {
-                println!("\n{}: {} in {} on line {}", word, told, self.source, self.line);
+                self.utter(&format!("\n{}: {} in {} on line {}\n", word, told, self.source, self.line));
                 return;
             }
             Fault::Thrown(raised) => raised,
@@ -240,8 +270,8 @@ impl<'a> Engine<'a> {
             Fault::Note(told) => {
                 let Some(named) = self.class_for(told) else { return };
                 let at = self.line;
-                println!("\n{}: Uncaught {}: {} in {}:{}", word, named, told, self.source, at);
-                println!("Stack trace:\n#0 {{main}}\n  thrown in {} on line {}", self.source, at);
+                self.utter(&format!("\n{}: Uncaught {}: {} in {}:{}\n", word, named, told, self.source, at));
+                self.utter(&format!("Stack trace:\n#0 {{main}}\n  thrown in {} on line {}\n", self.source, at));
                 return;
             }
         };
@@ -256,8 +286,8 @@ impl<'a> Engine<'a> {
             v => format!("Uncaught {}", v.display(&sp)),
         };
         let at = self.hurled_at.get();
-        println!("\n{}: {} in {}:{}", word, said, self.source, at);
-        println!("Stack trace:\n#0 {{main}}\n  thrown in {} on line {}", self.source, at);
+        self.utter(&format!("\n{}: {} in {}:{}\n", word, said, self.source, at));
+        self.utter(&format!("Stack trace:\n#0 {{main}}\n  thrown in {} on line {}\n", self.source, at));
     }
 
     /// A fault of the kernel's own as a value of the class the language
@@ -1299,7 +1329,7 @@ impl<'a> Engine<'a> {
                 // Text given is written out first; a number is not.
                 if let Builtin::Leave = builtin {
                     if let Some(Value::Text(said)) = self.data.get(at) {
-                        print!("{}", said);
+                        self.utter(said);
                     }
                     return Err(Fault::Finished);
                 }
@@ -1814,7 +1844,7 @@ impl<'a> Engine<'a> {
             Builtin::Echo => {
                 arity(1)?;
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
-                print!("{}", s);
+                self.utter(s);
                 Value::Null
             }
             // Source read while the program runs, assembled against
@@ -1896,6 +1926,20 @@ impl<'a> Engine<'a> {
                 self.began.set(Some(std::time::Instant::now()));
                 Value::Flag(true)
             }
+            // Keeping what the run writes out, and giving it up again.
+            Builtin::HoldOut => {
+                self.holding.borrow_mut().push(String::new());
+                Value::Flag(true)
+            }
+            Builtin::HeldOut => match self.holding.borrow().last() {
+                Some(kept) => Value::text(kept),
+                None => Value::Flag(false),
+            },
+            Builtin::DropOut => {
+                let held = self.holding.borrow_mut().pop();
+                Value::Flag(held.is_some())
+            }
+            Builtin::DeepOut => Value::Small(self.holding.borrow().len() as i64),
             Builtin::Given | Builtin::GivenCount | Builtin::GivenAt => {
                 let Some(given) = self.given.last().cloned() else {
                     // What a language says when one of these is reached
@@ -1938,24 +1982,24 @@ impl<'a> Engine<'a> {
                 }
             }
             Builtin::Say => {
-                println!("{}", self.render(&args));
+                self.utter(&format!("{}\n", self.render(&args)));
                 Value::Null
             }
             Builtin::Out => {
-                print!("{}", self.render(&args));
+                self.utter(&self.render(&args));
                 Value::Null
             }
             Builtin::Tell => {
                 let sp = self.wording();
                 for v in args.iter() {
-                    print!("{}", v.display(&sp));
+                    self.utter(&v.display(&sp));
                 }
                 Value::Null
             }
             Builtin::Define => return Err(format!("{}() needs a quoted name as its first argument", name)),
             Builtin::Dump => {
                 for v in args.iter() {
-                    println!("{}", dumped(v, 0, self.lang.real_bits.is_some()));
+                    self.utter(&format!("{}\n", dumped(v, 0, self.lang.real_bits.is_some())));
                 }
                 Value::Null
             }
@@ -2195,7 +2239,7 @@ impl<'a> Engine<'a> {
             }
             Builtin::Layout => {
                 arity(1)?;
-                print!("{}", laid_out(&args[0], 0));
+                self.utter(&laid_out(&args[0], 0));
                 Value::Flag(true)
             }
             Builtin::External => self.external(name, &args)?,
@@ -2219,7 +2263,7 @@ impl<'a> Engine<'a> {
         }
         let v = &rest[0];
         match which.as_str() {
-            "print_native" => println!("{}", v.display(&sp)),
+            "print_native" => self.utter(&format!("{}\n", v.display(&sp))),
             "debug_info" => eprintln!("[DEBUG] {}", v.display(&sp)),
             _ => {
                 return Ok(Value::Small(match v {

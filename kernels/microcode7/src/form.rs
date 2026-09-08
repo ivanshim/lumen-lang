@@ -94,6 +94,16 @@ pub enum Prim {
     /// How long the run may take from here, counted in seconds; nought
     /// takes the limit away (ext.builtin.time_limit).
     Clock,
+    /// Keeping what the run writes out instead of letting it go
+    /// (ext.builtin.output.*): begin keeping, what has been kept since
+    /// the last beginning, stop keeping and give up what was kept, and
+    /// how many keepings are in force. What a keeping gives up may be
+    /// written out again by whoever asked for it, so flushing and
+    /// filtering are built of these four rather than spelled apart.
+    KeepOut,
+    KeptOut,
+    LooseOut,
+    DeepOut,
     /// What the running call was handed, whatever of it the routine
     /// gave names to: the whole of it, how much there was, or the one
     /// standing at a place (ext.builtin.args.*).

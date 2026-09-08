@@ -315,10 +315,66 @@ function sys_get_temp_dir() { return "/tmp"; }
 function header($line, $replace = true, $code = 0) { return null; }
 function headers_sent() { return false; }
 function headers_list() { return array(); }
-function ob_start($handler = null) { return true; }
-function ob_get_clean() { return ""; }
-function ob_end_clean() { return true; }
-function ob_get_level() { return 0; }
+// What the run writes out may be kept aside and let go again. The
+// kernel holds the text; the handlers a program hands over are kept
+// here, one for each keeping, and run over the text as it is let go.
+$__handlers = array();
+function ob_start($handler = null) {
+    global $__handlers;
+    __output_hold();
+    $__handlers[] = $handler;
+    return true;
+}
+function ob_get_contents() { return __output_held(); }
+function ob_get_level() { return __output_depth(); }
+function __output_handler() {
+    global $__handlers;
+    if (count($__handlers) == 0) { return null; }
+    $last = $__handlers[count($__handlers) - 1];
+    array_pop($__handlers);
+    return $last;
+}
+function ob_end_clean() {
+    if (__output_depth() == 0) { return false; }
+    __output_handler();
+    return __output_drop();
+}
+function ob_get_clean() {
+    if (__output_depth() == 0) { return false; }
+    $held = __output_held();
+    __output_handler();
+    __output_drop();
+    return $held;
+}
+function ob_end_flush() {
+    if (__output_depth() == 0) { return false; }
+    $held = __output_held();
+    $handler = __output_handler();
+    __output_drop();
+    if ($handler !== null) { $held = $handler($held, 8); }
+    echo $held;
+    return true;
+}
+function ob_get_flush() {
+    if (__output_depth() == 0) { return false; }
+    $held = __output_held();
+    ob_end_flush();
+    return $held;
+}
+function ob_flush() {
+    if (__output_depth() == 0) { return false; }
+    $held = __output_held();
+    __output_drop();
+    echo $held;
+    __output_hold();
+    return true;
+}
+function ob_clean() {
+    if (__output_depth() == 0) { return false; }
+    __output_drop();
+    __output_hold();
+    return true;
+}
 function flush() { return null; }
 function usleep($micro) { return null; }
 function sleep($seconds) { return 0; }

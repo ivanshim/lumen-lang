@@ -131,9 +131,11 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     if let Err(fault) = machine.invoke(&program, Vec::new()) {
         // A run the program itself said was over came out right.
         if matches!(fault, engine::Fault::Finished) {
+            machine.let_go_all();
             return Ok(());
         }
         machine.ended_uncaught(&fault);
+        machine.let_go_all();
         return Err(fault.told(&machine.names()));
     }
 
@@ -141,9 +143,14 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     // program body has defined it.
     if let Some(entry) = &lang.entry_binding {
         if let Some(Value::Routine(main)) = machine.lookup(entry).cloned() {
-            machine.invoke(&main, Vec::new()).map_err(|f| f.told(&machine.names()))?;
+            let done = machine.invoke(&main, Vec::new()).map_err(|f| f.told(&machine.names()));
+            machine.let_go_all();
+            done?;
+            return Ok(());
         }
     }
+    // Whatever the run was still keeping goes out when it ends.
+    machine.let_go_all();
     Ok(())
 }
 

@@ -464,6 +464,21 @@ only. The extension labels so far, all from PHP:
   whatever happens when text is asked to be a class. It differs from
   `ext.op.name_by_value` in having no mark of its own: the value simply
   stands where the name would.
+- `ext.builtin.output.hold`, `.held`, `.drop` and `.depth`: keeping
+  what the run writes out instead of letting it go. The first begins a
+  keeping, the second answers with what has been kept since that
+  beginning, the third stops keeping and gives up what was kept, and the
+  fourth says how many keepings are in force. A keeping within a keeping
+  writes into the one around it, and whatever is still being kept when
+  the run ends is let go then.
+  
+  Only these four are kernel work, because only the kernel knows where
+  what a program writes out goes. Everything else a language spells over
+  them — letting a keeping go out again, emptying one without letting it
+  go, running what was kept through a routine before it goes — is
+  written in the language itself, since giving up what was kept hands it
+  back as an ordinary value, and writing it out again writes it into
+  whatever keeping now stands.
 - `ext.op.cast`: a switch; a kind's word written within the grouping
   marks before a value makes the value that kind — `(int) $x`. The
   words are the ones the language already gives its kinds, under
@@ -920,6 +935,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.file.write` | - | - | - | - | - | - | - | `file_put_contents` | - | - |
 | `ext.builtin.include` | - | - | - | - | - | - | - | `include` `include_once` `require` `require_once` | - | - |
 | `ext.builtin.isset` | - | - | - | - | - | - | - | `isset` | - | - |
+| `ext.builtin.output.depth` | - | - | - | - | - | - | - | `__output_depth` | - | - |
+| `ext.builtin.output.drop` | - | - | - | - | - | - | - | `__output_drop` | - | - |
+| `ext.builtin.output.held` | - | - | - | - | - | - | - | `__output_held` | - | - |
+| `ext.builtin.output.hold` | - | - | - | - | - | - | - | `__output_hold` | - | - |
 | `ext.builtin.print_r` | - | - | - | - | - | - | - | `print_r` | - | - |
 | `ext.builtin.time_limit` | - | - | - | - | - | - | - | `set_time_limit` | - | - |
 | `ext.builtin.unset` | - | - | - | - | - | - | - | `unset` | - | - |
