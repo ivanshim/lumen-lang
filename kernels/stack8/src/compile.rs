@@ -2458,6 +2458,15 @@ impl<'a> Compiler<'a> {
             });
             from += 1;
         }
+        // The name a method knows its own thing by is bound by the call
+        // and by nothing else: a language naming one refuses a write to
+        // it outright, and calls that a fault of the run.
+        if let (Some(this), [Instr::Read(slot)]) = (&self.lang.this_word, target.as_slice()) {
+            if slot.ident.as_ref() == this.as_str() {
+                self.registry.stopped_fatally = true;
+                return Err(format!("Cannot re-assign {}", this));
+            }
+        }
         // Where the target read its way into a place within a place,
         // the keys are taken apart, each with where it began, so that
         // the store may work each of them out once and in order.

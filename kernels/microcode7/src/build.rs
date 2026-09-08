@@ -2348,6 +2348,15 @@ impl<'a> Builder<'a> {
             let written = self.write_into(*inner, gives_back, compound, assign)?;
             return Ok(Form::Muted(Box::new(written)));
         }
+        // The name a method knows its own thing by is bound by the call
+        // and by nothing else: a language naming one turns a write to it
+        // down outright, and calls that a fault of the run.
+        if let (Some(this), Form::Read(slot)) = (self.table.single("ext.stmt.class.this"), &expr) {
+            if slot.ident.as_ref() == this {
+                self.stopped_fatally = true;
+                return Err(format!("Cannot re-assign {}", this));
+            }
+        }
         let plain = compound.is_none();
         // `b = &a`: b is tied to a's cell rather than given a copy.
         let tied_to_a_cell = self.table.single("ext.op.reference").map_or(false, |m| self.sign(m)) && plain;
