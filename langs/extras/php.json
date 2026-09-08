@@ -843,6 +843,19 @@
   "ext.builtin.time_limit": [
     "set_time_limit"
   ],
+  "ext.system.kind.loose": [
+    "mixed",
+    "callable",
+    "iterable",
+    "object",
+    "self",
+    "static",
+    "parent",
+    "void",
+    "never",
+    "false",
+    "true"
+  ],
   "ext.system.kind.brief": [
     "int",
     "-",

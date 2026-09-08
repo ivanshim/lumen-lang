@@ -168,6 +168,9 @@ pub struct Lang {
     /// The word this language calls a thing's kind by, where it has
     /// one: a thing is of no kind the core knows.
     pub object_kind: Option<String>,
+    /// The kind words that name no class of their own: what a value
+    /// written with one of them may be is not settled by the word.
+    pub loose_kinds: Vec<String>,
     /// Whether the kind of a value is given as text spelled by the
     /// `system.kind.*` names, rather than as a value of its own. Where
     /// it is, those names are not bound to anything.
@@ -526,7 +529,7 @@ w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.co
 w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
-w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.class.beneath | b ext.builtin.write.operator
+w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.class.beneath | b ext.builtin.write.operator | w ext.system.kind.loose
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
 w ext.system.fault.operands | w ext.op.increment.text | w ext.op.decrement.text
 w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind | w ext.system.fault.class.value
@@ -1104,6 +1107,7 @@ impl Lang {
             sort_bindings: kind_names,
             brief_kinds: r.strings("ext.system.kind.brief")?,
             object_kind: r.head("ext.system.kind.object")?,
+            loose_kinds: r.strings("ext.system.kind.loose")?,
             kind_spelled: r.flag("ext.system.kind.spelled")?,
             spare_args: reads_arguments,
             assign_gives_value: r.flag("ext.op.assign.value")?,
@@ -1407,6 +1411,27 @@ impl Lang {
 
     pub fn ends_stmt(&self, lex: &str) -> bool {
         Lang::spells(&self.stmt_ends, lex)
+    }
+
+    /// Whether a kind written before a parameter names a class: a word
+    /// the language has a kind of its own for does not, nor does one it
+    /// lists as naming none.
+    pub fn names_a_class(&self, word: &str) -> bool {
+        self.kind_of_word(word).is_none() && !Lang::spells(&self.loose_kinds, word)
+    }
+
+    /// The word this language names a value's kind by, the shorter one
+    /// where it has one.
+    pub fn kind_word(&self, v: &crate::value::Value) -> String {
+        use crate::value::Sort;
+        const IN_ORDER: [Sort; 7] =
+            [Sort::Integer, Sort::Rational, Sort::Real, Sort::Text, Sort::Boolean, Sort::Array, Sort::Null];
+        let Some(kind) = v.sort() else { return "value".to_string() };
+        let at = IN_ORDER.iter().position(|k| *k == kind);
+        match at.and_then(|i| self.brief_kinds.get(i)).filter(|word| *word != "-") {
+            Some(word) => word.clone(),
+            None => self.sort_bindings.iter().find(|(_, k)| *k == kind).map_or("value".to_string(), |(n, _)| n.clone()),
+        }
     }
 
     /// The kind a word names, by the word the language asks a value's

@@ -302,6 +302,11 @@ only. The extension labels so far, all from PHP:
 - `ext.system.kind.object`: the word this language calls a thing's kind
   by (`object`), since a thing is of no kind the core knows. Without it,
   asking a thing its kind is a fault.
+- `ext.system.kind.loose`: the kind words that name no class of their
+  own (`mixed`, `callable`, `object`, `self`, …), beside the words the
+  core kinds already answer to. A kind written before a parameter that
+  is none of these names a class, and only nothing at all may stand for
+  what such a parameter falls back on; anything else stops the reading.
 - `ext.op.ternary`: the two signs of `test ? a : b`, at the bottom of the
   precedence order.
 - `ext.block.lone_statement`: a switch; a single statement may stand
@@ -1361,6 +1366,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.globals` | - | - | - | - | - | - | - | `$GLOBALS` | - | - |
 | `ext.system.integer.bits` | - | - | - | - | - | - | - | `64` | - | - |
 | `ext.system.kind.brief` | - | - | - | - | - | - | - | `int` `-` `float` `string` `bool` `array` `null` | - | - |
+| `ext.system.kind.loose` | - | - | - | - | - | - | - | `mixed` `callable` `iterable` `object` `self` `static` `parent` `void` `never` `false` `true` | - | - |
 | `ext.system.kind.object` | - | - | - | - | - | - | - | `object` | - | - |
 | `ext.system.kind.spelled` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.system.real.bits` | - | - | - | - | - | - | - | `64` | - | - |

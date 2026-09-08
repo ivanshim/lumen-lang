@@ -347,6 +347,31 @@ fn shared_parameters(tokens: &[Token], table: &Table) -> (HashMap<String, Vec<bo
 /// bound to no name of its own.
 const ANONYMOUS: &str = "{closure}";
 
+/// Whether a kind written before a parameter names a class: a word the
+/// language has a kind of its own for does not, nor does one it lists as
+/// naming none.
+fn names_a_class(table: &Table, word: &str) -> bool {
+    kind_made(table, word).is_none() && !table.spells("ext.system.kind.loose", word)
+}
+
+/// The word this language names a value's kind by, the shorter one where
+/// it has one.
+fn kind_word(table: &Table, v: &Value) -> String {
+    use crate::data::Kind;
+    let order = [Kind::Whole, Kind::Fraction, Kind::Decimal, Kind::Chars, Kind::Truth, Kind::Vector, Kind::Nothing];
+    let Some(kind) = v.kind() else { return "value".to_string() };
+    let at = order.iter().position(|k| *k == kind);
+    match at.and_then(|i| table.strings("ext.system.kind.brief").get(i)).filter(|word| *word != "-") {
+        Some(word) => word.clone(),
+        None => crate::exec::KIND_LABELS
+            .iter()
+            .find(|(_, k)| *k == kind)
+            .and_then(|(label, _)| table.single(label))
+            .unwrap_or("value")
+            .to_string(),
+    }
+}
+
 fn constant(v: Value) -> Form {
     Form::Const(v)
 }
@@ -2168,6 +2193,22 @@ impl<'a> Builder<'a> {
                 // reference asks to be written out rather than left to
                 // be understood.
                 let nothing = matches!(spare, Form::Const(Value::Nil));
+                // A parameter written with a class's name takes a thing
+                // of that class, and nothing else may stand for what it
+                // falls back on. Only a value written out is told apart
+                // here, and the reading stops over it as a fault of the
+                // run.
+                if let (Some(kind), Form::Const(worth)) = (self.formal_kinds.last().and_then(Clone::clone), &spare) {
+                    if !nothing && names_a_class(table, &kind) {
+                        self.stopped_fatally = true;
+                        return Err(format!(
+                            "Cannot use {} as default value for parameter {} of type {}",
+                            kind_word(table, worth),
+                            params.last().map_or("", String::as_str),
+                            kind
+                        ));
+                    }
+                }
                 if nothing && !takes_nothing && kinded && self.tells_place {
                     let whose = match &self.within {
                         Some((class, _)) => format!("{}::{}", class, named),

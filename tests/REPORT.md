@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 94, differs 2, error 8, skipped 10 | pass 94, differs 2, error 8, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 187, differs 16, error 5, skipped 5 | pass 187, differs 16, error 5, skipped 5 |
+| `php/lang` | 213 | pass 188, differs 15, error 5, skipped 5 | pass 188, differs 15, error 5, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 49, differs 8, error 1, skipped 6 | pass 49, differs 8, error 1, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 356, differs 27, error 14, skipped 25 | pass 356, differs 27, error 14, skipped 25 |
+| all | 422 | pass 357, differs 26, error 14, skipped 25 | pass 357, differs 26, error 14, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 27 |
+| ran, printed something else | 26 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | skip php-cgi not available | 2 |
@@ -55,11 +55,11 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: NAN in <file> | 1 |
 | Fatal error: Uncaught Error: Expected ')' to close a group, got ';' in <file> | 1 |
 
-### Reserved words: 55 of 68 spelled
+### Reserved words: 56 of 68 spelled
 
-Spelled: `abstract`, `and`, `array`, `as`, `break`, `case`, `catch`, `class`, `const`, `continue`, `default`, `do`, `echo`, `else`, `elseif`, `empty`, `endfor`, `endforeach`, `endif`, `endswitch`, `endwhile`, `eval`, `exit`, `extends`, `final`, `finally`, `for`, `foreach`, `function`, `global`, `if`, `implements`, `include`, `include_once`, `instanceof`, `interface`, `isset`, `list`, `new`, `or`, `print`, `private`, `protected`, `public`, `readonly`, `require`, `require_once`, `return`, `static`, `switch`, `throw`, `try`, `unset`, `var`, `while`
+Spelled: `abstract`, `and`, `array`, `as`, `break`, `callable`, `case`, `catch`, `class`, `const`, `continue`, `default`, `do`, `echo`, `else`, `elseif`, `empty`, `endfor`, `endforeach`, `endif`, `endswitch`, `endwhile`, `eval`, `exit`, `extends`, `final`, `finally`, `for`, `foreach`, `function`, `global`, `if`, `implements`, `include`, `include_once`, `instanceof`, `interface`, `isset`, `list`, `new`, `or`, `print`, `private`, `protected`, `public`, `readonly`, `require`, `require_once`, `return`, `static`, `switch`, `throw`, `try`, `unset`, `var`, `while`
 
-Not spelled: `callable`, `clone`, `declare`, `enddeclare`, `fn`, `goto`, `insteadof`, `match`, `namespace`, `trait`, `use`, `xor`, `yield`
+Not spelled: `clone`, `declare`, `enddeclare`, `fn`, `goto`, `insteadof`, `match`, `namespace`, `trait`, `use`, `xor`, `yield`
 
 ### Most-called functions in the suite, and whether the definition spells them
 
@@ -601,7 +601,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/throw_variation_001.phpt` | pass | pass |  |
 | `php/lang/type_hints_001.phpt` | pass | pass |  |
 | `php/lang/type_hints_002.phpt` | pass | pass |  |
-| `php/lang/type_hints_003.phpt` | differs | differs | ran, printed something else |
+| `php/lang/type_hints_003.phpt` | pass | pass |  |
 | `php/lang/zend_throw_exception_001.phpt` | pass | pass |  |
 | `python/test_augassign.py` | error | error | Unexpected character '&' |
 | `python/test_bigmem.py` | error | error | Unexpected character '@' |

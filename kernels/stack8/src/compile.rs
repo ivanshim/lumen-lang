@@ -2261,6 +2261,23 @@ impl<'a> Compiler<'a> {
                 // the reference asks to be written out rather than left
                 // to be understood.
                 let nothing = matches!(spare.as_slice(), [Instr::Const(Value::Null)]);
+                // A parameter written with a class's name takes a thing
+                // of that class and nothing else may stand for what it
+                // falls back on. Only a value written out can be told
+                // apart here, and the reading stops over it as a fault
+                // of the run.
+                if let (Some(kind), [Instr::Const(worth)]) = (kinded.last().and_then(Clone::clone), spare.as_slice()) {
+                    if !nothing && lang.names_a_class(&kind) {
+                        self.registry.stopped_fatally = true;
+                        let told = format!(
+                            "Cannot use {} as default value for parameter {} of type {}",
+                            lang.kind_word(worth),
+                            formals.last().map_or("", String::as_str),
+                            kind
+                        );
+                        return Err(told);
+                    }
+                }
                 if nothing && !takes_nothing && kinded.last().map_or(false, Option::is_some) && lang.tells_place {
                     let whose = match &self.within {
                         Some((class, _)) => format!("{}::{}", class, named),
