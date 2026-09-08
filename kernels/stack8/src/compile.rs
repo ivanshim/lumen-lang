@@ -998,10 +998,16 @@ impl<'a> Compiler<'a> {
         let at = self.gensym("at");
         self.constant(Value::Small(0));
         self.write(&at);
+        // A walk that hands out the items' own cells goes over the array
+        // as it stands, so how far it reaches is asked afresh at the foot
+        // of every pass; one that walks a copy asks once, before it
+        // begins, and what the body does to the array is nothing to it.
         let extent = self.gensym("extent");
-        self.read(bag);
-        self.act(Action::Extent, 1);
-        self.write(&extent);
+        if !shared {
+            self.read(bag);
+            self.act(Action::Extent, 1);
+            self.write(&extent);
+        }
         let to_test = self.leap();
         let top = self.mark();
         self.enter_cycle(None);
@@ -1045,7 +1051,12 @@ impl<'a> Compiler<'a> {
         self.write(&at);
         self.land(to_test);
         self.read(&at);
-        self.read(&extent);
+        if shared {
+            self.read(bag);
+            self.act(Action::Extent, 1);
+        } else {
+            self.read(&extent);
+        }
         self.act(Action::Lt, 2);
         self.loop_back(top);
         self.leave_cycle(again);

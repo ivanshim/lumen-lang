@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 46, differs 30, error 28, skipped 10 | pass 46, differs 30, error 28, skipped 10 |
 | `php/func` | 14 | pass 7, differs 3, error 4, skipped 0 | pass 7, differs 3, error 4, skipped 0 |
-| `php/lang` | 213 | pass 80, differs 52, error 76, skipped 5 | pass 80, differs 52, error 76, skipped 5 |
+| `php/lang` | 213 | pass 82, differs 52, error 74, skipped 5 | pass 82, differs 52, error 74, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
-| `php/lang/operators` | 64 | pass 31, differs 21, error 6, skipped 6 | pass 31, differs 21, error 6, skipped 6 |
+| `php/lang/operators` | 64 | pass 34, differs 20, error 4, skipped 6 | pass 34, differs 20, error 4, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 169, differs 114, error 114, skipped 25 | pass 169, differs 114, error 114, skipped 25 |
+| all | 422 | pass 174, differs 113, error 110, skipped 25 | pass 174, differs 113, error 110, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 114 |
+| ran, printed something else | 113 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> | 6 |
@@ -50,10 +50,8 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Only a class can be made into an object in <file> | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Undefined variable: StdClass in <file> | 2 |
-| Fatal error: Uncaught Error: Array index 2 out of bounds (length: 1) in <file> | 2 |
 | Expected ']' after array index, got '++' | 2 |
 | Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> | 2 |
-| Unexpected token: > | 2 |
 | Fatal error: Uncaught Error: '$name' is not a function in <file> | 2 |
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> | 1 |
@@ -68,6 +66,8 @@ is listed, since the full kernels are meant to behave alike.
 | skip for Windows only | 1 |
 | Fatal error: Uncaught Error: Undefined variable: join in <file> | 1 |
 | skip Run only on Windows | 1 |
+| Fatal error: Uncaught Error: Undefined variable: INF in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: InfiniteIterator in <file> | 1 |
 
 ### Reserved words: 48 of 68 spelled
 
@@ -457,12 +457,12 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/error_2_exception_001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/execution_order.phpt` | differs | differs | ran, printed something else |
 | `php/lang/foreachLoop.001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: current in <file> |
-| `php/lang/foreachLoop.002.phpt` | error | error | Fatal error: Uncaught Error: Array index 2 out of bounds (length: 1) in <file> |
+| `php/lang/foreachLoop.002.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.003.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.004.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.005.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.006.phpt` | differs | differs | ran, printed something else |
-| `php/lang/foreachLoop.009.phpt` | error | error | Fatal error: Uncaught Error: Array index 2 out of bounds (length: 1) in <file> |
+| `php/lang/foreachLoop.009.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.010.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.011.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.012.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
@@ -534,7 +534,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/multiply_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/multiply_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/nan-comparison-false.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: NAN in <file> |
-| `php/lang/operators/negate_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/negate_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/negate_variationStr.phpt` | error | error | Fatal error: Uncaught Error: Cannot negate non-numeric value in <file> |
 | `php/lang/operators/operator_equals_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_equals_variation.phpt` | skipped | skipped | skip this test is for 32bit platform only |
@@ -555,13 +555,13 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/operator_lt_or_equal_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_lt_variation.phpt` | pass | pass |  |
 | `php/lang/operators/operator_lt_variation_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/operator_notequals_basic.phpt` | error | error | Unexpected token: > |
+| `php/lang/operators/operator_notequals_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_notequals_variation.phpt` | skipped | skipped | skip this test is for 32bit platform only |
-| `php/lang/operators/operator_notequals_variation_64bit.phpt` | error | error | Unexpected token: > |
+| `php/lang/operators/operator_notequals_variation_64bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/operator_notidentical_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_notidentical_variation.phpt` | skipped | skipped | skip this test is for 32bit platform only |
 | `php/lang/operators/operator_notidentical_variation_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/operator_spaceship_basic.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_spaceship_basic.phpt` | pass | pass |  |
 | `php/lang/operators/overloaded_property_ref.phpt` | error | error | Unexpected token: -> |
 | `php/lang/operators/postdec_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/postdec_variationStr.phpt` | differs | differs | ran, printed something else |

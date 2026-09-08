@@ -1596,6 +1596,20 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
+            // A language that asks equality loosely ranks loosely too,
+            // so that ranking two values and asking which comes first
+            // give answers that agree.
+            Prim::Rank if self.loose_equals => {
+                n(2)?;
+                let alike = self.prim(Prim::Eq, name, v)?.is_true();
+                Value::Small(if alike {
+                    0
+                } else if self.comes_first(&v[0], &v[1])? {
+                    -1
+                } else {
+                    1
+                })
+            }
             Prim::Rank => {
                 n(2)?;
                 // Numbers by their order, anything else by its text.
@@ -1695,7 +1709,10 @@ impl<'a> Machine<'a> {
                     (Value::Frac(was), Value::Frac(now)) if num_traits::Zero::is_zero(&now.above) => {
                         math::made_number(now.above.clone(), now.beneath.clone(), now.places, !was.under)
                     }
-                    _ => turned,
+                    // The lowest whole number turned about lies one past
+                    // the width, so it comes back a real, as a sum that
+                    // runs over does.
+                    _ => self.at_width(turned),
                 }
             }
             // Which of two comes first is asked just as loosely, so an
@@ -2171,6 +2188,14 @@ fn as_index(v: &Value) -> Result<usize, String> {
 /// one entry per line, each nested level two spaces further in.
 fn with_kind(v: &Value, level: usize, binary_reals: bool) -> String {
     let lead = "  ".repeat(level);
+    // Something standing inside a value is marked as shared when its
+    // cell is one that some name still reaches besides the value
+    // holding it. A cell no other name reaches shows plainly, and so
+    // does a value shown on its own.
+    let tied = |x: &Value| match x {
+        Value::Shared(cell) if Rc::strong_count(cell) > 1 => "&",
+        _ => "",
+    };
     match v {
         // A cell that names share is shown as what it holds.
         Value::Shared(cell) => with_kind(&cell.borrow(), level, binary_reals),
@@ -2184,7 +2209,7 @@ fn with_kind(v: &Value, level: usize, binary_reals: bool) -> String {
         Value::Text(s) => format!("string({}) \"{}\"", s.len(), s),
         Value::Flag(b) => format!("bool({})", b),
         Value::Vector(items) => {
-            let entries: Vec<String> = items.iter().enumerate().map(|(i, x)| format!("{lead}  [{i}]=>\n{lead}  {}\n", with_kind(x, level + 1, binary_reals))).collect();
+            let entries: Vec<String> = items.iter().enumerate().map(|(i, x)| format!("{lead}  [{i}]=>\n{lead}  {}{}\n", tied(x), with_kind(x, level + 1, binary_reals))).collect();
             format!("array({}) {{\n{}{lead}}}", items.len(), entries.concat())
         }
         Value::Dict(entries) => {
@@ -2196,7 +2221,7 @@ fn with_kind(v: &Value, level: usize, binary_reals: bool) -> String {
                         Value::Text(s) => format!("\"{}\"", s),
                         other => other.bare(),
                     };
-                    format!("{lead}  [{key}]=>\n{lead}  {}\n", with_kind(x, level + 1, binary_reals))
+                    format!("{lead}  [{key}]=>\n{lead}  {}{}\n", tied(x), with_kind(x, level + 1, binary_reals))
                 })
                 .collect();
             format!("array({}) {{\n{}{lead}}}", entries.len(), shown.concat())
@@ -2205,7 +2230,7 @@ fn with_kind(v: &Value, level: usize, binary_reals: bool) -> String {
             let held = thing.holds.borrow();
             let shown: Vec<String> = held
                 .iter()
-                .map(|(member, x)| format!("{lead}  [\"{member}\"]=>\n{lead}  {}\n", with_kind(x, level + 1, binary_reals)))
+                .map(|(member, x)| format!("{lead}  [\"{member}\"]=>\n{lead}  {}{}\n", tied(x), with_kind(x, level + 1, binary_reals)))
                 .collect();
             format!("object({})#{} ({}) {{\n{}{lead}}}", thing.of.name, thing.turn, held.len(), shown.concat())
         }

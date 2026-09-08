@@ -934,7 +934,10 @@ impl<'a> Engine<'a> {
                     (Value::Real(was), Value::Real(now)) if num_traits::Zero::is_zero(&now.p) => {
                         arith::shape_signed(now.p.clone(), now.q.clone(), Some(now.places), !was.below)
                     }
-                    _ => turned,
+                    // Turning the lowest whole number about takes it past
+                    // the width the language holds, as adding to the
+                    // highest one does.
+                    _ => self.within_width(turned),
                 }
             }
             Action::Invoke(name) => {
@@ -1376,6 +1379,16 @@ impl<'a> Engine<'a> {
                 self.hushed.set(self.hushed.get() - 1);
                 found
             }
+            // Where a language asks equality loosely, ranking is asked
+            // the same way, so that `<=>` and `<` never disagree about
+            // two values.
+            Action::Rank if self.lang.loose_equality => Value::Small(if self.dyadic(&Action::Eq, a, b)?.is_true() {
+                0
+            } else if self.loosely_below(a, b)? {
+                -1
+            } else {
+                1
+            }),
             Action::Rank => match crate::arith::order_values(a, b) {
                 Some(std::cmp::Ordering::Less) => Value::Small(-1),
                 Some(std::cmp::Ordering::Equal) => Value::Small(0),
@@ -2193,6 +2206,14 @@ pub fn places_default() -> Value {
 /// entry per line, nested arrays indented two more.
 fn dumped(v: &Value, depth: usize, binary_reals: bool) -> String {
     let pad = "  ".repeat(depth);
+    // A place whose cell some name still holds besides the one holding
+    // it is shown as shared. A place whose cell nothing else holds is
+    // shown plainly, since a cell no other name reaches is a value like
+    // any other; a value shown on its own is never marked.
+    let shared = |item: &Value| match item {
+        Value::Bond(cell) if std::rc::Rc::strong_count(cell) > 1 => "&",
+        _ => "",
+    };
     match v {
         // A cell two names share is shown as what it holds.
         Value::Bond(shared) => dumped(&shared.borrow(), depth, binary_reals),
@@ -2208,7 +2229,7 @@ fn dumped(v: &Value, depth: usize, binary_reals: bool) -> String {
         Value::Array(items) => {
             let mut out = format!("array({}) {{\n", items.len());
             for (i, item) in items.iter().enumerate() {
-                out.push_str(&format!("{pad}  [{i}]=>\n{pad}  {}\n", dumped(item, depth + 1, binary_reals)));
+                out.push_str(&format!("{pad}  [{i}]=>\n{pad}  {}{}\n", shared(item), dumped(item, depth + 1, binary_reals)));
             }
             out.push_str(&pad);
             out.push('}');
@@ -2222,7 +2243,7 @@ fn dumped(v: &Value, depth: usize, binary_reals: bool) -> String {
                     Value::Text(s) => format!("\"{}\"", s),
                     other => other.plain(),
                 };
-                out.push_str(&format!("{pad}  [{shown}]=>\n{pad}  {}\n", dumped(item, depth + 1, binary_reals)));
+                out.push_str(&format!("{pad}  [{shown}]=>\n{pad}  {}{}\n", shared(item), dumped(item, depth + 1, binary_reals)));
             }
             out.push_str(&pad);
             out.push('}');
@@ -2232,7 +2253,7 @@ fn dumped(v: &Value, depth: usize, binary_reals: bool) -> String {
             let held = thing.fields.borrow();
             let mut out = format!("object({})#{} ({}) {{\n", thing.class.name, thing.mark, held.len());
             for (member, item) in held.iter() {
-                out.push_str(&format!("{pad}  [\"{member}\"]=>\n{pad}  {}\n", dumped(item, depth + 1, binary_reals)));
+                out.push_str(&format!("{pad}  [\"{member}\"]=>\n{pad}  {}{}\n", shared(item), dumped(item, depth + 1, binary_reals)));
             }
             out.push_str(&pad);
             out.push('}');

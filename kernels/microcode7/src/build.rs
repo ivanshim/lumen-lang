@@ -1377,12 +1377,22 @@ impl<'a> Builder<'a> {
             self.address_to_write(k);
         }
         self.address_to_write(&item);
-        let (test_at, test_end) = (at_name.clone(), extent_name);
-        let (walk, walk_at) = (bag_name, at_name.clone());
+        // Handing out an item's own cell means walking the array itself
+        // and not the copy: its keys and how far it reaches are asked of
+        // it afresh each pass, so that what the body adds or takes away
+        // shortens or lengthens the walk. A walk over the copy asks once.
+        let over = shares.clone().unwrap_or_else(|| bag_name.clone());
+        let alive = shares.is_some();
+        let (test_at, test_end, test_over) = (at_name.clone(), extent_name, over.clone());
+        let (walk, walk_at) = (over, at_name.clone());
         let step_at = at_name;
         let looped = self.cycle(
             move |r| {
-                let (here, end) = (r.read(&test_at), r.read(&test_end));
+                let here = r.read(&test_at);
+                let end = match alive {
+                    true => prim_call(Prim::Extent, vec![r.read(&test_over)]),
+                    false => r.read(&test_end),
+                };
                 Ok(prim_call(Prim::Lt, vec![here, end]))
             },
             move |r| {
@@ -1432,7 +1442,10 @@ impl<'a> Builder<'a> {
                 Ok(r.write(&step_at, next))
             }),
         )?;
-        Ok(sequence(vec![hold, start, size, looped]))
+        match alive {
+            true => Ok(sequence(vec![hold, start, looped])),
+            false => Ok(sequence(vec![hold, start, size, looped])),
+        }
     }
 
     /// `for (init; test; step) body`: the init, then a cycle whose step
@@ -2047,6 +2060,14 @@ impl<'a> Builder<'a> {
                 for i in (0..deep).rev() {
                     let (holds, key, done) = (self.read(&in_cells[i]), self.read(&at_cells[i]), self.read(&in_cells[i + 1]));
                     steps.push(prim_call(Prim::Replace, vec![holds, key, done]));
+                }
+                // The cells the rewriting stood on were scaffolding, and
+                // are let go now the write has landed: a cell the program
+                // itself does not share should not go on being held by a
+                // name of the builder's own making.
+                for cell in &in_cells {
+                    let slot = self.address_to_write(cell);
+                    steps.push(Form::Forget(slot));
                 }
                 if gives_back {
                     steps.push(self.read(&holding));
