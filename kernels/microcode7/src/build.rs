@@ -110,6 +110,12 @@ pub struct Built {
     pub program: Rc<Routine>,
     pub globals: Vec<String>,
     pub seen: HashMap<String, Signature>,
+    /// Which parameters of which routines take a cell rather than a
+    /// value, and which routines hand a cell back. Text read while the
+    /// run goes is a piece of the same program and must know what the
+    /// whole of it declared.
+    pub shared_args: HashMap<String, Vec<bool>>,
+    pub gives_back: HashSet<String>,
 }
 
 /// What a run of postfix words is part of, which says where it stops.
@@ -130,19 +136,46 @@ pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMa
 /// stopped, for a language that tells such a stopping in its own words.
 pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32)> {
     let at = std::cell::Cell::new(0u32);
-    build_marking(tokens, table, seeded, assumed, strict, before, None, Some(&at)).map_err(|said| (said, at.get()))
+    build_marking(tokens, table, seeded, assumed, strict, before, None, Some(&at), None).map_err(|said| (said, at.get()))
 }
 
 /// The same, said besides which file the text came out of, where it was
 /// read as the run went.
 pub fn build_from(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>) -> Res<Built> {
-    build_marking(tokens, table, seeded, assumed, strict, before, written_in, None)
+    build_marking(tokens, table, seeded, assumed, strict, before, written_in, None, None)
 }
 
-fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<&std::cell::Cell<u32>>) -> Res<Built> {
+/// The same, save that the text stands inside a routine already running:
+/// the names that routine has are given here and a name the text reads
+/// or writes means one of them. Names of its own go on the end, so the
+/// frame it runs in need only be made longer. What the routine already
+/// declared about cells is handed over too, since the text is a piece of
+/// the same program.
+pub fn build_within(
+    tokens: &[Token],
+    table: &Table,
+    seeded: &[String],
+    inside: &[String],
+    knows: (&HashMap<String, Vec<bool>>, &HashSet<String>),
+    before: u32,
+) -> Res<Built> {
+    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, None, Some((inside, knows)))
+}
+
+type Within<'w> = (&'w [String], (&'w HashMap<String, Vec<bool>>, &'w HashSet<String>));
+
+fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<&std::cell::Cell<u32>>, within: Option<Within>) -> Res<Built> {
     let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
-    let (shared_args, gives_back) = shared_parameters(tokens, table);
-    let mut r = Builder { within: None, shared_args, gives_back, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(),
+    let (mut shared_args, mut gives_back) = shared_parameters(tokens, table);
+    let mut layers = vec![top];
+    if let Some((inside, (args, backs))) = within {
+        for (named, marks) in args {
+            shared_args.entry(named.clone()).or_insert_with(|| marks.clone());
+        }
+        gives_back.extend(backs.iter().cloned());
+        layers.push(Layer { holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
+    }
+    let mut r = Builder { within: None, shared_args, gives_back, table, forks: Vec::new(), tokens, pos: 0, layers, gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(),
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
@@ -194,8 +227,14 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         sequence(ahead)
     };
     let top = r.layers.pop().unwrap();
-    let program = Routine { ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: top.idents.clone(), frameless: false, written_in: r.written_in.clone(), traps: Traps::Naught, body };
-    Ok(Built { program: Rc::new(program), globals: top.idents, seen: r.seen })
+    // Where the text stands inside a routine, the layer just popped is
+    // that routine's and the one under it holds the globals.
+    let globals = match r.layers.pop() {
+        Some(under) => under.idents,
+        None => top.idents.clone(),
+    };
+    let program = Routine { ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: top.idents, frameless: false, written_in: r.written_in.clone(), traps: Traps::Naught, body };
+    Ok(Built { program: Rc::new(program), globals, seen: r.seen, shared_args: r.shared_args, gives_back: r.gives_back })
 }
 
 /// Which parameters of each program are written with the reference sign.

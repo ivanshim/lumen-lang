@@ -160,6 +160,46 @@ impl<'a> Engine<'a> {
     /// Where it came from a file of its own, that file is where the run
     /// is written for as long as it lasts: a complaint names it, and a
     /// file it asks for in turn is looked for beside it.
+    /// Text read while the run goes, read as standing where the call to
+    /// read it stands: the names of the routine around it are its own,
+    /// and what it writes to one of them the routine sees. Names it
+    /// makes itself go on the end and are gone once it is done, since
+    /// the frame it was handed is not its own to lengthen.
+    fn run_text_here(&mut self, program: &Rc<Routine>, frame: &mut [Value]) -> Flow<()> {
+        let given = self.drop_top()?;
+        let sp = self.wording();
+        let source = match &self.lang.prologue {
+            Some(open) => format!("{}
+{}", open, given.display(&sp)),
+            None => given.display(&sp),
+        };
+        let tokens = crate::layout::layout(crate::lex::lex(&source, self.lang)?, self.lang)?;
+        let names = program.idents.clone();
+        let read = crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, None, Some(names))?;
+        self.world.resize(self.registry.idents.len(), Value::Blank);
+        let mut mine: Vec<Value> = frame.to_vec();
+        mine.resize(read.idents.len().max(frame.len()), Value::Blank);
+        let base = self.data.len();
+        let outcome = self.run_instrs(&read, &mut mine);
+        // What the text wrote to a name the routine already had, the
+        // routine sees.
+        for (place, worth) in frame.iter_mut().zip(mine) {
+            *place = worth;
+        }
+        match outcome {
+            Ok(()) => {}
+            Err(Fault::Note(told)) => return Err(told.into()),
+            Err(other) => return Err(other),
+        }
+        // What it left behind is its answer; nothing left is a plain yes.
+        let answer = match self.data.len() > base {
+            true => self.drop_top()?,
+            false => Value::Small(1),
+        };
+        self.data.push(answer);
+        Ok(())
+    }
+
     fn run_source(&mut self, source: &str, came_from: Option<String>) -> Res<Value> {
         let tokens = crate::layout::layout(crate::lex::lex(source, self.lang)?, self.lang)?;
         let program = crate::compile::compile_from(&tokens, self.lang, &mut self.registry, 0, came_from.as_deref().map(Rc::from))?;
@@ -925,7 +965,7 @@ impl<'a> Engine<'a> {
         // so how much quiet stood when the piece began is what stands
         // again once it has gone.
         let quiet = self.hushed.get();
-        let mut outcome = self.run_body(frame, instrs);
+        let mut outcome = self.run_body(program, frame, instrs);
         // A complaint raised by the last word of a body would have
         // nowhere left to be handed over, so it is handed over here.
         if outcome.is_ok() && self.any_waiting.get() {
@@ -937,7 +977,7 @@ impl<'a> Engine<'a> {
         outcome
     }
 
-    fn run_body(&mut self, frame: &mut [Value], instrs: &[crate::code::Instr]) -> Flow<()> {
+    fn run_body(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[crate::code::Instr]) -> Flow<()> {
         let mut pc = 0;
         let mut counted = 0u32;
         // Where a raised value is caught, how deep the stack was when
@@ -984,7 +1024,15 @@ impl<'a> Engine<'a> {
                     self.store_cell(slot, frame, v)?;
                 }
                 Instr::Act(op, argc) => {
-                    if let Err(fault) = self.perform(op, *argc) {
+                    // Text read while the run goes is read where it
+                    // stands: inside a routine it sees that routine's
+                    // names, as the reference has it, and only the
+                    // outermost body has none but the globals.
+                    let done = match op {
+                        Action::Builtin(Builtin::Eval, _) if !program.body_of_all && *argc == 1 => self.run_text_here(program, frame),
+                        _ => self.perform(op, *argc),
+                    };
+                    if let Err(fault) = done {
                         // A language that names a class for the kernel's
                         // own faults has them raised as one of that
                         // class, so a program may take them like any

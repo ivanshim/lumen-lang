@@ -113,6 +113,14 @@ pub struct Machine<'a> {
     /// The files already read where the program asked that they be read
     /// only once, under the whole name each stands by.
     read_before: RefCell<std::collections::HashSet<String>>,
+    /// What the program already read declared about cells: which
+    /// parameters take one and which routines hand one back. Text read
+    /// while the run goes is a piece of the same program and is built
+    /// knowing it.
+    pub knows_cells: (HashMap<String, Vec<bool>>, std::collections::HashSet<String>),
+    /// The names of the frame each call is running in, innermost last,
+    /// so that text read while the run goes can be built knowing them.
+    frames_named: Vec<Rc<Routine>>,
     /// The routine every complaint is handed to, where the program has
     /// put one in the way of them; the complaints still to be handed
     /// over, since one may be raised where the run is only reading; and
@@ -177,6 +185,8 @@ impl<'a> Machine<'a> {
             afterward: RefCell::new(Vec::new()),
             things: RefCell::new(Vec::new()),
             read_before: RefCell::new(std::collections::HashSet::new()),
+            knows_cells: (HashMap::new(), std::collections::HashSet::new()),
+            frames_named: Vec::new(),
             hearer: RefCell::new(None),
             unheard: RefCell::new(Vec::new()),
             any_unheard: std::cell::Cell::new(false),
@@ -826,6 +836,26 @@ impl<'a> Machine<'a> {
     /// it came out of a file of its own, that file is where the run is
     /// written while it lasts: a complaint names it, and a file it asks
     /// for in turn is sought beside it.
+    /// Text read while the run goes, read as standing where the call to
+    /// read it stands: the names of the routine around it are its own,
+    /// and what it writes to one of them the routine sees afterwards.
+    /// Names it makes itself go on the end of that routine's frame.
+    fn run_text_within(&mut self, source: &str, frame: &Rc<Env>) -> Result<Value, Escape> {
+        let tokens = crate::scan::scan(source, self.table).map_err(Escape::Error)?;
+        let tokens = crate::indent::indent(tokens, self.table).map_err(Escape::Error)?;
+        let held: Vec<String> = self.frames_named.last().map_or_else(Vec::new, |p| p.idents.clone());
+        let knows = (&self.knows_cells.0, &self.knows_cells.1);
+        let built = crate::build::build_within(&tokens, self.table, &self.idents, &held, knows, 0).map_err(Escape::Error)?;
+        self.idents = built.globals;
+        self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
+        frame.cells.borrow_mut().resize(built.program.idents.len().max(held.len()), Value::Unset);
+        let answer = self.value_of(&built.program.body, frame)?;
+        Ok(match answer {
+            Value::Nil | Value::Unset => Value::Small(1),
+            other => other,
+        })
+    }
+
     fn run_source(&mut self, source: &str, came_out_of: Option<String>) -> Result<Value, String> {
         let tokens = crate::scan::scan(source, self.table)?;
         let tokens = crate::indent::indent(tokens, self.table)?;
@@ -1400,6 +1430,23 @@ impl<'a> Machine<'a> {
                     let v = self.value_list(args, frame)?;
                     self.walking(op, name, &v)
                 }
+                // Text read while the run goes is read where it stands:
+                // inside a routine it knows that routine's names, as the
+                // reference has it, and only the outermost body has none
+                // but the globals.
+                Prim::Weigh if !Rc::ptr_eq(frame, &self.outermost) => {
+                    let v = self.value_list(args, frame)?;
+                    if v.len() != 1 {
+                        return Err(Escape::Error(format!("{}() expects 1 argument, got {}", name, v.len())));
+                    }
+                    let w = self.wording();
+                    let given = v[0].render(w);
+                    let source = match self.table.single("lexical.prologue") {
+                        Some(open) => format!("{}\n{}", open, given),
+                        None => given,
+                    };
+                    self.run_text_within(&source, frame)
+                }
 
                 Prim::Both | Prim::Either => {
                     let seen = self.value_of(&args[0], frame)?;
@@ -1779,6 +1826,14 @@ impl<'a> Machine<'a> {
             (was, self.row)
         });
         let mut caught: u8 = 0;
+        // The names of the frame being run in, kept while it runs, so
+        // that text read while the run goes can be built knowing them.
+        // A program holding no names of its own runs in the frame around
+        // it, whose names are already kept.
+        let mine = !program.frameless;
+        if mine {
+            self.frames_named.push(program.clone());
+        }
         let outcome: Res = loop {
             caught |= match program.traps {
                 Traps::Naught => 0,
@@ -1802,6 +1857,11 @@ impl<'a> Machine<'a> {
                 Ok(Next::Jump(p, f)) => {
                     program = p;
                     frame = f;
+                    if mine {
+                        if let Some(top) = self.frames_named.last_mut() {
+                            *top = program.clone();
+                        }
+                    }
                     if watching {
                         let next = std::mem::take(&mut self.pending);
                         if let Some(top) = self.handed.last_mut() {
@@ -1817,6 +1877,9 @@ impl<'a> Machine<'a> {
                 Err(e) => break Err(e),
             }
         };
+        if mine {
+            self.frames_named.pop();
+        }
         if let Some((was, on)) = elsewhere {
             self.written_in = was;
             self.row = on;

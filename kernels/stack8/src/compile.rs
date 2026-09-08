@@ -42,6 +42,12 @@ pub struct Registry {
     /// The line the reading had reached when it stopped, for a language
     /// that tells such a stopping in its own words to name.
     pub stopped_at: usize,
+    /// Which parameters of which routines take a cell rather than a
+    /// value, and which routines give a cell back. Kept here because
+    /// text read while the run goes is a piece of the same program and
+    /// must know what the whole of it declared.
+    pub shared_args: HashMap<String, Vec<bool>>,
+    pub gives_back: std::collections::HashSet<String>,
 }
 
 impl Registry {
@@ -161,11 +167,28 @@ pub fn compile(tokens: &[Token], lang: &Lang, table: &mut Registry, before: u32)
 /// The same, told besides which file the text came out of, where it was
 /// read while the run was going.
 pub fn compile_from(tokens: &[Token], lang: &Lang, table: &mut Registry, before: u32, written_in: Option<Rc<str>>) -> Res<Rc<Routine>> {
+    compile_within(tokens, lang, table, before, written_in, None)
+}
+
+/// The same, save that the text may be read as standing inside a
+/// routine already running: the names it already has are given here, and
+/// a name the text reads or writes means that one. Names of its own are
+/// added on the end, so the frame it runs in need only be made longer.
+pub fn compile_within(
+    tokens: &[Token],
+    lang: &Lang,
+    table: &mut Registry,
+    before: u32,
+    written_in: Option<Rc<str>>,
+    inside: Option<Vec<String>>,
+) -> Res<Rc<Routine>> {
+    let alone = inside.is_none();
+    let already = inside.unwrap_or_default();
     let top = Piece {
-        outermost: true,
+        outermost: alone,
         ident: "<program>".to_string(),
-        idents: Vec::new(),
-        declared: Vec::new(),
+        declared: vec![false; already.len()],
+        idents: already,
         scopes: Vec::new(),
         globals: Vec::new(),
         lasts: Vec::new(),
@@ -175,7 +198,15 @@ pub fn compile_from(tokens: &[Token], lang: &Lang, table: &mut Registry, before:
         line: 0,
         instrs: Vec::new(),
     };
-    let (shared_args, gives_back) = shared_parameters(tokens, lang);
+    // Text read as standing inside a routine is a piece of a program
+    // already read: what that program declared about cells stands here.
+    let (mut shared_args, mut gives_back) = shared_parameters(tokens, lang);
+    if !alone {
+        for (name, marks) in &table.shared_args {
+            shared_args.entry(name.clone()).or_insert_with(|| marks.clone());
+        }
+        gives_back.extend(table.gives_back.iter().cloned());
+    }
     let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new() };
     if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
@@ -221,6 +252,10 @@ pub fn compile_from(tokens: &[Token], lang: &Lang, table: &mut Registry, before:
     let end = a.mark();
     for at in a.piece().escapes.clone() {
         a.piece().instrs[at] = Instr::Skip(end);
+    }
+    if alone {
+        a.registry.shared_args = a.shared_args.clone();
+        a.registry.gives_back = a.gives_back.clone();
     }
     let unit = a.pieces.pop().expect("the top unit");
     Ok(Rc::new(Routine { ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), instrs: peephole(unit.instrs) }))

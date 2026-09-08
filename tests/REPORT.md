@@ -19,19 +19,18 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 81, differs 5, error 18, skipped 10 | pass 81, differs 5, error 18, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 152, differs 28, error 28, skipped 5 | pass 152, differs 28, error 28, skipped 5 |
+| `php/lang` | 213 | pass 154, differs 30, error 24, skipped 5 | pass 154, differs 30, error 24, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 46, differs 10, error 2, skipped 6 | pass 46, differs 10, error 2, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 305, differs 44, error 48, skipped 25 | pass 305, differs 44, error 48, skipped 25 |
+| all | 422 | pass 307, differs 46, error 44, skipped 25 | pass 307, differs 46, error 44, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 44 |
+| ran, printed something else | 46 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
-| Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
 | skip php-cgi not available | 2 |
 | timeout | 2 |
@@ -68,6 +67,7 @@ is listed, since the full kernels are meant to behave alike.
 | skip only for Windows | 1 |
 | Fatal error: Uncaught Error: Undefined variable: include in <file> | 1 |
 | Fatal error: Uncaught TypeError: blah(): Argument #1 ($a) must be of type Foo, stdClass given, called in <file> in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: datetime in <file> | 1 |
 
 ### Reserved words: 55 of 68 spelled
 
@@ -465,10 +465,10 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/foreachLoop.009.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.010.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.011.phpt` | pass | pass |  |
-| `php/lang/foreachLoop.012.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
-| `php/lang/foreachLoop.013.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
-| `php/lang/foreachLoop.014.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
-| `php/lang/foreachLoop.015.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
+| `php/lang/foreachLoop.012.phpt` | pass | pass |  |
+| `php/lang/foreachLoop.013.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoop.014.phpt` | pass | pass |  |
+| `php/lang/foreachLoop.015.phpt` | differs | differs | ran, printed something else |
 | `php/lang/foreachLoop.016.phpt` | error | error | Parse error: A foreach that hands out its items for writing needs a named array in <file> |
 | `php/lang/foreachLoop.017.phpt` | pass | pass |  |
 | `php/lang/foreachLoopIterator.001.phpt` | pass | pass |  |

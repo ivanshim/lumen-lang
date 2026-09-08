@@ -338,6 +338,11 @@ only. The extension labels so far, all from PHP:
   classes themselves are declared in the language's own library, not
   here: the kernel is told only which class stands for each and what the
   methods are called.
+- `ext.builtin.eval` reads text as standing where the call to read it
+  stands: inside a routine, the names that routine has are its own, and
+  what it writes to one of them the routine sees afterwards. Names it
+  makes for itself go on the end and are gone once it is done. At the
+  outermost level it has the globals and nothing else, as before.
 - `ext.op.index.scalar`: the words for using a value with no places at
   all as though it had them, PHP's `Cannot use a scalar value as an
   array`. Without them the kernel says so in its own words.

@@ -136,6 +136,9 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         settled.ok_or_else(|| "The programs of this file take and leave values in a way that does not settle".to_string())?
     };
     let mut machine = exec::Machine::new(table, reduced.globals.clone());
+    // Text read while the run goes is a piece of this same program, and
+    // is built knowing what the whole of it declared about cells.
+    machine.knows_cells = (reduced.shared_args.clone(), reduced.gives_back.clone());
     if let Some(n) = table.single("system.args") {
         machine.define(n, Value::text(&program_args.join(" ")));
     }
