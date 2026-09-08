@@ -81,55 +81,113 @@ fn drop_comments(source: &str, table: &Table) -> String {
 /// lies between the prologue and the epilogue is code, and everything
 /// else is written out as it stands, as though the program said so.
 pub fn scan(source: &str, table: &Table) -> Result<Vec<Token>, String> {
+    scan_at(source, table).map_err(|(said, _)| said)
+}
+
+/// The same, saying besides which row the reading stopped on.
+pub fn scan_at(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)> {
     if !table.flag("ext.lexical.template") {
-        return scan_code(source, table);
+        return scan_code_marking(source, table, 1);
     }
-    let opening = table.single("lexical.prologue").ok_or_else(|| "A template needs lexical.prologue".to_string())?;
+    let opening = table.single("lexical.prologue").ok_or_else(|| ("A template needs lexical.prologue".to_string(), 0))?;
     let closing = table.single("ext.lexical.epilogue");
     let telling = table
         .prims
         .iter()
         .find(|(_, op)| **op == crate::form::Prim::Tell)
         .map(|(word, _)| word.clone())
-        .ok_or_else(|| "A template needs a builtin that writes what it is given".to_string())?;
+        .ok_or_else(|| ("A template needs a builtin that writes what it is given".to_string(), 0))?;
     let ending = table.single("stmt.terminator").unwrap_or(";").to_string();
     let mut out: Vec<Token> = Vec::new();
-    let says = |text: &str, out: &mut Vec<Token>| {
+    let says = |text: &str, row: u32, out: &mut Vec<Token>| {
         if text.is_empty() {
             return;
         }
-        out.push(Token { shape: Shape::Bare, lexeme: telling.clone(), span: 0, row: 1 });
-        out.push(Token { shape: Shape::Quote, lexeme: text.to_string(), span: 0, row: 1 });
-        out.push(Token { shape: Shape::Sign, lexeme: ending.clone(), span: 0, row: 1 });
+        out.push(Token { shape: Shape::Bare, lexeme: telling.clone(), span: 0, row });
+        out.push(Token { shape: Shape::Quote, lexeme: text.to_string(), span: 0, row });
+        out.push(Token { shape: Shape::Sign, lexeme: ending.clone(), span: 0, row });
     };
     let mut rest = source;
-    while let Some(at) = rest.find(opening) {
-        says(&rest[..at], &mut out);
-        let after = &rest[at + opening.len()..];
+    // The rows of the page are counted through the weave, so that what
+    // a run of code says of itself names the page's own lines.
+    let mut row: u32 = 1;
+    let briefly = table.single("ext.lexical.prologue.echo");
+    loop {
+        // A run of code may be opened by either marker, whichever comes
+        // first. The brief one asks for what the run comes to be
+        // written out, so the word that writes stands before it.
+        let (at, mark, writes) = match (rest.find(opening), briefly.and_then(|m| rest.find(m))) {
+            (Some(a), Some(b)) if b < a => (b, briefly.expect("the brief marker"), true),
+            (Some(a), _) => (a, opening, false),
+            (None, Some(b)) => (b, briefly.expect("the brief marker"), true),
+            (None, None) => break,
+        };
+        says(&rest[..at], row, &mut out);
+        row += rest[..at].matches('\n').count() as u32;
+        let after = &rest[at + mark.len()..];
         let (code, tail) = match closing.and_then(|e| after.find(e)) {
             Some(end) => (&after[..end], &after[end + closing.map_or(0, str::len)..]),
             None => (after, ""),
         };
-        let mut inside = scan_code(code, table)?;
+        let mut inside = scan_code_marking(code, table, row)?;
         inside.pop();
+        let ended = inside.last().map_or(row, |t| t.row);
+        if writes {
+            out.push(Token { shape: Shape::Bare, lexeme: telling.clone(), span: 0, row });
+        }
         out.append(&mut inside);
         // Each run of code stands as a statement, however it ended.
-        out.push(Token { shape: Shape::Sign, lexeme: ending.clone(), span: 0, row: 1 });
+        out.push(Token { shape: Shape::Sign, lexeme: ending.clone(), span: 0, row: ended });
+        row += code.matches('\n').count() as u32;
         // One line end straight after the closing marker belongs to it.
-        rest = tail.strip_prefix('\n').unwrap_or_else(|| tail.strip_prefix("\r\n").unwrap_or(tail));
+        let shorter = tail.strip_prefix('\n').unwrap_or_else(|| tail.strip_prefix("\r\n").unwrap_or(tail));
+        if shorter.len() != tail.len() {
+            row += 1;
+        }
+        rest = shorter;
     }
-    says(rest, &mut out);
-    out.push(Token { shape: Shape::Finish, lexeme: "EOF".into(), span: 0, row: 1 });
+    says(rest, row, &mut out);
+    out.push(Token { shape: Shape::Finish, lexeme: "EOF".into(), span: 0, row });
     Ok(out)
 }
 
 fn scan_code(source: &str, table: &Table) -> Result<Vec<Token>, String> {
+    let mut ended = 1;
+    scan_code_from(source, table, 1, &mut ended)
+}
+
+/// The same, begun at a given row, so that a run of code woven into a
+/// page names the rows of the page and not its own.
+fn scan_code_marking(source: &str, table: &Table, first: u32) -> Result<Vec<Token>, (String, u32)> {
+    let mut ended = first;
+    scan_code_from(source, table, first, &mut ended).map_err(|said| (said, ended))
+}
+
+fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> Result<Vec<Token>, String> {
     let text = drop_comments(source, table);
     let src: Vec<char> = text.chars().collect();
     let quotes = table.letters("lexical.string_quotes");
     let raw = table.letters("lexical.raw_quotes");
     let weaving = table.letters("ext.lexical.interpolating_quotes");
     let escapes = table.letters("lexical.string_escapes");
+    // A character an escape names by its number: the letter that begins
+    // one, the brackets the number stands in, and what the language
+    // says of a number badly written or of one beyond the last there is.
+    let numbered = table.letter("ext.lexical.escape.codepoint");
+    let number_open = table.letter("ext.lexical.escape.codepoint.open");
+    let number_close = table.letter("ext.lexical.escape.codepoint.close");
+    let badly = || {
+        table
+            .single("ext.lexical.escape.codepoint.amiss")
+            .unwrap_or("Bad character number")
+            .to_string()
+    };
+    let too_far = || {
+        table
+            .single("ext.lexical.escape.codepoint.beyond")
+            .unwrap_or("Character number too large")
+            .to_string()
+    };
     let point = table.letter("lexical.number.decimal_point");
     let base = table.letter("lexical.number.base_marker");
     let expo = table.letter("lexical.number.exponent_marker");
@@ -158,8 +216,11 @@ fn scan_code(source: &str, table: &Table) -> Result<Vec<Token>, String> {
     let fold_id = table.flag("identifier.case_insensitive");
     let mut tokens: Vec<Token> = Vec::new();
     let tok = |kind: Shape, text: String, row: u32| Token { shape: kind, lexeme: text, span: 0, row: row };
-    let (mut pos, mut row, mut at_bol) = (0usize, 1u32, true);
+    let (mut pos, mut row, mut at_bol) = (0usize, first, true);
     while pos < src.len() {
+        // The row the reading has reached is kept where the caller can
+        // see it, so that a reading that stops names the right line.
+        *ended = row;
         if at_bol {
             at_bol = false;
             let mut width = 0;
@@ -206,6 +267,53 @@ fn scan_code(source: &str, table: &Table) -> Result<Vec<Token>, String> {
                         plain.push(s.chars().count());
                         s.push(e);
                         k += 2;
+                        continue;
+                    }
+                    // The letter followed by its opening bracket names a
+                    // character by its number: the digits between the
+                    // brackets are read in sixteens and the character of
+                    // that number stands in their place. A number naming
+                    // no character of its own — half of a pair standing
+                    // for one character between them — is left as it was
+                    // written, text made of characters having no room
+                    // for it.
+                    if !is_raw && Some(e) == numbered && src.get(k + 2).copied() == number_open {
+                        let (mut j, mut digits, mut shut) = (k + 3, String::new(), false);
+                        while j < src.len() {
+                            let d = src[j];
+                            j += 1;
+                            if Some(d) == number_close {
+                                shut = true;
+                                break;
+                            }
+                            if !d.is_ascii_hexdigit() {
+                                return Err(badly());
+                            }
+                            digits.push(d);
+                        }
+                        if !shut || digits.is_empty() {
+                            return Err(badly());
+                        }
+                        let bare = digits.trim_start_matches('0');
+                        let number = match bare.is_empty() {
+                            true => 0,
+                            false => u32::from_str_radix(bare, 16).map_err(|_| too_far())?,
+                        };
+                        if number > 0x10FFFF {
+                            return Err(too_far());
+                        }
+                        match char::from_u32(number) {
+                            Some(made) => {
+                                plain.push(s.chars().count());
+                                s.push(made);
+                            }
+                            None => {
+                                s.push('\\');
+                                s.push(e);
+                                s.extend(src[k + 2..j].iter());
+                            }
+                        }
+                        k = j;
                         continue;
                     }
                     if e == '\\' || e == c || (!is_raw && escapes.contains(&e)) {
@@ -359,6 +467,17 @@ enum Piece {
 /// Cut a string with values woven in (ext.lexical.interpolating_quotes)
 /// into pieces: `$name`, `$name[i]` with a plain index, and `{$expr}`
 /// are code, the rest text. Char positions listed in `plain` are text.
+/// Whether a mark stands written at that place in a run of letters.
+fn written_at(cs: &[char], at: usize, mark: &str) -> bool {
+    !mark.is_empty() && cs.len() >= at + mark.chars().count() && cs[at..].iter().zip(mark.chars()).all(|(c, m)| *c == m)
+}
+
+/// Where a mark next stands from that place on, and nothing where it
+/// stands nowhere after it.
+fn next_written(cs: &[char], from: usize, mark: &str) -> Option<usize> {
+    (from..cs.len()).find(|at| written_at(cs, *at, mark))
+}
+
 fn pieces(s: &str, plain: &[usize], table: &Table) -> Vec<Piece> {
     let sigil = table.letter("identifier.variable_prefix");
     let cs: Vec<char> = s.chars().collect();
@@ -388,16 +507,57 @@ fn pieces(s: &str, plain: &[usize], table: &Table) -> Vec<Piece> {
             while end < cs.len() && table.extends_name(cs[end]) {
                 end += 1;
             }
-            if cs.get(end) == Some(&'[') {
-                let inside: String = cs[end + 1..].iter().take_while(|c| **c != ']').collect();
-                let closed = cs.get(end + 1 + inside.chars().count()) == Some(&']');
-                let plain_index = !inside.is_empty() && (inside.chars().all(|c| c.is_ascii_digit()) || inside.starts_with(|c| Some(c) == sigil));
-                if closed && plain_index {
-                    end += inside.chars().count() + 2;
+            // One step beyond the binding comes with it, which is the
+            // whole of this shorter way of writing: a place asked for
+            // in brackets, or a member asked for after the member mark.
+            // Anything longer wants the braces that take code entire.
+            let mut said: Option<String> = None;
+            let mut took_step = false;
+            if let (Some(shut), Some(opener)) = (table.single("op.index.close"), table.single("op.index.open")) {
+                if written_at(&cs, end, opener) {
+                    let after = end + opener.chars().count();
+                    if let Some(stop) = next_written(&cs, after, shut) {
+                        let inside: String = cs[after..stop].iter().collect();
+                        let all_digits = !inside.is_empty() && inside.chars().all(|c| c.is_ascii_digit());
+                        let a_name = inside.chars().next().map_or(false, |c| Some(c) == sigil);
+                        let a_word = inside.chars().next().map_or(false, |c| table.begins_name(c))
+                            && inside.chars().all(|c| table.extends_name(c));
+                        let beyond = stop + shut.chars().count();
+                        if all_digits || a_name {
+                            end = beyond;
+                            took_step = true;
+                        } else if a_word {
+                            // A word written bare between the brackets
+                            // asks for the text it spells, not a name,
+                            // so it is handed on written as text.
+                            let quotes = table.strings("lexical.raw_quotes");
+                            let any = table.strings("lexical.string_quotes");
+                            if let Some(mark) = quotes.first().or_else(|| any.first()) {
+                                let held: String = cs[at..end].iter().collect();
+                                said = Some(format!("{held}{opener}{mark}{inside}{mark}{shut}"));
+                                end = beyond;
+                                took_step = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if !took_step {
+                if let Some(mark) = table.single("ext.op.member") {
+                    if written_at(&cs, end, mark) {
+                        let after = end + mark.chars().count();
+                        if cs.get(after).map_or(false, |c| table.begins_name(*c)) {
+                            let mut beyond = after + 1;
+                            while beyond < cs.len() && table.extends_name(cs[beyond]) {
+                                beyond += 1;
+                            }
+                            end = beyond;
+                        }
+                    }
                 }
             }
             out.push(Piece::Text(std::mem::take(&mut text)));
-            out.push(Piece::Code(cs[at..end].iter().collect()));
+            out.push(Piece::Code(said.unwrap_or_else(|| cs[at..end].iter().collect())));
             at = end;
             continue;
         }

@@ -28,7 +28,7 @@ use std::rc::Rc;
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 
-use crate::lang::{Lang, Brackets, Blocks};
+use crate::lang::{Lang, Brackets, Blocks, Complaint};
 use crate::arith;
 use crate::lex::{Shape, Token};
 use crate::value::Value;
@@ -39,6 +39,9 @@ use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr, Plan};
 pub struct Registry {
     index: HashMap<String, usize>,
     pub idents: Vec<String>,
+    /// The line the reading had reached when it stopped, for a language
+    /// that tells such a stopping in its own words to name.
+    pub stopped_at: usize,
 }
 
 impl Registry {
@@ -98,6 +101,9 @@ pub struct Compiler<'a> {
     /// Which parameters of each program take a name's own cell rather
     /// than a copy of what it holds, found before anything is read.
     shared_args: HashMap<String, Vec<bool>>,
+    /// The routines the text declares as giving back a cell rather than
+    /// a copy, so that a call of one is known to have a cell to share.
+    gives_back: std::collections::HashSet<String>,
     /// The parameters of the method just read that name properties too.
     promoted: Vec<String>,
     /// How many lines stand before the program's own text.
@@ -112,6 +118,17 @@ pub struct Compiler<'a> {
     /// Where the value a store is to write is already waiting, which a
     /// taking-apart sets before each of its places.
     waiting: Option<String>,
+    /// How far a compound write steps what the place already holds,
+    /// where the step is the write's own and no value follows the sign:
+    /// what `++` and `--` mean.
+    stepping: Option<i64>,
+    /// Where the value a place held before a compound write is to be
+    /// kept, so that a step may give back what stood there before it.
+    stood: Option<String>,
+    /// Whether each routine being read gives back a cell rather than a
+    /// copy, the innermost last, so that what it answers with is made a
+    /// cell where it should be.
+    giving_cells: Vec<bool>,
 }
 
 type Res<T> = Result<T, String>;
@@ -154,11 +171,15 @@ pub fn compile_from(tokens: &[Token], lang: &Lang, table: &mut Registry, before:
         line: 0,
         instrs: Vec::new(),
     };
-    let shared_args = shared_parameters(tokens, lang);
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None };
+    let (shared_args, gives_back) = shared_parameters(tokens, lang);
+    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None, stepping: None, stood: None, giving_cells: Vec::new() };
     if lang.rpn {
-        a.rpn_body(&[], Span::Block)?;
+        if let Err(said) = a.rpn_body(&[], Span::Block) {
+            a.registry.stopped_at = a.look().row;
+            return Err(said);
+        }
         if !a.exhausted() {
+            a.registry.stopped_at = a.look().row;
             return Err(format!("Unexpected '{}'", a.look().lexeme));
         }
     } else {
@@ -169,7 +190,13 @@ pub fn compile_from(tokens: &[Token], lang: &Lang, table: &mut Registry, before:
         while !a.exhausted() {
             let defines = lang.hoisted && a.on_keyword(&lang.function_words);
             let from = a.mark();
-            a.stmt()?;
+            // Where the reading stops, the line it had reached is kept,
+            // so that a language with a word for such a stopping may
+            // name the line as it names any other.
+            if let Err(said) = a.stmt() {
+                a.registry.stopped_at = a.look().row;
+                return Err(said);
+            }
             if defines {
                 lifted.extend(a.piece().instrs.drain(from..));
             }
@@ -631,6 +658,13 @@ impl<'a> Compiler<'a> {
 
     /// The block after a statement head, in the language's style.
     fn body(&mut self) -> Res<()> {
+        // A loop with nothing to do may be written with the mark that
+        // ends a statement standing where its block would: the mark is
+        // the whole body, and nothing runs each pass.
+        if self.lang.lone_stmt && self.look().shape == Shape::Sign && self.lang.ends_stmt(&self.look().lexeme) {
+            self.take();
+            return Ok(());
+        }
         self.skip_intro();
         self.skip_seps();
         match self.lang.blocks {
@@ -653,6 +687,23 @@ impl<'a> Compiler<'a> {
             Blocks::Braced => {
                 let which = self.lang.block_opens.iter().position(|o| self.at_lexeme(o));
                 let Some(i) = which else {
+                    // A language may open a block with a mark where a
+                    // bracket would stand, closing it with a word of its
+                    // own. The statements run to whichever word comes
+                    // next: one that ends the whole shape is taken here,
+                    // and one that opens another arm of it is left
+                    // standing for whoever opened the block.
+                    if self.lang.instead_mark.as_ref().map_or(false, |m| self.at_symbol(m)) {
+                        self.take();
+                        let mut stops = self.lang.instead_closes.clone();
+                        stops.extend(self.lang.elif_words.iter().cloned());
+                        stops.extend(self.lang.else_words.iter().cloned());
+                        self.stmts_until(&stops)?;
+                        if self.on_any(&self.lang.instead_closes) {
+                            self.take();
+                        }
+                        return Ok(());
+                    }
                     if self.lang.lone_stmt {
                         return self.stmt();
                     }
@@ -690,6 +741,9 @@ impl<'a> Compiler<'a> {
             if !lang.let_words.is_empty() && Lang::spells(&lang.let_words, &w) {
                 return self.binding();
             }
+            if !lang.do_words.is_empty() && Lang::spells(&lang.do_words, &w) {
+                return self.do_stmt();
+            }
             if Lang::spells(&lang.if_words, &w) {
                 return self.branch();
             }
@@ -719,9 +773,9 @@ impl<'a> Compiler<'a> {
             }
             if Lang::spells(&lang.function_words, &w) {
                 self.take();
-                self.skip_reference();
+                let gives_cell = self.skip_reference();
                 let name = self.want_name("after the function keyword")?;
-                return self.function(name);
+                return self.function(name, gives_cell);
             }
             if Lang::spells(&lang.pass_words, &w) {
                 self.take();
@@ -779,9 +833,6 @@ impl<'a> Compiler<'a> {
     /// assignment or an expression.
     fn simple_stmt(&mut self) -> Res<()> {
         let lang = self.lang;
-        if self.bump_stmt()? {
-            return Ok(());
-        }
         if lang.bare_calls && self.look().shape == Shape::Instr {
             // A builtin without brackets after it; echo always, since a
             // bracket after it opens a group, not its arguments.
@@ -809,6 +860,12 @@ impl<'a> Compiler<'a> {
         let sep = self.lang.calling.as_ref().and_then(|c| c.between.clone());
         loop {
             let name = self.want_name("after the global keyword")?;
+            // A name bound to a global stands for that global whether or
+            // not anything was ever written to it, so the global is made
+            // to hold nothing where it held nothing at all: reading it
+            // is then reading a name written to.
+            let cell = Cell { ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false };
+            self.put(Instr::Ready(cell));
             self.piece().globals.push((name.clone(), name));
             match &sep {
                 Some(s) if self.at_symbol(s) => {
@@ -991,22 +1048,53 @@ impl<'a> Compiler<'a> {
     /// The walk itself: a place counted up to the extent, the key and
     /// the value bound from it at the head of each pass.
     fn walk(&mut self, bag: &str, key: Option<&str>, value: &str, shared: bool, place: Option<usize>) -> Res<()> {
+        let lang = self.lang;
+        // A walk that hands out the items' own cells goes over the array
+        // as it stands: what the body does to the array it does to the
+        // walk. One that walks a copy takes the copy here, and what the
+        // body does to the array is nothing to it — save where what is
+        // walked is a thing, which is a handle and so is walked itself.
+        // A thing that is its own walk, or that hands another over to be
+        // walked in its stead, is also settled here, once.
+        if shared {
+            // A thing that is its own walk holds no cells of its own to
+            // hand out, and a language with words for that says so.
+            self.read(bag);
+            self.act(Action::WalkAlone, 1);
+            self.put_away();
+        }
+        let over = match shared {
+            true => bag.to_string(),
+            false => {
+                let copy = self.gensym("walk");
+                self.read(bag);
+                self.act(Action::WalkFrom, 1);
+                self.write(&copy);
+                copy
+            }
+        };
         let at = self.gensym("at");
         self.constant(Value::Small(0));
         self.write(&at);
-        let extent = self.gensym("extent");
-        self.read(bag);
-        self.act(Action::Extent, 1);
-        self.write(&extent);
         let to_test = self.leap();
         let top = self.mark();
         self.enter_cycle(None);
-        if let Some(key) = key {
-            self.read(bag);
+        // A member taken off a thing while the walk is under way leaves
+        // its place behind, so that the members after it keep the places
+        // they had. The walk steps over such a place, as though the body
+        // of that pass had gone straight on to the next. Only a language
+        // with things to take members off asks the question at all.
+        if !lang.class_words.is_empty() {
+            self.read(&over);
             self.read(&at);
-            self.act(Action::KeyAt, 2);
-            self.write(key);
+            self.act(Action::Standing, 2);
+            let step_over = self.skip();
+            let deep = self.piece().cycles.len() - 1;
+            self.piece().cycles[deep].resumes.push(step_over);
         }
+        // What stands here is asked for before what it is called, since
+        // a thing that is its own walk is asked both and answers in that
+        // order.
         if shared {
             // The name is fastened to the item's own cell.
             self.read(&at);
@@ -1015,10 +1103,16 @@ impl<'a> Compiler<'a> {
             let name = self.cell_to_write(value);
             self.put(Instr::Fasten(name));
         } else {
-            self.read(bag);
+            self.read(&over);
             self.read(&at);
-            self.act(Action::ValueAt, 2);
+            self.act(Action::WalkThis, 2);
             self.write(value);
+        }
+        if let Some(key) = key {
+            self.read(&over);
+            self.read(&at);
+            self.act(Action::WalkKey, 2);
+            self.write(key);
         }
         // Where the walk hands its items to a place, the place is read
         // again here, with the item waiting in the walk's own cell.
@@ -1039,10 +1133,13 @@ impl<'a> Compiler<'a> {
         self.constant(Value::Small(1));
         self.act(Action::Add, 2);
         self.write(&at);
+        self.read(&over);
+        self.act(Action::WalkOnward, 1);
+        self.put_away();
         self.land(to_test);
+        self.read(&over);
         self.read(&at);
-        self.read(&extent);
-        self.act(Action::Lt, 2);
+        self.act(Action::WalkMore, 2);
         self.loop_back(top);
         self.leave_cycle(again);
         Ok(())
@@ -1137,13 +1234,21 @@ impl<'a> Compiler<'a> {
         self.write(&subject);
         self.skip_intro();
         self.skip_seps();
-        let which = lang.block_opens.iter().position(|o| self.at_lexeme(o));
-        let Some(i) = which else {
-            return Err(format!("Expected '{}' to open the switch, got '{}'", lang.block_opens[0], self.look().lexeme));
+        // A switch is opened by a bracket or, where the language spells
+        // one, by the mark that stands for a bracket; the words closing
+        // such a block close this one.
+        let closers = match lang.block_opens.iter().position(|o| self.at_lexeme(o)) {
+            Some(i) => {
+                self.take();
+                vec![lang.block_closes[i].clone()]
+            }
+            None if lang.instead_mark.as_ref().map_or(false, |m| self.at_symbol(m)) => {
+                self.take();
+                lang.instead_closes.clone()
+            }
+            None => return Err(format!("Expected '{}' to open the switch, got '{}'", lang.block_opens[0], self.look().lexeme)),
         };
-        self.take();
-        let close = lang.block_closes[i].clone();
-        let mut stops = vec![close.clone()];
+        let mut stops = closers.clone();
         stops.extend(lang.case_words.iter().cloned());
         stops.extend(lang.default_words.iter().cloned());
         self.enter_cycle(None);
@@ -1153,7 +1258,7 @@ impl<'a> Compiler<'a> {
         let mut fell: Option<usize> = None;
         let mut default_at: Option<usize> = None;
         self.skip_seps();
-        while !self.at_lexeme(&close) && !self.exhausted() {
+        while !self.on_any(&closers) && !self.exhausted() {
             let word = self.want_name("as case or default")?;
             let is_case = Lang::spells(&lang.case_words, &word);
             if !is_case && !Lang::spells(&lang.default_words, &word) {
@@ -1181,7 +1286,10 @@ impl<'a> Compiler<'a> {
             self.stmts_until(&stops)?;
             fell = Some(self.leap());
         }
-        self.want_lexeme(&close)?;
+        if !self.on_any(&closers) {
+            return Err(format!("Expected '{}' to close the switch, got '{}'", closers[0], self.look().lexeme));
+        }
+        self.take();
         let end = self.mark();
         if let Some(at) = fell {
             self.land(at);
@@ -1202,42 +1310,12 @@ impl<'a> Compiler<'a> {
             return None;
         }
         if self.lang.increments.iter().any(|s| *s == tok.lexeme) {
-            Some(Action::Add)
+            Some(Action::Step(true))
         } else if self.lang.decrements.iter().any(|s| *s == tok.lexeme) {
-            Some(Action::Sub)
+            Some(Action::Step(false))
         } else {
             None
         }
-    }
-
-    /// x = x + 1 (or - 1), the name left in the slot.
-    fn bump(&mut self, name: &str, op: Action) {
-        self.read(name);
-        self.constant(Value::Small(1));
-        self.act(op, 2);
-        self.write(name);
-    }
-
-    /// `++x;` or `x++;` as a statement: the value is not wanted, so
-    /// both orders come to the same thing.
-    fn bump_stmt(&mut self) -> Res<bool> {
-        let (first, second) = (self.look().clone(), self.look_ahead(1).clone());
-        if let (Some(op), Shape::Instr) = (self.bump_of(&first), second.shape) {
-            self.take();
-            self.take();
-            self.bump(&second.lexeme, op);
-            return Ok(true);
-        }
-        if let (Shape::Instr, Some(op)) = (first.shape, self.bump_of(&second)) {
-            if self.lang.keywords.contains(&first.lexeme) || self.lang.builtins.contains_key(&first.lexeme) {
-                return Ok(false);
-            }
-            self.take();
-            self.take();
-            self.bump(&first.lexeme, op);
-            return Ok(true);
-        }
-        Ok(false)
     }
 
     /// A builtin at the head of a statement called without brackets:
@@ -1308,7 +1386,7 @@ impl<'a> Compiler<'a> {
         let name = self.want_name("after the type")?;
         if let Some(call) = &self.lang.calling {
             if self.at_symbol(&call.open) {
-                return self.function(name);
+                return self.function(name, false);
             }
         }
         if self.on_sep() || self.exhausted() {
@@ -1391,6 +1469,29 @@ impl<'a> Compiler<'a> {
             }
         }
         self.land(over);
+        Ok(())
+    }
+
+    /// `do body while (c);`: the body runs before the test is asked, so
+    /// it runs at least once. A continue goes to the test, as it goes to
+    /// the step of a counted loop.
+    fn do_stmt(&mut self) -> Res<()> {
+        let lang = self.lang;
+        self.take();
+        let top = self.mark();
+        self.enter_cycle(None);
+        self.body()?;
+        let again = self.mark();
+        if !self.on_keyword(&lang.while_words) {
+            return Err(format!("Expected '{}' after the body, got '{}'", lang.while_words.first().map_or("while", |w| w.as_str()), self.look().lexeme));
+        }
+        self.take();
+        let group = lang.grouping.clone().ok_or_else(|| "A do loop needs syntax.group".to_string())?;
+        self.want_sign(&group.open, "after while")?;
+        self.expr(0)?;
+        self.want_sign(&group.close, "after the condition")?;
+        self.loop_back(top);
+        self.leave_cycle(again);
         Ok(())
     }
 
@@ -1516,8 +1617,16 @@ impl<'a> Compiler<'a> {
 
     fn return_stmt(&mut self) -> Res<()> {
         self.take();
+        // A routine that gives back a cell answers with the cell of
+        // whatever it names, so a name fastened to the answer and the
+        // one inside the routine stand for the one cell. Where what it
+        // names has no cell to share, the value itself is answered, as
+        // such a language does rather than stopping.
+        let by_cell = self.giving_cells.last().copied().unwrap_or(false);
         if self.on_sep() || self.exhausted() || self.on_any(&self.lang.block_closes) {
             self.constant(Value::Null);
+        } else if by_cell {
+            self.a_cell(&self.lang.unshared_given.clone(), true)?;
         } else {
             self.expr(0)?;
         }
@@ -1731,9 +1840,12 @@ impl<'a> Compiler<'a> {
                 constants.push((member, self.member_value()?));
             } else if self.on_keyword(&lang.function_words) {
                 self.take();
-                self.skip_reference();
+                let gives_cell = self.skip_reference();
                 let member = self.want_name("as the method name")?;
-                methods.push((member.clone(), self.method(&member)?));
+                self.giving_cells.push(gives_cell);
+                let built = self.method(&member);
+                self.giving_cells.pop();
+                methods.push((member.clone(), built?));
                 // A parameter of the maker that names a property makes
                 // the class carry that property too.
                 for named in std::mem::take(&mut self.promoted) {
@@ -1777,11 +1889,13 @@ impl<'a> Compiler<'a> {
         // every value of its own and every constant, in that order.
         let mut argc = 0;
         if let Some(base) = &base {
-            self.read(base);
+            let base = self.class_key(base);
+            self.read(&base);
             argc += 1;
         }
         for named in &answers {
-            self.read(named);
+            let named = self.class_key(named);
+            self.read(&named);
             argc += 1;
         }
         let names = |parts: Vec<(String, Vec<Instr>)>, a: &mut Self, argc: &mut usize| {
@@ -1802,7 +1916,8 @@ impl<'a> Compiler<'a> {
         let constant_names = names(constants, self, &mut argc);
         let plan = Plan { name: name.clone(), answers: answers.len(), field_names, shared_names, constant_names, methods, extends: base.is_some() };
         self.act(Action::Forge(Rc::new(plan)), argc);
-        self.write_global(&name);
+        let filed = self.class_key(&name);
+        self.write_global(&filed);
         Ok(())
     }
 
@@ -1872,7 +1987,7 @@ impl<'a> Compiler<'a> {
         let mut spares: Vec<(usize, usize)> = Vec::new();
         let mut promoted: Vec<String> = Vec::new();
         while !self.at_symbol(&call.close) && !self.exhausted() {
-            self.skip_reference();
+            let _by_cell = self.skip_reference();
             let mut names_property = false;
             while self.look().shape == Shape::Instr && Lang::spells(&lang.modifier_words, &self.look().lexeme) {
                 self.take();
@@ -1935,10 +2050,14 @@ impl<'a> Compiler<'a> {
 
     /// Step over the sign that says a name shares a cell; where it
     /// stands is already known from the reading done before compiling.
-    fn skip_reference(&mut self) {
+    /// The mark that says a routine gives back a cell rather than a
+    /// copy, if it stands here. Whether it did is given back.
+    fn skip_reference(&mut self) -> bool {
         if self.lang.reference_mark.as_ref().map_or(false, |m| self.at_symbol(m)) {
             self.take();
+            return true;
         }
+        false
     }
 
     /// The instrs a program begins with when some of its parameters
@@ -1958,7 +2077,14 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    fn function(&mut self, name: String) -> Res<()> {
+    fn function(&mut self, name: String, gives_cell: bool) -> Res<()> {
+        self.giving_cells.push(gives_cell);
+        let built = self.function_body(name);
+        self.giving_cells.pop();
+        built
+    }
+
+    fn function_body(&mut self, name: String) -> Res<()> {
         let lang = self.lang;
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
         self.want_sign(&call.open, "after function name")?;
@@ -1986,7 +2112,13 @@ impl<'a> Compiler<'a> {
             a.body()
         })?;
         self.constant(Value::Routine(program));
-        self.write(&name);
+        // A language may bind every routine among the outermost
+        // bindings, wherever it is written, so one written inside
+        // another is there for the whole run once that one has run.
+        match self.lang.routines_outermost {
+            true => self.write_global(&name),
+            false => self.write(&name),
+        }
         Ok(())
     }
 
@@ -2025,6 +2157,35 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// What a compound write takes with the value the place already
+    /// holds: the source after the sign, or the one step a `++` means,
+    /// which has no source of its own.
+    fn addend(&mut self) -> Res<()> {
+        match self.stepping {
+            Some(by) => {
+                self.constant(Value::Small(by));
+                Ok(())
+            }
+            None => self.expr(0),
+        }
+    }
+
+    /// The value the place holds, just read, kept where a step asked
+    /// for it, so that `x++` may give back what stood there.
+    fn stood_before(&mut self) {
+        if let Some(cell) = self.stood.clone() {
+            self.write(&cell);
+            self.read(&cell);
+        }
+    }
+
+    /// What a store answered with, put away: a write is not a value,
+    /// so nothing of it stands where the store was written.
+    fn put_away(&mut self) {
+        let held = self.gensym("stored");
+        self.write(&held);
+    }
+
     fn kept(&mut self, keep: Option<&str>) {
         if let Some(cell) = keep {
             self.write(cell);
@@ -2057,6 +2218,13 @@ impl<'a> Compiler<'a> {
         // the keys are taken apart, each with where it began, so that
         // the store may work each of them out once and in order.
         let (keys, key_at) = keys_apart(&target, from, &self.keyed);
+        // What the chain stands on, where it is anything but the one
+        // instr that reads a name: then the whole chain is rebuilt and
+        // written back into whatever it stood on.
+        let footing: Option<Vec<Instr>> = match key_at.first() {
+            Some(at) if *at > from + 1 => Some(target[..at - from].to_vec()),
+            _ => None,
+        };
         let appending = matches!(target.last(), Some(Instr::Act(Action::AtEnd, 1)));
         let done = match target.as_slice() {
             // `b = &a`: b is fastened to a's cell, not given a copy.
@@ -2067,7 +2235,7 @@ impl<'a> Compiler<'a> {
             {
                 let name = slot.ident.to_string();
                 self.take();
-                self.a_cell()?;
+                self.a_cell(&self.lang.unshared_written.clone(), false)?;
                 let held = self.cell_to_write(&name);
                 self.put(Instr::Fasten(held));
                 if keep.is_some() {
@@ -2081,7 +2249,8 @@ impl<'a> Compiler<'a> {
                 if let Some(op) = compound {
                     // x op= e is x = x op e.
                     self.read(&name);
-                    self.expr(0)?;
+                    self.stood_before();
+                    self.addend()?;
                     self.act(op, 2);
                     self.kept(keep);
                 } else {
@@ -2094,7 +2263,88 @@ impl<'a> Compiler<'a> {
             // and in order, then the arrays along the way are rewritten
             // from the innermost outwards. A place not there yet is made
             // on the way, since that is what writing into it means.
-            [Instr::Read(slot), ..] if !slot.moving && (keys.len() > 1 || (keys.len() == 1 && appending)) => {
+            // A chain standing on something other than a bare name:
+            // the keys are worked out once and in order, the arrays
+            // along the way rewritten from the innermost outwards, and
+            // the whole written back into what it stood on.
+            _ if footing.is_some() => {
+                let base = footing.clone().expect("what the chain stands on");
+                let held: Vec<String> = (0..keys.len()).map(|_| self.gensym("key")).collect();
+                for (i, key) in keys.iter().enumerate() {
+                    let at = self.mark();
+                    for w in relocated(key.clone(), at as i64 - key_at[i] as i64) {
+                        self.put(w);
+                    }
+                    self.write(&held[i]);
+                }
+                let deep = match appending { true => keys.len(), false => keys.len() - 1 };
+                let inner: Vec<String> = (0..=deep).map(|_| self.gensym("within")).collect();
+                // What the chain stands on is read quietly: it is being
+                // written into, and a place not there yet is made on the
+                // way rather than complained about.
+                // The value is worked out first, while what the chain
+                // stands on is still whole.
+                let value = self.gensym("value");
+                if compound.is_none() {
+                    self.value_written(keep)?;
+                    self.write(&value);
+                }
+                self.put(Instr::Hush(true));
+                let at = self.mark();
+                for w in relocated(base.clone(), at as i64 - from as i64) {
+                    self.put(w);
+                }
+                self.put(Instr::Hush(false));
+                self.write(&inner[0]);
+                for i in 0..deep {
+                    self.read(&inner[i]);
+                    self.read(&held[i]);
+                    self.act(Action::Nested, 2);
+                    self.write(&inner[i + 1]);
+                }
+                if let Some(op) = compound {
+                    self.read(&inner[deep]);
+                    self.read(&held[deep]);
+                    self.act(Action::At, 2);
+                    self.stood_before();
+                    self.addend()?;
+                    self.act(op, 2);
+                    self.kept(keep);
+                    self.write(&value);
+                }
+                let made = self.gensym("made");
+                if appending {
+                    self.read(&value);
+                    self.read(&inner[deep]);
+                    self.act(Action::Builtin(Builtin::Append, Rc::from("push")), 2);
+                } else {
+                    self.read(&held[deep]);
+                    self.read(&value);
+                    self.read(&inner[deep]);
+                    self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
+                }
+                self.write(&made);
+                for i in (0..deep).rev() {
+                    self.read(&held[i]);
+                    self.read(&made);
+                    self.read(&inner[i]);
+                    self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
+                    self.write(&made);
+                }
+                // What it stood on is written back into, read again as
+                // the store it is.
+                let footing_at = self.mark();
+                for w in relocated(base, footing_at as i64 - from as i64) {
+                    self.put(w);
+                }
+                let was = self.waiting.replace(made);
+                let stored = self.store_into(footing_at, None, None, "=");
+                self.waiting = was;
+                stored
+            }
+            [Instr::Read(slot), ..]
+                if !slot.moving && (keys.len() > 1 || (keys.len() == 1 && (appending || compound.is_some()))) =>
+            {
                 let name = slot.ident.to_string();
                 let held: Vec<String> = (0..keys.len()).map(|_| self.gensym("key")).collect();
                 for (i, key) in keys.iter().enumerate() {
@@ -2105,9 +2355,17 @@ impl<'a> Compiler<'a> {
                     self.write(&held[i]);
                 }
                 // Down through the arrays, keeping each one, as far as
-                // the one the write itself lands in.
+                // the one the write itself lands in. The value comes
+                // first, while the array is still where it stands, since
+                // reading it out to rewrite it would leave the name
+                // holding nothing while the value is worked out.
                 let deep = match appending { true => keys.len(), false => keys.len() - 1 };
                 let inner: Vec<String> = (0..=deep).map(|_| self.gensym("within")).collect();
+                let value = self.gensym("value");
+                if compound.is_none() {
+                    self.value_written(keep)?;
+                    self.write(&value);
+                }
                 self.read_to_rewrite(&name);
                 self.write(&inner[0]);
                 for i in 0..deep {
@@ -2116,20 +2374,18 @@ impl<'a> Compiler<'a> {
                     self.act(Action::Nested, 2);
                     self.write(&inner[i + 1]);
                 }
-                let value = self.gensym("value");
-                match compound {
-                    // x op= e writes what x holds now, taken with e.
-                    Some(op) => {
-                        self.read(&inner[deep]);
-                        self.read(&held[deep]);
-                        self.act(Action::At, 2);
-                        self.expr(0)?;
-                        self.act(op, 2);
-                        self.kept(keep);
-                    }
-                    None => self.value_written(keep)?,
+                // x op= e writes what x holds now, taken with e, which
+                // wants the place read first and so comes after.
+                if let Some(op) = compound {
+                    self.read(&inner[deep]);
+                    self.read(&held[deep]);
+                    self.act(Action::At, 2);
+                    self.stood_before();
+                    self.addend()?;
+                    self.act(op, 2);
+                    self.kept(keep);
+                    self.write(&value);
                 }
-                self.write(&value);
                 // Back out again, each array rewritten in the one above.
                 let made = self.gensym("made");
                 if appending {
@@ -2154,7 +2410,79 @@ impl<'a> Compiler<'a> {
                 self.write(&name);
                 Ok(())
             }
+            // `p op= e` where the place is a member of something: what
+            // holds it is worked out once and kept, the member read
+            // from there, taken with the value, and what comes of it
+            // written back into the same place.
+            [rest @ .., Instr::Act(Action::Grab(member), 1)] if compound.is_some() => {
+                let (member, rest) = (member.clone(), rest.to_vec());
+                let op = compound.expect("the operation");
+                let holder = self.gensym("holder");
+                for w in relocated(rest, 0) {
+                    self.put(w);
+                }
+                self.write(&holder);
+                self.read(&holder);
+                self.act(Action::Grab(member.clone()), 1);
+                self.stood_before();
+                self.addend()?;
+                self.act(op, 2);
+                self.kept(keep);
+                let value = self.gensym("value");
+                self.write(&value);
+                self.read(&holder);
+                self.read(&value);
+                self.act(Action::Plant(member), 2);
+                self.put_away();
+                Ok(())
+            }
+            // The same for a class's own value.
+            [rest @ .., Instr::Act(Action::Reach(member), 1)] if compound.is_some() => {
+                let (member, rest) = (member.clone(), rest.to_vec());
+                let op = compound.expect("the operation");
+                let holder = self.gensym("holder");
+                for w in relocated(rest, 0) {
+                    self.put(w);
+                }
+                self.write(&holder);
+                self.read(&holder);
+                self.act(Action::Reach(member.clone()), 1);
+                self.stood_before();
+                self.addend()?;
+                self.act(op, 2);
+                self.kept(keep);
+                let value = self.gensym("value");
+                self.write(&value);
+                self.read(&holder);
+                self.read(&value);
+                self.act(Action::Sow(member), 2);
+                self.put_away();
+                Ok(())
+            }
             _ if compound.is_some() => Err(format!("'{}' needs a plain variable on its left", assign)),
+            // `$GLOBALS['n'][] = v`: the binding the name spells is read
+            // quietly, since a write makes what is not there yet, the
+            // value put after its last place, and the whole written back
+            // under the same name.
+            [rest @ .., Instr::Act(Action::Named, 1), Instr::Act(Action::AtEnd, 1)] if compound.is_none() => {
+                let rest = rest.to_vec();
+                let named = self.gensym("named");
+                let at = self.mark();
+                for w in relocated(rest, at as i64 - from as i64) {
+                    self.put(w);
+                }
+                self.write(&named);
+                self.read(&named);
+                self.value_written(keep)?;
+                self.put(Instr::Hush(true));
+                self.read(&named);
+                self.act(Action::Named, 1);
+                self.put(Instr::Hush(false));
+                self.act(Action::Builtin(Builtin::Append, Rc::from("push")), 2);
+                self.act(Action::WriteNamed, 2);
+                self.put_away();
+                Ok(())
+            }
             // A read of the binding a value names turns into a write
             // of it: the text stays where it is and the value follows.
             [rest @ .., Instr::Act(Action::Named, 1)] if compound.is_none() => {
@@ -2163,6 +2491,34 @@ impl<'a> Compiler<'a> {
                 }
                 self.value_written(keep)?;
                 self.act(Action::WriteNamed, 2);
+                self.put_away();
+                Ok(())
+            }
+            // The read of a class's own value named by a value turns
+            // into a write of it, the class and the name staying put.
+            [rest @ .., Instr::Act(Action::ReachNamed, 2)] => {
+                let rest = rest.to_vec();
+                let at = self.mark();
+                for w in relocated(rest, at as i64 - from as i64) {
+                    self.put(w);
+                }
+                self.value_written(keep)?;
+                self.act(Action::SowNamed, 3);
+                self.put_away();
+                Ok(())
+            }
+            // The read of a member named by a value turns into a write
+            // of it: what it belongs to and the name both stay where
+            // they are, and the value follows them.
+            [rest @ .., Instr::Act(Action::GrabNamed, 2)] => {
+                let rest = rest.to_vec();
+                let at = self.mark();
+                for w in relocated(rest, at as i64 - from as i64) {
+                    self.put(w);
+                }
+                self.value_written(keep)?;
+                self.act(Action::PlantNamed, 3);
+                self.put_away();
                 Ok(())
             }
             // The read of a member turns into a write of it.
@@ -2173,6 +2529,7 @@ impl<'a> Compiler<'a> {
                 }
                 self.value_written(keep)?;
                 self.act(Action::Plant(member), 2);
+                self.put_away();
                 Ok(())
             }
             [rest @ .., Instr::Act(Action::Reach(member), 1)] => {
@@ -2182,6 +2539,7 @@ impl<'a> Compiler<'a> {
                 }
                 self.value_written(keep)?;
                 self.act(Action::Sow(member), 2);
+                self.put_away();
                 Ok(())
             }
             // `$o->a[i] = v` and `$o->a[] = v`: the property is read, the
@@ -2206,6 +2564,7 @@ impl<'a> Compiler<'a> {
                 let argc = if appending { 2 } else { 3 };
                 self.act(Action::Builtin(native, Rc::from("put")), argc);
                 self.act(Action::Plant(member), 2);
+                self.put_away();
                 Ok(())
             }
             [Instr::Read(slot), Instr::Act(Action::AtEnd, 1)] if !slot.moving => {
@@ -2215,6 +2574,28 @@ impl<'a> Compiler<'a> {
                 self.read_to_rewrite(&name);
                 self.act(Action::Builtin(Builtin::Append, Rc::from("push")), 2);
                 self.rewritten(&name);
+                Ok(())
+            }
+            // `a[i] = &b`: the place holds the cell itself, so a write
+            // through either name is a write the other sees.
+            [Instr::Read(slot), index @ .., Instr::Act(Action::At, 2)]
+                if !slot.moving
+                    && compound.is_none()
+                    && self.lang.reference_mark.as_ref().map_or(false, |m| self.at_symbol(m)) =>
+            {
+                let name = slot.ident.to_string();
+                for w in relocated(index.to_vec(), -1) {
+                    self.put(w);
+                }
+                self.take();
+                self.a_cell(&self.lang.unshared_written.clone(), false)?;
+                self.read_to_rewrite(&name);
+                self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
+                self.rewritten(&name);
+                if keep.is_some() {
+                    self.constant(Value::Null);
+                    self.kept(keep);
+                }
                 Ok(())
             }
             [Instr::Read(slot), index @ .., Instr::Act(Action::At, 2)] if !slot.moving => {
@@ -2271,8 +2652,18 @@ impl<'a> Compiler<'a> {
                 continue;
             }
             if lang.otherwise_mark.as_ref().map_or(false, |m| self.at_symbol(m)) {
-                // `a ?? b`: b is worked out only when a is nothing.
+                // `a ?? b`: b is worked out only when a is nothing. What
+                // stands on the left is read quietly, since a name or a
+                // place that is not there is the very case the whole is
+                // written for, and is nothing to complain of.
                 self.take();
+                let left: Vec<Instr> = self.piece().instrs.drain(from..).collect();
+                self.put(Instr::Hush(true));
+                let at = self.mark();
+                for w in relocated(left, at as i64 - from as i64) {
+                    self.put(w);
+                }
+                self.put(Instr::Hush(false));
                 self.write(TEMP_CELL);
                 self.read(TEMP_CELL);
                 self.act(Action::Nothing, 1);
@@ -2368,18 +2759,46 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// `++p` and `p--` over any place a write reaches: the place is
+    /// read, stepped by one and written back. What stands afterwards is
+    /// the value after the step, or the one that stood there before it
+    /// where the step is written after the place.
+    fn bumped(&mut self, from: usize, op: Action, gives_new: bool) -> Res<()> {
+        let stood = (!gives_new).then(|| self.gensym("stood"));
+        let keep = gives_new.then(|| self.gensym("stepped"));
+        let was_step = self.stepping.replace(1);
+        let was_stood = std::mem::replace(&mut self.stood, stood.clone());
+        let done = self.store_into(from, keep.as_deref(), Some(op), "++");
+        self.stepping = was_step;
+        self.stood = was_stood;
+        done?;
+        if let Some(cell) = keep.or(stood) {
+            self.read(&cell);
+        }
+        Ok(())
+    }
+
+    /// A piece of an expression, with a step written before or after it
+    /// where the language spells one.
     fn prefix(&mut self) -> Res<()> {
+        let from = self.mark();
+        if let Some(op) = self.bump_of(&self.look().clone()) {
+            self.take();
+            self.prefix()?;
+            return self.bumped(from, op, true);
+        }
+        self.prefix_piece()?;
+        if let Some(op) = self.bump_of(&self.look().clone()) {
+            self.take();
+            return self.bumped(from, op, false);
+        }
+        Ok(())
+    }
+
+    fn prefix_piece(&mut self) -> Res<()> {
         let lang = self.lang;
         let from = self.mark();
         let tok = self.look().clone();
-        if let (Some(op), Shape::Instr) = (self.bump_of(&tok), self.look_ahead(1).shape) {
-            // ++x: the new value.
-            self.take();
-            let name = self.take().lexeme;
-            self.bump(&name, op);
-            self.read(&name);
-            return Ok(());
-        }
         // `list($a, $b) = v`: the places named on the left each take
         // the matching place of the value on the right.
         if Lang::spells(&lang.unpack_words, &tok.lexeme) && matches!(tok.shape, Shape::Instr | Shape::Sign) {
@@ -2474,10 +2893,14 @@ impl<'a> Compiler<'a> {
                 self.take();
                 let named = self.want_name("as the class to make")?;
                 self.read_class(&named)?;
+                self.class_reference()?;
+                // A maker takes its arguments as any other routine does,
+                // so a parameter of it that takes a cell is handed one.
+                let maker = lang.constructor.clone().unwrap_or_default();
                 let argc = match lang.calling.clone() {
                     Some(call) if self.at_symbol(&call.open) => {
                         self.take();
-                        self.arguments(&call)?
+                        self.arguments_of(&maker, &call)?
                     }
                     _ => 0,
                 };
@@ -2517,6 +2940,8 @@ impl<'a> Compiler<'a> {
                                 self.forget(&call)?;
                             } else if native == Some(Builtin::Held) {
                                 self.held(&call)?;
+                            } else if native == Some(Builtin::Hollow) {
+                                self.hollow(&call)?;
                             } else if native == Some(Builtin::Pack) {
                                 // array(...) gathers its arguments like a literal.
                                 let count = self.elements(&call)?;
@@ -2540,14 +2965,25 @@ impl<'a> Compiler<'a> {
                                 self.call(&tok.lexeme, argc)?;
                             }
                         }
-                        _ => {
-                            self.read(&tok.lexeme);
-                            if let Some(op) = self.bump_of(&self.look().clone()) {
-                                // x++: the old value stays, the slot moves on.
-                                self.take();
-                                self.bump(&tok.lexeme, op);
-                            }
+                        // A word standing for all the outermost bindings
+                        // taken as an array: a place in it is the binding
+                        // whose name that place spells, which is how a
+                        // language reaches a global from inside a routine.
+                        _ if Lang::spells(&lang.globals_words, &tok.lexeme)
+                            && lang.index_brackets.as_ref().map_or(false, |b| self.at_symbol(&b.open)) =>
+                        {
+                            let index = lang.index_brackets.clone().expect("the index brackets");
+                            self.take();
+                            self.expr(0)?;
+                            self.want_sign(&index.close, "after the name of the binding")?;
+                            self.act(Action::Named, 1);
                         }
+                        // A name written before the scope mark names a
+                        // class, so it is read as one.
+                        _ if lang.scope_mark.as_ref().map_or(false, |m| self.at_symbol(m)) => {
+                            self.read_class(&tok.lexeme)?;
+                        }
+                        _ => self.read(&tok.lexeme),
                     }
                 }
             }
@@ -2583,22 +3019,63 @@ impl<'a> Compiler<'a> {
         self.indexing(from)
     }
 
+    /// The name a class is filed under. Where a language knows a class
+    /// by its name however the name is written, every class is filed
+    /// with its letters made small, so that each spelling finds it.
+    fn class_key(&self, name: &str) -> String {
+        // A binding standing where a class is named is a binding still,
+        // and bindings are told apart by how they are written; only a
+        // class's own name is filed however it is written.
+        let a_binding = self.lang.sigil.map_or(false, |mark| name.starts_with(mark));
+        match self.lang.classes_folded && !a_binding {
+            true => name.to_lowercase(),
+            false => name.to_string(),
+        }
+    }
+
+    /// What is left of a class named by a value: a property of a thing,
+    /// a place in an array, one after another. A call that follows the
+    /// chain belongs to the maker and never to the chain, which is why
+    /// no step of it is ever a call.
+    fn class_reference(&mut self) -> Res<()> {
+        let lang = self.lang;
+        if let Some(mark) = lang.member_mark.clone() {
+            while self.at_symbol(&mark) {
+                self.take();
+                let member = self.want_name("after the member mark")?;
+                self.act(Action::Grab(Rc::from(member.as_str())), 1);
+            }
+        }
+        if let Some(index) = lang.index_brackets.clone() {
+            while self.at_symbol(&index.open) {
+                self.take();
+                self.expr(0)?;
+                self.want_sign(&index.close, "after the place naming the class")?;
+                self.act(Action::At, 2);
+            }
+        }
+        Ok(())
+    }
+
     /// The class a name stands for: `self` and `parent` name the class
     /// being read and the one it stands on.
     fn read_class(&mut self, name: &str) -> Res<()> {
         let lang = self.lang;
         if Lang::spells(&lang.self_words, name) {
             let (here, _) = self.within.clone().ok_or_else(|| format!("'{}' belongs inside a class", name))?;
+            let here = self.class_key(&here);
             self.read(&here);
             return Ok(());
         }
         if Lang::spells(&lang.parent_words, name) {
             let (here, base) = self.within.clone().ok_or_else(|| format!("'{}' belongs inside a class", name))?;
             let base = base.ok_or_else(|| format!("Class {} stands on nothing", here))?;
+            let base = self.class_key(&base);
             self.read(&base);
             return Ok(());
         }
-        self.read(name);
+        let named = self.class_key(name);
+        self.read(&named);
         Ok(())
     }
 
@@ -2651,6 +3128,64 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// The value that spells a member's name: a piece written within
+    /// the block marks, or a bare variable — bare, since a call bracket
+    /// after it opens the method's arguments and not a call of the
+    /// variable itself.
+    fn member_value_name(&mut self, member: bool) -> Res<()> {
+        let lang = self.lang;
+        // After the mark that reaches into a class, the mark is the one
+        // a class's own values are written with, and what follows it
+        // spells the name outright: `C::$$n` is the value named by what
+        // `$n` holds. After the mark that reaches into a thing there is
+        // no such mark in the writing, so one standing there says the
+        // piece spells a name and the member is named by what *that*
+        // binding holds: `$o->${e}` is one step further in.
+        if Lang::spells(&lang.naming_words, &self.look().lexeme) {
+            self.take();
+            self.naming()?;
+            if member {
+                self.act(Action::Named, 1);
+            }
+            return Ok(());
+        }
+        if let (Some(open), Some(close)) = (lang.block_opens.first().cloned(), lang.block_closes.first().cloned()) {
+            if self.at_symbol(&open) {
+                self.take();
+                self.expr(0)?;
+                self.want_sign(&close, "after the member's name")?;
+                return Ok(());
+            }
+        }
+        let named = self.take().lexeme;
+        self.read(&named);
+        Ok(())
+    }
+
+    /// Whether what stands after the member mark is a value rather than
+    /// a name written out: a variable, or a piece written within the
+    /// block marks.
+    fn member_named_by_value(&mut self, member: bool) -> bool {
+        let lang = self.lang;
+        if lang.block_opens.first().map_or(false, |open| self.at_symbol(open)) {
+            return true;
+        }
+        if Lang::spells(&lang.naming_words, &self.look().lexeme) {
+            return true;
+        }
+        // A bare variable names a member of a thing by what it holds,
+        // but the same written after the mark that reaches into a class
+        // names that class's own value outright, mark and all. Only the
+        // mark that says a value spells a name works there.
+        let here = self.look();
+        let a_binding = here.shape == Shape::Instr && lang.sigil.map_or(false, |mark| here.lexeme.starts_with(mark));
+        // Unless a call follows it: `C::$m()` calls the method whose
+        // name the binding holds, where `C::$m` is the class's own value
+        // of that name.
+        let calling = lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).is_lexeme(Shape::Sign, &c.open));
+        a_binding && (member || calling)
+    }
+
     /// What follows the mark that says a value spells a name: a piece
     /// written within the block marks, or whatever binds as tightly as
     /// a negation, so that `$$$a` reads from the inside out.
@@ -2693,9 +3228,15 @@ impl<'a> Compiler<'a> {
     /// an array, or a property. Whichever it is, a cell is made of it
     /// where it is not one already and left on the stack, so a name may
     /// be fastened to it.
-    fn a_cell(&mut self) -> Res<()> {
+    fn a_cell(&mut self, unshared: &[String], at_run: bool) -> Res<()> {
         let from = self.mark();
-        self.expr_at(0, false)?;
+        // Where the asking stands, so that words said about it name that
+        // line and not whatever line a call along the way ran last.
+        let row = (self.look().row as u32).saturating_sub(self.before);
+        // Read as any expression is, a write among them: what is asked
+        // to share a cell may be a write, and a write is not a place, so
+        // its value is handed over and the language says so.
+        self.expr_at(0, true)?;
         let read: Vec<Instr> = self.piece().instrs.drain(from..).collect();
         match read.as_slice() {
             [Instr::Read(slot)] if !slot.moving => {
@@ -2710,16 +3251,80 @@ impl<'a> Compiler<'a> {
                 }
                 self.act(Action::BondField(member), 1);
             }
-            [Instr::Read(slot), index @ .., Instr::Act(Action::At, 2)] if !slot.moving => {
-                let name = slot.ident.to_string();
+            // A binding named as the run goes has a cell as any binding
+            // does, and asking for it is asking for that one.
+            [rest @ .., Instr::Act(Action::Named, 1)] => {
+                let rest = rest.to_vec();
                 let at = self.mark();
-                for w in relocated(index.to_vec(), at as i64 - (from as i64 + 1)) {
+                for w in relocated(rest, at as i64 - from as i64) {
                     self.put(w);
                 }
-                let held = self.cell_to_read(&name, false);
-                self.put(Instr::BondItem(held));
+                self.act(Action::BondNamed, 1);
             }
-            _ => return Err("Only a name, a place in an array or a property has a cell to share".to_string()),
+            [Instr::Read(slot), .., Instr::Act(Action::At, 2)] if !slot.moving => {
+                let name = slot.ident.to_string();
+                // The keys are taken apart so that each is worked out
+                // once and in order, and the chain walked by them.
+                let (keys, key_at) = keys_apart(&read, from, &self.keyed);
+                if keys.is_empty() {
+                    return Err("Only a place in a named array has a cell to share".to_string());
+                }
+                for (i, key) in keys.iter().enumerate() {
+                    let at = self.mark();
+                    for w in relocated(key.clone(), at as i64 - key_at[i] as i64) {
+                        self.put(w);
+                    }
+                }
+                // Asking for a place's cell is a write as much as a
+                // read, so a name holding nothing yet is not complained
+                // about where the language makes what a write needs.
+                let held = self.cell_to_read(&name, false);
+                self.put(Instr::Hush(true));
+                self.put(Instr::BondPlace(held, keys.len()));
+                self.put(Instr::Hush(false));
+            }
+            // Anything else is read as it stands: a call of a routine
+            // that gives back a cell answers with one already, and what
+            // has no cell to share is written plainly, which is what a
+            // language asking to share one from something that has none
+            // does rather than stopping.
+            _ => {
+                let at = self.mark();
+                for w in relocated(read.clone(), at as i64 - from as i64) {
+                    self.put(w);
+                }
+                // A call of a routine that gives back a cell answers
+                // with one, so nothing is said of it. Where a language
+                // has words for the rest, they are said here, once the
+                // value has been worked out.
+                let shares = match read.last() {
+                    // A method is declared as any other routine is, so
+                    // one written to give back a cell gives one however
+                    // it is called: through a thing, or through a class.
+                    Some(Instr::Act(Action::Invoke(name) | Action::Send(name) | Action::Summon(name), _)) => self.gives_back.contains(name.as_ref()),
+                    _ => false,
+                };
+                // Whether a name may be fastened to what a call answers
+                // with is settled by how the routine is written, so it
+                // is known here. Whether a routine giving back a cell
+                // was given one to give is settled by the run: the value
+                // itself says, being a cell or not.
+                let says = at_run || !shares;
+                if let (Some(said), true) = (unshared.first(), says) {
+                    if self.lang.tells_place && row > 0 {
+                        self.put(Instr::Line(row));
+                        self.piece().line = row;
+                    }
+                    let words = Rc::from(said.as_str());
+                    match at_run {
+                        true => self.act(Action::HeldAnyway(Complaint::Notice, words), 1),
+                        false => {
+                            self.act(Action::Remark(Complaint::Notice, words), 0);
+                            self.put_away();
+                        }
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -2778,6 +3383,25 @@ impl<'a> Compiler<'a> {
     /// than nothing. A binding never written and a place an array does
     /// not hold are both nothing, and neither is complained about, so
     /// every read within is a gentle one.
+    /// `empty(x)`: whether what the name or place holds is untrue,
+    /// asked as gently as asking whether it is there at all, since a
+    /// place that is not there holds nothing and nothing is untrue.
+    fn hollow(&mut self, call: &Brackets) -> Res<()> {
+        let from = self.mark();
+        self.put(Instr::Hush(true));
+        self.expr(0)?;
+        for w in self.piece().instrs[from..].iter_mut() {
+            if let Instr::Act(Action::At, 2) = w {
+                *w = Instr::Act(Action::Peek, 2);
+            }
+        }
+        self.put(Instr::Hush(false));
+        self.want_sign(&call.close, "after what is asked about")?;
+        self.act(Action::AsBool, 1);
+        self.act(Action::Not, 1);
+        Ok(())
+    }
+
     fn held(&mut self, call: &Brackets) -> Res<()> {
         let mut asked = 0;
         while !self.at_symbol(&call.close) {
@@ -2824,6 +3448,62 @@ impl<'a> Compiler<'a> {
                 break;
             }
             self.take();
+            // A value may stand where a member's name stands: the
+            // member is the one that value spells, worked out while the
+            // program runs.
+            if lang.members_by_value && self.member_named_by_value(member) {
+                let names_at = self.mark();
+                self.member_value_name(member)?;
+                let call = lang.calling.clone().filter(|c| self.at_symbol(&c.open));
+                if !member {
+                    let Some(call) = call else {
+                        // A class's own value, named by what the value
+                        // spells.
+                        self.act(Action::ReachNamed, 2);
+                        continue;
+                    };
+                    // A method of the class, named by what the value
+                    // spells. The name is worked out first and kept
+                    // aside; then the object a method is given, what
+                    // names the class, and the arguments.
+                    let both: Vec<Instr> = self.piece().instrs.drain(from..).collect();
+                    let (naming_class, naming_method) = both.split_at(names_at - from);
+                    let at = self.mark();
+                    for w in relocated(naming_method.to_vec(), at as i64 - names_at as i64) {
+                        self.put(w);
+                    }
+                    let held = self.gensym("called");
+                    self.write(&held);
+                    match (&lang.this_word, self.within.is_some()) {
+                        (Some(this), true) => self.read(&this.clone()),
+                        _ => self.constant(Value::Null),
+                    }
+                    let at = self.mark();
+                    for w in relocated(naming_class.to_vec(), at as i64 - from as i64) {
+                        self.put(w);
+                    }
+                    self.take();
+                    let argc = self.arguments_of("the method", &call)?;
+                    self.read(&held);
+                    self.act(Action::SummonNamed(argc), argc + 3);
+                    continue;
+                }
+                match call {
+                    Some(call) => {
+                        // The name is worked out before the arguments,
+                        // and the call wants it on top, so it is kept
+                        // aside while they are read.
+                        let held = self.gensym("called");
+                        self.write(&held);
+                        self.take();
+                        let argc = self.arguments_of("the method", &call)?;
+                        self.read(&held);
+                        self.act(Action::SendNamed(argc), argc + 2);
+                    }
+                    None => self.act(Action::GrabNamed, 2),
+                }
+                continue;
+            }
             let named = self.want_name("after the member mark")?;
             let call = lang.calling.clone().filter(|c| self.at_symbol(&c.open));
             if member {
@@ -2886,6 +3566,20 @@ impl<'a> Compiler<'a> {
         // A chain read within a key finishes before the chain holding
         // it, so the one left standing is the outermost.
         self.keyed = keyed;
+        // What a chain of looks comes to may itself be called: the value
+        // is held aside while the arguments are worked out, since a call
+        // wants what it calls above them.
+        if let Some(call) = self.lang.calling.clone() {
+            if stepped && self.at_symbol(&call.open) {
+                let callee = self.gensym("callee");
+                self.write(&callee);
+                self.take();
+                let argc = self.arguments(&call)?;
+                self.read(&callee);
+                self.act(Action::Invoke(Rc::from("the value a look came to")), argc + 1);
+                return self.indexing(from);
+            }
+        }
         // An index may be followed by more members: `$a[0]->b`.
         let more = lang.member_mark.as_ref().map_or(false, |m| self.at_symbol(m))
             || lang.scope_mark.as_ref().map_or(false, |m| self.at_symbol(m));
@@ -2946,13 +3640,12 @@ impl<'a> Compiler<'a> {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", pair.close));
             }
-            let lone = self.look().shape == Shape::Instr
-                && (self.look_ahead(1).is_lexeme(Shape::Sign, &pair.close)
-                    || pair.between.as_ref().map_or(false, |s| self.look_ahead(1).is_lexeme(Shape::Sign, s)));
-            if shared.get(count).copied().unwrap_or(false) && lone {
-                let name = self.take().lexeme;
-                let cell = self.cell_to_write(&name);
-                self.put(Instr::Bond(cell));
+            // A parameter that takes a cell is handed the cell of
+            // whatever names one: a binding, a place in an array, a
+            // property. What has none is handed its value, and the
+            // language says so where it has words for it.
+            if shared.get(count).copied().unwrap_or(false) {
+                self.a_cell(&self.lang.unshared_handed.clone(), false)?;
             } else {
                 self.expr(0)?;
             }
@@ -3463,9 +4156,10 @@ fn peephole(instrs: Vec<Instr>) -> Vec<Instr> {
 /// found by reading the tokens before anything is compiled: a call has to
 /// know before it works out its arguments, and a program may be called
 /// above where it is written.
-fn shared_parameters(tokens: &[Token], lang: &Lang) -> HashMap<String, Vec<bool>> {
+fn shared_parameters(tokens: &[Token], lang: &Lang) -> (HashMap<String, Vec<bool>>, std::collections::HashSet<String>) {
     let mut found = HashMap::new();
-    let (Some(mark), Some(call)) = (&lang.reference_mark, &lang.calling) else { return found };
+    let mut gives = std::collections::HashSet::new();
+    let (Some(mark), Some(call)) = (&lang.reference_mark, &lang.calling) else { return (found, gives) };
     let sign = |t: &Token, text: &str| t.is_lexeme(Shape::Sign, text);
     let mut i = 0;
     while i + 2 < tokens.len() {
@@ -3475,7 +4169,8 @@ fn shared_parameters(tokens: &[Token], lang: &Lang) -> HashMap<String, Vec<bool>
             continue;
         }
         let mut j = i + 1;
-        if sign(&tokens[j], mark) {
+        let hands_back = sign(&tokens[j], mark);
+        if hands_back {
             j += 1;
         }
         if tokens[j].shape != Shape::Instr || !sign(&tokens[j + 1], &call.open) {
@@ -3483,6 +4178,9 @@ fn shared_parameters(tokens: &[Token], lang: &Lang) -> HashMap<String, Vec<bool>
             continue;
         }
         let name = tokens[j].lexeme.clone();
+        if hands_back {
+            gives.insert(name.clone());
+        }
         j += 2;
         let (mut marks, mut shared, mut anything, mut defaulting, mut depth) = (Vec::new(), false, false, false, 1usize);
         while j < tokens.len() {
@@ -3513,7 +4211,7 @@ fn shared_parameters(tokens: &[Token], lang: &Lang) -> HashMap<String, Vec<bool>
         found.insert(name, marks);
         i = j;
     }
-    found
+    (found, gives)
 }
 
 /// The keys of an index chain, each with where it began, taken out of
@@ -3527,8 +4225,10 @@ fn keys_apart(target: &[Instr], from: usize, keyed: &[usize]) -> (Vec<Vec<Instr>
     if keyed.is_empty() || reach == 0 || !matches!(target[reach - 1], Instr::Act(Action::At, 2)) {
         return nothing;
     }
-    // The chain must stand on the one instr that reads the name.
-    if keyed[0] != from + 1 || keyed.windows(2).any(|w| w[0] >= w[1]) || keyed[keyed.len() - 1] >= from + reach {
+    // The chain stands on whatever comes before its first key, which
+    // may be a name, a property, a class's own value or anything else
+    // that can be read and written.
+    if keyed[0] <= from || keyed.windows(2).any(|w| w[0] >= w[1]) || keyed[keyed.len() - 1] >= from + reach {
         return nothing;
     }
     let mut keys = Vec::new();
@@ -3562,11 +4262,25 @@ fn relocated(instrs: Vec<Instr>, delta: i64) -> Vec<Instr> {
 /// A whole number too wide for the language to hold as one is a real
 /// there, literal or not.
 fn within_width(v: Value, lang: &Lang) -> Value {
-    let (Some(bits), Value::Huge(n)) = (lang.integer_bits, &v) else { return v };
-    if n.bits() < bits as u64 {
-        return v;
+    let places = lang.real_digits.unwrap_or(arith::DEFAULT_PLACES);
+    if let (Some(bits), Value::Huge(n)) = (lang.integer_bits, &v) {
+        if n.bits() >= bits as u64 {
+            return arith::shape_number((**n).clone(), BigInt::from(1), Some(places));
+        }
     }
-    arith::shape_number((**n).clone(), BigInt::from(1), Some(lang.real_digits.unwrap_or(arith::DEFAULT_PLACES)))
+    // A real written in a program is brought to the width the language
+    // holds its reals in, as a real worked out while it runs is, so
+    // that the two are the same number and not merely alike.
+    crate::value::to_binary_width(v, lang.real_bits, places)
+}
+
+/// What a language says of a run of digits it cannot read, where it
+/// gives words for that; the kernel's own naming of it otherwise.
+fn unreadable_number(text: &str, lang: &Lang) -> String {
+    match &lang.number_amiss {
+        Some(said) => said.clone(),
+        None => format!("Invalid number: {}", text),
+    }
 }
 
 fn parse_number(text: &str, lang: &Lang) -> Res<Value> {
@@ -3583,7 +4297,7 @@ fn read_number(text: &str, lang: &Lang) -> Res<Value> {
         if let Some(digits) = text.strip_prefix(prefix.as_str()) {
             return BigInt::parse_bytes(digits.as_bytes(), *base)
                 .map(Value::of_big)
-                .ok_or_else(|| format!("Invalid number: {}", text));
+                .ok_or_else(|| unreadable_number(text, lang));
         }
     }
     // A nought before more digits, where a language says so, means the
@@ -3591,7 +4305,7 @@ fn read_number(text: &str, lang: &Lang) -> Res<Value> {
     if lang.octal_lead && text.len() > 1 && text.starts_with('0') && text.bytes().all(|b| b.is_ascii_digit()) {
         return BigInt::parse_bytes(text[1..].as_bytes(), 8)
             .map(Value::of_big)
-            .ok_or_else(|| format!("Invalid number: {}", text));
+            .ok_or_else(|| unreadable_number(text, lang));
     }
     if let Some(mark) = lang.base_mark.filter(|m| text.contains(*m)) {
         let (p, q) = in_given_base(text, mark, lang.point, lang.exponent_mark)?;
@@ -3600,12 +4314,12 @@ fn read_number(text: &str, lang: &Lang) -> Res<Value> {
     // 1e9, 2.5E-3: the part before the letter, scaled by a power of ten; always a real.
     if let Some(at) = text.find(|c| lang.exponent_letters.contains(&c)) {
         let (mantissa, power) = (&text[..at], &text[at + 1..]);
-        let power: i32 = power.parse().map_err(|_| format!("Invalid number: {}", text))?;
+        let power: i32 = power.parse().map_err(|_| unreadable_number(text, lang))?;
         let (p, q) = match read_number(mantissa, lang)? {
             Value::Real(r) => (r.p.clone(), r.q.clone()),
             Value::Small(n) => (BigInt::from(n), BigInt::from(1)),
             Value::Huge(n) => ((*n).clone(), BigInt::from(1)),
-            _ => return Err(format!("Invalid number: {}", text)),
+            _ => return Err(unreadable_number(text, lang)),
         };
         let scale = BigInt::from(10).pow(power.unsigned_abs());
         let (p, q) = if power < 0 { (p, q * scale) } else { (p * scale, q) };

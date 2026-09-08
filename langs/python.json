@@ -84,6 +84,7 @@
   "syntax.map.close": [
     "}"
   ],
+  "system.flag.counts": false,
   "literal.true": [
     "True"
   ],

@@ -172,6 +172,14 @@ impl RuntimeValue for LumenBool {
 
     fn as_display_string(&self) -> String {
         let d = crate::language::definition::def();
+        // A language may count a flag rather than word it: true stands
+        // for one, and false for nothing whatever.
+        if d.flag_counts {
+            return match self.value {
+                true => "1".to_string(),
+                false => String::new(),
+            };
+        }
         if self.value { d.word_or("literal.true", "true") } else { d.word_or("literal.false", "false") }.to_string()
     }
 

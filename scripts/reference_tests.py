@@ -197,10 +197,16 @@ def run_phpt(path, kernel):
     # business and whether it worked changes nothing.
     if "CLEAN" in s:
         run(kernel, ["--lang", "langs/extras/php.json"], s["CLEAN"], ".clean.php", beside=path)
+    # run-tests.php compares what was written and does not look at the
+    # exit status at all, save where a test asks for one outright. PHP
+    # itself leaves with 255 on a fatal error, so a test whose expected
+    # output *is* a fatal error could never come out right if the status
+    # were part of the question. What was written decides; the status
+    # only says how to name a test that printed something else.
+    ok = (got == want) if "EXPECT" in s else (re.fullmatch(expectf_pattern(want) if "EXPECTF" in s else want, got, re.S) is not None)
+    if ok:
+        return "pass", ""
     if code == 0:
-        ok = (got == want) if "EXPECT" in s else (re.fullmatch(expectf_pattern(want) if "EXPECTF" in s else want, got, re.S) is not None)
-        if ok:
-            return "pass", ""
         return "differs", "ran, printed something else"
     return "error", reason_of(code, out, err, "PhpError")
 

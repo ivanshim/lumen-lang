@@ -59,19 +59,57 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
 /// file lies in, where it has words for them.
 const OWN_PLACE: [(&str, &str); 2] = [("file", "ext.system.source.file"), ("directory", "ext.system.source.directory")];
 
-const REQUEST_PARTS: [(&str, &str); 7] = [
-    ("GET", "ext.system.request.query"), ("POST", "ext.system.request.form"), ("COOKIE", "ext.system.request.cookies"),
-    ("SERVER", "ext.system.request.server"), ("ENV", "ext.system.request.env"), ("FILES", "ext.system.request.files"),
-    ("ALL", "ext.system.request.all"),
+/// What the host may find amiss in a request before the program runs.
+/// The host names only which of them it found; the words for each are
+/// the language's own.
+const REQUEST_AMISS: [(&str, &str); 4] = [
+    ("boundary", "ext.system.request.amiss.boundary"),
+    ("boundary.wrong", "ext.system.request.amiss.boundary.wrong"),
+    ("part", "ext.system.request.amiss.part"),
+    ("body.large", "ext.system.request.amiss.body.large"),
 ];
 
+const REQUEST_PARTS: [(&str, &str); 8] = [
+    ("GET", "ext.system.request.query"), ("POST", "ext.system.request.form"), ("COOKIE", "ext.system.request.cookies"),
+    ("SERVER", "ext.system.request.server"), ("ENV", "ext.system.request.env"), ("FILES", "ext.system.request.files"),
+    ("ALL", "ext.system.request.all"), ("SETTINGS", "ext.system.request.settings"),
+];
+
+/// A program that could not be read, told the way this language tells a
+/// complaint: written where the run would have written, naming the file
+/// and the row the reading stopped on. Where the language has no word
+/// for such a stopping, nothing is written and the fault goes back as
+/// it came, for the host to tell in its own way.
+fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, String, bool)], before: u32) -> String {
+    let Some(word) = table.single("ext.system.complaint.reading") else { return said.to_string() };
+    let named = |key: &str| request.iter().find(|(from, k, ..)| from == "SELF" && k == key).map(|(.., v, _)| v.clone());
+    let file = named("file").unwrap_or_default();
+    print!("\n{}: {} in {} on line {}\n", word, said, file, row.saturating_sub(before));
+    // The run ends straight after this, and ending does not empty what
+    // waits to be written, so it is emptied here.
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    said.to_string()
+}
+
+fn lines_before(request: &[(String, String, String, bool)]) -> u32 {
+    request
+        .iter()
+        .find(|(from, key, ..)| from == "SELF" && key == "lines_before")
+        .and_then(|(.., n, _)| n.parse().ok())
+        .unwrap_or(0)
+}
+
 fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
-    let tokens = scan::scan(source, table)?;
-    let tokens = indent::indent(tokens, table)?;
+    let ahead = lines_before(request);
+    let read = scan::scan_at(source, table).map_err(|(said, row)| cannot_read(table, &said, row, request, ahead));
+    let tokens = indent::indent(read?, table)?;
     let system = ["system.args", "system.memoization", "system.real_default_precision", "system.entry", "system.kind.integer",
         "system.kind.rational", "system.kind.real", "system.kind.string", "system.kind.boolean", "system.kind.array", "system.kind.null"];
     let mut seeded: Vec<String> = system.iter().filter_map(|k| table.single(k).map(str::to_string)).collect();
     seeded.extend(REQUEST_PARTS.iter().filter_map(|(_, key)| table.single(key).map(str::to_string)));
+    seeded.extend(table.single("ext.system.request.amiss").map(str::to_string));
+    seeded.extend(table.single("ext.system.request.body").map(str::to_string));
     seeded.extend(OWN_PLACE.iter().filter_map(|(_, key)| table.single(key).map(str::to_string)));
     seeded.extend(table.single("ext.system.source.line").map(str::to_string));
     let before: u32 = request
@@ -80,7 +118,8 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         .and_then(|(.., n, _)| n.parse().ok())
         .unwrap_or(0);
     let reduced = if !table.rpn {
-        build::build(&tokens, table, &seeded, HashMap::new(), true, before)?
+        build::build_at(&tokens, table, &seeded, HashMap::new(), true, before)
+            .map_err(|(said, row)| cannot_read(table, &said, row, request, ahead))?
     } else {
         // Read leniently until the named programs' arities settle, then strictly.
         let mut assumed: HashMap<String, build::Signature> = HashMap::new();
@@ -116,6 +155,31 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         }
         machine.define(name, Value::Dict(std::rc::Rc::new(carried)));
     }
+    // The body as it came, for a program that would read it itself.
+    if let Some(name) = table.single("ext.system.request.body") {
+        let found = request.iter().find(|(from, key, ..)| from == "SELF" && key == "body");
+        machine.define(name, found.map_or(Value::Nil, |(.., raw, _)| Value::text(raw)));
+    }
+    // What the host found amiss in the request before the program ran,
+    // told in the language's own words.
+    if let Some(name) = table.single("ext.system.request.amiss") {
+        // Each is the kind the host found, and after it whatever counts
+        // the kind is told with; the words come with places for them.
+        let said: Vec<Value> = request
+            .iter()
+            .filter(|(from, key, ..)| from == "SELF" && key == "amiss")
+            .filter_map(|(.., told, _)| {
+                let mut steps = told.split('\u{1f}');
+                let kind = steps.next().unwrap_or_default();
+                let (_, key) = REQUEST_AMISS.iter().find(|(k, _)| *k == kind)?;
+                let words = table.single(key)?;
+                let mut whole = vec![Value::text(words)];
+                whole.extend(steps.map(Value::text));
+                Some(Value::Vector(std::rc::Rc::new(whole)))
+            })
+            .collect();
+        machine.define(name, Value::Vector(std::rc::Rc::new(said)));
+    }
     if let Some((.., place, _)) = request.iter().find(|(from, key, ..)| from == "SELF" && key == "file") {
         machine.found_in(place);
     }
@@ -136,15 +200,32 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     if let Some(n) = table.single("system.real_default_precision") {
         machine.define(n, Value::Small(math::DEFAULT_PLACES as i64));
     }
-    machine.run_main(&reduced.program.body)?;
+    if let Err(told) = machine.run_main(&reduced.program.body) {
+        let _ = machine.run_afterward();
+        machine.let_things_go();
+        machine.let_go_all();
+        return Err(told);
+    }
+    if let Err(told) = machine.run_afterward() {
+        machine.let_things_go();
+        machine.let_go_all();
+        return Err(told);
+    }
     if let Some(entry) = table.single("system.entry") {
         if let Some(Value::Bound(p, env)) = machine.lookup(entry) {
-            machine.invoke(p, env, Vec::new()).map_err(|e| match e {
+            let done = machine.invoke(p, env, Vec::new()).map_err(|e| match e {
                 exec::Escape::Error(m) => m,
                 _ => String::new(),
-            })?;
+            });
+            machine.let_things_go();
+            machine.let_go_all();
+            done?;
+            return Ok(());
         }
     }
+    // Whatever the run was still keeping goes out when it ends.
+    machine.let_things_go();
+    machine.let_go_all();
     Ok(())
 }
 

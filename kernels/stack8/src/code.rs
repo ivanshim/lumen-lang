@@ -28,6 +28,9 @@ pub struct Cell {
 #[derive(Debug, Clone)]
 pub enum Action {
     Add,
+    /// A step onward or back (`++`, `--`), which is adding or taking
+    /// away one save where a language steps text along its letters.
+    Step(bool),
     Sub,
     Mul,
     Div,
@@ -71,6 +74,27 @@ pub enum Action {
     AtEnd,
     /// How many places an array or a map holds.
     Extent,
+    /// Whether the place a walk has reached still holds a member. A
+    /// property taken off a thing leaves its place behind, and the walk
+    /// steps over it rather than handing it out. The thing walked is
+    /// below the place.
+    Standing,
+    /// What a walk walks. A thing that hands another over to be walked
+    /// in its stead answers with that one; a thing that is its own walk
+    /// is wound back and answers with itself; anything else is itself.
+    WalkFrom,
+    /// Whether a walk has more to hand out, what stands at the place it
+    /// has reached and what that is called, and the step onward. A thing
+    /// that is its own walk is asked; anything else is counted through,
+    /// as an array is.
+    WalkMore,
+    WalkThis,
+    WalkKey,
+    WalkOnward,
+    /// A walk that hands out the items' own cells asks for this first: a
+    /// thing that is its own walk has no such cells, and a language with
+    /// words for that says so and stops.
+    WalkAlone,
     /// Which of two values comes first: below, alike, or above.
     Rank,
     /// Whether two values are the very same: of one kind, and alike
@@ -89,6 +113,9 @@ pub enum Action {
     /// The value of the binding whose name the text above spells: how a
     /// language reads a name worked out while the program runs.
     Named,
+    /// The cell of the outermost binding a value names, made where
+    /// that binding has none yet.
+    BondNamed,
     /// Write the value above into the binding whose name the text under
     /// it spells.
     WriteNamed,
@@ -96,6 +123,16 @@ pub enum Action {
     Cast(crate::value::Sort),
     /// Whether the value above is nothing at all.
     Nothing,
+    /// Say these words about the piece standing here, in the language's
+    /// own word for that kind of remark, and go on: how a definition
+    /// that has something to say about a shape it still allows says it.
+    Remark(crate::lang::Complaint, Rc<str>),
+    /// A cell for the value standing here, whatever it is: the cell
+    /// itself where it is one already, and otherwise these words and a
+    /// fresh cell holding it. A routine written to give back a cell
+    /// gives one back however it ends, and only the run can say whether
+    /// what it named had one of its own.
+    HeldAnyway(crate::lang::Complaint, Rc<str>),
     /// What an array holds at that place, answering nothing where it
     /// holds nothing there, or where what is asked is not an array at
     /// all, and saying nothing about it either way: how a language asks
@@ -121,6 +158,22 @@ pub enum Action {
     /// not one already, and push the cell, so another name may be
     /// fastened to it.
     BondField(Rc<str>),
+    /// The property of the object, named by the text above it: how a
+    /// language reads a property whose name is worked out while the
+    /// program runs.
+    GrabNamed,
+    /// Write that property: the object, the name, then the value.
+    PlantNamed,
+    /// Call the method of the object, named by the text above it, with
+    /// the arguments above that. The count is of the arguments alone.
+    SendNamed(usize),
+    /// A class's own value, named by the text above the class.
+    ReachNamed,
+    /// Call the method of the class, named by the text above the
+    /// arguments. The count is of the arguments alone.
+    SummonNamed(usize),
+    /// Write a class's own value: the class, the name, then the value.
+    SowNamed,
     /// Call that method of the object below the arguments.
     Send(Rc<str>),
     /// A constant or a class's own value, of the class above.
@@ -169,6 +222,11 @@ pub enum Builtin {
     /// binding was never written or a place is not there
     /// (ext.builtin.isset).
     Held,
+    /// Whether what a name or a place holds is untrue, asked the same
+    /// way: without minding that it is not there at all
+    /// (ext.builtin.empty). It is the companion of the one above, and
+    /// asks the looser question, since nothing at all is untrue.
+    Hollow,
     /// Each argument with its kind, PHP's var_dump (ext.builtin.var_dump).
     Dump,
     /// Source read while the program runs: the text itself
@@ -177,6 +235,10 @@ pub enum Builtin {
     /// and run where it stands, and what it gives back is its answer.
     Eval,
     Include,
+    /// The same, but only where that file has not been read before in
+    /// this run (ext.builtin.include.once); a file read already answers
+    /// with truth and is not read again.
+    IncludeOnce,
     /// What a file holds, all of it at once; what to write into one;
     /// whether a file is there at all; and taking one away
     /// (ext.builtin.file.*). Only a language that spells these reaches
@@ -188,6 +250,33 @@ pub enum Builtin {
     /// How long the run may take from here, in seconds; nought lifts
     /// the limit (ext.builtin.time_limit).
     TimeLimit,
+    /// Keeping what the run writes out rather than letting it go
+    /// (ext.builtin.output.*): begin keeping, what has been kept since
+    /// the last beginning, stop keeping and give up what was kept, and
+    /// how many keepings are in force. What a keeping gives up may be
+    /// written out again by whoever asked for it, so a language builds
+    /// flushing and filtering out of these four.
+    HoldOut,
+    HeldOut,
+    DropOut,
+    DeepOut,
+    /// A routine to run when the run is over, with whatever else was
+    /// given to stand as its arguments (ext.builtin.at_end). They run
+    /// in the order they were named, after the program's own last
+    /// statement and before what is still being kept is let go.
+    WhenDone,
+    /// A routine to be handed every complaint the run makes, instead of
+    /// the complaint being written out (ext.builtin.complaint.handler).
+    /// It is handed the word for the kind, what was said, where the
+    /// program is written and which line was running. Answering false
+    /// leaves the complaint to be written out as it would have been;
+    /// giving nothing takes the routine away again.
+    Complainer,
+    /// Say these words as a complaint of the kind the first names, where
+    /// the run stands (ext.builtin.complaint.say): how a language writes
+    /// a complaint of its own and has it told as the run's own are, in
+    /// its place and through whatever stands in their way.
+    Complain,
     /// What the running call was given, however much of it the routine
     /// named: all of it as an array, how much there was, or the one at a
     /// position (ext.builtin.args.*).
@@ -256,8 +345,18 @@ pub enum Instr {
     /// shared cell, and push that cell: how a walk hands out its items
     /// for writing.
     BondItem(Cell),
+    /// Pop that many keys, walk into the array in this binding by them,
+    /// make what it holds at the last a shared cell, and push that cell.
+    /// Unlike the one above this reads keys and not positions, and where
+    /// a language makes what a write needs it makes the arrays and the
+    /// places along the way.
+    BondPlace(Cell, usize),
     /// Leave this binding as though nothing were ever written to it.
     Forget(Cell),
+    /// Make this global stand ready: where nothing was ever written to
+    /// it, nothing is written to it now, so that a name bound to it is
+    /// a name written to and not one never written.
+    Ready(Cell),
     /// From here to the matching Unguard, a raised value is caught: the
     /// stack goes back to its depth here, the value is pushed, and the
     /// run goes on at the index.

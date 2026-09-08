@@ -259,7 +259,7 @@ impl<'a> Writer<'a> {
         let label = Self::op_label(op);
         let lex = self.to.first(label).ok_or_else(|| format!("no `{}`", label))?;
         if matches!(op, Op::Div | Op::DivReal) {
-            let real = self.to.text("op.div.result") == Some("real");
+            let real = matches!(self.to.text("op.div.result"), Some("real") | Some("whole_or_real"));
             if real != (op == Op::DivReal) {
                 return Err(if real { "exact division".to_string() } else { "division yielding a real".to_string() });
             }

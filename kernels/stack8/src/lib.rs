@@ -59,8 +59,36 @@ fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, St
     go_inner(lang, source, program_args, request).map_err(|e| format!("{}: {}", lang.banner, e))
 }
 
+/// A program that could not be read, told the way this language tells a
+/// complaint: written where the run would have written, naming the file
+/// and the line the reading stopped on. Where the language has no word
+/// for such a stopping, nothing is written here and the fault goes back
+/// as it came, for the host to tell in its own way.
+fn cannot_read(lang: &Lang, said: &str, row: usize, request: &[(String, String, String, bool)], before: u32) -> String {
+    let Some(word) = lang.reading_word.as_deref() else { return said.to_string() };
+    let named = |key: &str| request.iter().find(|(from, k, ..)| from == "SELF" && k == key).map(|(.., v, _)| v.clone());
+    let file = named("file").unwrap_or_default();
+    let line = (row as u32).saturating_sub(before);
+    print!("\n{}: {} in {} on line {}\n", word, said, file, line);
+    // The run ends straight after this, and ending does not empty what
+    // is waiting to be written, so it is emptied here.
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    said.to_string()
+}
+
+fn lines_before(request: &[(String, String, String, bool)]) -> u32 {
+    request
+        .iter()
+        .find(|(from, key, ..)| from == "SELF" && key == "lines_before")
+        .and_then(|(.., n, _)| n.parse().ok())
+        .unwrap_or(0)
+}
+
 fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
-    let tokens = layout::layout(lex::lex(source, lang)?, lang)?;
+    let before = lines_before(request);
+    let read = lex::lex_at(source, lang).map_err(|(said, row)| cannot_read(lang, &said, row, request, before));
+    let tokens = layout::layout(read?, lang)?;
     let mut registry = compile::Registry::default();
     // The system names are globals whether or not the program mentions them.
     let system = [&lang.args_binding, &lang.memo_binding, &lang.precision_binding, &lang.entry_binding];
@@ -75,15 +103,19 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     for (_, name) in &lang.request_bindings {
         registry.slot(name);
     }
+    if let Some(name) = &lang.amiss_binding {
+        registry.slot(name);
+    }
+    if let Some(name) = &lang.body_binding {
+        registry.slot(name);
+    }
     for (_, name) in &lang.source_bindings {
         registry.slot(name);
     }
-    let before = request
-        .iter()
-        .find(|(from, key, ..)| from == "SELF" && key == "lines_before")
-        .and_then(|(.., n, _)| n.parse().ok())
-        .unwrap_or(0);
-    let program = compile::compile(&tokens, lang, &mut registry, before)?;
+    let program = match compile::compile(&tokens, lang, &mut registry, before) {
+        Ok(program) => program,
+        Err(said) => return Err(cannot_read(lang, &said, registry.stopped_at, request, before)),
+    };
 
     let mut machine = engine::Engine::new(lang, registry);
     if let Some(name) = &lang.args_binding {
@@ -108,6 +140,31 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
         }
         machine.define(name, Value::Map(std::rc::Rc::new(carried)));
     }
+    // The body as it came, for a program that would read it itself.
+    if let Some(name) = &lang.body_binding {
+        let found = request.iter().find(|(from, key, ..)| from == "SELF" && key == "body");
+        machine.define(name, found.map_or(Value::Null, |(.., raw, _)| Value::text(raw)));
+    }
+    // What the host found amiss in the request before the program ran,
+    // in the language's own words: the host names only which of them it
+    // found, since the wording is the language's and not the host's.
+    if let Some(name) = &lang.amiss_binding {
+        // Each is the kind the host found, and after it whatever counts
+        // the kind is told with; the words come with places for them.
+        let said: Vec<Value> = request
+            .iter()
+            .filter(|(from, key, ..)| from == "SELF" && key == "amiss")
+            .filter_map(|(.., told, _)| {
+                let mut steps = told.split('\u{1f}');
+                let kind = steps.next().unwrap_or_default();
+                let (_, words) = lang.amiss_words.iter().find(|(k, _)| *k == kind)?;
+                let mut whole = vec![Value::text(words)];
+                whole.extend(steps.map(|n| Value::text(n)));
+                Some(Value::array(whole))
+            })
+            .collect();
+        machine.define(name, Value::array(said));
+    }
     if let Some((.., place, _)) = request.iter().find(|(from, key, ..)| from == "SELF" && key == "file") {
         machine.written_in(place);
     }
@@ -129,21 +186,36 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     // A value raised and never caught is a fault like any other, told
     // in the language's own words.
     if let Err(fault) = machine.invoke(&program, Vec::new()) {
-        // A run the program itself said was over came out right.
+        // A run the program itself said was over came out right, and
+        // what was named to run at the end runs even then.
         if matches!(fault, engine::Fault::Finished) {
-            return Ok(());
+            let done = machine.run_when_done();
+            machine.let_things_go();
+            machine.let_go_all();
+            return done.map_err(|f| f.told(&machine.names()));
         }
         machine.ended_uncaught(&fault);
+        let _ = machine.run_when_done();
+        machine.let_things_go();
+        machine.let_go_all();
         return Err(fault.told(&machine.names()));
     }
+    machine.run_when_done().map_err(|f| f.told(&machine.names()))?;
 
     // A language with an entry function (Rust's `main`) runs it once the
     // program body has defined it.
     if let Some(entry) = &lang.entry_binding {
         if let Some(Value::Routine(main)) = machine.lookup(entry).cloned() {
-            machine.invoke(&main, Vec::new()).map_err(|f| f.told(&machine.names()))?;
+            let done = machine.invoke(&main, Vec::new()).map_err(|f| f.told(&machine.names()));
+            machine.let_things_go();
+            machine.let_go_all();
+            done?;
+            return Ok(());
         }
     }
+    // Whatever the run was still keeping goes out when it ends.
+    machine.let_things_go();
+    machine.let_go_all();
     Ok(())
 }
 

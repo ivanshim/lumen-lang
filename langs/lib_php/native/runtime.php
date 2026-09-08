@@ -14,6 +14,8 @@ define("PHP_VERSION", "8.4.0");
 define("PHP_MAJOR_VERSION", 8);
 define("PHP_MINOR_VERSION", 4);
 define("PHP_OS", "Linux");
+define("PHP_BUILD_DATE", "Sep  8 2026 00:00:00");
+define("INF", 1.0e400);
 define("PHP_OS_FAMILY", "Linux");
 define("PHP_ZTS", 0);
 define("PHP_DEBUG", 0);
@@ -35,26 +37,103 @@ define("E_STRICT", 2048);
 define("E_RECOVERABLE_ERROR", 4096);
 define("E_DEPRECATED", 8192);
 define("E_USER_DEPRECATED", 16384);
-define("E_ALL", 32767);
+// Every kind of complaint a program may ask to be told of. The kind
+// once called strict is no longer one of them, though its number is
+// still spelled.
+define("E_ALL", 30719);
 define("SORT_REGULAR", 0);
 define("SORT_NUMERIC", 1);
 define("SORT_STRING", 2);
 define("COUNT_NORMAL", 0);
 define("COUNT_RECURSIVE", 1);
+define("PHP_OUTPUT_HANDLER_START", 1);
+define("PHP_OUTPUT_HANDLER_WRITE", 0);
+define("PHP_OUTPUT_HANDLER_CLEAN", 2);
+define("PHP_OUTPUT_HANDLER_FLUSH", 4);
+define("PHP_OUTPUT_HANDLER_FINAL", 8);
+define("PHP_OUTPUT_HANDLER_END", 8);
+define("PHP_OUTPUT_HANDLER_CONT", 0);
 
 // The settings a kernel run from a command line has nothing to change.
-function error_reporting($level = null) { return E_ALL; }
+// Which kinds of complaint are to be said at all, and the routine a
+// program has put in the way of them. A run starts saying all of them
+// and with no routine of its own in the way.
+// What the host found amiss in the request before the program ran is
+// said first of all, as PHP says it.
+// A setting on its way out is said to be, before the program runs.
+function __say_settings_outworn() {
+    global $__started_with;
+    if (!is_array($__started_with)) { return null; }
+    foreach ($__started_with as $name => $said) {
+        if ($name === "report_memleaks") {
+            echo "\nDeprecated: PHP Startup: Directive '" . $name . "' is deprecated in Unknown on line 0\n";
+        }
+    }
+    return null;
+}
+function __say_request_amiss() {
+    global $__request_amiss;
+    if (!is_array($__request_amiss)) { return null; }
+    foreach ($__request_amiss as $told) {
+        $said = $told[0];
+        if (count($told) == 3) { $said = sprintf($told[0], $told[1], $told[2]); }
+        elseif (count($told) == 2) { $said = sprintf($told[0], $told[1]); }
+        echo "\nWarning: " . $said . " in Unknown on line 0\n";
+    }
+    return null;
+}
+$__reporting = __ini_reporting();
+$__error_handler = null;
+__hook_as_needed();
+__say_request_amiss();
+__say_settings_outworn();
+function error_reporting($level = null) {
+    global $__reporting;
+    $was = $__reporting;
+    if ($level !== null) {
+        $__reporting = whole_of($level);
+        __hook_as_needed();
+    }
+    return $was;
+}
+// The run's own complaints come this way only where the program wants
+// something done with them: a routine of its own in their way, or some
+// kinds not to be said at all.
+function __hook_as_needed() {
+    global $__error_handler, $__reporting;
+    if ($__error_handler !== null || $__reporting != E_ALL) {
+        __complaint_handler('__from_the_run');
+    } else {
+        __complaint_handler(null);
+    }
+}
 // The settings a run was started with are carried in the environment,
 // each under the name it has with PHP_INI_ before it, which is how the
 // host tells the run about them. A setting written while the run goes
 // is kept beside them and answered from there afterwards.
 $__settings = array();
+__room_at_start();
+// What a setting stands at where the run was started with nothing said
+// about it. A name not among these has no value at all until one is set.
+function __ini_default($name) {
+    if ($name === "default_charset") { return "UTF-8"; }
+    if ($name === "input_encoding") { return ""; }
+    if ($name === "internal_encoding") { return ""; }
+    if ($name === "output_encoding") { return ""; }
+    return false;
+}
 function ini_get($name) {
     global $__settings;
     if (array_key_exists($name, $__settings)) { return $__settings[$name]; }
-    $carried = 'PHP_INI_' . $name;
-    if (array_key_exists($carried, $_ENV)) { return $_ENV[$carried]; }
-    return false;
+    global $__started_with;
+    if (array_key_exists($name, $__started_with)) {
+        $held = $__started_with[$name];
+        // A setting counted in kinds of complaint is written as an
+        // expression over their words, and answers as the number.
+        if ($name === "error_reporting") { return (string)__ini_number($held); }
+        return $held;
+    }
+    return __ini_default($name);
 }
 // Only a setting the language has may be written to; a name that is
 // none of its own is refused, whatever the run was started with. These
@@ -64,20 +143,191 @@ function ini_set($name, $value) {
     $known = array('precision', 'serialize_precision', 'memory_limit', 'max_execution_time', 'error_reporting', 'display_errors', 'log_errors', 'default_charset', 'internal_encoding', 'input_encoding', 'output_encoding', 'include_path', 'date.timezone', 'output_buffering', 'zend.assertions', 'assert.exception');
     if (!in_array($name, $known)) { return false; }
     $was = ini_get($name);
+    if ($name === 'memory_limit') {
+        $held = __room_allowed((string)$value);
+        if ($held[1]) { __complain(E_WARNING, __room_said((string)$value, $held[0])); }
+        $__settings[$name] = $held[0];
+        return $was;
+    }
     $__settings[$name] = (string)$value;
     return $was;
 }
-function set_error_handler($handler, $levels = 32767) { return null; }
-function restore_error_handler() { return true; }
+// ini_alter is ini_set under its older name; ini_restore drops what was
+// written while the run went, so that the setting the run was started
+// with answers again.
+function ini_alter($name, $value) { return ini_set($name, $value); }
+function ini_restore($name) {
+    global $__settings;
+    unset($__settings[$name]);
+    return null;
+}
+
+// The whole number a piece of text opens with, as a setting's size is
+// read: a sign, then figures counted in sixteens after 0x, in twos
+// after 0b, in eights after a lone nought, and in tens otherwise.
+// Anything that is not a figure ends the number.
+$__whole_used = 0;
+function leading_whole($text) {
+    global $__whole_used;
+    $sign = 1;
+    $at = 0;
+    if (strlen($text) > 0 && ($text[0] === "-" || $text[0] === "+")) {
+        if ($text[0] === "-") { $sign = -1; }
+        $at = 1;
+    }
+    $rest = strtolower(substr($text, $at));
+    $base = 10;
+    if (starts_with($rest, "0x")) { $base = 16; $rest = substr($rest, 2); }
+    elseif (starts_with($rest, "0b")) { $base = 2; $rest = substr($rest, 2); }
+    elseif (strlen($rest) > 1 && $rest[0] === "0") { $base = 8; $rest = substr($rest, 1); }
+    $figures = substr(base_digits(), 0, $base);
+    $end = 0;
+    while ($end < strlen($rest) && strpos($figures, $rest[$end]) !== false) { $end = $end + 1; }
+    $__whole_used = strlen($text) - strlen($rest) + $end;
+    if ($end == 0) { return 0; }
+    return $sign * base_to_number(substr($rest, 0, $end), $base);
+}
+
+// A setting's size: the number the text opens with, times what the last
+// letter of the whole stands for. A thousand and twenty-four for k, that
+// many times over again for m, and once more for g; any other letter
+// stands for nothing, and the number is read without it.
+function ini_parse_quantity($text) {
+    global $__whole_used;
+    $whole = trim($text);
+    if ($whole === "") { return 0; }
+    $last = strtolower($whole[strlen($whole) - 1]);
+    $times = 1;
+    if ($last === "k") { $times = 1024; }
+    if ($last === "m") { $times = 1048576; }
+    if ($last === "g") { $times = 1073741824; }
+    $body = ($times > 1) ? substr($whole, 0, strlen($whole) - 1) : $whole;
+    $found = leading_whole($body);
+    $over = trim(substr($body, $__whole_used));
+    // Anything past the number that is not the letter standing for a
+    // multiplier is read past, and said to be read past, since a run
+    // that once took such a setting still takes it.
+    if ($times > 1) {
+        if ($over !== "") {
+            __complain(E_WARNING, 'Invalid quantity "' . $text . '", interpreting as "' . $found . ' ' . $last . '" for backwards compatibility');
+        }
+    } elseif ($over !== "") {
+        $mark = ord($last);
+        if ($mark >= 97 && $mark <= 122) {
+            __complain(E_WARNING, 'Invalid quantity "' . $text . '": unknown multiplier "' . $last . '", interpreting as "' . $found . '" for backwards compatibility');
+        } else {
+            __complain(E_WARNING, 'Invalid quantity "' . $text . '", interpreting as "' . $found . '" for backwards compatibility');
+        }
+    }
+    return $found * $times;
+}
+
+// How much room a run may take is held down to the most it may be given.
+// A wish for more than that is turned down and said to be; a wish for no
+// limit at all is quietly brought down to it.
+function __room_allowed($wanted) {
+    $most = ini_get('max_memory_limit');
+    if ($most === false || $most === "") { return array($wanted, false); }
+    $ceiling = ini_parse_quantity($most);
+    if ($ceiling <= 0) { return array($wanted, false); }
+    $asked = ini_parse_quantity($wanted);
+    if ($asked < 0) { return array($most, false); }
+    if ($asked > $ceiling) { return array($most, true); }
+    return array($wanted, false);
+}
+function __room_said($wanted, $most) {
+    return "Failed to set memory_limit to " . ini_parse_quantity($wanted) . " bytes. Setting to max_memory_limit instead (currently: " . ini_parse_quantity($most) . " bytes)";
+}
+// The room the run was started with, brought down where it must be.
+function __room_at_start() {
+    global $__settings, $__started_with;
+    if (!array_key_exists('memory_limit', $__started_with)) { return null; }
+    $wanted = $__started_with['memory_limit'];
+    $held = __room_allowed($wanted);
+    if ($held[1]) {
+        echo "\nWarning: " . __room_said($wanted, $held[0]) . " in Unknown on line 0\n";
+    }
+    $__settings['memory_limit'] = $held[0];
+    return null;
+}
+function set_error_handler($handler, $levels = 30719) {
+    global $__error_handler;
+    $was = $__error_handler;
+    $__error_handler = $handler;
+    __hook_as_needed();
+    return $was;
+}
+function restore_error_handler() {
+    global $__error_handler;
+    $__error_handler = null;
+    __hook_as_needed();
+    return true;
+}
+// The number a program knows a kind of complaint by, from the word the
+// run writes it under.
+function __complaint_number($word) {
+    if ($word === "Warning") { return E_WARNING; }
+    if ($word === "Deprecated") { return E_DEPRECATED; }
+    if ($word === "Fatal error") { return E_ERROR; }
+    return E_NOTICE;
+}
+// A complaint the run itself made. The program's routine takes it; where
+// there is none, or where its kind is one being said, answering false
+// leaves the run to write it out in its own words.
+function __from_the_run($word, $message, $file, $line) {
+    global $__error_handler, $__reporting;
+    $level = __complaint_number($word);
+    if ($__error_handler !== null) {
+        $handler = $__error_handler;
+        $handler($level, $message, $file, $line);
+        return true;
+    }
+    if (($__reporting & $level) == 0) { return true; }
+    return false;
+}
+// The word each kind of complaint is written under, and the number a
+// program knows it by.
+function __complaint_word($level) {
+    if ($level == E_USER_ERROR || $level == E_ERROR) { return "Fatal error"; }
+    if ($level == E_USER_WARNING || $level == E_WARNING) { return "Warning"; }
+    if ($level == E_USER_DEPRECATED || $level == E_DEPRECATED) { return "Deprecated"; }
+    return "Notice";
+}
+// A complaint the program itself makes: the routine a program put in
+// the way of them takes it, and where there is none it is written out
+// as the run's own complaints are, if its kind is one being said.
+function __complain($level, $message) {
+    global $__error_handler, $__reporting;
+    if ($__error_handler !== null) {
+        $handler = $__error_handler;
+        $handler($level, $message, __FILE__, __LINE__);
+        return true;
+    }
+    if (($__reporting & $level) == 0) { return true; }
+    // Said as the run's own complaints are, so it names the line the
+    // program was on and not one of the library's.
+    return __complaint_say(__complaint_word($level), $message);
+}
 function set_exception_handler($handler) { return null; }
-function error_log($message) { return true; }
+// A message put where the run keeps them. Sending one on as mail is not
+// something a run of this kind does, so saying to send one with nowhere
+// to send it to is turned down.
+function error_log($message, $sort = 0, $where = null, $headers = null) {
+    if ($sort == 1) { return $where !== null; }
+    return true;
+}
 function extension_loaded($name) { return false; }
 function function_exists($name) { return false; }
 function gc_collect_cycles() { return 0; }
 function memory_get_usage($real = false) { return 0; }
 
 // A key is taken as the array takes one, so 7 and "7" name one place.
+// Nothing standing where a key should is still read as the empty piece
+// of text, which is on its way out and said to be.
 function array_key_exists($key, $array) {
+    if ($key === null) {
+        __complain(E_DEPRECATED, "Using null as the key parameter for array_key_exists() is deprecated, use an empty string instead");
+    }
     foreach ($array as $k => $v) {
         if ($k == $key) { return true; }
     }
@@ -163,6 +413,34 @@ function implode($glue, $pieces) {
     return $out;
 }
 
+function join($glue, $pieces) { return implode($glue, $pieces); }
+
+// Text as a web address carries it: a letter, a figure and a few marks
+// stand as they are, and everything else is written as a percent and the
+// two figures of its code. The older spelling writes a space as a plus
+// and does not spare the tilde.
+function url_encoded($text, $plus_for_space, $tilde_spared) {
+    $out = "";
+    $at = 0;
+    while ($at < strlen($text)) {
+        $c = $text[$at];
+        $n = ord($c);
+        $plain = ($n >= 97 && $n <= 122) || ($n >= 65 && $n <= 90) || ($n >= 48 && $n <= 57);
+        $plain = $plain || $n == 45 || $n == 46 || $n == 95 || ($tilde_spared && $n == 126);
+        if ($plain) {
+            $out = $out . $c;
+        } elseif ($n == 32 && $plus_for_space) {
+            $out = $out . "+";
+        } else {
+            $out = $out . "%" . strtoupper(str_pad(dechex($n), 2, "0", 0));
+        }
+        $at = $at + 1;
+    }
+    return $out;
+}
+function urlencode($text) { return url_encoded($text, true, false); }
+function rawurlencode($text) { return url_encoded($text, false, true); }
+
 function str_repeat($text, $times) {
     $out = "";
     $i = 0;
@@ -178,6 +456,24 @@ function is_long($value) { return is_int($value); }
 function is_string($value) { return gettype($value) === "string"; }
 function is_bool($value) { return gettype($value) === "boolean"; }
 function is_array($value) { return gettype($value) === "array"; }
+// The place an array is looked at from. Nothing here moves that place —
+// a walk leaves it where it stood, and this language has no word for
+// moving it — so it is always the first place, and these two say what
+// stands there. The words for moving it are left out rather than
+// written to move nothing, since a word that lies is worse than none.
+// Both take the array as a value and not as a cell: what they answer is
+// read out of it and nothing is written back, and asking them of
+// something that is not a binding is nothing to complain of.
+function current($array) {
+    if (!is_array($array)) { return false; }
+    foreach ($array as $value) { return $value; }
+    return false;
+}
+function key($array) {
+    if (!is_array($array)) { return null; }
+    foreach ($array as $at => $value) { return $at; }
+    return null;
+}
 function is_null($value) { return $value === null; }
 function is_float($value) { return gettype($value) === "double"; }
 function is_double($value) { return is_float($value); }
@@ -234,14 +530,99 @@ function is_callable($value) { return false; }
 
 // What a run from a command line has nothing to answer with, and the
 // few library functions that only need what is already here.
-function sys_get_temp_dir() { return "/tmp"; }
+function sys_get_temp_dir() {
+    $named = ini_get("sys_temp_dir");
+    if ($named !== false && $named !== "") { return $named; }
+    return "/tmp";
+}
 function header($line, $replace = true, $code = 0) { return null; }
 function headers_sent() { return false; }
 function headers_list() { return array(); }
-function ob_start($handler = null) { return true; }
-function ob_get_clean() { return ""; }
-function ob_end_clean() { return true; }
-function ob_get_level() { return 0; }
+// What the run writes out may be kept aside and let go again. The
+// kernel holds the text; the handlers a program hands over are kept
+// here, one for each keeping, and run over the text as it is let go.
+$__handlers = array();
+$__flushing = false;
+$__started = array();
+function ob_start($handler = null) {
+    global $__handlers, $__started, $__flushing;
+    // What is still being kept when the run ends is let go then. The
+    // kernel lets go of what it holds by itself; a handler is the one
+    // part it cannot run, so only a keeping given one is let go by hand.
+    if ($handler !== null && !$__flushing) { $__flushing = true; __at_end('__let_go_all'); }
+    __output_hold();
+    $__handlers[] = $handler;
+    $__started[] = false;
+    return true;
+}
+function __let_go_all() {
+    while (__output_depth() > 0) { ob_end_flush(); }
+}
+function ob_get_contents() { return __output_held(); }
+function ob_get_level() { return __output_depth(); }
+// What the innermost keeping holds, run through the handler the program
+// gave for it. The handler is told whether this is the first it has seen
+// of this keeping and whether it is the last.
+function __run_handler($held, $final, $why = 0) {
+    global $__handlers, $__started;
+    $at = count($__handlers) - 1;
+    if ($at < 0) { return $held; }
+    $handler = $__handlers[$at];
+    if ($handler === null) { return $held; }
+    $mode = $why;
+    if ($why == 0) { $mode = $final ? PHP_OUTPUT_HANDLER_FINAL : PHP_OUTPUT_HANDLER_FLUSH; }
+    if (!$__started[$at]) { $mode = $mode | PHP_OUTPUT_HANDLER_START; }
+    $__started[$at] = true;
+    return $handler($held, $mode);
+}
+function __forget_handler() {
+    global $__handlers, $__started;
+    array_pop($__handlers);
+    array_pop($__started);
+}
+function ob_end_clean() {
+    if (__output_depth() == 0) { return false; }
+    __forget_handler();
+    return __output_drop();
+}
+function ob_get_clean() {
+    if (__output_depth() == 0) { return false; }
+    $held = __output_held();
+    __forget_handler();
+    __output_drop();
+    return $held;
+}
+function ob_end_flush() {
+    if (__output_depth() == 0) { return false; }
+    $held = __run_handler(__output_held(), true);
+    __forget_handler();
+    __output_drop();
+    echo $held;
+    return true;
+}
+function ob_get_flush() {
+    if (__output_depth() == 0) { return false; }
+    $held = __output_held();
+    ob_end_flush();
+    return $held;
+}
+function ob_flush() {
+    if (__output_depth() == 0) { return false; }
+    $held = __run_handler(__output_held(), false);
+    __output_drop();
+    echo $held;
+    __output_hold();
+    return true;
+}
+function ob_clean() {
+    if (__output_depth() == 0) { return false; }
+    // The handler is told the keeping was emptied, and what it answers
+    // with is thrown away with the rest; it has still seen this keeping.
+    __run_handler(__output_held(), false, PHP_OUTPUT_HANDLER_CLEAN);
+    __output_drop();
+    __output_hold();
+    return true;
+}
 function flush() { return null; }
 function usleep($micro) { return null; }
 function sleep($seconds) { return 0; }
@@ -424,14 +805,92 @@ function hex2bin($text) {
 // The rest of what a program expects to find already there.
 
 function phpversion($extension = null) { return PHP_VERSION; }
+function zend_version() { return "4.0.0"; }
 function php_sapi_name() { return "cli"; }
 function php_uname($mode = "a") { return PHP_OS; }
 function setlocale($category, $locale) { return false; }
 function date_default_timezone_set($zone) { return true; }
 function date_default_timezone_get() { return "UTC"; }
-function register_shutdown_function($work) { return null; }
-function trigger_error($message, $level = 1024) { return true; }
+function register_shutdown_function($work, $a = null, $b = null, $c = null) {
+    if ($c !== null) { return __at_end($work, $a, $b, $c); }
+    if ($b !== null) { return __at_end($work, $a, $b); }
+    if ($a !== null) { return __at_end($work, $a); }
+    return __at_end($work);
+}
+function trigger_error($message, $level = 1024) { return __complain($level, $message); }
+function user_error($message, $level = 1024) { return trigger_error($message, $level); }
+// What a file holds. The body of the request the run was started with
+// is a file a program may name, and reads the same however often it is
+// read, since it is held as it came rather than drawn from.
+function file_get_contents($path) {
+    global $__request_body;
+    if ($path === "php://input") {
+        if (!is_string($__request_body)) { return ""; }
+        return $__request_body;
+    }
+    return __file_read($path);
+}
 function realpath($path) { return $path; }
+// Moving a file: what it held is written where it is going and taken
+// from where it was. A file that is not there to move is said so and
+// answered with false, as every other reading of one that is not there
+// is answered.
+function rename($from, $to) {
+    $held = __file_read($from);
+    if ($held === false) {
+        __complain(E_WARNING, "rename(" . $from . "," . $to . "): No such file or directory");
+        return false;
+    }
+    file_put_contents($to, $held);
+    unlink($from);
+    return true;
+}
+// Whether a name has been given a value that stands everywhere, and
+// what that value is. Both are asked by working the name out, since a
+// name that stands for nothing cannot be worked out at all.
+function defined($name) {
+    try {
+        eval("return " . $name . ";");
+    } catch (Error $e) {
+        return false;
+    }
+    return true;
+}
+function constant($name) {
+    return eval("return " . $name . ";");
+}
+// A claim a program makes about itself. Where the run is set to let
+// them go by, it is not looked at; otherwise a claim that does not hold
+// is raised, under the words the program gave for it where it gave any.
+function assert($claim, $told = null) {
+    if (ini_get("zend.assertions") === "-1") { return true; }
+    if ($claim) { return true; }
+    if ($told !== null && !is_string($told)) { throw $told; }
+    if ($told !== null) { throw new AssertionError($told); }
+    throw new AssertionError("assert(false)");
+}
+// Calling what a value names, with whatever else was handed over. The
+// value may be the name of a routine or a thing paired with the name of
+// one of its methods; either stands where a routine stands.
+function call_user_func($what) {
+    $given = func_get_args();
+    $count = func_num_args();
+    if ($count <= 1) { return $what(); }
+    if ($count == 2) { return $what($given[1]); }
+    if ($count == 3) { return $what($given[1], $given[2]); }
+    if ($count == 4) { return $what($given[1], $given[2], $given[3]); }
+    if ($count == 5) { return $what($given[1], $given[2], $given[3], $given[4]); }
+    return $what($given[1], $given[2], $given[3], $given[4], $given[5]);
+}
+function call_user_func_array($what, $given) {
+    $count = count($given);
+    if ($count == 0) { return $what(); }
+    if ($count == 1) { return $what($given[0]); }
+    if ($count == 2) { return $what($given[0], $given[1]); }
+    if ($count == 3) { return $what($given[0], $given[1], $given[2]); }
+    if ($count == 4) { return $what($given[0], $given[1], $given[2], $given[3]); }
+    return $what($given[0], $given[1], $given[2], $given[3], $given[4]);
+}
 function basename($path) {
     $at = strlen($path) - 1;
     while ($at >= 0) {
@@ -618,4 +1077,84 @@ function number_format($number, $places = 0, $point = ".", $between = ",") {
     $grouped = substr($whole, 0, $left) . $grouped;
     if ($places > 0) { return $sign . $grouped . $point . $rest; }
     return $sign . $grouped;
+}
+
+// A setting written as an expression over the words a language names its
+// kinds of complaint by: the words and numbers taken together with the
+// marks that work on bits. What binds tightest is a mark before a value,
+// then both bits, then one bit, then either bit.
+$__ini_at = 0;
+function __ini_word($text) {
+    global $__ini_at;
+    while ($__ini_at < strlen($text) && $text[$__ini_at] === " ") { $__ini_at = $__ini_at + 1; }
+    if ($__ini_at >= strlen($text)) { return ""; }
+    $c = $text[$__ini_at];
+    if (strpos("&|^~!()", $c) !== false) { $__ini_at = $__ini_at + 1; return $c; }
+    $from = $__ini_at;
+    while ($__ini_at < strlen($text) && strpos(" &|^~!()", $text[$__ini_at]) === false) { $__ini_at = $__ini_at + 1; }
+    return substr($text, $from, $__ini_at - $from);
+}
+function __ini_peek($text) {
+    global $__ini_at;
+    $was = $__ini_at;
+    $word = __ini_word($text);
+    $__ini_at = $was;
+    return $word;
+}
+function __ini_value($text) {
+    $word = __ini_word($text);
+    if ($word === "~") { return ~__ini_value($text); }
+    if ($word === "!") { return __ini_value($text) ? 0 : 1; }
+    if ($word === "(") { $held = __ini_either($text); __ini_word($text); return $held; }
+    if ($word === "") { return 0; }
+    return __ini_named($word);
+}
+// The words a setting may be written with, and what each is worth.
+function __ini_named($word) {
+    if ($word === "E_ERROR") { return E_ERROR; }
+    if ($word === "E_WARNING") { return E_WARNING; }
+    if ($word === "E_PARSE") { return E_PARSE; }
+    if ($word === "E_NOTICE") { return E_NOTICE; }
+    if ($word === "E_CORE_ERROR") { return E_CORE_ERROR; }
+    if ($word === "E_CORE_WARNING") { return E_CORE_WARNING; }
+    if ($word === "E_COMPILE_ERROR") { return E_COMPILE_ERROR; }
+    if ($word === "E_COMPILE_WARNING") { return E_COMPILE_WARNING; }
+    if ($word === "E_USER_ERROR") { return E_USER_ERROR; }
+    if ($word === "E_USER_WARNING") { return E_USER_WARNING; }
+    if ($word === "E_USER_NOTICE") { return E_USER_NOTICE; }
+    if ($word === "E_STRICT") { return E_STRICT; }
+    if ($word === "E_RECOVERABLE_ERROR") { return E_RECOVERABLE_ERROR; }
+    if ($word === "E_DEPRECATED") { return E_DEPRECATED; }
+    if ($word === "E_USER_DEPRECATED") { return E_USER_DEPRECATED; }
+    if ($word === "E_ALL") { return E_ALL; }
+    if ($word === "On" || $word === "on" || $word === "true" || $word === "yes") { return 1; }
+    if ($word === "Off" || $word === "off" || $word === "false" || $word === "no" || $word === "none") { return 0; }
+    return whole_of($word);
+}
+function __ini_both($text) {
+    $held = __ini_value($text);
+    while (__ini_peek($text) === "&") { __ini_word($text); $held = $held & __ini_value($text); }
+    return $held;
+}
+function __ini_one($text) {
+    $held = __ini_both($text);
+    while (__ini_peek($text) === "^") { __ini_word($text); $held = $held ^ __ini_both($text); }
+    return $held;
+}
+function __ini_either($text) {
+    $held = __ini_one($text);
+    while (__ini_peek($text) === "|") { __ini_word($text); $held = $held | __ini_one($text); }
+    return $held;
+}
+// Which kinds of complaint the run was started with, where it was
+// started with a setting for them at all.
+function __ini_reporting() {
+    global $__started_with;
+    if (!array_key_exists('error_reporting', $__started_with)) { return E_ALL; }
+    return __ini_number($__started_with['error_reporting']);
+}
+function __ini_number($text) {
+    global $__ini_at;
+    $__ini_at = 0;
+    return __ini_either($text);
 }

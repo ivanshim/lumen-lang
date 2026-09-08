@@ -82,6 +82,9 @@ pub struct Words<'a> {
     pub yes: &'a str,
     pub no: &'a str,
     pub none: &'a str,
+    /// Whether a language counts a flag rather than wording it: true
+    /// shows as one, false as nothing at all.
+    pub counted: bool,
 }
 
 impl Value {
@@ -152,6 +155,8 @@ impl Value {
 
     pub fn text(&self, w: Words) -> String {
         match self {
+            Value::Bool(true) if w.counted => "1".to_string(),
+            Value::Bool(false) if w.counted => String::new(),
             Value::Bool(true) => w.yes.to_string(),
             Value::Bool(false) => w.no.to_string(),
             Value::Null | Value::Empty => w.none.to_string(),

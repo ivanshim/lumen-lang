@@ -57,7 +57,7 @@ lexical.keywords_case_insensitive:B identifier.unicode:B identifier.variable_pre
 block.open:L block.close:L block.intro:L block.indent_size:N stmt.terminator:L \
 syntax.notation:W syntax.group.open:L syntax.group.close:L syntax.call.open:L syntax.call.separator:L \
 syntax.call.close:L syntax.call.label:L syntax.array.open:L syntax.array.separator:L syntax.array.close:L \
-syntax.map.open:L syntax.map.separator:L syntax.map.pair:L syntax.map.close:L literal.true:L \
+syntax.map.open:L syntax.map.separator:L syntax.map.pair:L syntax.map.close:L system.flag.counts:B literal.true:L \
 literal.false:L literal.null:L literal.null.silent:B op.precedence:T op.right_associative:L op.add:L \
 op.sub:L op.mul:L op.div:L op.div.result:O op.quot:L \
 op.rem:L op.pow:L op.eq:L op.ne:L op.lt:L \
@@ -85,21 +85,24 @@ const EXT_TAGS: &str = "\
 ext.lexical.epilogue:L ext.builtin.echo:L ext.syntax.call.bare:B ext.op.increment:L ext.op.decrement:L \
 ext.lexical.interpolating_quotes:L ext.stmt.for.c:L ext.op.assign.compound:B ext.stmt.static:L ext.stmt.global:L \
 ext.stmt.const:L ext.builtin.define:L ext.builtin.var_dump:L ext.stmt.switch:L ext.stmt.case:L \
-ext.stmt.default:L ext.stmt.case.mark:L ext.op.ternary:L ext.block.lone_statement:B ext.stmt.function.hoisted:B \
+ext.stmt.default:L ext.stmt.case.mark:L ext.op.ternary:L ext.block.lone_statement:B ext.stmt.function.hoisted:B ext.stmt.function.outermost:B ext.system.request.amiss:L ext.system.request.amiss.boundary:L ext.system.request.amiss.boundary.wrong:L ext.system.request.amiss.part:L ext.system.request.amiss.body.large:L ext.system.request.body:L \
 ext.lexical.number.exponent:L ext.op.plus:L ext.stmt.break.levels:B ext.builtin.array:L ext.op.index.append:B ext.stmt.for.collection:B ext.builtin.print_r:L \
 ext.stmt.function.returns:L ext.stmt.class:L ext.stmt.class.extends:L ext.stmt.class.new:L ext.stmt.class.this:L \
 ext.stmt.class.constructor:L ext.stmt.class.modifier:L ext.stmt.class.shared:L ext.op.member:L ext.op.scope:L \
 ext.op.instanceof:L ext.stmt.class.parent:L ext.stmt.class.self:L ext.lexical.name_lead:L ext.stmt.try:L \
 ext.stmt.catch:L ext.stmt.finally:L ext.stmt.throw:L ext.stmt.catch.separator:L ext.op.reference:L \
 ext.system.request.query:L ext.system.request.form:L ext.system.request.cookies:L ext.system.request.server:L \
-ext.system.request.env:L ext.system.request.files:L ext.system.request.all:L ext.op.index.absent:B \
-ext.stmt.class.interface:L ext.stmt.class.implements:L ext.op.compare:L ext.builtin.unset:L ext.lexical.template:B \
+ext.system.request.env:L ext.system.request.files:L ext.system.request.all:L ext.system.request.settings:L ext.op.index.absent:B ext.op.index.scalar:L ext.stmt.class.destructor:L \
+ext.op.walk.class:L ext.op.walk.rewind:L ext.op.walk.more:L ext.op.walk.this:L ext.op.walk.key:L \
+ext.op.walk.onward:L ext.op.walk.giver.class:L ext.op.walk.giver:L ext.op.walk.no_cell:L \
+ext.stmt.class.interface:L ext.stmt.class.implements:L ext.op.compare:L ext.builtin.unset:L ext.lexical.template:B ext.lexical.prologue.echo:L \
 ext.op.otherwise:L ext.op.bit.and:L ext.op.bit.or:L ext.op.bit.xor:L ext.op.bit.not:L \
 ext.op.bit.left:L ext.op.bit.right:L ext.op.identical:L ext.op.not_identical:L ext.system.kind.spelled:B ext.builtin.args.all:L \
-ext.builtin.args.count:L ext.builtin.args.at:L ext.op.assign.value:B ext.op.index.plain_keys:B \
+ext.builtin.args.count:L ext.builtin.args.at:L ext.builtin.args.all.outside:L ext.builtin.args.count.outside:L ext.builtin.args.at.outside:L ext.builtin.args.at.below:L ext.builtin.args.at.beyond:L ext.op.assign.value:B ext.op.index.plain_keys:B \
 ext.system.source.file:L ext.system.source.directory:L ext.system.source.line:L ext.system.source.routine:L ext.system.source.class:L ext.system.source.method:L \
-ext.system.complaint.warning:L ext.system.complaint.notice:L ext.system.complaint.deprecated:L ext.system.complaint.fatal:L ext.system.fault.class:L ext.system.fault.class.arithmetic:L ext.system.fault.class.division:L ext.system.fault.class.kind:L ext.builtin.time_limit:L ext.system.kind.brief:L ext.builtin.file.read:L ext.builtin.file.write:L \
-ext.builtin.file.exists:L ext.builtin.file.remove:L ext.builtin.eval:L ext.builtin.include:L ext.op.hush:L ext.op.name_by_value:L ext.op.cast:B ext.stmt.unpack:L ext.builtin.isset:L ext.op.index.makes:B ext.system.untrue.text:L ext.system.untrue.empty_array:B ext.builtin.exit:L \
+ext.system.complaint.warning:L ext.system.complaint.notice:L ext.system.complaint.deprecated:L ext.system.complaint.fatal:L ext.system.complaint.reading:L ext.system.fault.class:L ext.system.fault.operands:L ext.op.increment.text:L ext.op.decrement.text:L ext.system.fault.class.arithmetic:L ext.system.fault.class.division:L ext.system.fault.class.kind:L ext.system.fault.class.value:L ext.builtin.time_limit:L ext.system.kind.brief:L ext.builtin.file.read:L ext.builtin.file.write:L \
+ext.builtin.file.exists:L ext.builtin.file.remove:L ext.builtin.eval:L ext.builtin.include:L ext.builtin.include.once:L ext.builtin.output.hold:L ext.builtin.output.held:L ext.builtin.output.drop:L ext.builtin.output.depth:L ext.builtin.at_end:L ext.builtin.complaint.handler:L ext.builtin.complaint.say:L ext.op.hush:L ext.op.name_by_value:L ext.op.cast:B ext.op.member.by_value:B ext.op.index.text:B ext.system.globals:L ext.op.reference.unshared.written:L ext.op.reference.unshared.given:L ext.op.reference.unshared.handed:L ext.stmt.terminator.only:B ext.stmt.block.instead:L ext.stmt.block.instead.close:L ext.op.spelled:B ext.system.class.folded:B ext.stmt.unpack:L ext.builtin.isset:L ext.builtin.empty:L ext.stmt.do:L ext.op.index.makes:B ext.system.untrue.text:L ext.system.untrue.empty_array:B ext.builtin.exit:L \
+ext.lexical.escape.codepoint:L ext.lexical.escape.codepoint.open:L ext.lexical.escape.codepoint.close:L ext.lexical.escape.codepoint.amiss:L ext.lexical.escape.codepoint.beyond:L ext.lexical.number.amiss:L \
 ext.lexical.number.binary_prefix:L ext.lexical.number.octal_prefix:L ext.lexical.number.octal_lead:B \
 ext.lexical.number.separator:L ext.system.integer.bits:N ext.system.real.bits:N ext.system.real.digits:N \
 ";
@@ -133,7 +136,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 39] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 48] = [
     ("builtin.emit", Prim::Echo), ("builtin.print", Prim::Say), ("builtin.write", Prim::Out), ("builtin.len", Prim::Length),
     ("builtin.char_at", Prim::CharAtIndex), ("builtin.ord", Prim::CodeOf), ("builtin.chr", Prim::CharOf), ("builtin.typeof", Prim::SortOf),
     ("builtin.error", Prim::Raise), ("builtin.extern", Prim::External), ("builtin.range", Prim::Span), ("builtin.real", Prim::MakeReal),
@@ -141,10 +144,13 @@ pub const BUILTIN_LABELS: [(&str, Prim); 39] = [
     ("builtin.to_real", Prim::AsReal), ("builtin.num", Prim::Numer), ("builtin.den", Prim::Denom), ("builtin.push", Prim::Append),
     ("builtin.get", Prim::Fetch), ("builtin.put", Prim::Replace), ("ext.builtin.echo", Prim::Tell),
     ("ext.builtin.define", Prim::Define), ("ext.builtin.var_dump", Prim::Dump), ("ext.builtin.array", Prim::Gather),
-    ("ext.builtin.print_r", Prim::Portray), ("ext.builtin.unset", Prim::Erase), ("ext.builtin.isset", Prim::Standing), ("ext.builtin.exit", Prim::Quit),
+    ("ext.builtin.print_r", Prim::Portray), ("ext.builtin.unset", Prim::Erase), ("ext.builtin.isset", Prim::Standing), ("ext.builtin.empty", Prim::Hollow), ("ext.builtin.exit", Prim::Quit),
     ("ext.builtin.args.all", Prim::Handed), ("ext.builtin.args.count", Prim::HowMany),
     ("ext.builtin.args.at", Prim::HandedAt), ("ext.builtin.time_limit", Prim::Clock),
-    ("ext.builtin.eval", Prim::Weigh), ("ext.builtin.include", Prim::Bring),
+    ("ext.builtin.eval", Prim::Weigh), ("ext.builtin.include", Prim::Bring), ("ext.builtin.include.once", Prim::BringOnce),
+    ("ext.builtin.output.hold", Prim::KeepOut), ("ext.builtin.output.held", Prim::KeptOut),
+    ("ext.builtin.output.drop", Prim::LooseOut), ("ext.builtin.output.depth", Prim::DeepOut),
+    ("ext.builtin.at_end", Prim::Afterward), ("ext.builtin.complaint.handler", Prim::Hearer), ("ext.builtin.complaint.say", Prim::Complain),
     ("ext.builtin.file.read", Prim::Slurp), ("ext.builtin.file.write", Prim::Spill),
     ("ext.builtin.file.exists", Prim::There), ("ext.builtin.file.remove", Prim::Gone),
 ];
@@ -381,8 +387,8 @@ impl Table {
         if self.flag("op.index.strings") && !self.has_any("op.index.open") {
             return Err("op.index.strings needs op.index.open".to_string());
         }
-        if !matches!(self.lone("op.div.result"), None | Some("rational") | Some("real")) {
-            return Err("op.div.result must be 'rational', 'real' or null".to_string());
+        if !matches!(self.lone("op.div.result"), None | Some("rational") | Some("real") | Some("whole_or_real")) {
+            return Err("op.div.result must be 'rational', 'real', 'whole_or_real' or null".to_string());
         }
         if !self.has_any("stmt.let") && (self.has_any("stmt.let.mutable") || self.has_any("stmt.let.annotation") || self.flag("stmt.let.type_first")) {
             return Err("stmt.let.mutable, stmt.let.annotation and stmt.let.type_first need stmt.let".to_string());
@@ -429,7 +435,7 @@ impl Table {
             let at = if last { table.iter().rposition(|t| t.contains(&lex.to_string())) } else { table.iter().position(|t| t.contains(&lex.to_string())) };
             at.map(|i| i as u32 + 1)
         };
-        let real_division = self.lone("op.div.result") == Some("real");
+        let real_division = matches!(self.lone("op.div.result"), Some("real") | Some("whole_or_real"));
         for (label, op) in BINARY_LABELS {
             let op = if label == "op.div" && real_division { Prim::OverReal } else { op };
             for lex in self.strings(label).to_vec() {

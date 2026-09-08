@@ -35,7 +35,11 @@ pub fn indent(tokens: Vec<Token>, table: &Table) -> Result<Vec<Token>, String> {
                 }
             }
             Shape::Lead => {}
-            Shape::LineEnd if inside > 0 => {}
+            // A line end is space within brackets always, and
+            // throughout a language whose statements end only where the
+            // terminator stands: an expression may run on to the next
+            // line there, as it may within brackets.
+            Shape::LineEnd if inside > 0 || table.flag("ext.stmt.terminator.only") => {}
             Shape::Sign => {
                 if opens.contains(&t.lexeme.as_str()) {
                     inside += 1;

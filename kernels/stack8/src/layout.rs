@@ -34,7 +34,11 @@ pub fn layout(tokens: Vec<Token>, lang: &Lang) -> Result<Vec<Token>, String> {
                 }
             }
             Shape::Lead => {}
-            Shape::LineEnd if nesting > 0 => {}
+            // A line end is space inside brackets always, and
+            // everywhere in a language whose statements end only where
+            // the terminator is written: there an expression may be
+            // carried on to the next line, as it may inside brackets.
+            Shape::LineEnd if nesting > 0 || lang.terminator_only => {}
             Shape::Sign => {
                 if pairs.iter().any(|p| p.open == tok.lexeme) {
                     nesting += 1;

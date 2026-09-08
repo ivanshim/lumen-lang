@@ -58,7 +58,7 @@ syntax.group.open:L syntax.group.close:L \
 syntax.call.open:L syntax.call.separator:L syntax.call.close:L syntax.call.label:L \
 syntax.array.open:L syntax.array.separator:L syntax.array.close:L \
 syntax.map.open:L syntax.map.separator:L syntax.map.pair:L syntax.map.close:L \
-literal.true:L literal.false:L literal.null:L literal.null.silent:B \
+literal.true:L literal.false:L literal.null:L literal.null.silent:B system.flag.counts:B \
 op.precedence:T op.right_associative:L \
 op.add:L op.sub:L op.mul:L op.div:L op.div.result:O op.quot:L op.rem:L op.pow:L \
 op.eq:L op.ne:L op.lt:L op.le:L op.gt:L op.ge:L \
@@ -312,8 +312,8 @@ impl Spec {
         if self.on("op.index.strings") && !self.any("op.index.open") {
             return Err("op.index.strings needs op.index.open".to_string());
         }
-        if !matches!(self.word("op.div.result"), None | Some("rational") | Some("real")) {
-            return Err("op.div.result must be 'rational', 'real' or null".to_string());
+        if !matches!(self.word("op.div.result"), None | Some("rational") | Some("real") | Some("whole_or_real")) {
+            return Err("op.div.result must be 'rational', 'real', 'whole_or_real' or null".to_string());
         }
         if !self.any("stmt.let") && (self.any("stmt.let.mutable") || self.any("stmt.let.annotation") || self.on("stmt.let.type_first")) {
             return Err("stmt.let.mutable, stmt.let.annotation and stmt.let.type_first need stmt.let".to_string());
@@ -360,7 +360,7 @@ impl Spec {
             let at = if last { table.iter().rposition(|t| t.contains(&lex.to_string())) } else { table.iter().position(|t| t.contains(&lex.to_string())) };
             at.map(|i| i as u32 + 1)
         };
-        let real_division = self.word("op.div.result") == Some("real");
+        let real_division = matches!(self.word("op.div.result"), Some("real") | Some("whole_or_real"));
         for (label, op) in BINARY_LABELS {
             let op = if label == "op.div" && real_division { Op::DivReal } else { op };
             for lex in self.list(label).to_vec() {

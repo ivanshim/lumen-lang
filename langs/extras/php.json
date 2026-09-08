@@ -25,11 +25,34 @@
   "lexical.string_escapes": [
     "n",
     "t",
+    "r",
+    "0",
     "\\",
     "\""
   ],
+  "ext.lexical.escape.codepoint": [
+    "u"
+  ],
+  "ext.lexical.escape.codepoint.open": [
+    "{"
+  ],
+  "ext.lexical.escape.codepoint.close": [
+    "}"
+  ],
+  "ext.lexical.number.amiss": [
+    "Invalid numeric literal"
+  ],
+  "ext.lexical.escape.codepoint.amiss": [
+    "Invalid UTF-8 codepoint escape sequence"
+  ],
+  "ext.lexical.escape.codepoint.beyond": [
+    "Invalid UTF-8 codepoint escape sequence: Codepoint too large"
+  ],
   "lexical.prologue": [
     "<?php"
+  ],
+  "ext.lexical.prologue.echo": [
+    "<?="
   ],
   "lexical.name_quote": [],
   "lexical.number.decimal_point": [
@@ -91,6 +114,7 @@
     "=>"
   ],
   "syntax.map.close": [],
+  "system.flag.counts": true,
   "literal.true": [
     "true"
   ],
@@ -126,6 +150,7 @@
     [
       "==",
       "!=",
+      "<>",
       "===",
       "!=="
     ],
@@ -179,7 +204,7 @@
   "op.div": [
     "/"
   ],
-  "op.div.result": "real",
+  "op.div.result": "whole_or_real",
   "op.quot": [],
   "op.rem": [
     "%"
@@ -191,7 +216,8 @@
     "=="
   ],
   "op.ne": [
-    "!="
+    "!=",
+    "<>"
   ],
   "op.lt": [
     "<"
@@ -420,6 +446,71 @@
   ],
   "ext.op.index.append": true,
   "ext.op.index.makes": true,
+  "ext.op.index.text": true,
+  "ext.op.spelled": true,
+  "ext.system.class.folded": true,
+  "ext.builtin.output.hold": [
+    "__output_hold"
+  ],
+  "ext.builtin.output.held": [
+    "__output_held"
+  ],
+  "ext.builtin.output.drop": [
+    "__output_drop"
+  ],
+  "ext.builtin.output.depth": [
+    "__output_depth"
+  ],
+  "ext.builtin.at_end": [
+    "__at_end"
+  ],
+  "ext.builtin.complaint.handler": [
+    "__complaint_handler"
+  ],
+  "ext.builtin.complaint.say": [
+    "__complaint_say"
+  ],
+  "ext.system.fault.class.value": [
+    "ValueError"
+  ],
+  "ext.builtin.args.all.outside": [
+    "func_get_args() cannot be called from the global scope"
+  ],
+  "ext.builtin.args.count.outside": [
+    "func_num_args() must be called from a function context"
+  ],
+  "ext.builtin.args.at.outside": [
+    "func_get_arg() cannot be called from the global scope"
+  ],
+  "ext.builtin.args.at.below": [
+    "func_get_arg(): Argument #1 ($position) must be greater than or equal to 0"
+  ],
+  "ext.builtin.args.at.beyond": [
+    "func_get_arg(): Argument #1 ($position) must be less than the number of the arguments passed to the currently executed function"
+  ],
+  "ext.system.globals": [
+    "$GLOBALS"
+  ],
+  "ext.op.reference.unshared.written": [
+    "Only variables should be assigned by reference"
+  ],
+  "ext.op.reference.unshared.given": [
+    "Only variable references should be returned by reference"
+  ],
+  "ext.op.reference.unshared.handed": [
+    "Only variables should be passed by reference"
+  ],
+  "ext.stmt.terminator.only": true,
+  "ext.stmt.block.instead": [
+    ":"
+  ],
+  "ext.stmt.block.instead.close": [
+    "endif",
+    "endwhile",
+    "endfor",
+    "endforeach",
+    "endswitch"
+  ],
   "ext.builtin.exit": [
     "exit",
     "die"
@@ -448,6 +539,36 @@
   ],
   "ext.stmt.class.constructor": [
     "__construct"
+  ],
+  "ext.stmt.class.destructor": [
+    "__destruct"
+  ],
+  "ext.op.walk.class": [
+    "Iterator"
+  ],
+  "ext.op.walk.rewind": [
+    "rewind"
+  ],
+  "ext.op.walk.more": [
+    "valid"
+  ],
+  "ext.op.walk.this": [
+    "current"
+  ],
+  "ext.op.walk.key": [
+    "key"
+  ],
+  "ext.op.walk.onward": [
+    "next"
+  ],
+  "ext.op.walk.giver.class": [
+    "IteratorAggregate"
+  ],
+  "ext.op.walk.giver": [
+    "getIterator"
+  ],
+  "ext.op.walk.no_cell": [
+    "An iterator cannot be used with foreach by reference"
   ],
   "ext.stmt.class.modifier": [
     "public",
@@ -534,6 +655,34 @@
   "ext.builtin.isset": [
     "isset"
   ],
+  "ext.builtin.empty": [
+    "empty"
+  ],
+  "ext.stmt.do": [
+    "do"
+  ],
+  "ext.stmt.function.outermost": true,
+  "ext.system.request.amiss": [
+    "$__request_amiss"
+  ],
+  "ext.system.request.body": [
+    "$__request_body"
+  ],
+  "ext.system.request.settings": [
+    "$__started_with"
+  ],
+  "ext.system.request.amiss.boundary": [
+    "PHP Request Startup: Missing boundary in multipart/form-data POST data"
+  ],
+  "ext.system.request.amiss.boundary.wrong": [
+    "PHP Request Startup: Invalid boundary in multipart/form-data POST data"
+  ],
+  "ext.system.request.amiss.part": [
+    "PHP Request Startup: File Upload Mime headers garbled"
+  ],
+  "ext.system.request.amiss.body.large": [
+    "PHP Request Startup: POST Content-Length of %s bytes exceeds the limit of %s bytes"
+  ],
   "ext.lexical.template": true,
   "ext.op.otherwise": [
     "??"
@@ -561,6 +710,7 @@
     "$"
   ],
   "ext.op.cast": true,
+  "ext.op.member.by_value": true,
   "ext.stmt.unpack": [
     "list"
   ],
@@ -624,11 +774,26 @@
   "ext.system.integer.bits": 64,
   "ext.system.real.bits": 64,
   "ext.system.real.digits": 14,
+  "ext.system.complaint.reading": [
+    "Parse error"
+  ],
   "ext.system.complaint.fatal": [
     "Fatal error"
   ],
   "ext.system.fault.class": [
     "Error"
+  ],
+  "ext.op.increment.text": [
+    "Increment on non-numeric string is deprecated, use str_increment() instead"
+  ],
+  "ext.op.decrement.text": [
+    "Decrement on non-numeric string has no effect and is deprecated"
+  ],
+  "ext.system.fault.operands": [
+    "Unsupported operand types"
+  ],
+  "ext.op.index.scalar": [
+    "Cannot use a scalar value as an array"
   ],
   "ext.system.fault.class.arithmetic": [
     "ArithmeticError"
@@ -652,7 +817,7 @@
     "null"
   ],
   "ext.builtin.file.read": [
-    "file_get_contents"
+    "__file_read"
   ],
   "ext.builtin.file.write": [
     "file_put_contents"
@@ -668,8 +833,10 @@
   ],
   "ext.builtin.include": [
     "include",
+    "require"
+  ],
+  "ext.builtin.include.once": [
     "include_once",
-    "require",
     "require_once"
   ]
 }

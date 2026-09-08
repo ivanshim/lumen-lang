@@ -17,63 +17,63 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 46, differs 30, error 28, skipped 10 | pass 46, differs 30, error 28, skipped 10 |
-| `php/func` | 14 | pass 7, differs 3, error 4, skipped 0 | pass 7, differs 3, error 4, skipped 0 |
-| `php/lang` | 213 | pass 75, differs 50, error 83, skipped 5 | pass 75, differs 50, error 83, skipped 5 |
+| `php/basic` | 114 | pass 81, differs 5, error 18, skipped 10 | pass 81, differs 5, error 18, skipped 10 |
+| `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
+| `php/lang` | 213 | pass 146, differs 36, error 26, skipped 5 | pass 146, differs 36, error 26, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
-| `php/lang/operators` | 64 | pass 31, differs 21, error 6, skipped 6 | pass 31, differs 21, error 6, skipped 6 |
-| `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 164, differs 112, error 121, skipped 25 | pass 164, differs 112, error 121, skipped 25 |
+| `php/lang/operators` | 64 | pass 46, differs 10, error 2, skipped 6 | pass 46, differs 10, error 2, skipped 6 |
+| `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
+| all | 422 | pass 299, differs 52, error 46, skipped 25 | pass 299, differs 52, error 46, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 112 |
-| Only a name, a place in an array or a property has a cell to share | 9 |
+| ran, printed something else | 52 |
 | skip this test is for 32bit platform only | 9 |
-| Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
-| Fatal error: Uncaught Error: Cannot index non-array value in <file> | 4 |
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
-| Unexpected token: : | 3 |
-| Unexpected token: & | 3 |
-| Fatal error: Uncaught Error: Undefined variable: current in <file> | 3 |
-| Unexpected token: ++ | 3 |
 | skip php-cgi not available | 2 |
-| Expected an expression | 2 |
-| Unexpected token: { | 2 |
+| timeout | 2 |
+| Parse error: Unexpected token: { in <file> | 2 |
 | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> | 2 |
-| Fatal error: Uncaught Error: Undefined variable: ini_parse_quantity in <file> | 2 |
-| Fatal error: Maximum execution time of 1 second exceeded in <file> | 2 |
-| Fatal error: Uncaught Error: Undefined variable: ob_get_contents in <file> | 2 |
-| Unexpected token: } | 2 |
-| Fatal error: Uncaught Error: put() requires an array in <file> | 2 |
-| Fatal error: Uncaught Error: Only a class can be made into an object in <file> | 2 |
+| Parse error: Unexpected token: & in <file> | 2 |
+| thrown in <file> | 2 |
 | no --FILE-- section | 2 |
-| Fatal error: Uncaught Error: Undefined variable: StdClass in <file> | 2 |
-| Fatal error: Uncaught Error: Array index 2 out of bounds (length: 1) in <file> | 2 |
-| Expected ']' after array index, got '++' | 2 |
-| Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> | 2 |
-| Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> | 2 |
-| Unexpected token: > | 2 |
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> | 1 |
-| Fatal error: Uncaught Error: Undefined variable: rename in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: PHP_BINARY in <file> | 1 |
+| Parse error: Unexpected token: << in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: ENT_HTML5 in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> | 1 |
-| Expected identifier as the property name, got '{' | 1 |
-| Fatal error: Uncaught Error: Undefined variable: PHP_BUILD_DATE in <file> | 1 |
+| Parse error: Expected identifier as the property name, got '{' in <file> | 1 |
 | skip locale needed for this test is not supported on this platform | 1 |
 | Fatal error: Uncaught Error: Undefined variable: umask in <file> | 1 |
 | skip for Windows only | 1 |
+| Fatal error: Uncaught Error: Undefined variable: serialize in <file> | 1 |
+| skip Run only on Windows | 1 |
+| Fatal error: Uncaught Error: Undefined variable: infiniteiterator in <file> | 1 |
+| Fatal error: Uncaught Error: Unexpected token: ; in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: mktime in <file> | 1 |
+| Fatal error: Uncaught Error: Cannot call method 'GetMyName' on a value that is not an object in <file> | 1 |
+| skip Can't find german locale | 1 |
+| Fatal error: Uncaught Error: Undefined variable: get_declared_classes in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: foo in <file> | 1 |
+| Parse error: Expected identifier after the global keyword, got '$' in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: debug_backtrace in <file> | 1 |
+| Fatal error: Uncaught Error: Function typehint_ref expects 2 arguments, got 1 in <file> | 1 |
+| Fatal error: Uncaught Error: Cannot call method 'get_name' on a value that is not an object in <file> | 1 |
+| skip setlocale() failed | 1 |
+| skip only for Windows | 1 |
+| Fatal error: Uncaught Error: Undefined variable: include in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: datetime in <file> | 1 |
 
-### Reserved words: 48 of 68 spelled
+### Reserved words: 55 of 68 spelled
 
-Spelled: `abstract`, `and`, `array`, `as`, `break`, `case`, `catch`, `class`, `const`, `continue`, `default`, `echo`, `else`, `elseif`, `eval`, `exit`, `extends`, `final`, `finally`, `for`, `foreach`, `function`, `global`, `if`, `implements`, `include`, `include_once`, `instanceof`, `interface`, `isset`, `list`, `new`, `or`, `print`, `private`, `protected`, `public`, `readonly`, `require`, `require_once`, `return`, `static`, `switch`, `throw`, `try`, `unset`, `var`, `while`
+Spelled: `abstract`, `and`, `array`, `as`, `break`, `case`, `catch`, `class`, `const`, `continue`, `default`, `do`, `echo`, `else`, `elseif`, `empty`, `endfor`, `endforeach`, `endif`, `endswitch`, `endwhile`, `eval`, `exit`, `extends`, `final`, `finally`, `for`, `foreach`, `function`, `global`, `if`, `implements`, `include`, `include_once`, `instanceof`, `interface`, `isset`, `list`, `new`, `or`, `print`, `private`, `protected`, `public`, `readonly`, `require`, `require_once`, `return`, `static`, `switch`, `throw`, `try`, `unset`, `var`, `while`
 
-Not spelled: `callable`, `clone`, `declare`, `do`, `empty`, `enddeclare`, `endfor`, `endforeach`, `endif`, `endswitch`, `endwhile`, `fn`, `goto`, `insteadof`, `match`, `namespace`, `trait`, `use`, `xor`, `yield`
+Not spelled: `callable`, `clone`, `declare`, `enddeclare`, `fn`, `goto`, `insteadof`, `match`, `namespace`, `trait`, `use`, `xor`, `yield`
 
 ### Most-called functions in the suite, and whether the definition spells them
 
@@ -92,8 +92,8 @@ Not spelled: `callable`, `clone`, `declare`, `do`, `empty`, `enddeclare`, `endfo
 | `ini_set` | 30 | no |
 | `__construct` | 24 | yes |
 | `print_r` | 21 | yes |
-| `file_get_contents` | 21 | yes |
-| `current` | 13 | no |
+| `file_get_contents` | 21 | no |
+| `current` | 13 | yes |
 | `var_export` | 12 | no |
 | `ob_start` | 12 | no |
 | `doForEach` | 12 | no |
@@ -108,12 +108,12 @@ Not spelled: `callable`, `clone`, `declare`, `do`, `empty`, `enddeclare`, `endfo
 | `bin2hex` | 9 | no |
 | `fgetc` | 9 | no |
 | `fseek` | 9 | no |
-| `rewind` | 9 | no |
+| `rewind` | 9 | yes |
 | `set_error_handler` | 9 | no |
 | `bar` | 9 | no |
 | `func_get_args` | 9 | yes |
 | `array_push` | 9 | yes |
-| `getIterator` | 9 | no |
+| `getIterator` | 9 | yes |
 | `returnConstantByValue` | 9 | no |
 | `returnConstantByRef` | 9 | no |
 | `returnVariableByRef` | 9 | no |
@@ -222,115 +222,115 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/021.phpt` | pass | pass |  |
 | `php/basic/022.phpt` | differs | differs | ran, printed something else |
 | `php/basic/023.phpt` | pass | pass |  |
-| `php/basic/025.phpt` | differs | differs | ran, printed something else |
+| `php/basic/025.phpt` | pass | pass |  |
 | `php/basic/028.phpt` | pass | pass |  |
 | `php/basic/029.phpt` | differs | differs | ran, printed something else |
 | `php/basic/030.phpt` | pass | pass |  |
 | `php/basic/031.phpt` | pass | pass |  |
 | `php/basic/032.phpt` | pass | pass |  |
 | `php/basic/GHSA-9pqp-7h25-4f32.phpt` | skipped | skipped | skip php-cgi not available |
-| `php/basic/array_key_exists_null_deprecation.phpt` | differs | differs | ran, printed something else |
+| `php/basic/array_key_exists_null_deprecation.phpt` | pass | pass |  |
 | `php/basic/array_null_offset_deprecation.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug20539.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: session_id in <file> |
-| `php/basic/bug29971.phpt` | differs | differs | ran, printed something else |
+| `php/basic/bug29971.phpt` | pass | pass |  |
 | `php/basic/bug31875.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> |
-| `php/basic/bug45986.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: rename in <file> |
+| `php/basic/bug45986.phpt` | pass | pass |  |
 | `php/basic/bug53180.phpt` | pass | pass |  |
 | `php/basic/bug54514.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: PHP_BINARY in <file> |
-| `php/basic/bug55500.phpt` | differs | differs | ran, printed something else |
-| `php/basic/bug61000.phpt` | differs | differs | ran, printed something else |
-| `php/basic/bug67198.phpt` | error | error | Expected an expression |
+| `php/basic/bug55500.phpt` | pass | pass |  |
+| `php/basic/bug61000.phpt` | pass | pass |  |
+| `php/basic/bug67198.phpt` | error | error | Parse error: Unexpected token: << in <file> |
 | `php/basic/bug67988.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ENT_HTML5 in <file> |
 | `php/basic/bug71273.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> |
-| `php/basic/bug73969.phpt` | error | error | Expected identifier as the property name, got '{' |
+| `php/basic/bug73969.phpt` | error | error | Parse error: Expected identifier as the property name, got '{' in <file> |
 | `php/basic/bug78236.phpt` | pass | pass |  |
 | `php/basic/bug78929.phpt` | pass | pass |  |
 | `php/basic/bug79699.phpt` | pass | pass |  |
-| `php/basic/bug80384.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
-| `php/basic/build_date.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: PHP_BUILD_DATE in <file> |
+| `php/basic/bug80384.phpt` | error | error | timeout |
+| `php/basic/build_date.phpt` | pass | pass |  |
 | `php/basic/consistent_float_string_casts.phpt` | skipped | skipped | skip locale needed for this test is not supported on this platform |
-| `php/basic/enable_post_data_reading_01.phpt` | differs | differs | ran, printed something else |
-| `php/basic/enable_post_data_reading_02.phpt` | differs | differs | ran, printed something else |
-| `php/basic/enable_post_data_reading_03.phpt` | differs | differs | ran, printed something else |
-| `php/basic/enable_post_data_reading_04.phpt` | differs | differs | ran, printed something else |
-| `php/basic/enable_post_data_reading_05.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
-| `php/basic/enable_post_data_reading_06.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
-| `php/basic/enable_post_data_reading_07.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
-| `php/basic/encoding.phpt` | differs | differs | ran, printed something else |
+| `php/basic/enable_post_data_reading_01.phpt` | pass | pass |  |
+| `php/basic/enable_post_data_reading_02.phpt` | pass | pass |  |
+| `php/basic/enable_post_data_reading_03.phpt` | pass | pass |  |
+| `php/basic/enable_post_data_reading_04.phpt` | pass | pass |  |
+| `php/basic/enable_post_data_reading_05.phpt` | pass | pass |  |
+| `php/basic/enable_post_data_reading_06.phpt` | pass | pass |  |
+| `php/basic/enable_post_data_reading_07.phpt` | pass | pass |  |
+| `php/basic/encoding.phpt` | pass | pass |  |
 | `php/basic/errorlog_permission.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: umask in <file> |
 | `php/basic/gh15905.phpt` | pass | pass |  |
 | `php/basic/gh16998.phpt` | skipped | skipped | skip php-cgi not available |
 | `php/basic/gh17951_ini_parse_1.phpt` | pass | pass |  |
 | `php/basic/gh17951_ini_parse_2.phpt` | pass | pass |  |
 | `php/basic/gh17951_ini_parse_3.phpt` | pass | pass |  |
-| `php/basic/gh17951_ini_parse_4.phpt` | differs | differs | ran, printed something else |
-| `php/basic/gh17951_ini_parse_5.phpt` | differs | differs | ran, printed something else |
+| `php/basic/gh17951_ini_parse_4.phpt` | pass | pass |  |
+| `php/basic/gh17951_ini_parse_5.phpt` | pass | pass |  |
 | `php/basic/gh17951_runtime_change_1.phpt` | pass | pass |  |
 | `php/basic/gh17951_runtime_change_2.phpt` | pass | pass |  |
-| `php/basic/gh17951_runtime_change_3.phpt` | differs | differs | ran, printed something else |
-| `php/basic/gh17951_runtime_change_4.phpt` | differs | differs | ran, printed something else |
+| `php/basic/gh17951_runtime_change_3.phpt` | pass | pass |  |
+| `php/basic/gh17951_runtime_change_4.phpt` | pass | pass |  |
 | `php/basic/gh17951_runtime_change_5.phpt` | pass | pass |  |
-| `php/basic/gh17951_runtime_change_6.phpt` | differs | differs | ran, printed something else |
-| `php/basic/gh20858.phpt` | differs | differs | ran, printed something else |
-| `php/basic/gh20964.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
+| `php/basic/gh17951_runtime_change_6.phpt` | pass | pass |  |
+| `php/basic/gh20858.phpt` | pass | pass |  |
+| `php/basic/gh20964.phpt` | pass | pass |  |
 | `php/basic/gh7896.phpt` | skipped | skipped | skip for Windows only |
-| `php/basic/header_register_callback.phpt` | error | error | Unexpected token: { |
-| `php/basic/header_register_callback_after_output.phpt` | error | error | Unexpected token: { |
+| `php/basic/header_register_callback.phpt` | error | error | Parse error: Unexpected token: { in <file> |
+| `php/basic/header_register_callback_after_output.phpt` | error | error | Parse error: Unexpected token: { in <file> |
 | `php/basic/header_register_callback_trampoline.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> |
 | `php/basic/header_register_callback_trampoline_after_headers_sent.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> |
-| `php/basic/ini_directive_deprecated_report_memleaks.phpt` | differs | differs | ran, printed something else |
-| `php/basic/ini_parse_quantity_basic.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ini_parse_quantity in <file> |
-| `php/basic/ini_parse_quantity_warnings.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ini_parse_quantity in <file> |
-| `php/basic/precision.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: join in <file> |
+| `php/basic/ini_directive_deprecated_report_memleaks.phpt` | pass | pass |  |
+| `php/basic/ini_parse_quantity_basic.phpt` | pass | pass |  |
+| `php/basic/ini_parse_quantity_warnings.phpt` | pass | pass |  |
+| `php/basic/precision.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: serialize in <file> |
 | `php/basic/req44164.phpt` | pass | pass |  |
 | `php/basic/req60524-win.phpt` | skipped | skipped | skip Run only on Windows |
-| `php/basic/req60524.phpt` | differs | differs | ran, printed something else |
+| `php/basic/req60524.phpt` | pass | pass |  |
 | `php/basic/rfc1867_anonymous_upload.phpt` | pass | pass |  |
 | `php/basic/rfc1867_array_upload.phpt` | pass | pass |  |
 | `php/basic/rfc1867_boundary_1.phpt` | pass | pass |  |
 | `php/basic/rfc1867_boundary_2.phpt` | pass | pass |  |
 | `php/basic/rfc1867_empty_upload.phpt` | pass | pass |  |
-| `php/basic/rfc1867_file_upload_disabled.phpt` | differs | differs | ran, printed something else |
-| `php/basic/rfc1867_garbled_mime_headers.phpt` | differs | differs | ran, printed something else |
-| `php/basic/rfc1867_invalid_boundary.phpt` | differs | differs | ran, printed something else |
+| `php/basic/rfc1867_file_upload_disabled.phpt` | pass | pass |  |
+| `php/basic/rfc1867_garbled_mime_headers.phpt` | pass | pass |  |
+| `php/basic/rfc1867_invalid_boundary.phpt` | pass | pass |  |
 | `php/basic/rfc1867_malicious_input.phpt` | pass | pass |  |
 | `php/basic/rfc1867_max_file_size.phpt` | pass | pass |  |
 | `php/basic/rfc1867_max_file_uploads_empty_files.phpt` | pass | pass |  |
-| `php/basic/rfc1867_missing_boundary.phpt` | differs | differs | ran, printed something else |
-| `php/basic/rfc1867_missing_boundary_2.phpt` | differs | differs | ran, printed something else |
+| `php/basic/rfc1867_missing_boundary.phpt` | pass | pass |  |
+| `php/basic/rfc1867_missing_boundary_2.phpt` | pass | pass |  |
 | `php/basic/rfc1867_multiple_webkitdirectory.phpt` | pass | pass |  |
-| `php/basic/rfc1867_post_max_filesize.phpt` | differs | differs | ran, printed something else |
-| `php/basic/rfc1867_post_max_size.phpt` | differs | differs | ran, printed something else |
-| `php/basic/timeout_variation_0.phpt` | error | error | Fatal error: Maximum execution time of 1 second exceeded in <file> |
+| `php/basic/rfc1867_post_max_filesize.phpt` | pass | pass |  |
+| `php/basic/rfc1867_post_max_size.phpt` | pass | pass |  |
+| `php/basic/timeout_variation_0.phpt` | pass | pass |  |
 | `php/basic/timeout_variation_1.phpt` | skipped | skipped | skip Windows only test |
 | `php/basic/timeout_variation_10.phpt` | skipped | skipped | skip Windows only test |
 | `php/basic/timeout_variation_2.phpt` | skipped | skipped | skip Windows only test |
 | `php/basic/timeout_variation_4.phpt` | skipped | skipped | skip Windows only test |
-| `php/basic/timeout_variation_7.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: INF in <file> |
-| `php/basic/timeout_variation_8.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: InfiniteIterator in <file> |
+| `php/basic/timeout_variation_7.phpt` | pass | pass |  |
+| `php/basic/timeout_variation_8.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: infiniteiterator in <file> |
 | `php/basic/timeout_variation_9.phpt` | skipped | skipped | skip Windows only test |
 | `php/func/001.phpt` | pass | pass |  |
 | `php/func/002.phpt` | pass | pass |  |
 | `php/func/003.phpt` | pass | pass |  |
 | `php/func/004.phpt` | pass | pass |  |
-| `php/func/005.phpt` | differs | differs | ran, printed something else |
-| `php/func/005a.phpt` | error | error | Fatal error: Maximum execution time of 1 second exceeded in <file> |
-| `php/func/006.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ob_get_contents in <file> |
-| `php/func/007.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ini_restore in <file> |
+| `php/func/005.phpt` | pass | pass |  |
+| `php/func/005a.phpt` | pass | pass |  |
+| `php/func/006.phpt` | pass | pass |  |
+| `php/func/007.phpt` | pass | pass |  |
 | `php/func/008.phpt` | pass | pass |  |
 | `php/func/009.phpt` | pass | pass |  |
 | `php/func/010.phpt` | pass | pass |  |
-| `php/func/011.phpt` | differs | differs | ran, printed something else |
-| `php/func/bug64523.phpt` | differs | differs | ran, printed something else |
-| `php/func/ini_alter.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ini_alter in <file> |
+| `php/func/011.phpt` | pass | pass |  |
+| `php/func/bug64523.phpt` | pass | pass |  |
+| `php/func/ini_alter.phpt` | pass | pass |  |
 | `php/lang/001.phpt` | pass | pass |  |
 | `php/lang/002.phpt` | pass | pass |  |
 | `php/lang/003.phpt` | pass | pass |  |
 | `php/lang/004.phpt` | pass | pass |  |
 | `php/lang/005.phpt` | pass | pass |  |
 | `php/lang/006.phpt` | pass | pass |  |
-| `php/lang/007.phpt` | differs | differs | ran, printed something else |
-| `php/lang/008.phpt` | error | error | Unexpected token: : |
+| `php/lang/007.phpt` | pass | pass |  |
+| `php/lang/008.phpt` | pass | pass |  |
 | `php/lang/009.phpt` | pass | pass |  |
 | `php/lang/010.phpt` | pass | pass |  |
 | `php/lang/011.phpt` | pass | pass |  |
@@ -345,27 +345,27 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/020.phpt` | pass | pass |  |
 | `php/lang/021.phpt` | pass | pass |  |
 | `php/lang/022.phpt` | pass | pass |  |
-| `php/lang/023.phpt` | error | error | Fatal error: Uncaught Error: Unexpected token: += in <file> |
-| `php/lang/024.phpt` | error | error | Invalid assignment target before '=' |
+| `php/lang/023.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: mktime in <file> |
+| `php/lang/024.phpt` | pass | pass |  |
 | `php/lang/025.phpt` | pass | pass |  |
 | `php/lang/026.phpt` | pass | pass |  |
-| `php/lang/027.phpt` | error | error | Expected an expression |
-| `php/lang/028.phpt` | error | error | Unexpected token: : |
-| `php/lang/030.phpt` | error | error | Unexpected token: & |
+| `php/lang/027.phpt` | pass | pass |  |
+| `php/lang/028.phpt` | error | error | Fatal error: Uncaught Error: Cannot call method 'GetMyName' on a value that is not an object in <file> |
+| `php/lang/030.phpt` | error | error | Parse error: Unexpected token: & in <file> |
 | `php/lang/032.phpt` | pass | pass |  |
-| `php/lang/033.phpt` | error | error | Unexpected token: : |
+| `php/lang/033.phpt` | differs | differs | ran, printed something else |
 | `php/lang/034.phpt` | skipped | skipped | skip Can't find german locale |
 | `php/lang/035.phpt` | pass | pass |  |
 | `php/lang/036.phpt` | differs | differs | ran, printed something else |
 | `php/lang/037.phpt` | pass | pass |  |
-| `php/lang/038.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
-| `php/lang/039.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
+| `php/lang/038.phpt` | error | error | thrown in <file> |
+| `php/lang/039.phpt` | pass | pass |  |
 | `php/lang/040.phpt` | pass | pass |  |
-| `php/lang/041.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'b' in A in <file> |
-| `php/lang/042.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'B' in A in <file> |
-| `php/lang/043.phpt` | error | error | Fatal error: Uncaught Error: Cannot call 'foo' on a value that is not a class in <file> |
-| `php/lang/044.phpt` | error | error | Fatal error: Uncaught Error: Cannot call '$name' on a value that is not a class in <file> |
-| `php/lang/045.phpt` | error | error | Unexpected token: } |
+| `php/lang/041.phpt` | pass | pass |  |
+| `php/lang/042.phpt` | pass | pass |  |
+| `php/lang/043.phpt` | pass | pass |  |
+| `php/lang/044.phpt` | pass | pass |  |
+| `php/lang/045.phpt` | error | error | timeout |
 | `php/lang/array_shortcut_001.phpt` | pass | pass |  |
 | `php/lang/array_shortcut_002.phpt` | pass | pass |  |
 | `php/lang/array_shortcut_003.phpt` | pass | pass |  |
@@ -373,57 +373,57 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bison1.phpt` | pass | pass |  |
 | `php/lang/bug18872.phpt` | pass | pass |  |
 | `php/lang/bug19566.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_declared_classes in <file> |
-| `php/lang/bug19943.phpt` | error | error | Fatal error: Uncaught Error: put() requires an array in <file> |
-| `php/lang/bug20175.phpt` | error | error | Only a name, a place in an array or a property has a cell to share |
-| `php/lang/bug21094.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug21600.phpt` | error | error | Unexpected token: & |
-| `php/lang/bug21669.phpt` | error | error | Fatal error: Uncaught Error: Only a class can be made into an object in <file> |
+| `php/lang/bug19943.phpt` | pass | pass |  |
+| `php/lang/bug20175.phpt` | pass | pass |  |
+| `php/lang/bug21094.phpt` | pass | pass |  |
+| `php/lang/bug21600.phpt` | pass | pass |  |
+| `php/lang/bug21669.phpt` | pass | pass |  |
 | `php/lang/bug21820.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug21849.phpt` | pass | pass |  |
 | `php/lang/bug21961.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> |
-| `php/lang/bug22231.phpt` | error | error | Unexpected token: & |
-| `php/lang/bug22510.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug22592.phpt` | error | error | Fatal error: Uncaught Error: put() requires an array in <file> |
+| `php/lang/bug22231.phpt` | error | error | Parse error: Unexpected token: & in <file> |
+| `php/lang/bug22510.phpt` | pass | pass |  |
+| `php/lang/bug22592.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug23279.phpt` | error | error | thrown in <file> |
-| `php/lang/bug23384.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: Foo in <file> |
-| `php/lang/bug23489.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug23384.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: foo in <file> |
+| `php/lang/bug23489.phpt` | pass | pass |  |
 | `php/lang/bug23524.phpt` | pass | pass |  |
 | `php/lang/bug23584.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug23624.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: current in <file> |
+| `php/lang/bug23624.phpt` | pass | pass |  |
 | `php/lang/bug24054.phpt` | pass | pass |  |
-| `php/lang/bug24396.phpt` | error | error | Expected identifier after the global keyword, got '$' |
-| `php/lang/bug24436.phpt` | error | error | Fatal error: Uncaught Error: Cannot index non-array value in <file> |
+| `php/lang/bug24396.phpt` | error | error | Parse error: Expected identifier after the global keyword, got '$' in <file> |
+| `php/lang/bug24436.phpt` | pass | pass |  |
 | `php/lang/bug24499.phpt` | pass | pass |  |
 | `php/lang/bug24573.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: debug_backtrace in <file> |
 | `php/lang/bug24640.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug24652.phpt` | pass | pass |  |
 | `php/lang/bug24658.phpt` | error | error | Fatal error: Uncaught Error: Function typehint_ref expects 2 arguments, got 1 in <file> |
-| `php/lang/bug24783.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: urlencode in <file> |
-| `php/lang/bug24908.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug24951.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ob_end_flush in <file> |
+| `php/lang/bug24783.phpt` | pass | pass |  |
+| `php/lang/bug24908.phpt` | pass | pass |  |
+| `php/lang/bug24951.phpt` | pass | pass |  |
 | `php/lang/bug25145.phpt` | pass | pass |  |
-| `php/lang/bug25547.phpt` | error | error | Fatal error: Uncaught TypeError: Cannot coerce array to number in <file> |
-| `php/lang/bug25652.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug25922.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug25547.phpt` | pass | pass |  |
+| `php/lang/bug25652.phpt` | pass | pass |  |
+| `php/lang/bug25922.phpt` | pass | pass |  |
 | `php/lang/bug26182.phpt` | pass | pass |  |
 | `php/lang/bug26696.phpt` | pass | pass |  |
 | `php/lang/bug26866.phpt` | error | error | Fatal error: Uncaught Error: Cannot call method 'get_name' on a value that is not an object in <file> |
 | `php/lang/bug26869.phpt` | pass | pass |  |
 | `php/lang/bug27354.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug27439.phpt` | error | error | Unexpected token: } |
-| `php/lang/bug27443.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: defined in <file> |
+| `php/lang/bug27439.phpt` | pass | pass |  |
+| `php/lang/bug27443.phpt` | pass | pass |  |
 | `php/lang/bug27535.phpt` | pass | pass |  |
 | `php/lang/bug28213.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug28800.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug28800.phpt` | pass | pass |  |
 | `php/lang/bug29566.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug29893.phpt` | error | error | '-=' needs a plain variable on its left |
+| `php/lang/bug29893.phpt` | pass | pass |  |
 | `php/lang/bug29944.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug30578.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug30578.phpt` | pass | pass |  |
 | `php/lang/bug30638.phpt` | skipped | skipped | skip setlocale() failed |
 | `php/lang/bug30726.phpt` | pass | pass |  |
 | `php/lang/bug30862.phpt` | pass | pass |  |
 | `php/lang/bug32828.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug32924.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug32924.phpt` | pass | pass |  |
 | `php/lang/bug35176.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug35382.phpt` | skipped | skipped | no --FILE-- section |
 | `php/lang/bug38579.phpt` | skipped | skipped | skip only for Windows |
@@ -431,73 +431,73 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug44654.phpt` | pass | pass |  |
 | `php/lang/bug44827.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug45392.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug55754.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: current in <file> |
+| `php/lang/bug55754.phpt` | pass | pass |  |
 | `php/lang/bug71897.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug73172.phpt` | pass | pass |  |
 | `php/lang/bug73329.phpt` | pass | pass |  |
-| `php/lang/bug7515.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ob_get_contents in <file> |
-| `php/lang/catchable_error_001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: StdClass in <file> |
+| `php/lang/bug7515.phpt` | pass | pass |  |
+| `php/lang/catchable_error_001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/catchable_error_002.phpt` | differs | differs | ran, printed something else |
 | `php/lang/comments.phpt` | pass | pass |  |
 | `php/lang/comments2.phpt` | skipped | skipped | no --FILE-- section |
 | `php/lang/compare_objects_basic1.phpt` | pass | pass |  |
-| `php/lang/compare_objects_basic2.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: DateTime in <file> |
+| `php/lang/compare_objects_basic2.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: datetime in <file> |
 | `php/lang/constants/PHP_INT_32bit.phpt` | skipped | skipped | skip this test is for 32-bit platforms only |
 | `php/lang/constants/PHP_INT_64bit.phpt` | pass | pass |  |
-| `php/lang/empty_variation.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: empty in <file> |
-| `php/lang/engine_assignExecutionOrder_001.phpt` | error | error | Expected identifier after the member mark, got '$' |
-| `php/lang/engine_assignExecutionOrder_002.phpt` | error | error | Fatal error: Uncaught Error: Cannot index non-array value in <file> |
-| `php/lang/engine_assignExecutionOrder_003.phpt` | error | error | Unexpected token: ) |
+| `php/lang/empty_variation.phpt` | pass | pass |  |
+| `php/lang/engine_assignExecutionOrder_001.phpt` | pass | pass |  |
+| `php/lang/engine_assignExecutionOrder_002.phpt` | error | error | Fatal error: Uncaught Error: Cannot use a scalar value as an array in <file> |
+| `php/lang/engine_assignExecutionOrder_003.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_004.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_005.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_006.phpt` | pass | pass |  |
-| `php/lang/engine_assignExecutionOrder_007.phpt` | error | error | Fatal error: Uncaught Error: Only a class can be made into an object in <file> |
-| `php/lang/engine_assignExecutionOrder_008.phpt` | error | error | Unexpected token: ++ |
+| `php/lang/engine_assignExecutionOrder_007.phpt` | pass | pass |  |
+| `php/lang/engine_assignExecutionOrder_008.phpt` | error | error | Parse error: '++' needs a plain variable on its left in <file> |
 | `php/lang/engine_assignExecutionOrder_009.phpt` | pass | pass |  |
-| `php/lang/error_2_exception_001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/error_2_exception_001.phpt` | pass | pass |  |
 | `php/lang/execution_order.phpt` | differs | differs | ran, printed something else |
-| `php/lang/foreachLoop.001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: current in <file> |
-| `php/lang/foreachLoop.002.phpt` | error | error | Fatal error: Uncaught Error: Array index 2 out of bounds (length: 1) in <file> |
+| `php/lang/foreachLoop.001.phpt` | pass | pass |  |
+| `php/lang/foreachLoop.002.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.003.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.004.phpt` | pass | pass |  |
-| `php/lang/foreachLoop.005.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoop.005.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.006.phpt` | differs | differs | ran, printed something else |
-| `php/lang/foreachLoop.009.phpt` | error | error | Fatal error: Uncaught Error: Array index 2 out of bounds (length: 1) in <file> |
+| `php/lang/foreachLoop.009.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.010.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.011.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.012.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
 | `php/lang/foreachLoop.013.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
 | `php/lang/foreachLoop.014.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
 | `php/lang/foreachLoop.015.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
-| `php/lang/foreachLoop.016.phpt` | error | error | A foreach that hands out its items for writing needs a named array |
+| `php/lang/foreachLoop.016.phpt` | error | error | Parse error: A foreach that hands out its items for writing needs a named array in <file> |
 | `php/lang/foreachLoop.017.phpt` | pass | pass |  |
-| `php/lang/foreachLoopIterator.001.phpt` | error | error | Expected ']' after array index, got '++' |
-| `php/lang/foreachLoopIterator.002.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: Iterator in <file> |
-| `php/lang/foreachLoopIteratorAggregate.001.phpt` | error | error | Unexpected token: ++ |
-| `php/lang/foreachLoopIteratorAggregate.002.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: IteratorAggregate in <file> |
-| `php/lang/foreachLoopIteratorAggregate.003.phpt` | error | error | Expected ']' after array index, got '++' |
-| `php/lang/foreachLoopIteratorAggregate.004.phpt` | error | error | Unexpected token: ++ |
+| `php/lang/foreachLoopIterator.001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoopIterator.002.phpt` | pass | pass |  |
+| `php/lang/foreachLoopIteratorAggregate.001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoopIteratorAggregate.002.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoopIteratorAggregate.003.phpt` | pass | pass |  |
+| `php/lang/foreachLoopIteratorAggregate.004.phpt` | pass | pass |  |
 | `php/lang/foreachLoopObjects.001.phpt` | differs | differs | ran, printed something else |
-| `php/lang/foreachLoopObjects.002.phpt` | error | error | Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> |
-| `php/lang/foreachLoopObjects.003.phpt` | error | error | Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> |
-| `php/lang/foreachLoopObjects.004.phpt` | error | error | Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> |
-| `php/lang/foreachLoopObjects.005.phpt` | error | error | Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> |
-| `php/lang/foreachLoopObjects.006.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: stdclass in <file> |
+| `php/lang/foreachLoopObjects.002.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoopObjects.003.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoopObjects.004.phpt` | pass | pass |  |
+| `php/lang/foreachLoopObjects.005.phpt` | pass | pass |  |
+| `php/lang/foreachLoopObjects.006.phpt` | pass | pass |  |
 | `php/lang/foreach_with_object_001.phpt` | pass | pass |  |
 | `php/lang/foreach_with_references_001.phpt` | pass | pass |  |
 | `php/lang/func_get_arg.001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/func_get_arg.002.phpt` | pass | pass |  |
-| `php/lang/func_get_arg.003.phpt` | differs | differs | ran, printed something else |
-| `php/lang/func_get_arg.004.phpt` | differs | differs | ran, printed something else |
+| `php/lang/func_get_arg.003.phpt` | pass | pass |  |
+| `php/lang/func_get_arg.004.phpt` | pass | pass |  |
 | `php/lang/func_get_arg.005.phpt` | pass | pass |  |
-| `php/lang/func_get_arg_variation.phpt` | differs | differs | ran, printed something else |
+| `php/lang/func_get_arg_variation.phpt` | pass | pass |  |
 | `php/lang/func_get_args.001.phpt` | pass | pass |  |
 | `php/lang/func_get_args.002.phpt` | pass | pass |  |
-| `php/lang/func_get_args.003.phpt` | differs | differs | ran, printed something else |
+| `php/lang/func_get_args.003.phpt` | pass | pass |  |
 | `php/lang/func_get_args.004.phpt` | differs | differs | ran, printed something else |
 | `php/lang/func_num_args.001.phpt` | pass | pass |  |
 | `php/lang/func_num_args.002.phpt` | pass | pass |  |
-| `php/lang/func_num_args.003.phpt` | differs | differs | ran, printed something else |
+| `php/lang/func_num_args.003.phpt` | pass | pass |  |
 | `php/lang/func_num_args.004.phpt` | pass | pass |  |
 | `php/lang/include_variation1.phpt` | pass | pass |  |
 | `php/lang/include_variation2.phpt` | pass | pass |  |
@@ -508,9 +508,9 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/integer_literals/hexadecimal_64bit.phpt` | pass | pass |  |
 | `php/lang/integer_literals/octal_32bit.phpt` | skipped | skipped | skip this test is for 32bit platform only |
 | `php/lang/integer_literals/octal_64bit.phpt` | pass | pass |  |
-| `php/lang/invalid_octal.phpt` | error | error | Invalid number: 08 |
+| `php/lang/invalid_octal.phpt` | pass | pass |  |
 | `php/lang/operators/add_basiclong_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/add_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/add_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseAnd_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseAnd_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseNot_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
@@ -526,19 +526,19 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/bitwiseShiftRight_variationStr2.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseXor_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseXor_variationStr.phpt` | pass | pass |  |
-| `php/lang/operators/coalesce.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: StdClass in <file> |
-| `php/lang/operators/divide_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/divide_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/coalesce.phpt` | pass | pass |  |
+| `php/lang/operators/divide_basiclong_64bit.phpt` | pass | pass |  |
+| `php/lang/operators/divide_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/modulus_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/modulus_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/multiply_basiclong_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/multiply_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/multiply_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/nan-comparison-false.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: NAN in <file> |
-| `php/lang/operators/negate_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/negate_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/negate_variationStr.phpt` | error | error | Fatal error: Uncaught Error: Cannot negate non-numeric value in <file> |
 | `php/lang/operators/operator_equals_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_equals_variation.phpt` | skipped | skipped | skip this test is for 32bit platform only |
-| `php/lang/operators/operator_equals_variation_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/operator_equals_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_gt_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_gt_or_equal_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_gt_or_equal_variation.phpt` | skipped | skipped | skip this test is for 32bit platform only |
@@ -555,60 +555,60 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/operator_lt_or_equal_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_lt_variation.phpt` | pass | pass |  |
 | `php/lang/operators/operator_lt_variation_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/operator_notequals_basic.phpt` | error | error | Unexpected token: > |
+| `php/lang/operators/operator_notequals_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_notequals_variation.phpt` | skipped | skipped | skip this test is for 32bit platform only |
-| `php/lang/operators/operator_notequals_variation_64bit.phpt` | error | error | Unexpected token: > |
+| `php/lang/operators/operator_notequals_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_notidentical_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_notidentical_variation.phpt` | skipped | skipped | skip this test is for 32bit platform only |
 | `php/lang/operators/operator_notidentical_variation_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/operator_spaceship_basic.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/overloaded_property_ref.phpt` | error | error | Unexpected token: -> |
+| `php/lang/operators/operator_spaceship_basic.phpt` | pass | pass |  |
+| `php/lang/operators/overloaded_property_ref.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/postdec_basiclong_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/postdec_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/postdec_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/postinc_basiclong_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/postinc_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/postinc_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/predec_basiclong_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/predec_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/predec_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/preinc_basiclong_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/preinc_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/preinc_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/subtract_basiclong_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/subtract_variationStr.phpt` | differs | differs | ran, printed something else |
-| `php/lang/passByReference_001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/subtract_variationStr.phpt` | pass | pass |  |
+| `php/lang/passByReference_001.phpt` | pass | pass |  |
 | `php/lang/passByReference_002.phpt` | differs | differs | ran, printed something else |
-| `php/lang/passByReference_003.phpt` | error | error | Fatal error: Uncaught Error: Cannot index non-array value in <file> |
-| `php/lang/passByReference_004.phpt` | differs | differs | ran, printed something else |
-| `php/lang/passByReference_005.phpt` | differs | differs | ran, printed something else |
-| `php/lang/passByReference_006.phpt` | error | error | Fatal error: Uncaught Error: Cannot index non-array value in <file> |
-| `php/lang/passByReference_007.phpt` | differs | differs | ran, printed something else |
+| `php/lang/passByReference_003.phpt` | pass | pass |  |
+| `php/lang/passByReference_004.phpt` | pass | pass |  |
+| `php/lang/passByReference_005.phpt` | pass | pass |  |
+| `php/lang/passByReference_006.phpt` | pass | pass |  |
+| `php/lang/passByReference_007.phpt` | pass | pass |  |
 | `php/lang/passByReference_008.phpt` | pass | pass |  |
 | `php/lang/passByReference_009.phpt` | pass | pass |  |
 | `php/lang/passByReference_010.phpt` | differs | differs | ran, printed something else |
-| `php/lang/passByReference_012.phpt` | differs | differs | ran, printed something else |
-| `php/lang/returnByReference.001.phpt` | error | error | Only a name, a place in an array or a property has a cell to share |
-| `php/lang/returnByReference.002.phpt` | error | error | Only a name, a place in an array or a property has a cell to share |
-| `php/lang/returnByReference.003.phpt` | error | error | Only a name, a place in an array or a property has a cell to share |
-| `php/lang/returnByReference.004.phpt` | error | error | Only a name, a place in an array or a property has a cell to share |
-| `php/lang/returnByReference.005.phpt` | error | error | Only a name, a place in an array or a property has a cell to share |
-| `php/lang/returnByReference.006.phpt` | error | error | Only a name, a place in an array or a property has a cell to share |
-| `php/lang/returnByReference.007.phpt` | error | error | Only a name, a place in an array or a property has a cell to share |
-| `php/lang/returnByReference.008.phpt` | error | error | Only a name, a place in an array or a property has a cell to share |
-| `php/lang/returnByReference.009.phpt` | differs | differs | ran, printed something else |
+| `php/lang/passByReference_012.phpt` | pass | pass |  |
+| `php/lang/returnByReference.001.phpt` | pass | pass |  |
+| `php/lang/returnByReference.002.phpt` | pass | pass |  |
+| `php/lang/returnByReference.003.phpt` | pass | pass |  |
+| `php/lang/returnByReference.004.phpt` | pass | pass |  |
+| `php/lang/returnByReference.005.phpt` | pass | pass |  |
+| `php/lang/returnByReference.006.phpt` | pass | pass |  |
+| `php/lang/returnByReference.007.phpt` | pass | pass |  |
+| `php/lang/returnByReference.008.phpt` | pass | pass |  |
+| `php/lang/returnByReference.009.phpt` | pass | pass |  |
 | `php/lang/short_tags.001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/short_tags.002.phpt` | pass | pass |  |
-| `php/lang/short_tags.004.phpt` | differs | differs | ran, printed something else |
+| `php/lang/short_tags.004.phpt` | pass | pass |  |
 | `php/lang/static_basic_001.phpt` | pass | pass |  |
 | `php/lang/static_basic_002.phpt` | differs | differs | ran, printed something else |
-| `php/lang/static_variation_001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: g1 in <file> |
-| `php/lang/static_variation_002.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: cfg in <file> |
-| `php/lang/string/unicode_escape.phpt` | differs | differs | ran, printed something else |
-| `php/lang/string/unicode_escape_empty.phpt` | differs | differs | ran, printed something else |
-| `php/lang/string/unicode_escape_incomplete.phpt` | differs | differs | ran, printed something else |
-| `php/lang/string/unicode_escape_large_codepoint.phpt` | differs | differs | ran, printed something else |
+| `php/lang/static_variation_001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/static_variation_002.phpt` | differs | differs | ran, printed something else |
+| `php/lang/string/unicode_escape.phpt` | pass | pass |  |
+| `php/lang/string/unicode_escape_empty.phpt` | pass | pass |  |
+| `php/lang/string/unicode_escape_incomplete.phpt` | pass | pass |  |
+| `php/lang/string/unicode_escape_large_codepoint.phpt` | pass | pass |  |
 | `php/lang/string/unicode_escape_legacy.phpt` | pass | pass |  |
-| `php/lang/string/unicode_escape_sign.phpt` | differs | differs | ran, printed something else |
-| `php/lang/string/unicode_escape_sign2.phpt` | differs | differs | ran, printed something else |
+| `php/lang/string/unicode_escape_sign.phpt` | pass | pass |  |
+| `php/lang/string/unicode_escape_sign2.phpt` | pass | pass |  |
 | `php/lang/string/unicode_escape_surrogates.phpt` | differs | differs | ran, printed something else |
-| `php/lang/string/unicode_escape_whitespace.phpt` | differs | differs | ran, printed something else |
+| `php/lang/string/unicode_escape_whitespace.phpt` | pass | pass |  |
 | `php/lang/string_decimals_001.phpt` | pass | pass |  |
 | `php/lang/syntax_errors.phpt` | error | error | Fatal error: Uncaught Error: Expected ')' to close a group, got ';' in <file> |
 | `php/lang/this_assignment.phpt` | pass | pass |  |
@@ -616,7 +616,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/type_hints_001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/type_hints_002.phpt` | differs | differs | ran, printed something else |
 | `php/lang/type_hints_003.phpt` | differs | differs | ran, printed something else |
-| `php/lang/zend_throw_exception_001.phpt` | error | error | Fatal error: Uncaught Error: '$name' is not a function in <file> |
+| `php/lang/zend_throw_exception_001.phpt` | pass | pass |  |
 | `python/test_augassign.py` | error | error | Unexpected character '&' |
 | `python/test_bigmem.py` | error | error | Unexpected character '@' |
 | `python/test_binop.py` | error | error | Unexpected token: , |

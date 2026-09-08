@@ -109,7 +109,17 @@ pub fn apply(op: Arith, l: Value, r: Value) -> LumenResult<Value> {
     };
     // A real operand makes the result real, as does division in a
     // language whose `/` yields a real (op.div.result).
-    let result_is_real = left_is_real || right_is_real || (op == Arith::Div && def().div_real);
+    let mut result_is_real = left_is_real || right_is_real || (op == Arith::Div && def().div_real);
+    // Two whole numbers dividing evenly give a whole one, where the
+    // language says its division does that rather than always a real.
+    if result_is_real && op == Arith::Div && def().div_whole_when_even && !left_is_real && !right_is_real {
+        if let (Ok(top), Ok(bottom)) = (as_number(l.as_ref()), as_number(r.as_ref())) {
+            let divisor = bottom.value.clone();
+            if divisor != BigInt::from(0) && &top.value % &divisor == BigInt::from(0) {
+                result_is_real = false;
+            }
+        }
+    }
 
     // The remainder is derived: a - b * (a // b), so the identity
     // a == b * (a // b) + a % b holds for every kind of number.

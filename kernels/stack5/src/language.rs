@@ -73,6 +73,10 @@ pub struct Def {
     pub none: Vec<String>,
     /// Nothing shows as no text at all, not as the word for it.
     pub none_silent: bool,
+    /// Whether a flag shows as the number it counts for.
+    pub flag_counts: bool,
+    /// Whether two whole numbers dividing evenly make a whole one.
+    pub div_stays_whole: bool,
     pub binary: HashMap<String, Infix>,
     pub unary: HashMap<String, Infix>,
     pub pipes: Vec<String>,
@@ -133,7 +137,7 @@ w syntax.group.open | w syntax.group.close
 w syntax.call.open | w syntax.call.separator | w syntax.call.close | w syntax.call.label
 w syntax.array.open | w syntax.array.separator | w syntax.array.close
 x syntax.map.open | x syntax.map.separator | x syntax.map.pair | x syntax.map.close
-w literal.true | w literal.false | w literal.null | b literal.null.silent
+w literal.true | w literal.false | w literal.null | b literal.null.silent | b system.flag.counts
 t op.precedence | w op.right_associative
 w op.add | w op.sub | w op.mul | w op.div | o op.div.result | w op.quot | w op.rem | w op.pow
 w op.eq | w op.ne | w op.lt | w op.le | w op.gt | w op.ge
@@ -395,11 +399,16 @@ impl Def {
             return Err("a postfix language takes no op.precedence".to_string());
         }
         let rights = r.list("op.right_associative")?;
-        let div = match r.text_or_null("op.div.result")?.as_deref() {
+        let said = r.text_or_null("op.div.result")?;
+        let div = match said.as_deref() {
             None | Some("rational") => Op::Div,
-            Some("real") => Op::RealDiv,
-            Some(other) => return Err(format!("op.div.result must be 'rational', 'real' or null, got '{other}'")),
+            Some("real") | Some("whole_or_real") => Op::RealDiv,
+            Some(other) => {
+                return Err(format!("op.div.result must be 'rational', 'real', 'whole_or_real' or null, got '{other}'"))
+            }
         };
+        // Two whole numbers dividing evenly make a whole one.
+        let div_stays_whole = said.as_deref() == Some("whole_or_real");
         let tier_of = |lex: &str, from_top: bool| -> Option<u32> {
             if postfix {
                 return Some(0);
@@ -585,6 +594,8 @@ impl Def {
             no: r.list("literal.false")?,
             none: r.list("literal.null")?,
             none_silent: r.switch("literal.null.silent")?,
+            flag_counts: r.switch("system.flag.counts")?,
+            div_stays_whole,
             binary,
             unary,
             pipes,

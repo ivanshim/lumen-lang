@@ -58,7 +58,7 @@ impl<'a> Machine<'a> {
     fn spelling(&self) -> Spelling<'a> {
         let word = |list: &'a [String], fallback: &'a str| list.first().map_or(fallback, String::as_str);
         let nothing = if self.def.none_silent { "" } else { word(&self.def.none, "null") };
-        Spelling { yes: word(&self.def.yes, "true"), no: word(&self.def.no, "false"), none: nothing }
+        Spelling { yes: word(&self.def.yes, "true"), no: word(&self.def.no, "false"), none: nothing, counted: self.def.flag_counts }
     }
 
     fn pop(&mut self) -> Outcome<Value> {
@@ -297,6 +297,20 @@ impl<'a> Machine<'a> {
             Op::Concat => joined(),
             Op::Index => self.index(a, b)?,
             Op::Add if matches!(a, Value::Str(_)) || matches!(b, Value::Str(_)) => joined(),
+            // Two whole numbers dividing evenly make a whole one, in a
+            // language whose division says so rather than always
+            // making a real of it.
+            Op::RealDiv
+                if self.def.div_stays_whole
+                    && matches!(a, Value::Int(_) | Value::Big(_))
+                    && matches!(b, Value::Int(_) | Value::Big(_))
+                    && matches!(numbers::compute(Calc::Div, a, b), Some(Ok(Value::Int(_) | Value::Big(_)))) =>
+            {
+                match numbers::compute(Calc::Div, a, b) {
+                    Some(r) => r?,
+                    None => return Err("Division requires numeric operands".to_string()),
+                }
+            }
             Op::Add | Op::Sub | Op::Mul | Op::Div | Op::RealDiv | Op::Quot | Op::Rem | Op::Pow => {
                 let calc = match op {
                     Op::Add => Calc::Add,

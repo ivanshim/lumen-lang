@@ -42,37 +42,140 @@ const CGI_VARS: [&str; 14] = [
 /// the body on the input when the request says one is coming.
 pub fn gathered() -> Request {
     let mut request = Request::new();
+    // A run may be told which of the groups to gather at all, each by a
+    // letter of its own, and how deep a name may point.
+    let wanted = setting("variables_order").unwrap_or_else(|| "EGPCS".to_string());
+    let takes = |letter: char| wanted.contains(letter);
+    let deepest = setting("max_input_nesting_level").and_then(|said| said.trim().parse::<usize>().ok());
     let query = env::var("QUERY_STRING").unwrap_or_default();
-    for (key, value) in fields(&query) {
-        request.push(("GET".to_string(), key, value, false));
+    let asked = shallow_enough(fields(&query), deepest);
+    for (key, value) in asked {
+        if takes('G') {
+            request.push(("GET".to_string(), key, value, false));
+        }
     }
-    let (posted, sent) = body_given();
-    for (key, value) in &posted {
-        request.push(("POST".to_string(), key.clone(), value.clone(), false));
+    let (posted, sent, amiss, raw) = body_given();
+    if let Some(raw) = raw {
+        request.push(("SELF".to_string(), "body".to_string(), raw, false));
+    }
+    for kind in amiss {
+        request.push(("SELF".to_string(), "amiss".to_string(), kind, false));
+    }
+    for (key, value) in shallow_enough(posted, deepest) {
+        if takes('P') {
+            request.push(("POST".to_string(), key, value, false));
+        }
     }
     for (key, value, counted) in &sent {
         request.push(("FILES".to_string(), key.clone(), value.clone(), *counted));
     }
     let cookies = env::var("HTTP_COOKIE").unwrap_or_default();
     for (key, value) in crumbs(&cookies) {
-        request.push(("COOKIE".to_string(), key, value, false));
-    }
-    for name in CGI_VARS {
-        if let Ok(value) = env::var(name) {
-            request.push(("SERVER".to_string(), name.to_string(), value, false));
+        if takes('C') {
+            request.push(("COOKIE".to_string(), key, value, false));
         }
     }
+    if takes('S') {
+        for name in CGI_VARS {
+            if let Ok(value) = env::var(name) {
+                request.push(("SERVER".to_string(), name.to_string(), value, false));
+            }
+        }
+    }
+    if takes('E') {
+        for (name, value) in env::vars() {
+            request.push(("ENV".to_string(), name, value, false));
+        }
+    }
+    // What the run was started with, each under its own name. It is told
+    // apart from the rest because a run may be told to gather none of
+    // the groups and must still know what it was started with.
     for (name, value) in env::vars() {
-        request.push(("ENV".to_string(), name, value, false));
+        if let Some(named) = name.strip_prefix("PHP_INI_") {
+            request.push(("SETTINGS".to_string(), named.to_string(), value, false));
+        }
     }
     request
+}
+
+/// The fields whose names point no deeper than the run allows. A name
+/// pointing deeper takes the whole of what it stands under with it,
+/// since half a value is no value.
+fn shallow_enough(given: Vec<(String, String)>, deepest: Option<usize>) -> Vec<(String, String)> {
+    let Some(deepest) = deepest else { return given };
+    let too_deep: Vec<String> = given
+        .iter()
+        .filter(|(key, _)| key.matches(BETWEEN_STEPS).count() > deepest)
+        .filter_map(|(key, _)| key.split(BETWEEN_STEPS).next().map(str::to_string))
+        .collect();
+    given
+        .into_iter()
+        .filter(|(key, _)| {
+            let base = key.split(BETWEEN_STEPS).next().unwrap_or_default();
+            !too_deep.iter().any(|held| held == base)
+        })
+        .collect()
+}
+
+/// Whether a name that points inside a value is written whole: what
+/// stands before the first bracket names the value, and from there the
+/// name must be brackets and nothing else, each closing before the next
+/// opens.
+fn well_named(name: &str) -> bool {
+    let Some(at) = name.find('[') else { return true };
+    let mut rest = &name[at..];
+    while !rest.is_empty() {
+        if !rest.starts_with('[') {
+            return false;
+        }
+        let Some(shut) = rest.find(']') else { return false };
+        if rest[1..shut].contains('[') {
+            return false;
+        }
+        rest = &rest[shut + 1..];
+    }
+    true
+}
+
+/// A setting counted in bytes, as PHP counts one: the number the text
+/// opens with, times what the last letter of the whole stands for.
+fn quantity(text: &str) -> Option<i64> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let last = text.chars().last().unwrap_or(' ').to_ascii_lowercase();
+    let times: i64 = match last {
+        'k' => 1024,
+        'm' => 1024 * 1024,
+        'g' => 1024 * 1024 * 1024,
+        _ => 1,
+    };
+    let digits = match times > 1 {
+        true => &text[..text.len() - last.len_utf8()],
+        false => text,
+    };
+    let digits = digits.trim();
+    let (sign, rest) = match digits.strip_prefix('-') {
+        Some(rest) => (-1, rest),
+        None => (1, digits.strip_prefix('+').unwrap_or(digits)),
+    };
+    let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+    let opening: i64 = rest[..end].parse().unwrap_or(0);
+    Some(sign * opening * times)
+}
+
+/// What a setting the run was started with says, as the runner hands it
+/// over: every one carries the name it has with PHP_INI_ before it.
+fn setting(name: &str) -> Option<String> {
+    env::var(format!("PHP_INI_{}", name)).ok()
 }
 
 /// What the body carries: the fields of a form, and the files sent with
 /// it. A body written as one piece is read as a form; a body written in
 /// parts is cut at its boundary, and a part naming a file is written out
 /// where the program can read it.
-fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>) {
+fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>, Vec<String>, Option<String>) {
     let kind = env::var("CONTENT_TYPE").unwrap_or_default();
     let plain = kind.starts_with("application/x-www-form-urlencoded");
     // What a part is cut at runs from `boundary=` to the first comma, as
@@ -83,25 +186,56 @@ fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>) {
         .map(str::trim)
         .find_map(|part| part.strip_prefix("boundary="))
         .map(|mark| mark.split(',').next().unwrap_or(mark).trim().to_string());
-    if !plain && boundary.is_none() {
-        return (Vec::new(), Vec::new());
-    }
+    let in_parts_said = kind.starts_with("multipart/");
     let length: usize = env::var("CONTENT_LENGTH").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
+    // A body larger than the run was told to take is not read at all,
+    // and how large it was and how large it might have been are told.
+    if let Some(most) = setting("post_max_size").and_then(|said| quantity(&said)).filter(|most| *most > 0) {
+        if length as i64 > most {
+            return (Vec::new(), Vec::new(), vec![format!("body.large{}{}{}{}", BETWEEN_STEPS, length, BETWEEN_STEPS, most)], None);
+        }
+    }
     let mut body = vec![0u8; length];
     if std::io::stdin().read_exact(&mut body).is_err() {
-        return (Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new(), None);
     }
-    match boundary {
-        Some(mark) => in_parts(&body, mark.trim_matches('"')),
-        None => (fields(&String::from_utf8_lossy(&body)), Vec::new()),
+    // Whatever the body holds is kept as it came, so a program may read
+    // it for itself however the run reads it.
+    let raw = Some(String::from_utf8_lossy(&body).into_owned());
+    // A run may be told not to take anything out of the body; it is
+    // still there to be read as it came.
+    let reads_body = setting("enable_post_data_reading").map_or(true, |said| !matches!(said.trim(), "0" | "" | "off" | "Off" | "false"));
+    if !reads_body {
+        return (Vec::new(), Vec::new(), Vec::new(), raw);
     }
+    // A body said to be written in parts must say what they are cut at,
+    // and say it whole: one opening a quote must close it. A body that
+    // never claimed to be written in parts is only left unread.
+    if boundary.is_none() {
+        let amiss = if in_parts_said { vec!["boundary".to_string()] } else { Vec::new() };
+        return match plain {
+            true => (fields(raw.as_deref().unwrap_or_default()), Vec::new(), amiss, raw),
+            false => (Vec::new(), Vec::new(), amiss, raw),
+        };
+    }
+    let mark = boundary.expect("a boundary");
+    if mark.starts_with('"') && !mark.ends_with('"') {
+        return (Vec::new(), Vec::new(), vec!["boundary.wrong".to_string()], raw);
+    }
+    let (posted, sent, amiss) = in_parts(&body, mark.trim_matches('"'));
+    (posted, sent, amiss, raw)
 }
 
 /// A body written in parts: each part says what it is called, and a part
 /// that names a file is written out to a place of its own, which the
 /// program is told about the way PHP tells it.
-fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String, String, bool)>) {
+fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String, String, bool)>, Vec<String>) {
     let (mut posted, mut sent) = (Vec::new(), Vec::new());
+    let mut amiss: Vec<String> = Vec::new();
+    // A run may be told to take no files at all, and to take none larger
+    // than so much.
+    let takes_files = setting("file_uploads").map_or(true, |said| !matches!(said.trim(), "0" | "" | "off" | "Off" | "false"));
+    let file_limit = setting("upload_max_filesize").and_then(|said| quantity(&said)).filter(|most| *most > 0);
     let mut files = 0usize;
     // A part written before the files may say how large a file the form
     // will take; one larger than that is turned away.
@@ -114,7 +248,11 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
             break;
         }
         let after = after.strip_prefix(b"\r\n").or_else(|| after.strip_prefix(b"\n")).unwrap_or(after);
-        let end = find_bytes(after, mark.as_bytes()).unwrap_or(after.len());
+        // A part the closing mark never comes after was cut short: what
+        // it holds is only half of it, so none of it is kept.
+        let shut = find_bytes(after, mark.as_bytes());
+        let cut_short = shut.is_none();
+        let end = shut.unwrap_or(after.len());
         let piece = &after[..end];
         let head_end = find_bytes(piece, b"\r\n\r\n").map(|p| (p, 4)).or_else(|| find_bytes(piece, b"\n\n").map(|p| (p, 2)));
         rest = &after[end.min(after.len())..];
@@ -141,11 +279,14 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
         // anything after the last bracket is no name at all, and the
         // whole part goes unread. A form's own fields are read more
         // kindly than this, which is why the rule lives here.
-        if named("name").map_or(false, |name| name.contains('[') && !name.ends_with(']')) {
+        if named("name").map_or(false, |name| !well_named(&name)) {
             continue;
         }
         match (named("name"), named("filename")) {
-            (None, None) => continue,
+            (None, None) => {
+                amiss.push("part".to_string());
+                continue;
+            }
             (Some(name), None) => {
                 let said = String::from_utf8_lossy(content).into_owned();
                 if name == "MAX_FILE_SIZE" {
@@ -153,6 +294,7 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
                 }
                 posted.push((steps_of(&name), said));
             }
+            (_, Some(_)) if !takes_files => continue,
             (given, Some(filename)) => {
                 // A part naming no file at all sent none: it is counted
                 // among the files, and everything said of it is empty
@@ -161,10 +303,14 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
                 // A file larger than the form said it would take is
                 // turned away, and nothing of it is kept.
                 let too_large = form_limit.map_or(false, |most| content.len() > most);
+                // One larger than the run was told to take is turned
+                // away too, and said to be turned away for that reason.
+                let past_limit = file_limit.map_or(false, |most| content.len() as i64 > most);
+                let too_large = too_large || past_limit;
                 // The file is written out, since a program is given the
                 // place it lies in rather than what it holds.
                 let held = env::temp_dir().join(format!("lumenup{}{}", std::process::id(), files));
-                let written = !none_sent && !too_large && std::fs::write(&held, content).is_ok();
+                let written = !none_sent && !too_large && !cut_short && std::fs::write(&held, content).is_ok();
                 let place = held.to_string_lossy().into_owned();
                 // A part that says nothing of its name is kept by its
                 // turn among the files.
@@ -186,18 +332,24 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
                 for (what, value, counted) in [
                     ("name", called, false),
                     ("full_path", filename, false),
-                    ("type", if none_sent || too_large { nothing.clone() } else { kind.clone() }, false),
+                    ("type", if none_sent || too_large || cut_short { nothing.clone() } else { kind.clone() }, false),
                     ("tmp_name", if written { place } else { nothing.clone() }, false),
                     // 0: it came. 2: it was larger than the form said it
                     // would take. 4: none was sent. 1: it came and could
                     // not be put anywhere.
-                    ("error", match (none_sent, too_large, written) {
+                    // 0: it came. 3: only half of it came. 2: it was
+                    // larger than the form said it would take. 1: larger
+                    // than the run was told to take, or it came and could
+                    // not be put anywhere. 4: none was sent.
+                    ("error", match (none_sent, cut_short, too_large, written) {
                         (true, ..) => "4".to_string(),
-                        (_, true, _) => "2".to_string(),
+                        (_, true, ..) => "3".to_string(),
+                        (_, _, true, _) if past_limit => "1".to_string(),
+                        (_, _, true, _) => "2".to_string(),
                         (.., true) => "0".to_string(),
                         _ => "1".to_string(),
                     }, true),
-                    ("size", if none_sent || too_large { "0".to_string() } else { content.len().to_string() }, true),
+                    ("size", if none_sent || too_large || cut_short { "0".to_string() } else { content.len().to_string() }, true),
                 ] {
                     let path = match deeper {
                         Some(rest) => format!("{first}{BETWEEN_STEPS}{what}{BETWEEN_STEPS}{rest}"),
@@ -208,7 +360,7 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
             }
         }
     }
-    (posted, sent)
+    (posted, sent, amiss)
 }
 
 /// What a head line calls something: `name=x`, `name='x'` or `name="x"`,

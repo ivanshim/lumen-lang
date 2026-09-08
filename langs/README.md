@@ -64,8 +64,10 @@ only names what its language spells; the floor is the same for all.
    tier it appears in and its unary precedence from the last.
    `op.right_associative` names the lexemes that associate to the right.
    `op.div.result` says what `op.div` yields: `rational`, Lumen's exact
-   `/`, or `real`, the `/` of Python, JavaScript, PHP and Pascal, a real at
-   the default precision; `null` when the language has no `op.div`.
+   `/`; `real`, the `/` of Python, JavaScript and Pascal, a real at the
+   default precision; or `whole_or_real`, PHP's `/`, which is a real save
+   where two whole numbers divide evenly and it is a whole one; `null`
+   when the language has no `op.div`.
 5. Keys beginning with `$` are for readers, not for running a program:
    `$comment` explains, and `$library` maps a label the language leaves
    empty to the library function that provides it (Lumen's `print`),
@@ -283,7 +285,10 @@ only. The extension labels so far, all from PHP:
 - `ext.stmt.class` and its family: `ext.stmt.class.extends`,
   `ext.stmt.class.new`, `ext.stmt.class.this` (the name a method knows
   its own object by), `ext.stmt.class.constructor` (the method run when
-  an object is made), `ext.stmt.class.modifier` (words before a member
+  an object is made), `ext.stmt.class.destructor` (the method run when an
+  object is let go, at the latest when the run ends, every object still
+  standing then being let go in the order they were made, before what the
+  run is still keeping goes out), `ext.stmt.class.modifier` (words before a member
   that this kernel reads past: `public`, `final`), `ext.stmt.class.shared`
   (the modifier for a member the class keeps rather than its objects),
   `ext.stmt.class.parent` and `ext.stmt.class.self`. A class is a value
@@ -309,6 +314,30 @@ only. The extension labels so far, all from PHP:
   block may be opened in one run and closed in another, which is how a
   page is written around a loop. One line end straight after the closing
   marker belongs to it.
+- `ext.op.walk.class` and its family: a thing may be its own walk.
+  `ext.op.walk.class` is the class of method names saying so (PHP's
+  `Iterator`), and `ext.op.walk.rewind`, `.more`, `.this`, `.key` and
+  `.onward` are the five methods of the walk: wind back, whether there
+  is more, what stands here, what it is called, and the step onward. A
+  walk winds the thing back once, then asks whether there is more, what
+  stands here and — only where the walk names its keys — what that is
+  called; the step onward comes before the next asking and not after
+  the first. `ext.op.walk.giver.class` and `ext.op.walk.giver` are for a
+  thing that hands another over to be walked in its stead (PHP's
+  `IteratorAggregate` and `getIterator`); one so handed over may hand
+  over a third, and the asking goes on until what comes back hands over
+  nothing further. `ext.op.walk.no_cell` is the words for asking such a
+  thing to hand out the items' own cells, which it has none of. The
+  classes themselves are declared in the language's own library, not
+  here: the kernel is told only which class stands for each and what the
+  methods are called.
+- `ext.op.index.scalar`: the words for using a value with no places at
+  all as though it had them, PHP's `Cannot use a scalar value as an
+  array`. Without them the kernel says so in its own words.
+- `ext.lexical.prologue.echo`: a second opening marker, PHP's `<?=`,
+  opening a run of code whose value is written out where it stands: the
+  word that writes is put before the run, so `<?= $a ?>` says what
+  `echo $a;` says. Either marker opens a run, whichever stands first.
 - `ext.stmt.class.interface` and `ext.stmt.class.implements`: a class of
   method names only, and the word saying a class answers to one. A
   method may be named and not written out there; it answers with
@@ -384,6 +413,18 @@ only. The extension labels so far, all from PHP:
   is not there yet, so `$x[0][1] = 'deep'` builds what it needs and
   says nothing about what was not there. It is the writing counterpart
   of `ext.op.index.absent`, which says how a place not there reads.
+- `ext.op.index.text`: a switch; a piece of text is a row of places,
+  each holding one letter. Such a place takes a letter as well as
+  giving one: only the first letter of what is written there is put
+  there, and what comes out is text again, not an array of letters, so
+  `$s[0] = 'j'` turns `"hello"` into `"jello"`. A place counted from the
+  end reaches back from it, and a place past the end is reached over
+  spaces, so writing at the fifth place of `"ab"` gives `"ab   z"`. A
+  place named by text is the number that text opens with, reading and
+  writing alike, as text counts as a number wherever one is wanted. It
+  is said apart from `op.index.strings`, which only says that text may
+  be read letter by letter: a language may let a program read letters
+  without letting it write them.
 - `ext.system.untrue.text` and `ext.system.untrue.empty_array`: what a
   language counts as untrue past nought and nothing. The first names
   pieces of text held untrue besides text with nothing in it — PHP
@@ -407,6 +448,209 @@ only. The extension labels so far, all from PHP:
   still there to be looked up while the run goes; the mark written
   inside a unit of its own is turned down rather than quietly meaning
   another binding.
+- `ext.system.globals`: the words standing for all the outermost
+  bindings taken as an array, so that a place in that array is the
+  binding whose name the place spells — `$GLOBALS['a']` is the
+  outermost `$a`. It is `ext.op.name_by_value` written another way and
+  reaches the same bindings, but it is written *inside* a routine and
+  not turned down there, since reaching an outermost binding from
+  within one is the whole of what it is for. Reading, writing and
+  putting a value after the last place of what it holds all go through
+  it, and a place in it may be reached into further
+  (`$GLOBALS['a']['k']`).
+- `ext.op.reference.unshared.written`, `.given` and `.handed`: what a
+  language has to say when a program asks to share a cell from something
+  that has none — where the asking is a write (`$b = &f()`), where it is
+  a routine that gives back a cell answering with something that has
+  none (`return 100` inside `function &f()`), and where it is a call
+  handing an argument to a parameter that takes a cell (`f(g())`). The
+  words are said as a notice where the definition names one, once the
+  value has been worked out and under the line the asking was written
+  on, and the value itself is answered with, as such a language does
+  rather than stopping. A call of a routine the text declares as giving
+  back a cell has one to share, so nothing is said of it. All three are
+  left out by a language that holds its peace.
+
+  Whichever of the three it is, the cell comes of the same reading:
+  a binding, a place in an array, a property, or a class's own value
+  gives up its cell, and a maker's parameters take one as any other
+  routine's do.
+- `ext.stmt.block.instead` and `ext.stmt.block.instead.close`: a mark
+  that opens a block where a bracket would stand, and the words that
+  close one so opened — `if ($a): ... endif;`, `while (c): ...
+  endwhile;`, and the same for a counted loop, a walk and a switch. The
+  statements run to whichever of those words comes next: one that ends
+  the whole shape is taken with the block, and one that opens another
+  arm of it (an `else`, an `elseif`) is left standing for whoever opened
+  the block. Which closing word ends which shape is not checked, since
+  nesting settles it: an inner block meets its own word first.
+- `ext.op.spelled`: a switch; a piece of text spelling the name of a
+  routine or a class may stand where the routine or the class itself
+  would — `$f()`, `new $c`, `$c::C`, `$c::$s`, `$c::m()`. The name is
+  looked up among the outermost bindings, those being the only ones
+  still there to be looked up while the run goes, and text naming
+  nothing of the kind is left as it stands, so what happens next is
+  whatever happens when text is asked to be a class. It differs from
+  `ext.op.name_by_value` in having no mark of its own: the value simply
+  stands where the name would.
+- `ext.stmt.terminator.only`: a switch; a statement ends only where the
+  `stmt.terminator` is written, and a line end is no more than space —
+  everywhere, as it already is inside brackets. So an expression may be
+  carried on to the next line: `$a = $b` on one line and `+ $c;` on the
+  next is one statement, as it is in PHP and in every language of that
+  shape. A language that says nothing here ends a statement at a line
+  end too, which is what a language wants when it writes no terminator,
+  and what Lumen wants although it writes one, since a line end is the
+  end of a statement there as well. The reference kernels do not read
+  this label and refuse such a program outright, which is what they do
+  with every other thing only the full kernels know.
+- `ext.op.increment.text` and `ext.op.decrement.text`: what a language
+  says when a step onward or back is taken on text that spells no number
+  at all. Naming either turns the rule on for that way. A step onward
+  walks the text along its letters: the last one moves on, `z` coming
+  round to `a` and carrying into the one before it, `Z` to `A` and `9` to
+  `0` likewise, so `"abc"` becomes `"abd"` and `"xyz"` becomes `"xza"`; a
+  mark that is neither letter nor digit halts the walk where it stands,
+  and a carry off the front sets a fresh `a`, `A` or `1` there. Empty
+  text becomes `"1"`. A step back leaves such text as it stands. Either
+  way the words are said as a deprecation. Text that spells a number,
+  fully and with nothing after it, is stepped as the number it spells;
+  text that spells one and then says more is not, since that is the very
+  case the letters are for.
+- `ext.system.complaint.reading`: the word a language puts before a
+  program it cannot read at all. Where it names one, a reading that
+  stops is told the way every other complaint is told — written where
+  the run would have written, naming the file and the line the reading
+  stopped on — rather than handed back to the host to say in its own
+  way. What is said after the word is whatever the kernel found: the
+  words a definition gave for it where it gave any, and the kernel's own
+  naming otherwise.
+- `ext.lexical.number.amiss`: what a language says of a run of digits it
+  cannot read, `08` where noughts do not lead an eight-fold number among
+  them. Sister to `ext.lexical.escape.codepoint.amiss`.
+- `ext.system.fault.operands`: the words a language puts before naming
+  what an arithmetic step was handed, where one of them can take no part
+  in it. Text spelling no number at all is the case that matters: a
+  language naming these words stops there rather than working with
+  nothing, and the kernel writes them followed by the kind of the left
+  side, the operation as this language writes it, and the kind of the
+  right — `Unsupported operand types: string + string`. Text that spells
+  a number and then says something more is not this: it is worth what it
+  opens with, and is only complained of. The fault is raised under the
+  class `ext.system.fault.class.kind` names, that being the kind of
+  thing it is.
+- `ext.lexical.escape.codepoint`, `.open` and `.close`: a character
+  written by its number rather than by itself. After the escape mark the
+  letter, then the number in sixteens between the two brackets, and the
+  character of that number stands in their place: `"\u{2603}"` is a
+  snowman. Leading noughts change nothing, and the letters of the number
+  may be written large or small. The letter alone, with no opening
+  bracket after it, is not one of these at all, and is kept as written,
+  which is what lets a language keep `"\u202e"` as the eight characters
+  it looks like. A number naming half of a pair — two numbers standing
+  together for one character — names no character of its own, and since
+  the kernels hold text as characters and not as bytes, such an escape
+  is left as it was written.
+- `ext.lexical.escape.codepoint.amiss` and `.beyond`: what a language
+  says of a number written where a number does not belong (nothing
+  between the brackets, a letter that is no digit, a bracket never
+  closed) and of one past the last character there is.
+- `ext.system.class.folded`: a switch; a class goes by its name however
+  the name is written, so `stdClass`, `StdClass` and `stdclass` all name
+  the one class, in a `new`, in a class it is built on, in a `catch`, on
+  the right of an `instanceof` and where a name reaches a member of it.
+  Only classes: bindings, constants and the names of members are told
+  apart by how they are written, as they were before. A class keeps the
+  spelling it was declared with, which is what is answered when a
+  program asks a thing what class it is of.
+- `ext.builtin.output.hold`, `.held`, `.drop` and `.depth`: keeping
+  what the run writes out instead of letting it go. The first begins a
+  keeping, the second answers with what has been kept since that
+  beginning, the third stops keeping and gives up what was kept, and the
+  fourth says how many keepings are in force. A keeping within a keeping
+  writes into the one around it, and whatever is still being kept when
+  the run ends is let go then.
+  
+  Only these four are kernel work, because only the kernel knows where
+  what a program writes out goes. Everything else a language spells over
+  them — letting a keeping go out again, emptying one without letting it
+  go, running what was kept through a routine before it goes — is
+  written in the language itself, since giving up what was kept hands it
+  back as an ordinary value, and writing it out again writes it into
+  whatever keeping now stands.
+- `ext.system.request.settings`: the binding holding what the run was
+  started with, as a map from each setting's name to what it says. It is
+  told apart from the other groups because a run may be told to gather
+  none of them and must still know what it was started with.
+- `ext.system.request.body`: the binding holding the request's body as
+  it came, so a program may read it for itself however the run reads it —
+  and read it again, since it is held rather than drawn from. A run told
+  not to take anything out of the body still has it here.
+- `ext.system.request.amiss`, and `.amiss.boundary`,
+  `.amiss.boundary.wrong` and `.amiss.part`: the binding holding what the
+  host found amiss in the request before the program ran, as a list of
+  pieces of text, and the words for each thing that may be amiss — a
+  body said to be written in parts naming no boundary, naming one that
+  is not whole, and a part whose headers name nothing. The host says
+  only *which* of them it found; the wording is the language's own, so
+  the shared host carries no language's words. A language leaving the
+  first out is told nothing.
+
+  `ext.system.request.amiss.body.large` goes with them, for a body larger
+  than the run was told to take. Its words carry places for the two
+  counts, and each thing found amiss reaches the program as the words
+  first and then whatever counts go in them, so a language fills them in
+  however it fills in any others.
+- `ext.stmt.function.outermost`: a switch; a routine is bound among the
+  outermost bindings wherever it is written, so one written inside
+  another is there for the whole run once the routine holding it has
+  run. Without it a routine written inside another is that one's own,
+  as it is in a language where a nested routine closes over its place.
+- `ext.stmt.do`: the words opening a body that runs before its test is
+  asked, the test standing after it — `do { … } while (c);`. The body
+  runs at least once, and a `continue` within it goes to the test, as it
+  goes to the step of a counted loop.
+- A loop with nothing to do may be written with the mark that ends a
+  statement standing where its block would (`while ($i++ < 3);`), where
+  the language lets a lone statement stand for a block. The mark is the
+  whole body, and nothing runs each pass.
+- `ext.builtin.empty`: a builtin asking whether what a name or a place
+  holds is untrue, asked as gently as `ext.builtin.isset` asks whether
+  it is there at all — a name never written and a place an array does
+  not hold are both untrue, and neither is complained about. It is the
+  companion of that one and asks the looser question, since nothing at
+  all is untrue. Like it, it is a shape and not a call: it reads one
+  thing, and every look within it is a glance.
+- `ext.builtin.complaint.say`: a builtin saying words as a complaint of
+  the kind the first thing given names, where the run stands. It is how
+  a language makes a complaint of its own and has it told as the run's
+  own are: in the place the run had reached, kept quiet where quiet was
+  asked for, and through whatever the program put in their way. Words
+  said from a language's own library name the line of the program that
+  was running, not a line of the library.
+- `ext.builtin.complaint.handler`: a builtin naming a routine to be
+  handed every complaint the run makes, instead of the complaint being
+  written out. It takes the word for the kind, what was said, where the
+  program is written and the line that was running; answering false
+  leaves the complaint to be written out as it would have been, and
+  giving nothing takes the routine away again. Together with the four
+  `ext.system.complaint.*` words, that is enough for a language to write
+  the whole of its own diagnostics — which kinds are said at all, and
+  what a program may put in their way — in its own terms.
+
+  A complaint is usually raised where the run is only reading and cannot
+  reach back into the program, so it waits and is handed over before the
+  next step, which keeps it in step with what the program writes out.
+- `ext.builtin.at_end`: a builtin naming a routine to run once the run
+  is over, with whatever else is given standing as its arguments. They
+  run in the order they were named, after the program's last statement
+  and before what is still being kept is let go — which is how a
+  language writes the letting-go itself, handler and all, in its own
+  terms rather than the kernel's.
+- Where `ext.op.spelled` stands, a pair of a thing and a method's name
+  also stands where a routine would: `array($this, 'transform')` is that
+  method of that thing, the thing handed over first, and a class in the
+  first place names a method of the class itself.
 - `ext.op.cast`: a switch; a kind's word written within the grouping
   marks before a value makes the value that kind — `(int) $x`. The
   words are the ones the language already gives its kinds, under
@@ -425,12 +669,35 @@ only. The extension labels so far, all from PHP:
   into, not only a name, and they are worked out in the order they are
   written, after the value they take from. The whole comes to that
   value, as any other write does.
+- `ext.op.member.by_value`: a switch; a value may stand where a
+  member's name stands, and the member is the one that value spells
+  (`$o->$name`, `$o->{e}`, `$o->$name()`). A bare variable there is
+  read as itself, since a call bracket after it opens the method's
+  arguments and not a call of the variable. Where the mark of
+  `ext.op.name_by_value` stands instead, the member is named by what
+  that binding holds and not by the piece itself, so `$o->${e}` reads
+  the binding `e` spells and names the member by what it holds.
+  Reading and writing both go through it.
+
+  The mark that reaches into a class takes a value the same way, but
+  one step less far in, because a class's own values already carry the
+  variable mark in the writing: `C::$$n` is the value named by what
+  `$n` holds, and `C::${e}` the one named by what `e` comes to, while
+  `C::$n` names `n` outright. After the mark that reaches into a thing
+  there is no such mark in the writing, so one standing there says the
+  piece spells a name and the member is named by what *that* binding
+  holds.
 - `ext.builtin.eval`: builtins taking a piece of the language written
   out as text, reading it as the run's own language and running it
   where the call stands. The text is read with whatever a program of
   that language opens with, since a program written out is a program;
   what it leaves behind is what the call gives back, and a name it
   writes is a name the rest of the run can read.
+- `ext.builtin.include.once`: the same as the one below, but only where
+  that file has not been read before in this run. A file read already
+  answers with truth and is not read again, under whatever name it was
+  asked for the second time, since it is the file that stands and not
+  the name.
 - `ext.builtin.include`: builtins naming a file whose text is read and
   run in the same way, as though it had been written where the call
   stands. A file that cannot be read answers false rather than stopping
@@ -499,6 +766,17 @@ only. The extension labels so far, all from PHP:
   these, a call may hand over more than the routine names; the rest is
   kept aside rather than bound. Outside a routine there is nothing to
   read, and asking is an error.
+
+  Five more labels give a language its own words for the errors:
+  `ext.builtin.args.all.outside`, `.count.outside` and `.at.outside` for
+  asking where no call is running — one for each, since a language need
+  not word them alike — and `ext.builtin.args.at.below` and
+  `.at.beyond` for a place before the first or past the last. Where a
+  language leaves them out, the kernel's own words are used. Words the
+  definition gave for a place outside the range are known again by being
+  those very words, and take the class `ext.system.fault.class.value`
+  names, which is the class of a fault about a value standing outside
+  the range it may take.
 - `ext.op.identical` and `ext.op.not_identical`: whether two values are
   one and the same (`===`, `!==`), which asks more than being equal.
   Spelling them also makes being equal (`op.eq`, `op.ne`) the looser
@@ -543,6 +821,18 @@ only. The extension labels so far, all from PHP:
   called above where it is written. A walk may hand out its items the
   same way (`foreach ($a as &$v)`), and then it walks the binding itself,
   so writing an item writes the array it came from.
+
+  What a cell may be taken from is a name, a place in an array, a
+  property, or a call of a routine that gives one back; a place in an
+  array may be tied to one as well (`$a[0] = &$x`), and writing to such
+  a place writes through the cell rather than over it. The mark written
+  after the word that opens a routine (`function &f()`) says the
+  routine gives back a cell and not a copy: what it answers with is the
+  cell of whatever it names, so `$a = &f()` ties `$a` to that cell
+  while a plain `$a = f()` takes a copy, a cell becoming a name's own
+  only by being tied to it. Asking to share a cell from something that
+  has none writes the value plainly, as such a language does rather
+  than stopping.
 - `ext.stmt.function.returns`: the mark before a return type, read beside
   the core `stmt.function.returns`. PHP says it here because the porter
   writes a type for every function it ports and PHP has no word for a
@@ -588,6 +878,16 @@ there: `ext.op.index.absent` says that reading a place an array does not
 hold gives nothing rather than stopping, and the core label
 `literal.null.silent` says that nothing shows as no text at all rather
 than as the word a program writes for it.
+
+The core label `system.flag.counts` is of the same shape and is PHP's
+too: a flag shows as the number it counts for rather than as the word a
+program writes for it, one holding true as `1` and one holding false as
+nothing at all. It governs how a flag is written out, joined to other
+text, or made into text on purpose. The words themselves are still what
+a program writes for the literals, and are still what a complaint says
+where it names what it was handed, since a complaint names what was
+written rather than what it counts as. All six kernels read it, since it
+is how ordinary values come out and not a thing only the full ones do.
 
 ## A parameter's own value
 
@@ -660,7 +960,7 @@ Generated by `python3 scripts/lang_table.py`; edit the JSON, not the table.
 | `lexical.comment_block.close` | - | - | - | `*/` | `*/` | `*/` | `}` `*)` | `*/` | `=end` | `*/` |
 | `lexical.string_quotes` | `"` `'` | `"` | `"` `'` | `"` | `"` | `"` `'` | `'` | `"` `'` | `"` `'` | `"` |
 | `lexical.raw_quotes` | `'` | - | - | - | - | - | `'` | `'` | `'` | - |
-| `lexical.string_escapes` | `n` `t` `\` `"` | `n` `t` `\` `"` | `n` `t` `\` `"` `'` | `n` `t` `\` `"` | `n` `t` `\` `"` | `n` `t` `\` `"` `'` | - | `n` `t` `\` `"` | `n` `t` `\` `"` | `n` `t` `\` `"` |
+| `lexical.string_escapes` | `n` `t` `\` `"` | `n` `t` `\` `"` | `n` `t` `\` `"` `'` | `n` `t` `\` `"` | `n` `t` `\` `"` | `n` `t` `\` `"` `'` | - | `n` `t` `r` `0` `\` `"` | `n` `t` `\` `"` | `n` `t` `\` `"` |
 | `lexical.prologue` | - | - | `import sys` | - | - | - | - | `<?php` | - | - |
 | `lexical.name_quote` | - | `'` | - | - | - | - | - | - | - | - |
 | `lexical.number.decimal_point` | `.` | `.` | `.` | `.` | `.` | `.` | `.` | `.` | `.` | `.` |
@@ -691,6 +991,7 @@ Generated by `python3 scripts/lang_table.py`; edit the JSON, not the table.
 | `syntax.map.separator` | - | - | `,` | - | - | - | - | - | - | - |
 | `syntax.map.pair` | - | - | `:` | - | - | - | - | `=>` | - | - |
 | `syntax.map.close` | - | - | `}` | - | - | - | - | - | - | - |
+| `system.flag.counts` | `false` | `false` | `false` | `false` | `false` | `false` | `false` | `true` | `false` | `false` |
 | `literal.true` | `true` | `true` | `True` | `true` | `true` | `true` | `true` | `true` | `true` | `true` |
 | `literal.false` | `false` | `false` | `False` | `false` | `false` | `false` | `false` | `false` | `false` | `false` |
 | `literal.null` | `null` | `null` | `None` | `None` | `NULL` | `null` `undefined` | `nil` | `null` | `nil` | `nil` |
@@ -700,12 +1001,12 @@ Generated by `python3 scripts/lang_table.py`; edit the JSON, not the table.
 | `op.sub` | `-` | `-` | `-` | `-` | `-` | `-` | `-` | `-` | `-` | `-` |
 | `op.mul` | `*` | `*` | `*` | `*` | `*` | `*` | `*` | `*` | `*` | `*` |
 | `op.div` | `/` | `/` | `/` | - | - | `/` | `/` | `/` | - | - |
-| `op.div.result` | `rational` | `rational` | `real` | - | - | `real` | `real` | `real` | - | - |
+| `op.div.result` | `rational` | `rational` | `real` | - | - | `real` | `real` | `whole_or_real` | - | - |
 | `op.quot` | `//` | `//` | `//` | `/` | `/` | - | `div` | - | `/` | `/` |
 | `op.rem` | `%` | `%` | `%` | `%` | `%` | `%` | `mod` | `%` | `%` | `%` |
 | `op.pow` | `**` | `**` | `**` | - | - | `**` | - | `**` | `**` | - |
 | `op.eq` | `==` | `==` | `==` | `==` | `==` | `===` `==` | `=` | `==` | `==` | `==` |
-| `op.ne` | `!=` | `!=` | `!=` | `!=` | `!=` | `!==` `!=` | `<>` | `!=` | `!=` | `!=` |
+| `op.ne` | `!=` | `!=` | `!=` | `!=` | `!=` | `!==` `!=` | `<>` | `!=` `<>` | `!=` | `!=` |
 | `op.lt` | `<` | `<` | `<` | `<` | `<` | `<` | `<` | `<` | `<` | `<` |
 | `op.le` | `<=` | `<=` | `<=` | `<=` | `<=` | `<=` | `<=` | `<=` | `<=` | `<=` |
 | `op.gt` | `>` | `>` | `>` | `>` | `>` | `>` | `>` | `>` | `>` | `>` |
@@ -794,7 +1095,7 @@ Operator precedence, lowest tier first. Unary operators sit in their own tier.
 - **c (extra)**: `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `!` `-`
 - **javascript (extra)**: `||` < `&&` < `===` `!==` `==` `!=` < `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `!` `-` < `**` < `.`
 - **pascal (extra)**: `=` `<>` `<` `>` `<=` `>=` < `+` `-` `or` < `*` `/` `div` `mod` `and` < `-` `not`
-- **php (extra)**: `or` < `and` < `||` < `&&` < `|` < `^` < `&` < `==` `!=` `===` `!==` < `<` `>` `<=` `>=` `<=>` < `.` < `<<` `>>` < `+` `-` < `*` `/` `%` < `!` `~` `@` < `-` < `**`
+- **php (extra)**: `or` < `and` < `||` < `&&` < `|` < `^` < `&` < `==` `!=` `<>` `===` `!==` < `<` `>` `<=` `>=` `<=>` < `.` < `<<` `>>` < `+` `-` < `*` `/` `%` < `!` `~` `@` < `-` < `**`
 - **ruby (extra)**: `or` < `and` < `not` < `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `...` < `+` `-` < `*` `/` `%` < `-` < `!` < `**` < `.`
 - **swift (extra)**: `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `..<` < `+` `-` < `*` `/` `%` < `!` `-` < `.`
 
@@ -804,31 +1105,52 @@ Extension labels, optional and read by the full kernels only (absent means empty
 |---|---|---|---|---|---|---|---|---|---|---|
 | `ext.block.lone_statement` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.builtin.args.all` | - | - | - | - | - | - | - | `func_get_args` | - | - |
+| `ext.builtin.args.all.outside` | - | - | - | - | - | - | - | `func_get_args() cannot be called from the global scope` | - | - |
 | `ext.builtin.args.at` | - | - | - | - | - | - | - | `func_get_arg` | - | - |
+| `ext.builtin.args.at.below` | - | - | - | - | - | - | - | `func_get_arg(): Argument #1 ($position) must be greater than or equal to 0` | - | - |
+| `ext.builtin.args.at.beyond` | - | - | - | - | - | - | - | `func_get_arg(): Argument #1 ($position) must be less than the number of the arguments passed to the currently executed function` | - | - |
+| `ext.builtin.args.at.outside` | - | - | - | - | - | - | - | `func_get_arg() cannot be called from the global scope` | - | - |
 | `ext.builtin.args.count` | - | - | - | - | - | - | - | `func_num_args` | - | - |
+| `ext.builtin.args.count.outside` | - | - | - | - | - | - | - | `func_num_args() must be called from a function context` | - | - |
 | `ext.builtin.array` | - | - | - | - | - | - | - | `array` | - | - |
+| `ext.builtin.at_end` | - | - | - | - | - | - | - | `__at_end` | - | - |
+| `ext.builtin.complaint.handler` | - | - | - | - | - | - | - | `__complaint_handler` | - | - |
+| `ext.builtin.complaint.say` | - | - | - | - | - | - | - | `__complaint_say` | - | - |
 | `ext.builtin.define` | - | - | - | - | - | - | - | `define` | - | - |
 | `ext.builtin.echo` | - | - | - | - | - | - | - | `echo` | - | - |
+| `ext.builtin.empty` | - | - | - | - | - | - | - | `empty` | - | - |
 | `ext.builtin.eval` | - | - | - | - | - | - | - | `eval` | - | - |
 | `ext.builtin.exit` | - | - | - | - | - | - | - | `exit` `die` | - | - |
 | `ext.builtin.file.exists` | - | - | - | - | - | - | - | `file_exists` | - | - |
-| `ext.builtin.file.read` | - | - | - | - | - | - | - | `file_get_contents` | - | - |
+| `ext.builtin.file.read` | - | - | - | - | - | - | - | `__file_read` | - | - |
 | `ext.builtin.file.remove` | - | - | - | - | - | - | - | `unlink` | - | - |
 | `ext.builtin.file.write` | - | - | - | - | - | - | - | `file_put_contents` | - | - |
-| `ext.builtin.include` | - | - | - | - | - | - | - | `include` `include_once` `require` `require_once` | - | - |
+| `ext.builtin.include` | - | - | - | - | - | - | - | `include` `require` | - | - |
+| `ext.builtin.include.once` | - | - | - | - | - | - | - | `include_once` `require_once` | - | - |
 | `ext.builtin.isset` | - | - | - | - | - | - | - | `isset` | - | - |
+| `ext.builtin.output.depth` | - | - | - | - | - | - | - | `__output_depth` | - | - |
+| `ext.builtin.output.drop` | - | - | - | - | - | - | - | `__output_drop` | - | - |
+| `ext.builtin.output.held` | - | - | - | - | - | - | - | `__output_held` | - | - |
+| `ext.builtin.output.hold` | - | - | - | - | - | - | - | `__output_hold` | - | - |
 | `ext.builtin.print_r` | - | - | - | - | - | - | - | `print_r` | - | - |
 | `ext.builtin.time_limit` | - | - | - | - | - | - | - | `set_time_limit` | - | - |
 | `ext.builtin.unset` | - | - | - | - | - | - | - | `unset` | - | - |
 | `ext.builtin.var_dump` | - | - | - | - | - | - | - | `var_dump` | - | - |
 | `ext.lexical.epilogue` | - | - | - | - | - | - | - | `?>` | - | - |
+| `ext.lexical.escape.codepoint` | - | - | - | - | - | - | - | `u` | - | - |
+| `ext.lexical.escape.codepoint.amiss` | - | - | - | - | - | - | - | `Invalid UTF-8 codepoint escape sequence` | - | - |
+| `ext.lexical.escape.codepoint.beyond` | - | - | - | - | - | - | - | `Invalid UTF-8 codepoint escape sequence: Codepoint too large` | - | - |
+| `ext.lexical.escape.codepoint.close` | - | - | - | - | - | - | - | `}` | - | - |
+| `ext.lexical.escape.codepoint.open` | - | - | - | - | - | - | - | `{` | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | - | - | - | `"` | - | - |
 | `ext.lexical.name_lead` | - | - | - | - | - | - | - | `\` | - | - |
+| `ext.lexical.number.amiss` | - | - | - | - | - | - | - | `Invalid numeric literal` | - | - |
 | `ext.lexical.number.binary_prefix` | - | - | - | - | - | - | - | `0b` `0B` | - | - |
 | `ext.lexical.number.exponent` | - | - | - | - | - | - | - | `e` `E` | - | - |
 | `ext.lexical.number.octal_lead` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.lexical.number.octal_prefix` | - | - | - | - | - | - | - | `0o` `0O` | - | - |
 | `ext.lexical.number.separator` | - | - | - | - | - | - | - | `_` | - | - |
+| `ext.lexical.prologue.echo` | - | - | - | - | - | - | - | `<?=` | - | - |
 | `ext.lexical.template` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.assign.compound` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.assign.value` | - | - | - | - | - | - | - | `true` | - | - |
@@ -841,22 +1163,42 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.cast` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.compare` | - | - | - | - | - | - | - | `<=>` | - | - |
 | `ext.op.decrement` | - | - | - | - | - | - | - | `--` | - | - |
+| `ext.op.decrement.text` | - | - | - | - | - | - | - | `Decrement on non-numeric string has no effect and is deprecated` | - | - |
 | `ext.op.hush` | - | - | - | - | - | - | - | `@` | - | - |
 | `ext.op.identical` | - | - | - | - | - | - | - | `===` | - | - |
 | `ext.op.increment` | - | - | - | - | - | - | - | `++` | - | - |
+| `ext.op.increment.text` | - | - | - | - | - | - | - | `Increment on non-numeric string is deprecated, use str_increment() instead` | - | - |
 | `ext.op.index.absent` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.index.append` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.index.makes` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.index.plain_keys` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.op.index.scalar` | - | - | - | - | - | - | - | `Cannot use a scalar value as an array` | - | - |
+| `ext.op.index.text` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.instanceof` | - | - | - | - | - | - | - | `instanceof` | - | - |
 | `ext.op.member` | - | - | - | - | - | - | - | `->` | - | - |
+| `ext.op.member.by_value` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.name_by_value` | - | - | - | - | - | - | - | `$` | - | - |
 | `ext.op.not_identical` | - | - | - | - | - | - | - | `!==` | - | - |
 | `ext.op.otherwise` | - | - | - | - | - | - | - | `??` | - | - |
 | `ext.op.plus` | - | - | - | - | - | - | - | `+` | - | - |
 | `ext.op.reference` | - | - | - | - | - | - | - | `&` | - | - |
+| `ext.op.reference.unshared.given` | - | - | - | - | - | - | - | `Only variable references should be returned by reference` | - | - |
+| `ext.op.reference.unshared.handed` | - | - | - | - | - | - | - | `Only variables should be passed by reference` | - | - |
+| `ext.op.reference.unshared.written` | - | - | - | - | - | - | - | `Only variables should be assigned by reference` | - | - |
 | `ext.op.scope` | - | - | - | - | - | - | - | `::` | - | - |
+| `ext.op.spelled` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.ternary` | - | - | - | - | - | - | - | `?` `:` | - | - |
+| `ext.op.walk.class` | - | - | - | - | - | - | - | `Iterator` | - | - |
+| `ext.op.walk.giver` | - | - | - | - | - | - | - | `getIterator` | - | - |
+| `ext.op.walk.giver.class` | - | - | - | - | - | - | - | `IteratorAggregate` | - | - |
+| `ext.op.walk.key` | - | - | - | - | - | - | - | `key` | - | - |
+| `ext.op.walk.more` | - | - | - | - | - | - | - | `valid` | - | - |
+| `ext.op.walk.no_cell` | - | - | - | - | - | - | - | `An iterator cannot be used with foreach by reference` | - | - |
+| `ext.op.walk.onward` | - | - | - | - | - | - | - | `next` | - | - |
+| `ext.op.walk.rewind` | - | - | - | - | - | - | - | `rewind` | - | - |
+| `ext.op.walk.this` | - | - | - | - | - | - | - | `current` | - | - |
+| `ext.stmt.block.instead` | - | - | - | - | - | - | - | `:` | - | - |
+| `ext.stmt.block.instead.close` | - | - | - | - | - | - | - | `endif` `endwhile` `endfor` `endforeach` `endswitch` | - | - |
 | `ext.stmt.break.levels` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.stmt.case` | - | - | - | - | - | - | - | `case` | - | - |
 | `ext.stmt.case.mark` | - | - | - | - | - | - | - | `:` | - | - |
@@ -864,6 +1206,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.catch.separator` | - | - | - | - | - | - | - | `\|` | - | - |
 | `ext.stmt.class` | - | - | - | - | - | - | - | `class` | - | - |
 | `ext.stmt.class.constructor` | - | - | - | - | - | - | - | `__construct` | - | - |
+| `ext.stmt.class.destructor` | - | - | - | - | - | - | - | `__destruct` | - | - |
 | `ext.stmt.class.extends` | - | - | - | - | - | - | - | `extends` | - | - |
 | `ext.stmt.class.implements` | - | - | - | - | - | - | - | `implements` | - | - |
 | `ext.stmt.class.interface` | - | - | - | - | - | - | - | `interface` | - | - |
@@ -875,38 +1218,53 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.this` | - | - | - | - | - | - | - | `$this` | - | - |
 | `ext.stmt.const` | - | - | - | - | - | - | - | `const` | - | - |
 | `ext.stmt.default` | - | - | - | - | - | - | - | `default` | - | - |
+| `ext.stmt.do` | - | - | - | - | - | - | - | `do` | - | - |
 | `ext.stmt.finally` | - | - | - | - | - | - | - | `finally` | - | - |
 | `ext.stmt.for.c` | - | - | - | - | - | - | - | `for` | - | - |
 | `ext.stmt.for.collection` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.function.hoisted` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.stmt.function.outermost` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.stmt.function.returns` | - | - | - | - | - | - | - | `:` | - | - |
 | `ext.stmt.global` | - | - | - | - | - | - | - | `global` | - | - |
 | `ext.stmt.static` | - | - | - | - | - | - | - | `static` | - | - |
 | `ext.stmt.switch` | - | - | - | - | - | - | - | `switch` | - | - |
+| `ext.stmt.terminator.only` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.stmt.throw` | - | - | - | - | - | - | - | `throw` | - | - |
 | `ext.stmt.try` | - | - | - | - | - | - | - | `try` | - | - |
 | `ext.stmt.unpack` | - | - | - | - | - | - | - | `list` | - | - |
 | `ext.syntax.call.bare` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.system.class.folded` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.system.complaint.deprecated` | - | - | - | - | - | - | - | `Deprecated` | - | - |
 | `ext.system.complaint.fatal` | - | - | - | - | - | - | - | `Fatal error` | - | - |
 | `ext.system.complaint.notice` | - | - | - | - | - | - | - | `Notice` | - | - |
+| `ext.system.complaint.reading` | - | - | - | - | - | - | - | `Parse error` | - | - |
 | `ext.system.complaint.warning` | - | - | - | - | - | - | - | `Warning` | - | - |
 | `ext.system.fault.class` | - | - | - | - | - | - | - | `Error` | - | - |
 | `ext.system.fault.class.arithmetic` | - | - | - | - | - | - | - | `ArithmeticError` | - | - |
 | `ext.system.fault.class.division` | - | - | - | - | - | - | - | `DivisionByZeroError` | - | - |
 | `ext.system.fault.class.kind` | - | - | - | - | - | - | - | `TypeError` | - | - |
+| `ext.system.fault.class.value` | - | - | - | - | - | - | - | `ValueError` | - | - |
+| `ext.system.fault.operands` | - | - | - | - | - | - | - | `Unsupported operand types` | - | - |
+| `ext.system.globals` | - | - | - | - | - | - | - | `$GLOBALS` | - | - |
 | `ext.system.integer.bits` | - | - | - | - | - | - | - | `64` | - | - |
 | `ext.system.kind.brief` | - | - | - | - | - | - | - | `int` `-` `float` `string` `bool` `array` `null` | - | - |
 | `ext.system.kind.spelled` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.system.real.bits` | - | - | - | - | - | - | - | `64` | - | - |
 | `ext.system.real.digits` | - | - | - | - | - | - | - | `14` | - | - |
 | `ext.system.request.all` | - | - | - | - | - | - | - | `$_REQUEST` | - | - |
+| `ext.system.request.amiss` | - | - | - | - | - | - | - | `$__request_amiss` | - | - |
+| `ext.system.request.amiss.body.large` | - | - | - | - | - | - | - | `PHP Request Startup: POST Content-Length of %s bytes exceeds the limit of %s bytes` | - | - |
+| `ext.system.request.amiss.boundary` | - | - | - | - | - | - | - | `PHP Request Startup: Missing boundary in multipart/form-data POST data` | - | - |
+| `ext.system.request.amiss.boundary.wrong` | - | - | - | - | - | - | - | `PHP Request Startup: Invalid boundary in multipart/form-data POST data` | - | - |
+| `ext.system.request.amiss.part` | - | - | - | - | - | - | - | `PHP Request Startup: File Upload Mime headers garbled` | - | - |
+| `ext.system.request.body` | - | - | - | - | - | - | - | `$__request_body` | - | - |
 | `ext.system.request.cookies` | - | - | - | - | - | - | - | `$_COOKIE` | - | - |
 | `ext.system.request.env` | - | - | - | - | - | - | - | `$_ENV` | - | - |
 | `ext.system.request.files` | - | - | - | - | - | - | - | `$_FILES` | - | - |
 | `ext.system.request.form` | - | - | - | - | - | - | - | `$_POST` | - | - |
 | `ext.system.request.query` | - | - | - | - | - | - | - | `$_GET` | - | - |
 | `ext.system.request.server` | - | - | - | - | - | - | - | `$_SERVER` | - | - |
+| `ext.system.request.settings` | - | - | - | - | - | - | - | `$__started_with` | - | - |
 | `ext.system.source.class` | - | - | - | - | - | - | - | `__CLASS__` | - | - |
 | `ext.system.source.directory` | - | - | - | - | - | - | - | `__DIR__` | - | - |
 | `ext.system.source.file` | - | - | - | - | - | - | - | `__FILE__` | - | - |

@@ -90,6 +90,9 @@ pub struct Wording<'a> {
     pub true_word: &'a str,
     pub false_word: &'a str,
     pub null_word: &'a str,
+    /// Whether a flag becomes text as the number it stands for: one
+    /// holding true becomes `1`, one holding false nothing at all.
+    pub flag_counts: bool,
     /// Where a language's reals are binary numbers of a fixed width,
     /// how many significant digits one shows when simply written out.
     /// Where it says nothing, a real is shown to its own precision.
@@ -224,8 +227,14 @@ impl Value {
             // A cell two names share is written as what it holds: the
             // sharing is between the names and not in the value.
             Value::Bond(shared) => shared.borrow().display(sp),
-            Value::Flag(true) => sp.true_word.to_string(),
-            Value::Flag(false) => sp.false_word.to_string(),
+            Value::Flag(true) => match sp.flag_counts {
+                true => "1".to_string(),
+                false => sp.true_word.to_string(),
+            },
+            Value::Flag(false) => match sp.flag_counts {
+                true => String::new(),
+                false => sp.false_word.to_string(),
+            },
             Value::Null | Value::Blank | Value::Gap | Value::Fence => sp.null_word.to_string(),
             Value::Array(items) => {
                 let shown: Vec<String> = items.iter().map(|v| v.display(sp)).collect();
@@ -384,10 +393,21 @@ impl Class {
     }
 
     /// Whether this class is that one, stands on it, or answers to it.
+    /// Loosely, how the name is written is not part of it.
+    pub fn named(&self, name: &str, loosely: bool) -> bool {
+        let same = match loosely {
+            true => self.name.eq_ignore_ascii_case(name),
+            false => self.name == name,
+        };
+        same
+            || self.base.as_ref().map_or(false, |b| b.named(name, loosely))
+            || self.answers.iter().any(|a| a.named(name, loosely))
+    }
+
+    /// Whether this class is that one, stands on it, or answers to it,
+    /// the name written just as it is.
     pub fn descends_from(&self, name: &str) -> bool {
-        self.name == name
-            || self.base.as_ref().map_or(false, |b| b.descends_from(name))
-            || self.answers.iter().any(|a| a.descends_from(name))
+        self.named(name, false)
     }
 
     /// Every property an object of this class begins with, those it
@@ -438,26 +458,53 @@ pub fn as_binary(p: &BigInt, q: &BigInt) -> f64 {
     }
 }
 
-/// What a binary real is worth, held exactly: the fewest digits that
-/// read back as the same number are what the number stands for.
+/// What a binary real is worth, held exactly: a whole number of halves,
+/// quarters and so on, which is all such a number ever is. Holding it
+/// so is what makes the next step round as the width rounds, rather
+/// than as the shortest way of writing it would.
 pub fn from_binary(x: f64) -> Option<(BigInt, BigInt)> {
     if !x.is_finite() {
         return None;
     }
-    let written = format!("{:e}", x);
-    let (mantissa, power) = written.split_once('e')?;
-    let power: i32 = power.parse().ok()?;
-    let negative = mantissa.starts_with('-');
-    let figures: String = mantissa.trim_start_matches('-').chars().filter(|c| *c != '.').collect();
-    let scale = power - (figures.len() as i32 - 1);
-    let mut p: BigInt = figures.parse().ok()?;
-    if negative {
+    if x == 0.0 {
+        return Some((BigInt::zero(), BigInt::one()));
+    }
+    let bits = x.to_bits();
+    let below = bits >> 63 == 1;
+    let power = ((bits >> 52) & 0x7ff) as i64;
+    let part = bits & 0x000f_ffff_ffff_ffff;
+    // The smallest numbers of the width carry no leading one.
+    let (whole, twos) = match power {
+        0 => (part, -1074i64),
+        _ => (part | (1u64 << 52), power - 1075),
+    };
+    let mut p = BigInt::from(whole);
+    if below {
         p = -p;
     }
-    Some(match scale >= 0 {
-        true => (p * BigInt::from(10).pow(scale as u32), BigInt::one()),
-        false => (p, BigInt::from(10).pow(scale.unsigned_abs())),
+    Some(match twos >= 0 {
+        true => (p << twos as usize, BigInt::one()),
+        false => (p, BigInt::one() << twos.unsigned_abs() as usize),
     })
+}
+
+/// A real brought to the nearest one of a width of bits, held exactly.
+/// Where the language holds no width, or the number is past every one
+/// of that width, it is left as it stands.
+pub fn to_binary_width(v: Value, bits: Option<usize>, places: usize) -> Value {
+    if bits.is_none() {
+        return v;
+    }
+    let (p, q, below) = match &v {
+        Value::Real(r) => (r.p.clone(), r.q.clone(), r.below),
+        Value::Frac(r) => (r.p.clone(), r.q.clone(), false),
+        _ => return v,
+    };
+    match from_binary(as_binary(&p, &q)) {
+        // A nought below nought keeps its minus at any width.
+        Some((p, q)) => crate::arith::shape_signed(p, q, Some(places), below),
+        None => v,
+    }
 }
 
 /// A binary real written out the way such a language writes one: the
@@ -490,7 +537,7 @@ pub fn binary_string(x: f64, digits: Option<usize>) -> String {
     let sign = if mantissa.starts_with('-') { "-" } else { "" };
     // Written plainly while the power is small, and with the power
     // spelled out beyond that, which is where such a language changes.
-    if (-5..15).contains(&power) {
+    if (-4..15).contains(&power) {
         return format!("{}{}", sign, laid_flat(&figures, power));
     }
     let rest = &figures[1..];

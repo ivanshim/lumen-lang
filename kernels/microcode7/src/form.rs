@@ -31,6 +31,9 @@ pub enum Callee {
 /// forms for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prim {
+    /// A step onward or back (`++`, `--`): adding or taking away one,
+    /// save where a language walks text along its letters instead.
+    Onward(bool),
     // builtins a definition may spell
     Echo,
     Say,
@@ -57,6 +60,11 @@ pub enum Prim {
     Glance,
     /// Whether every one of these is something other than nothing.
     Standing,
+    /// Whether what a name or a place holds is untrue, asked as gently:
+    /// without minding that it is not there at all (ext.builtin.empty).
+    /// The companion of the one above, asking the looser question, since
+    /// nothing at all is untrue.
+    Hollow,
     /// The value made one of the whole kind (ext.op.cast).
     AsWhole,
     /// The value made one of the real kind.
@@ -84,6 +92,10 @@ pub enum Prim {
     /// what it gives back.
     Weigh,
     Bring,
+    /// The same as the one above, but only where that file has not been
+    /// read before in this run (ext.builtin.include.once); one read
+    /// already answers with truth and is not read again.
+    BringOnce,
     /// What a file holds, all at once; what to put into one; whether a
     /// file is there; and taking one away (ext.builtin.file.*). A
     /// language reaches outside its run only by spelling these.
@@ -94,6 +106,33 @@ pub enum Prim {
     /// How long the run may take from here, counted in seconds; nought
     /// takes the limit away (ext.builtin.time_limit).
     Clock,
+    /// Keeping what the run writes out instead of letting it go
+    /// (ext.builtin.output.*): begin keeping, what has been kept since
+    /// the last beginning, stop keeping and give up what was kept, and
+    /// how many keepings are in force. What a keeping gives up may be
+    /// written out again by whoever asked for it, so flushing and
+    /// filtering are built of these four rather than spelled apart.
+    KeepOut,
+    KeptOut,
+    LooseOut,
+    DeepOut,
+    /// A routine to run once the run is over, with whatever else was
+    /// given standing as its arguments (ext.builtin.at_end). They run in
+    /// the order they were named, after the program's last statement and
+    /// before what is still kept is let go.
+    Afterward,
+    /// A routine to be handed every complaint the run makes, instead of
+    /// the complaint being written out (ext.builtin.complaint.handler).
+    /// It takes the word for the kind, what was said, where the program
+    /// is written and the line that was running. Answering false leaves
+    /// the complaint to be written out as it would have been; giving
+    /// nothing takes the routine away again.
+    Hearer,
+    /// Say these words as a complaint of the kind the first names, where
+    /// the run stands (ext.builtin.complaint.say): how a language makes
+    /// a complaint of its own and has it told as the run's own are, in
+    /// its place and through whatever stands in their way.
+    Complain,
     /// What the running call was handed, whatever of it the routine
     /// gave names to: the whole of it, how much there was, or the one
     /// standing at a place (ext.builtin.args.*).
@@ -144,6 +183,26 @@ pub enum Prim {
     ItemAt,
     /// How many places an array or a map holds.
     Extent,
+    /// Whether a thing still keeps a member at the place a walk has
+    /// reached. Where it does not, the pass is passed over. The thing
+    /// comes first, the place after it.
+    Kept,
+    /// What a walk walks. A thing handing another over to be walked in
+    /// its stead answers with that one, and so on until one does not; a
+    /// thing that is its own walk is wound back and answers with itself;
+    /// anything else answers with itself.
+    Walked,
+    /// Whether a walk has more to hand out, what is at hand, what it is
+    /// named, and the step onward. A thing that is its own walk is
+    /// asked; anything else is counted through, as an array is.
+    MoreYet,
+    AtHand,
+    NamedHere,
+    StepOn,
+    /// Asked before a walk that hands out the items' own cells: a thing
+    /// that is its own walk keeps no such cells, and a language with
+    /// words for that says so and stops.
+    AloneWalk,
     /// `a[]`, a place only a store reaches.
     AtEnd,
     /// A thing of the class given, its maker run over the rest.
@@ -237,11 +296,25 @@ pub enum Form {
     /// Make what the array in this binding holds at that place a shared
     /// cell, and give it back: how a walk hands out its items.
     ShareItem(Address, Box<Form>),
+    /// The same, but by the keys places are named by rather than by
+    /// position, and down a chain of them; where a language makes what a
+    /// write needs, the arrays and the places are made on the way in.
+    SharePlace(Address, Vec<Form>),
     /// Make that property of the thing a shared cell if it is not one
     /// already, and give the cell back, so a name may be tied to it.
     ShareField(Box<Form>, Rc<str>),
+    /// Make that value of the class a shared cell if it is not one
+    /// already, and give the cell back.
+    ShareOwn(Box<Form>, Rc<str>),
+    /// Make the outermost binding this value spells a shared cell if it
+    /// is not one already, and give the cell back.
+    ShareCalled(Box<Form>),
     /// Leave this binding as though nothing were ever written to it.
     Forget(Address),
+    /// Make this global ready: where nothing was ever written to it,
+    /// nothing is written to it now, so that a name bound to it names
+    /// a binding written to and not one never written.
+    Ready(Address),
     /// Find this value with whatever it has to say about itself kept
     /// quiet: how a language that lets a program silence one piece of
     /// itself says which piece.
@@ -251,6 +324,17 @@ pub enum Form {
     Called(Box<Form>),
     /// Write the second into the binding whose name the first spells.
     CallWrite(Box<Form>, Box<Form>),
+    /// Words a definition holds ready for a shape it still allows, said
+    /// where the shape is reached and nowhere else, under the language's
+    /// own word for that kind of remark. The line is the one the shape
+    /// was written on, so that a call along the way does not move it.
+    Remark(&'static str, Rc<str>, u32),
+    /// A cell for what the form within comes to, whatever that is: the
+    /// cell itself where it is one already, and otherwise these words,
+    /// on the line given, and a fresh cell holding the value. A routine
+    /// written to give back a cell gives one however it ends, and only
+    /// the run can say whether what it named had one of its own.
+    HeldEither(&'static str, Rc<str>, u32, Box<Form>),
 }
 
 /// One catch: the classes it takes, where it holds what it caught, and

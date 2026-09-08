@@ -42,7 +42,7 @@ const LABELS: &[&str] = &[
     "syntax.call.open", "syntax.call.separator", "syntax.call.close", "syntax.call.label",
     "syntax.array.open", "syntax.array.separator", "syntax.array.close",
     "syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close",
-    "literal.true", "literal.false", "literal.null", "literal.null.silent",
+    "literal.true", "literal.false", "literal.null", "literal.null.silent", "system.flag.counts",
     "op.precedence", "op.right_associative",
     "op.add", "op.sub", "op.mul", "op.div", "op.div.result", "op.quot", "op.rem", "op.pow",
     "op.eq", "op.ne", "op.lt", "op.le", "op.gt", "op.ge",
@@ -85,11 +85,16 @@ pub struct Definition {
     pub keywords_case_insensitive: bool,
     /// Nothing shows as no text at all, not as the word for it.
     pub nothing_silent: bool,
+    /// Whether a flag becomes text as the number it counts for: one
+    /// holding true becomes `1`, one holding false nothing at all.
+    pub flag_counts: bool,
     /// The binding words are type names placed first (C's `int x = 1;`),
     /// and a name followed by the call bracket defines a function.
     pub type_first: bool,
     /// `op.div` yields a real (Python's `/`) rather than an exact rational.
     pub div_real: bool,
+    /// Whether dividing two whole numbers evenly gives a whole one.
+    pub div_whole_when_even: bool,
     /// Indexing a string yields the character at that position.
     pub index_strings: bool,
     /// A function's result is the value last assigned to its own name
@@ -163,9 +168,11 @@ impl Definition {
             identifier_unicode: false,
             identifiers_case_insensitive: false,
             nothing_silent: false,
+            flag_counts: false,
             keywords_case_insensitive: false,
             type_first: false,
             div_real: false,
+            div_whole_when_even: false,
             index_strings: false,
             result_by_name: false,
             block_style: BlockStyle::Indentation,
@@ -200,12 +207,16 @@ impl Definition {
                 ("stmt.let.type_first", Json::Bool(flag)) => definition.type_first = *flag,
                 ("op.index.strings", Json::Bool(flag)) => definition.index_strings = *flag,
                 ("literal.null.silent", Json::Bool(flag)) => definition.nothing_silent = *flag,
+                ("system.flag.counts", Json::Bool(flag)) => definition.flag_counts = *flag,
                 ("stmt.function.result_by_name", Json::Bool(flag)) => definition.result_by_name = *flag,
                 ("op.div.result", Json::String(result)) => {
+                    definition.div_whole_when_even = result == "whole_or_real";
                     definition.div_real = match result.as_str() {
-                        "real" => true,
+                        "real" | "whole_or_real" => true,
                         "rational" => false,
-                        other => return Err(format!("op.div.result must be 'rational', 'real' or null, got '{other}'")),
+                        other => {
+                            return Err(format!("op.div.result must be 'rational', 'real', 'whole_or_real' or null, got '{other}'"))
+                        }
                     };
                 }
                 ("block.style", Json::String(style)) => {

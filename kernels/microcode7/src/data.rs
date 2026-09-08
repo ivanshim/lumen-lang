@@ -96,6 +96,9 @@ pub struct Names<'a> {
     pub truth: &'a str,
     pub falsity: &'a str,
     pub nil: &'a str,
+    /// Whether a flag becomes text as the number it counts for: one
+    /// holding true becomes `1`, one holding false nothing whatever.
+    pub flag_counted: bool,
     /// Where a language holds its reals to a width of bits, how many
     /// figures one shows when simply written out; where it says
     /// nothing, a real is shown to the precision it carries.
@@ -218,6 +221,8 @@ impl Value {
         match self {
             // A cell that names share is written as what it holds.
             Value::Shared(cell) => cell.borrow().render(w),
+            Value::Flag(true) if w.flag_counted => "1".to_string(),
+            Value::Flag(false) if w.flag_counted => String::new(),
             Value::Flag(true) => w.truth.to_string(),
             Value::Flag(false) => w.falsity.to_string(),
             Value::Nil | Value::Unset => w.nil.to_string(),
@@ -354,9 +359,18 @@ impl Blueprint {
     }
 
     pub fn built_on(&self, name: &str) -> bool {
-        self.name == name
-            || self.under.as_ref().map_or(false, |u| u.built_on(name))
-            || self.answers.iter().any(|a| a.built_on(name))
+        self.goes_by(name, false)
+    }
+
+    /// The same, save that letters written large and small may be
+    /// counted the one letter where a language asks for that.
+    pub fn goes_by(&self, name: &str, either_way: bool) -> bool {
+        let it = match either_way {
+            true => self.name.eq_ignore_ascii_case(name),
+            false => self.name == name,
+        };
+        it || self.under.as_ref().map_or(false, |u| u.goes_by(name, either_way))
+            || self.answers.iter().any(|a| a.goes_by(name, either_way))
     }
 
     /// Every property a thing of this class starts with, what it is
@@ -405,26 +419,49 @@ pub fn nearest_binary(above: &BigInt, beneath: &BigInt) -> f64 {
     }
 }
 
-/// What a binary real is worth, held as a ratio: the fewest figures
-/// that read back as the same number say what it stands for.
+/// What a binary real is worth, held as a ratio: so many halves,
+/// quarters and eighths, which is the whole of what such a number is.
+/// Holding it that way is what makes the step after it round as the
+/// width rounds, and not as the shortest way of writing it would.
 pub fn binary_worth(x: f64) -> Option<(BigInt, BigInt)> {
     if !x.is_finite() {
         return None;
     }
-    let shown = format!("{:e}", x);
-    let (front, power) = shown.split_once('e')?;
-    let power: i32 = power.parse().ok()?;
-    let below_nought = front.starts_with('-');
-    let run: String = front.trim_start_matches('-').chars().filter(|c| *c != '.').collect();
-    let step = power - (run.len() as i32 - 1);
-    let mut above: BigInt = run.parse().ok()?;
-    if below_nought {
+    if x == 0.0 {
+        return Some((BigInt::zero(), BigInt::one()));
+    }
+    let held = x.to_bits();
+    let under = held >> 63 == 1;
+    let step = ((held >> 52) & 0x7ff) as i64;
+    let rest = held & 0x000f_ffff_ffff_ffff;
+    // The very smallest of the width carry no leading one.
+    let (run, halvings) = match step {
+        0 => (rest, -1074i64),
+        _ => (rest | (1u64 << 52), step - 1075),
+    };
+    let mut above = BigInt::from(run);
+    if under {
         above = -above;
     }
-    Some(match step >= 0 {
-        true => (above * BigInt::from(10).pow(step as u32), BigInt::one()),
-        false => (above, BigInt::from(10).pow(step.unsigned_abs())),
+    Some(match halvings >= 0 {
+        true => (above << halvings as usize, BigInt::one()),
+        false => (above, BigInt::one() << halvings.unsigned_abs() as usize),
     })
+}
+
+/// A real brought to the nearest of a width of bits, held exactly.
+/// Where the language holds no width, or the number stands past every
+/// one of that width, it is left as it is.
+pub fn at_binary_width(v: Value, bits: Option<usize>, figures: usize) -> Value {
+    if bits.is_none() {
+        return v;
+    }
+    let Value::Frac(e) = &v else { return v };
+    match binary_worth(nearest_binary(&e.above, &e.beneath)) {
+        // A nought under nought holds its minus at any width.
+        Some((above, beneath)) => crate::math::made_number(above, beneath, Some(figures), e.under),
+        None => v,
+    }
 }
 
 /// A binary real written out: the fewest figures that read back as the
@@ -451,7 +488,7 @@ pub fn figured(x: f64, figures: Option<usize>) -> String {
         }
     }
     let sign = if front.starts_with('-') { "-" } else { "" };
-    if (-5..15).contains(&power) {
+    if (-4..15).contains(&power) {
         let point = power + 1;
         let body = if point <= 0 {
             format!("0.{}{}", "0".repeat(-point as usize), run)
