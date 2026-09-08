@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 46, differs 30, error 28, skipped 10 | pass 46, differs 30, error 28, skipped 10 |
 | `php/func` | 14 | pass 7, differs 3, error 4, skipped 0 | pass 7, differs 3, error 4, skipped 0 |
-| `php/lang` | 213 | pass 75, differs 49, error 84, skipped 5 | pass 75, differs 49, error 84, skipped 5 |
+| `php/lang` | 213 | pass 75, differs 50, error 83, skipped 5 | pass 75, differs 50, error 83, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 31, differs 21, error 6, skipped 6 | pass 31, differs 21, error 6, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 164, differs 111, error 122, skipped 25 | pass 164, differs 111, error 122, skipped 25 |
+| all | 422 | pass 164, differs 112, error 121, skipped 25 | pass 164, differs 112, error 121, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 111 |
+| ran, printed something else | 112 |
 | Only a name, a place in an array or a property has a cell to share | 9 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
@@ -382,7 +382,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug21849.phpt` | pass | pass |  |
 | `php/lang/bug21961.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> |
 | `php/lang/bug22231.phpt` | error | error | Unexpected token: & |
-| `php/lang/bug22510.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: __FUNCTION__ in <file> |
+| `php/lang/bug22510.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug22592.phpt` | error | error | Fatal error: Uncaught Error: put() requires an array in <file> |
 | `php/lang/bug23279.phpt` | error | error | thrown in <file> |
 | `php/lang/bug23384.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: Foo in <file> |

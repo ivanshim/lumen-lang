@@ -437,6 +437,28 @@ impl<'a> Compiler<'a> {
             self.constant(Value::Small(row as i64));
             return;
         }
+        // The routine a piece is written in, the class that routine
+        // belongs to, and the two written together: all known while the
+        // program is put together, so each stands for what it names.
+        let unit = self.piece();
+        let routine = match unit.outermost {
+            true => String::new(),
+            false => unit.ident.clone(),
+        };
+        let within = self.within.as_ref().map(|(named, _)| named.clone()).unwrap_or_default();
+        for (binding, said) in [
+            (&self.lang.routine_binding, routine.clone()),
+            (&self.lang.class_binding, within.clone()),
+            (&self.lang.method_binding, match within.is_empty() {
+                true => routine,
+                false => format!("{}::{}", within, routine),
+            }),
+        ] {
+            if binding.as_deref() == Some(name) {
+                self.constant(Value::text(&said));
+                return;
+            }
+        }
         let slot = self.cell_to_read(name, false);
         self.put(Instr::Read(slot));
     }

@@ -588,6 +588,15 @@
   "ext.system.source.directory": [
     "__DIR__"
   ],
+  "ext.system.source.routine": [
+    "__FUNCTION__"
+  ],
+  "ext.system.source.class": [
+    "__CLASS__"
+  ],
+  "ext.system.source.method": [
+    "__METHOD__"
+  ],
   "ext.system.source.line": [
     "__LINE__"
   ],

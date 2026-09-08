@@ -461,6 +461,13 @@ only. The extension labels so far, all from PHP:
   kernel's faults are of which kind is the kernel's own to know, since
   it is the one that words them, and the two full kernels word them
   differently.
+- `ext.system.source.routine`, `.class` and `.method`: the names a
+  program calls the routine a piece is written in, the class that
+  routine belongs to, and the two written together (`__FUNCTION__`,
+  `__CLASS__`, `__METHOD__`). All three are known while the program is
+  put together, so each stands for what it names where it is written;
+  outside any routine or any class the name is text with nothing in it,
+  as such a language leaves it.
 - `ext.system.source.file` and `ext.system.source.directory`: the names
   a program calls the file it is written in and the place that file
   lies in (`__FILE__`, `__DIR__`). The host works both out from the
@@ -900,9 +907,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.request.form` | - | - | - | - | - | - | - | `$_POST` | - | - |
 | `ext.system.request.query` | - | - | - | - | - | - | - | `$_GET` | - | - |
 | `ext.system.request.server` | - | - | - | - | - | - | - | `$_SERVER` | - | - |
+| `ext.system.source.class` | - | - | - | - | - | - | - | `__CLASS__` | - | - |
 | `ext.system.source.directory` | - | - | - | - | - | - | - | `__DIR__` | - | - |
 | `ext.system.source.file` | - | - | - | - | - | - | - | `__FILE__` | - | - |
 | `ext.system.source.line` | - | - | - | - | - | - | - | `__LINE__` | - | - |
+| `ext.system.source.method` | - | - | - | - | - | - | - | `__METHOD__` | - | - |
+| `ext.system.source.routine` | - | - | - | - | - | - | - | `__FUNCTION__` | - | - |
 | `ext.system.untrue.empty_array` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.system.untrue.text` | - | - | - | - | - | - | - | `0` | - | - |
 <!-- table:end -->

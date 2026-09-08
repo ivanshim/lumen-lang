@@ -82,6 +82,9 @@ pub struct Builder<'a> {
     /// Where the value a write is to put is already waiting, which a
     /// taking-apart sets before each of its places.
     waiting: Option<String>,
+    /// The routines being built, the innermost last, so a word standing
+    /// for the one a piece is written in knows which that is.
+    naming: Vec<String>,
     tells_place: bool,
 }
 
@@ -110,7 +113,7 @@ pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMa
 pub fn build_from(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>) -> Res<Built> {
     let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let shared_args = shared_parameters(tokens, table);
-    let mut r = Builder { within: None, shared_args, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None,
+    let mut r = Builder { within: None, shared_args, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, naming: Vec::new(),
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
@@ -555,6 +558,23 @@ impl<'a> Builder<'a> {
         if self.table.single("ext.system.source.line") == Some(name) {
             return constant(Value::Small((self.look().row).saturating_sub(self.before) as i64));
         }
+        // The routine a piece stands in, the class that routine belongs
+        // to, and the two written together: each is known while the form
+        // is built, so each stands for what it names.
+        let routine = self.naming.last().cloned().unwrap_or_default();
+        let within = self.within.as_ref().map(|(called, _)| called.clone()).unwrap_or_default();
+        for (label, said) in [
+            ("ext.system.source.routine", routine.clone()),
+            ("ext.system.source.class", within.clone()),
+            ("ext.system.source.method", match within.is_empty() {
+                true => routine,
+                false => format!("{}::{}", within, routine),
+            }),
+        ] {
+            if self.table.single(label) == Some(name) {
+                return constant(Value::text(&said));
+            }
+        }
         Form::Read(self.address_to_read(name))
     }
 
@@ -574,10 +594,12 @@ impl<'a> Builder<'a> {
 
     /// A program value: its body reduced in a scope of its own.
     fn routine(&mut self, name: &str, holds: Holds, catches: Traps, params: Vec<String>, least: usize, body: impl FnOnce(&mut Self) -> Res<Form>) -> Res<Form> {
+        self.naming.push(name.to_string());
         let param_slots = (0..params.len()).collect();
         self.layers.push(Layer { holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new() });
         let body = body(self)?;
         let scope = self.layers.pop().unwrap();
+        self.naming.pop();
         Ok(constant(Value::Routine(Rc::new(Routine { ident: name.to_string(), least, formals: params, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), traps: catches, body }))))
     }
 

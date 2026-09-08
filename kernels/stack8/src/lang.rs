@@ -169,6 +169,12 @@ pub struct Lang {
     /// complaint rather than a stop.
     pub complaint_words: Vec<(Complaint, String)>,
     pub line_binding: Option<String>,
+    /// The names a program calls the routine it is written in, the
+    /// class that routine belongs to, and the two written together.
+    /// All three are known while the program is put together.
+    pub routine_binding: Option<String>,
+    pub class_binding: Option<String>,
+    pub method_binding: Option<String>,
     /// The class a fault of the kernel's own is raised as, where a
     /// language names one, so that a program may take it like any other.
     pub fault_class: Option<String>,
@@ -360,6 +366,7 @@ w ext.builtin.eval | w ext.builtin.include | w ext.op.hush | w ext.builtin.isset
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
 w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind
 w ext.op.name_by_value | b ext.op.cast | w ext.stmt.unpack
+w ext.system.source.routine | w ext.system.source.class | w ext.system.source.method
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 ";
@@ -926,6 +933,9 @@ impl Lang {
                 found
             },
             line_binding: r.head("ext.system.source.line")?,
+            routine_binding: r.head("ext.system.source.routine")?,
+            class_binding: r.head("ext.system.source.class")?,
+            method_binding: r.head("ext.system.source.method")?,
             fault_class: r.head("ext.system.fault.class")?,
             fault_arithmetic: r.head("ext.system.fault.class.arithmetic")?,
             fault_division: r.head("ext.system.fault.class.division")?,
