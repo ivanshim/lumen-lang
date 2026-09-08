@@ -464,6 +464,22 @@ only. The extension labels so far, all from PHP:
   whatever happens when text is asked to be a class. It differs from
   `ext.op.name_by_value` in having no mark of its own: the value simply
   stands where the name would.
+- `ext.lexical.escape.codepoint`, `.open` and `.close`: a character
+  written by its number rather than by itself. After the escape mark the
+  letter, then the number in sixteens between the two brackets, and the
+  character of that number stands in their place: `"\u{2603}"` is a
+  snowman. Leading noughts change nothing, and the letters of the number
+  may be written large or small. The letter alone, with no opening
+  bracket after it, is not one of these at all, and is kept as written,
+  which is what lets a language keep `"\u202e"` as the eight characters
+  it looks like. A number naming half of a pair — two numbers standing
+  together for one character — names no character of its own, and since
+  the kernels hold text as characters and not as bytes, such an escape
+  is left as it was written.
+- `ext.lexical.escape.codepoint.amiss` and `.beyond`: what a language
+  says of a number written where a number does not belong (nothing
+  between the brackets, a letter that is no digit, a bracket never
+  closed) and of one past the last character there is.
 - `ext.system.class.folded`: a switch; a class goes by its name however
   the name is written, so `stdClass`, `StdClass` and `stdclass` all name
   the one class, in a `new`, in a class it is built on, in a `catch`, on
@@ -1035,6 +1051,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.unset` | - | - | - | - | - | - | - | `unset` | - | - |
 | `ext.builtin.var_dump` | - | - | - | - | - | - | - | `var_dump` | - | - |
 | `ext.lexical.epilogue` | - | - | - | - | - | - | - | `?>` | - | - |
+| `ext.lexical.escape.codepoint` | - | - | - | - | - | - | - | `u` | - | - |
+| `ext.lexical.escape.codepoint.amiss` | - | - | - | - | - | - | - | `Invalid UTF-8 codepoint escape sequence` | - | - |
+| `ext.lexical.escape.codepoint.beyond` | - | - | - | - | - | - | - | `Invalid UTF-8 codepoint escape sequence: Codepoint too large` | - | - |
+| `ext.lexical.escape.codepoint.close` | - | - | - | - | - | - | - | `}` | - | - |
+| `ext.lexical.escape.codepoint.open` | - | - | - | - | - | - | - | `{` | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | - | - | - | `"` | - | - |
 | `ext.lexical.name_lead` | - | - | - | - | - | - | - | `\` | - | - |
 | `ext.lexical.number.binary_prefix` | - | - | - | - | - | - | - | `0b` `0B` | - | - |

@@ -130,6 +130,24 @@ fn scan_code(source: &str, table: &Table) -> Result<Vec<Token>, String> {
     let raw = table.letters("lexical.raw_quotes");
     let weaving = table.letters("ext.lexical.interpolating_quotes");
     let escapes = table.letters("lexical.string_escapes");
+    // A character an escape names by its number: the letter that begins
+    // one, the brackets the number stands in, and what the language
+    // says of a number badly written or of one beyond the last there is.
+    let numbered = table.letter("ext.lexical.escape.codepoint");
+    let number_open = table.letter("ext.lexical.escape.codepoint.open");
+    let number_close = table.letter("ext.lexical.escape.codepoint.close");
+    let badly = || {
+        table
+            .single("ext.lexical.escape.codepoint.amiss")
+            .unwrap_or("Bad character number")
+            .to_string()
+    };
+    let too_far = || {
+        table
+            .single("ext.lexical.escape.codepoint.beyond")
+            .unwrap_or("Character number too large")
+            .to_string()
+    };
     let point = table.letter("lexical.number.decimal_point");
     let base = table.letter("lexical.number.base_marker");
     let expo = table.letter("lexical.number.exponent_marker");
@@ -206,6 +224,53 @@ fn scan_code(source: &str, table: &Table) -> Result<Vec<Token>, String> {
                         plain.push(s.chars().count());
                         s.push(e);
                         k += 2;
+                        continue;
+                    }
+                    // The letter followed by its opening bracket names a
+                    // character by its number: the digits between the
+                    // brackets are read in sixteens and the character of
+                    // that number stands in their place. A number naming
+                    // no character of its own — half of a pair standing
+                    // for one character between them — is left as it was
+                    // written, text made of characters having no room
+                    // for it.
+                    if !is_raw && Some(e) == numbered && src.get(k + 2).copied() == number_open {
+                        let (mut j, mut digits, mut shut) = (k + 3, String::new(), false);
+                        while j < src.len() {
+                            let d = src[j];
+                            j += 1;
+                            if Some(d) == number_close {
+                                shut = true;
+                                break;
+                            }
+                            if !d.is_ascii_hexdigit() {
+                                return Err(badly());
+                            }
+                            digits.push(d);
+                        }
+                        if !shut || digits.is_empty() {
+                            return Err(badly());
+                        }
+                        let bare = digits.trim_start_matches('0');
+                        let number = match bare.is_empty() {
+                            true => 0,
+                            false => u32::from_str_radix(bare, 16).map_err(|_| too_far())?,
+                        };
+                        if number > 0x10FFFF {
+                            return Err(too_far());
+                        }
+                        match char::from_u32(number) {
+                            Some(made) => {
+                                plain.push(s.chars().count());
+                                s.push(made);
+                            }
+                            None => {
+                                s.push('\\');
+                                s.push(e);
+                                s.extend(src[k + 2..j].iter());
+                            }
+                        }
+                        k = j;
                         continue;
                     }
                     if e == '\\' || e == c || (!is_raw && escapes.contains(&e)) {

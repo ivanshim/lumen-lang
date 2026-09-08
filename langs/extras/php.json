@@ -30,6 +30,21 @@
     "\\",
     "\""
   ],
+  "ext.lexical.escape.codepoint": [
+    "u"
+  ],
+  "ext.lexical.escape.codepoint.open": [
+    "{"
+  ],
+  "ext.lexical.escape.codepoint.close": [
+    "}"
+  ],
+  "ext.lexical.escape.codepoint.amiss": [
+    "Invalid UTF-8 codepoint escape sequence"
+  ],
+  "ext.lexical.escape.codepoint.beyond": [
+    "Invalid UTF-8 codepoint escape sequence: Codepoint too large"
+  ],
   "lexical.prologue": [
     "<?php"
   ],

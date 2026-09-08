@@ -49,6 +49,15 @@ pub struct Lang {
     pub quotes: Vec<char>,
     pub raw_quotes: Vec<char>,
     pub escape_letters: Vec<char>,
+    /// The letter that, after the escape mark, begins a character
+    /// named by its number, and the brackets that number stands in.
+    pub codepoint_letter: Option<char>,
+    pub codepoint_open: Option<char>,
+    pub codepoint_close: Option<char>,
+    /// What the language says of a number badly written, and of one
+    /// beyond the last character there is.
+    pub codepoint_amiss: Option<String>,
+    pub codepoint_beyond: Option<String>,
     pub prologue: Option<String>,
     pub point: Option<char>,
     pub base_mark: Option<char>,
@@ -438,6 +447,8 @@ w ext.system.source.routine | w ext.system.source.class | w ext.system.source.me
 b ext.op.member.by_value | b ext.op.index.text | w ext.system.globals
 w ext.op.reference.unshared.written | w ext.op.reference.unshared.given | w ext.op.reference.unshared.handed
 w ext.stmt.block.instead | w ext.stmt.block.instead.close | b ext.op.spelled | b ext.system.class.folded
+w ext.lexical.escape.codepoint | w ext.lexical.escape.codepoint.open | w ext.lexical.escape.codepoint.close
+w ext.lexical.escape.codepoint.amiss | w ext.lexical.escape.codepoint.beyond
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 ";
@@ -909,6 +920,11 @@ impl Lang {
             quotes,
             raw_quotes,
             escape_letters: escapes,
+            codepoint_letter: r.letter("ext.lexical.escape.codepoint")?,
+            codepoint_open: r.letter("ext.lexical.escape.codepoint.open")?,
+            codepoint_close: r.letter("ext.lexical.escape.codepoint.close")?,
+            codepoint_amiss: r.head("ext.lexical.escape.codepoint.amiss")?,
+            codepoint_beyond: r.head("ext.lexical.escape.codepoint.beyond")?,
             prologue: r.head("lexical.prologue")?,
             point: r.letter("lexical.number.decimal_point")?,
             base_mark: r.letter("lexical.number.base_marker")?,

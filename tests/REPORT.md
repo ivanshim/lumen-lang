@@ -23,16 +23,17 @@ is listed, since the full kernels are meant to behave alike.
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 22, error 2, skipped 6 | pass 34, differs 22, error 2, skipped 6 |
-| `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 240, differs 78, error 79, skipped 25 | pass 240, differs 78, error 79, skipped 25 |
+| `php/lang/string` | 9 | pass 2, differs 1, error 6, skipped 0 | pass 2, differs 1, error 6, skipped 0 |
+| all | 422 | pass 241, differs 71, error 85, skipped 25 | pass 241, differs 71, error 85, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 78 |
+| ran, printed something else | 71 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
 | Fatal error: Uncaught Error: Undefined variable: iterator in <file> | 5 |
+| Invalid UTF-8 codepoint escape sequence | 5 |
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
 | Fatal error: Uncaught Error: Undefined variable: current in <file> | 3 |
@@ -67,7 +68,6 @@ is listed, since the full kernels are meant to behave alike.
 | skip Can't find german locale | 1 |
 | Fatal error: Uncaught Error: Cannot reach 'b' in null in <file> | 1 |
 | Fatal error: Uncaught Error: Cannot reach 'B' in null in <file> | 1 |
-| Fatal error: Uncaught Error: Cannot call 'foo' on a value that is not a class in <file> | 1 |
 
 ### Reserved words: 55 of 68 spelled
 
@@ -600,15 +600,15 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/static_basic_002.phpt` | differs | differs | ran, printed something else |
 | `php/lang/static_variation_001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/static_variation_002.phpt` | differs | differs | ran, printed something else |
-| `php/lang/string/unicode_escape.phpt` | differs | differs | ran, printed something else |
-| `php/lang/string/unicode_escape_empty.phpt` | differs | differs | ran, printed something else |
-| `php/lang/string/unicode_escape_incomplete.phpt` | differs | differs | ran, printed something else |
-| `php/lang/string/unicode_escape_large_codepoint.phpt` | differs | differs | ran, printed something else |
+| `php/lang/string/unicode_escape.phpt` | pass | pass |  |
+| `php/lang/string/unicode_escape_empty.phpt` | error | error | Invalid UTF-8 codepoint escape sequence |
+| `php/lang/string/unicode_escape_incomplete.phpt` | error | error | Invalid UTF-8 codepoint escape sequence |
+| `php/lang/string/unicode_escape_large_codepoint.phpt` | error | error | Invalid UTF-8 codepoint escape sequence: Codepoint too large |
 | `php/lang/string/unicode_escape_legacy.phpt` | pass | pass |  |
-| `php/lang/string/unicode_escape_sign.phpt` | differs | differs | ran, printed something else |
-| `php/lang/string/unicode_escape_sign2.phpt` | differs | differs | ran, printed something else |
+| `php/lang/string/unicode_escape_sign.phpt` | error | error | Invalid UTF-8 codepoint escape sequence |
+| `php/lang/string/unicode_escape_sign2.phpt` | error | error | Invalid UTF-8 codepoint escape sequence |
 | `php/lang/string/unicode_escape_surrogates.phpt` | differs | differs | ran, printed something else |
-| `php/lang/string/unicode_escape_whitespace.phpt` | differs | differs | ran, printed something else |
+| `php/lang/string/unicode_escape_whitespace.phpt` | error | error | Invalid UTF-8 codepoint escape sequence |
 | `php/lang/string_decimals_001.phpt` | pass | pass |  |
 | `php/lang/syntax_errors.phpt` | error | error | Fatal error: Uncaught Error: Expected ')' to close a group, got ';' in <file> |
 | `php/lang/this_assignment.phpt` | pass | pass |  |

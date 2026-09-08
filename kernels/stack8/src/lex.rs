@@ -164,6 +164,51 @@ impl<'a> Cursor<'a> {
         false
     }
 
+    /// The character an escape names by its number: the opening
+    /// bracket is where this begins, the number is written in sixteens,
+    /// and the closing bracket ends it. Nothing where the number names
+    /// no character of its own — half of a pair standing for one
+    /// character between them is a number without a character, and a
+    /// kernel whose text is made of characters cannot hold it, so the
+    /// escape is left as it was written.
+    fn codepoint(&mut self) -> Result<(Option<char>, String), String> {
+        let amiss = || self.lang.codepoint_amiss.clone().unwrap_or_else(|| "Bad character number".to_string());
+        let open = self.lang.codepoint_open.expect("the escape has brackets");
+        let close = self.lang.codepoint_close.ok_or_else(amiss)?;
+        let mut written = String::from(open);
+        self.step();
+        let mut digits = String::new();
+        loop {
+            let Some(c) = self.look(0) else { return Err(amiss()) };
+            written.push(c);
+            if c == close {
+                self.step();
+                break;
+            }
+            if !c.is_ascii_hexdigit() {
+                return Err(amiss());
+            }
+            digits.push(c);
+            self.step();
+        }
+        if digits.is_empty() {
+            return Err(amiss());
+        }
+        // A number of any length may be written, leading noughts and
+        // all, so one too long to hold is one beyond the last character.
+        let beyond = || self.lang.codepoint_beyond.clone().unwrap_or_else(|| "Character number too large".to_string());
+        let Ok(number) = u32::from_str_radix(digits.trim_start_matches('0'), 16).or_else(|_| match digits.chars().all(|d| d == '0') {
+            true => Ok(0),
+            false => Err(()),
+        }) else {
+            return Err(beyond());
+        };
+        if number > 0x10FFFF {
+            return Err(beyond());
+        }
+        Ok((char::from_u32(number), written))
+    }
+
     fn string(&mut self, quote: char) -> Result<(), String> {
         let (line, col) = (self.row, self.column);
         self.step();
@@ -182,6 +227,24 @@ impl<'a> Cursor<'a> {
                         // An escaped sigil is just the sigil.
                         shielded.push(s.chars().count());
                         s.push(next);
+                        continue;
+                    }
+                    // A character named by its number: the letter, the
+                    // number written in sixteens between its brackets,
+                    // and the character of that number in its place.
+                    if !raw && Some(next) == self.lang.codepoint_letter && self.look(0) == self.lang.codepoint_open {
+                        let (made, written) = self.codepoint()?;
+                        match made {
+                            Some(made) => {
+                                shielded.push(s.chars().count());
+                                s.push(made);
+                            }
+                            None => {
+                                s.push('\\');
+                                s.push(next);
+                                s.push_str(&written);
+                            }
+                        }
                         continue;
                     }
                     if next == '\\' || next == quote || (!raw && self.lang.escape_letters.contains(&next)) {
