@@ -455,6 +455,15 @@ only. The extension labels so far, all from PHP:
   arm of it (an `else`, an `elseif`) is left standing for whoever opened
   the block. Which closing word ends which shape is not checked, since
   nesting settles it: an inner block meets its own word first.
+- `ext.op.spelled`: a switch; a piece of text spelling the name of a
+  routine or a class may stand where the routine or the class itself
+  would — `$f()`, `new $c`, `$c::C`, `$c::$s`, `$c::m()`. The name is
+  looked up among the outermost bindings, those being the only ones
+  still there to be looked up while the run goes, and text naming
+  nothing of the kind is left as it stands, so what happens next is
+  whatever happens when text is asked to be a class. It differs from
+  `ext.op.name_by_value` in having no mark of its own: the value simply
+  stands where the name would.
 - `ext.op.cast`: a switch; a kind's word written within the grouping
   marks before a value makes the value that kind — `(int) $x`. The
   words are the ones the language already gives its kinds, under
@@ -939,6 +948,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.reference.unshared.handed` | - | - | - | - | - | - | - | `Only variables should be passed by reference` | - | - |
 | `ext.op.reference.unshared.written` | - | - | - | - | - | - | - | `Only variables should be assigned by reference` | - | - |
 | `ext.op.scope` | - | - | - | - | - | - | - | `::` | - | - |
+| `ext.op.spelled` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.ternary` | - | - | - | - | - | - | - | `?` `:` | - | - |
 | `ext.stmt.block.instead` | - | - | - | - | - | - | - | `:` | - | - |
 | `ext.stmt.block.instead.close` | - | - | - | - | - | - | - | `endif` `endwhile` `endfor` `endforeach` `endswitch` | - | - |

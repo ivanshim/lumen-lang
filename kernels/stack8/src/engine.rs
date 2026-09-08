@@ -312,6 +312,21 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// What a value stands for where a routine or a class is wanted.
+    /// Where a language lets a name be worked out as the run goes, a
+    /// piece of text spells one of the outermost bindings, and that
+    /// binding is what stands there.
+    fn what_it_spells(&self, v: Value) -> Value {
+        let Value::Text(name) = &v else { return v };
+        if !self.lang.spelled_stands {
+            return v;
+        }
+        match self.lookup(name) {
+            Some(found @ (Value::Class(_) | Value::Routine(_))) => found.clone(),
+            _ => v,
+        }
+    }
+
     pub fn lookup(&self, name: &str) -> Option<&Value> {
         let i = self.registry.idents.iter().position(|n| n == name)?;
         match &self.world[i] {
@@ -941,7 +956,8 @@ impl<'a> Engine<'a> {
                 }
             }
             Action::Invoke(name) => {
-                let callee = self.drop_top()?;
+                let top = self.drop_top()?;
+                let callee = self.what_it_spells(top);
                 return match callee {
                     Value::Routine(p) => self.invoke_top(&p, argc - 1),
                     _ => Err(format!("'{}' is not a function", name).into()),
@@ -1033,7 +1049,8 @@ impl<'a> Engine<'a> {
             }
             Action::Make => {
                 let mut args = self.drop_many(argc)?;
-                let Value::Class(class) = args.remove(0) else {
+                let stands = self.what_it_spells(args.remove(0));
+                let Value::Class(class) = stands else {
                     return Err("Only a class can be made into an object".to_string().into());
                 };
                 self.made += 1;
@@ -1176,7 +1193,10 @@ impl<'a> Engine<'a> {
                 all.extend(args);
                 return self.invoke(&method, all);
             }
-            Action::Reach(name) => match self.drop_top()? {
+            Action::Reach(name) => match {
+                let top = self.drop_top()?;
+                self.what_it_spells(top)
+            } {
                 Value::Class(c) => match c.constant(&name) {
                     Some(v) => v.clone(),
                     None => match c.holder(&name) {
@@ -1192,7 +1212,8 @@ impl<'a> Engine<'a> {
             Action::Sow(name) => {
                 let mut pair = self.drop_many(2)?;
                 let value = pair.pop().expect("the value");
-                match pair.pop().expect("the class") {
+                let stands = self.what_it_spells(pair.pop().expect("the class"));
+                match stands {
                     Value::Class(c) => {
                         let holder = c.holder(&name).unwrap_or(&c);
                         let mut shared = holder.shared.borrow_mut();
@@ -1208,7 +1229,8 @@ impl<'a> Engine<'a> {
             Action::Summon(name) => {
                 let mut args = self.drop_many(argc)?;
                 let this = args.remove(0);
-                let Value::Class(class) = args.remove(0) else {
+                let stands = self.what_it_spells(args.remove(0));
+                let Value::Class(class) = stands else {
                     return Err(format!("Cannot call '{}' on a value that is not a class", name).into());
                 };
                 let method = class.method(&name).cloned();

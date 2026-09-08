@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 47, differs 31, error 26, skipped 10 | pass 47, differs 31, error 26, skipped 10 |
 | `php/func` | 14 | pass 9, differs 3, error 2, skipped 0 | pass 9, differs 3, error 2, skipped 0 |
-| `php/lang` | 213 | pass 93, differs 51, error 64, skipped 5 | pass 93, differs 51, error 64, skipped 5 |
+| `php/lang` | 213 | pass 93, differs 52, error 63, skipped 5 | pass 93, differs 52, error 63, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 21, error 3, skipped 6 | pass 34, differs 21, error 3, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 188, differs 114, error 95, skipped 25 | pass 188, differs 114, error 95, skipped 25 |
+| all | 422 | pass 188, differs 115, error 94, skipped 25 | pass 188, differs 115, error 94, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 114 |
+| ran, printed something else | 115 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
@@ -50,7 +50,6 @@ is listed, since the full kernels are meant to behave alike.
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Undefined variable: StdClass in <file> | 2 |
 | Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> | 2 |
-| Fatal error: Uncaught Error: '$name' is not a function in <file> | 2 |
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: rename in <file> | 1 |
@@ -68,6 +67,7 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: InfiniteIterator in <file> | 1 |
 | Fatal error: Uncaught Error: Unexpected token: ; in <file> | 1 |
 | Fatal error: Uncaught Error: Unexpected token: += in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: call_user_func in <file> | 1 |
 
 ### Reserved words: 53 of 68 spelled
 
@@ -361,10 +361,10 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/038.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
 | `php/lang/039.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
 | `php/lang/040.phpt` | pass | pass |  |
-| `php/lang/041.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'b' in A in <file> |
-| `php/lang/042.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'B' in A in <file> |
+| `php/lang/041.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'b' in B in <file> |
+| `php/lang/042.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'B' in B in <file> |
 | `php/lang/043.phpt` | error | error | Fatal error: Uncaught Error: Cannot call 'foo' on a value that is not a class in <file> |
-| `php/lang/044.phpt` | error | error | Fatal error: Uncaught Error: Cannot call '$name' on a value that is not a class in <file> |
+| `php/lang/044.phpt` | error | error | Fatal error: Uncaught Error: Call to undefined method A::$methodname() in <file> |
 | `php/lang/045.phpt` | error | error | Unexpected token: } |
 | `php/lang/array_shortcut_001.phpt` | pass | pass |  |
 | `php/lang/array_shortcut_002.phpt` | pass | pass |  |
@@ -589,7 +589,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/returnByReference.003.phpt` | differs | differs | ran, printed something else |
 | `php/lang/returnByReference.004.phpt` | differs | differs | ran, printed something else |
 | `php/lang/returnByReference.005.phpt` | differs | differs | ran, printed something else |
-| `php/lang/returnByReference.006.phpt` | error | error | Fatal error: Uncaught Error: '$name' is not a function in <file> |
+| `php/lang/returnByReference.006.phpt` | differs | differs | ran, printed something else |
 | `php/lang/returnByReference.007.phpt` | error | error | Fatal error: Uncaught Error: Call to undefined method C::$functionToCall() in <file> |
 | `php/lang/returnByReference.008.phpt` | differs | differs | ran, printed something else |
 | `php/lang/returnByReference.009.phpt` | pass | pass |  |

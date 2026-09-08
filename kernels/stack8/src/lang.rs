@@ -263,6 +263,12 @@ pub struct Lang {
     /// arm of it is left standing.
     pub instead_mark: Option<String>,
     pub instead_closes: Vec<String>,
+    /// Whether a piece of text spelling the name of a routine or a class
+    /// may stand where the routine or the class itself would: `$f()`,
+    /// `new $c`, `$c::m()`. The name is one of the outermost bindings,
+    /// those being the only ones still there to be looked up as the run
+    /// goes.
+    pub spelled_stands: bool,
     /// The words that open a taking-apart: a list of places written on
     /// the left of a write, each taking the matching place of the value.
     pub unpack_words: Vec<String>,
@@ -397,7 +403,7 @@ w ext.op.name_by_value | b ext.op.cast | w ext.stmt.unpack
 w ext.system.source.routine | w ext.system.source.class | w ext.system.source.method
 b ext.op.member.by_value | b ext.op.index.text | w ext.system.globals
 w ext.op.reference.unshared.written | w ext.op.reference.unshared.given | w ext.op.reference.unshared.handed
-w ext.stmt.block.instead | w ext.stmt.block.instead.close
+w ext.stmt.block.instead | w ext.stmt.block.instead.close | b ext.op.spelled
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 ";
@@ -1020,6 +1026,7 @@ impl Lang {
             unshared_handed: r.strings("ext.op.reference.unshared.handed")?,
             instead_mark: r.head("ext.stmt.block.instead")?,
             instead_closes: r.strings("ext.stmt.block.instead.close")?,
+            spelled_stands: r.flag("ext.op.spelled")?,
             unpack_words: r.strings("ext.stmt.unpack")?,
             makes_places: r.flag("ext.op.index.makes")?,
             untrue_text: r.strings("ext.system.untrue.text")?,

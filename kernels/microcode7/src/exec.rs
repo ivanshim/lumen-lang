@@ -108,6 +108,9 @@ pub struct Machine<'a> {
     /// is, such a place takes a letter as well as giving one, and a place
     /// named by text is the number that text opens with.
     letter_places: bool,
+    /// Whether a piece of text spelling the name of a routine or a class
+    /// may stand where the routine or class itself would.
+    spelled_stands: bool,
     /// Pieces of text this language holds untrue past text with nothing
     /// in it, and whether an array with nothing in it is untrue.
     false_words: Vec<String>,
@@ -150,6 +153,7 @@ impl<'a> Machine<'a> {
             quieted: 0,
             builds_places: table.flag("ext.op.index.makes"),
             letter_places: table.flag("ext.op.index.text"),
+            spelled_stands: table.flag("ext.op.spelled"),
             false_words: table.strings("ext.system.untrue.text").to_vec(),
             hollow_is_false: table.flag("ext.system.untrue.empty_array"),
             complaint_words: COMPLAINT_LABELS
@@ -268,6 +272,21 @@ impl<'a> Machine<'a> {
     /// The binding a piece of text calls. Where a language marks its
     /// variables, the mark belongs to the name and not to the text
     /// spelling it, so it goes back on.
+    /// What a value stands for where a routine or a class is wanted.
+    /// Where a language lets a name be worked out as the run goes, a
+    /// piece of text spells one of the outermost bindings, and that
+    /// binding is what stands there.
+    fn what_it_spells(&self, v: Value) -> Value {
+        let Value::Text(name) = &v else { return v };
+        if !self.spelled_stands {
+            return v;
+        }
+        match self.lookup(name) {
+            Some(found @ (Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..))) => found.clone(),
+            _ => v,
+        }
+    }
+
     fn name_it_spells(&self, spelled: &Value) -> String {
         let w = self.wording();
         let said = spelled.render(w).to_string();
@@ -1022,7 +1041,8 @@ impl<'a> Machine<'a> {
                     if values.is_empty() {
                         return Err("Nothing was given to make".to_string().into());
                     }
-                    let Value::Blueprint(class) = values.remove(0) else {
+                    let stands = self.what_it_spells(values.remove(0));
+                    let Value::Blueprint(class) = stands else {
                         return Err("Only a class can be made into a thing".to_string().into());
                     };
                     self.made += 1;
@@ -1063,7 +1083,7 @@ impl<'a> Machine<'a> {
                         return Err(format!("{}() needs a class and a method name", name).into());
                     }
                     let subject = values.remove(0);
-                    let holder = values.remove(0);
+                    let holder = self.what_it_spells(values.remove(0));
                     let called = values.remove(0).bare();
                     let Value::Blueprint(class) = holder else {
                         return Err(format!("Cannot call '{}' on something that is not a class", called).into());
@@ -1130,7 +1150,8 @@ impl<'a> Machine<'a> {
     }
 
     fn bound(&mut self, node: &Form, frame: &Rc<Env>) -> Res<(Rc<Routine>, Rc<Env>)> {
-        match self.value_of(node, frame)? {
+        let found = self.value_of(node, frame)?;
+        match self.what_it_spells(found) {
             Value::Bound(p, env) => Ok((p, env)),
             Value::Unset => Err("Unknown function".to_string().into()),
             _ => match node {
@@ -1423,7 +1444,8 @@ impl<'a> Machine<'a> {
             Prim::Within => {
                 n(2)?;
                 let called = v[1].bare();
-                match &v[0] {
+                let stands = self.what_it_spells(v[0].clone());
+                match &stands {
                     Value::Blueprint(class) => match class.constant(&called) {
                         Some(x) => x.clone(),
                         None => match class.keeper(&called) {
@@ -1440,7 +1462,8 @@ impl<'a> Machine<'a> {
             Prim::Into => {
                 n(3)?;
                 let called = v[1].bare();
-                match &v[0] {
+                let stands = self.what_it_spells(v[0].clone());
+                match &stands {
                     Value::Blueprint(class) => {
                         let keeper = class.keeper(&called).unwrap_or(class);
                         let mut shared = keeper.shared.borrow_mut();
