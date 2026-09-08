@@ -2362,7 +2362,13 @@ impl<'a> Machine<'a> {
                 Ok(Next::Jump(p, f)) => {
                     program = p;
                     frame = f;
-                    if mine {
+                    // A program holding no names of its own is a piece
+                    // of the one it was reached from and runs in its
+                    // frame and its class: stepping into one does not
+                    // take the place of what is running, however it was
+                    // reached.
+                    let stands_alone = !program.frameless;
+                    if mine && stands_alone {
                         if let Some(top) = self.frames_named.last_mut() {
                             *top = program.clone();
                         }
@@ -2370,7 +2376,7 @@ impl<'a> Machine<'a> {
                             *here = program.within.clone();
                         }
                     }
-                    if noted {
+                    if noted && stands_alone {
                         if let Some(top) = self.calls.last_mut() {
                             top.named = Rc::from(program.ident.as_str());
                             top.within = program.within.clone();

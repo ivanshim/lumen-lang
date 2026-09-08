@@ -20,3 +20,37 @@ interface Iterator extends Traversable {
 interface IteratorAggregate extends Traversable {
     function getIterator();
 }
+
+// A walk over an array: the keys are taken once, at the start, so what
+// the walk hands out is what the array held when the walk began.
+class ArrayIterator implements Iterator {
+    private $items;
+    private $keys;
+    private $at;
+    function __construct($array = array()) {
+        $this->items = $array;
+        $this->keys = array_keys($array);
+        $this->at = 0;
+    }
+    function current() { return $this->items[$this->keys[$this->at]]; }
+    function key() { return $this->keys[$this->at]; }
+    function next() { $this->at = $this->at + 1; }
+    function rewind() { $this->at = 0; }
+    function valid() { return $this->at < count($this->keys); }
+}
+
+// A walk that never ends: when the walk it stands on runs out, it is
+// wound back and goes round again.
+class InfiniteIterator implements Iterator {
+    private $inner;
+    function __construct($inner) { $this->inner = $inner; }
+    function current() { return $this->inner->current(); }
+    function key() { return $this->inner->key(); }
+    function next() {
+        $this->inner->next();
+        if (!$this->inner->valid()) { $this->inner->rewind(); }
+    }
+    function rewind() { $this->inner->rewind(); }
+    function valid() { return $this->inner->valid(); }
+}
+

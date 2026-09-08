@@ -17,14 +17,14 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 92, differs 2, error 10, skipped 10 | pass 92, differs 2, error 10, skipped 10 |
+| `php/basic` | 114 | pass 93, differs 2, error 9, skipped 10 | pass 93, differs 2, error 9, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
 | `php/lang` | 213 | pass 180, differs 21, error 7, skipped 5 | pass 180, differs 21, error 7, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 49, differs 8, error 1, skipped 6 | pass 49, differs 8, error 1, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 347, differs 32, error 18, skipped 25 | pass 347, differs 32, error 18, skipped 25 |
+| all | 422 | pass 348, differs 32, error 17, skipped 25 | pass 348, differs 32, error 17, skipped 25 |
 
 | Reason | Tests |
 |---|---|
@@ -45,7 +45,6 @@ is listed, since the full kernels are meant to behave alike.
 | skip for Windows only | 1 |
 | Fatal error: Uncaught Error: Undefined variable: serialize in <file> | 1 |
 | skip Run only on Windows | 1 |
-| Fatal error: Uncaught Error: Undefined variable: infiniteiterator in <file> | 1 |
 | Fatal error: Uncaught Error: Unexpected token: ; in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: mktime in <file> | 1 |
 | skip Can't find german locale | 1 |
@@ -297,7 +296,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/timeout_variation_2.phpt` | skipped | skipped | skip Windows only test |
 | `php/basic/timeout_variation_4.phpt` | skipped | skipped | skip Windows only test |
 | `php/basic/timeout_variation_7.phpt` | pass | pass |  |
-| `php/basic/timeout_variation_8.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: infiniteiterator in <file> |
+| `php/basic/timeout_variation_8.phpt` | pass | pass |  |
 | `php/basic/timeout_variation_9.phpt` | skipped | skipped | skip Windows only test |
 | `php/func/001.phpt` | pass | pass |  |
 | `php/func/002.phpt` | pass | pass |  |
