@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 39, differs 37, error 28, skipped 10 | pass 39, differs 37, error 28, skipped 10 |
 | `php/func` | 14 | pass 7, differs 3, error 4, skipped 0 | pass 7, differs 3, error 4, skipped 0 |
-| `php/lang` | 213 | pass 62, differs 57, error 89, skipped 5 | pass 62, differs 57, error 89, skipped 5 |
+| `php/lang` | 213 | pass 66, differs 54, error 88, skipped 5 | pass 66, differs 54, error 88, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 30, differs 21, error 7, skipped 6 | pass 30, differs 21, error 7, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 143, differs 126, error 128, skipped 25 | pass 143, differs 126, error 128, skipped 25 |
+| all | 422 | pass 147, differs 123, error 127, skipped 25 | pass 147, differs 123, error 127, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 126 |
+| ran, printed something else | 123 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | Unexpected character '$' | 6 |
@@ -337,15 +337,15 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/012.phpt` | pass | pass |  |
 | `php/lang/013.phpt` | pass | pass |  |
 | `php/lang/014.phpt` | pass | pass |  |
-| `php/lang/015.phpt` | differs | differs | ran, printed something else |
-| `php/lang/016.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: MyFunc in <file> |
+| `php/lang/015.phpt` | pass | pass |  |
+| `php/lang/016.phpt` | pass | pass |  |
 | `php/lang/017.phpt` | pass | pass |  |
 | `php/lang/018.phpt` | pass | pass |  |
 | `php/lang/019.phpt` | error | error | Fatal error: Uncaught Error: Unexpected token: ; in <file> |
 | `php/lang/020.phpt` | pass | pass |  |
 | `php/lang/021.phpt` | pass | pass |  |
 | `php/lang/022.phpt` | pass | pass |  |
-| `php/lang/023.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: mktime in <file> |
+| `php/lang/023.phpt` | error | error | Fatal error: Uncaught Error: Unexpected character '$' in <file> |
 | `php/lang/024.phpt` | error | error | Unexpected character '$' |
 | `php/lang/025.phpt` | pass | pass |  |
 | `php/lang/026.phpt` | pass | pass |  |
@@ -499,9 +499,9 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/func_num_args.002.phpt` | pass | pass |  |
 | `php/lang/func_num_args.003.phpt` | differs | differs | ran, printed something else |
 | `php/lang/func_num_args.004.phpt` | pass | pass |  |
-| `php/lang/include_variation1.phpt` | differs | differs | ran, printed something else |
-| `php/lang/include_variation2.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: test in <file> |
-| `php/lang/include_variation3.phpt` | differs | differs | ran, printed something else |
+| `php/lang/include_variation1.phpt` | pass | pass |  |
+| `php/lang/include_variation2.phpt` | differs | differs | ran, printed something else |
+| `php/lang/include_variation3.phpt` | pass | pass |  |
 | `php/lang/integer_literals/binary_32bit.phpt` | skipped | skipped | skip this test is for 32bit platform only |
 | `php/lang/integer_literals/binary_64bit.phpt` | pass | pass |  |
 | `php/lang/integer_literals/hexadecimal_32bit.phpt` | skipped | skipped | skip this test is for 32bit platform only |
@@ -612,7 +612,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/string_decimals_001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: int in <file> |
 | `php/lang/syntax_errors.phpt` | error | error | Fatal error: Uncaught Error: Expected ')' to close a group, got ';' in <file> |
 | `php/lang/this_assignment.phpt` | pass | pass |  |
-| `php/lang/throw_variation_001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/throw_variation_001.phpt` | error | error | Fatal error: Uncaught Error: Uncaught Exception: in <file> |
 | `php/lang/type_hints_001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/type_hints_002.phpt` | differs | differs | ran, printed something else |
 | `php/lang/type_hints_003.phpt` | differs | differs | ran, printed something else |

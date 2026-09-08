@@ -406,7 +406,12 @@ only. The extension labels so far, all from PHP:
   run in the same way, as though it had been written where the call
   stands. A file that cannot be read answers false rather than stopping
   the run. The text is read as a whole program of the language, opening
-  as one, so a file spelling its own opening needs no second one.
+  as one, so a file spelling its own opening needs no second one. The
+  file is looked for beside the one asking for it before it is looked
+  for where the run was started, since a program naming a file beside
+  itself means the one beside itself; and while its text runs, that
+  file is where the run is written, so a complaint names it and a file
+  it asks for in turn is looked for beside it.
 - `ext.builtin.time_limit`: a builtin saying how long the run may take
   from here, counted in seconds, with nought taking the limit away. A
   run that passes it is stopped and told with the word for the end of a

@@ -418,15 +418,26 @@ impl<'a> Machine<'a> {
 
     /// Build source against the globals this run already has and run it
     /// where it stands, giving back what it answered with.
-    fn run_source(&mut self, source: &str) -> Result<Value, String> {
+    /// Text read as the run goes, built and run where it stands. Where
+    /// it came out of a file of its own, that file is where the run is
+    /// written while it lasts: a complaint names it, and a file it asks
+    /// for in turn is sought beside it.
+    fn run_source(&mut self, source: &str, came_out_of: Option<String>) -> Result<Value, String> {
         let tokens = crate::scan::scan(source, self.table)?;
         let tokens = crate::indent::indent(tokens, self.table)?;
         let built = crate::build::build(&tokens, self.table, &self.idents, HashMap::new(), true, 0)?;
         self.idents = built.globals;
         // Names the new source brought with it want room to stand in.
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
+        let (was_in, was_on) = (self.written_in.clone(), self.row);
+        if let Some(place) = came_out_of {
+            self.written_in = place;
+        }
         let top = self.outermost.clone();
-        match self.value_of(&built.program.body, &top) {
+        let ran = self.value_of(&built.program.body, &top);
+        self.written_in = was_in;
+        self.row = was_on;
+        match ran {
             Ok(answer) => Ok(match answer {
                 // Nothing answered is a plain yes, as such a language says.
                 Value::Nil | Value::Unset => Value::Small(1),
@@ -1298,6 +1309,7 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 let w = self.wording();
                 let given = v[0].render(w);
+                let mut came_out_of = None;
                 let source = match op {
                     // Text handed over to be run is code already; a file
                     // is text with code marked out inside it, so only
@@ -1306,12 +1318,27 @@ impl<'a> Machine<'a> {
                         Some(open) => format!("{}\n{}", open, given),
                         None => given,
                     },
-                    _ => match std::fs::read(&given) {
-                        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-                        Err(_) => return Ok(Value::Flag(false)),
-                    },
+                    // A file is sought beside the one asking for it
+                    // before it is sought where the run began: a program
+                    // naming a file beside itself means that one.
+                    _ => {
+                        let near = std::path::Path::new(&self.written_in).parent().map(|place| place.join(&given));
+                        let near = near.filter(|place| place.exists());
+                        came_out_of = Some(match &near {
+                            Some(place) => place.to_string_lossy().into_owned(),
+                            None => given.clone(),
+                        });
+                        let held = match near {
+                            Some(place) => std::fs::read(place),
+                            None => std::fs::read(&given),
+                        };
+                        match held {
+                            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                            Err(_) => return Ok(Value::Flag(false)),
+                        }
+                    }
                 };
-                return self.run_source(&source);
+                return self.run_source(&source, came_out_of);
             }
             // Reaching outside the run, which only a language that
             // spells these labels does at all. What cannot be done

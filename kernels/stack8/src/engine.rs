@@ -127,13 +127,24 @@ impl<'a> Engine<'a> {
 
     /// Assemble source against the globals this run already has and run
     /// it where it stands, giving back whatever it answered with.
-    fn run_source(&mut self, source: &str) -> Res<Value> {
+    /// Text read while the run is going, built and run where it stands.
+    /// Where it came from a file of its own, that file is where the run
+    /// is written for as long as it lasts: a complaint names it, and a
+    /// file it asks for in turn is looked for beside it.
+    fn run_source(&mut self, source: &str, came_from: Option<String>) -> Res<Value> {
         let tokens = crate::layout::layout(crate::lex::lex(source, self.lang)?, self.lang)?;
         let program = crate::compile::compile(&tokens, self.lang, &mut self.registry, 0)?;
         // Names the new source brought with it want room in the world.
         self.world.resize(self.registry.idents.len(), Value::Blank);
+        let (was_written_in, was_on) = (self.source.clone(), self.line);
+        if let Some(place) = came_from {
+            self.source = place;
+        }
         let base = self.data.len();
-        match self.invoke(&program, Vec::new()) {
+        let ran = self.invoke(&program, Vec::new());
+        self.source = was_written_in;
+        self.line = was_on;
+        match ran {
             Ok(()) => {}
             Err(Fault::Note(told)) => return Err(told),
             Err(other) => return Err(other.told(&self.names())),
@@ -1554,6 +1565,7 @@ impl<'a> Engine<'a> {
                 arity(1)?;
                 let sp = self.wording();
                 let given = args[0].display(&sp);
+                let mut came_from = None;
                 let source = match builtin {
                     // Text given to be run is code already, where a
                     // file is text with code marked out inside it, so
@@ -1563,12 +1575,28 @@ impl<'a> Engine<'a> {
                         Some(open) => format!("{}\n{}", open, given),
                         None => given,
                     },
-                    _ => match std::fs::read(&given) {
-                        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-                        Err(_) => return Ok(Value::Flag(false)),
-                    },
+                    // A file is looked for beside the one asking for it
+                    // before it is looked for where the run was started,
+                    // since a program naming a file beside itself means
+                    // the one beside itself.
+                    _ => {
+                        let beside = std::path::Path::new(&self.source).parent().map(|near| near.join(&given));
+                        let near = beside.filter(|near| near.exists());
+                        came_from = Some(match &near {
+                            Some(place) => place.to_string_lossy().into_owned(),
+                            None => given.clone(),
+                        });
+                        let found = match near {
+                            Some(place) => std::fs::read(place),
+                            None => std::fs::read(&given),
+                        };
+                        match found {
+                            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                            Err(_) => return Ok(Value::Flag(false)),
+                        }
+                    }
                 };
-                return self.run_source(&source);
+                return self.run_source(&source, came_from);
             }
             // Reaching outside the run: only a language that spells
             // these labels can, and what cannot be done gives false
