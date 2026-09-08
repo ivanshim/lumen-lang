@@ -2741,6 +2741,20 @@ impl<'a> Compiler<'a> {
             }
             // A read of the binding a value names turns into a write
             // of it: the text stays where it is and the value follows.
+            // `$GLOBALS['n'] = &e`: the binding the name spells is
+            // fastened to the cell, as a name written out would be.
+            [rest @ .., Instr::Act(Action::Named, 1)]
+                if compound.is_none() && self.lang.reference_mark.as_ref().map_or(false, |m| self.at_symbol(m)) =>
+            {
+                for w in relocated(rest.to_vec(), 0) {
+                    self.put(w);
+                }
+                self.take();
+                self.a_cell(&self.lang.unshared_written.clone(), false, None)?;
+                self.act(Action::FastenNamed, 2);
+                self.put_away();
+                Ok(())
+            }
             [rest @ .., Instr::Act(Action::Named, 1)] if compound.is_none() => {
                 for w in relocated(rest.to_vec(), 0) {
                     self.put(w);

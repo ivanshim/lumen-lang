@@ -19,23 +19,22 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 87, differs 2, error 15, skipped 10 | pass 87, differs 2, error 15, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 167, differs 21, error 20, skipped 5 | pass 167, differs 21, error 20, skipped 5 |
+| `php/lang` | 213 | pass 167, differs 22, error 19, skipped 5 | pass 167, differs 22, error 19, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 48, differs 9, error 1, skipped 6 | pass 48, differs 9, error 1, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 328, differs 33, error 36, skipped 25 | pass 328, differs 33, error 36, skipped 25 |
+| all | 422 | pass 328, differs 34, error 35, skipped 25 | pass 328, differs 34, error 35, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 33 |
+| ran, printed something else | 34 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | skip php-cgi not available | 2 |
 | timeout | 2 |
 | Parse error: Unexpected token: { in <file> | 2 |
 | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> | 2 |
-| Parse error: Unexpected token: & in <file> | 2 |
 | thrown in <file> | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
@@ -57,6 +56,7 @@ is listed, since the full kernels are meant to behave alike.
 | skip Can't find german locale | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_declared_classes in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> | 1 |
+| Fatal error: Uncaught Error: 'foo' is not a function in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: debug_backtrace in <file> | 1 |
 | Fatal error: Uncaught Error: Function typehint_ref expects 2 arguments, got 1 in <file> | 1 |
 | Fatal error: Uncaught Error: Cannot call method 'get_name' on a value that is not an object in <file> | 1 |
@@ -351,7 +351,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/026.phpt` | pass | pass |  |
 | `php/lang/027.phpt` | pass | pass |  |
 | `php/lang/028.phpt` | error | error | Fatal error: Uncaught Error: Cannot call method 'GetMyName' on a value that is not an object in <file> |
-| `php/lang/030.phpt` | error | error | Parse error: Unexpected token: & in <file> |
+| `php/lang/030.phpt` | differs | differs | ran, printed something else |
 | `php/lang/032.phpt` | pass | pass |  |
 | `php/lang/033.phpt` | pass | pass |  |
 | `php/lang/034.phpt` | skipped | skipped | skip Can't find german locale |
@@ -381,7 +381,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug21820.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug21849.phpt` | pass | pass |  |
 | `php/lang/bug21961.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> |
-| `php/lang/bug22231.phpt` | error | error | Parse error: Unexpected token: & in <file> |
+| `php/lang/bug22231.phpt` | error | error | Fatal error: Uncaught Error: 'foo' is not a function in <file> |
 | `php/lang/bug22510.phpt` | pass | pass |  |
 | `php/lang/bug22592.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug23279.phpt` | error | error | thrown in <file> |

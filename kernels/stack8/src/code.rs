@@ -136,6 +136,9 @@ pub enum Action {
     /// Take the place the key names out of whatever the cell below it
     /// holds, leaving everything else where it was.
     ForgetWithin,
+    /// Fasten the binding a value spells to the cell above it, so the
+    /// two names stand for the one cell.
+    FastenNamed,
     /// The value above made a value of that kind (ext.op.cast).
     Cast(crate::value::Sort),
     /// Whether the value above is nothing at all.

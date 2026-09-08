@@ -1414,6 +1414,17 @@ impl<'a> Machine<'a> {
                 self.outermost.cells.borrow_mut()[at] = Value::Unset;
                 Ok(Value::Nil)
             }
+            Form::TieCalled(spells, cell) => {
+                let spelled = self.value_of(spells, frame)?;
+                let held = self.value_of(cell, frame)?;
+                let name = self.name_it_spells(&spelled);
+                let at = self.place_called(&name);
+                // What has no cell to share is simply written, as a
+                // language asking to share one from something without
+                // one does rather than stopping.
+                self.outermost.cells.borrow_mut()[at] = held;
+                Ok(Value::Nil)
+            }
             Form::ReadyCalled(spells) => {
                 let spelled = self.value_of(spells, frame)?;
                 let name = self.name_it_spells(&spelled);

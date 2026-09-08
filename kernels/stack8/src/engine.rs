@@ -1471,6 +1471,18 @@ impl<'a> Engine<'a> {
                 drop(inside);
                 Value::Null
             }
+            Action::FastenNamed => {
+                let held = self.drop_top()?;
+                let spelled = self.drop_top()?;
+                let name = self.name_spelled(&spelled);
+                let at = self.registry.slot(&name);
+                self.world.resize(self.registry.idents.len(), Value::Blank);
+                // What has no cell to share is simply written, as a
+                // language that asks to share one from something that
+                // has none does rather than stopping.
+                self.world[at] = held;
+                Value::Null
+            }
             // A value made a value of another kind. Numbers give up what
             // lies past the point, text is read for the number it opens
             // with, and anything that is not an array becomes an array

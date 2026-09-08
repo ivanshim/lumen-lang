@@ -2339,6 +2339,13 @@ impl<'a> Builder<'a> {
                     false => tie,
                 });
             }
+            // `$GLOBALS['n'] = &e`: the binding the name spells is tied
+            // to the cell, as a name written out would be.
+            if let Form::Called(spells) = expr {
+                self.advance();
+                let shared = self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.written").to_vec(), false, None)?;
+                return Ok(Form::TieCalled(spells, Box::new(shared)));
+            }
         }
         // Where the value is already worked out and waiting in a cell,
         // the write reads it from there rather than reading what comes

@@ -322,6 +322,9 @@ pub enum Form {
     /// Make the outermost binding this value spells ready, as the form
     /// above does for one written out.
     ReadyCalled(Box<Form>),
+    /// Tie the outermost binding a value spells to a shared cell, so
+    /// that name and the cell's other names stand for the one cell.
+    TieCalled(Box<Form>, Box<Form>),
     /// Leave this binding as though nothing were ever written to it.
     Forget(Address),
     /// Make this global ready: where nothing was ever written to it,
