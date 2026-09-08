@@ -3043,7 +3043,12 @@ impl<'a> Builder<'a> {
     /// go by its name however the name is written, every class binds
     /// its name written small, so that each way of writing it arrives.
     fn class_binding(&self, name: &str) -> String {
-        match self.table.flag("ext.system.class.folded") {
+        // A binding written where a class is named stays a binding, and
+        // bindings are told apart by how they are written; only a
+        // class's own name is bound however it is written.
+        let sigil = self.table.letter("identifier.variable_prefix");
+        let a_binding = sigil.map_or(false, |mark| name.starts_with(mark));
+        match self.table.flag("ext.system.class.folded") && !a_binding {
             true => name.to_lowercase(),
             false => name.to_string(),
         }

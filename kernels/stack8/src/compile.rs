@@ -2975,7 +2975,11 @@ impl<'a> Compiler<'a> {
     /// by its name however the name is written, every class is filed
     /// with its letters made small, so that each spelling finds it.
     fn class_key(&self, name: &str) -> String {
-        match self.lang.classes_folded {
+        // A binding standing where a class is named is a binding still,
+        // and bindings are told apart by how they are written; only a
+        // class's own name is filed however it is written.
+        let a_binding = self.lang.sigil.map_or(false, |mark| name.starts_with(mark));
+        match self.lang.classes_folded && !a_binding {
             true => name.to_lowercase(),
             false => name.to_string(),
         }
