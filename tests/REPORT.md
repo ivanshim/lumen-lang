@@ -17,18 +17,18 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 47, differs 31, error 26, skipped 10 | pass 47, differs 31, error 26, skipped 10 |
-| `php/func` | 14 | pass 11, differs 2, error 1, skipped 0 | pass 11, differs 2, error 1, skipped 0 |
+| `php/basic` | 114 | pass 48, differs 30, error 26, skipped 10 | pass 48, differs 30, error 26, skipped 10 |
+| `php/func` | 14 | pass 13, differs 0, error 1, skipped 0 | pass 13, differs 0, error 1, skipped 0 |
 | `php/lang` | 213 | pass 111, differs 40, error 57, skipped 5 | pass 111, differs 40, error 57, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 21, error 3, skipped 6 | pass 34, differs 21, error 3, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 208, differs 102, error 87, skipped 25 | pass 208, differs 102, error 87, skipped 25 |
+| all | 422 | pass 211, differs 99, error 87, skipped 25 | pass 211, differs 99, error 87, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 102 |
+| ran, printed something else | 99 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
@@ -284,7 +284,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/precision.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: serialize in <file> |
 | `php/basic/req44164.phpt` | pass | pass |  |
 | `php/basic/req60524-win.phpt` | skipped | skipped | skip Run only on Windows |
-| `php/basic/req60524.phpt` | differs | differs | ran, printed something else |
+| `php/basic/req60524.phpt` | pass | pass |  |
 | `php/basic/rfc1867_anonymous_upload.phpt` | pass | pass |  |
 | `php/basic/rfc1867_array_upload.phpt` | pass | pass |  |
 | `php/basic/rfc1867_boundary_1.phpt` | pass | pass |  |
@@ -320,8 +320,8 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/func/008.phpt` | pass | pass |  |
 | `php/func/009.phpt` | pass | pass |  |
 | `php/func/010.phpt` | pass | pass |  |
-| `php/func/011.phpt` | differs | differs | ran, printed something else |
-| `php/func/bug64523.phpt` | differs | differs | ran, printed something else |
+| `php/func/011.phpt` | pass | pass |  |
+| `php/func/bug64523.phpt` | pass | pass |  |
 | `php/func/ini_alter.phpt` | pass | pass |  |
 | `php/lang/001.phpt` | pass | pass |  |
 | `php/lang/002.phpt` | pass | pass |  |

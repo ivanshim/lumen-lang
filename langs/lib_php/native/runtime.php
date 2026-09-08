@@ -35,7 +35,10 @@ define("E_STRICT", 2048);
 define("E_RECOVERABLE_ERROR", 4096);
 define("E_DEPRECATED", 8192);
 define("E_USER_DEPRECATED", 16384);
-define("E_ALL", 32767);
+// Every kind of complaint a program may ask to be told of. The kind
+// once called strict is no longer one of them, though its number is
+// still spelled.
+define("E_ALL", 30719);
 define("SORT_REGULAR", 0);
 define("SORT_NUMERIC", 1);
 define("SORT_STRING", 2);
@@ -53,8 +56,9 @@ define("PHP_OUTPUT_HANDLER_CONT", 0);
 // Which kinds of complaint are to be said at all, and the routine a
 // program has put in the way of them. A run starts saying all of them
 // and with no routine of its own in the way.
-$__reporting = 32767;
+$__reporting = __ini_reporting();
 $__error_handler = null;
+__hook_as_needed();
 function error_reporting($level = null) {
     global $__reporting;
     $was = $__reporting;
@@ -84,7 +88,13 @@ function ini_get($name) {
     global $__settings;
     if (array_key_exists($name, $__settings)) { return $__settings[$name]; }
     $carried = 'PHP_INI_' . $name;
-    if (array_key_exists($carried, $_ENV)) { return $_ENV[$carried]; }
+    if (array_key_exists($carried, $_ENV)) {
+        $held = $_ENV[$carried];
+        // A setting counted in kinds of complaint is written as an
+        // expression over their words, and answers as the number.
+        if ($name === "error_reporting") { return (string)__ini_number($held); }
+        return $held;
+    }
     return false;
 }
 // Only a setting the language has may be written to; a name that is
@@ -147,7 +157,7 @@ function ini_parse_quantity($text) {
     return leading_whole($text) * $times;
 }
 
-function set_error_handler($handler, $levels = 32767) {
+function set_error_handler($handler, $levels = 30719) {
     global $__error_handler;
     $was = $__error_handler;
     $__error_handler = $handler;
@@ -397,7 +407,11 @@ function is_callable($value) { return false; }
 
 // What a run from a command line has nothing to answer with, and the
 // few library functions that only need what is already here.
-function sys_get_temp_dir() { return "/tmp"; }
+function sys_get_temp_dir() {
+    $named = ini_get("sys_temp_dir");
+    if ($named !== false && $named !== "") { return $named; }
+    return "/tmp";
+}
 function header($line, $replace = true, $code = 0) { return null; }
 function headers_sent() { return false; }
 function headers_list() { return array(); }
@@ -868,4 +882,84 @@ function number_format($number, $places = 0, $point = ".", $between = ",") {
     $grouped = substr($whole, 0, $left) . $grouped;
     if ($places > 0) { return $sign . $grouped . $point . $rest; }
     return $sign . $grouped;
+}
+
+// A setting written as an expression over the words a language names its
+// kinds of complaint by: the words and numbers taken together with the
+// marks that work on bits. What binds tightest is a mark before a value,
+// then both bits, then one bit, then either bit.
+$__ini_at = 0;
+function __ini_word($text) {
+    global $__ini_at;
+    while ($__ini_at < strlen($text) && $text[$__ini_at] === " ") { $__ini_at = $__ini_at + 1; }
+    if ($__ini_at >= strlen($text)) { return ""; }
+    $c = $text[$__ini_at];
+    if (strpos("&|^~!()", $c) !== false) { $__ini_at = $__ini_at + 1; return $c; }
+    $from = $__ini_at;
+    while ($__ini_at < strlen($text) && strpos(" &|^~!()", $text[$__ini_at]) === false) { $__ini_at = $__ini_at + 1; }
+    return substr($text, $from, $__ini_at - $from);
+}
+function __ini_peek($text) {
+    global $__ini_at;
+    $was = $__ini_at;
+    $word = __ini_word($text);
+    $__ini_at = $was;
+    return $word;
+}
+function __ini_value($text) {
+    $word = __ini_word($text);
+    if ($word === "~") { return ~__ini_value($text); }
+    if ($word === "!") { return __ini_value($text) ? 0 : 1; }
+    if ($word === "(") { $held = __ini_either($text); __ini_word($text); return $held; }
+    if ($word === "") { return 0; }
+    return __ini_named($word);
+}
+// The words a setting may be written with, and what each is worth.
+function __ini_named($word) {
+    if ($word === "E_ERROR") { return E_ERROR; }
+    if ($word === "E_WARNING") { return E_WARNING; }
+    if ($word === "E_PARSE") { return E_PARSE; }
+    if ($word === "E_NOTICE") { return E_NOTICE; }
+    if ($word === "E_CORE_ERROR") { return E_CORE_ERROR; }
+    if ($word === "E_CORE_WARNING") { return E_CORE_WARNING; }
+    if ($word === "E_COMPILE_ERROR") { return E_COMPILE_ERROR; }
+    if ($word === "E_COMPILE_WARNING") { return E_COMPILE_WARNING; }
+    if ($word === "E_USER_ERROR") { return E_USER_ERROR; }
+    if ($word === "E_USER_WARNING") { return E_USER_WARNING; }
+    if ($word === "E_USER_NOTICE") { return E_USER_NOTICE; }
+    if ($word === "E_STRICT") { return E_STRICT; }
+    if ($word === "E_RECOVERABLE_ERROR") { return E_RECOVERABLE_ERROR; }
+    if ($word === "E_DEPRECATED") { return E_DEPRECATED; }
+    if ($word === "E_USER_DEPRECATED") { return E_USER_DEPRECATED; }
+    if ($word === "E_ALL") { return E_ALL; }
+    if ($word === "On" || $word === "on" || $word === "true" || $word === "yes") { return 1; }
+    if ($word === "Off" || $word === "off" || $word === "false" || $word === "no" || $word === "none") { return 0; }
+    return whole_of($word);
+}
+function __ini_both($text) {
+    $held = __ini_value($text);
+    while (__ini_peek($text) === "&") { __ini_word($text); $held = $held & __ini_value($text); }
+    return $held;
+}
+function __ini_one($text) {
+    $held = __ini_both($text);
+    while (__ini_peek($text) === "^") { __ini_word($text); $held = $held ^ __ini_both($text); }
+    return $held;
+}
+function __ini_either($text) {
+    $held = __ini_one($text);
+    while (__ini_peek($text) === "|") { __ini_word($text); $held = $held | __ini_one($text); }
+    return $held;
+}
+// Which kinds of complaint the run was started with, where it was
+// started with a setting for them at all.
+function __ini_reporting() {
+    $carried = 'PHP_INI_error_reporting';
+    if (!array_key_exists($carried, $_ENV)) { return E_ALL; }
+    return __ini_number($_ENV[$carried]);
+}
+function __ini_number($text) {
+    global $__ini_at;
+    $__ini_at = 0;
+    return __ini_either($text);
 }
