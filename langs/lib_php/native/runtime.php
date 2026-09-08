@@ -14,6 +14,8 @@ define("PHP_VERSION", "8.4.0");
 define("PHP_MAJOR_VERSION", 8);
 define("PHP_MINOR_VERSION", 4);
 define("PHP_OS", "Linux");
+define("PHP_BUILD_DATE", "Sep  8 2026 00:00:00");
+define("INF", 1.0e400);
 define("PHP_OS_FAMILY", "Linux");
 define("PHP_ZTS", 0);
 define("PHP_DEBUG", 0);
@@ -828,6 +830,66 @@ function file_get_contents($path) {
     return __file_read($path);
 }
 function realpath($path) { return $path; }
+// Moving a file: what it held is written where it is going and taken
+// from where it was. A file that is not there to move is said so and
+// answered with false, as every other reading of one that is not there
+// is answered.
+function rename($from, $to) {
+    $held = __file_read($from);
+    if ($held === false) {
+        __complain(E_WARNING, "rename(" . $from . "," . $to . "): No such file or directory");
+        return false;
+    }
+    file_put_contents($to, $held);
+    unlink($from);
+    return true;
+}
+// Whether a name has been given a value that stands everywhere, and
+// what that value is. Both are asked by working the name out, since a
+// name that stands for nothing cannot be worked out at all.
+function defined($name) {
+    try {
+        eval("return " . $name . ";");
+    } catch (Error $e) {
+        return false;
+    }
+    return true;
+}
+function constant($name) {
+    return eval("return " . $name . ";");
+}
+// A claim a program makes about itself. Where the run is set to let
+// them go by, it is not looked at; otherwise a claim that does not hold
+// is raised, under the words the program gave for it where it gave any.
+function assert($claim, $told = null) {
+    if (ini_get("zend.assertions") === "-1") { return true; }
+    if ($claim) { return true; }
+    if ($told !== null && !is_string($told)) { throw $told; }
+    if ($told !== null) { throw new AssertionError($told); }
+    throw new AssertionError("assert(false)");
+}
+// Calling what a value names, with whatever else was handed over. The
+// value may be the name of a routine or a thing paired with the name of
+// one of its methods; either stands where a routine stands.
+function call_user_func($what) {
+    $given = func_get_args();
+    $count = func_num_args();
+    if ($count <= 1) { return $what(); }
+    if ($count == 2) { return $what($given[1]); }
+    if ($count == 3) { return $what($given[1], $given[2]); }
+    if ($count == 4) { return $what($given[1], $given[2], $given[3]); }
+    if ($count == 5) { return $what($given[1], $given[2], $given[3], $given[4]); }
+    return $what($given[1], $given[2], $given[3], $given[4], $given[5]);
+}
+function call_user_func_array($what, $given) {
+    $count = count($given);
+    if ($count == 0) { return $what(); }
+    if ($count == 1) { return $what($given[0]); }
+    if ($count == 2) { return $what($given[0], $given[1]); }
+    if ($count == 3) { return $what($given[0], $given[1], $given[2]); }
+    if ($count == 4) { return $what($given[0], $given[1], $given[2], $given[3]); }
+    return $what($given[0], $given[1], $given[2], $given[3], $given[4]);
+}
 function basename($path) {
     $at = strlen($path) - 1;
     while ($at >= 0) {

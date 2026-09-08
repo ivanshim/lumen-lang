@@ -17,14 +17,14 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 77, differs 5, error 22, skipped 10 | pass 77, differs 5, error 22, skipped 10 |
-| `php/func` | 14 | pass 13, differs 0, error 1, skipped 0 | pass 13, differs 0, error 1, skipped 0 |
-| `php/lang` | 213 | pass 122, differs 42, error 44, skipped 5 | pass 122, differs 42, error 44, skipped 5 |
+| `php/basic` | 114 | pass 81, differs 5, error 18, skipped 10 | pass 81, differs 5, error 18, skipped 10 |
+| `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
+| `php/lang` | 213 | pass 124, differs 42, error 42, skipped 5 | pass 124, differs 42, error 42, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 46, differs 10, error 2, skipped 6 | pass 46, differs 10, error 2, skipped 6 |
 | `php/lang/string` | 9 | pass 2, differs 1, error 6, skipped 0 | pass 2, differs 1, error 6, skipped 0 |
-| all | 422 | pass 264, differs 58, error 75, skipped 25 | pass 264, differs 58, error 75, skipped 25 |
+| all | 422 | pass 271, differs 58, error 68, skipped 25 | pass 271, differs 58, error 68, skipped 25 |
 
 | Reason | Tests |
 |---|---|
@@ -37,37 +37,37 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
 | skip php-cgi not available | 2 |
 | Expected an expression | 2 |
+| timeout | 2 |
 | Unexpected token: { | 2 |
 | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> | 2 |
-| Fatal error: Maximum execution time of 1 second exceeded in <file> | 2 |
 | Unexpected token: & | 2 |
 | thrown in <file> | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> | 2 |
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> | 1 |
-| Fatal error: Uncaught Error: Undefined variable: rename in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: PHP_BINARY in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: ENT_HTML5 in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> | 1 |
 | Expected identifier as the property name, got '{' | 1 |
-| timeout | 1 |
-| Fatal error: Uncaught Error: Undefined variable: PHP_BUILD_DATE in <file> | 1 |
 | skip locale needed for this test is not supported on this platform | 1 |
 | Fatal error: Uncaught Error: Undefined variable: umask in <file> | 1 |
 | skip for Windows only | 1 |
 | Fatal error: Uncaught Error: Undefined variable: serialize in <file> | 1 |
 | skip Run only on Windows | 1 |
-| Fatal error: Uncaught Error: Undefined variable: INF in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: infiniteiterator in <file> | 1 |
-| Shutdown | 1 |
 | Fatal error: Uncaught Error: Unexpected token: ; in <file> | 1 |
 | Fatal error: Uncaught Error: Unexpected token: += in <file> | 1 |
-| Fatal error: Uncaught Error: Undefined variable: call_user_func in <file> | 1 |
+| Fatal error: Uncaught Error: Cannot call method 'GetMyName' on a value that is not an object in <file> | 1 |
 | skip Can't find german locale | 1 |
-| Fatal error: Uncaught Error: Cannot reach 'b' in null in <file> | 1 |
-| Fatal error: Uncaught Error: Cannot reach 'B' in null in <file> | 1 |
+| Fatal error: Uncaught Error: Cannot reach 'b' in B in <file> | 1 |
+| Fatal error: Uncaught Error: Cannot reach 'B' in B in <file> | 1 |
 | Fatal error: Uncaught Error: Cannot call 'foo' on a value that is not a class in <file> | 1 |
+| Fatal error: Uncaught Error: Call to undefined method A::$methodname() in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: get_declared_classes in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: foo in <file> | 1 |
+| Expected identifier after the global keyword, got '$' | 1 |
 
 ### Reserved words: 55 of 68 spelled
 
@@ -234,7 +234,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/bug20539.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: session_id in <file> |
 | `php/basic/bug29971.phpt` | pass | pass |  |
 | `php/basic/bug31875.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> |
-| `php/basic/bug45986.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: rename in <file> |
+| `php/basic/bug45986.phpt` | pass | pass |  |
 | `php/basic/bug53180.phpt` | pass | pass |  |
 | `php/basic/bug54514.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: PHP_BINARY in <file> |
 | `php/basic/bug55500.phpt` | pass | pass |  |
@@ -247,7 +247,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/bug78929.phpt` | pass | pass |  |
 | `php/basic/bug79699.phpt` | pass | pass |  |
 | `php/basic/bug80384.phpt` | error | error | timeout |
-| `php/basic/build_date.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: PHP_BUILD_DATE in <file> |
+| `php/basic/build_date.phpt` | pass | pass |  |
 | `php/basic/consistent_float_string_casts.phpt` | skipped | skipped | skip locale needed for this test is not supported on this platform |
 | `php/basic/enable_post_data_reading_01.phpt` | pass | pass |  |
 | `php/basic/enable_post_data_reading_02.phpt` | pass | pass |  |
@@ -301,12 +301,12 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/rfc1867_multiple_webkitdirectory.phpt` | pass | pass |  |
 | `php/basic/rfc1867_post_max_filesize.phpt` | pass | pass |  |
 | `php/basic/rfc1867_post_max_size.phpt` | pass | pass |  |
-| `php/basic/timeout_variation_0.phpt` | error | error | Fatal error: Maximum execution time of 1 second exceeded in <file> |
+| `php/basic/timeout_variation_0.phpt` | pass | pass |  |
 | `php/basic/timeout_variation_1.phpt` | skipped | skipped | skip Windows only test |
 | `php/basic/timeout_variation_10.phpt` | skipped | skipped | skip Windows only test |
 | `php/basic/timeout_variation_2.phpt` | skipped | skipped | skip Windows only test |
 | `php/basic/timeout_variation_4.phpt` | skipped | skipped | skip Windows only test |
-| `php/basic/timeout_variation_7.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: INF in <file> |
+| `php/basic/timeout_variation_7.phpt` | pass | pass |  |
 | `php/basic/timeout_variation_8.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: infiniteiterator in <file> |
 | `php/basic/timeout_variation_9.phpt` | skipped | skipped | skip Windows only test |
 | `php/func/001.phpt` | pass | pass |  |
@@ -314,7 +314,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/func/003.phpt` | pass | pass |  |
 | `php/func/004.phpt` | pass | pass |  |
 | `php/func/005.phpt` | pass | pass |  |
-| `php/func/005a.phpt` | error | error | Shutdown |
+| `php/func/005a.phpt` | pass | pass |  |
 | `php/func/006.phpt` | pass | pass |  |
 | `php/func/007.phpt` | pass | pass |  |
 | `php/func/008.phpt` | pass | pass |  |
@@ -350,7 +350,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/025.phpt` | pass | pass |  |
 | `php/lang/026.phpt` | pass | pass |  |
 | `php/lang/027.phpt` | pass | pass |  |
-| `php/lang/028.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: call_user_func in <file> |
+| `php/lang/028.phpt` | error | error | Fatal error: Uncaught Error: Cannot call method 'GetMyName' on a value that is not an object in <file> |
 | `php/lang/030.phpt` | error | error | Unexpected token: & |
 | `php/lang/032.phpt` | pass | pass |  |
 | `php/lang/033.phpt` | differs | differs | ran, printed something else |
@@ -361,11 +361,11 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/038.phpt` | error | error | thrown in <file> |
 | `php/lang/039.phpt` | pass | pass |  |
 | `php/lang/040.phpt` | pass | pass |  |
-| `php/lang/041.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'b' in null in <file> |
-| `php/lang/042.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'B' in null in <file> |
+| `php/lang/041.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'b' in B in <file> |
+| `php/lang/042.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'B' in B in <file> |
 | `php/lang/043.phpt` | error | error | Fatal error: Uncaught Error: Cannot call 'foo' on a value that is not a class in <file> |
 | `php/lang/044.phpt` | error | error | Fatal error: Uncaught Error: Call to undefined method A::$methodname() in <file> |
-| `php/lang/045.phpt` | error | error | Fatal error: Maximum execution time of 1 second exceeded in <file> |
+| `php/lang/045.phpt` | error | error | timeout |
 | `php/lang/array_shortcut_001.phpt` | pass | pass |  |
 | `php/lang/array_shortcut_002.phpt` | pass | pass |  |
 | `php/lang/array_shortcut_003.phpt` | pass | pass |  |
@@ -411,7 +411,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug26869.phpt` | pass | pass |  |
 | `php/lang/bug27354.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug27439.phpt` | pass | pass |  |
-| `php/lang/bug27443.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: defined in <file> |
+| `php/lang/bug27443.phpt` | pass | pass |  |
 | `php/lang/bug27535.phpt` | pass | pass |  |
 | `php/lang/bug28213.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug28800.phpt` | pass | pass |  |
@@ -616,7 +616,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/type_hints_001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/type_hints_002.phpt` | differs | differs | ran, printed something else |
 | `php/lang/type_hints_003.phpt` | differs | differs | ran, printed something else |
-| `php/lang/zend_throw_exception_001.phpt` | error | error | Fatal error: Uncaught Error: '$name' is not a function in <file> |
+| `php/lang/zend_throw_exception_001.phpt` | pass | pass |  |
 | `python/test_augassign.py` | error | error | Unexpected character '&' |
 | `python/test_bigmem.py` | error | error | Unexpected character '@' |
 | `python/test_binop.py` | error | error | Unexpected token: , |
