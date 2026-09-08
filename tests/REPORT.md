@@ -17,20 +17,19 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 73, differs 5, error 26, skipped 10 | pass 73, differs 5, error 26, skipped 10 |
+| `php/basic` | 114 | pass 76, differs 6, error 22, skipped 10 | pass 76, differs 6, error 22, skipped 10 |
 | `php/func` | 14 | pass 13, differs 0, error 1, skipped 0 | pass 13, differs 0, error 1, skipped 0 |
-| `php/lang` | 213 | pass 115, differs 43, error 50, skipped 5 | pass 115, differs 43, error 50, skipped 5 |
+| `php/lang` | 213 | pass 116, differs 43, error 49, skipped 5 | pass 116, differs 43, error 49, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 22, error 2, skipped 6 | pass 34, differs 22, error 2, skipped 6 |
 | `php/lang/string` | 9 | pass 2, differs 1, error 6, skipped 0 | pass 2, differs 1, error 6, skipped 0 |
-| all | 422 | pass 241, differs 71, error 85, skipped 25 | pass 241, differs 71, error 85, skipped 25 |
+| all | 422 | pass 245, differs 72, error 80, skipped 25 | pass 245, differs 72, error 80, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 71 |
+| ran, printed something else | 72 |
 | skip this test is for 32bit platform only | 9 |
-| Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
 | Fatal error: Uncaught Error: Undefined variable: iterator in <file> | 5 |
 | Invalid UTF-8 codepoint escape sequence | 5 |
@@ -43,6 +42,7 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> | 2 |
 | Fatal error: Maximum execution time of 1 second exceeded in <file> | 2 |
 | Unexpected token: & | 2 |
+| thrown in <file> | 2 |
 | Fatal error: Uncaught Error: Only a class can be made into an object in <file> | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> | 2 |
@@ -53,6 +53,7 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: ENT_HTML5 in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> | 1 |
 | Expected identifier as the property name, got '{' | 1 |
+| timeout | 1 |
 | Fatal error: Uncaught Error: Undefined variable: PHP_BUILD_DATE in <file> | 1 |
 | skip locale needed for this test is not supported on this platform | 1 |
 | Fatal error: Uncaught Error: Undefined variable: umask in <file> | 1 |
@@ -67,7 +68,6 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: call_user_func in <file> | 1 |
 | skip Can't find german locale | 1 |
 | Fatal error: Uncaught Error: Cannot reach 'b' in null in <file> | 1 |
-| Fatal error: Uncaught Error: Cannot reach 'B' in null in <file> | 1 |
 
 ### Reserved words: 55 of 68 spelled
 
@@ -246,16 +246,16 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/bug78236.phpt` | pass | pass |  |
 | `php/basic/bug78929.phpt` | pass | pass |  |
 | `php/basic/bug79699.phpt` | pass | pass |  |
-| `php/basic/bug80384.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
+| `php/basic/bug80384.phpt` | error | error | timeout |
 | `php/basic/build_date.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: PHP_BUILD_DATE in <file> |
 | `php/basic/consistent_float_string_casts.phpt` | skipped | skipped | skip locale needed for this test is not supported on this platform |
 | `php/basic/enable_post_data_reading_01.phpt` | pass | pass |  |
 | `php/basic/enable_post_data_reading_02.phpt` | pass | pass |  |
 | `php/basic/enable_post_data_reading_03.phpt` | pass | pass |  |
 | `php/basic/enable_post_data_reading_04.phpt` | pass | pass |  |
-| `php/basic/enable_post_data_reading_05.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
-| `php/basic/enable_post_data_reading_06.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
-| `php/basic/enable_post_data_reading_07.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
+| `php/basic/enable_post_data_reading_05.phpt` | pass | pass |  |
+| `php/basic/enable_post_data_reading_06.phpt` | pass | pass |  |
+| `php/basic/enable_post_data_reading_07.phpt` | differs | differs | ran, printed something else |
 | `php/basic/encoding.phpt` | pass | pass |  |
 | `php/basic/errorlog_permission.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: umask in <file> |
 | `php/basic/gh15905.phpt` | pass | pass |  |
@@ -272,7 +272,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/gh17951_runtime_change_5.phpt` | pass | pass |  |
 | `php/basic/gh17951_runtime_change_6.phpt` | pass | pass |  |
 | `php/basic/gh20858.phpt` | pass | pass |  |
-| `php/basic/gh20964.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
+| `php/basic/gh20964.phpt` | pass | pass |  |
 | `php/basic/gh7896.phpt` | skipped | skipped | skip for Windows only |
 | `php/basic/header_register_callback.phpt` | error | error | Unexpected token: { |
 | `php/basic/header_register_callback_after_output.phpt` | error | error | Unexpected token: { |
@@ -358,8 +358,8 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/035.phpt` | pass | pass |  |
 | `php/lang/036.phpt` | differs | differs | ran, printed something else |
 | `php/lang/037.phpt` | pass | pass |  |
-| `php/lang/038.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
-| `php/lang/039.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: fopen in <file> |
+| `php/lang/038.phpt` | error | error | thrown in <file> |
+| `php/lang/039.phpt` | pass | pass |  |
 | `php/lang/040.phpt` | pass | pass |  |
 | `php/lang/041.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'b' in null in <file> |
 | `php/lang/042.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'B' in null in <file> |
