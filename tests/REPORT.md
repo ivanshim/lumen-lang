@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 94, differs 2, error 8, skipped 10 | pass 94, differs 2, error 8, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 183, differs 19, error 6, skipped 5 | pass 183, differs 19, error 6, skipped 5 |
+| `php/lang` | 213 | pass 184, differs 18, error 6, skipped 5 | pass 184, differs 18, error 6, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 49, differs 8, error 1, skipped 6 | pass 49, differs 8, error 1, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 352, differs 30, error 15, skipped 25 | pass 352, differs 30, error 15, skipped 25 |
+| all | 422 | pass 353, differs 29, error 15, skipped 25 | pass 353, differs 29, error 15, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 30 |
+| ran, printed something else | 29 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | skip php-cgi not available | 2 |
@@ -400,7 +400,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug27439.phpt` | pass | pass |  |
 | `php/lang/bug27443.phpt` | pass | pass |  |
 | `php/lang/bug27535.phpt` | pass | pass |  |
-| `php/lang/bug28213.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug28213.phpt` | pass | pass |  |
 | `php/lang/bug28800.phpt` | pass | pass |  |
 | `php/lang/bug29566.phpt` | pass | pass |  |
 | `php/lang/bug29893.phpt` | pass | pass |  |

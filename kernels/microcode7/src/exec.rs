@@ -2751,59 +2751,27 @@ impl<'a> Machine<'a> {
             // globals it already has and run where it stands. A file
             // that cannot be read answers false, as such a language says.
             Prim::Weigh | Prim::Bring | Prim::BringOnce => {
-                n(1)?;
-                let w = self.wording();
-                let given = v[0].render(w);
-                let mut came_out_of = None;
-                let source = match op {
-                    // Text handed over to be run is code already; a file
-                    // is text with code marked out inside it, so only
-                    // the first wants the mark that opens code.
-                    Prim::Weigh => match self.table.single("lexical.prologue") {
-                        Some(open) => format!("{}\n{}", open, given),
-                        None => given,
-                    },
-                    // A file is sought beside the one asking for it
-                    // before it is sought where the run began: a program
-                    // naming a file beside itself means that one.
-                    _ => {
-                        let near = std::path::Path::new(self.written_in.as_ref()).parent().map(|place| place.join(&given));
-                        let near = near.filter(|place| place.exists());
-                        came_out_of = Some(match &near {
-                            Some(place) => place.to_string_lossy().into_owned(),
-                            None => given.clone(),
-                        });
-                        let held = match near {
-                            Some(place) => std::fs::read(place),
-                            None => std::fs::read(&given),
-                        };
-                        // A file asked for once only is read the first
-                        // time and passed over after, under whatever
-                        // name it was asked for, since it is the file
-                        // and not the name that stands.
-                        if op == Prim::BringOnce {
-                            let place = came_out_of.clone().unwrap_or_else(|| given.clone());
-                            let whole = std::fs::canonicalize(&place).map(|p| p.to_string_lossy().into_owned()).unwrap_or(place);
-                            if !self.read_before.borrow_mut().insert(whole) {
-                                return Ok(Value::Flag(true));
-                            }
-                        }
-                        match held {
-                            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-                            // A file that will not be read is not there
-                            // as far as the run can tell: it says so
-                            // twice, of the file and of the reading in,
-                            // and answers false.
-                            Err(_) => {
-                                self.grumble("warning", &format!("{}(): Failed to open stream: No such file or directory", name));
-                                let told = format!("{}(): Failed opening '{}' for inclusion (include_path='.')", name, given);
-                                self.grumble("warning", &told);
-                                return Ok(Value::Flag(false));
-                            }
-                        }
+                // A source read in stands as a call of its own, so that
+                // a fault raised in the reading, or by what it reads,
+                // names the reading among the calls it stood under.
+                self.calls.push(Called {
+                    named: Rc::from(name),
+                    within: None,
+                    from: self.written_in.clone(),
+                    on: self.row,
+                    handed_at: None,
+                });
+                let done = self.read_in(op, name, v);
+                // A complaint the reading raised is handed over while
+                // the reading still stands, so whatever takes it sees
+                // the reading and not what came after.
+                if self.any_unheard.get() {
+                    if let Err(over) = self.hand_over_unheard() {
+                        self.got_away = Some(over);
                     }
-                };
-                return self.run_source(&source, came_out_of);
+                }
+                self.calls.pop();
+                return done;
             }
             // Reaching outside the run, which only a language that
             // spells these labels does at all. What cannot be done
@@ -3544,6 +3512,67 @@ impl<'a> Machine<'a> {
             Prim::Seq | Prim::Choose | Prim::Both | Prim::Either | Prim::Yield | Prim::Leave | Prim::Resume | Prim::Append | Prim::Replace
             | Prim::Spawn | Prim::Ask | Prim::Bid | Prim::Hurl | Prim::Otherwise => unreachable!("handled in eval"),
         })
+    }
+
+    /// A source read in and run: text given outright, or a file
+    /// sought beside the one asking for it before it is sought where
+    /// the run began.
+    fn read_in(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if v.len() != 1 {
+            return Err(format!("{}() expects 1 argument, got {}", name, v.len()));
+        }
+                let w = self.wording();
+                let given = v[0].render(w);
+                let mut came_out_of = None;
+                let source = match op {
+                    // Text handed over to be run is code already; a file
+                    // is text with code marked out inside it, so only
+                    // the first wants the mark that opens code.
+                    Prim::Weigh => match self.table.single("lexical.prologue") {
+                        Some(open) => format!("{}\n{}", open, given),
+                        None => given,
+                    },
+                    // A file is sought beside the one asking for it
+                    // before it is sought where the run began: a program
+                    // naming a file beside itself means that one.
+                    _ => {
+                        let near = std::path::Path::new(self.written_in.as_ref()).parent().map(|place| place.join(&given));
+                        let near = near.filter(|place| place.exists());
+                        came_out_of = Some(match &near {
+                            Some(place) => place.to_string_lossy().into_owned(),
+                            None => given.clone(),
+                        });
+                        let held = match near {
+                            Some(place) => std::fs::read(place),
+                            None => std::fs::read(&given),
+                        };
+                        // A file asked for once only is read the first
+                        // time and passed over after, under whatever
+                        // name it was asked for, since it is the file
+                        // and not the name that stands.
+                        if op == Prim::BringOnce {
+                            let place = came_out_of.clone().unwrap_or_else(|| given.clone());
+                            let whole = std::fs::canonicalize(&place).map(|p| p.to_string_lossy().into_owned()).unwrap_or(place);
+                            if !self.read_before.borrow_mut().insert(whole) {
+                                return Ok(Value::Flag(true));
+                            }
+                        }
+                        match held {
+                            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                            // A file that will not be read is not there
+                            // as far as the run can tell: it says so
+                            // twice, of the file and of the reading in,
+                            // and answers false.
+                            Err(_) => {
+                                self.grumble("warning", &format!("{}(): Failed to open stream: No such file or directory", name));
+                                let told = format!("{}(): Failed opening '{}' for inclusion (include_path='.')", name, given);
+                                self.grumble("warning", &told);
+                                return Ok(Value::Flag(false));
+                            }
+                        }
+                    }
+                };
+                return self.run_source(&source, came_out_of);
     }
 
     /// A key as this language takes one.

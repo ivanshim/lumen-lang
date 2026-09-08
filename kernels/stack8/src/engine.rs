@@ -2812,6 +2812,69 @@ impl<'a> Engine<'a> {
         })
     }
 
+    /// A source read in and run: text given outright, or a file
+    /// sought beside the one asking for it before it is sought where
+    /// the run began.
+    fn read_in(&mut self, builtin: Builtin, name: &str, args: &[Value]) -> Res<Value> {
+                if args.len() != 1 {
+                    return Err(format!("{}() expects 1 argument, got {}", name, args.len()));
+                }
+                let sp = self.wording();
+                let given = args[0].display(&sp);
+                let mut came_from = None;
+                let source = match builtin {
+                    // Text given to be run is code already, where a
+                    // file is text with code marked out inside it, so
+                    // the mark that opens code is put before the one
+                    // and not the other.
+                    Builtin::Eval => match &self.lang.prologue {
+                        Some(open) => format!("{}\n{}", open, given),
+                        None => given,
+                    },
+                    // A file is looked for beside the one asking for it
+                    // before it is looked for where the run was started,
+                    // since a program naming a file beside itself means
+                    // the one beside itself.
+                    _ => {
+                        let beside = std::path::Path::new(self.source.as_ref()).parent().map(|near| near.join(&given));
+                        let near = beside.filter(|near| near.exists());
+                        came_from = Some(match &near {
+                            Some(place) => place.to_string_lossy().into_owned(),
+                            None => given.clone(),
+                        });
+                        let found = match near {
+                            Some(place) => std::fs::read(place),
+                            None => std::fs::read(&given),
+                        };
+                        // A file asked for only once is read the first
+                        // time and passed over after, whichever name it
+                        // was asked for under, since it is the file and
+                        // not the name that stands.
+                        if builtin == Builtin::IncludeOnce {
+                            let place = came_from.clone().unwrap_or_else(|| given.clone());
+                            let whole = std::fs::canonicalize(&place).map(|p| p.to_string_lossy().into_owned()).unwrap_or(place);
+                            if !self.read_already.borrow_mut().insert(whole) {
+                                return Ok(Value::Flag(true));
+                            }
+                        }
+                        match found {
+                            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                            // A file that cannot be read is not there as
+                            // far as the run is concerned: it says so
+                            // twice, once of the file and once of the
+                            // reading in, and answers false.
+                            Err(_) => {
+                                self.complain(Complaint::Warning, &format!("{}(): Failed to open stream: No such file or directory", name));
+                                let told = format!("{}(): Failed opening '{}' for inclusion (include_path='.')", name, given);
+                                self.complain(Complaint::Warning, &told);
+                                return Ok(Value::Flag(false));
+                            }
+                        }
+                    }
+                };
+                return self.run_source(&source, came_from);
+    }
+
     /// A key as this language takes one.
     fn key(&self, at: &Value) -> Value {
         // Naming a place by nothing at all names the place the empty
@@ -3014,61 +3077,27 @@ impl<'a> Engine<'a> {
             // the same globals and run where it stands. A file that
             // cannot be read gives false back, as such a language says.
             Builtin::Eval | Builtin::Include | Builtin::IncludeOnce => {
-                arity(1)?;
-                let sp = self.wording();
-                let given = args[0].display(&sp);
-                let mut came_from = None;
-                let source = match builtin {
-                    // Text given to be run is code already, where a
-                    // file is text with code marked out inside it, so
-                    // the mark that opens code is put before the one
-                    // and not the other.
-                    Builtin::Eval => match &self.lang.prologue {
-                        Some(open) => format!("{}\n{}", open, given),
-                        None => given,
-                    },
-                    // A file is looked for beside the one asking for it
-                    // before it is looked for where the run was started,
-                    // since a program naming a file beside itself means
-                    // the one beside itself.
-                    _ => {
-                        let beside = std::path::Path::new(self.source.as_ref()).parent().map(|near| near.join(&given));
-                        let near = beside.filter(|near| near.exists());
-                        came_from = Some(match &near {
-                            Some(place) => place.to_string_lossy().into_owned(),
-                            None => given.clone(),
-                        });
-                        let found = match near {
-                            Some(place) => std::fs::read(place),
-                            None => std::fs::read(&given),
-                        };
-                        // A file asked for only once is read the first
-                        // time and passed over after, whichever name it
-                        // was asked for under, since it is the file and
-                        // not the name that stands.
-                        if builtin == Builtin::IncludeOnce {
-                            let place = came_from.clone().unwrap_or_else(|| given.clone());
-                            let whole = std::fs::canonicalize(&place).map(|p| p.to_string_lossy().into_owned()).unwrap_or(place);
-                            if !self.read_already.borrow_mut().insert(whole) {
-                                return Ok(Value::Flag(true));
-                            }
-                        }
-                        match found {
-                            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-                            // A file that cannot be read is not there as
-                            // far as the run is concerned: it says so
-                            // twice, once of the file and once of the
-                            // reading in, and answers false.
-                            Err(_) => {
-                                self.complain(Complaint::Warning, &format!("{}(): Failed to open stream: No such file or directory", name));
-                                let told = format!("{}(): Failed opening '{}' for inclusion (include_path='.')", name, given);
-                                self.complain(Complaint::Warning, &told);
-                                return Ok(Value::Flag(false));
-                            }
-                        }
+                // A source read in stands as a call of its own, so that
+                // a fault raised in the reading, or by what it reads,
+                // names the reading among the calls it stood under.
+                self.calls.push(Called {
+                    named: Rc::from(name),
+                    within: None,
+                    from: self.source.clone(),
+                    on: self.line,
+                    given_at: None,
+                });
+                let done = self.read_in(builtin, name, args);
+                // A complaint the reading raised is handed over while
+                // the reading still stands, so whatever takes it sees
+                // the reading and not what came after.
+                if self.any_waiting.get() {
+                    if let Err(fault) = self.hand_over_complaints() {
+                        self.carried = Some(fault);
                     }
-                };
-                return self.run_source(&source, came_from);
+                }
+                self.calls.pop();
+                return done;
             }
             // Reaching outside the run: only a language that spells
             // these labels can, and what cannot be done gives false
