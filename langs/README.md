@@ -488,6 +488,12 @@ only. The extension labels so far, all from PHP:
   only *which* of them it found; the wording is the language's own, so
   the shared host carries no language's words. A language leaving the
   first out is told nothing.
+
+  `ext.system.request.amiss.body.large` goes with them, for a body larger
+  than the run was told to take. Its words carry places for the two
+  counts, and each thing found amiss reaches the program as the words
+  first and then whatever counts go in them, so a language fills them in
+  however it fills in any others.
 - `ext.stmt.function.outermost`: a switch; a routine is bound among the
   outermost bindings wherever it is written, so one written inside
   another is there for the whole run once the routine holding it has
