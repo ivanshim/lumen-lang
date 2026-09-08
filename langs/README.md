@@ -479,6 +479,13 @@ only. The extension labels so far, all from PHP:
   written in the language itself, since giving up what was kept hands it
   back as an ordinary value, and writing it out again writes it into
   whatever keeping now stands.
+- `ext.builtin.empty`: a builtin asking whether what a name or a place
+  holds is untrue, asked as gently as `ext.builtin.isset` asks whether
+  it is there at all — a name never written and a place an array does
+  not hold are both untrue, and neither is complained about. It is the
+  companion of that one and asks the looser question, since nothing at
+  all is untrue. Like it, it is a shape and not a call: it reads one
+  thing, and every look within it is a glance.
 - `ext.builtin.complaint.handler`: a builtin naming a routine to be
   handed every complaint the run makes, instead of the complaint being
   written out. It takes the word for the kind, what was said, where the
@@ -952,6 +959,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.complaint.handler` | - | - | - | - | - | - | - | `__complaint_handler` | - | - |
 | `ext.builtin.define` | - | - | - | - | - | - | - | `define` | - | - |
 | `ext.builtin.echo` | - | - | - | - | - | - | - | `echo` | - | - |
+| `ext.builtin.empty` | - | - | - | - | - | - | - | `empty` | - | - |
 | `ext.builtin.eval` | - | - | - | - | - | - | - | `eval` | - | - |
 | `ext.builtin.exit` | - | - | - | - | - | - | - | `exit` `die` | - | - |
 | `ext.builtin.file.exists` | - | - | - | - | - | - | - | `file_exists` | - | - |

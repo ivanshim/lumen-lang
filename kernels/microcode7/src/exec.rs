@@ -2037,6 +2037,10 @@ impl<'a> Machine<'a> {
                 seen
             }
             Prim::Standing => Value::Flag(v.iter().all(|x| !matches!(x, Value::Nil | Value::Unset))),
+            Prim::Hollow => {
+                n(1)?;
+                Value::Flag(!self.stands_true(&v[0]))
+            }
             // A value made one of another kind. Numbers give up what
             // lies past the point, text is read for the number it opens
             // with, and anything that is not an array becomes an array

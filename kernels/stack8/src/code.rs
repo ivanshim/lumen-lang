@@ -186,6 +186,11 @@ pub enum Builtin {
     /// binding was never written or a place is not there
     /// (ext.builtin.isset).
     Held,
+    /// Whether what a name or a place holds is untrue, asked the same
+    /// way: without minding that it is not there at all
+    /// (ext.builtin.empty). It is the companion of the one above, and
+    /// asks the looser question, since nothing at all is untrue.
+    Hollow,
     /// Each argument with its kind, PHP's var_dump (ext.builtin.var_dump).
     Dump,
     /// Source read while the program runs: the text itself

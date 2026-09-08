@@ -1614,7 +1614,7 @@ impl<'a> Builder<'a> {
             let bracketed = self.table.single("syntax.call.open").map_or(false, |o| next.shape == Shape::Sign && next.lexeme == o);
             let bare = match op {
                 Some(Prim::Tell) => true,
-                Some(Prim::Append | Prim::Replace | Prim::Define | Prim::Gather | Prim::Erase | Prim::Standing) | None => false,
+                Some(Prim::Append | Prim::Replace | Prim::Define | Prim::Gather | Prim::Erase | Prim::Standing | Prim::Hollow) | None => false,
                 Some(_) => !bracketed,
             };
             if bare {
@@ -2597,6 +2597,9 @@ impl<'a> Builder<'a> {
                     if table.prims.get(&t.lexeme) == Some(&Prim::Erase) {
                         return self.forget();
                     }
+                    if table.prims.get(&t.lexeme) == Some(&Prim::Hollow) {
+                        return self.hollow();
+                    }
                     if table.prims.get(&t.lexeme) == Some(&Prim::Standing) {
                         return self.standing();
                     }
@@ -2941,6 +2944,16 @@ impl<'a> Builder<'a> {
     /// than nothing. A name never written and a place an array does not
     /// hold both count as nothing, and neither is complained about, so
     /// every look inside is a glance and the whole is muted.
+    /// `empty(x)`: whether what the name or place holds is untrue,
+    /// asked as gently as asking whether it is there at all, since a
+    /// place that is not there holds nothing and nothing is untrue.
+    fn hollow(&mut self) -> Res<Form> {
+        let close = self.table.single("syntax.call.close").unwrap().to_string();
+        let one = self.expr(0)?;
+        self.need_sign(&close, "after what is asked about")?;
+        Ok(prim_call(Prim::Hollow, vec![Form::Muted(Box::new(glancing(one)))]))
+    }
+
     fn standing(&mut self) -> Res<Form> {
         let table = self.table;
         let close = table.single("syntax.call.close").unwrap().to_string();
@@ -3695,7 +3708,7 @@ impl<'a> Builder<'a> {
                 Prim::External | Prim::Span => return Err(format!("'{}' has no postfix form", w)),
                 Prim::Echo | Prim::Say | Prim::Out | Prim::Tell | Prim::Dump | Prim::Raise => (1, false),
                 Prim::Portray => (1, true),
-                Prim::Define | Prim::Gather | Prim::Erase | Prim::Standing => return Err(format!("'{}' has no postfix form", w)),
+                Prim::Define | Prim::Gather | Prim::Erase | Prim::Standing | Prim::Hollow => return Err(format!("'{}' has no postfix form", w)),
                 Prim::CharAtIndex | Prim::Fetch | Prim::MakeReal => (2, true),
                 _ => (1, true),
             };

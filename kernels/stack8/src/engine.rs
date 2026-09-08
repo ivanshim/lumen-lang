@@ -2367,7 +2367,7 @@ impl<'a> Engine<'a> {
             Builtin::Pack => return Err(format!("{}() is a literal, not a call", name)),
             // Asking is done where the program is put together, since
             // what is asked about is a name and not its value.
-            Builtin::Held => return Err("Only a name or a place in an array can be asked about".into()),
+            Builtin::Held | Builtin::Hollow => return Err("Only a name or a place in an array can be asked about".into()),
             Builtin::Erase => {
                 // Taking a place out of an array: the array is given back
                 // without it.

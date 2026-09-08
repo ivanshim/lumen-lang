@@ -598,6 +598,9 @@
   "ext.builtin.isset": [
     "isset"
   ],
+  "ext.builtin.empty": [
+    "empty"
+  ],
   "ext.lexical.template": true,
   "ext.op.otherwise": [
     "??"

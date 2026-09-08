@@ -57,6 +57,11 @@ pub enum Prim {
     Glance,
     /// Whether every one of these is something other than nothing.
     Standing,
+    /// Whether what a name or a place holds is untrue, asked as gently:
+    /// without minding that it is not there at all (ext.builtin.empty).
+    /// The companion of the one above, asking the looser question, since
+    /// nothing at all is untrue.
+    Hollow,
     /// The value made one of the whole kind (ext.op.cast).
     AsWhole,
     /// The value made one of the real kind.

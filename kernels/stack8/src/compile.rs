@@ -2831,6 +2831,8 @@ impl<'a> Compiler<'a> {
                                 self.forget(&call)?;
                             } else if native == Some(Builtin::Held) {
                                 self.held(&call)?;
+                            } else if native == Some(Builtin::Hollow) {
+                                self.hollow(&call)?;
                             } else if native == Some(Builtin::Pack) {
                                 // array(...) gathers its arguments like a literal.
                                 let count = self.elements(&call)?;
@@ -3183,6 +3185,25 @@ impl<'a> Compiler<'a> {
     /// than nothing. A binding never written and a place an array does
     /// not hold are both nothing, and neither is complained about, so
     /// every read within is a gentle one.
+    /// `empty(x)`: whether what the name or place holds is untrue,
+    /// asked as gently as asking whether it is there at all, since a
+    /// place that is not there holds nothing and nothing is untrue.
+    fn hollow(&mut self, call: &Brackets) -> Res<()> {
+        let from = self.mark();
+        self.put(Instr::Hush(true));
+        self.expr(0)?;
+        for w in self.piece().instrs[from..].iter_mut() {
+            if let Instr::Act(Action::At, 2) = w {
+                *w = Instr::Act(Action::Peek, 2);
+            }
+        }
+        self.put(Instr::Hush(false));
+        self.want_sign(&call.close, "after what is asked about")?;
+        self.act(Action::AsBool, 1);
+        self.act(Action::Not, 1);
+        Ok(())
+    }
+
     fn held(&mut self, call: &Brackets) -> Res<()> {
         let mut asked = 0;
         while !self.at_symbol(&call.close) {
