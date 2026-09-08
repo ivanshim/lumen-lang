@@ -970,6 +970,15 @@ impl<'a> Engine<'a> {
                         Some((k, v)) => if key { k.clone() } else { v.clone() },
                         None => return Err(format!("Array index {} out of bounds (length: {})", at, pairs.len()).into()),
                     },
+                    // A thing holds named values too, and walking it
+                    // walks those, in the order they were written.
+                    Value::Object(o) => {
+                        let held = o.fields.borrow();
+                        match held.get(at) {
+                            Some((n, v)) => if key { Value::text(n) } else { v.clone() },
+                            None => return Err(format!("Array index {} out of bounds (length: {})", at, held.len()).into()),
+                        }
+                    }
                     _ => return Err("Cannot walk a value that is not an array".to_string().into()),
                 }
             }
@@ -1048,6 +1057,15 @@ impl<'a> Engine<'a> {
                 }
                 v => return Err(format!("Cannot read property '{}' of {}", name, v.plain()).into()),
             },
+            Action::Uproot(name) => {
+                match self.drop_top()? {
+                    Value::Object(o) => {
+                        o.fields.borrow_mut().retain(|(n, _)| n != name.as_ref());
+                        Value::Null
+                    }
+                    v => return Err(format!("Cannot take property '{}' off {}", name, v.plain()).into()),
+                }
+            }
             Action::Plant(name) => {
                 let mut pair = self.drop_many(2)?;
                 let value = pair.pop().expect("the value");
@@ -1140,6 +1158,7 @@ impl<'a> Engine<'a> {
             Action::Extent => match self.drop_top()? {
                 Value::Array(items) => Value::Small(items.len() as i64),
                 Value::Map(pairs) => Value::Small(pairs.len() as i64),
+                Value::Object(o) => Value::Small(o.fields.borrow().len() as i64),
                 // A language with a word for a warning is told a value
                 // cannot be walked and walks it no times, rather than
                 // having the run stopped over it.

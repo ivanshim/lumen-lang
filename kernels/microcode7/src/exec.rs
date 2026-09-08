@@ -1241,6 +1241,15 @@ impl<'a> Machine<'a> {
                         Some((k, x)) => if wants_key { k.clone() } else { x.clone() },
                         None => return Err(format!("Array index {} out of bounds (length: {})", at, entries.len())),
                     },
+                    // A thing keeps named values too, and walking it
+                    // walks those, in the order they were written.
+                    Value::Thing(thing) => {
+                        let holds = thing.holds.borrow();
+                        match holds.get(at) {
+                            Some((k, x)) => if wants_key { Value::text(k) } else { x.clone() },
+                            None => return Err(format!("Array index {} out of bounds (length: {})", at, holds.len())),
+                        }
+                    }
                     _ => return Err("Cannot walk a value that is not an array".to_string()),
                 }
             }
@@ -1249,6 +1258,7 @@ impl<'a> Machine<'a> {
                 match &v[0] {
                     Value::Vector(items) => Value::Small(items.len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
+                    Value::Thing(thing) => Value::Small(thing.holds.borrow().len() as i64),
                     // A language with a word for a warning hears that a
                     // value cannot be walked and walks it no times,
                     // rather than having the run stopped over it.
@@ -1279,6 +1289,17 @@ impl<'a> Machine<'a> {
                         }
                     }
                     other => return Err(format!("Cannot read property '{}' of {}", called, other.bare())),
+                }
+            }
+            Prim::Pluck => {
+                n(2)?;
+                let called = v[1].bare();
+                match &v[0] {
+                    Value::Thing(thing) => {
+                        thing.holds.borrow_mut().retain(|(k, _)| *k != called);
+                        Value::Nil
+                    }
+                    other => return Err(format!("Cannot take property '{}' off {}", called, other.bare())),
                 }
             }
             Prim::Onto => {

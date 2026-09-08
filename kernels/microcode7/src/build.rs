@@ -2299,7 +2299,10 @@ impl<'a> Builder<'a> {
                         _ => return Err("Only a name or a place in an array can be forgotten".to_string()),
                     }
                 }
-                _ => return Err("Only a name or a place in an array can be forgotten".to_string()),
+                // `unset($o->p)`: the property is taken off the thing
+                // itself, which every name for it sees at once.
+                Form::Apply(Callee::Prim(Prim::Of, _), args) if args.len() == 2 => prim_call(Prim::Pluck, args),
+                _ => return Err("Only a name, a place in an array or a property can be forgotten".to_string()),
             });
             if let Some(s) = &sep {
                 if self.sign(s) {

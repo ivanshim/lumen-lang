@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 44, differs 32, error 28, skipped 10 | pass 44, differs 32, error 28, skipped 10 |
 | `php/func` | 14 | pass 7, differs 3, error 4, skipped 0 | pass 7, differs 3, error 4, skipped 0 |
-| `php/lang` | 213 | pass 74, differs 53, error 81, skipped 5 | pass 74, differs 53, error 81, skipped 5 |
+| `php/lang` | 213 | pass 75, differs 51, error 82, skipped 5 | pass 75, differs 51, error 82, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 31, differs 21, error 6, skipped 6 | pass 31, differs 21, error 6, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 161, differs 117, error 119, skipped 25 | pass 161, differs 117, error 119, skipped 25 |
+| all | 422 | pass 162, differs 115, error 120, skipped 25 | pass 162, differs 115, error 120, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 117 |
+| ran, printed something else | 115 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
@@ -41,7 +41,6 @@ is listed, since the full kernels are meant to behave alike.
 | Unexpected token: & | 3 |
 | Fatal error: Uncaught Error: Undefined variable: current in <file> | 3 |
 | Unexpected token: ++ | 3 |
-| Only a name or a place in an array can be forgotten | 3 |
 | skip php-cgi not available | 2 |
 | Expected an expression | 2 |
 | Unexpected token: { | 2 |
@@ -56,6 +55,8 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: StdClass in <file> | 2 |
 | Fatal error: Uncaught Error: Array index 2 out of bounds (length: 1) in <file> | 2 |
 | Expected ']' after array index, got '++' | 2 |
+| Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> | 2 |
+| Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> | 2 |
 | Unexpected token: > | 2 |
 | Unexpected token: :: | 2 |
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
@@ -67,7 +68,6 @@ is listed, since the full kernels are meant to behave alike.
 | Expected identifier as the property name, got '{' | 1 |
 | Fatal error: Uncaught Error: Undefined variable: PHP_BUILD_DATE in <file> | 1 |
 | skip locale needed for this test is not supported on this platform | 1 |
-| Fatal error: Uncaught Error: Undefined variable: umask in <file> | 1 |
 
 ### Reserved words: 48 of 68 spelled
 
@@ -464,7 +464,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/foreachLoop.006.phpt` | differs | differs | ran, printed something else |
 | `php/lang/foreachLoop.009.phpt` | error | error | Fatal error: Uncaught Error: Array index 2 out of bounds (length: 1) in <file> |
 | `php/lang/foreachLoop.010.phpt` | pass | pass |  |
-| `php/lang/foreachLoop.011.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoop.011.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.012.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
 | `php/lang/foreachLoop.013.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
 | `php/lang/foreachLoop.014.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
@@ -478,10 +478,10 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/foreachLoopIteratorAggregate.003.phpt` | error | error | Expected ']' after array index, got '++' |
 | `php/lang/foreachLoopIteratorAggregate.004.phpt` | error | error | Unexpected token: ++ |
 | `php/lang/foreachLoopObjects.001.phpt` | differs | differs | ran, printed something else |
-| `php/lang/foreachLoopObjects.002.phpt` | differs | differs | ran, printed something else |
-| `php/lang/foreachLoopObjects.003.phpt` | error | error | Only a name or a place in an array can be forgotten |
-| `php/lang/foreachLoopObjects.004.phpt` | error | error | Only a name or a place in an array can be forgotten |
-| `php/lang/foreachLoopObjects.005.phpt` | error | error | Only a name or a place in an array can be forgotten |
+| `php/lang/foreachLoopObjects.002.phpt` | error | error | Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> |
+| `php/lang/foreachLoopObjects.003.phpt` | error | error | Fatal error: Uncaught Error: Cannot walk a value that is not an array in <file> |
+| `php/lang/foreachLoopObjects.004.phpt` | error | error | Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> |
+| `php/lang/foreachLoopObjects.005.phpt` | error | error | Fatal error: Uncaught Error: Array index 4 out of bounds (length: 4) in <file> |
 | `php/lang/foreachLoopObjects.006.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: stdclass in <file> |
 | `php/lang/foreach_with_object_001.phpt` | pass | pass |  |
 | `php/lang/foreach_with_references_001.phpt` | pass | pass |  |

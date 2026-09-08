@@ -114,6 +114,9 @@ pub enum Action {
     Grab(Rc<str>),
     /// Write that property: the object, then the value.
     Plant(Rc<str>),
+    /// Take that property off the object above, as though it had never
+    /// been written.
+    Uproot(Rc<str>),
     /// Call that method of the object below the arguments.
     Send(Rc<str>),
     /// A constant or a class's own value, of the class above.

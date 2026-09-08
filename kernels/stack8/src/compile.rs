@@ -2594,7 +2594,18 @@ impl<'a> Compiler<'a> {
                     self.act(Action::Builtin(Builtin::Erase, Rc::from("unset")), 2);
                     self.write(&name);
                 }
-                _ => return Err("Only a name or a place in an array can be forgotten".to_string()),
+                // `unset($o->p)`: the property is taken off the thing
+                // itself, which every name for it sees at once.
+                [rest @ .., Instr::Act(Action::Grab(member), 1)] => {
+                    let (member, rest) = (member.clone(), rest.to_vec());
+                    let at = self.mark();
+                    for w in relocated(rest, at as i64 - from as i64) {
+                        self.put(w);
+                    }
+                    self.act(Action::Uproot(member), 1);
+                    self.discard();
+                }
+                _ => return Err("Only a name, a place in an array or a property can be forgotten".to_string()),
             }
             if let Some(sep) = &call.between {
                 if self.at_symbol(sep) {

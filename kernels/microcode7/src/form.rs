@@ -152,6 +152,9 @@ pub enum Prim {
     Of,
     /// Write that property: the thing, the name, the value.
     Onto,
+    /// Take that property off the thing, as though it had never been
+    /// written there.
+    Pluck,
     /// Call the method named second, of the thing named first.
     Ask,
     /// A constant or a kept value of the class given.
