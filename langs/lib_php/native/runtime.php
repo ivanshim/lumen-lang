@@ -111,9 +111,9 @@ function __ini_default($name) {
 function ini_get($name) {
     global $__settings;
     if (array_key_exists($name, $__settings)) { return $__settings[$name]; }
-    $carried = 'PHP_INI_' . $name;
-    if (array_key_exists($carried, $_ENV)) {
-        $held = $_ENV[$carried];
+    global $__started_with;
+    if (array_key_exists($name, $__started_with)) {
+        $held = $__started_with[$name];
         // A setting counted in kinds of complaint is written as an
         // expression over their words, and answers as the number.
         if ($name === "error_reporting") { return (string)__ini_number($held); }
@@ -226,10 +226,9 @@ function __room_said($wanted, $most) {
 }
 // The room the run was started with, brought down where it must be.
 function __room_at_start() {
-    global $__settings;
-    $carried = 'PHP_INI_memory_limit';
-    if (!array_key_exists($carried, $_ENV)) { return null; }
-    $wanted = $_ENV[$carried];
+    global $__settings, $__started_with;
+    if (!array_key_exists('memory_limit', $__started_with)) { return null; }
+    $wanted = $__started_with['memory_limit'];
     $held = __room_allowed($wanted);
     if ($held[1]) {
         echo "\nWarning: " . __room_said($wanted, $held[0]) . " in Unknown on line 0\n";
@@ -1057,9 +1056,9 @@ function __ini_either($text) {
 // Which kinds of complaint the run was started with, where it was
 // started with a setting for them at all.
 function __ini_reporting() {
-    $carried = 'PHP_INI_error_reporting';
-    if (!array_key_exists($carried, $_ENV)) { return E_ALL; }
-    return __ini_number($_ENV[$carried]);
+    global $__started_with;
+    if (!array_key_exists('error_reporting', $__started_with)) { return E_ALL; }
+    return __ini_number($__started_with['error_reporting']);
 }
 function __ini_number($text) {
     global $__ini_at;

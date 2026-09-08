@@ -614,6 +614,9 @@
   "ext.system.request.body": [
     "$__request_body"
   ],
+  "ext.system.request.settings": [
+    "$__started_with"
+  ],
   "ext.system.request.amiss.boundary": [
     "PHP Request Startup: Missing boundary in multipart/form-data POST data"
   ],

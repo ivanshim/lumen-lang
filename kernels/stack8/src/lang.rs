@@ -417,7 +417,7 @@ w ext.op.member | w ext.op.scope | w ext.op.instanceof | w ext.stmt.class.parent
 w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.try | w ext.stmt.catch
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
-w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | b ext.op.index.absent | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
+w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | w ext.system.request.settings | b ext.op.index.absent | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
 w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right
 w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at
@@ -1123,7 +1123,7 @@ impl Lang {
                     ("GET", "ext.system.request.query"), ("POST", "ext.system.request.form"),
                     ("COOKIE", "ext.system.request.cookies"), ("SERVER", "ext.system.request.server"),
                     ("ENV", "ext.system.request.env"), ("FILES", "ext.system.request.files"),
-                    ("ALL", "ext.system.request.all"),
+                    ("ALL", "ext.system.request.all"), ("SETTINGS", "ext.system.request.settings"),
                 ];
                 let mut named = Vec::new();
                 for (group, tag) in groups {

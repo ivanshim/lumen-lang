@@ -42,9 +42,17 @@ const CGI_VARS: [&str; 14] = [
 /// the body on the input when the request says one is coming.
 pub fn gathered() -> Request {
     let mut request = Request::new();
+    // A run may be told which of the groups to gather at all, each by a
+    // letter of its own, and how deep a name may point.
+    let wanted = setting("variables_order").unwrap_or_else(|| "EGPCS".to_string());
+    let takes = |letter: char| wanted.contains(letter);
+    let deepest = setting("max_input_nesting_level").and_then(|said| said.trim().parse::<usize>().ok());
     let query = env::var("QUERY_STRING").unwrap_or_default();
-    for (key, value) in fields(&query) {
-        request.push(("GET".to_string(), key, value, false));
+    let asked = shallow_enough(fields(&query), deepest);
+    for (key, value) in asked {
+        if takes('G') {
+            request.push(("GET".to_string(), key, value, false));
+        }
     }
     let (posted, sent, amiss, raw) = body_given();
     if let Some(raw) = raw {
@@ -53,25 +61,80 @@ pub fn gathered() -> Request {
     for kind in amiss {
         request.push(("SELF".to_string(), "amiss".to_string(), kind, false));
     }
-    for (key, value) in &posted {
-        request.push(("POST".to_string(), key.clone(), value.clone(), false));
+    for (key, value) in shallow_enough(posted, deepest) {
+        if takes('P') {
+            request.push(("POST".to_string(), key, value, false));
+        }
     }
     for (key, value, counted) in &sent {
         request.push(("FILES".to_string(), key.clone(), value.clone(), *counted));
     }
     let cookies = env::var("HTTP_COOKIE").unwrap_or_default();
     for (key, value) in crumbs(&cookies) {
-        request.push(("COOKIE".to_string(), key, value, false));
-    }
-    for name in CGI_VARS {
-        if let Ok(value) = env::var(name) {
-            request.push(("SERVER".to_string(), name.to_string(), value, false));
+        if takes('C') {
+            request.push(("COOKIE".to_string(), key, value, false));
         }
     }
+    if takes('S') {
+        for name in CGI_VARS {
+            if let Ok(value) = env::var(name) {
+                request.push(("SERVER".to_string(), name.to_string(), value, false));
+            }
+        }
+    }
+    if takes('E') {
+        for (name, value) in env::vars() {
+            request.push(("ENV".to_string(), name, value, false));
+        }
+    }
+    // What the run was started with, each under its own name. It is told
+    // apart from the rest because a run may be told to gather none of
+    // the groups and must still know what it was started with.
     for (name, value) in env::vars() {
-        request.push(("ENV".to_string(), name, value, false));
+        if let Some(named) = name.strip_prefix("PHP_INI_") {
+            request.push(("SETTINGS".to_string(), named.to_string(), value, false));
+        }
     }
     request
+}
+
+/// The fields whose names point no deeper than the run allows. A name
+/// pointing deeper takes the whole of what it stands under with it,
+/// since half a value is no value.
+fn shallow_enough(given: Vec<(String, String)>, deepest: Option<usize>) -> Vec<(String, String)> {
+    let Some(deepest) = deepest else { return given };
+    let too_deep: Vec<String> = given
+        .iter()
+        .filter(|(key, _)| key.matches(BETWEEN_STEPS).count() > deepest)
+        .filter_map(|(key, _)| key.split(BETWEEN_STEPS).next().map(str::to_string))
+        .collect();
+    given
+        .into_iter()
+        .filter(|(key, _)| {
+            let base = key.split(BETWEEN_STEPS).next().unwrap_or_default();
+            !too_deep.iter().any(|held| held == base)
+        })
+        .collect()
+}
+
+/// Whether a name that points inside a value is written whole: what
+/// stands before the first bracket names the value, and from there the
+/// name must be brackets and nothing else, each closing before the next
+/// opens.
+fn well_named(name: &str) -> bool {
+    let Some(at) = name.find('[') else { return true };
+    let mut rest = &name[at..];
+    while !rest.is_empty() {
+        if !rest.starts_with('[') {
+            return false;
+        }
+        let Some(shut) = rest.find(']') else { return false };
+        if rest[1..shut].contains('[') {
+            return false;
+        }
+        rest = &rest[shut + 1..];
+    }
+    true
 }
 
 /// A setting counted in bytes, as PHP counts one: the number the text
@@ -212,7 +275,7 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
         // anything after the last bracket is no name at all, and the
         // whole part goes unread. A form's own fields are read more
         // kindly than this, which is why the rule lives here.
-        if named("name").map_or(false, |name| name.contains('[') && !name.ends_with(']')) {
+        if named("name").map_or(false, |name| !well_named(&name)) {
             continue;
         }
         match (named("name"), named("filename")) {

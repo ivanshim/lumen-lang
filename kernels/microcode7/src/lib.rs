@@ -69,10 +69,10 @@ const REQUEST_AMISS: [(&str, &str); 4] = [
     ("body.large", "ext.system.request.amiss.body.large"),
 ];
 
-const REQUEST_PARTS: [(&str, &str); 7] = [
+const REQUEST_PARTS: [(&str, &str); 8] = [
     ("GET", "ext.system.request.query"), ("POST", "ext.system.request.form"), ("COOKIE", "ext.system.request.cookies"),
     ("SERVER", "ext.system.request.server"), ("ENV", "ext.system.request.env"), ("FILES", "ext.system.request.files"),
-    ("ALL", "ext.system.request.all"),
+    ("ALL", "ext.system.request.all"), ("SETTINGS", "ext.system.request.settings"),
 ];
 
 fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {

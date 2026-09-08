@@ -479,6 +479,10 @@ only. The extension labels so far, all from PHP:
   written in the language itself, since giving up what was kept hands it
   back as an ordinary value, and writing it out again writes it into
   whatever keeping now stands.
+- `ext.system.request.settings`: the binding holding what the run was
+  started with, as a map from each setting's name to what it says. It is
+  told apart from the other groups because a run may be told to gather
+  none of them and must still know what it was started with.
 - `ext.system.request.body`: the binding holding the request's body as
   it came, so a program may read it for itself however the run reads it —
   and read it again, since it is held rather than drawn from. A run told
@@ -1126,6 +1130,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.request.form` | - | - | - | - | - | - | - | `$_POST` | - | - |
 | `ext.system.request.query` | - | - | - | - | - | - | - | `$_GET` | - | - |
 | `ext.system.request.server` | - | - | - | - | - | - | - | `$_SERVER` | - | - |
+| `ext.system.request.settings` | - | - | - | - | - | - | - | `$__started_with` | - | - |
 | `ext.system.source.class` | - | - | - | - | - | - | - | `__CLASS__` | - | - |
 | `ext.system.source.directory` | - | - | - | - | - | - | - | `__DIR__` | - | - |
 | `ext.system.source.file` | - | - | - | - | - | - | - | `__FILE__` | - | - |

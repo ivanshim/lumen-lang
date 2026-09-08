@@ -17,18 +17,18 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 68, differs 10, error 26, skipped 10 | pass 68, differs 10, error 26, skipped 10 |
+| `php/basic` | 114 | pass 71, differs 7, error 26, skipped 10 | pass 71, differs 7, error 26, skipped 10 |
 | `php/func` | 14 | pass 13, differs 0, error 1, skipped 0 | pass 13, differs 0, error 1, skipped 0 |
 | `php/lang` | 213 | pass 114, differs 42, error 52, skipped 5 | pass 114, differs 42, error 52, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 21, error 3, skipped 6 | pass 34, differs 21, error 3, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 234, differs 81, error 82, skipped 25 | pass 234, differs 81, error 82, skipped 25 |
+| all | 422 | pass 237, differs 78, error 82, skipped 25 | pass 237, differs 78, error 82, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 81 |
+| ran, printed something else | 78 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
@@ -232,13 +232,13 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/array_key_exists_null_deprecation.phpt` | pass | pass |  |
 | `php/basic/array_null_offset_deprecation.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug20539.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: session_id in <file> |
-| `php/basic/bug29971.phpt` | differs | differs | ran, printed something else |
+| `php/basic/bug29971.phpt` | pass | pass |  |
 | `php/basic/bug31875.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> |
 | `php/basic/bug45986.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: rename in <file> |
 | `php/basic/bug53180.phpt` | pass | pass |  |
 | `php/basic/bug54514.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: PHP_BINARY in <file> |
-| `php/basic/bug55500.phpt` | differs | differs | ran, printed something else |
-| `php/basic/bug61000.phpt` | differs | differs | ran, printed something else |
+| `php/basic/bug55500.phpt` | pass | pass |  |
+| `php/basic/bug61000.phpt` | pass | pass |  |
 | `php/basic/bug67198.phpt` | error | error | Expected an expression |
 | `php/basic/bug67988.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ENT_HTML5 in <file> |
 | `php/basic/bug71273.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> |
