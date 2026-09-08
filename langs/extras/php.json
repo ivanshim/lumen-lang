@@ -588,6 +588,13 @@
   "ext.op.walk.giver": [
     "getIterator"
   ],
+  "ext.op.walk.giver.unwalkable": [
+    "Objects returned by",
+    "must be traversable or implement interface Iterator"
+  ],
+  "ext.system.fault.class.walk": [
+    "Exception"
+  ],
   "ext.op.walk.no_cell": [
     "An iterator cannot be used with foreach by reference"
   ],

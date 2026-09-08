@@ -704,6 +704,9 @@ impl<'a> Engine<'a> {
             // Words the definition gave for an operand that can take no
             // part are known by the message opening with them.
             _ if self.lang.operand_fault.as_ref().map_or(false, |w| told.starts_with(w.as_str())) => &self.lang.fault_kind,
+            // Words the definition gave for what was handed over to be
+            // walked, known the same way.
+            _ if self.lang.giver_unwalkable.as_ref().map_or(false, |(w, _)| told.starts_with(w.as_str())) => &self.lang.fault_walk,
             _ => &None,
         };
         named.clone().or_else(|| self.lang.fault_class.clone())
@@ -715,9 +718,17 @@ impl<'a> Engine<'a> {
         self.hurled_at.set(self.line);
         self.made += 1;
         let mut fields = class.all_fields();
-        match fields.iter_mut().find(|(n, _)| n == "message") {
-            Some(place) => place.1 = Value::text(told),
-            None => fields.push(("message".to_string(), Value::text(told))),
+        // What a fault of the kernel's own holds: the words said, and
+        // where in the program it was raised.
+        for (named, held) in [
+            ("message", Value::text(told)),
+            ("file", Value::text(&self.source)),
+            ("line", Value::Small(self.line as i64)),
+        ] {
+            match fields.iter_mut().find(|(n, _)| n == named) {
+                Some(place) => place.1 = held,
+                None => fields.push((named.to_string(), held)),
+            }
         }
         Some(Value::Object(Rc::new(Instance { class, fields: RefCell::new(fields), mark: self.made })))
     }
@@ -760,7 +771,7 @@ impl<'a> Engine<'a> {
 
     /// What a thing hands over to be walked in its stead, where it is a
     /// thing that hands one over and what it hands back is not itself.
-    fn walk_handed(&mut self, held: &Value) -> Result<Option<Value>, Fault> {
+    fn walk_handed(&mut self, held: &Value) -> Result<Option<(String, Value)>, Fault> {
         let (Some(class), Some(gives)) = (self.lang.giver_class.clone(), self.lang.walk_giver.clone()) else { return Ok(None) };
         let Value::Object(o) = held else { return Ok(None) };
         if !o.class.named(&class, self.lang.classes_folded) {
@@ -772,7 +783,7 @@ impl<'a> Engine<'a> {
         let itself = matches!((&handed, held), (Value::Object(a), Value::Object(b)) if Rc::ptr_eq(a, b));
         Ok(match itself {
             true => None,
-            false => Some(handed),
+            false => Some((o.class.name.clone(), handed)),
         })
     }
 
@@ -2327,14 +2338,30 @@ impl<'a> Engine<'a> {
                 // third, so the asking goes on until what comes back is
                 // no longer a thing that hands one over. A thing that
                 // hands back itself hands back nothing further.
-                while let Some(next) = self.walk_handed(&handed)? {
+                // Asking a thing what to walk in its stead runs a piece
+                // of the program written elsewhere. The walk stands
+                // where it is written, and whatever is said of it says
+                // so, so where it stands is kept over the asking.
+                let stood_on = self.line;
+                let mut gave = None;
+                while let Some((giver, next)) = self.walk_handed(&handed)? {
+                    gave = Some(giver);
                     handed = next;
                 }
+                self.line = stood_on;
                 match self.walker(&handed) {
                     Some(_) => {
                         self.walk_asked(&handed, self.lang.walk_rewind.clone())?;
                     }
-                    None => self.walkable(&handed)?,
+                    // What is handed over to be walked in another's
+                    // stead must be a walk itself; a language with words
+                    // for it stops rather than walking what it was given.
+                    None => match (gave, &self.lang.giver_unwalkable, &self.lang.walk_giver) {
+                        (Some(giver), Some((before, after)), Some(gives)) => {
+                            return Err(format!("{} {}::{}() {}", before, giver, gives, after).into());
+                        }
+                        _ => self.walkable(&handed)?,
+                    },
                 }
                 handed
             }

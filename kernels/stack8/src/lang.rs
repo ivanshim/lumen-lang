@@ -199,6 +199,9 @@ pub struct Lang {
     /// The class a fault of the kernel's own is raised as, where a
     /// language names one, so that a program may take it like any other.
     pub fault_class: Option<String>,
+    /// The class a fault over what was handed over to be walked is
+    /// raised as.
+    pub fault_walk: Option<String>,
     /// The class a fault of a kind is raised as, where a language names
     /// one: working with numbers, dividing by nought, and a value of a
     /// kind the work cannot take. Each stands in for the plain class
@@ -407,6 +410,10 @@ pub struct Lang {
     /// the walk over.
     pub giver_class: Option<String>,
     pub walk_giver: Option<String>,
+    /// What is said of a thing that hands over, to be walked in its
+    /// stead, something that is no walk at all: the words before the
+    /// name of what handed it over, and the words after.
+    pub giver_unwalkable: Option<(String, String)>,
     /// The words for asking a thing that is its own walk to hand out
     /// the items' own cells, which it has none of.
     pub walk_no_cell: Option<String>,
@@ -538,7 +545,7 @@ w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
 w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.class.beneath | b ext.builtin.write.operator | w ext.system.kind.loose | w ext.builtin.clock | w ext.stmt.class.trait | w ext.stmt.class.uses | w ext.stmt.class.uses.alias
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
 w ext.system.fault.operands | w ext.op.increment.text | w ext.op.decrement.text
-w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind | w ext.system.fault.class.value
+w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind | w ext.system.fault.class.value | w ext.system.fault.class.walk | w ext.op.walk.giver.unwalkable
 w ext.op.name_by_value | b ext.op.cast | w ext.stmt.unpack
 w ext.system.source.routine | w ext.system.source.class | w ext.system.source.method
 b ext.op.member.by_value | b ext.op.index.text | w ext.system.globals
@@ -1144,6 +1151,7 @@ impl Lang {
             fault_division: r.head("ext.system.fault.class.division")?,
             fault_kind: r.head("ext.system.fault.class.kind")?,
             fault_value: r.head("ext.system.fault.class.value")?,
+            fault_walk: r.head("ext.system.fault.class.walk")?,
             operand_fault: r.head("ext.system.fault.operands")?,
             div_stays_whole,
             mod_whole: r.flag("op.mod.whole")?,
@@ -1255,6 +1263,11 @@ impl Lang {
             walk_onward: r.head("ext.op.walk.onward")?,
             giver_class: r.head("ext.op.walk.giver.class")?,
             walk_giver: r.head("ext.op.walk.giver")?,
+            giver_unwalkable: match r.strings("ext.op.walk.giver.unwalkable")?.as_slice() {
+                [] => None,
+                [before, after] => Some((before.clone(), after.clone())),
+                _ => return Err("ext.op.walk.giver.unwalkable takes exactly two pieces, what is said before the name and what is said after".to_string()),
+            },
             walk_no_cell: r.head("ext.op.walk.no_cell")?,
             walk_key_no_cell: r.head("ext.op.walk.key.no_cell")?,
             modifier_words: r.strings("ext.stmt.class.modifier")?,

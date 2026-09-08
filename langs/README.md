@@ -403,7 +403,13 @@ only. The extension labels so far, all from PHP:
   thing that hands another over to be walked in its stead (PHP's
   `IteratorAggregate` and `getIterator`); one so handed over may hand
   over a third, and the asking goes on until what comes back hands over
-  nothing further. `ext.op.walk.no_cell` is the words for asking such a
+  nothing further. `ext.op.walk.giver.unwalkable` is two pieces of what
+  is said where what was handed over is no walk at all: what is said
+  before the name of the thing that handed it over and what is said
+  after, with `Class::method()` written between them; a language that
+  leaves it out walks whatever was handed over as best it may. The class
+  the fault is raised as is what `ext.system.fault.class.walk` names.
+  `ext.op.walk.no_cell` is the words for asking such a
   thing to hand out the items' own cells, which it has none of. The
   classes themselves are declared in the language's own library, not
   here: the kernel is told only which class stands for each and what the
@@ -1313,6 +1319,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.walk.class` | - | - | - | - | - | - | - | `Iterator` | - | - |
 | `ext.op.walk.giver` | - | - | - | - | - | - | - | `getIterator` | - | - |
 | `ext.op.walk.giver.class` | - | - | - | - | - | - | - | `IteratorAggregate` | - | - |
+| `ext.op.walk.giver.unwalkable` | - | - | - | - | - | - | - | `Objects returned by` `must be traversable or implement interface Iterator` | - | - |
 | `ext.op.walk.key` | - | - | - | - | - | - | - | `key` | - | - |
 | `ext.op.walk.key.no_cell` | - | - | - | - | - | - | - | `Key element cannot be a reference` | - | - |
 | `ext.op.walk.more` | - | - | - | - | - | - | - | `valid` | - | - |
@@ -1378,6 +1385,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class.division` | - | - | - | - | - | - | - | `DivisionByZeroError` | - | - |
 | `ext.system.fault.class.kind` | - | - | - | - | - | - | - | `TypeError` | - | - |
 | `ext.system.fault.class.value` | - | - | - | - | - | - | - | `ValueError` | - | - |
+| `ext.system.fault.class.walk` | - | - | - | - | - | - | - | `Exception` | - | - |
 | `ext.system.fault.operands` | - | - | - | - | - | - | - | `Unsupported operand types` | - | - |
 | `ext.system.globals` | - | - | - | - | - | - | - | `$GLOBALS` | - | - |
 | `ext.system.integer.bits` | - | - | - | - | - | - | - | `64` | - | - |

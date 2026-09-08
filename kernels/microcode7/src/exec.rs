@@ -399,14 +399,27 @@ impl<'a> Machine<'a> {
             Prim::Walked => {
                 n(1)?;
                 let mut walking = v[0].clone();
-                while let Some(further) = self.walk_handed(&walking)? {
+                // Asking a thing what it hands over runs a piece of the
+                // program standing elsewhere. The walk is written where
+                // it is written, and is spoken of as standing there, so
+                // the row is put back after the asking.
+                let row = self.row;
+                let mut handed_by = None;
+                while let Some((giver, further)) = self.walk_handed(&walking)? {
+                    handed_by = Some(giver);
                     walking = further;
                 }
+                self.row = row;
                 match self.walks_itself(&walking) {
                     Some(_) => {
                         self.walk_asked(&walking, self.table.single("ext.op.walk.rewind").map(str::to_string))?;
                     }
-                    None => self.can_be_walked(&walking)?,
+                    // What one thing hands over for another to walk has
+                    // to be a walk in its own right.
+                    None => match handed_by.as_deref().and_then(|giver| self.handed_no_walk(giver)) {
+                        Some(said) => return Err(said.into()),
+                        None => self.can_be_walked(&walking)?,
+                    },
                 }
                 walking
             }
@@ -542,7 +555,7 @@ impl<'a> Machine<'a> {
 
     /// What a thing hands over to be walked for it, where it is a thing
     /// that hands one over and what comes back is not the thing itself.
-    fn walk_handed(&mut self, x: &Value) -> Result<Option<Value>, Escape> {
+    fn walk_handed(&mut self, x: &Value) -> Result<Option<(String, Value)>, Escape> {
         let (Some(class), Some(gives)) = (self.table.single("ext.op.walk.giver.class"), self.table.single("ext.op.walk.giver")) else {
             return Ok(None);
         };
@@ -555,8 +568,20 @@ impl<'a> Machine<'a> {
         let itself = matches!((&handed, x), (Value::Thing(a), Value::Thing(b)) if Rc::ptr_eq(a, b));
         Ok(match itself {
             true => None,
-            false => Some(handed),
+            false => Some((thing.of.name.clone(), handed)),
         })
+    }
+
+    /// What is said where a thing hands over, to be walked for it,
+    /// something that is no walk. Nothing where the definition has no
+    /// words for it, and the value is walked as best it may be.
+    fn handed_no_walk(&self, giver: &str) -> Option<String> {
+        let said = self.table.strings("ext.op.walk.giver.unwalkable");
+        let gives = self.table.single("ext.op.walk.giver")?;
+        match said {
+            [before, after] => Some(format!("{} {}::{}() {}", before, giver, gives, after)),
+            _ => None,
+        }
     }
 
     /// Ask a thing that is its own walk one of the walk's questions.
@@ -911,6 +936,10 @@ impl<'a> Machine<'a> {
             _ if self.table.single("ext.system.fault.operands").map_or(false, |w| told.starts_with(w)) => {
                 Some("ext.system.fault.class.kind")
             }
+            // So too the words for what was handed over to be walked.
+            _ if self.table.strings("ext.op.walk.giver.unwalkable").first().map_or(false, |w| told.starts_with(w.as_str())) => {
+                Some("ext.system.fault.class.walk")
+            }
             _ => None,
         };
         by_kind
@@ -924,9 +953,18 @@ impl<'a> Machine<'a> {
         let Some(Value::Blueprint(of)) = self.class_bound(&named) else { return None };
         self.made += 1;
         let mut holds = of.every_field();
-        match holds.iter_mut().find(|(k, _)| k == "message") {
-            Some(place) => place.1 = Value::text(told),
-            None => holds.push(("message".to_string(), Value::text(told))),
+        // A fault of the kernel's own carries the words said and the
+        // place in the program they were said of.
+        let carried = [
+            ("message", Value::text(told)),
+            ("file", Value::text(&self.written_in)),
+            ("line", Value::Small(self.row as i64)),
+        ];
+        for (key, value) in carried {
+            match holds.iter_mut().find(|(k, _)| k == key) {
+                Some(place) => place.1 = value,
+                None => holds.push((key.to_string(), value)),
+            }
         }
         Some(Value::Thing(Rc::new(Thing { of, holds: RefCell::new(holds), turn: self.made })))
     }
