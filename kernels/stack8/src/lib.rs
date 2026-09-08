@@ -129,15 +129,19 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     // A value raised and never caught is a fault like any other, told
     // in the language's own words.
     if let Err(fault) = machine.invoke(&program, Vec::new()) {
-        // A run the program itself said was over came out right.
+        // A run the program itself said was over came out right, and
+        // what was named to run at the end runs even then.
         if matches!(fault, engine::Fault::Finished) {
+            let done = machine.run_when_done();
             machine.let_go_all();
-            return Ok(());
+            return done.map_err(|f| f.told(&machine.names()));
         }
         machine.ended_uncaught(&fault);
+        let _ = machine.run_when_done();
         machine.let_go_all();
         return Err(fault.told(&machine.names()));
     }
+    machine.run_when_done().map_err(|f| f.told(&machine.names()))?;
 
     // A language with an entry function (Rust's `main`) runs it once the
     // program body has defined it.

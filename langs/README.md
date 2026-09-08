@@ -479,6 +479,16 @@ only. The extension labels so far, all from PHP:
   written in the language itself, since giving up what was kept hands it
   back as an ordinary value, and writing it out again writes it into
   whatever keeping now stands.
+- `ext.builtin.at_end`: a builtin naming a routine to run once the run
+  is over, with whatever else is given standing as its arguments. They
+  run in the order they were named, after the program's last statement
+  and before what is still being kept is let go — which is how a
+  language writes the letting-go itself, handler and all, in its own
+  terms rather than the kernel's.
+- Where `ext.op.spelled` stands, a pair of a thing and a method's name
+  also stands where a routine would: `array($this, 'transform')` is that
+  method of that thing, the thing handed over first, and a class in the
+  first place names a method of the class itself.
 - `ext.op.cast`: a switch; a kind's word written within the grouping
   marks before a value makes the value that kind — `(int) $x`. The
   words are the ones the language already gives its kinds, under
@@ -925,6 +935,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.args.count` | - | - | - | - | - | - | - | `func_num_args` | - | - |
 | `ext.builtin.args.count.outside` | - | - | - | - | - | - | - | `func_num_args() must be called from a function context` | - | - |
 | `ext.builtin.array` | - | - | - | - | - | - | - | `array` | - | - |
+| `ext.builtin.at_end` | - | - | - | - | - | - | - | `__at_end` | - | - |
 | `ext.builtin.define` | - | - | - | - | - | - | - | `define` | - | - |
 | `ext.builtin.echo` | - | - | - | - | - | - | - | `echo` | - | - |
 | `ext.builtin.eval` | - | - | - | - | - | - | - | `eval` | - | - |

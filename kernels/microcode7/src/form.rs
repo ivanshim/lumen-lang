@@ -104,6 +104,11 @@ pub enum Prim {
     KeptOut,
     LooseOut,
     DeepOut,
+    /// A routine to run once the run is over, with whatever else was
+    /// given standing as its arguments (ext.builtin.at_end). They run in
+    /// the order they were named, after the program's last statement and
+    /// before what is still kept is let go.
+    Afterward,
     /// What the running call was handed, whatever of it the routine
     /// gave names to: the whole of it, how much there was, or the one
     /// standing at a place (ext.builtin.args.*).

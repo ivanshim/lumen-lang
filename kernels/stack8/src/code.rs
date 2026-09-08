@@ -215,6 +215,11 @@ pub enum Builtin {
     HeldOut,
     DropOut,
     DeepOut,
+    /// A routine to run when the run is over, with whatever else was
+    /// given to stand as its arguments (ext.builtin.at_end). They run
+    /// in the order they were named, after the program's own last
+    /// statement and before what is still being kept is let go.
+    WhenDone,
     /// What the running call was given, however much of it the routine
     /// named: all of it as an array, how much there was, or the one at a
     /// position (ext.builtin.args.*).

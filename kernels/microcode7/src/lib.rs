@@ -137,6 +137,11 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         machine.define(n, Value::Small(math::DEFAULT_PLACES as i64));
     }
     if let Err(told) = machine.run_main(&reduced.program.body) {
+        let _ = machine.run_afterward();
+        machine.let_go_all();
+        return Err(told);
+    }
+    if let Err(told) = machine.run_afterward() {
         machine.let_go_all();
         return Err(told);
     }

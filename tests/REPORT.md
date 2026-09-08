@@ -18,17 +18,17 @@ is listed, since the full kernels are meant to behave alike.
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
 | `php/basic` | 114 | pass 47, differs 31, error 26, skipped 10 | pass 47, differs 31, error 26, skipped 10 |
-| `php/func` | 14 | pass 10, differs 3, error 1, skipped 0 | pass 10, differs 3, error 1, skipped 0 |
-| `php/lang` | 213 | pass 100, differs 46, error 62, skipped 5 | pass 100, differs 46, error 62, skipped 5 |
+| `php/func` | 14 | pass 11, differs 2, error 1, skipped 0 | pass 11, differs 2, error 1, skipped 0 |
+| `php/lang` | 213 | pass 101, differs 45, error 62, skipped 5 | pass 101, differs 45, error 62, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 34, differs 21, error 3, skipped 6 | pass 34, differs 21, error 3, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 196, differs 109, error 92, skipped 25 | pass 196, differs 109, error 92, skipped 25 |
+| all | 422 | pass 198, differs 107, error 92, skipped 25 | pass 198, differs 107, error 92, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 109 |
+| ran, printed something else | 107 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
@@ -42,7 +42,6 @@ is listed, since the full kernels are meant to behave alike.
 | skip php-cgi not available | 2 |
 | Unexpected token: { | 2 |
 | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> | 2 |
-| Fatal error: Maximum execution time of 1 second exceeded in <file> | 2 |
 | Unexpected token: & | 2 |
 | Unexpected token: } | 2 |
 | Fatal error: Uncaught Error: Only a class can be made into an object in <file> | 2 |
@@ -62,12 +61,13 @@ is listed, since the full kernels are meant to behave alike.
 | skip for Windows only | 1 |
 | Fatal error: Uncaught Error: Undefined variable: serialize in <file> | 1 |
 | skip Run only on Windows | 1 |
+| Fatal error: Maximum execution time of 1 second exceeded in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: INF in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: InfiniteIterator in <file> | 1 |
+| Shutdown | 1 |
 | Fatal error: Uncaught Error: Unexpected token: ; in <file> | 1 |
 | Fatal error: Uncaught Error: Unexpected token: += in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: call_user_func in <file> | 1 |
-| skip Can't find german locale | 1 |
 
 ### Reserved words: 53 of 68 spelled
 
@@ -313,8 +313,8 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/func/002.phpt` | pass | pass |  |
 | `php/func/003.phpt` | pass | pass |  |
 | `php/func/004.phpt` | pass | pass |  |
-| `php/func/005.phpt` | differs | differs | ran, printed something else |
-| `php/func/005a.phpt` | error | error | Fatal error: Maximum execution time of 1 second exceeded in <file> |
+| `php/func/005.phpt` | pass | pass |  |
+| `php/func/005a.phpt` | error | error | Shutdown |
 | `php/func/006.phpt` | pass | pass |  |
 | `php/func/007.phpt` | pass | pass |  |
 | `php/func/008.phpt` | pass | pass |  |
@@ -386,7 +386,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug22592.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug23279.phpt` | error | error | thrown in <file> |
 | `php/lang/bug23384.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: Foo in <file> |
-| `php/lang/bug23489.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug23489.phpt` | pass | pass |  |
 | `php/lang/bug23524.phpt` | pass | pass |  |
 | `php/lang/bug23584.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug23624.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: current in <file> |

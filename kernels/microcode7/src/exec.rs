@@ -104,6 +104,9 @@ pub struct Machine<'a> {
     /// let go, innermost last. A keeping within a keeping writes into
     /// the one around it when it is given up.
     holding: RefCell<Vec<String>>,
+    /// The routines to run once the program's last statement is done,
+    /// each with what it is to be handed, in the order they were named.
+    afterward: RefCell<Vec<(Value, Vec<Value>)>>,
     /// Whether writing into a place makes what is needed to hold it: an
     /// array where a name holds nothing, and one at each place along the
     /// way that is not there yet.
@@ -156,6 +159,7 @@ impl<'a> Machine<'a> {
             written_in: String::new(),
             quieted: 0,
             holding: RefCell::new(Vec::new()),
+            afterward: RefCell::new(Vec::new()),
             builds_places: table.flag("ext.op.index.makes"),
             letter_places: table.flag("ext.op.index.text"),
             spelled_stands: table.flag("ext.op.spelled"),
@@ -336,6 +340,28 @@ impl<'a> Machine<'a> {
             None => {
                 drop(holding);
                 print!("{}", text);
+            }
+        }
+    }
+
+    /// The routines named to run once the program is done, in the order
+    /// they were named. One that raises something stops the rest, as a
+    /// fault anywhere else does.
+    pub fn run_afterward(&mut self) -> Result<(), String> {
+        loop {
+            let next = {
+                let mut waiting = self.afterward.borrow_mut();
+                if waiting.is_empty() {
+                    return Ok(());
+                }
+                waiting.remove(0)
+            };
+            let (work, given) = next;
+            if let Value::Bound(p, env) = self.what_it_spells(work) {
+                self.invoke(p, env, given).map_err(|e| match e {
+                    Escape::Error(m) => m,
+                    _ => String::new(),
+                })?;
             }
         }
     }
@@ -1006,7 +1032,12 @@ impl<'a> Machine<'a> {
                 Ok(v)
             }
             Form::Apply(Callee::Code(target), args) => {
-                let (p, env) = self.bound(target, frame)?;
+                let found = self.value_of(target, frame)?;
+                let stands = self.what_it_spells(found);
+                if let Some(done) = self.paired_call(&stands, args, frame) {
+                    return done;
+                }
+                let (p, env) = self.routine_of(stands, target)?;
                 let callee = self.env_for(&p, env, args, frame)?;
                 self.drive(p, callee)
             }
@@ -1185,7 +1216,12 @@ impl<'a> Machine<'a> {
 
     fn bound(&mut self, node: &Form, frame: &Rc<Env>) -> Res<(Rc<Routine>, Rc<Env>)> {
         let found = self.value_of(node, frame)?;
-        match self.what_it_spells(found) {
+        let stands = self.what_it_spells(found);
+        self.routine_of(stands, node)
+    }
+
+    fn routine_of(&mut self, stands: Value, node: &Form) -> Res<(Rc<Routine>, Rc<Env>)> {
+        match stands {
             Value::Bound(p, env) => Ok((p, env)),
             Value::Unset => Err("Unknown function".to_string().into()),
             _ => match node {
@@ -1195,11 +1231,46 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// A pair of a thing and a method's name, standing where a routine
+    /// would: that method of that thing, the thing handed over first.
+    /// A class in the first place names a method of the class itself.
+    fn paired_call(&mut self, stands: &Value, args: &[Form], frame: &Rc<Env>) -> Option<Res<Value>> {
+        if !self.spelled_stands {
+            return None;
+        }
+        let Value::Vector(pair) = stands else { return None };
+        if pair.len() != 2 {
+            return None;
+        }
+        let called = pair[1].bare();
+        let subject = self.what_it_spells(pair[0].clone());
+        let given = match self.value_list(args, frame) {
+            Ok(given) => given,
+            Err(e) => return Some(Err(e)),
+        };
+        let (class, first) = match subject {
+            Value::Thing(thing) => (thing.of.clone(), Value::Thing(thing)),
+            Value::Blueprint(class) => (class, Value::Nil),
+            _ => return Some(Err(format!("Cannot call '{}' on something that holds no method", called).into())),
+        };
+        let Some(program) = class.program(&called).cloned() else {
+            return Some(Err(format!("Call to undefined method {}::{}()", class.name, called).into()));
+        };
+        let mut all = vec![first];
+        all.extend(given);
+        Some(self.invoke(program, self.outermost.clone(), all).map_err(Escape::from))
+    }
+
     /// One step in tail position: a value, or the program to run next.
     fn advance(&mut self, node: &Form, frame: &Rc<Env>) -> Res<Next> {
         match node {
             Form::Apply(Callee::Code(target), args) => {
-                let (p, env) = self.bound(target, frame)?;
+                let found = self.value_of(target, frame)?;
+                let stands = self.what_it_spells(found);
+                if let Some(done) = self.paired_call(&stands, args, frame) {
+                    return Ok(Next::Value(done?));
+                }
+                let (p, env) = self.routine_of(stands, target)?;
                 let callee = self.env_for(&p, env, args, frame)?;
                 Ok(Next::Jump(p, callee))
             }
@@ -1648,6 +1719,17 @@ impl<'a> Machine<'a> {
                 self.allowed = as_index(&v[0])?;
                 self.started = Some(std::time::Instant::now());
                 Value::Flag(true)
+            }
+            // A routine to run once the run is over, with whatever else
+            // was given standing as its arguments.
+            Prim::Afterward => {
+                if v.is_empty() {
+                    return Err(format!("{}() needs a program to run", name));
+                }
+                let mut given = v.to_vec();
+                let work = given.remove(0);
+                self.afterward.borrow_mut().push((work, given));
+                Value::Nil
             }
             // Keeping what the run writes out, and giving it up again.
             Prim::KeepOut => {

@@ -438,6 +438,9 @@
   "ext.builtin.output.depth": [
     "__output_depth"
   ],
+  "ext.builtin.at_end": [
+    "__at_end"
+  ],
   "ext.system.fault.class.value": [
     "ValueError"
   ],

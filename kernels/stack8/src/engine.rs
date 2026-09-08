@@ -52,6 +52,10 @@ pub struct Engine<'a> {
     /// let go, innermost last. A keeping within a keeping writes into
     /// the one around it when it is given up.
     holding: RefCell<Vec<String>>,
+    /// The routines to run once the program's own last statement is
+    /// done, each with what it is to be handed, in the order they were
+    /// named.
+    when_done: RefCell<Vec<(Value, Vec<Value>)>>,
     args_cell: Option<usize>,
     memo_cell: Option<usize>,
 }
@@ -124,6 +128,7 @@ impl<'a> Engine<'a> {
             began: std::cell::Cell::new(None),
             hushed: std::cell::Cell::new(0),
             holding: RefCell::new(Vec::new()),
+            when_done: RefCell::new(Vec::new()),
             args_cell: find(&lang.args_binding),
             memo_cell: find(&lang.memo_binding),
             registry,
@@ -225,6 +230,25 @@ impl<'a> Engine<'a> {
             None => {
                 drop(holding);
                 print!("{}", text);
+            }
+        }
+    }
+
+    /// The routines named to run once the program is done, in the order
+    /// they were named. One that raises something stops the rest, as a
+    /// fault anywhere else does.
+    pub fn run_when_done(&mut self) -> Result<(), Fault> {
+        loop {
+            let next = {
+                let mut waiting = self.when_done.borrow_mut();
+                if waiting.is_empty() {
+                    return Ok(());
+                }
+                waiting.remove(0)
+            };
+            let (work, given) = next;
+            if let Value::Routine(p) = self.what_it_spells(work) {
+                self.invoke(&p, given)?;
             }
         }
     }
@@ -993,6 +1017,32 @@ impl<'a> Engine<'a> {
                 let callee = self.what_it_spells(top);
                 return match callee {
                     Value::Routine(p) => self.invoke_top(&p, argc - 1),
+                    // A pair of a thing and a method's name stands for
+                    // that method of that thing, which is how a language
+                    // hands one routine over where any other would do.
+                    Value::Array(pair) if self.lang.spelled_stands && pair.len() == 2 => {
+                        let sp = self.wording();
+                        let called: Rc<str> = Rc::from(pair[1].display(&sp).as_str());
+                        let subject = match self.what_it_spells(pair[0].clone()) {
+                            Value::Class(_) => Value::Null,
+                            held => held,
+                        };
+                        let mut args = self.drop_many(argc - 1)?;
+                        if matches!(subject, Value::Null) {
+                            let stands = self.what_it_spells(pair[0].clone());
+                            self.data.push(subject);
+                            self.data.push(stands);
+                            for a in args.drain(..) {
+                                self.data.push(a);
+                            }
+                            return self.perform(&Action::Summon(called), argc + 1);
+                        }
+                        self.data.push(subject);
+                        for a in args.drain(..) {
+                            self.data.push(a);
+                        }
+                        return self.perform(&Action::Send(called), argc);
+                    }
                     _ => Err(format!("'{}' is not a function", name).into()),
                 };
             }
@@ -1925,6 +1975,17 @@ impl<'a> Engine<'a> {
                 self.limit.set(seconds);
                 self.began.set(Some(std::time::Instant::now()));
                 Value::Flag(true)
+            }
+            // A routine to run when the run is over, with whatever else
+            // was given to stand as its arguments.
+            Builtin::WhenDone => {
+                if args.is_empty() {
+                    return Err(format!("{}() needs a program to run", name));
+                }
+                let mut given = args.clone();
+                let work = given.remove(0);
+                self.when_done.borrow_mut().push((work, given));
+                Value::Null
             }
             // Keeping what the run writes out, and giving it up again.
             Builtin::HoldOut => {

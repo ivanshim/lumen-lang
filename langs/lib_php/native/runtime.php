@@ -319,11 +319,18 @@ function headers_list() { return array(); }
 // kernel holds the text; the handlers a program hands over are kept
 // here, one for each keeping, and run over the text as it is let go.
 $__handlers = array();
+$__flushing = false;
 function ob_start($handler = null) {
-    global $__handlers;
+    global $__handlers, $__flushing;
+    // What is still being kept when the run ends is let go then, each
+    // keeping through its own handler, which only the language can do.
+    if (!$__flushing) { $__flushing = true; __at_end('__let_go_all'); }
     __output_hold();
     $__handlers[] = $handler;
     return true;
+}
+function __let_go_all() {
+    while (__output_depth() > 0) { ob_end_flush(); }
 }
 function ob_get_contents() { return __output_held(); }
 function ob_get_level() { return __output_depth(); }
@@ -563,7 +570,12 @@ function php_uname($mode = "a") { return PHP_OS; }
 function setlocale($category, $locale) { return false; }
 function date_default_timezone_set($zone) { return true; }
 function date_default_timezone_get() { return "UTC"; }
-function register_shutdown_function($work) { return null; }
+function register_shutdown_function($work, $a = null, $b = null, $c = null) {
+    if ($c !== null) { return __at_end($work, $a, $b, $c); }
+    if ($b !== null) { return __at_end($work, $a, $b); }
+    if ($a !== null) { return __at_end($work, $a); }
+    return __at_end($work);
+}
 function trigger_error($message, $level = 1024) { return true; }
 function realpath($path) { return $path; }
 function basename($path) {
