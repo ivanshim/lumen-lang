@@ -558,6 +558,36 @@ impl<'a> Engine<'a> {
     /// A value with no places at all cannot be walked. A language with
     /// a word for a warning is told so and walks it no times, rather
     /// than having the run stopped over it.
+    /// The bits of a value, with a word said where a real is too wide
+    /// for the whole numbers this language holds and working on its bits
+    /// means taking something else. A language with no word for a
+    /// warning says nothing and takes it just the same.
+    fn bits_said(&self, v: &Value) -> Res<i64> {
+        let bits = bits_of(v)?;
+        if !self.lang.warns_of_unwritten {
+            return Ok(bits);
+        }
+        if let Value::Frac(_) | Value::Real(_) = v {
+            let Some(exact) = arith::Exact::from_value(v) else { return Ok(bits) };
+            // The nearest real of the width is what a language of that
+            // width holds, and whether *it* can be held as a whole
+            // number is the question, not whether the exact ratio can.
+            let near = crate::value::as_binary(&exact.p, &exact.q);
+            let widest = 9223372036854775808.0f64;
+            if !(near >= -widest && near < widest) {
+                // Written to the last figure that tells it apart from its
+                // neighbours, since the words are about this very number
+                // and not about how the language shows one.
+                let told = format!(
+                    "The float {} is not representable as an int, cast occurred",
+                    crate::value::binary_string(near, None)
+                );
+                self.complain(Complaint::Warning, &told);
+            }
+        }
+        Ok(bits)
+    }
+
     fn walkable(&mut self, held: &Value) -> Result<(), Fault> {
         if matches!(held, Value::Array(_) | Value::Map(_) | Value::Object(_)) {
             return Ok(());
@@ -1340,7 +1370,7 @@ impl<'a> Engine<'a> {
                         let out: Vec<u8> = s.as_bytes().iter().map(|c| !c).collect();
                         Value::text(&String::from_utf8_lossy(&out))
                     }
-                    _ => Value::Small(!bits_of(&v)?),
+                    _ => Value::Small(!self.bits_said(&v)?),
                 }
             }
             Action::Negate => {
@@ -2046,7 +2076,7 @@ impl<'a> Engine<'a> {
             // Working on the bits reads each side as a whole number of
             // sixty-four bits, sign and all, whatever it was written as.
             Action::BitBoth | Action::BitEither | Action::BitOne | Action::BitUp | Action::BitDown => {
-                let (x, y) = (bits_of(a)?, bits_of(b)?);
+                let (x, y) = (self.bits_said(a)?, self.bits_said(b)?);
                 Value::Small(match op {
                     Action::BitBoth => x & y,
                     Action::BitEither => x | y,

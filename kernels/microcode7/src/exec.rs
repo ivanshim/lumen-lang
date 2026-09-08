@@ -408,6 +408,33 @@ impl<'a> Machine<'a> {
         Ok(())
     }
 
+    /// The bits of a value, with a word said where a real is too wide
+    /// for the whole numbers this language holds, so that working on its
+    /// bits means working on something else. A language with no word for
+    /// a warning says nothing and works on it just the same.
+    fn bits_told(&self, x: &Value) -> Result<i64, String> {
+        let bits = sixty_four(x)?;
+        if !self.complaint_words.iter().any(|(k, _)| *k == "warning") {
+            return Ok(bits);
+        }
+        if let Value::Frac(_) = x {
+            let Some(exact) = math::ratio_of(x) else { return Ok(bits) };
+            // The nearest real of the width is what such a language
+            // holds, so whether that can be held as a whole number is
+            // the question, not whether the exact ratio can.
+            let near = crate::data::nearest_binary(&exact.above, &exact.beneath);
+            let widest = 9223372036854775808.0f64;
+            if !(near >= -widest && near < widest) {
+                let told = format!(
+                    "The float {} is not representable as an int, cast occurred",
+                    crate::data::figured(near, None)
+                );
+                self.grumble("warning", &told);
+            }
+        }
+        Ok(bits)
+    }
+
     /// The thing that is its own walk, where this value is one.
     fn walks_itself(&self, x: &Value) -> Option<Rc<Thing>> {
         let class = self.table.single("ext.op.walk.class")?;
@@ -2426,7 +2453,7 @@ impl<'a> Machine<'a> {
             // read as a whole number of sixty-four bits first.
             Prim::BitsOver => match &v[0] {
                 Value::Text(s) => Value::text(&letters_turned(s)),
-                other => Value::Small(!sixty_four(other)?),
+                other => Value::Small(!self.bits_told(other)?),
             },
             // Two pieces of text meet letter by letter. The shorter one
             // says how far it goes, save where either bit will do, and
@@ -2450,7 +2477,7 @@ impl<'a> Machine<'a> {
                 Value::text(&String::from_utf8_lossy(&letters))
             }
             Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne => {
-                let (left, right) = (sixty_four(&v[0])?, sixty_four(&v[1])?);
+                let (left, right) = (self.bits_told(&v[0])?, self.bits_told(&v[1])?);
                 Value::Small(match op {
                     Prim::BitsBoth => left & right,
                     Prim::BitsEither => left | right,
@@ -2458,7 +2485,7 @@ impl<'a> Machine<'a> {
                 })
             }
             Prim::BitsUp | Prim::BitsDown => {
-                let (bits, by) = (sixty_four(&v[0])?, sixty_four(&v[1])?);
+                let (bits, by) = (self.bits_told(&v[0])?, self.bits_told(&v[1])?);
                 if by < 0 {
                     return Err("Bit shift by a negative number".to_string());
                 }
