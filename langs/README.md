@@ -229,6 +229,12 @@ only. The extension labels so far, all from PHP:
   and running to the end of the statement (`print "x";`). `echo` is read
   this way even with a bracket after it, since `echo ($a) . "b", $c;` is
   a group and then more arguments, not a call.
+- `ext.builtin.write.operator`: a switch; the writer (`builtin.write`) is
+  read the same way, as an operator and not as a call, so a bracket after
+  it groups what follows rather than holding its argument. It takes the
+  whole of the piece it stands before, which is why PHP's
+  `print ($a == $b) ? 'yes' : 'no';` writes one word or the other and not
+  the answer to the comparison.
 - `ext.op.increment`, `ext.op.decrement`: `++` and `--`, as statements
   and in expressions, before or after the name (`++$i` is the stepped
   value, `$i++` the value before).
@@ -1232,6 +1238,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.uncaught` | - | - | - | - | - | - | - | `__uncaught_handler` | - | - |
 | `ext.builtin.unset` | - | - | - | - | - | - | - | `unset` | - | - |
 | `ext.builtin.var_dump` | - | - | - | - | - | - | - | `var_dump` | - | - |
+| `ext.builtin.write.operator` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.lexical.epilogue` | - | - | - | - | - | - | - | `?>` | - | - |
 | `ext.lexical.escape.codepoint` | - | - | - | - | - | - | - | `u` | - | - |
 | `ext.lexical.escape.codepoint.amiss` | - | - | - | - | - | - | - | `Invalid UTF-8 codepoint escape sequence` | - | - |

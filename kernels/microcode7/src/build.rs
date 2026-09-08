@@ -1903,6 +1903,10 @@ impl<'a> Builder<'a> {
             let bracketed = self.table.single("syntax.call.open").map_or(false, |o| next.shape == Shape::Sign && next.lexeme == o);
             let bare = match op {
                 Some(Prim::Tell) => true,
+                // A writer written as an operator takes the whole of
+                // what follows however it is written, so brackets after
+                // it group rather than hold what it is given.
+                Some(Prim::Out) if self.table.flag("ext.builtin.write.operator") => true,
                 Some(Prim::Append | Prim::Replace | Prim::Define | Prim::Gather | Prim::Erase | Prim::Standing | Prim::Hollow) | None => false,
                 Some(_) => !bracketed,
             };

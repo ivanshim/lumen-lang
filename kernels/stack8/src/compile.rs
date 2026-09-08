@@ -930,6 +930,10 @@ impl<'a> Compiler<'a> {
             let bracketed = lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).is_lexeme(Shape::Sign, &c.open));
             match lang.builtins.get(&w) {
                 Some(Builtin::Tell) => return self.bare_call(w),
+                // A writer written as an operator takes the whole of
+                // what follows however it is written, so brackets after
+                // it group rather than hold what it is given.
+                Some(Builtin::Out) if lang.writes_as_operator => return self.bare_call(w),
                 Some(Builtin::Append) | Some(Builtin::Replace) | Some(Builtin::Define) | Some(Builtin::Pack) | Some(Builtin::Erase) | None => {}
                 Some(_) if !bracketed => return self.bare_call(w),
                 Some(_) => {}

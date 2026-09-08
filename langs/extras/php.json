@@ -318,6 +318,7 @@
   "builtin.write": [
     "print"
   ],
+  "ext.builtin.write.operator": true,
   "builtin.print.placeholder": [],
   "builtin.len": [
     "count",
