@@ -2217,6 +2217,28 @@ impl<'a> Compiler<'a> {
                 self.rewritten(&name);
                 Ok(())
             }
+            // `a[i] = &b`: the place holds the cell itself, so a write
+            // through either name is a write the other sees.
+            [Instr::Read(slot), index @ .., Instr::Act(Action::At, 2)]
+                if !slot.moving
+                    && compound.is_none()
+                    && self.lang.reference_mark.as_ref().map_or(false, |m| self.at_symbol(m)) =>
+            {
+                let name = slot.ident.to_string();
+                for w in relocated(index.to_vec(), -1) {
+                    self.put(w);
+                }
+                self.take();
+                self.a_cell()?;
+                self.read_to_rewrite(&name);
+                self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
+                self.rewritten(&name);
+                if keep.is_some() {
+                    self.constant(Value::Null);
+                    self.kept(keep);
+                }
+                Ok(())
+            }
             [Instr::Read(slot), index @ .., Instr::Act(Action::At, 2)] if !slot.moving => {
                 let name = slot.ident.to_string();
                 for w in relocated(index.to_vec(), -1) {

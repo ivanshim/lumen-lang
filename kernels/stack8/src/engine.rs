@@ -1990,6 +1990,12 @@ impl<'a> Engine<'a> {
                     // A list written at a place it already holds stays a list.
                     Value::Array(mut items) if as_index(&at).map_or(false, |i| i < items.len()) => {
                         let i = as_index(&at)?;
+                        // A place holding a cell that names share is
+                        // written through, not written over.
+                        if let Value::Bond(shared) = &items[i] {
+                            *shared.borrow_mut() = v;
+                            return Ok(Value::Array(items));
+                        }
                         Rc::make_mut(&mut items)[i] = v;
                         Value::Array(items)
                     }
@@ -2185,7 +2191,12 @@ fn next_key(pairs: &[(Value, Value)]) -> i64 {
 /// Write a key: over the value it already holds, or at the end.
 fn put_key(pairs: &mut Vec<(Value, Value)>, key: Value, value: Value) {
     match pairs.iter_mut().find(|(k, _)| k.equals(&key)) {
-        Some(slot) => slot.1 = value,
+        // A place holding a cell that names share is written through,
+        // not written over.
+        Some(slot) => match &slot.1 {
+            Value::Bond(shared) => *shared.borrow_mut() = value,
+            _ => slot.1 = value,
+        },
         None => pairs.push((key, value)),
     }
 }

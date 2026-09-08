@@ -19,17 +19,17 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 46, differs 30, error 28, skipped 10 | pass 46, differs 30, error 28, skipped 10 |
 | `php/func` | 14 | pass 7, differs 3, error 4, skipped 0 | pass 7, differs 3, error 4, skipped 0 |
-| `php/lang` | 213 | pass 75, differs 50, error 83, skipped 5 | pass 75, differs 50, error 83, skipped 5 |
+| `php/lang` | 213 | pass 76, differs 49, error 83, skipped 5 | pass 76, differs 49, error 83, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 31, differs 21, error 6, skipped 6 | pass 31, differs 21, error 6, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 164, differs 112, error 121, skipped 25 | pass 164, differs 112, error 121, skipped 25 |
+| all | 422 | pass 165, differs 111, error 121, skipped 25 | pass 165, differs 111, error 121, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 112 |
-| Only a name, a place in an array or a property has a cell to share | 9 |
+| ran, printed something else | 111 |
+| Only a name, a place in an array or a property has a cell to share | 12 |
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
@@ -37,7 +37,6 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
 | Unexpected token: : | 3 |
-| Unexpected token: & | 3 |
 | Fatal error: Uncaught Error: Undefined variable: current in <file> | 3 |
 | Unexpected token: ++ | 3 |
 | skip php-cgi not available | 2 |
@@ -68,6 +67,7 @@ is listed, since the full kernels are meant to behave alike.
 | skip locale needed for this test is not supported on this platform | 1 |
 | Fatal error: Uncaught Error: Undefined variable: umask in <file> | 1 |
 | skip for Windows only | 1 |
+| Fatal error: Uncaught Error: Undefined variable: join in <file> | 1 |
 
 ### Reserved words: 48 of 68 spelled
 
@@ -351,7 +351,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/026.phpt` | pass | pass |  |
 | `php/lang/027.phpt` | error | error | Expected an expression |
 | `php/lang/028.phpt` | error | error | Unexpected token: : |
-| `php/lang/030.phpt` | error | error | Unexpected token: & |
+| `php/lang/030.phpt` | error | error | Only a name, a place in an array or a property has a cell to share |
 | `php/lang/032.phpt` | pass | pass |  |
 | `php/lang/033.phpt` | error | error | Unexpected token: : |
 | `php/lang/034.phpt` | skipped | skipped | skip Can't find german locale |
@@ -376,12 +376,12 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug19943.phpt` | error | error | Fatal error: Uncaught Error: put() requires an array in <file> |
 | `php/lang/bug20175.phpt` | error | error | Only a name, a place in an array or a property has a cell to share |
 | `php/lang/bug21094.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug21600.phpt` | error | error | Unexpected token: & |
+| `php/lang/bug21600.phpt` | error | error | Only a name, a place in an array or a property has a cell to share |
 | `php/lang/bug21669.phpt` | error | error | Fatal error: Uncaught Error: Only a class can be made into an object in <file> |
 | `php/lang/bug21820.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug21849.phpt` | pass | pass |  |
 | `php/lang/bug21961.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> |
-| `php/lang/bug22231.phpt` | error | error | Unexpected token: & |
+| `php/lang/bug22231.phpt` | error | error | Only a name, a place in an array or a property has a cell to share |
 | `php/lang/bug22510.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug22592.phpt` | error | error | Fatal error: Uncaught Error: put() requires an array in <file> |
 | `php/lang/bug23279.phpt` | error | error | thrown in <file> |
@@ -460,7 +460,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/foreachLoop.002.phpt` | error | error | Fatal error: Uncaught Error: Array index 2 out of bounds (length: 1) in <file> |
 | `php/lang/foreachLoop.003.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.004.phpt` | pass | pass |  |
-| `php/lang/foreachLoop.005.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoop.005.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.006.phpt` | differs | differs | ran, printed something else |
 | `php/lang/foreachLoop.009.phpt` | error | error | Fatal error: Uncaught Error: Array index 2 out of bounds (length: 1) in <file> |
 | `php/lang/foreachLoop.010.phpt` | pass | pass |  |

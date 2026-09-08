@@ -2183,7 +2183,12 @@ fn after_keys(entries: &[(Value, Value)]) -> i64 {
 /// Write a key over what it holds, or add it at the end.
 fn set_key(entries: &mut Vec<(Value, Value)>, key: Value, value: Value) {
     match entries.iter_mut().find(|(k, _)| k.equals(&key)) {
-        Some(entry) => entry.1 = value,
+        // A place keeping a cell that names share is written through,
+        // not written over.
+        Some(entry) => match &entry.1 {
+            Value::Shared(cell) => *cell.borrow_mut() = value,
+            _ => entry.1 = value,
+        },
         None => entries.push((key, value)),
     }
 }
@@ -2228,6 +2233,14 @@ fn written_into(held: &mut Value, key: Option<Value>, value: Value, ident: &str,
         _ => false,
     };
     if let (Value::Vector(items), true) = (&mut *held, stays) {
+        // A place keeping a cell that names share is written through,
+        // not written over.
+        if let Some(k) = &key {
+            if let Some(Value::Shared(cell)) = items.get(as_index(k)?) {
+                *cell.borrow_mut() = value;
+                return Ok(());
+            }
+        }
         let items = Rc::make_mut(items);
         match key {
             Some(k) => items[as_index(&k)?] = value,

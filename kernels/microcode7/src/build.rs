@@ -1856,6 +1856,12 @@ impl<'a> Builder<'a> {
         }
         let plain = compound.is_none();
         // `b = &a`: b is tied to a's cell rather than given a copy.
+        let tied_to_a_cell = self.table.single("ext.op.reference").map_or(false, |m| self.sign(m)) && plain;
+        let mut shared_value: Option<Form> = None;
+        if tied_to_a_cell && matches!(expr, Form::Apply(Callee::Prim(Prim::At, _), _)) {
+            self.advance();
+            shared_value = Some(self.a_shared_cell()?);
+        }
         if self.table.single("ext.op.reference").map_or(false, |m| self.sign(m)) && plain {
             if let Form::Read(slot) = &expr {
                 let held = slot.ident.to_string();
@@ -1872,9 +1878,11 @@ impl<'a> Builder<'a> {
         // Where the value is already worked out and waiting in a cell,
         // the write reads it from there rather than reading what comes
         // after the sign: a taking-apart has no sign before each place.
-        let mut value = match self.waiting.clone() {
-            Some(cell) => self.read(&cell),
-            None => self.expr(0)?,
+        // Where a cell was already taken, that cell is the value.
+        let mut value = match (self.waiting.clone(), &shared_value) {
+            (_, Some(_)) => constant(Value::Nil),
+            (Some(cell), None) => self.read(&cell),
+            (None, None) => self.expr(0)?,
         };
         let keep = (gives_back && plain).then(|| {
             self.gensyms += 1;
@@ -1974,6 +1982,19 @@ impl<'a> Builder<'a> {
                     steps.push(self.read(&holding));
                 }
                 sequence(steps)
+            }
+            // `a[i] = &b`: the place holds the cell itself, so a write
+            // through either name is a write the other sees.
+            Form::Apply(Callee::Prim(Prim::At, _), ref args) if tied_to_a_cell && args.len() == 2 => {
+                let Form::Apply(_, mut args) = expr else { unreachable!("a look") };
+                let index = args.pop().expect("the place");
+                match args.pop().expect("what holds it") {
+                    Form::Read(slot) => {
+                        let target = self.read_to_write(&slot.ident);
+                        prim_call(Prim::Replace, vec![target, index, shared_value.expect("a cell")])
+                    }
+                    _ => return Err("Invalid assignment target".to_string()),
+                }
             }
             // A read of the binding a value names becomes a write of it.
             Form::Called(spells) if compound.is_none() => Form::CallWrite(spells, Box::new(value)),
