@@ -95,6 +95,7 @@ function __hook_as_needed() {
 // host tells the run about them. A setting written while the run goes
 // is kept beside them and answered from there afterwards.
 $__settings = array();
+__room_at_start();
 function ini_get($name) {
     global $__settings;
     if (array_key_exists($name, $__settings)) { return $__settings[$name]; }
@@ -116,6 +117,12 @@ function ini_set($name, $value) {
     $known = array('precision', 'serialize_precision', 'memory_limit', 'max_execution_time', 'error_reporting', 'display_errors', 'log_errors', 'default_charset', 'internal_encoding', 'input_encoding', 'output_encoding', 'include_path', 'date.timezone', 'output_buffering', 'zend.assertions', 'assert.exception');
     if (!in_array($name, $known)) { return false; }
     $was = ini_get($name);
+    if ($name === 'memory_limit') {
+        $held = __room_allowed((string)$value);
+        if ($held[1]) { __complain(E_WARNING, __room_said((string)$value, $held[0])); }
+        $__settings[$name] = $held[0];
+        return $was;
+    }
     $__settings[$name] = (string)$value;
     return $was;
 }
@@ -168,6 +175,35 @@ function ini_parse_quantity($text) {
     return leading_whole($text) * $times;
 }
 
+// How much room a run may take is held down to the most it may be given.
+// A wish for more than that is turned down and said to be; a wish for no
+// limit at all is quietly brought down to it.
+function __room_allowed($wanted) {
+    $most = ini_get('max_memory_limit');
+    if ($most === false || $most === "") { return array($wanted, false); }
+    $ceiling = ini_parse_quantity($most);
+    if ($ceiling <= 0) { return array($wanted, false); }
+    $asked = ini_parse_quantity($wanted);
+    if ($asked < 0) { return array($most, false); }
+    if ($asked > $ceiling) { return array($most, true); }
+    return array($wanted, false);
+}
+function __room_said($wanted, $most) {
+    return "Failed to set memory_limit to " . ini_parse_quantity($wanted) . " bytes. Setting to max_memory_limit instead (currently: " . ini_parse_quantity($most) . " bytes)";
+}
+// The room the run was started with, brought down where it must be.
+function __room_at_start() {
+    global $__settings;
+    $carried = 'PHP_INI_memory_limit';
+    if (!array_key_exists($carried, $_ENV)) { return null; }
+    $wanted = $_ENV[$carried];
+    $held = __room_allowed($wanted);
+    if ($held[1]) {
+        echo "\nWarning: " . __room_said($wanted, $held[0]) . " in Unknown on line 0\n";
+    }
+    $__settings['memory_limit'] = $held[0];
+    return null;
+}
 function set_error_handler($handler, $levels = 30719) {
     global $__error_handler;
     $was = $__error_handler;
