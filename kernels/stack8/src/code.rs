@@ -7,6 +7,11 @@
 
 use std::rc::Rc;
 
+/// What is put after a class's name to file it under: a class and a
+/// routine may go by one name, and a binding is one thing, so the three
+/// are told apart by how each is filed rather than by what it holds.
+pub const OF_A_CLASS: &str = "\0class";
+
 use crate::value::Value;
 
 /// A binding's address: candidate local slots (innermost first) and the

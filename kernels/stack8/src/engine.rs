@@ -892,21 +892,36 @@ impl<'a> Engine<'a> {
         if !self.lang.spelled_stands {
             return v;
         }
-        match self.class_named(name) {
-            Some(found @ (Value::Class(_) | Value::Routine(_))) => found.clone(),
-            _ => v,
+        // A routine and a class may go by one name. Standing where
+        // either would do, the routine is meant: a class named by a
+        // value stands where only a class will do, and is looked for
+        // there.
+        match self.lookup(name) {
+            Some(found @ Value::Routine(_)) => found.clone(),
+            _ => self.class_named(name).cloned().unwrap_or(v),
         }
     }
 
-    /// The outermost binding of that name. Where a language knows a
-    /// class by its name however the name is written, a name nothing
-    /// answers to is tried again with every letter made small.
+    /// The same, where only a class will do: `new $c`, `$c::m()` and the
+    /// rest, which a routine of that name is no answer to.
+    fn class_it_spells(&self, v: Value) -> Value {
+        let Value::Text(name) = &v else { return v };
+        if !self.lang.spelled_stands {
+            return v;
+        }
+        self.class_named(name).cloned().unwrap_or(v)
+    }
+
+    /// The class of that name. Where a language knows a class by its
+    /// name however the name is written, a name nothing answers to is
+    /// tried again with every letter made small.
     fn class_named(&self, name: &str) -> Option<&Value> {
-        if let found @ Some(_) = self.lookup(name) {
+        let filed = format!("{}{}", name, crate::code::OF_A_CLASS);
+        if let found @ Some(_) = self.lookup(&filed) {
             return found;
         }
         match self.lang.classes_folded {
-            true => self.lookup(&name.to_lowercase()),
+            true => self.lookup(&format!("{}{}", name.to_lowercase(), crate::code::OF_A_CLASS)),
             false => None,
         }
     }
@@ -1703,7 +1718,7 @@ impl<'a> Engine<'a> {
             Action::BondOwn(name) => {
                 let stands = {
                     let top = self.drop_top()?;
-                    self.what_it_spells(top)
+                    self.class_it_spells(top)
                 };
                 match stands {
                     Value::Class(c) => {
@@ -1857,13 +1872,13 @@ impl<'a> Engine<'a> {
                             Value::Bond(cell) => cell.borrow().clone(),
                             held => held.clone(),
                         };
-                        let subject = match self.what_it_spells(first.clone()) {
+                        let subject = match self.class_it_spells(first.clone()) {
                             Value::Class(_) => Value::Null,
                             held => held,
                         };
                         let mut args = self.drop_many(argc - 1)?;
                         if matches!(subject, Value::Null) {
-                            let stands = self.what_it_spells(first);
+                            let stands = self.class_it_spells(first);
                             self.data.push(subject);
                             self.data.push(stands);
                             for a in args.drain(..) {
@@ -1970,7 +1985,7 @@ impl<'a> Engine<'a> {
             }
             Action::Make => {
                 let mut args = self.drop_many(argc)?;
-                let stands = self.what_it_spells(args.remove(0));
+                let stands = self.class_it_spells(args.remove(0));
                 let Value::Class(class) = stands else {
                     return Err("Only a class can be made into an object".to_string().into());
                 };
@@ -2168,7 +2183,7 @@ impl<'a> Engine<'a> {
             }
             Action::Reach(name) => match {
                 let top = self.drop_top()?;
-                self.what_it_spells(top)
+                self.class_it_spells(top)
             } {
                 Value::Class(c) => match c.constant(&name) {
                     Some(v) => v.clone(),
@@ -2188,7 +2203,7 @@ impl<'a> Engine<'a> {
             Action::Sow(name) => {
                 let mut pair = self.drop_many(2)?;
                 let value = pair.pop().expect("the value");
-                let stands = self.what_it_spells(pair.pop().expect("the class"));
+                let stands = self.class_it_spells(pair.pop().expect("the class"));
                 match stands {
                     Value::Class(c) => {
                         let holder = c.holder(&name).unwrap_or(&c);
@@ -2208,7 +2223,7 @@ impl<'a> Engine<'a> {
             Action::Summon(name) => {
                 let mut args = self.drop_many(argc)?;
                 let this = args.remove(0);
-                let stands = self.what_it_spells(args.remove(0));
+                let stands = self.class_it_spells(args.remove(0));
                 let Value::Class(class) = stands else {
                     let told = self.no_such_class(&stands).unwrap_or_else(|| format!("Cannot call '{}' on a value that is not a class", name));
                     return Err(told.into());
@@ -3223,8 +3238,10 @@ impl<'a> Engine<'a> {
                 let mut named = Vec::new();
                 for (at, held) in self.world.iter().enumerate() {
                     if wanted(held) {
+                        // A class is filed under more than its name, so
+                        // what it is filed under is taken off again.
                         if let Some(name) = self.registry.idents.get(at) {
-                            named.push(Value::text(name));
+                            named.push(Value::text(name.trim_end_matches(crate::code::OF_A_CLASS)));
                         }
                     }
                 }
@@ -3234,7 +3251,7 @@ impl<'a> Engine<'a> {
             // the class it is of. Nothing where it stands on none.
             Builtin::ClassBeneath => {
                 arity(1)?;
-                let of = match self.what_it_spells(args[0].clone()) {
+                let of = match self.class_it_spells(args[0].clone()) {
                     Value::Object(o) => Some(o.class.clone()),
                     Value::Class(c) => Some(c),
                     _ => None,

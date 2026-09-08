@@ -592,21 +592,35 @@ impl<'a> Machine<'a> {
         if !self.spelled_stands {
             return v;
         }
-        match self.class_bound(name) {
-            Some(found @ (Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..))) => found.clone(),
-            _ => v,
+        // A routine and a class may go by one name. Standing where
+        // either would do, the routine is meant: a class named by a
+        // value stands where only a class will do, and is sought there.
+        match self.lookup(name) {
+            Some(found @ (Value::Routine(_) | Value::Bound(..))) => found,
+            _ => self.class_bound(name).unwrap_or(v),
         }
     }
 
-    /// The outermost binding of that name. Where classes go by their
-    /// names however the names are written, a name nothing stands
-    /// under is asked for again with its letters written small.
+    /// The same, where only a class will do: `new $c`, `$c::m()` and the
+    /// rest, which a routine of that name is no answer to.
+    fn class_it_spells(&self, v: Value) -> Value {
+        let Value::Text(name) = &v else { return v };
+        if !self.spelled_stands {
+            return v;
+        }
+        self.class_bound(name).unwrap_or(v)
+    }
+
+    /// The class of that name. Where classes go by their names however
+    /// the names are written, a name nothing stands under is asked for
+    /// again with its letters written small.
     fn class_bound(&self, name: &str) -> Option<Value> {
-        if let found @ Some(_) = self.lookup(name) {
+        let filed = format!("{}{}", name, crate::form::OF_A_CLASS);
+        if let found @ Some(_) = self.lookup(&filed) {
             return found;
         }
         match self.classes_either_way {
-            true => self.lookup(&name.to_lowercase()),
+            true => self.lookup(&format!("{}{}", name.to_lowercase(), crate::form::OF_A_CLASS)),
             false => None,
         }
     }
@@ -1807,7 +1821,7 @@ impl<'a> Machine<'a> {
                     if values.is_empty() {
                         return Err("Nothing was given to make".to_string().into());
                     }
-                    let stands = self.what_it_spells(values.remove(0));
+                    let stands = self.class_it_spells(values.remove(0));
                     let Value::Blueprint(class) = stands else {
                         return Err("Only a class can be made into a thing".to_string().into());
                     };
@@ -1863,7 +1877,7 @@ impl<'a> Machine<'a> {
                         return Err(format!("{}() needs a class and a method name", name).into());
                     }
                     let subject = values.remove(0);
-                    let holder = self.what_it_spells(values.remove(0));
+                    let holder = self.class_it_spells(values.remove(0));
                     let called = values.remove(0).bare();
                     let Value::Blueprint(class) = holder else {
                         let said = self.class_lacking(&holder).unwrap_or_else(|| format!("Cannot call '{}' on something that is not a class", called));
@@ -2055,7 +2069,7 @@ impl<'a> Machine<'a> {
             Value::Shared(cell) => cell.borrow().clone(),
             held => held.clone(),
         };
-        let subject = self.what_it_spells(first_of);
+        let subject = self.class_it_spells(first_of);
         let given = match self.value_list(args, frame) {
             Ok(given) => given,
             Err(e) => return Some(Err(e)),
@@ -2691,7 +2705,7 @@ impl<'a> Machine<'a> {
             Prim::Within => {
                 n(2)?;
                 let called = v[1].bare();
-                let stands = self.what_it_spells(v[0].clone());
+                let stands = self.class_it_spells(v[0].clone());
                 match &stands {
                     Value::Blueprint(class) => match class.constant(&called) {
                         Some(x) => x.clone(),
@@ -2715,7 +2729,7 @@ impl<'a> Machine<'a> {
             Prim::Into => {
                 n(3)?;
                 let called = v[1].bare();
-                let stands = self.what_it_spells(v[0].clone());
+                let stands = self.class_it_spells(v[0].clone());
                 match &stands {
                     Value::Blueprint(class) => {
                         let keeper = class.keeper(&called).unwrap_or(class);
@@ -2914,8 +2928,10 @@ impl<'a> Machine<'a> {
                         _ => matches!(held, Value::Bound(..) | Value::Routine(_)),
                     };
                     if wanted {
+                        // A class is filed under more than its name, so
+                        // what it is filed under is taken off again.
                         if let Some(name) = self.idents.get(at) {
-                            named.push(Value::text(name));
+                            named.push(Value::text(name.trim_end_matches(crate::form::OF_A_CLASS)));
                         }
                     }
                 }
@@ -2925,7 +2941,7 @@ impl<'a> Machine<'a> {
             // the class it is of. Nothing where it stands on none.
             Prim::ClassBeneath => {
                 n(1)?;
-                let of = match self.what_it_spells(v[0].clone()) {
+                let of = match self.class_it_spells(v[0].clone()) {
                     Value::Thing(thing) => Some(thing.of.clone()),
                     Value::Blueprint(class) => Some(class),
                     _ => None,

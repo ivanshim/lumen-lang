@@ -1476,13 +1476,13 @@ impl<'a> Builder<'a> {
         // What it is built on first, then a value for each property, each
         // kept value and each constant, in the order the plan names them.
         let mut values = Vec::new();
-        if let Some(under) = &under {
-            let under = self.class_binding(under);
-            values.push(self.read(&under));
+        if let Some(under) = &under.clone() {
+            let bound = self.class_binding(under);
+            values.push(self.read_bound(under, &bound));
         }
-        for named in &answers {
-            let named = self.class_binding(named);
-            let read = self.read(&named);
+        for named in &answers.clone() {
+            let bound = self.class_binding(named);
+            let read = self.read_bound(named, &bound);
             values.push(read);
         }
         let names = |parts: Vec<(String, Form)>, values: &mut Vec<Form>| -> Vec<String> {
@@ -3708,11 +3708,14 @@ impl<'a> Builder<'a> {
         // bindings are told apart by how they are written; only a
         // class's own name is bound however it is written.
         let sigil = self.table.letter("identifier.variable_prefix");
-        let a_binding = sigil.map_or(false, |mark| name.starts_with(mark));
-        match self.table.flag("ext.system.class.folded") && !a_binding {
+        if sigil.map_or(false, |mark| name.starts_with(mark)) {
+            return name.to_string();
+        }
+        let folded = match self.table.flag("ext.system.class.folded") {
             true => name.to_lowercase(),
             false => name.to_string(),
-        }
+        };
+        format!("{}{}", folded, crate::form::OF_A_CLASS)
     }
 
     /// What is left of a class named by a value: a property of a thing,
@@ -3744,17 +3747,25 @@ impl<'a> Builder<'a> {
         let table = self.table;
         if table.spells("ext.stmt.class.self", name) {
             let (here, _) = self.within.clone().ok_or_else(|| format!("'{}' belongs inside a class", name))?;
-            let here = self.class_binding(&here);
-            return Ok(self.read(&here));
+            let bound = self.class_binding(&here);
+            return Ok(self.read_bound(&here, &bound));
         }
         if table.spells("ext.stmt.class.parent", name) {
             let (here, under) = self.within.clone().ok_or_else(|| format!("'{}' belongs inside a class", name))?;
             let under = under.ok_or_else(|| format!("Class {} is built on nothing", here))?;
-            let under = self.class_binding(&under);
-            return Ok(self.read(&under));
+            let bound = self.class_binding(&under);
+            return Ok(self.read_bound(&under, &bound));
         }
         let bound = self.class_binding(name);
-        Ok(self.read(&bound))
+        Ok(self.read_bound(name, &bound))
+    }
+
+    /// Reads what a class is bound as, under the name it was written
+    /// with: what a class is bound as is the kernel's own doing, so a
+    /// fault speaks of the name and never of the binding behind it.
+    fn read_bound(&mut self, written: &str, bound: &str) -> Form {
+        let slot = self.address_to_read(bound);
+        Form::Read(Address { ident: Rc::from(written), ..slot })
     }
 
     /// `thing->member` and `class::member`, in a chain.

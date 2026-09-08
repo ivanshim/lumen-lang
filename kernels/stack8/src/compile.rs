@@ -2146,13 +2146,13 @@ impl<'a> Compiler<'a> {
         // every value of its own and every constant, in that order.
         let mut argc = 0;
         if let Some(base) = &base {
-            let base = self.class_key(base);
-            self.read(&base);
+            let filed = self.class_key(base);
+            self.read_filed(&base.clone(), &filed);
             argc += 1;
         }
-        for named in &answers {
-            let named = self.class_key(named);
-            self.read(&named);
+        for named in &answers.clone() {
+            let filed = self.class_key(named);
+            self.read_filed(named, &filed);
             argc += 1;
         }
         let names = |parts: Vec<(String, Vec<Instr>)>, a: &mut Self, argc: &mut usize| {
@@ -3508,10 +3508,14 @@ impl<'a> Compiler<'a> {
         // and bindings are told apart by how they are written; only a
         // class's own name is filed however it is written.
         let a_binding = self.lang.sigil.map_or(false, |mark| name.starts_with(mark));
-        match self.lang.classes_folded && !a_binding {
+        if a_binding {
+            return name.to_string();
+        }
+        let folded = match self.lang.classes_folded {
             true => name.to_lowercase(),
             false => name.to_string(),
-        }
+        };
+        format!("{}{}", folded, crate::code::OF_A_CLASS)
     }
 
     /// What is left of a class named by a value: a property of a thing,
@@ -3544,20 +3548,28 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         if Lang::spells(&lang.self_words, name) {
             let (here, _) = self.within.clone().ok_or_else(|| format!("'{}' belongs inside a class", name))?;
-            let here = self.class_key(&here);
-            self.read(&here);
+            let filed = self.class_key(&here);
+            self.read_filed(&here, &filed);
             return Ok(());
         }
         if Lang::spells(&lang.parent_words, name) {
             let (here, base) = self.within.clone().ok_or_else(|| format!("'{}' belongs inside a class", name))?;
             let base = base.ok_or_else(|| format!("Class {} stands on nothing", here))?;
-            let base = self.class_key(&base);
-            self.read(&base);
+            let filed = self.class_key(&base);
+            self.read_filed(&base, &filed);
             return Ok(());
         }
         let named = self.class_key(name);
-        self.read(&named);
+        self.read_filed(name, &named);
         Ok(())
+    }
+
+    /// Reads what a class is filed under, while the name a fault speaks
+    /// of stays the one the reader wrote: what a class is filed under is
+    /// the kernel's own making and is never anybody else's to read.
+    fn read_filed(&mut self, written: &str, filed: &str) {
+        let slot = self.cell_to_read(filed, false);
+        self.put(Instr::Read(Cell { ident: Rc::from(written), ..slot }));
     }
 
     /// `unset(a, b[k])`: each name is left as though nothing were ever
