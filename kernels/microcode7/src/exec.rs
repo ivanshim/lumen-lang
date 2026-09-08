@@ -3096,6 +3096,33 @@ impl<'a> Machine<'a> {
                 words.sort();
                 Value::Vector(Rc::new(words.iter().map(|w| Value::text(w)).collect()))
             }
+            // What a class answers to, by name: the methods written in
+            // it, or the properties its things carry, its own coming
+            // before those of the class it is built on. A thing is asked
+            // of the class that made it.
+            Prim::ClassMethods | Prim::ClassProperties => {
+                n(1)?;
+                let of = match self.class_it_spells(v[0].clone()) {
+                    Value::Thing(thing) => Some(thing.of.clone()),
+                    Value::Blueprint(class) => Some(class),
+                    _ => None,
+                };
+                let mut gathered: Vec<String> = Vec::new();
+                let mut here = of;
+                while let Some(class) = here {
+                    let names: Vec<String> = match op {
+                        Prim::ClassMethods => class.methods.iter().map(|(called, _)| called.clone()).collect(),
+                        _ => class.fields.iter().map(|(called, _)| crate::data::holder_of(called).0.to_string()).collect(),
+                    };
+                    for called in names {
+                        if !gathered.iter().any(|held| *held == called) {
+                            gathered.push(called);
+                        }
+                    }
+                    here = class.under.clone();
+                }
+                Value::Vector(Rc::new(gathered.iter().map(|called| Value::text(called)).collect()))
+            }
             // The class a class stands on, by name: a thing is asked of
             // the class it is of. Nothing where it stands on none.
             Prim::ClassBeneath => {

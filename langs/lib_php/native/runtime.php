@@ -583,7 +583,6 @@ function real_of($value) {
     return 0.0;
 }
 function is_object($value) { return gettype($value) === "object"; }
-function is_callable($value) { return false; }
 
 // What a run from a command line has nothing to answer with, and the
 // few library functions that only need what is already here.

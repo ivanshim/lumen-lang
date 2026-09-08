@@ -136,8 +136,12 @@ fn precise(calc: Operation, a: &Exact, b: &Exact) -> Result<Value, String> {
             precise(Operation::Minus, a, &bq)?
         }
         Operation::Raise => {
-            // By squaring, on the exponent's integer part.
-            let mut n = (&b.p / &b.q).to_u64().ok_or_else(|| "Exponent too large".to_string())?;
+            // By squaring, on the exponent's integer part. An exponent
+            // below nought raises by as much and gives one over what
+            // came of that, which a ratio holds exactly.
+            let whole = &b.p / &b.q;
+            let beneath = whole.is_negative();
+            let mut n = whole.abs().to_u64().ok_or_else(|| "Exponent too large".to_string())?;
             let mut base = a.clone();
             let mut acc = Exact { p: BigInt::one(), q: BigInt::one(), places: a.places };
             while n > 0 {
@@ -149,7 +153,13 @@ fn precise(calc: Operation, a: &Exact, b: &Exact) -> Result<Value, String> {
                     base = Exact::from_value(&precise(Operation::Times, &base, &base)?).expect("a number");
                 }
             }
-            shape_number(acc.p, acc.q, acc.places)
+            if beneath && acc.p.is_zero() {
+                return Err("Division by zero".to_string());
+            }
+            match beneath {
+                true => shape_number(acc.q, acc.p, acc.places),
+                false => shape_number(acc.p, acc.q, acc.places),
+            }
         }
     })
 }

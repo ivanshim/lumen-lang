@@ -101,7 +101,12 @@ fn precise(op: Calc, a: &Ratio, b: &Ratio) -> Result<Value, String> {
             precise(Calc::Minus, a, &p)
         }
         Calc::Power => {
-            let mut e = (&b.above / &b.beneath).to_u64().ok_or_else(|| "Exponent too large".to_string())?;
+            // An exponent under nought raises by as much and answers
+            // with one over what came of that, which a ratio holds
+            // exactly.
+            let whole = &b.above / &b.beneath;
+            let under_nought = whole.is_negative();
+            let mut e = whole.abs().to_u64().ok_or_else(|| "Exponent too large".to_string())?;
             let mut base = a.clone();
             let mut acc = Ratio { above: BigInt::one(), beneath: BigInt::one(), places: a.places, under: false };
             while e > 0 {
@@ -113,7 +118,13 @@ fn precise(op: Calc, a: &Ratio, b: &Ratio) -> Result<Value, String> {
                     base = ratio_of(&precise(Calc::Times, &base, &base)?).unwrap();
                 }
             }
-            Ok(make_number(acc.above, acc.beneath, acc.places))
+            if under_nought && acc.above.is_zero() {
+                return Err("Division by zero".to_string());
+            }
+            match under_nought {
+                true => Ok(make_number(acc.beneath, acc.above, acc.places)),
+                false => Ok(make_number(acc.above, acc.beneath, acc.places)),
+            }
         }
     }
 }

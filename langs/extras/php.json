@@ -929,6 +929,12 @@
   "ext.builtin.routines": [
     "__routines_bound"
   ],
+  "ext.builtin.class.methods": [
+    "__class_methods"
+  ],
+  "ext.builtin.class.properties": [
+    "__class_properties"
+  ],
   "ext.builtin.class.beneath": [
     "__class_beneath"
   ],

@@ -7,6 +7,7 @@ pub static EPILOGUE: &str = "?>";
 
 pub static FILES: &[(&str, &str)] = &[
     ("langs/lib_php/native/arrays.php", include_str!("native/arrays.php")),
+    ("langs/lib_php/native/classes.php", include_str!("native/classes.php")),
     ("langs/lib_php/native/exceptions.php", include_str!("native/exceptions.php")),
     ("langs/lib_php/native/iterators.php", include_str!("native/iterators.php")),
     ("langs/lib_php/native/runtime.php", include_str!("native/runtime.php")),

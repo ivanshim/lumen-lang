@@ -329,6 +329,10 @@ pub enum Builtin {
     RoutinesBound,
     /// The words the language spells of its own, by name.
     Spelled,
+    /// The methods a class answers to, and the properties its things
+    /// hold, by name: what it has of its own and what it stands on has.
+    ClassMethods,
+    ClassProperties,
     /// How many seconds have passed since the start of the year the
     /// system counts from (ext.builtin.clock).
     Clock,

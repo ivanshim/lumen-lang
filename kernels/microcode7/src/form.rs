@@ -144,6 +144,10 @@ pub enum Prim {
     RoutinesBound,
     /// The words the language has of its own, by name.
     WordsSpelled,
+    /// The methods a class answers to, and the properties its things
+    /// hold, by name: its own and those of the class it is built on.
+    ClassMethods,
+    ClassProperties,
     /// A routine written where a value stands, taking away with it the
     /// values after it: the routine comes first, and each value after
     /// fills one of the slots the routine names as carried.

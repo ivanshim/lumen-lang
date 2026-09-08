@@ -3328,6 +3328,34 @@ impl<'a> Engine<'a> {
                 words.sort_by(|a, b| a.plain().cmp(&b.plain()));
                 Value::array(words)
             }
+            // What a class answers to, by name: the methods it has, or
+            // the properties its things hold, its own first and then
+            // those of the class it stands on. A thing is asked of the
+            // class it is of.
+            Builtin::ClassMethods | Builtin::ClassProperties => {
+                arity(1)?;
+                let of = match self.class_it_spells(args[0].clone()) {
+                    Value::Object(o) => Some(o.class.clone()),
+                    Value::Class(c) => Some(c),
+                    _ => None,
+                };
+                let mut named = Vec::new();
+                let mut here = of;
+                while let Some(class) = here {
+                    match builtin {
+                        Builtin::ClassMethods => named.extend(class.methods.iter().map(|(n, _)| n.clone())),
+                        _ => named.extend(class.fields.iter().map(|(n, _)| crate::value::who_keeps(n).0.to_string())),
+                    }
+                    here = class.base.clone();
+                }
+                let mut seen = Vec::new();
+                for name in named {
+                    if !seen.iter().any(|held: &String| held == &name) {
+                        seen.push(name);
+                    }
+                }
+                Value::array(seen.into_iter().map(|n| Value::text(&n)).collect())
+            }
             // The class a class stands on, by name: a thing is asked of
             // the class it is of. Nothing where it stands on none.
             Builtin::ClassBeneath => {

@@ -276,6 +276,12 @@ only. The extension labels so far, all from PHP:
   with the names of the classes, and of the routines, the run has bound.
   PHP's `get_declared_classes` and `get_defined_functions` are written on
   them.
+- `ext.builtin.class.methods` and `ext.builtin.class.properties`:
+  builtins answering with the names of the methods a class has, and of
+  the properties its things carry, its own coming before those of the
+  class it stands on. A thing given to either is asked of the class that
+  made it. PHP's `method_exists`, `get_class_methods`, `property_exists`
+  and `is_callable` are written on them.
 - `ext.builtin.spelled`: a builtin answering with the words the
   definition spells of the language's own, which a program may call
   though nobody wrote them. PHP's `function_exists` is written on it,
@@ -1258,6 +1264,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.at_end` | - | - | - | - | - | - | - | `__at_end` | - | - |
 | `ext.builtin.calls` | - | - | - | - | - | - | - | `__calls` | - | - |
 | `ext.builtin.class.beneath` | - | - | - | - | - | - | - | `__class_beneath` | - | - |
+| `ext.builtin.class.methods` | - | - | - | - | - | - | - | `__class_methods` | - | - |
+| `ext.builtin.class.properties` | - | - | - | - | - | - | - | `__class_properties` | - | - |
 | `ext.builtin.classes` | - | - | - | - | - | - | - | `__classes_bound` | - | - |
 | `ext.builtin.clock` | - | - | - | - | - | - | - | `__clock` | - | - |
 | `ext.builtin.complaint.handler` | - | - | - | - | - | - | - | `__complaint_handler` | - | - |
