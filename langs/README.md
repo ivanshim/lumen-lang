@@ -276,6 +276,13 @@ only. The extension labels so far, all from PHP:
   with the names of the classes, and of the routines, the run has bound.
   PHP's `get_declared_classes` and `get_defined_functions` are written on
   them.
+- `ext.builtin.spelled`: a builtin answering with the words the
+  definition spells of the language's own, which a program may call
+  though nobody wrote them. PHP's `function_exists` is written on it,
+  together with `ext.builtin.routines`, and it fills in the internal
+  half of `get_defined_functions`. Such a word may also be reached
+  through a value that spells it, so that a name held in a binding calls
+  the word as though the word itself had been written there.
 - `ext.system.runner`: a name bound to the file of the program that ran
   this one, as the system knows it, for a program that wants to find
   itself again. It stands beside `ext.system.source.file` and comes the
@@ -1258,6 +1265,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.output.hold` | - | - | - | - | - | - | - | `__output_hold` | - | - |
 | `ext.builtin.print_r` | - | - | - | - | - | - | - | `print_r` | - | - |
 | `ext.builtin.routines` | - | - | - | - | - | - | - | `__routines_bound` | - | - |
+| `ext.builtin.spelled` | - | - | - | - | - | - | - | `__words_spelled` | - | - |
 | `ext.builtin.time_limit` | - | - | - | - | - | - | - | `set_time_limit` | - | - |
 | `ext.builtin.uncaught` | - | - | - | - | - | - | - | `__uncaught_handler` | - | - |
 | `ext.builtin.unset` | - | - | - | - | - | - | - | `unset` | - | - |

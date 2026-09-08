@@ -332,9 +332,21 @@ function get_defined_functions($exclude_disabled = true) {
     if (func_num_args() > 0) {
         __complaint_say(__complaint_word(E_DEPRECATED), 'get_defined_functions(): The $exclude_disabled parameter has no effect since PHP 8.0');
     }
-    return array("internal" => array(), "user" => __routines_bound());
+    return array("internal" => __words_spelled(), "user" => __routines_bound());
 }
-function function_exists($name) { return false; }
+// Whether a routine of that name is there to be called: one the
+// language spells of its own, or one the program or this library has
+// written. A name is told apart however it is written, as a call is.
+function function_exists($name) {
+    $wanted = strtolower($name);
+    foreach (__words_spelled() as $word) {
+        if (strtolower($word) === $wanted) { return true; }
+    }
+    foreach (__routines_bound() as $bound) {
+        if (strtolower($bound) === $wanted) { return true; }
+    }
+    return false;
+}
 function gc_collect_cycles() { return 0; }
 function memory_get_usage($real = false) { return 0; }
 

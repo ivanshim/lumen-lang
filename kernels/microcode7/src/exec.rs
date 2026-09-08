@@ -1768,6 +1768,9 @@ impl<'a> Machine<'a> {
                 if let Some(done) = self.paired_call(&stands, args, frame) {
                     return done;
                 }
+                if let Some(done) = self.word_it_spells(&stands, args, frame) {
+                    return done;
+                }
                 let (p, env) = self.routine_of(stands, target)?;
                 let callee = self.env_for(&p, env, args, frame)?;
                 self.drive(p, callee)
@@ -2070,6 +2073,29 @@ impl<'a> Machine<'a> {
         self.routine_of(stands, node)
     }
 
+    /// A word of the language's own reached through a value that spells
+    /// it, run as though the word itself had been written there. Only
+    /// the words that work on the values handed to them can be reached
+    /// this way: the ones that hold on to the pieces they are written
+    /// with have nothing to work on when there are none.
+    fn word_it_spells(&mut self, stands: &Value, args: &[Form], frame: &Rc<Env>) -> Option<Res<Value>> {
+        let Value::Text(word) = stands else { return None };
+        let op = self.table.prims.get(word.as_ref()).copied()?;
+        let name = word.to_string();
+        Some((|| {
+            let values = self.value_list(args, frame)?;
+            let made = self.prim(op, &name, &values);
+            if let Some(away) = self.got_away.take() {
+                return Err(away);
+            }
+            let made = made?;
+            if self.any_unheard.get() {
+                self.hand_over_unheard()?;
+            }
+            Ok(made)
+        })())
+    }
+
     fn routine_of(&mut self, stands: Value, node: &Form) -> Res<(Rc<Routine>, Rc<Env>)> {
         match stands {
             Value::Bound(p, env) => Ok((p, env)),
@@ -2139,6 +2165,9 @@ impl<'a> Machine<'a> {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
                 if let Some(done) = self.paired_call(&stands, args, frame) {
+                    return Ok(Next::Value(done?));
+                }
+                if let Some(done) = self.word_it_spells(&stands, args, frame) {
                     return Ok(Next::Value(done?));
                 }
                 let (p, env) = self.routine_of(stands, target)?;
@@ -2982,6 +3011,14 @@ impl<'a> Machine<'a> {
                     }
                 }
                 Value::Vector(Rc::new(named))
+            }
+            // The words the language has of its own, by name: what a
+            // program may call though nobody wrote them.
+            Prim::WordsSpelled => {
+                n(0)?;
+                let mut words: Vec<String> = self.table.prims.keys().cloned().collect();
+                words.sort();
+                Value::Vector(Rc::new(words.iter().map(|w| Value::text(w)).collect()))
             }
             // The class a class stands on, by name: a thing is asked of
             // the class it is of. Nothing where it stands on none.

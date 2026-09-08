@@ -142,6 +142,8 @@ pub enum Prim {
     /// (ext.builtin.classes, ext.builtin.routines).
     ClassesBound,
     RoutinesBound,
+    /// The words the language has of its own, by name.
+    WordsSpelled,
     /// How many seconds have passed since the start of the year the
     /// system counts from (ext.builtin.clock).
     SinceEpoch,

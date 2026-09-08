@@ -1903,6 +1903,22 @@ impl<'a> Engine<'a> {
                         }
                         return self.perform(&Action::Send(called), argc);
                     }
+                    // A word of the language's own stands where a
+                    // routine stands: text spelling one is called as
+                    // though the word itself had been written there.
+                    Value::Text(word) => match self.lang.builtins.get(word.as_ref()).copied() {
+                        Some(native) => {
+                            let mut given = self.drop_many(argc - 1)?;
+                            let outcome = self.builtin(native, &word, &mut given);
+                            let held = match self.carried.take() {
+                                Some(fled) => return Err(fled),
+                                None => outcome?,
+                            };
+                            self.data.push(held);
+                            Ok(())
+                        }
+                        None => Err(format!("'{}' is not a function", name).into()),
+                    },
                     _ => Err(format!("'{}' is not a function", name).into()),
                 };
             }
@@ -3286,6 +3302,14 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Value::array(named)
+            }
+            // The words the language spells of its own, by name: what
+            // a program may call without anybody having written it.
+            Builtin::Spelled => {
+                arity(0)?;
+                let mut words: Vec<Value> = self.lang.builtins.keys().map(|w| Value::text(w)).collect();
+                words.sort_by(|a, b| a.plain().cmp(&b.plain()));
+                Value::array(words)
             }
             // The class a class stands on, by name: a thing is asked of
             // the class it is of. Nothing where it stands on none.

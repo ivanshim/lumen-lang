@@ -323,6 +323,8 @@ pub enum Builtin {
     /// (ext.builtin.classes, ext.builtin.routines).
     ClassesBound,
     RoutinesBound,
+    /// The words the language spells of its own, by name.
+    Spelled,
     /// How many seconds have passed since the start of the year the
     /// system counts from (ext.builtin.clock).
     Clock,

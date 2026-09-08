@@ -916,6 +916,9 @@
   "ext.builtin.classes": [
     "__classes_bound"
   ],
+  "ext.builtin.spelled": [
+    "__words_spelled"
+  ],
   "ext.builtin.routines": [
     "__routines_bound"
   ],
