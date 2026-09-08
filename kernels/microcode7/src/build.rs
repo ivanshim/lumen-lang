@@ -2483,7 +2483,7 @@ impl<'a> Builder<'a> {
                 }
                 if let (Some(op), Some(value)) = (compound, afterward) {
                     let (lands_in, key) = (self.read(&in_cells[deep]), self.read(&at_cells[deep]));
-                    let now = self.kept_before(prim_call(Prim::At, vec![lands_in, key]));
+                    let now = self.kept_before(prim_call(Prim::Toward, vec![lands_in, key]));
                     let combined = self.kept_after(prim_call(op, vec![now, value]));
                     steps.push(self.write(&holding, combined));
                 }
@@ -2565,7 +2565,7 @@ impl<'a> Builder<'a> {
                 }
                 if let (Some(op), Some(value)) = (compound, afterward) {
                     let (lands_in, key) = (self.read(&in_cells[deep]), self.read(&at_cells[deep]));
-                    let now = self.kept_before(prim_call(Prim::At, vec![lands_in, key]));
+                    let now = self.kept_before(prim_call(Prim::Toward, vec![lands_in, key]));
                     let combined = self.kept_after(prim_call(op, vec![now, value]));
                     steps.push(self.write(&holding, combined));
                 }
@@ -2664,7 +2664,7 @@ impl<'a> Builder<'a> {
                 self.gensyms += 1;
                 let key = format!("#key{}", self.gensyms);
                 let hold = self.write(&key, index);
-                let now = prim_call(Prim::At, vec![self.read(&held), self.read(&key)]);
+                let now = prim_call(Prim::Toward, vec![self.read(&held), self.read(&key)]);
                 let now = self.kept_before(now);
                 let made = self.kept_after(prim_call(op, vec![now, value]));
                 let (made, landed) = self.kept_landing(gives_back, made);
@@ -3440,7 +3440,7 @@ impl<'a> Builder<'a> {
                 self.gensyms += 1;
                 let held = format!("#place{}", self.gensyms);
                 let from = self.read(holding);
-                let there = prim_call(Prim::At, vec![from, constant(Value::Small(at as i64))]);
+                let there = prim_call(Prim::Apart, vec![from, constant(Value::Small(at as i64))]);
                 steps.push(self.write(&held, there));
                 if table.spells("ext.stmt.unpack", &self.look().lexeme) {
                     self.advance();

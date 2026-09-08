@@ -108,6 +108,17 @@ struct Called {
     given_at: Option<usize>,
 }
 
+/// How a place is being read: plainly, while a value is being taken
+/// apart, or so that what comes of it may be written back there. Only
+/// the last refuses a value with no places at all, since there is no
+/// place there to write.
+#[derive(Clone, Copy, PartialEq)]
+enum Reading {
+    Plain,
+    Apart,
+    Toward,
+}
+
 type Res<T> = Result<T, String>;
 /// What stops a run: a fault of the kernel's own words, or a value the
 /// program raised for a catch to take.
@@ -2393,23 +2404,25 @@ impl<'a> Engine<'a> {
             Action::Same => Value::Flag(a.identical(b)),
             Action::Unsame => Value::Flag(!a.identical(b)),
             Action::Join => joined(),
-            Action::At => self.element(a, b)?,
+            Action::At => self.element(a, b, Reading::Plain)?,
+            Action::Apart => self.element(a, b, Reading::Apart)?,
+            Action::Toward => self.element(a, b, Reading::Toward)?,
             // Reaching inside makes the place on the way where nothing
             // is there yet, which is what a write to it means.
             Action::Nested if self.lang.makes_places => {
                 self.hushed.set(self.hushed.get() + 1);
-                let found = self.element(a, b).unwrap_or(Value::Null);
+                let found = self.element(a, b, Reading::Plain).unwrap_or(Value::Null);
                 self.hushed.set(self.hushed.get() - 1);
                 match found {
                     Value::Null | Value::Blank | Value::Gap => Value::Array(std::rc::Rc::new(Vec::new())),
                     held => held,
                 }
             }
-            Action::Nested => self.element(a, b)?,
+            Action::Nested => self.element(a, b, Reading::Plain)?,
             // Looking has nothing to say about what is not there.
             Action::Peek => {
                 self.hushed.set(self.hushed.get() + 1);
-                let found = self.element(a, b).unwrap_or(Value::Null);
+                let found = self.element(a, b, Reading::Plain).unwrap_or(Value::Null);
                 self.hushed.set(self.hushed.get() - 1);
                 found
             }
@@ -2787,7 +2800,7 @@ impl<'a> Engine<'a> {
         }
     }
 
-    fn element(&self, target: &Value, at: &Value) -> Res<Value> {
+    fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
         // A place holding a cell two names share reads as what the cell
         // holds, since the sharing is between the names and not
         // something the value itself carries.
@@ -2795,10 +2808,10 @@ impl<'a> Engine<'a> {
             Value::Bond(shared) => shared.borrow().clone(),
             held => held,
         };
-        return self.element_held(target, at).map(seen);
+        return self.element_held(target, at, how).map(seen);
     }
 
-    fn element_held(&self, target: &Value, at: &Value) -> Res<Value> {
+    fn element_held(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
         // A language may say that a place an array does not hold reads as
         // nothing rather than stopping the program, and one with a word
         // for a warning says so before reading nothing there.
@@ -2853,6 +2866,19 @@ impl<'a> Engine<'a> {
                 .nth(i)
                 .map(|c| Value::text(&c.to_string()))
                 .ok_or_else(|| format!("String index {} out of bounds (length: {})", i, s.chars().count())),
+            // A value with no places at all. A language reading a place
+            // an array does not hold as nothing reads a place of such a
+            // value the same way, naming the kind it was asked of; a
+            // thing is another matter and is refused.
+            _ if self.lang.absent_index && how != Reading::Toward && !matches!(target, Value::Object(_)) => {
+                let kind = self.kind_named(target);
+                let told = match how {
+                    Reading::Apart => format!("Cannot use {} as array", kind),
+                    _ => format!("Trying to access array offset on {}", kind),
+                };
+                self.complain(Complaint::Warning, &told);
+                Ok(Value::Null)
+            }
             _ => Err(self.not_an_array()),
         }
     }
@@ -3256,7 +3282,7 @@ impl<'a> Engine<'a> {
             }
             Builtin::Fetch => {
                 arity(2)?;
-                self.element(&args[0], &args[1])?
+                self.element(&args[0], &args[1], Reading::Plain)?
             }
             Builtin::Append => {
                 arity(2)?;

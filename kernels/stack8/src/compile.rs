@@ -2558,7 +2558,7 @@ impl<'a> Compiler<'a> {
                 if let Some(op) = compound {
                     self.read(&inner[deep]);
                     self.read(&held[deep]);
-                    self.act(Action::At, 2);
+                    self.act(Action::Toward, 2);
                     self.stood_before();
                     self.addend()?;
                     self.act(op, 2);
@@ -2632,7 +2632,7 @@ impl<'a> Compiler<'a> {
                 if let Some(op) = compound {
                     self.read(&inner[deep]);
                     self.read(&held[deep]);
-                    self.act(Action::At, 2);
+                    self.act(Action::Toward, 2);
                     self.stood_before();
                     self.addend()?;
                     self.act(op, 2);
@@ -3817,7 +3817,7 @@ impl<'a> Compiler<'a> {
                 let held = self.gensym("place");
                 self.read(holding);
                 self.constant(Value::Small(at as i64));
-                self.act(Action::At, 2);
+                self.act(Action::Apart, 2);
                 self.write(&held);
                 if Lang::spells(&lang.unpack_words, &self.look().lexeme) {
                     self.take();

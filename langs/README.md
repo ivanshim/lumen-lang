@@ -925,7 +925,10 @@ body.
 
 Two more labels come with it, both PHP's way of reading what is not
 there: `ext.op.index.absent` says that reading a place an array does not
-hold gives nothing rather than stopping, and the core label
+hold gives nothing rather than stopping — as does reading a place of a
+value with no places at all, which is spoken of by the kind it was asked
+of, and in a taking-apart's own words where that is what asked — and the
+core label
 `literal.null.silent` says that nothing shows as no text at all rather
 than as the word a program writes for it.
 

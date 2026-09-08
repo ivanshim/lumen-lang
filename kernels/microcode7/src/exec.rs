@@ -72,6 +72,17 @@ struct Called {
     handed_at: Option<usize>,
 }
 
+/// How a place is being read: plainly, while a value is being taken
+/// apart, or so that what comes of it may be written back there. Only
+/// the last turns down a value with no places at all, there being no
+/// place there to write.
+#[derive(Clone, Copy, PartialEq)]
+enum Reading {
+    Plain,
+    Apart,
+    Toward,
+}
+
 type Res<T = Value> = Result<T, Escape>;
 
 enum Next {
@@ -1799,11 +1810,11 @@ impl<'a> Machine<'a> {
                     };
                     if let Some(cell) = shared {
                         let mut held = cell.borrow_mut();
-                        written_into(&mut held, key, value, &slot.ident, self.builds_places, letter)?;
+                        written_into(&mut held, key, value, &self.no_places(), self.builds_places, letter)?;
                         return Ok(Value::Nil);
                     }
                     let mut slots = f.cells.borrow_mut();
-                    written_into(&mut slots[i], key, value, &slot.ident, self.builds_places, letter)?;
+                    written_into(&mut slots[i], key, value, &self.no_places(), self.builds_places, letter)?;
                     Ok(Value::Nil)
                 }
                 // A language may say the run is over where it stands.
@@ -3000,11 +3011,13 @@ impl<'a> Machine<'a> {
             Prim::Selfsame => Value::Flag(v[0].selfsame(&v[1])),
             Prim::Unlike => Value::Flag(!v[0].selfsame(&v[1])),
             Prim::Join => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),
-            Prim::At => self.element(&v[0], &v[1])?,
+            Prim::At => self.element(&v[0], &v[1], Reading::Plain)?,
+            Prim::Apart => self.element(&v[0], &v[1], Reading::Apart)?,
+            Prim::Toward => self.element(&v[0], &v[1], Reading::Toward)?,
             // A glance has nothing to say about what is not there.
             Prim::Glance => {
                 self.quieted += 1;
-                let seen = self.element(&v[0], &v[1]).unwrap_or(Value::Nil);
+                let seen = self.element(&v[0], &v[1], Reading::Plain).unwrap_or(Value::Nil);
                 self.quieted -= 1;
                 seen
             }
@@ -3037,10 +3050,10 @@ impl<'a> Machine<'a> {
             }
             // Reaching in makes the place where nothing is there yet,
             // which is what a write into it asks for.
-            Prim::Inward if !self.builds_places => self.element(&v[0], &v[1])?,
+            Prim::Inward if !self.builds_places => self.element(&v[0], &v[1], Reading::Plain)?,
             Prim::Inward => {
                 self.quieted += 1;
-                let reached = self.element(&v[0], &v[1]).unwrap_or(Value::Nil);
+                let reached = self.element(&v[0], &v[1], Reading::Plain).unwrap_or(Value::Nil);
                 self.quieted -= 1;
                 match reached {
                     Value::Nil | Value::Unset => Value::Vector(std::rc::Rc::new(Vec::new())),
@@ -3332,7 +3345,7 @@ impl<'a> Machine<'a> {
             }
             Prim::Fetch => {
                 n(2)?;
-                self.element(&v[0], &v[1])?
+                self.element(&v[0], &v[1], Reading::Plain)?
             }
             Prim::External => {
                 let target = match v.first() {
@@ -3384,17 +3397,17 @@ impl<'a> Machine<'a> {
         self.as_key(at)
     }
 
-    fn element(&self, target: &Value, at: &Value) -> Result<Value, String> {
+    fn element(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {
         // A place holding a cell that names share reads as whatever the
         // cell holds: the sharing lies between the names, not in the
         // value itself.
-        return self.element_within(target, at).map(|found| match found {
+        return self.element_within(target, at, how).map(|found| match found {
             Value::Shared(cell) => cell.borrow().clone(),
             held => held,
         });
     }
 
-    fn element_within(&self, target: &Value, at: &Value) -> Result<Value, String> {
+    fn element_within(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {
         // A language may say that a place an array does not hold reads as
         // nothing rather than stopping the program.
         // A language that reads an absent place as nothing, and has a
@@ -3453,6 +3466,19 @@ impl<'a> Machine<'a> {
                 .nth(i)
                 .map(|c| Value::text(&c.to_string()))
                 .ok_or_else(|| format!("String index {} out of bounds (length: {})", i, s.chars().count())),
+            // A value with no places whatever. A language reading a
+            // place an array does not hold as nothing reads a place of
+            // such a value the same way, and names the kind it was
+            // asked of; a thing is another matter and is turned down.
+            _ if self.table.flag("ext.op.index.absent") && how != Reading::Toward && !matches!(target, Value::Thing(_)) => {
+                let kind = self.kind_called(target);
+                let told = match how {
+                    Reading::Apart => format!("Cannot use {} as array", kind),
+                    _ => format!("Trying to access array offset on {}", kind),
+                };
+                self.grumble("warning", &told);
+                Ok(Value::Nil)
+            }
             _ => Err(self.no_places()),
         }
     }
@@ -3684,7 +3710,7 @@ fn letter_put(had: &str, at: &Value, put: &str) -> Result<Value, String> {
     Ok(Value::text(&letters.into_iter().collect::<String>()))
 }
 
-fn written_into(held: &mut Value, key: Option<Value>, value: Value, ident: &str, builds: bool, letter: Option<String>) -> Result<(), String> {
+fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &str, builds: bool, letter: Option<String>) -> Result<(), String> {
     // Where a language writes into text, a named place in text takes a
     // letter and the name goes on holding text.
     if let (Value::Text(had), Some(put), Some(at)) = (&*held, &letter, &key) {
@@ -3720,7 +3746,9 @@ fn written_into(held: &mut Value, key: Option<Value>, value: Value, ident: &str,
         *held = Value::Dict(Rc::new(spread));
     }
     let Value::Dict(entries) = held else {
-        return Err(format!("Variable '{}' is not an array", ident));
+        // A value with no places at all is written to in the words the
+        // language has for that, as reading such a place is.
+        return Err(no_places.to_string());
     };
     let entries = Rc::make_mut(entries);
     let key = key.unwrap_or_else(|| Value::Small(after_keys(entries)));

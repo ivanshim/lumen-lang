@@ -70,6 +70,14 @@ pub enum Action {
     /// walks an array or a map.
     KeyAt,
     ValueAt,
+    /// What a value holds at that place, read while the value is being
+    /// taken apart. The same as the above, save that a value with no
+    /// places at all is spoken of in the words a taking-apart uses.
+    Apart,
+    /// What a value holds at that place, read so that what comes of it
+    /// may be written back there. A value with no places at all is no
+    /// place to write, so it is refused as a write to one is.
+    Toward,
     /// `a[]`, which only an assignment may write to.
     AtEnd,
     /// How many places an array or a map holds.

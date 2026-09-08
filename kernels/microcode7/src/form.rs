@@ -257,6 +257,14 @@ pub enum Prim {
     Negate,
     Join,
     At,
+    /// What a value holds at that place, read while the value is being
+    /// taken apart: the same as the above, save that a value with no
+    /// places at all is spoken of in a taking-apart's own words.
+    Apart,
+    /// What a value holds at that place, read so that what comes of it
+    /// may be written back there. A value with no places at all is no
+    /// place to write, so it is turned down as a write to one is.
+    Toward,
     MakeArray,
     // control
     Seq,
