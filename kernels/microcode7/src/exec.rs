@@ -565,6 +565,14 @@ impl<'a> Machine<'a> {
     }
 
     fn store(&self, slot: &Address, frame: &Rc<Env>, value: Value) -> Result<(), String> {
+        // A cell becomes a name's own only by being tied to it. A plain
+        // write of one writes what it holds, so a routine giving back a
+        // cell, called without the mark that shares one, hands over a
+        // copy like any other.
+        let value = match value {
+            Value::Shared(cell) => cell.borrow().clone(),
+            held => held,
+        };
         let f = ascend(frame, slot.up);
         if Rc::ptr_eq(f, &self.outermost) && Some(slot.at) == self.args_cell {
             return Err(format!("Cannot reassign {} (system-provided immutable value)", slot.ident));

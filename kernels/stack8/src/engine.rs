@@ -499,6 +499,14 @@ impl<'a> Engine<'a> {
     /// A store: into the hole a taking load left, if one is addressed;
     /// else the first local, or the global when there is none.
     fn store_cell(&mut self, slot: &Cell, frame: &mut [Value], v: Value) -> Res<()> {
+        // A cell only ever becomes a name's own through fastening. A
+        // plain write of one writes what it holds, so that a routine
+        // giving back a cell, called without the mark that shares one,
+        // hands over a copy like any other.
+        let v = match v {
+            Value::Bond(shared) => shared.borrow().clone(),
+            held => held,
+        };
         for &s in &slot.near {
             if let Value::Bond(shared) = &frame[s] {
                 *shared.borrow_mut() = v;
@@ -701,10 +709,13 @@ impl<'a> Engine<'a> {
                     self.data.push(Value::Bond(shared));
                 }
                 Instr::Fasten(slot) => {
-                    let Value::Bond(shared) = self.drop_top()? else {
-                        return Err("Only a shared cell can be fastened to a name".into());
-                    };
-                    self.put_cell(slot, frame, Value::Bond(shared));
+                    // What has no cell to share is simply written, as a
+                    // language that asks to share one from something
+                    // that has none does rather than stopping.
+                    match self.drop_top()? {
+                        Value::Bond(shared) => self.put_cell(slot, frame, Value::Bond(shared)),
+                        held => self.store_cell(slot, frame, held)?,
+                    }
                 }
                 Instr::BondItem(slot) => {
                     let at = self.drop_top()?;

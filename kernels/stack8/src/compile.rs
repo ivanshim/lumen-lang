@@ -112,6 +112,10 @@ pub struct Compiler<'a> {
     /// Where the value a store is to write is already waiting, which a
     /// taking-apart sets before each of its places.
     waiting: Option<String>,
+    /// Whether each routine being read gives back a cell rather than a
+    /// copy, the innermost last, so that what it answers with is made a
+    /// cell where it should be.
+    giving_cells: Vec<bool>,
 }
 
 type Res<T> = Result<T, String>;
@@ -155,7 +159,7 @@ pub fn compile_from(tokens: &[Token], lang: &Lang, table: &mut Registry, before:
         instrs: Vec::new(),
     };
     let shared_args = shared_parameters(tokens, lang);
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None };
+    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, within: None, shared_args, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None, giving_cells: Vec::new() };
     if lang.rpn {
         a.rpn_body(&[], Span::Block)?;
         if !a.exhausted() {
@@ -719,9 +723,9 @@ impl<'a> Compiler<'a> {
             }
             if Lang::spells(&lang.function_words, &w) {
                 self.take();
-                self.skip_reference();
+                let gives_cell = self.skip_reference();
                 let name = self.want_name("after the function keyword")?;
-                return self.function(name);
+                return self.function(name, gives_cell);
             }
             if Lang::spells(&lang.pass_words, &w) {
                 self.take();
@@ -1308,7 +1312,7 @@ impl<'a> Compiler<'a> {
         let name = self.want_name("after the type")?;
         if let Some(call) = &self.lang.calling {
             if self.at_symbol(&call.open) {
-                return self.function(name);
+                return self.function(name, false);
             }
         }
         if self.on_sep() || self.exhausted() {
@@ -1516,8 +1520,16 @@ impl<'a> Compiler<'a> {
 
     fn return_stmt(&mut self) -> Res<()> {
         self.take();
+        // A routine that gives back a cell answers with the cell of
+        // whatever it names, so a name fastened to the answer and the
+        // one inside the routine stand for the one cell. Where what it
+        // names has no cell to share, the value itself is answered, as
+        // such a language does rather than stopping.
+        let by_cell = self.giving_cells.last().copied().unwrap_or(false);
         if self.on_sep() || self.exhausted() || self.on_any(&self.lang.block_closes) {
             self.constant(Value::Null);
+        } else if by_cell {
+            self.a_cell()?;
         } else {
             self.expr(0)?;
         }
@@ -1731,9 +1743,12 @@ impl<'a> Compiler<'a> {
                 constants.push((member, self.member_value()?));
             } else if self.on_keyword(&lang.function_words) {
                 self.take();
-                self.skip_reference();
+                let gives_cell = self.skip_reference();
                 let member = self.want_name("as the method name")?;
-                methods.push((member.clone(), self.method(&member)?));
+                self.giving_cells.push(gives_cell);
+                let built = self.method(&member);
+                self.giving_cells.pop();
+                methods.push((member.clone(), built?));
                 // A parameter of the maker that names a property makes
                 // the class carry that property too.
                 for named in std::mem::take(&mut self.promoted) {
@@ -1872,7 +1887,7 @@ impl<'a> Compiler<'a> {
         let mut spares: Vec<(usize, usize)> = Vec::new();
         let mut promoted: Vec<String> = Vec::new();
         while !self.at_symbol(&call.close) && !self.exhausted() {
-            self.skip_reference();
+            let _by_cell = self.skip_reference();
             let mut names_property = false;
             while self.look().shape == Shape::Instr && Lang::spells(&lang.modifier_words, &self.look().lexeme) {
                 self.take();
@@ -1935,10 +1950,14 @@ impl<'a> Compiler<'a> {
 
     /// Step over the sign that says a name shares a cell; where it
     /// stands is already known from the reading done before compiling.
-    fn skip_reference(&mut self) {
+    /// The mark that says a routine gives back a cell rather than a
+    /// copy, if it stands here. Whether it did is given back.
+    fn skip_reference(&mut self) -> bool {
         if self.lang.reference_mark.as_ref().map_or(false, |m| self.at_symbol(m)) {
             self.take();
+            return true;
         }
+        false
     }
 
     /// The instrs a program begins with when some of its parameters
@@ -1958,7 +1977,14 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    fn function(&mut self, name: String) -> Res<()> {
+    fn function(&mut self, name: String, gives_cell: bool) -> Res<()> {
+        self.giving_cells.push(gives_cell);
+        let built = self.function_body(name);
+        self.giving_cells.pop();
+        built
+    }
+
+    fn function_body(&mut self, name: String) -> Res<()> {
         let lang = self.lang;
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
         self.want_sign(&call.open, "after function name")?;
@@ -2741,7 +2767,17 @@ impl<'a> Compiler<'a> {
                 let held = self.cell_to_read(&name, false);
                 self.put(Instr::BondItem(held));
             }
-            _ => return Err("Only a name, a place in an array or a property has a cell to share".to_string()),
+            // Anything else is read as it stands: a call of a routine
+            // that gives back a cell answers with one already, and what
+            // has no cell to share is written plainly, which is what a
+            // language asking to share one from something that has none
+            // does rather than stopping.
+            _ => {
+                let at = self.mark();
+                for w in relocated(read.clone(), at as i64 - from as i64) {
+                    self.put(w);
+                }
+            }
         }
         Ok(())
     }

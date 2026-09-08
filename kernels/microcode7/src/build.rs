@@ -85,6 +85,10 @@ pub struct Builder<'a> {
     /// The routines being built, the innermost last, so a word standing
     /// for the one a piece is written in knows which that is.
     naming: Vec<String>,
+    /// Whether each routine being built gives back a cell and not a
+    /// copy, the innermost last, so what it answers with is made a cell
+    /// where it should be.
+    giving_cells: Vec<bool>,
     tells_place: bool,
 }
 
@@ -113,7 +117,7 @@ pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMa
 pub fn build_from(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>) -> Res<Built> {
     let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let shared_args = shared_parameters(tokens, table);
-    let mut r = Builder { within: None, shared_args, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, naming: Vec::new(),
+    let mut r = Builder { within: None, shared_args, table, forks: Vec::new(), tokens, pos: 0, layers: vec![top], gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, naming: Vec::new(), giving_cells: Vec::new(),
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
@@ -806,8 +810,16 @@ impl<'a> Builder<'a> {
             }
             if self.key("stmt.return") {
                 self.advance();
+                // A routine giving back a cell answers with the cell of
+                // whatever it names, so a name tied to the answer and
+                // the one within stand for one cell. Where what it names
+                // has no cell, the value itself is the answer, as such a
+                // language does rather than stopping.
+                let by_cell = self.giving_cells.last().copied().unwrap_or(false);
                 let value = if self.on_stmt_end() || self.exhausted() || self.on_any("block.close") {
                     Vec::new()
+                } else if by_cell {
+                    vec![self.a_shared_cell()?]
                 } else {
                     vec![self.expr(0)?]
                 };
@@ -825,9 +837,12 @@ impl<'a> Builder<'a> {
             }
             if self.key("stmt.function") {
                 self.advance();
-                self.skip_reference();
+                let gives_cell = self.skip_reference();
                 let name = self.need_word("after the function keyword")?;
-                return self.func(name);
+                self.giving_cells.push(gives_cell);
+                let built = self.func(name);
+                self.giving_cells.pop();
+                return built;
             }
             if self.key("stmt.pass") {
                 self.advance();
@@ -1071,10 +1086,12 @@ impl<'a> Builder<'a> {
                 constants.push((member, self.expr(0)?));
             } else if self.key("stmt.function") {
                 self.advance();
-                self.skip_reference();
+                let gives_cell = self.skip_reference();
                 let member = self.need_word("as the method name")?;
-                let program = self.method(&member)?;
-                methods.push((member, program));
+                self.giving_cells.push(gives_cell);
+                let program = self.method(&member);
+                self.giving_cells.pop();
+                methods.push((member, program?));
                 // A parameter of the maker that names a property makes
                 // the class carry that property too.
                 for named in std::mem::take(&mut self.also_property) {
@@ -1760,10 +1777,14 @@ impl<'a> Builder<'a> {
 
     /// Step over the sign saying a name shares a cell: where it stands
     /// was read before anything was built.
-    fn skip_reference(&mut self) {
+    /// The mark saying a routine gives back a cell and not a copy, if it
+    /// stands here. Whether it did is given back.
+    fn skip_reference(&mut self) -> bool {
         if self.table.single("ext.op.reference").map_or(false, |m| self.sign(m)) {
             self.advance();
+            return true;
         }
+        false
     }
 
     /// What a program does first when some of its parameters carry a
@@ -2432,7 +2453,12 @@ impl<'a> Builder<'a> {
                     _ => return Err("Only a place in a named array has a cell to share".to_string()),
                 }
             }
-            _ => return Err("Only a name, a place in an array or a property has a cell to share".to_string()),
+            // Anything else is read as it stands: a call of a routine
+            // giving back a cell answers with one already, and what has
+            // no cell to share is written plainly, which is what a
+            // language asking to share one from something without one
+            // does rather than stopping.
+            found => found,
         })
     }
 

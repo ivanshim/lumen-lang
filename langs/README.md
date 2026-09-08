@@ -543,6 +543,18 @@ only. The extension labels so far, all from PHP:
   called above where it is written. A walk may hand out its items the
   same way (`foreach ($a as &$v)`), and then it walks the binding itself,
   so writing an item writes the array it came from.
+
+  What a cell may be taken from is a name, a place in an array, a
+  property, or a call of a routine that gives one back; a place in an
+  array may be tied to one as well (`$a[0] = &$x`), and writing to such
+  a place writes through the cell rather than over it. The mark written
+  after the word that opens a routine (`function &f()`) says the
+  routine gives back a cell and not a copy: what it answers with is the
+  cell of whatever it names, so `$a = &f()` ties `$a` to that cell
+  while a plain `$a = f()` takes a copy, a cell becoming a name's own
+  only by being tied to it. Asking to share a cell from something that
+  has none writes the value plainly, as such a language does rather
+  than stopping.
 - `ext.stmt.function.returns`: the mark before a return type, read beside
   the core `stmt.function.returns`. PHP says it here because the porter
   writes a type for every function it ports and PHP has no word for a
