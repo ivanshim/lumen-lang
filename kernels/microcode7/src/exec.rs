@@ -1926,6 +1926,16 @@ impl<'a> Machine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value) -> Result<Value, String> {
+        // A place holding a cell that names share reads as whatever the
+        // cell holds: the sharing lies between the names, not in the
+        // value itself.
+        return self.element_within(target, at).map(|found| match found {
+            Value::Shared(cell) => cell.borrow().clone(),
+            held => held,
+        });
+    }
+
+    fn element_within(&self, target: &Value, at: &Value) -> Result<Value, String> {
         // A language may say that a place an array does not hold reads as
         // nothing rather than stopping the program.
         // A language that reads an absent place as nothing, and has a

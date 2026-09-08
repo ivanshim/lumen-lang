@@ -2320,7 +2320,17 @@ impl<'a> Builder<'a> {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", close));
             }
-            let item = self.expr(0)?;
+            // `[&$a]`: the place holds the binding's own cell, so a
+            // write through either name is a write the other sees.
+            let tied = self.table.single("ext.op.reference").map_or(false, |m| self.sign(m));
+            let item = if tied {
+                self.advance();
+                let named = self.need_word("as the name to share a cell with")?;
+                let slot = self.address_to_write(&named);
+                Form::Share(slot)
+            } else {
+                self.expr(0)?
+            };
             items.push(match &mark {
                 Some(m) if self.sign(m) => {
                     self.advance();

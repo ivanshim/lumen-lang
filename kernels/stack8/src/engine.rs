@@ -1532,6 +1532,17 @@ impl<'a> Engine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value) -> Res<Value> {
+        // A place holding a cell two names share reads as what the cell
+        // holds, since the sharing is between the names and not
+        // something the value itself carries.
+        let seen = |v: Value| match v {
+            Value::Bond(shared) => shared.borrow().clone(),
+            held => held,
+        };
+        return self.element_held(target, at).map(seen);
+    }
+
+    fn element_held(&self, target: &Value, at: &Value) -> Res<Value> {
         // A language may say that a place an array does not hold reads as
         // nothing rather than stopping the program, and one with a word
         // for a warning says so before reading nothing there.

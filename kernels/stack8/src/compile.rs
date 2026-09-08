@@ -2641,7 +2641,17 @@ impl<'a> Compiler<'a> {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", pair.close));
             }
-            self.expr(0)?;
+            // `[&$a]`: the place holds the binding's own cell, so a
+            // write through either is a write both see.
+            let shared = self.lang.reference_mark.clone().filter(|m| self.at_symbol(m)).is_some();
+            if shared {
+                self.take();
+                let named = self.want_name("as the name to share a cell with")?;
+                let cell = self.cell_to_write(&named);
+                self.put(Instr::Bond(cell));
+            } else {
+                self.expr(0)?;
+            }
             if let Some(mark) = &mark {
                 if self.at_symbol(mark) {
                     self.take();

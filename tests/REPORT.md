@@ -19,12 +19,12 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 39, differs 37, error 28, skipped 10 | pass 39, differs 37, error 28, skipped 10 |
 | `php/func` | 14 | pass 7, differs 3, error 4, skipped 0 | pass 7, differs 3, error 4, skipped 0 |
-| `php/lang` | 213 | pass 67, differs 53, error 88, skipped 5 | pass 67, differs 53, error 88, skipped 5 |
+| `php/lang` | 213 | pass 68, differs 53, error 87, skipped 5 | pass 68, differs 53, error 87, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
-| `php/lang/operators` | 64 | pass 30, differs 21, error 7, skipped 6 | pass 30, differs 21, error 7, skipped 6 |
+| `php/lang/operators` | 64 | pass 31, differs 21, error 6, skipped 6 | pass 31, differs 21, error 6, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 148, differs 122, error 127, skipped 25 | pass 148, differs 122, error 127, skipped 25 |
+| all | 422 | pass 150, differs 122, error 125, skipped 25 | pass 150, differs 122, error 125, skipped 25 |
 
 | Reason | Tests |
 |---|---|
@@ -32,12 +32,12 @@ is listed, since the full kernels are meant to behave alike.
 | skip this test is for 32bit platform only | 9 |
 | Fatal error: Uncaught Error: Undefined variable: fopen in <file> | 7 |
 | skip Windows only test | 5 |
-| Unexpected token: & | 5 |
 | Unexpected token: ) | 4 |
 | Unexpected token: -> | 4 |
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
 | Unexpected token: : | 3 |
+| Unexpected token: & | 3 |
 | Fatal error: Uncaught Error: Undefined variable: current in <file> | 3 |
 | Fatal error: Uncaught Error: Cannot index non-array value in <file> | 3 |
 | Unexpected token: , | 3 |
@@ -463,7 +463,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/foreachLoop.005.phpt` | differs | differs | ran, printed something else |
 | `php/lang/foreachLoop.006.phpt` | differs | differs | ran, printed something else |
 | `php/lang/foreachLoop.009.phpt` | error | error | Fatal error: Uncaught Error: Array index 2 out of bounds (length: 1) in <file> |
-| `php/lang/foreachLoop.010.phpt` | error | error | Unexpected token: & |
+| `php/lang/foreachLoop.010.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.011.phpt` | differs | differs | ran, printed something else |
 | `php/lang/foreachLoop.012.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
 | `php/lang/foreachLoop.013.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
@@ -546,7 +546,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/operator_gt_variation.phpt` | pass | pass |  |
 | `php/lang/operators/operator_gt_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_identical_basic.phpt` | pass | pass |  |
-| `php/lang/operators/operator_identical_recusion-01.phpt` | error | error | Unexpected token: & |
+| `php/lang/operators/operator_identical_recusion-01.phpt` | pass | pass |  |
 | `php/lang/operators/operator_identical_variation.phpt` | skipped | skipped | skip this test is for 32bit platform only |
 | `php/lang/operators/operator_identical_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_lt_basic.phpt` | pass | pass |  |
