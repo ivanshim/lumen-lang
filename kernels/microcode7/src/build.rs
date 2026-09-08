@@ -295,6 +295,18 @@ fn chain_apart(form: Form) -> Result<(String, Vec<Form>, bool), Form> {
     }
 }
 
+/// The making a word calls for, by the word a language asks a value's
+/// kind with or by the shorter word it complains with. Nothing where
+/// the word names no kind of that language's.
+fn kind_made(table: &Table, word: &str) -> Option<Prim> {
+    const MAKINGS: [Prim; 7] = [Prim::AsWhole, Prim::AsDecimal, Prim::AsDecimal, Prim::AsChars, Prim::AsTruth, Prim::AsVector, Prim::AsNothing];
+    if let Some(at) = crate::exec::KIND_LABELS.iter().position(|(label, _)| table.single(label) == Some(word)) {
+        return MAKINGS.get(at).copied();
+    }
+    let at = table.strings("ext.system.kind.brief").iter().position(|n| n != "-" && n == word)?;
+    MAKINGS.get(at).copied()
+}
+
 fn invoke(program: Form, args: Vec<Form>) -> Form {
     Form::Apply(Callee::Code(Box::new(program)), args)
 }
@@ -2017,6 +2029,29 @@ impl<'a> Builder<'a> {
             let name = self.advance().lexeme;
             let step = self.stepped(&name, by);
             return Ok(sequence(vec![step, self.read(&name)]));
+        }
+        // `(int) x`: a kind's word written within the grouping marks
+        // before a value makes the value that kind. Only a word the
+        // language names a kind by counts, so grouping a plain name is
+        // still grouping.
+        if table.flag("ext.op.cast") {
+            let opens = table.single("syntax.group.open").map(str::to_string);
+            let closes = table.single("syntax.group.close").map(str::to_string);
+            if let (Some(open), Some(close)) = (opens, closes) {
+                let made = self
+                    .sign(&open)
+                    .then(|| kind_made(table, &self.glance(1).lexeme))
+                    .flatten()
+                    .filter(|_| self.glance(2).shape == Shape::Sign && self.glance(2).lexeme == close);
+                if let Some(made) = made {
+                    self.advance();
+                    self.advance();
+                    self.advance();
+                    let tier = table.monadic.values().map(|m| m.level).max().unwrap_or(0);
+                    let inner = self.expr(tier)?;
+                    return Ok(prim_call(made, vec![inner]));
+                }
+            }
         }
         if matches!(t.shape, Shape::Sign | Shape::Bare) {
             if let Some(op) = table.monadic.get(&t.lexeme).copied() {

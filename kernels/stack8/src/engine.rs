@@ -198,6 +198,19 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// What a value is worth as a number: text for the number it opens
+    /// with, a flag for one or nought, nothing for nought, and an array
+    /// for whether it holds anything.
+    fn as_number(&self, v: &Value) -> Value {
+        match v {
+            Value::Text(s) => number_opening(s).0.unwrap_or(Value::Small(0)),
+            Value::Flag(yes) => Value::Small(i64::from(*yes)),
+            Value::Null | Value::Blank | Value::Gap | Value::Fence => Value::Small(0),
+            Value::Array(_) | Value::Map(_) => Value::Small(i64::from(self.truth(v))),
+            held => held.clone(),
+        }
+    }
+
     fn complain(&self, kind: Complaint, message: &str) {
         if self.hushed.get() > 0 {
             return;
@@ -858,6 +871,35 @@ impl<'a> Engine<'a> {
                     _ => self.world[at] = value,
                 }
                 Value::Null
+            }
+            // A value made a value of another kind. Numbers give up what
+            // lies past the point, text is read for the number it opens
+            // with, and anything that is not an array becomes an array
+            // holding just itself.
+            Action::Cast(kind) => {
+                let v = self.drop_top()?;
+                let sp = self.wording();
+                match kind {
+                    Sort::Text => Value::text(&v.display(&sp)),
+                    Sort::Boolean => Value::Flag(self.truth(&v)),
+                    Sort::Null => Value::Null,
+                    Sort::Array => match v {
+                        held @ (Value::Array(_) | Value::Map(_)) => held,
+                        Value::Null | Value::Blank | Value::Gap => Value::array(Vec::new()),
+                        held => Value::array(vec![held]),
+                    },
+                    Sort::Integer => {
+                        let worth = self.as_number(&v);
+                        let (p, q) = arith::parts(&worth).unwrap_or((BigInt::from(0), BigInt::from(1)));
+                        self.within_width(Value::of_big(p / q))
+                    }
+                    Sort::Real | Sort::Rational => {
+                        let worth = self.as_number(&v);
+                        let places = self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES);
+                        let made = arith::to_real(&worth, places).unwrap_or(Value::Small(0));
+                        self.at_real_width(made)
+                    }
+                }
             }
             Action::BitTurn => {
                 let v = self.drop_top()?;

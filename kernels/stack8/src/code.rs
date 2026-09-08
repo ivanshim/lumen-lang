@@ -92,6 +92,8 @@ pub enum Action {
     /// Write the value above into the binding whose name the text under
     /// it spells.
     WriteNamed,
+    /// The value above made a value of that kind (ext.op.cast).
+    Cast(crate::value::Sort),
     /// Whether the value above is nothing at all.
     Nothing,
     /// What an array holds at that place, answering nothing where it

@@ -2277,6 +2277,28 @@ impl<'a> Compiler<'a> {
             self.read(&name);
             return Ok(());
         }
+        // `(int) x`: a kind's name written within the grouping marks
+        // before a value makes the value that kind. Only a word the
+        // language names a kind by counts, so a plain grouping of a
+        // name is still a grouping.
+        if lang.casts_kinds {
+            if let Some(group) = lang.grouping.clone() {
+                let kind = self
+                    .at_symbol(&group.open)
+                    .then(|| lang.kind_of_word(&self.look_ahead(1).lexeme))
+                    .flatten()
+                    .filter(|_| self.look_ahead(2).is_lexeme(Shape::Sign, &group.close));
+                if let Some(kind) = kind {
+                    self.take();
+                    self.take();
+                    self.take();
+                    let tier = lang.monadic.values().map(|m| m.level).max().unwrap_or(0);
+                    self.expr(tier)?;
+                    self.act(Action::Cast(kind), 1);
+                    return Ok(());
+                }
+            }
+        }
         if matches!(tok.shape, Shape::Sign | Shape::Instr) {
             if let Some(infix) = lang.monadic.get(&tok.lexeme).cloned() {
                 self.take();

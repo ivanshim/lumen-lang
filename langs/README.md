@@ -407,6 +407,15 @@ only. The extension labels so far, all from PHP:
   still there to be looked up while the run goes; the mark written
   inside a unit of its own is turned down rather than quietly meaning
   another binding.
+- `ext.op.cast`: a switch; a kind's word written within the grouping
+  marks before a value makes the value that kind — `(int) $x`. The
+  words are the ones the language already gives its kinds, under
+  `system.kind.*` or the shorter `ext.system.kind.brief`, so nothing
+  new is named. Only a word naming a kind of that language's counts, so
+  grouping a plain name is still grouping. A number gives up what lies
+  past the point, text is read for the number it opens with, a flag is
+  one or nought, and anything that is not an array becomes an array
+  holding only itself.
 - `ext.builtin.eval`: builtins taking a piece of the language written
   out as text, reading it as the run's own language and running it
   where the call stands. The text is read with whatever a program of
@@ -813,6 +822,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.bit.or` | - | - | - | - | - | - | - | `\|` | - | - |
 | `ext.op.bit.right` | - | - | - | - | - | - | - | `>>` | - | - |
 | `ext.op.bit.xor` | - | - | - | - | - | - | - | `^` | - | - |
+| `ext.op.cast` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.compare` | - | - | - | - | - | - | - | `<=>` | - | - |
 | `ext.op.decrement` | - | - | - | - | - | - | - | `--` | - | - |
 | `ext.op.hush` | - | - | - | - | - | - | - | `@` | - | - |

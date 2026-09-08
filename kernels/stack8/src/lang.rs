@@ -226,6 +226,9 @@ pub struct Lang {
     /// The mark written before a value to say that the value spells a
     /// name, and the name is what is meant.
     pub naming_words: Vec<String>,
+    /// Whether a kind's name written within the grouping marks, before
+    /// a value, makes the value that kind.
+    pub casts_kinds: bool,
     /// Whether writing into a place makes what is needed to hold it:
     /// an array where a name holds nothing, and one at each place along
     /// the way that is not there yet.
@@ -353,7 +356,7 @@ w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists |
 w ext.builtin.eval | w ext.builtin.include | w ext.op.hush | w ext.builtin.isset | b ext.op.index.makes
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
 w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind
-w ext.op.name_by_value
+w ext.op.name_by_value | b ext.op.cast
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 ";
@@ -964,6 +967,7 @@ impl Lang {
             plus_words: r.strings("ext.op.plus")?,
             hush_words: hushes,
             naming_words: r.strings("ext.op.name_by_value")?,
+            casts_kinds: r.flag("ext.op.cast")?,
             makes_places: r.flag("ext.op.index.makes")?,
             untrue_text: r.strings("ext.system.untrue.text")?,
             untrue_empty: r.flag("ext.system.untrue.empty_array")?,
@@ -1133,6 +1137,20 @@ impl Lang {
 
     pub fn ends_stmt(&self, lex: &str) -> bool {
         Lang::spells(&self.stmt_ends, lex)
+    }
+
+    /// The kind a word names, by the word the language asks a value's
+    /// kind with or by the shorter word it complains with. Nothing where
+    /// the word names no kind of the language's.
+    pub fn kind_of_word(&self, word: &str) -> Option<crate::value::Sort> {
+        use crate::value::Sort;
+        const IN_ORDER: [Sort; 7] =
+            [Sort::Integer, Sort::Rational, Sort::Real, Sort::Text, Sort::Boolean, Sort::Array, Sort::Null];
+        if let Some((_, kind)) = self.sort_bindings.iter().find(|(n, _)| n == word) {
+            return Some(*kind);
+        }
+        let at = self.brief_kinds.iter().position(|n| n != "-" && n == word)?;
+        IN_ORDER.get(at).copied()
     }
 
     pub fn begins_name(&self, c: char) -> bool {

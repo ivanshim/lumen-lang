@@ -285,6 +285,19 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// What a value is worth as a number: text for the number it opens
+    /// with, a flag for one or nought, nothing for nought, and an array
+    /// for whether it holds anything at all.
+    fn worth_of(&self, v: &Value) -> Value {
+        match v {
+            Value::Text(_) => number_opening_in(v).0.unwrap_or(Value::Small(0)),
+            Value::Flag(yes) => Value::Small(i64::from(*yes)),
+            Value::Nil | Value::Unset => Value::Small(0),
+            Value::Vector(_) | Value::Dict(_) => Value::Small(i64::from(self.stands_true(v))),
+            held => held.clone(),
+        }
+    }
+
     fn grumble(&self, kind: &str, about: &str) {
         if self.quieted > 0 {
             return;
@@ -1626,6 +1639,28 @@ impl<'a> Machine<'a> {
                 seen
             }
             Prim::Standing => Value::Flag(v.iter().all(|x| !matches!(x, Value::Nil | Value::Unset))),
+            // A value made one of another kind. Numbers give up what
+            // lies past the point, text is read for the number it opens
+            // with, and anything that is not an array becomes an array
+            // holding only itself.
+            Prim::AsChars => Value::text(&v[0].render(w)),
+            Prim::AsTruth => Value::Flag(self.stands_true(&v[0])),
+            Prim::AsNothing => Value::Nil,
+            Prim::AsVector => match v[0].clone() {
+                held @ (Value::Vector(_) | Value::Dict(_)) => held,
+                Value::Nil | Value::Unset => Value::Vector(std::rc::Rc::new(Vec::new())),
+                held => Value::Vector(std::rc::Rc::new(vec![held])),
+            },
+            Prim::AsWhole => {
+                let worth = self.worth_of(&v[0]);
+                let r = math::ratio_of(&worth).unwrap_or(crate::data::Ratio { above: BigInt::from(0), beneath: BigInt::from(1), places: None, under: false });
+                self.at_width(Value::from_big(&r.above / &r.beneath))
+            }
+            Prim::AsDecimal => {
+                let worth = self.worth_of(&v[0]);
+                let made = math::to_decimal(&worth, self.real_figures()).unwrap_or(Value::Small(0));
+                self.at_width(made)
+            }
             // Reaching in makes the place where nothing is there yet,
             // which is what a write into it asks for.
             Prim::Inward if !self.builds_places => self.element(&v[0], &v[1])?,

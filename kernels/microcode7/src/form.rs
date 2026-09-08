@@ -57,6 +57,19 @@ pub enum Prim {
     Glance,
     /// Whether every one of these is something other than nothing.
     Standing,
+    /// The value made one of the whole kind (ext.op.cast).
+    AsWhole,
+    /// The value made one of the real kind.
+    AsDecimal,
+    /// The value made text.
+    AsChars,
+    /// The value made a flag.
+    AsTruth,
+    /// The value made an array; anything that is not one becomes an
+    /// array holding just itself.
+    AsVector,
+    /// The value made nothing at all.
+    AsNothing,
     /// Say the run is over where it stands (ext.builtin.exit). Text
     /// given is written out first; a number is not.
     Quit,

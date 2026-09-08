@@ -19,12 +19,12 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 39, differs 37, error 28, skipped 10 | pass 39, differs 37, error 28, skipped 10 |
 | `php/func` | 14 | pass 7, differs 3, error 4, skipped 0 | pass 7, differs 3, error 4, skipped 0 |
-| `php/lang` | 213 | pass 68, differs 53, error 87, skipped 5 | pass 68, differs 53, error 87, skipped 5 |
+| `php/lang` | 213 | pass 71, differs 53, error 84, skipped 5 | pass 71, differs 53, error 84, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 31, differs 21, error 6, skipped 6 | pass 31, differs 21, error 6, skipped 6 |
 | `php/lang/string` | 9 | pass 1, differs 8, error 0, skipped 0 | pass 1, differs 8, error 0, skipped 0 |
-| all | 422 | pass 150, differs 122, error 125, skipped 25 | pass 150, differs 122, error 125, skipped 25 |
+| all | 422 | pass 153, differs 122, error 122, skipped 25 | pass 153, differs 122, error 122, skipped 25 |
 
 | Reason | Tests |
 |---|---|
@@ -40,7 +40,6 @@ is listed, since the full kernels are meant to behave alike.
 | Unexpected token: & | 3 |
 | Fatal error: Uncaught Error: Undefined variable: current in <file> | 3 |
 | Fatal error: Uncaught Error: Cannot index non-array value in <file> | 3 |
-| Unexpected token: , | 3 |
 | Unexpected token: ++ | 3 |
 | Only a name or a place in an array can be forgotten | 3 |
 | skip php-cgi not available | 2 |
@@ -56,6 +55,7 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Only a class can be made into an object in <file> | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Undefined variable: StdClass in <file> | 2 |
+| Unexpected token: , | 2 |
 | Fatal error: Uncaught Error: Array index 2 out of bounds (length: 1) in <file> | 2 |
 | Expected ']' after array index, got '++' | 2 |
 | Unexpected token: > | 2 |
@@ -420,7 +420,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug29944.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug30578.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug30638.phpt` | skipped | skipped | skip setlocale() failed |
-| `php/lang/bug30726.phpt` | error | error | Unexpected token: , |
+| `php/lang/bug30726.phpt` | pass | pass |  |
 | `php/lang/bug30862.phpt` | pass | pass |  |
 | `php/lang/bug32828.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug32924.phpt` | differs | differs | ran, printed something else |
@@ -434,7 +434,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug55754.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: current in <file> |
 | `php/lang/bug71897.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug73172.phpt` | pass | pass |  |
-| `php/lang/bug73329.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: float in <file> |
+| `php/lang/bug73329.phpt` | pass | pass |  |
 | `php/lang/bug7515.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ob_get_contents in <file> |
 | `php/lang/catchable_error_001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: StdClass in <file> |
 | `php/lang/catchable_error_002.phpt` | differs | differs | ran, printed something else |
@@ -609,7 +609,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/string/unicode_escape_sign2.phpt` | differs | differs | ran, printed something else |
 | `php/lang/string/unicode_escape_surrogates.phpt` | differs | differs | ran, printed something else |
 | `php/lang/string/unicode_escape_whitespace.phpt` | differs | differs | ran, printed something else |
-| `php/lang/string_decimals_001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: int in <file> |
+| `php/lang/string_decimals_001.phpt` | pass | pass |  |
 | `php/lang/syntax_errors.phpt` | error | error | Fatal error: Uncaught Error: Expected ')' to close a group, got ';' in <file> |
 | `php/lang/this_assignment.phpt` | pass | pass |  |
 | `php/lang/throw_variation_001.phpt` | error | error | Fatal error: Uncaught Error: Uncaught Exception: in <file> |

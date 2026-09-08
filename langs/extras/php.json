@@ -560,6 +560,7 @@
   "ext.op.name_by_value": [
     "$"
   ],
+  "ext.op.cast": true,
   "ext.op.identical": [
     "==="
   ],
