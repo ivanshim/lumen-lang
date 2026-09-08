@@ -424,6 +424,22 @@ impl<'a> Runner<'a> {
             Op::Concat => Value::str(&format!("{}{}", v[0].text(w), v[1].text(w))),
             Op::Index => self.index(&v[0], &v[1])?,
             Op::Add if matches!(v[0], Value::Str(_)) || matches!(v[1], Value::Str(_)) => Value::str(&format!("{}{}", v[0].text(w), v[1].text(w))),
+            // A language whose remainder is taken between whole numbers
+            // brings what it is given to one first, cutting away
+            // whatever lies past the point.
+            Op::Rem
+                if self.spec.on("op.mod.whole")
+                    && (matches!(v[0], Value::Exact(_)) || matches!(v[1], Value::Exact(_))) =>
+            {
+                let cut = |x: &Value| match arith::exact(x) {
+                    Some(e) => Value::big(&e.num / &e.den),
+                    None => x.clone(),
+                };
+                match arith::apply(Sum::Rem, &cut(&v[0]), &cut(&v[1])) {
+                    Some(r) => r?,
+                    None => return Err("Modulo requires numeric operands".to_string()),
+                }
+            }
             // Two whole numbers dividing evenly make a whole one, in a
             // language that says its division does so rather than always
             // making a real.

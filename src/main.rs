@@ -71,6 +71,20 @@ fn mirror_for(language: &str) -> Option<(&'static str, &'static str, &'static [(
 /// mirror's hand-written native source can run on.
 const FULL_KERNELS: [&str; 2] = ["stack8", "microcode7"];
 
+/// A file may open with a line saying which program is to run it. That
+/// line belongs to the system that runs the file and not to the program,
+/// so it is emptied here — emptied and not taken out, so that every line
+/// after it keeps the number it was written on.
+fn without_shebang(source: String) -> String {
+    if !source.starts_with("#!") {
+        return source;
+    }
+    match source.find('\n') {
+        Some(end) => source[end..].to_string(),
+        None => String::new(),
+    }
+}
+
 fn with_library(kernel: &str, language: &str, source: String) -> String {
     if env::var_os("LUMEN_BARE").is_some() {
         return source;
@@ -151,6 +165,7 @@ fn main() {
         eprintln!("Error: Failed to read {}: {}", inv.file, e);
         process::exit(1);
     });
+    let source = without_shebang(source);
 
     // Every program runs on top of its language's library.
     let given_lines = source.lines().count();

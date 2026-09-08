@@ -80,8 +80,12 @@ const REQUEST_PARTS: [(&str, &str); 8] = [
 /// and the row the reading stopped on. Where the language has no word
 /// for such a stopping, nothing is written and the fault goes back as
 /// it came, for the host to tell in its own way.
-fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, String, bool)], before: u32) -> String {
-    let Some(word) = table.single("ext.system.complaint.reading") else { return said.to_string() };
+fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, String, bool)], before: u32, fatally: bool) -> String {
+    let key = match fatally {
+        true => "ext.system.complaint.fatal",
+        false => "ext.system.complaint.reading",
+    };
+    let Some(word) = table.single(key) else { return said.to_string() };
     let named = |key: &str| request.iter().find(|(from, k, ..)| from == "SELF" && k == key).map(|(.., v, _)| v.clone());
     let file = named("file").unwrap_or_default();
     print!("\n{}: {} in {} on line {}\n", word, said, file, row.saturating_sub(before));
@@ -102,9 +106,9 @@ fn lines_before(request: &[(String, String, String, bool)]) -> u32 {
 
 fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     let ahead = lines_before(request);
-    let read = scan::scan_at(source, table).map_err(|(said, row)| cannot_read(table, &said, row, request, ahead));
+    let read = scan::scan_at(source, table).map_err(|(said, row)| cannot_read(table, &said, row, request, ahead, false));
     let tokens = indent::indent(read?, table)?;
-    let system = ["system.args", "system.memoization", "system.real_default_precision", "system.entry", "system.kind.integer",
+    let system = ["system.args", "ext.system.args.list", "ext.system.args.count", "system.memoization", "system.real_default_precision", "system.entry", "system.kind.integer",
         "system.kind.rational", "system.kind.real", "system.kind.string", "system.kind.boolean", "system.kind.array", "system.kind.null"];
     let mut seeded: Vec<String> = system.iter().filter_map(|k| table.single(k).map(str::to_string)).collect();
     seeded.extend(REQUEST_PARTS.iter().filter_map(|(_, key)| table.single(key).map(str::to_string)));
@@ -119,7 +123,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         .unwrap_or(0);
     let reduced = if !table.rpn {
         build::build_at(&tokens, table, &seeded, HashMap::new(), true, before)
-            .map_err(|(said, row)| cannot_read(table, &said, row, request, ahead))?
+            .map_err(|(said, row, hard)| cannot_read(table, &said, row, request, ahead, hard))?
     } else {
         // Read leniently until the named programs' arities settle, then strictly.
         let mut assumed: HashMap<String, build::Signature> = HashMap::new();
@@ -136,8 +140,24 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         settled.ok_or_else(|| "The programs of this file take and leave values in a way that does not settle".to_string())?
     };
     let mut machine = exec::Machine::new(table, reduced.globals.clone());
+    // Text read while the run goes is a piece of this same program, and
+    // is built knowing what the whole of it declared about cells.
+    machine.knows_cells = (reduced.shared_args.clone(), reduced.arg_names.clone(), reduced.gives_back.clone());
     if let Some(n) = table.single("system.args") {
         machine.define(n, Value::text(&program_args.join(" ")));
+    }
+    // The same arguments as a list. The file the run was started with
+    // stands first in it, as the system that started the run counts it.
+    if table.single("ext.system.args.list").is_some() || table.single("ext.system.args.count").is_some() {
+        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == "file").map(|(.., v, _)| v.clone());
+        let mut all: Vec<Value> = vec![Value::text(&file.unwrap_or_default())];
+        all.extend(program_args.iter().map(|a| Value::text(a)));
+        if let Some(n) = table.single("ext.system.args.count") {
+            machine.define(n, Value::Small(all.len() as i64));
+        }
+        if let Some(n) = table.single("ext.system.args.list") {
+            machine.define(n, Value::Vector(std::rc::Rc::new(all)));
+        }
     }
     // What the request carries, each group a map under the name the
     // definition gives it.

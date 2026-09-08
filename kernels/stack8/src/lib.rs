@@ -64,8 +64,12 @@ fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, St
 /// and the line the reading stopped on. Where the language has no word
 /// for such a stopping, nothing is written here and the fault goes back
 /// as it came, for the host to tell in its own way.
-fn cannot_read(lang: &Lang, said: &str, row: usize, request: &[(String, String, String, bool)], before: u32) -> String {
-    let Some(word) = lang.reading_word.as_deref() else { return said.to_string() };
+fn cannot_read(lang: &Lang, said: &str, row: usize, request: &[(String, String, String, bool)], before: u32, fatally: bool) -> String {
+    let word = match fatally {
+        true => lang.complaint_words.iter().find(|(kind, _)| *kind == lang::Complaint::Fatal).map(|(_, word)| word.as_str()),
+        false => lang.reading_word.as_deref(),
+    };
+    let Some(word) = word else { return said.to_string() };
     let named = |key: &str| request.iter().find(|(from, k, ..)| from == "SELF" && k == key).map(|(.., v, _)| v.clone());
     let file = named("file").unwrap_or_default();
     let line = (row as u32).saturating_sub(before);
@@ -87,11 +91,11 @@ fn lines_before(request: &[(String, String, String, bool)]) -> u32 {
 
 fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     let before = lines_before(request);
-    let read = lex::lex_at(source, lang).map_err(|(said, row)| cannot_read(lang, &said, row, request, before));
+    let read = lex::lex_at(source, lang).map_err(|(said, row)| cannot_read(lang, &said, row, request, before, false));
     let tokens = layout::layout(read?, lang)?;
     let mut registry = compile::Registry::default();
     // The system names are globals whether or not the program mentions them.
-    let system = [&lang.args_binding, &lang.memo_binding, &lang.precision_binding, &lang.entry_binding];
+    let system = [&lang.args_binding, &lang.args_list, &lang.args_count, &lang.memo_binding, &lang.precision_binding, &lang.entry_binding];
     for name in system.into_iter().flatten() {
         registry.slot(name);
     }
@@ -114,12 +118,25 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     }
     let program = match compile::compile(&tokens, lang, &mut registry, before) {
         Ok(program) => program,
-        Err(said) => return Err(cannot_read(lang, &said, registry.stopped_at, request, before)),
+        Err(said) => return Err(cannot_read(lang, &said, registry.stopped_at, request, before, registry.stopped_fatally)),
     };
 
     let mut machine = engine::Engine::new(lang, registry);
     if let Some(name) = &lang.args_binding {
         machine.define(name, Value::text(&program_args.join(" ")));
+    }
+    // The same arguments as a list. The file the run was started with
+    // stands first in it, as the system that started the run counts it.
+    if lang.args_list.is_some() || lang.args_count.is_some() {
+        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == "file").map(|(.., v, _)| v.clone());
+        let mut all: Vec<Value> = vec![Value::text(&file.unwrap_or_default())];
+        all.extend(program_args.iter().map(|a| Value::text(a)));
+        if let Some(name) = &lang.args_count {
+            machine.define(name, Value::Small(all.len() as i64));
+        }
+        if let Some(name) = &lang.args_list {
+            machine.define(name, Value::array(all));
+        }
     }
     // Every part of the request is a map of what it carries, under the
     // name the definition gives it; the one for all of them holds what

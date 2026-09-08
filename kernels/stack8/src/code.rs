@@ -74,11 +74,13 @@ pub enum Action {
     AtEnd,
     /// How many places an array or a map holds.
     Extent,
-    /// Whether the place a walk has reached still holds a member. A
-    /// property taken off a thing leaves its place behind, and the walk
-    /// steps over it rather than handing it out. The thing walked is
-    /// below the place.
-    Standing,
+    /// Whether the place a walk has reached holds a member the walk may
+    /// hand out. A property taken off a thing leaves its place behind,
+    /// and one the class keeps to itself is no business of a walk
+    /// written outside it: either is stepped over. The thing walked is
+    /// below the place, and the class the walk is written in, if any, is
+    /// carried here.
+    Standing(Option<Rc<str>>),
     /// What a walk walks. A thing that hands another over to be walked
     /// in its stead answers with that one; a thing that is its own walk
     /// is wound back and answers with itself; anything else is itself.
@@ -119,6 +121,24 @@ pub enum Action {
     /// Write the value above into the binding whose name the text under
     /// it spells.
     WriteNamed,
+    /// Leave the binding a value spells standing for nothing.
+    ForgetNamed,
+    /// Make the binding a value spells hold nothing where it held
+    /// nothing at all, so that reading it is reading a name written to.
+    ReadyNamed,
+    /// The cell of a place inside whatever the cell below the keys
+    /// holds: how a place is shared out of something that is not a
+    /// binding of its own, such as a property holding an array.
+    BondWithin(usize),
+    /// Make that own value of the class above a shared cell if it is
+    /// not one already, and push the cell.
+    BondOwn(Rc<str>),
+    /// Take the place the key names out of whatever the cell below it
+    /// holds, leaving everything else where it was.
+    ForgetWithin,
+    /// Fasten the binding a value spells to the cell above it, so the
+    /// two names stand for the one cell.
+    FastenNamed,
     /// The value above made a value of that kind (ext.op.cast).
     Cast(crate::value::Sort),
     /// Whether the value above is nothing at all.
@@ -127,6 +147,12 @@ pub enum Action {
     /// own word for that kind of remark, and go on: how a definition
     /// that has something to say about a shape it still allows says it.
     Remark(crate::lang::Complaint, Rc<str>),
+    /// The value standing here where a cell was asked for. Where it is
+    /// a cell it is handed on as it is; where it is not, these words are
+    /// said and it is handed on all the same, or, in the second, said
+    /// and the run stopped there.
+    HeldOrSaid(crate::lang::Complaint, Rc<str>),
+    HeldOrStop(Rc<str>),
     /// A cell for the value standing here, whatever it is: the cell
     /// itself where it is one already, and otherwise these words and a
     /// fresh cell holding it. A routine written to give back a cell
@@ -353,6 +379,11 @@ pub enum Instr {
     BondPlace(Cell, usize),
     /// Leave this binding as though nothing were ever written to it.
     Forget(Cell),
+    /// From here until the mark that ends it, the run says nothing at
+    /// all about itself: how a language lets a program silence a piece
+    /// of itself outright, where Hush only keeps quiet about what is
+    /// not there.
+    Mute(bool),
     /// Make this global stand ready: where nothing was ever written to
     /// it, nothing is written to it now, so that a name bound to it is
     /// a name written to and not one never written.
@@ -378,6 +409,10 @@ pub enum Instr {
 pub struct Routine {
     pub ident: String,
     pub formals: Vec<String>,
+    /// The class each parameter is declared to take, where one was
+    /// written and it names a class. Nothing for a parameter written
+    /// without one, or with a kind that is not a class.
+    pub formal_kinds: Vec<Option<Rc<str>>>,
     /// How many arguments must be given; the rest have a value of their
     /// own, written by the program's own first instrs.
     pub least: usize,
@@ -394,6 +429,10 @@ pub struct Routine {
     /// a complaint names it, and a file it asks for is looked for
     /// beside it. Nothing where the program is the run's own.
     pub written_in: Option<Rc<str>>,
+    /// The class this program was written inside, where it was written
+    /// inside one: what a class keeps to itself is reached from here and
+    /// nowhere else.
+    pub within: Option<Rc<str>>,
     pub instrs: Vec<Instr>,
 }
 
@@ -409,6 +448,8 @@ pub struct Plan {
     /// itself and of its constants; a value for each is on the stack, in
     /// that order, when the class is forged.
     pub field_names: Vec<String>,
+    /// How far each property may be reached from, name for name.
+    pub field_reach: Vec<crate::value::Reach>,
     pub shared_names: Vec<String>,
     pub constant_names: Vec<String>,
     pub methods: Vec<(String, Rc<Routine>)>,

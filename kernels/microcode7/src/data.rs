@@ -103,6 +103,11 @@ pub struct Names<'a> {
     /// figures one shows when simply written out; where it says
     /// nothing, a real is shown to the precision it carries.
     pub real_figures: Option<usize>,
+    /// The words for a member a class shares only with those built on
+    /// it, and for one it keeps to itself, as they are written beside
+    /// the name where a thing is shown.
+    pub within_word: Option<&'a str>,
+    pub alone_word: Option<&'a str>,
 }
 
 impl Value {
@@ -323,6 +328,15 @@ pub fn decimal_string(above: &BigInt, beneath: &BigInt, places: usize) -> String
 /// A class: its name, what it is built on, the properties a thing of it
 /// starts with, the programs it answers to, its constants, and the
 /// values it keeps for itself rather than for its things.
+/// How far a member of a class is reached from: from anywhere, from the
+/// class and those built on it, or from the class alone.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Reach {
+    Everywhere,
+    Within,
+    Alone,
+}
+
 #[derive(Debug)]
 pub struct Blueprint {
     pub name: String,
@@ -330,6 +344,8 @@ pub struct Blueprint {
     /// The classes of method names only that this one answers to.
     pub answers: Vec<Rc<Blueprint>>,
     pub fields: Vec<(String, Value)>,
+    /// How far each of those is reached from, one for one.
+    pub reaches: Vec<Reach>,
     pub methods: Vec<(String, Rc<Routine>)>,
     pub constants: Vec<(String, Value)>,
     pub shared: RefCell<Vec<(String, Value)>>,
@@ -373,17 +389,50 @@ impl Blueprint {
             || self.answers.iter().any(|a| a.goes_by(name, either_way))
     }
 
+    /// How far a member of that name is reached from, and the class
+    /// saying so: the nearest one declaring it, this class first.
+    pub fn reach_of(&self, name: &str) -> Option<(Reach, &str)> {
+        match self.fields.iter().position(|(n, _)| n == name) {
+            Some(at) => Some((self.reaches.get(at).copied().unwrap_or(Reach::Everywhere), self.name.as_str())),
+            None => self.under.as_ref().and_then(|u| u.reach_of(name)),
+        }
+    }
+
     /// Every property a thing of this class starts with, what it is
-    /// built on first, so this class has the last word.
+    /// built on first, so this class has the last word. A property a
+    /// class holds alone is filed under its own name and the class's
+    /// together, so a class built on it may declare one of the same name
+    /// without the two becoming one.
     pub fn every_field(&self) -> Vec<(String, Value)> {
         let mut all = self.under.as_ref().map_or_else(Vec::new, |u| u.every_field());
-        for (name, value) in &self.fields {
-            match all.iter_mut().find(|(n, _)| n == name) {
+        for (at, (name, value)) in self.fields.iter().enumerate() {
+            let alone = self.reaches.get(at) == Some(&Reach::Alone);
+            let filed = match alone {
+                true => held_alone(name, &self.name),
+                false => name.clone(),
+            };
+            match all.iter_mut().find(|(n, _)| *n == filed) {
                 Some(place) => place.1 = value.clone(),
-                None => all.push((name.clone(), value.clone())),
+                None => all.push((filed, value.clone())),
             }
         }
         all
+    }
+}
+
+/// A property a class holds alone, filed under its own name and the
+/// class's together, so that two classes along one line may each hold a
+/// property of that name and neither be the other's.
+pub fn held_alone(name: &str, owner: &str) -> String {
+    format!("{}\0{}", name, owner)
+}
+
+/// The name a property is filed under, taken apart: what it is called,
+/// and the class holding it alone where one does.
+pub fn holder_of(filed: &str) -> (&str, Option<&str>) {
+    match filed.split_once('\0') {
+        Some((name, owner)) => (name, Some(owner)),
+        None => (filed, None),
     }
 }
 

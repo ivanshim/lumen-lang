@@ -44,7 +44,7 @@ const LABELS: &[&str] = &[
     "syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close",
     "literal.true", "literal.false", "literal.null", "literal.null.silent", "system.flag.counts",
     "op.precedence", "op.right_associative",
-    "op.add", "op.sub", "op.mul", "op.div", "op.div.result", "op.quot", "op.rem", "op.pow",
+    "op.add", "op.sub", "op.mul", "op.div", "op.div.result", "op.mod.whole", "op.quot", "op.rem", "op.pow",
     "op.eq", "op.ne", "op.lt", "op.le", "op.gt", "op.ge",
     "op.and", "op.or", "op.not", "op.negate",
     "op.concat", "op.range", "op.index.open", "op.index.close", "op.index.strings", "op.pipe",
@@ -95,6 +95,10 @@ pub struct Definition {
     pub div_real: bool,
     /// Whether dividing two whole numbers evenly gives a whole one.
     pub div_whole_when_even: bool,
+    /// The remainder is taken between whole numbers, whatever it is
+    /// given: a real is brought to the whole number nearest nothing
+    /// first, as a language whose remainder is a whole one does.
+    pub rem_whole: bool,
     /// Indexing a string yields the character at that position.
     pub index_strings: bool,
     /// A function's result is the value last assigned to its own name
@@ -173,6 +177,7 @@ impl Definition {
             type_first: false,
             div_real: false,
             div_whole_when_even: false,
+            rem_whole: false,
             index_strings: false,
             result_by_name: false,
             block_style: BlockStyle::Indentation,
@@ -208,6 +213,7 @@ impl Definition {
                 ("op.index.strings", Json::Bool(flag)) => definition.index_strings = *flag,
                 ("literal.null.silent", Json::Bool(flag)) => definition.nothing_silent = *flag,
                 ("system.flag.counts", Json::Bool(flag)) => definition.flag_counts = *flag,
+                ("op.mod.whole", Json::Bool(flag)) => definition.rem_whole = *flag,
                 ("stmt.function.result_by_name", Json::Bool(flag)) => definition.result_by_name = *flag,
                 ("op.div.result", Json::String(result)) => {
                     definition.div_whole_when_even = result == "whole_or_real";

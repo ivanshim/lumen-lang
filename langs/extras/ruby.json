@@ -158,6 +158,7 @@
   ],
   "op.div": [],
   "op.div.result": null,
+  "op.mod.whole": false,
   "op.quot": [
     "/"
   ],

@@ -17,27 +17,24 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 81, differs 5, error 18, skipped 10 | pass 81, differs 5, error 18, skipped 10 |
+| `php/basic` | 114 | pass 87, differs 2, error 15, skipped 10 | pass 87, differs 2, error 15, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 146, differs 36, error 26, skipped 5 | pass 146, differs 36, error 26, skipped 5 |
+| `php/lang` | 213 | pass 172, differs 20, error 16, skipped 5 | pass 172, differs 20, error 16, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
-| `php/lang/operators` | 64 | pass 46, differs 10, error 2, skipped 6 | pass 46, differs 10, error 2, skipped 6 |
+| `php/lang/operators` | 64 | pass 49, differs 8, error 1, skipped 6 | pass 49, differs 8, error 1, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 299, differs 52, error 46, skipped 25 | pass 299, differs 52, error 46, skipped 25 |
+| all | 422 | pass 334, differs 31, error 32, skipped 25 | pass 334, differs 31, error 32, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 52 |
+| ran, printed something else | 31 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
-| Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
-| Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
 | skip php-cgi not available | 2 |
 | timeout | 2 |
 | Parse error: Unexpected token: { in <file> | 2 |
 | Fatal error: Uncaught Error: Undefined variable: header_register_callback in <file> | 2 |
-| Parse error: Unexpected token: & in <file> | 2 |
 | thrown in <file> | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
@@ -55,19 +52,22 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: infiniteiterator in <file> | 1 |
 | Fatal error: Uncaught Error: Unexpected token: ; in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: mktime in <file> | 1 |
-| Fatal error: Uncaught Error: Cannot call method 'GetMyName' on a value that is not an object in <file> | 1 |
 | skip Can't find german locale | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_declared_classes in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> | 1 |
-| Fatal error: Uncaught Error: Undefined variable: foo in <file> | 1 |
-| Parse error: Expected identifier after the global keyword, got '$' in <file> | 1 |
+| Fatal error: Uncaught Error: 'foo' is not a function in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: debug_backtrace in <file> | 1 |
-| Fatal error: Uncaught Error: Function typehint_ref expects 2 arguments, got 1 in <file> | 1 |
-| Fatal error: Uncaught Error: Cannot call method 'get_name' on a value that is not an object in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: array_walk in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: debug_print_backtrace in <file> | 1 |
 | skip setlocale() failed | 1 |
 | skip only for Windows | 1 |
-| Fatal error: Uncaught Error: Undefined variable: include in <file> | 1 |
+| Fatal error: Uncaught TypeError: blah(): Argument #1 ($a) must be of type Foo, stdClass given, called in <file> in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: datetime in <file> | 1 |
+| skip this test is for 32-bit platforms only | 1 |
+| Fatal error: Uncaught Error: Cannot use a scalar value as an array in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: NAN in <file> | 1 |
+| Fatal error: Uncaught Error: Expected ')' to close a group, got ';' in <file> | 1 |
+| Fatal error: Uncaught TypeError: type_hint_foo(): Argument #1 ($a) must be of type Foo, Bar given, called in <file> in <file> | 1 |
 
 ### Reserved words: 55 of 68 spelled
 
@@ -205,12 +205,12 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/008.phpt` | pass | pass |  |
 | `php/basic/009.phpt` | pass | pass |  |
 | `php/basic/010.phpt` | pass | pass |  |
-| `php/basic/011.phpt` | error | error | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> |
-| `php/basic/011_empty_query.phpt` | differs | differs | ran, printed something else |
+| `php/basic/011.phpt` | pass | pass |  |
+| `php/basic/011_empty_query.phpt` | pass | pass |  |
 | `php/basic/011_register_argc_argv_disabled.phpt` | pass | pass |  |
-| `php/basic/011_windows.phpt` | error | error | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> |
-| `php/basic/012.phpt` | error | error | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> |
-| `php/basic/012_register_argc_argv_disabled.phpt` | differs | differs | ran, printed something else |
+| `php/basic/011_windows.phpt` | pass | pass |  |
+| `php/basic/012.phpt` | pass | pass |  |
+| `php/basic/012_register_argc_argv_disabled.phpt` | pass | pass |  |
 | `php/basic/013.phpt` | pass | pass |  |
 | `php/basic/014.phpt` | pass | pass |  |
 | `php/basic/015.phpt` | pass | pass |  |
@@ -230,7 +230,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/032.phpt` | pass | pass |  |
 | `php/basic/GHSA-9pqp-7h25-4f32.phpt` | skipped | skipped | skip php-cgi not available |
 | `php/basic/array_key_exists_null_deprecation.phpt` | pass | pass |  |
-| `php/basic/array_null_offset_deprecation.phpt` | differs | differs | ran, printed something else |
+| `php/basic/array_null_offset_deprecation.phpt` | pass | pass |  |
 | `php/basic/bug20539.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: session_id in <file> |
 | `php/basic/bug29971.phpt` | pass | pass |  |
 | `php/basic/bug31875.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_defined_functions in <file> |
@@ -350,13 +350,13 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/025.phpt` | pass | pass |  |
 | `php/lang/026.phpt` | pass | pass |  |
 | `php/lang/027.phpt` | pass | pass |  |
-| `php/lang/028.phpt` | error | error | Fatal error: Uncaught Error: Cannot call method 'GetMyName' on a value that is not an object in <file> |
-| `php/lang/030.phpt` | error | error | Parse error: Unexpected token: & in <file> |
+| `php/lang/028.phpt` | pass | pass |  |
+| `php/lang/030.phpt` | differs | differs | ran, printed something else |
 | `php/lang/032.phpt` | pass | pass |  |
-| `php/lang/033.phpt` | differs | differs | ran, printed something else |
+| `php/lang/033.phpt` | pass | pass |  |
 | `php/lang/034.phpt` | skipped | skipped | skip Can't find german locale |
 | `php/lang/035.phpt` | pass | pass |  |
-| `php/lang/036.phpt` | differs | differs | ran, printed something else |
+| `php/lang/036.phpt` | pass | pass |  |
 | `php/lang/037.phpt` | pass | pass |  |
 | `php/lang/038.phpt` | error | error | thrown in <file> |
 | `php/lang/039.phpt` | pass | pass |  |
@@ -381,23 +381,23 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug21820.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug21849.phpt` | pass | pass |  |
 | `php/lang/bug21961.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> |
-| `php/lang/bug22231.phpt` | error | error | Parse error: Unexpected token: & in <file> |
+| `php/lang/bug22231.phpt` | error | error | Fatal error: Uncaught Error: 'foo' is not a function in <file> |
 | `php/lang/bug22510.phpt` | pass | pass |  |
 | `php/lang/bug22592.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug23279.phpt` | error | error | thrown in <file> |
-| `php/lang/bug23384.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: foo in <file> |
+| `php/lang/bug23384.phpt` | pass | pass |  |
 | `php/lang/bug23489.phpt` | pass | pass |  |
 | `php/lang/bug23524.phpt` | pass | pass |  |
-| `php/lang/bug23584.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug23584.phpt` | pass | pass |  |
 | `php/lang/bug23624.phpt` | pass | pass |  |
 | `php/lang/bug24054.phpt` | pass | pass |  |
-| `php/lang/bug24396.phpt` | error | error | Parse error: Expected identifier after the global keyword, got '$' in <file> |
+| `php/lang/bug24396.phpt` | pass | pass |  |
 | `php/lang/bug24436.phpt` | pass | pass |  |
 | `php/lang/bug24499.phpt` | pass | pass |  |
 | `php/lang/bug24573.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: debug_backtrace in <file> |
 | `php/lang/bug24640.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug24652.phpt` | pass | pass |  |
-| `php/lang/bug24658.phpt` | error | error | Fatal error: Uncaught Error: Function typehint_ref expects 2 arguments, got 1 in <file> |
+| `php/lang/bug24658.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: array_walk in <file> |
 | `php/lang/bug24783.phpt` | pass | pass |  |
 | `php/lang/bug24908.phpt` | pass | pass |  |
 | `php/lang/bug24951.phpt` | pass | pass |  |
@@ -407,15 +407,15 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug25922.phpt` | pass | pass |  |
 | `php/lang/bug26182.phpt` | pass | pass |  |
 | `php/lang/bug26696.phpt` | pass | pass |  |
-| `php/lang/bug26866.phpt` | error | error | Fatal error: Uncaught Error: Cannot call method 'get_name' on a value that is not an object in <file> |
+| `php/lang/bug26866.phpt` | pass | pass |  |
 | `php/lang/bug26869.phpt` | pass | pass |  |
-| `php/lang/bug27354.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug27354.phpt` | pass | pass |  |
 | `php/lang/bug27439.phpt` | pass | pass |  |
 | `php/lang/bug27443.phpt` | pass | pass |  |
 | `php/lang/bug27535.phpt` | pass | pass |  |
-| `php/lang/bug28213.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug28213.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: debug_print_backtrace in <file> |
 | `php/lang/bug28800.phpt` | pass | pass |  |
-| `php/lang/bug29566.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug29566.phpt` | pass | pass |  |
 | `php/lang/bug29893.phpt` | pass | pass |  |
 | `php/lang/bug29944.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug30578.phpt` | pass | pass |  |
@@ -427,7 +427,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug35176.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug35382.phpt` | skipped | skipped | no --FILE-- section |
 | `php/lang/bug38579.phpt` | skipped | skipped | skip only for Windows |
-| `php/lang/bug43958.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: include in <file> |
+| `php/lang/bug43958.phpt` | pass | pass |  |
 | `php/lang/bug44654.phpt` | pass | pass |  |
 | `php/lang/bug44827.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug45392.phpt` | differs | differs | ran, printed something else |
@@ -436,8 +436,8 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug73172.phpt` | pass | pass |  |
 | `php/lang/bug73329.phpt` | pass | pass |  |
 | `php/lang/bug7515.phpt` | pass | pass |  |
-| `php/lang/catchable_error_001.phpt` | differs | differs | ran, printed something else |
-| `php/lang/catchable_error_002.phpt` | differs | differs | ran, printed something else |
+| `php/lang/catchable_error_001.phpt` | error | error | Fatal error: Uncaught TypeError: blah(): Argument #1 ($a) must be of type Foo, stdClass given, called in <file> in <file> |
+| `php/lang/catchable_error_002.phpt` | pass | pass |  |
 | `php/lang/comments.phpt` | pass | pass |  |
 | `php/lang/comments2.phpt` | skipped | skipped | no --FILE-- section |
 | `php/lang/compare_objects_basic1.phpt` | pass | pass |  |
@@ -452,7 +452,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/engine_assignExecutionOrder_005.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_006.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_007.phpt` | pass | pass |  |
-| `php/lang/engine_assignExecutionOrder_008.phpt` | error | error | Parse error: '++' needs a plain variable on its left in <file> |
+| `php/lang/engine_assignExecutionOrder_008.phpt` | pass | pass |  |
 | `php/lang/engine_assignExecutionOrder_009.phpt` | pass | pass |  |
 | `php/lang/error_2_exception_001.phpt` | pass | pass |  |
 | `php/lang/execution_order.phpt` | differs | differs | ran, printed something else |
@@ -461,25 +461,25 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/foreachLoop.003.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.004.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.005.phpt` | pass | pass |  |
-| `php/lang/foreachLoop.006.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoop.006.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.009.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.010.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.011.phpt` | pass | pass |  |
-| `php/lang/foreachLoop.012.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
-| `php/lang/foreachLoop.013.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
-| `php/lang/foreachLoop.014.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
-| `php/lang/foreachLoop.015.phpt` | error | error | Fatal error: Uncaught Error: count() requires a string or array argument in <file> |
-| `php/lang/foreachLoop.016.phpt` | error | error | Parse error: A foreach that hands out its items for writing needs a named array in <file> |
+| `php/lang/foreachLoop.012.phpt` | pass | pass |  |
+| `php/lang/foreachLoop.013.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoop.014.phpt` | pass | pass |  |
+| `php/lang/foreachLoop.015.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoop.016.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.017.phpt` | pass | pass |  |
-| `php/lang/foreachLoopIterator.001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoopIterator.001.phpt` | pass | pass |  |
 | `php/lang/foreachLoopIterator.002.phpt` | pass | pass |  |
-| `php/lang/foreachLoopIteratorAggregate.001.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoopIteratorAggregate.001.phpt` | pass | pass |  |
 | `php/lang/foreachLoopIteratorAggregate.002.phpt` | differs | differs | ran, printed something else |
 | `php/lang/foreachLoopIteratorAggregate.003.phpt` | pass | pass |  |
 | `php/lang/foreachLoopIteratorAggregate.004.phpt` | pass | pass |  |
-| `php/lang/foreachLoopObjects.001.phpt` | differs | differs | ran, printed something else |
-| `php/lang/foreachLoopObjects.002.phpt` | differs | differs | ran, printed something else |
-| `php/lang/foreachLoopObjects.003.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoopObjects.001.phpt` | pass | pass |  |
+| `php/lang/foreachLoopObjects.002.phpt` | pass | pass |  |
+| `php/lang/foreachLoopObjects.003.phpt` | pass | pass |  |
 | `php/lang/foreachLoopObjects.004.phpt` | pass | pass |  |
 | `php/lang/foreachLoopObjects.005.phpt` | pass | pass |  |
 | `php/lang/foreachLoopObjects.006.phpt` | pass | pass |  |
@@ -513,7 +513,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/add_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseAnd_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseAnd_variationStr.phpt` | pass | pass |  |
-| `php/lang/operators/bitwiseNot_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/bitwiseNot_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseNot_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/bitwiseOr_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseOr_variationStr.phpt` | pass | pass |  |
@@ -535,7 +535,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/multiply_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/nan-comparison-false.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: NAN in <file> |
 | `php/lang/operators/negate_basiclong_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/negate_variationStr.phpt` | error | error | Fatal error: Uncaught Error: Cannot negate non-numeric value in <file> |
+| `php/lang/operators/negate_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/operator_equals_basic.phpt` | pass | pass |  |
 | `php/lang/operators/operator_equals_variation.phpt` | skipped | skipped | skip this test is for 32bit platform only |
 | `php/lang/operators/operator_equals_variation_64bit.phpt` | pass | pass |  |
@@ -562,7 +562,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/operator_notidentical_variation.phpt` | skipped | skipped | skip this test is for 32bit platform only |
 | `php/lang/operators/operator_notidentical_variation_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/operator_spaceship_basic.phpt` | pass | pass |  |
-| `php/lang/operators/overloaded_property_ref.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/overloaded_property_ref.phpt` | pass | pass |  |
 | `php/lang/operators/postdec_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/postdec_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/postinc_basiclong_64bit.phpt` | pass | pass |  |
@@ -574,7 +574,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/subtract_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/subtract_variationStr.phpt` | pass | pass |  |
 | `php/lang/passByReference_001.phpt` | pass | pass |  |
-| `php/lang/passByReference_002.phpt` | differs | differs | ran, printed something else |
+| `php/lang/passByReference_002.phpt` | pass | pass |  |
 | `php/lang/passByReference_003.phpt` | pass | pass |  |
 | `php/lang/passByReference_004.phpt` | pass | pass |  |
 | `php/lang/passByReference_005.phpt` | pass | pass |  |
@@ -582,7 +582,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/passByReference_007.phpt` | pass | pass |  |
 | `php/lang/passByReference_008.phpt` | pass | pass |  |
 | `php/lang/passByReference_009.phpt` | pass | pass |  |
-| `php/lang/passByReference_010.phpt` | differs | differs | ran, printed something else |
+| `php/lang/passByReference_010.phpt` | pass | pass |  |
 | `php/lang/passByReference_012.phpt` | pass | pass |  |
 | `php/lang/returnByReference.001.phpt` | pass | pass |  |
 | `php/lang/returnByReference.002.phpt` | pass | pass |  |
@@ -597,7 +597,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/short_tags.002.phpt` | pass | pass |  |
 | `php/lang/short_tags.004.phpt` | pass | pass |  |
 | `php/lang/static_basic_001.phpt` | pass | pass |  |
-| `php/lang/static_basic_002.phpt` | differs | differs | ran, printed something else |
+| `php/lang/static_basic_002.phpt` | pass | pass |  |
 | `php/lang/static_variation_001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/static_variation_002.phpt` | differs | differs | ran, printed something else |
 | `php/lang/string/unicode_escape.phpt` | pass | pass |  |
@@ -612,9 +612,9 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/string_decimals_001.phpt` | pass | pass |  |
 | `php/lang/syntax_errors.phpt` | error | error | Fatal error: Uncaught Error: Expected ')' to close a group, got ';' in <file> |
 | `php/lang/this_assignment.phpt` | pass | pass |  |
-| `php/lang/throw_variation_001.phpt` | error | error | Fatal error: Uncaught Error: Uncaught Exception: in <file> |
-| `php/lang/type_hints_001.phpt` | differs | differs | ran, printed something else |
-| `php/lang/type_hints_002.phpt` | differs | differs | ran, printed something else |
+| `php/lang/throw_variation_001.phpt` | pass | pass |  |
+| `php/lang/type_hints_001.phpt` | error | error | Fatal error: Uncaught TypeError: type_hint_foo(): Argument #1 ($a) must be of type Foo, Bar given, called in <file> in <file> |
+| `php/lang/type_hints_002.phpt` | pass | pass |  |
 | `php/lang/type_hints_003.phpt` | differs | differs | ran, printed something else |
 | `php/lang/zend_throw_exception_001.phpt` | pass | pass |  |
 | `python/test_augassign.py` | error | error | Unexpected character '&' |

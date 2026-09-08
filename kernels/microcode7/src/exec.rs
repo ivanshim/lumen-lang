@@ -21,7 +21,7 @@ use num_traits::ToPrimitive;
 use crate::math::{self, Calc};
 use crate::table::Table;
 use crate::form::{Input, Traps, Form, Prim, Routine, Address, Callee};
-use crate::data::{Blueprint, Thing, Env, Kind, Value, Names};
+use crate::data::{Blueprint, Env, Kind, Names, Reach, Thing, Value};
 
 /// The label under which a language spells each kind of complaint.
 pub const COMPLAINT_LABELS: [(&str, &str); 4] = [
@@ -100,6 +100,12 @@ pub struct Machine<'a> {
     /// How many pieces now being found asked to be quiet. Counted, not
     /// flagged, because a quiet piece may hold another.
     quieted: usize,
+    /// The same for a piece the program silenced outright: nothing at
+    /// all is said of it, not even a word about how it is written.
+    silenced: usize,
+    /// The class each call runs inside, innermost last: what a class
+    /// holds alone is reached from there and from nowhere else.
+    inside: Vec<Option<Rc<str>>>,
     /// What the run has written out while it was being kept rather than
     /// let go, innermost last. A keeping within a keeping writes into
     /// the one around it when it is given up.
@@ -113,6 +119,18 @@ pub struct Machine<'a> {
     /// The files already read where the program asked that they be read
     /// only once, under the whole name each stands by.
     read_before: RefCell<std::collections::HashSet<String>>,
+    /// What a source read in got away with: the reading answers with a
+    /// value or a note, so a throw or an ending is kept here and let
+    /// go again where the reading stood.
+    got_away: Option<Escape>,
+    /// What the program already read declared about cells: which
+    /// parameters take one and which routines hand one back. Text read
+    /// while the run goes is a piece of the same program and is built
+    /// knowing it.
+    pub knows_cells: (HashMap<String, Vec<bool>>, HashMap<String, Vec<String>>, std::collections::HashSet<String>),
+    /// The names of the frame each call is running in, innermost last,
+    /// so that text read while the run goes can be built knowing them.
+    frames_named: Vec<Rc<Routine>>,
     /// The routine every complaint is handed to, where the program has
     /// put one in the way of them; the complaints still to be handed
     /// over, since one may be raised where the run is only reading; and
@@ -173,10 +191,15 @@ impl<'a> Machine<'a> {
             started: None,
             written_in: String::new(),
             quieted: 0,
+            silenced: 0,
+            inside: Vec::new(),
             holding: RefCell::new(Vec::new()),
             afterward: RefCell::new(Vec::new()),
             things: RefCell::new(Vec::new()),
             read_before: RefCell::new(std::collections::HashSet::new()),
+            got_away: None,
+            knows_cells: (HashMap::new(), HashMap::new(), std::collections::HashSet::new()),
+            frames_named: Vec::new(),
             hearer: RefCell::new(None),
             unheard: RefCell::new(Vec::new()),
             any_unheard: std::cell::Cell::new(false),
@@ -394,6 +417,67 @@ impl<'a> Machine<'a> {
         Ok(())
     }
 
+    /// The bits of a value, with a word said where a real is too wide
+    /// for the whole numbers this language holds, so that working on its
+    /// bits means working on something else. A language with no word for
+    /// a warning says nothing and works on it just the same.
+    fn bits_told(&self, x: &Value) -> Result<i64, String> {
+        let bits = sixty_four(x)?;
+        if !self.complaint_words.iter().any(|(k, _)| *k == "warning") {
+            return Ok(bits);
+        }
+        if let Value::Frac(_) = x {
+            let Some(exact) = math::ratio_of(x) else { return Ok(bits) };
+            // The nearest real of the width is what such a language
+            // holds, so whether that can be held as a whole number is
+            // the question, not whether the exact ratio can.
+            let near = crate::data::nearest_binary(&exact.above, &exact.beneath);
+            let widest = 9223372036854775808.0f64;
+            if !(near >= -widest && near < widest) {
+                let told = format!(
+                    "The float {} is not representable as an int, cast occurred",
+                    crate::data::figured(near, None)
+                );
+                self.grumble("warning", &told);
+            }
+        }
+        Ok(bits)
+    }
+
+    /// The class the run stands inside, where it stands inside one.
+    fn standing_in(&self) -> Option<&str> {
+        self.inside.last().and_then(|named| named.as_deref())
+    }
+
+    /// Where a thing holds a property of that name, reached from where
+    /// the run stands: a class holding one alone files it under its own
+    /// name and the class's together, so a program written in that class
+    /// finds it there and every other finds the open one.
+    fn member_place(&self, holds: &[(String, Value)], called: &str) -> Option<usize> {
+        if let Some(here) = self.standing_in() {
+            let alone = crate::data::held_alone(called, here);
+            if let Some(at) = holds.iter().position(|(k, x)| *k == alone && kept(x)) {
+                return Some(at);
+            }
+        }
+        holds.iter().position(|(k, x)| k == called && kept(x))
+    }
+
+    /// Whether a class shares what it holds for itself and those along
+    /// its line with the class the run stands in: the two lie along one
+    /// line when either is built on the other.
+    fn along_with(&self, holder: &str, here: Option<&str>) -> bool {
+        let Some(here) = here else { return false };
+        if here == holder {
+            return true;
+        }
+        let built_on = |below: &str, above: &str| match self.class_bound(below) {
+            Some(Value::Blueprint(c)) => c.goes_by(above, self.classes_either_way),
+            _ => false,
+        };
+        built_on(here, holder) || built_on(holder, here)
+    }
+
     /// The thing that is its own walk, where this value is one.
     fn walks_itself(&self, x: &Value) -> Option<Rc<Thing>> {
         let class = self.table.single("ext.op.walk.class")?;
@@ -577,7 +661,18 @@ impl<'a> Machine<'a> {
     }
 
     fn grumble(&self, kind: &str, about: &str) {
-        if self.quieted > 0 {
+        if self.quieted > 0 || self.silenced > 0 {
+            return;
+        }
+        self.said_regardless(kind, about);
+    }
+
+    /// The same, said even where the run keeps quiet about what is not
+    /// there: a word about how a program is written is no word about
+    /// what the run found, and only a piece silenced outright holds it
+    /// back.
+    fn said_regardless(&self, kind: &str, about: &str) {
+        if self.silenced > 0 {
             return;
         }
         // A program may put a routine in the way of every complaint. One
@@ -705,6 +800,8 @@ impl<'a> Machine<'a> {
                 true => "",
                 false => self.table.single("literal.null").unwrap_or("null"),
             },
+            within_word: self.table.single("ext.stmt.class.guarded"),
+            alone_word: self.table.single("ext.stmt.class.hidden"),
         }
     }
 
@@ -724,6 +821,8 @@ impl<'a> Machine<'a> {
             _ if told.starts_with("Division by zero") => Some("ext.system.fault.class.division"),
             _ if told.starts_with("Bit shift by") => Some("ext.system.fault.class.arithmetic"),
             _ if told.starts_with("Cannot coerce") => Some("ext.system.fault.class.kind"),
+            // An argument that is not of the class its parameter takes.
+            _ if told.contains(" must be of type ") => Some("ext.system.fault.class.kind"),
             // Words the definition gave for an operand that can take no
             // part are known by the message opening with them.
             _ if self.table.single("ext.system.fault.operands").map_or(false, |w| told.starts_with(w)) => {
@@ -822,6 +921,26 @@ impl<'a> Machine<'a> {
     /// it came out of a file of its own, that file is where the run is
     /// written while it lasts: a complaint names it, and a file it asks
     /// for in turn is sought beside it.
+    /// Text read while the run goes, read as standing where the call to
+    /// read it stands: the names of the routine around it are its own,
+    /// and what it writes to one of them the routine sees afterwards.
+    /// Names it makes itself go on the end of that routine's frame.
+    fn run_text_within(&mut self, source: &str, frame: &Rc<Env>) -> Result<Value, Escape> {
+        let tokens = crate::scan::scan(source, self.table).map_err(Escape::Error)?;
+        let tokens = crate::indent::indent(tokens, self.table).map_err(Escape::Error)?;
+        let held: Vec<String> = self.frames_named.last().map_or_else(Vec::new, |p| p.idents.clone());
+        let knows = (&self.knows_cells.0, &self.knows_cells.1, &self.knows_cells.2);
+        let built = crate::build::build_within(&tokens, self.table, &self.idents, &held, knows, 0).map_err(Escape::Error)?;
+        self.idents = built.globals;
+        self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
+        frame.cells.borrow_mut().resize(built.program.idents.len().max(held.len()), Value::Unset);
+        let answer = self.value_of(&built.program.body, frame)?;
+        Ok(match answer {
+            Value::Nil | Value::Unset => Value::Small(1),
+            other => other,
+        })
+    }
+
     fn run_source(&mut self, source: &str, came_out_of: Option<String>) -> Result<Value, String> {
         let tokens = crate::scan::scan(source, self.table)?;
         let tokens = crate::indent::indent(tokens, self.table)?;
@@ -845,12 +964,13 @@ impl<'a> Machine<'a> {
             }),
             Err(Escape::Error(told)) => Err(told),
             Err(Escape::Yield(answer)) => Ok(answer),
-            Err(other) => Err(match other {
-                Escape::Done => return Ok(Value::Nil),
-                Escape::Stopped(told) => told,
-                Escape::Thrown(raised) => format!("Uncaught {}", raised.bare()),
-                _ => "A run of source ended oddly".to_string(),
-            }),
+            // A throw, or an ending, is whatever stands around the
+            // reading to answer for and not the reading itself, so it
+            // is kept and let go again there.
+            Err(other) => {
+                self.got_away = Some(other);
+                Err("the source read in did not finish".to_string())
+            }
         }
     }
 
@@ -1073,6 +1193,22 @@ impl<'a> Machine<'a> {
             // Words a definition holds ready for a shape it still allows.
             // The line is set to where the shape stands, so that a call
             // worked out on the way does not leave its own line behind.
+            Form::CellOrSaid(kind, said, row, inner) => {
+                let worth = self.value_of(inner, frame)?;
+                if let Value::Shared(_) = worth {
+                    return Ok(worth);
+                }
+                if *row > 0 {
+                    self.row = *row;
+                }
+                match kind {
+                    Some(word) => {
+                        self.grumble(word, said);
+                        return Ok(worth);
+                    }
+                    None => return Err(Escape::Error(said.to_string())),
+                }
+            }
             Form::HeldEither(kind, said, row, inner) => {
                 let worth = self.value_of(inner, frame)?;
                 if let Value::Shared(_) = worth {
@@ -1112,6 +1248,12 @@ impl<'a> Machine<'a> {
                 self.quieted -= 1;
                 return found;
             }
+            Form::Silenced(inner) => {
+                self.silenced += 1;
+                let found = self.value_of(inner, frame);
+                self.silenced -= 1;
+                return found;
+            }
             // The property becomes a cell the thing and the name taking
             // it both stand for, so a write through either is seen by
             // both.
@@ -1121,7 +1263,7 @@ impl<'a> Machine<'a> {
                     return Err(format!("Cannot share property '{}' of {}", called, thing.bare()).into());
                 };
                 let mut holds = thing.holds.borrow_mut();
-                let at = match holds.iter().position(|(k, x)| k.as_str() == called.as_ref() && kept(x)) {
+                let at = match self.member_place(&holds, called) {
                     Some(at) => at,
                     None => {
                         holds.push((called.to_string(), Value::Nil));
@@ -1231,6 +1373,74 @@ impl<'a> Machine<'a> {
                 f.cells.borrow_mut()[slot.at] = Value::Unset;
                 Ok(Value::Nil)
             }
+            Form::ShareWithin(under, places) => {
+                let holder = self.value_of(under, frame)?;
+                let mut keys = Vec::with_capacity(places.len());
+                for place in places {
+                    let named = self.value_of(place, frame)?;
+                    keys.push(self.as_key(&named));
+                }
+                let Value::Shared(cell) = holder else {
+                    return Err("Cannot take a cell from a place in something that is not an array".to_string().into());
+                };
+                let makes = self.builds_places;
+                let mut inside = cell.borrow_mut();
+                Ok(Value::Shared(shared_deep(&mut inside, &keys, makes)?))
+            }
+            Form::ForgetWithin(under, place) => {
+                let holder = self.value_of(under, frame)?;
+                let named = self.value_of(place, frame)?;
+                let at = self.as_key_spoken(&named);
+                let Value::Shared(cell) = holder else {
+                    return Err("Cannot take a place out of something that is not an array".to_string().into());
+                };
+                let mut inside = cell.borrow_mut();
+                let left = match &*inside {
+                    Value::Vector(items) => {
+                        let i = as_index(&at)?;
+                        Value::Dict(Rc::new(
+                            items
+                                .iter()
+                                .enumerate()
+                                .filter(|(j, _)| *j != i)
+                                .map(|(j, v)| (Value::Small(j as i64), v.clone()))
+                                .collect(),
+                        ))
+                    }
+                    Value::Dict(pairs) => Value::Dict(Rc::new(pairs.iter().filter(|(k, _)| !k.equals(&at)).cloned().collect())),
+                    held => return Err(format!("Cannot take a place out of {}", held.bare()).into()),
+                };
+                *inside = left;
+                Ok(Value::Nil)
+            }
+            Form::ForgetCalled(spells) => {
+                let spelled = self.value_of(spells, frame)?;
+                let name = self.name_it_spells(&spelled);
+                let at = self.place_called(&name);
+                self.outermost.cells.borrow_mut()[at] = Value::Unset;
+                Ok(Value::Nil)
+            }
+            Form::TieCalled(spells, cell) => {
+                let spelled = self.value_of(spells, frame)?;
+                let held = self.value_of(cell, frame)?;
+                let name = self.name_it_spells(&spelled);
+                let at = self.place_called(&name);
+                // What has no cell to share is simply written, as a
+                // language asking to share one from something without
+                // one does rather than stopping.
+                self.outermost.cells.borrow_mut()[at] = held;
+                Ok(Value::Nil)
+            }
+            Form::ReadyCalled(spells) => {
+                let spelled = self.value_of(spells, frame)?;
+                let name = self.name_it_spells(&spelled);
+                let at = self.place_called(&name);
+                let mut cells = self.outermost.cells.borrow_mut();
+                if matches!(cells[at], Value::Unset) {
+                    cells[at] = Value::Nil;
+                }
+                Ok(Value::Nil)
+            }
             Form::OnLine(row, inner) => {
                 self.row = *row;
                 // A statement is a fair place to look at the clock:
@@ -1322,6 +1532,7 @@ impl<'a> Machine<'a> {
                     under,
                     answers,
                     fields,
+                    reaches: plan.field_reach.clone(),
                     methods: plan.methods.clone(),
                     constants,
                     shared: RefCell::new(shared),
@@ -1394,6 +1605,23 @@ impl<'a> Machine<'a> {
                 Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn => {
                     let v = self.value_list(args, frame)?;
                     self.walking(op, name, &v)
+                }
+                // Text read while the run goes is read where it stands:
+                // inside a routine it knows that routine's names, as the
+                // reference has it, and only the outermost body has none
+                // but the globals.
+                Prim::Weigh if !Rc::ptr_eq(frame, &self.outermost) => {
+                    let v = self.value_list(args, frame)?;
+                    if v.len() != 1 {
+                        return Err(Escape::Error(format!("{}() expects 1 argument, got {}", name, v.len())));
+                    }
+                    let w = self.wording();
+                    let given = v[0].render(w);
+                    let source = match self.table.single("lexical.prologue") {
+                        Some(open) => format!("{}\n{}", open, given),
+                        None => given,
+                    };
+                    self.run_text_within(&source, frame)
                 }
 
                 Prim::Both | Prim::Either => {
@@ -1518,7 +1746,7 @@ impl<'a> Machine<'a> {
                     let (f, i) = self.locate(slot, frame)?;
                     let mut values = values;
                     let value = values.pop().unwrap();
-                    let key = values.pop().map(|k| self.as_key(&k));
+                    let key = values.pop().map(|k| self.as_key_spoken(&k));
                     // Worked out before the place is reached, since
                     // reaching it holds the frame the name lives in.
                     let letter = self.letter_places.then(|| value.render(self.wording()));
@@ -1547,7 +1775,18 @@ impl<'a> Machine<'a> {
                 }
                 op => {
                     let values = self.value_list(args, frame)?;
-                    let made = self.prim(*op, name, &values)?;
+                    // A class may answer for a property the thing does
+                    // not hold, and take the write of one: where the
+                    // language names such methods and the class is
+                    // written with them, they stand in its place.
+                    if let Some(done) = self.stands_for_property(*op, &values)? {
+                        return Ok(done);
+                    }
+                    let made = self.prim(*op, name, &values);
+                    if let Some(away) = self.got_away.take() {
+                        return Err(away);
+                    }
+                    let made = made?;
                     // A complaint the operation itself raised is handed
                     // over here, before whatever holds it goes on, so
                     // that it is said where it happened.
@@ -1558,6 +1797,41 @@ impl<'a> Machine<'a> {
                 }
             },
         }
+    }
+
+    /// The method a class answers a property it does not hold with, or
+    /// takes the write of one with, run in the property's stead.
+    /// Nothing where the thing holds the property already, or where the
+    /// language names no such method and the class is written without.
+    fn stands_for_property(&mut self, op: Prim, values: &[Value]) -> Res<Option<Value>> {
+        let key = match op {
+            Prim::Of if values.len() == 2 => "ext.stmt.class.reader",
+            Prim::Onto if values.len() == 3 => "ext.stmt.class.writer",
+            _ => return Ok(None),
+        };
+        let Some(named) = self.table.single(key).map(str::to_string) else {
+            return Ok(None);
+        };
+        let Value::Thing(thing) = &values[0] else {
+            return Ok(None);
+        };
+        let thing = thing.clone();
+        let called = values[1].bare();
+        let held = {
+            let holds = thing.holds.borrow();
+            self.member_place(&holds, &called).is_some()
+        };
+        if held {
+            return Ok(None);
+        }
+        let Some(program) = thing.of.program(&named).cloned() else {
+            return Ok(None);
+        };
+        let mut all = vec![values[0].clone(), Value::text(&called)];
+        if let Some(written) = values.get(2) {
+            all.push(written.clone());
+        }
+        self.invoke(program, self.outermost.clone(), all).map(Some)
     }
 
     fn value_list(&mut self, args: &[Form], frame: &Rc<Env>) -> Res<Vec<Value>> {
@@ -1597,7 +1871,14 @@ impl<'a> Machine<'a> {
             return None;
         }
         let called = pair[1].bare();
-        let subject = self.what_it_spells(pair[0].clone());
+        // The thing may stand in the pair through a cell it shares with
+        // a name, and reads there as what the cell holds, exactly as
+        // reading that name would.
+        let first_of = match &pair[0] {
+            Value::Shared(cell) => cell.borrow().clone(),
+            held => held.clone(),
+        };
+        let subject = self.what_it_spells(first_of);
         let given = match self.value_list(args, frame) {
             Ok(given) => given,
             Err(e) => return Some(Err(e)),
@@ -1665,6 +1946,9 @@ impl<'a> Machine<'a> {
         // is worked out, even one the routine gives no name to.
         if self.reads_handed {
             let all = self.value_list(args, caller)?;
+            for (at, v) in all.iter().enumerate() {
+                self.of_the_class_written(program, at, v)?;
+            }
             let frame = if program.frameless { env } else { Env::make(program.idents.len(), Some(env)) };
             if !program.frameless {
                 let mut cells = frame.cells.borrow_mut();
@@ -1679,11 +1963,52 @@ impl<'a> Machine<'a> {
             return Ok(env);
         }
         let frame = Env::make(program.idents.len(), Some(env));
-        for (i, a) in program.formal_slots.iter().zip(args) {
+        for (at, (i, a)) in program.formal_slots.iter().zip(args).enumerate() {
             let v = self.value_of(a, caller)?;
+            self.of_the_class_written(program, at, &v)?;
             frame.cells.borrow_mut()[*i] = v;
         }
         Ok(frame)
+    }
+
+    /// An argument is of the class its parameter was written to take. A
+    /// parameter written with a kind naming no class is let be, since a
+    /// language may bring such a value to the kind rather than refusing
+    /// it, and nothing at all is let through, since a parameter with no
+    /// value of its own may be handed nothing.
+    fn of_the_class_written(&mut self, program: &Rc<Routine>, at: usize, x: &Value) -> Result<(), Escape> {
+        let Some(Some(written)) = program.formal_kinds.get(at) else { return Ok(()) };
+        // A parameter handed a cell holds that cell; what was given is
+        // what the cell holds, and that is what has a class.
+        let held;
+        let x = match x {
+            Value::Shared(cell) => {
+                held = cell.borrow().clone();
+                &held
+            }
+            other => other,
+        };
+        if matches!(x, Value::Nil | Value::Unset) {
+            return Ok(());
+        }
+        let Some(Value::Blueprint(_)) = self.class_bound(written) else { return Ok(()) };
+        if matches!(x, Value::Thing(t) if t.of.goes_by(written, self.classes_either_way)) {
+            return Ok(());
+        }
+        let handed = match x {
+            Value::Thing(t) => t.of.name.clone(),
+            other => self.kind_called(other),
+        };
+        Err(Escape::Error(format!(
+            "{}(): Argument #{} ({}) must be of type {}, {} given, called in {} on line {}",
+            program.ident,
+            at + 1,
+            program.formals.get(at).map_or("", String::as_str),
+            written,
+            handed,
+            self.written_in,
+            self.row
+        )))
     }
 
     pub fn invoke(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
@@ -1740,6 +2065,18 @@ impl<'a> Machine<'a> {
             (was, self.row)
         });
         let mut caught: u8 = 0;
+        // The names of the frame being run in, kept while it runs, so
+        // that text read while the run goes can be built knowing them.
+        // A program holding no names of its own runs in the frame around
+        // it, whose names are already kept.
+        // A program holding no names of its own runs in the frame around
+        // it, and inside the class around it: an arm of a branch is such
+        // a one, and the class it stands in is the class it stands in.
+        let mine = !program.frameless;
+        if mine {
+            self.frames_named.push(program.clone());
+            self.inside.push(program.within.clone());
+        }
         let outcome: Res = loop {
             caught |= match program.traps {
                 Traps::Naught => 0,
@@ -1763,6 +2100,14 @@ impl<'a> Machine<'a> {
                 Ok(Next::Jump(p, f)) => {
                     program = p;
                     frame = f;
+                    if mine {
+                        if let Some(top) = self.frames_named.last_mut() {
+                            *top = program.clone();
+                        }
+                        if let Some(here) = self.inside.last_mut() {
+                            *here = program.within.clone();
+                        }
+                    }
                     if watching {
                         let next = std::mem::take(&mut self.pending);
                         if let Some(top) = self.handed.last_mut() {
@@ -1778,6 +2123,10 @@ impl<'a> Machine<'a> {
                 Err(e) => break Err(e),
             }
         };
+        if mine {
+            self.frames_named.pop();
+            self.inside.pop();
+        }
         if let Some((was, on)) = elsewhere {
             self.written_in = was;
             self.row = on;
@@ -1851,7 +2200,10 @@ impl<'a> Machine<'a> {
                     Value::Thing(thing) => {
                         let holds = thing.holds.borrow();
                         match holds.get(at) {
-                            Some((k, x)) => if wants_key { Value::text(k) } else { x.clone() },
+                            // What a member is called, not the name it
+                            // is filed under: a class holding one alone
+                            // files it under its own name as well.
+                            Some((k, x)) => if wants_key { Value::text(crate::data::holder_of(k).0) } else { x.clone() },
                             None => return Err(format!("Array index {} out of bounds (length: {})", at, holds.len())),
                         }
                     }
@@ -1882,9 +2234,28 @@ impl<'a> Machine<'a> {
                 return Err(format!("{}() is worked out where a call can be made", name))
             }
             Prim::Kept => {
-                n(2)?;
+                n(3)?;
                 match (&v[0], as_index(&v[1])) {
-                    (Value::Thing(thing), Ok(at)) => Value::Flag(thing.holds.borrow().get(at).map_or(true, |(_, x)| kept(x))),
+                    // A thing that is its own walk hands out what it
+                    // pleases: what it holds is none of the walk's work.
+                    (Value::Thing(_), _) if self.walks_itself(&v[0]).is_some() => Value::Flag(true),
+                    (Value::Thing(thing), Ok(at)) => {
+                        let here = match &v[2] {
+                            Value::Text(named) => Some(named.to_string()),
+                            _ => None,
+                        };
+                        let holds = thing.holds.borrow();
+                        let reaches = |filed: &str| match crate::data::holder_of(filed) {
+                            // What a class holds alone is that class's
+                            // business and no other's.
+                            (_, Some(owner)) => here.as_deref() == Some(owner),
+                            (called, None) => match thing.of.reach_of(called) {
+                                Some((Reach::Within, holder)) => self.along_with(holder, here.as_deref()),
+                                _ => true,
+                            },
+                        };
+                        Value::Flag(holds.get(at).map_or(true, |(k, x)| kept(x) && reaches(k)))
+                    }
                     _ => Value::Flag(true),
                 }
             }
@@ -1893,7 +2264,10 @@ impl<'a> Machine<'a> {
                 let called = v[1].bare();
                 match &v[0] {
                     Value::Thing(thing) => {
-                        let found = thing.holds.borrow().iter().find(|(k, x)| *k == called && kept(x)).map(|(_, x)| x.clone());
+                        let found = {
+                            let holds = thing.holds.borrow();
+                            self.member_place(&holds, &called).map(|at| holds[at].1.clone())
+                        };
                         match found {
                             // A property kept in a shared cell reads as
                             // what the cell holds; the sharing lies
@@ -1920,10 +2294,9 @@ impl<'a> Machine<'a> {
                         // The place itself stays, emptied. A walk under
                         // way counts places, and closing one up would
                         // draw every later member back a step beneath it.
-                        for (k, x) in thing.holds.borrow_mut().iter_mut() {
-                            if *k == called {
-                                *x = Value::Unset;
-                            }
+                        let mut holds = thing.holds.borrow_mut();
+                        if let Some(at) = self.member_place(&holds, &called) {
+                            holds[at].1 = Value::Unset;
                         }
                         Value::Nil
                     }
@@ -1936,8 +2309,8 @@ impl<'a> Machine<'a> {
                 match &v[0] {
                     Value::Thing(thing) => {
                         let mut holds = thing.holds.borrow_mut();
-                        match holds.iter_mut().find(|(k, x)| *k == called && kept(x)) {
-                            Some(place) => place.1 = v[2].clone(),
+                        match self.member_place(&holds, &called) {
+                            Some(at) => holds[at].1 = v[2].clone(),
                             None => holds.push((called, v[2].clone())),
                         }
                         Value::Nil
@@ -1955,7 +2328,13 @@ impl<'a> Machine<'a> {
                         None => match class.keeper(&called) {
                             Some(keeper) => {
                                 let held = keeper.shared.borrow().iter().find(|(k, _)| *k == called).map(|(_, x)| x.clone());
-                                held.expect("the keeper holds it")
+                                // Kept in a shared cell, it reads as
+                                // what the cell holds: the sharing is
+                                // between the names, not in the value.
+                                match held.expect("the keeper holds it") {
+                                    Value::Shared(cell) => cell.borrow().clone(),
+                                    held => held,
+                                }
                             }
                             None => return Err(format!("Undefined constant {}::{}", class.name, called)),
                         },
@@ -2088,7 +2467,16 @@ impl<'a> Machine<'a> {
                         }
                         match held {
                             Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-                            Err(_) => return Ok(Value::Flag(false)),
+                            // A file that will not be read is not there
+                            // as far as the run can tell: it says so
+                            // twice, of the file and of the reading in,
+                            // and answers false.
+                            Err(_) => {
+                                self.grumble("warning", &format!("{}(): Failed to open stream: No such file or directory", name));
+                                let told = format!("{}(): Failed opening '{}' for inclusion (include_path='.')", name, given);
+                                self.grumble("warning", &told);
+                                return Ok(Value::Flag(false));
+                            }
                         }
                     }
                 };
@@ -2277,7 +2665,7 @@ impl<'a> Machine<'a> {
             // read as a whole number of sixty-four bits first.
             Prim::BitsOver => match &v[0] {
                 Value::Text(s) => Value::text(&letters_turned(s)),
-                other => Value::Small(!sixty_four(other)?),
+                other => Value::Small(!self.bits_told(other)?),
             },
             // Two pieces of text meet letter by letter. The shorter one
             // says how far it goes, save where either bit will do, and
@@ -2301,7 +2689,7 @@ impl<'a> Machine<'a> {
                 Value::text(&String::from_utf8_lossy(&letters))
             }
             Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne => {
-                let (left, right) = (sixty_four(&v[0])?, sixty_four(&v[1])?);
+                let (left, right) = (self.bits_told(&v[0])?, self.bits_told(&v[1])?);
                 Value::Small(match op {
                     Prim::BitsBoth => left & right,
                     Prim::BitsEither => left | right,
@@ -2309,7 +2697,7 @@ impl<'a> Machine<'a> {
                 })
             }
             Prim::BitsUp | Prim::BitsDown => {
-                let (bits, by) = (sixty_four(&v[0])?, sixty_four(&v[1])?);
+                let (bits, by) = (self.bits_told(&v[0])?, self.bits_told(&v[1])?);
                 if by < 0 {
                     return Err("Bit shift by a negative number".to_string());
                 }
@@ -2321,6 +2709,16 @@ impl<'a> Machine<'a> {
                 } else {
                     bits.checked_shr(far).unwrap_or(if bits < 0 { -1 } else { 0 })
                 })
+            }
+            // Text turned about is text taken times minus one, the way a
+            // language reading a number out of text does it: the number
+            // the text opens with is turned about, and text opening with
+            // none is a pair no such step can take.
+            Prim::Negate
+                if matches!(v[0], Value::Text(_)) && self.complaint_words.iter().any(|(k, _)| *k == "warning") =>
+            {
+                let pair = [v[0].clone(), Value::Small(-1)];
+                return self.prim(Prim::Times, name, &pair);
             }
             Prim::Negate => {
                 let turned = match math::compute(Calc::Minus, &Value::Small(0), &v[0]) {
@@ -2478,7 +2876,7 @@ impl<'a> Machine<'a> {
                         (Some(n), true) => n,
                         (Some(n), false) => {
                             if warns {
-                                self.grumble("warning", "A non-well-formed numeric value encountered");
+                                self.grumble("warning", "A non-numeric value encountered");
                                 return n;
                             }
                             x.clone()
@@ -2493,6 +2891,16 @@ impl<'a> Machine<'a> {
                     }
                 };
                 let pair = [worth(&v[0]), worth(&v[1])];
+                return self.prim(op, name, &pair);
+            }
+            // A language whose remainder is taken between whole numbers
+            // brings what it is given to one first, the way it brings a
+            // value to the bits it works on.
+            Prim::Mod
+                if self.table.flag("op.mod.whole")
+                    && (matches!(v[0], Value::Frac(_)) || matches!(v[1], Value::Frac(_))) =>
+            {
+                let pair = [Value::Small(self.bits_told(&v[0])?), Value::Small(self.bits_told(&v[1])?)];
                 return self.prim(op, name, &pair);
             }
             // Two whole numbers dividing evenly leave a whole one, in a
@@ -2587,7 +2995,7 @@ impl<'a> Machine<'a> {
             Prim::Define => return Err(format!("{}() needs a quoted name as its first argument", name)),
             Prim::Dump => {
                 for x in v {
-                    self.utter(&format!("{}\n", with_kind(x, 0, self.table.count("ext.system.real.bits").is_some())));
+                    self.utter(&format!("{}\n", with_kind(x, 0, self.table.count("ext.system.real.bits").is_some(), self.wording())));
                 }
                 Value::Nil
             }
@@ -2749,6 +3157,16 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// The same, with a word said where a place is named by nothing at
+    /// all and the language asks for that to be written out. A place
+    /// being taken away is named without a word, as the reference has it.
+    fn as_key_spoken(&self, at: &Value) -> Value {
+        if let (Value::Nil | Value::Unset, Some(said)) = (at, self.table.single("ext.op.index.nothing")) {
+            self.said_regardless("deprecated", &said.to_string());
+        }
+        self.as_key(at)
+    }
+
     fn element(&self, target: &Value, at: &Value) -> Result<Value, String> {
         // A place holding a cell that names share reads as whatever the
         // cell holds: the sharing lies between the names, not in the
@@ -2783,7 +3201,7 @@ impl<'a> Machine<'a> {
             return Ok(Value::Nil);
         }
         if let Value::Dict(entries) = target {
-            let at = &self.as_key(at);
+            let at = &self.as_key_spoken(at);
             let found = entries.iter().find(|(k, _)| k.equals(at));
             return match found {
                 Some((_, v)) => Ok(v.clone()),
@@ -2793,7 +3211,15 @@ impl<'a> Machine<'a> {
         // Text naming a place in text counts for the number it opens
         // with, since text counts as a number wherever one is wanted.
         let spelled = match (target, at) {
-            (Value::Text(_), Value::Text(_)) if self.letter_places => number_opening_in(at).0,
+            (Value::Text(_), Value::Text(said)) if self.letter_places => {
+                let (opens, outright) = number_opening_in(at);
+                // Where the text naming the place is no number outright,
+                // the run says so rather than counting it quietly.
+                if !outright && opens.is_some() {
+                    self.grumble("warning", &format!("Illegal string offset \"{}\"", said));
+                }
+                opens
+            }
             _ => None,
         };
         let i = match as_index(spelled.as_ref().unwrap_or(at)) {
@@ -2850,6 +3276,21 @@ fn as_index(v: &Value) -> Result<usize, String> {
 /// A value shown with its kind the way PHP's var_dump does: numbers as
 /// `int(n)` and `float(x)`, text with its length in bytes, a vector
 /// one entry per line, each nested level two spaces further in.
+/// How far a member is reached from, written beside its name where a
+/// thing is shown: nothing where it is open to everything, the word for
+/// one a class shares only with those built on it, or the declaring
+/// class's name and the word for one it keeps to itself.
+fn written_reach(of: &Blueprint, filed: &str, w: Names) -> String {
+    let (member, owner) = crate::data::holder_of(filed);
+    if let Some(declared) = owner {
+        return w.alone_word.map_or_else(String::new, |word| format!(":\"{declared}\":{word}"));
+    }
+    match of.reach_of(member) {
+        Some((Reach::Within, _)) => w.within_word.map_or_else(String::new, |word| format!(":{word}")),
+        _ => String::new(),
+    }
+}
+
 /// Whether a thing still keeps a member at a place. Taking one off
 /// empties its place and leaves it there, so that a walk already under
 /// way finds the rest of the members where it left them.
@@ -2857,7 +3298,7 @@ pub fn kept(x: &Value) -> bool {
     !matches!(x, Value::Unset)
 }
 
-fn with_kind(v: &Value, level: usize, binary_reals: bool) -> String {
+fn with_kind(v: &Value, level: usize, binary_reals: bool, w: Names) -> String {
     let lead = "  ".repeat(level);
     // Something standing inside a value is marked as shared when its
     // cell is one that some name still reaches besides the value
@@ -2869,7 +3310,7 @@ fn with_kind(v: &Value, level: usize, binary_reals: bool) -> String {
     };
     match v {
         // A cell that names share is shown as what it holds.
-        Value::Shared(cell) => with_kind(&cell.borrow(), level, binary_reals),
+        Value::Shared(cell) => with_kind(&cell.borrow(), level, binary_reals, w),
         Value::Small(_) | Value::Huge(_) => format!("int({})", v.bare()),
         // Shown with its kind, a binary real is written in the fewest
         // figures that read back as the same number.
@@ -2880,7 +3321,7 @@ fn with_kind(v: &Value, level: usize, binary_reals: bool) -> String {
         Value::Text(s) => format!("string({}) \"{}\"", s.len(), s),
         Value::Flag(b) => format!("bool({})", b),
         Value::Vector(items) => {
-            let entries: Vec<String> = items.iter().enumerate().map(|(i, x)| format!("{lead}  [{i}]=>\n{lead}  {}{}\n", tied(x), with_kind(x, level + 1, binary_reals))).collect();
+            let entries: Vec<String> = items.iter().enumerate().map(|(i, x)| format!("{lead}  [{i}]=>\n{lead}  {}{}\n", tied(x), with_kind(x, level + 1, binary_reals, w))).collect();
             format!("array({}) {{\n{}{lead}}}", items.len(), entries.concat())
         }
         Value::Dict(entries) => {
@@ -2892,7 +3333,7 @@ fn with_kind(v: &Value, level: usize, binary_reals: bool) -> String {
                         Value::Text(s) => format!("\"{}\"", s),
                         other => other.bare(),
                     };
-                    format!("{lead}  [{key}]=>\n{lead}  {}{}\n", tied(x), with_kind(x, level + 1, binary_reals))
+                    format!("{lead}  [{key}]=>\n{lead}  {}{}\n", tied(x), with_kind(x, level + 1, binary_reals, w))
                 })
                 .collect();
             format!("array({}) {{\n{}{lead}}}", entries.len(), shown.concat())
@@ -2902,7 +3343,11 @@ fn with_kind(v: &Value, level: usize, binary_reals: bool) -> String {
             let shown: Vec<String> = held
                 .iter()
                 .filter(|(_, x)| kept(x))
-                .map(|(member, x)| format!("{lead}  [\"{member}\"]=>\n{lead}  {}{}\n", tied(x), with_kind(x, level + 1, binary_reals)))
+                .map(|(filed, x)| {
+                    let how = written_reach(&thing.of, filed, w);
+                    let member = crate::data::holder_of(filed).0;
+                    format!("{lead}  [\"{member}\"{how}]=>\n{lead}  {}{}\n", tied(x), with_kind(x, level + 1, binary_reals, w))
+                })
                 .collect();
             format!("object({})#{} ({}) {{\n{}{lead}}}", thing.of.name, thing.turn, shown.len(), shown.concat())
         }
@@ -2969,7 +3414,8 @@ fn over_lines(v: &Value, along: usize, w: Names) -> String {
         Value::Dict(entries) => ("Array".to_string(), entries.iter().map(|(k, x)| (k.render(w), x)).collect()),
         Value::Thing(thing) => {
             held = thing.holds.borrow();
-            (format!("{} Object", thing.of.name), held.iter().filter(|(_, x)| kept(x)).map(|(k, x)| (k.clone(), x)).collect())
+            let named = |k: &String| format!("{}{}", crate::data::holder_of(k).0, written_reach(&thing.of, k, w));
+            (format!("{} Object", thing.of.name), held.iter().filter(|(_, x)| kept(x)).map(|(k, x)| (named(k), x)).collect())
         }
         other => return other.render(w),
     };

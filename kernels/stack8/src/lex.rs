@@ -656,7 +656,14 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
         out.push(Token { shape: Shape::Sign, lexeme: ending.clone(), width: 0, row: cur.row, column: 1 });
         row = cur.row;
         // One line end straight after the closing marker is PHP's to eat.
-        rest = tail.strip_prefix('\n').unwrap_or_else(|| tail.strip_prefix("\r\n").unwrap_or(tail));
+        // Eaten or not, the line it ended is a line of the page and is
+        // counted, so that what a complaint says of a line names the
+        // line the program was written on.
+        let shorter = tail.strip_prefix('\n').unwrap_or_else(|| tail.strip_prefix("\r\n").unwrap_or(tail));
+        if shorter.len() != tail.len() {
+            row += 1;
+        }
+        rest = shorter;
     }
     told(rest, &mut out);
     Ok(out)

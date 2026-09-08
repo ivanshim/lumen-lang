@@ -56,7 +56,7 @@ def spelled(definition):
     return words
 
 
-def run(kernel, args, source, suffix, request=None, beside=None):
+def run(kernel, args, source, suffix, request=None, beside=None, given=()):
     # php-src's run-tests.php writes the program next to the .phpt it came
     # from, so a test naming a file beside itself finds it. Where a test
     # says where it belongs, put it there; otherwise anywhere will do.
@@ -70,7 +70,7 @@ def run(kernel, args, source, suffix, request=None, beside=None):
     setting = {**os.environ, **(request or {}).get("env", {})}
     body = (request or {}).get("body", "")
     try:
-        p = subprocess.run([str(BINARY), "--kernel", kernel] + args + [path], input=body, capture_output=True,
+        p = subprocess.run([str(BINARY), "--kernel", kernel] + args + [path] + list(given), input=body, capture_output=True,
                            text=True, timeout=TIMEOUT, errors="replace", env=setting)
         return p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
@@ -139,7 +139,13 @@ def expectf_pattern(expected):
 def web_request(sections):
     """The request a .phpt describes: its --GET--, --POST--, --COOKIE-- and
     --ENV-- sections, given the way a web server gives one."""
-    env = {"REQUEST_METHOD": "GET", "QUERY_STRING": sections.get("GET", "").strip()}
+    # run-tests.php runs a test through the web only where the test asks
+    # for it; the rest go through the command line, where there is no
+    # request at all and nothing of one to be told about.
+    over_the_web = any(part in sections for part in ("GET", "POST", "POST_RAW", "COOKIE", "CGI"))
+    env = {}
+    if over_the_web:
+        env = {"REQUEST_METHOD": "GET", "QUERY_STRING": sections.get("GET", "").strip()}
     for line in sections.get("ENV", "").splitlines():
         name, _, value = line.partition("=")
         if name.strip():
@@ -186,7 +192,10 @@ def run_phpt(path, kernel):
     expected = s.get("EXPECT", s.get("EXPECTF", s.get("EXPECTREGEX")))
     if expected is None:
         return "skipped", "no --EXPECT-- section"
-    code, out, err = run(kernel, ["--lang", "langs/extras/php.json"], s["FILE"], ".php", web_request(s), beside=path)
+    # run-tests.php hands the words of an --ARGS-- section to the program
+    # as its own arguments, so a test that reads them reads them here too.
+    given = s.get("ARGS", "").split()
+    code, out, err = run(kernel, ["--lang", "langs/extras/php.json"], s["FILE"], ".php", web_request(s), beside=path, given=given)
     # php-src's own run-tests.php trims both ends before comparing, and
     # a complaint is written with a blank line before it, so the same
     # trim is what the reference expects.

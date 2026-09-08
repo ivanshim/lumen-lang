@@ -152,6 +152,10 @@ pub struct Lang {
     pub builtins: HashMap<String, Builtin>,
     pub holes: Vec<String>,
     pub args_binding: Option<String>,
+    /// The same arguments as a list, the file the run was started with
+    /// first, and how many there are in it.
+    pub args_list: Option<String>,
+    pub args_count: Option<String>,
     pub memo_binding: Option<String>,
     pub precision_binding: Option<String>,
     pub entry_binding: Option<String>,
@@ -204,6 +208,10 @@ pub struct Lang {
     pub operand_fault: Option<String>,
     /// Whether dividing two whole numbers evenly gives a whole one.
     pub div_stays_whole: bool,
+    /// The remainder is taken between whole numbers, whatever it is
+    /// given: a real is brought to the whole number nearest nothing
+    /// first, as a language whose remainder is a whole one does.
+    pub mod_whole: bool,
     /// What a language says when a step onward or back is taken on text
     /// that spells no number. Naming either turns the rule on for that
     /// way: onward moves the last letter along, carrying; back leaves
@@ -246,6 +254,10 @@ pub struct Lang {
     pub case_words: Vec<String>,
     pub default_words: Vec<String>,
     pub case_marks: Vec<String>,
+    /// The words for closing a case with the mark that ends a statement
+    /// rather than with the case's own, which a language may allow and
+    /// still ask to be written the other way.
+    pub case_mark_instead: Option<String>,
     /// The two signs of `test ? a : b`.
     pub ternary: Option<(String, String)>,
     /// A lone statement may stand where a block is expected.
@@ -363,6 +375,11 @@ pub struct Lang {
     /// The method run when an object is let go, at the latest when the
     /// run ends.
     pub destructor: Option<String>,
+    /// The method that answers for a property the thing does not hold,
+    /// and the one that takes a write of such a property. Each is given
+    /// the name that was asked for, the writer the value as well.
+    pub reader: Option<String>,
+    pub writer: Option<String>,
     /// A thing may be its own walk. The class of method names saying so,
     /// and the five methods of the walk: wind back, whether there is
     /// more, what stands here, what it is called, and step on.
@@ -380,8 +397,16 @@ pub struct Lang {
     /// The words for asking a thing that is its own walk to hand out
     /// the items' own cells, which it has none of.
     pub walk_no_cell: Option<String>,
+    /// The words for marking the name a walk gives its keys to as taking
+    /// a cell: a key is not a place and has no cell to hand out.
+    pub walk_key_no_cell: Option<String>,
     /// Words that may stand before a member and say nothing this kernel reads.
     pub modifier_words: Vec<String>,
+    /// The modifiers saying how far a member may be reached from: only
+    /// from the class that declares it, or from that class and those
+    /// standing on it. A member with neither is open to all.
+    pub hidden_words: Vec<String>,
+    pub guarded_words: Vec<String>,
     /// The modifier marking a member the class keeps for itself.
     pub shared_words: Vec<String>,
     /// `object->member`, and `class::member`.
@@ -412,6 +437,9 @@ pub struct Lang {
     /// The words for using a value that is neither an array nor
     /// anything with places as though it had them.
     pub scalar_index: Option<String>,
+    /// The words for naming a place by nothing at all, which a language
+    /// may take as naming the place named by the empty text.
+    pub nothing_index: Option<String>,
     /// What the language calls the parts of a web request: the name for
     /// each group the host gathers, and one for all of them together.
     pub request_bindings: Vec<(String, String)>,
@@ -434,7 +462,7 @@ w syntax.array.open | w syntax.array.separator | w syntax.array.close | w syntax
 w syntax.map.separator | w syntax.map.pair | w syntax.map.close | w literal.true
 w literal.false | w literal.null | b literal.null.silent | t op.precedence | w op.right_associative
 w op.add | w op.sub | w op.mul | w op.div
-o op.div.result | w op.quot | w op.rem | w op.pow
+o op.div.result | b op.mod.whole | w op.quot | w op.rem | w op.pow
 w op.eq | w op.ne | w op.lt | w op.le
 w op.gt | w op.ge | w op.and | w op.or
 w op.not | w op.negate | w op.concat | w op.range
@@ -461,23 +489,23 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
-w ext.lexical.epilogue | w ext.lexical.prologue.echo | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
+w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.stmt.for.c | b ext.op.assign.compound
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.const | w ext.builtin.define
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
-w ext.stmt.case.mark | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
+w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
 w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.request.amiss.boundary.wrong | w ext.system.request.amiss.part | w ext.system.request.amiss.body.large | w ext.system.request.body
 w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
 w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
-w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.destructor
+w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.destructor | w ext.stmt.class.reader | w ext.stmt.class.writer
 w ext.op.walk.class | w ext.op.walk.rewind | w ext.op.walk.more | w ext.op.walk.this | w ext.op.walk.key
-w ext.op.walk.onward | w ext.op.walk.giver.class | w ext.op.walk.giver | w ext.op.walk.no_cell | w ext.stmt.class.modifier | w ext.stmt.class.shared
+w ext.op.walk.onward | w ext.op.walk.giver.class | w ext.op.walk.giver | w ext.op.walk.no_cell | w ext.op.walk.key.no_cell | w ext.stmt.class.modifier | w ext.stmt.class.hidden | w ext.stmt.class.guarded | w ext.stmt.class.shared
 w ext.op.member | w ext.op.scope | w ext.op.instanceof | w ext.stmt.class.parent
 w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.try | w ext.stmt.catch
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
-w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | w ext.system.request.settings | b ext.op.index.absent | w ext.op.index.scalar | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
+w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | w ext.system.request.settings | b ext.op.index.absent | w ext.op.index.scalar | w ext.op.index.nothing | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
 w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right
 w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at
@@ -1053,6 +1081,8 @@ impl Lang {
             builtins: natives,
             holes: r.strings("builtin.print.placeholder")?,
             args_binding: args_name,
+            args_list: r.head("ext.system.args.list")?,
+            args_count: r.head("ext.system.args.count")?,
             memo_binding: memo_name,
             precision_binding: precision_name,
             entry_binding: entry_name,
@@ -1089,6 +1119,7 @@ impl Lang {
             fault_value: r.head("ext.system.fault.class.value")?,
             operand_fault: r.head("ext.system.fault.operands")?,
             div_stays_whole,
+            mod_whole: r.flag("op.mod.whole")?,
             step_up_text: r.head("ext.op.increment.text")?,
             step_down_text: r.head("ext.op.decrement.text")?,
             warns_of_unwritten: r.head("ext.system.complaint.warning")?.is_some(),
@@ -1121,6 +1152,7 @@ impl Lang {
             case_words: r.strings("ext.stmt.case")?,
             default_words: r.strings("ext.stmt.default")?,
             case_marks: r.strings("ext.stmt.case.mark")?,
+            case_mark_instead: r.head("ext.stmt.case.mark.instead")?,
             ternary: match r.strings("ext.op.ternary")?.as_slice() {
                 [] => None,
                 [q, m] => Some((q.clone(), m.clone())),
@@ -1184,6 +1216,8 @@ impl Lang {
             this_word: r.head("ext.stmt.class.this")?,
             constructor: r.head("ext.stmt.class.constructor")?,
             destructor: r.head("ext.stmt.class.destructor")?,
+            reader: r.head("ext.stmt.class.reader")?,
+            writer: r.head("ext.stmt.class.writer")?,
             walker_class: r.head("ext.op.walk.class")?,
             walk_rewind: r.head("ext.op.walk.rewind")?,
             walk_more: r.head("ext.op.walk.more")?,
@@ -1193,7 +1227,10 @@ impl Lang {
             giver_class: r.head("ext.op.walk.giver.class")?,
             walk_giver: r.head("ext.op.walk.giver")?,
             walk_no_cell: r.head("ext.op.walk.no_cell")?,
+            walk_key_no_cell: r.head("ext.op.walk.key.no_cell")?,
             modifier_words: r.strings("ext.stmt.class.modifier")?,
+            hidden_words: r.strings("ext.stmt.class.hidden")?,
+            guarded_words: r.strings("ext.stmt.class.guarded")?,
             shared_words: r.strings("ext.stmt.class.shared")?,
             member_mark: r.head("ext.op.member")?,
             scope_mark: r.head("ext.op.scope")?,
@@ -1212,6 +1249,7 @@ impl Lang {
             reference_mark: r.head("ext.op.reference")?,
             absent_index: r.flag("ext.op.index.absent")?,
             scalar_index: r.head("ext.op.index.scalar")?,
+            nothing_index: r.head("ext.op.index.nothing")?,
             request_bindings: {
                 let groups = [
                     ("GET", "ext.system.request.query"), ("POST", "ext.system.request.form"),

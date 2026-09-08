@@ -59,7 +59,7 @@ syntax.notation:W syntax.group.open:L syntax.group.close:L syntax.call.open:L sy
 syntax.call.close:L syntax.call.label:L syntax.array.open:L syntax.array.separator:L syntax.array.close:L \
 syntax.map.open:L syntax.map.separator:L syntax.map.pair:L syntax.map.close:L system.flag.counts:B literal.true:L \
 literal.false:L literal.null:L literal.null.silent:B op.precedence:T op.right_associative:L op.add:L \
-op.sub:L op.mul:L op.div:L op.div.result:O op.quot:L \
+op.sub:L op.mul:L op.div:L op.div.result:O op.mod.whole:B op.quot:L \
 op.rem:L op.pow:L op.eq:L op.ne:L op.lt:L \
 op.le:L op.gt:L op.ge:L op.and:L op.or:L \
 op.not:L op.negate:L op.concat:L op.range:L op.index.open:L \
@@ -88,13 +88,13 @@ ext.stmt.const:L ext.builtin.define:L ext.builtin.var_dump:L ext.stmt.switch:L e
 ext.stmt.default:L ext.stmt.case.mark:L ext.op.ternary:L ext.block.lone_statement:B ext.stmt.function.hoisted:B ext.stmt.function.outermost:B ext.system.request.amiss:L ext.system.request.amiss.boundary:L ext.system.request.amiss.boundary.wrong:L ext.system.request.amiss.part:L ext.system.request.amiss.body.large:L ext.system.request.body:L \
 ext.lexical.number.exponent:L ext.op.plus:L ext.stmt.break.levels:B ext.builtin.array:L ext.op.index.append:B ext.stmt.for.collection:B ext.builtin.print_r:L \
 ext.stmt.function.returns:L ext.stmt.class:L ext.stmt.class.extends:L ext.stmt.class.new:L ext.stmt.class.this:L \
-ext.stmt.class.constructor:L ext.stmt.class.modifier:L ext.stmt.class.shared:L ext.op.member:L ext.op.scope:L \
+ext.stmt.class.constructor:L ext.stmt.class.modifier:L ext.stmt.class.hidden:L ext.stmt.class.guarded:L ext.stmt.class.shared:L ext.op.member:L ext.op.scope:L \
 ext.op.instanceof:L ext.stmt.class.parent:L ext.stmt.class.self:L ext.lexical.name_lead:L ext.stmt.try:L \
 ext.stmt.catch:L ext.stmt.finally:L ext.stmt.throw:L ext.stmt.catch.separator:L ext.op.reference:L \
 ext.system.request.query:L ext.system.request.form:L ext.system.request.cookies:L ext.system.request.server:L \
-ext.system.request.env:L ext.system.request.files:L ext.system.request.all:L ext.system.request.settings:L ext.op.index.absent:B ext.op.index.scalar:L ext.stmt.class.destructor:L \
-ext.op.walk.class:L ext.op.walk.rewind:L ext.op.walk.more:L ext.op.walk.this:L ext.op.walk.key:L \
-ext.op.walk.onward:L ext.op.walk.giver.class:L ext.op.walk.giver:L ext.op.walk.no_cell:L \
+ext.system.request.env:L ext.system.request.files:L ext.system.request.all:L ext.system.request.settings:L ext.op.index.absent:B ext.op.index.scalar:L ext.op.index.nothing:L ext.stmt.class.destructor:L ext.stmt.class.reader:L ext.stmt.class.writer:L \
+ext.system.args.list:L ext.system.args.count:L ext.op.walk.class:L ext.op.walk.rewind:L ext.op.walk.more:L ext.op.walk.this:L ext.op.walk.key:L \
+ext.op.walk.onward:L ext.op.walk.giver.class:L ext.op.walk.giver:L ext.op.walk.no_cell:L ext.op.walk.key.no_cell:L ext.stmt.case.mark.instead:L \
 ext.stmt.class.interface:L ext.stmt.class.implements:L ext.op.compare:L ext.builtin.unset:L ext.lexical.template:B ext.lexical.prologue.echo:L \
 ext.op.otherwise:L ext.op.bit.and:L ext.op.bit.or:L ext.op.bit.xor:L ext.op.bit.not:L \
 ext.op.bit.left:L ext.op.bit.right:L ext.op.identical:L ext.op.not_identical:L ext.system.kind.spelled:B ext.builtin.args.all:L \

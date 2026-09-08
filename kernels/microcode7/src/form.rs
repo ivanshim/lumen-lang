@@ -309,6 +309,22 @@ pub enum Form {
     /// Make the outermost binding this value spells a shared cell if it
     /// is not one already, and give the cell back.
     ShareCalled(Box<Form>),
+    /// The cell of a place inside whatever a cell already holds: how a
+    /// place is shared out of something that is no binding of its own,
+    /// such as a property or a class's own value holding an array.
+    ShareWithin(Box<Form>, Vec<Form>),
+    /// Take the place the key names out of what a cell holds, leaving
+    /// the rest of it where it was.
+    ForgetWithin(Box<Form>, Box<Form>),
+    /// Leave the outermost binding this value spells as though nothing
+    /// were ever written to it.
+    ForgetCalled(Box<Form>),
+    /// Make the outermost binding this value spells ready, as the form
+    /// above does for one written out.
+    ReadyCalled(Box<Form>),
+    /// Tie the outermost binding a value spells to a shared cell, so
+    /// that name and the cell's other names stand for the one cell.
+    TieCalled(Box<Form>, Box<Form>),
     /// Leave this binding as though nothing were ever written to it.
     Forget(Address),
     /// Make this global ready: where nothing was ever written to it,
@@ -319,6 +335,11 @@ pub enum Form {
     /// quiet: how a language that lets a program silence one piece of
     /// itself says which piece.
     Muted(Box<Form>),
+    /// The same, but the run says nothing at all of the piece within,
+    /// not even a word about how it is written: how a language lets a
+    /// program silence a piece of itself outright, where Muted only
+    /// keeps quiet about what is not there.
+    Silenced(Box<Form>),
     /// The binding whose name this value spells, found while the run
     /// goes: how a language reads a name it works out.
     Called(Box<Form>),
@@ -329,6 +350,11 @@ pub enum Form {
     /// own word for that kind of remark. The line is the one the shape
     /// was written on, so that a call along the way does not move it.
     Remark(&'static str, Rc<str>, u32),
+    /// The value the form within comes to, where a cell was asked for.
+    /// Where it is a cell it goes on as it is; where it is not, these
+    /// words are said on the line given and it goes on all the same, or,
+    /// where nothing is said, the run is stopped with them.
+    CellOrSaid(Option<&'static str>, Rc<str>, u32, Box<Form>),
     /// A cell for what the form within comes to, whatever that is: the
     /// cell itself where it is one already, and otherwise these words,
     /// on the line given, and a fresh cell holding the value. A routine
@@ -355,6 +381,8 @@ pub struct Plan {
     /// is built on, among the values written for it.
     pub answers: usize,
     pub field_names: Vec<String>,
+    /// How far each property is reached from, name for name.
+    pub field_reach: Vec<crate::data::Reach>,
     pub shared_names: Vec<String>,
     pub constant_names: Vec<String>,
     pub methods: Vec<(String, Rc<Routine>)>,
@@ -398,6 +426,10 @@ pub struct Routine {
     pub least: usize,
     pub ident: String,
     pub formals: Vec<String>,
+    /// The class each parameter is written to take, where one was
+    /// written and it names a class. Nothing for a parameter with none,
+    /// or with a kind that is no class.
+    pub formal_kinds: Vec<Option<Rc<str>>>,
     pub formal_slots: Vec<usize>,
     pub idents: Vec<String>,
     /// Holds no idents: runs in the frame it closed over, making none.
@@ -408,5 +440,9 @@ pub struct Routine {
     /// complaint names it, and a file it asks for is sought beside it.
     /// Nothing where the program is the run's own.
     pub written_in: Option<Rc<str>>,
+    /// The class this program was written inside, where it was written
+    /// inside one: what a class holds alone is reached from there and
+    /// from nowhere else.
+    pub within: Option<Rc<str>>,
     pub body: Form,
 }

@@ -262,6 +262,10 @@ only. The extension labels so far, all from PHP:
   section runs on into the next unless it breaks; when no case matches,
   the default's section runs, wherever it stands. A switch counts as a
   loop to `break` and `continue`.
+- `ext.stmt.case.mark.instead`: what to say when a case is closed the way
+  a statement is closed rather than with `ext.stmt.case.mark`. The
+  section still reads; the words are raised as a deprecation while the
+  program is read, so they come out ahead of anything it prints.
 - `ext.op.ternary`: the two signs of `test ? a : b`, at the bottom of the
   precedence order.
 - `ext.block.lone_statement`: a switch; a single statement may stand
@@ -285,10 +289,22 @@ only. The extension labels so far, all from PHP:
 - `ext.stmt.class` and its family: `ext.stmt.class.extends`,
   `ext.stmt.class.new`, `ext.stmt.class.this` (the name a method knows
   its own object by), `ext.stmt.class.constructor` (the method run when
-  an object is made), `ext.stmt.class.destructor` (the method run when an
+  an object is made), `ext.stmt.class.hidden` and
+  `ext.stmt.class.guarded` (the modifiers saying how far a member may be
+  reached from: only from the class declaring it, or from that class and
+  those standing on it; a member with neither is open to all. A walk over
+  a thing hands out only what the class the walk is written in may reach,
+  and where a thing is shown the reach is written beside the name —
+  `["d":protected]` and `["e":"C":private]` — in the definition's own
+  words), `ext.stmt.class.destructor` (the method run when an
   object is let go, at the latest when the run ends, every object still
   standing then being let go in the order they were made, before what the
-  run is still keeping goes out), `ext.stmt.class.modifier` (words before a member
+  run is still keeping goes out), `ext.stmt.class.reader` and
+  `ext.stmt.class.writer` (the method a class answers with for a property
+  its things do not hold, given the name asked for, and the one that
+  takes such a write, given the name and the value; a class written
+  without them reads and writes the property as before),
+  `ext.stmt.class.modifier` (words before a member
   that this kernel reads past: `public`, `final`), `ext.stmt.class.shared`
   (the modifier for a member the class keeps rather than its objects),
   `ext.stmt.class.parent` and `ext.stmt.class.self`. A class is a value
@@ -331,6 +347,30 @@ only. The extension labels so far, all from PHP:
   classes themselves are declared in the language's own library, not
   here: the kernel is told only which class stands for each and what the
   methods are called.
+- `ext.system.args.list` and `ext.system.args.count`: the arguments the
+  run was started with as a list, the file the run was started with first
+  in it, and how many there are. Where `system.args` gives them as one
+  piece of text, these give the same arguments the way a language that
+  walks them wants them.
+- `ext.builtin.eval` reads text as standing where the call to read it
+  stands: inside a routine, the names that routine has are its own, and
+  what it writes to one of them the routine sees afterwards. Names it
+  makes for itself go on the end and are gone once it is done. At the
+  outermost level it has the globals and nothing else, as before.
+- `ext.op.walk.key.no_cell`: the words for marking the name a walk gives
+  its keys to as taking a cell. A key is not a place: it is what a member
+  is called, and a name given it has no cell of the walk's to be fastened
+  to. It is said where the program is read, under the word for a fault of
+  the run rather than the word for a program that cannot be read, since
+  the reference counts it the first and not the second.
+- `ext.op.index.nothing`: the words for naming a place by nothing at
+  all, which a language may take as naming the place the empty text
+  names. They are said where such a place is read, written or asked
+  about, and not where one is taken away, which is what the reference
+  does. A piece the program silenced outright (`ext.op.hush`) keeps them
+  back; a piece merely kept quiet about what is not there does not, since
+  a word about how a program is written is no word about what the run
+  found.
 - `ext.op.index.scalar`: the words for using a value with no places at
   all as though it had them, PHP's `Cannot use a scalar value as an
   array`. Without them the kernel says so in its own words.
@@ -879,6 +919,14 @@ hold gives nothing rather than stopping, and the core label
 `literal.null.silent` says that nothing shows as no text at all rather
 than as the word a program writes for it.
 
+The core label `op.mod.whole` is PHP's too: the remainder is taken
+between whole numbers, whatever it is given, a real being brought to the
+whole number nearest nothing first. It is core, and not an extension,
+because which kind a remainder leaves behind is how an ordinary value
+comes out and every kernel has to agree on that. A language whose reals
+are held to a width says besides, where it has a word for a warning, that
+a real too wide to be held as a whole number was brought to one.
+
 The core label `system.flag.counts` is of the same shape and is PHP's
 too: a flag shows as the number it counts for rather than as the word a
 program writes for it, one holding true as `1` and one holding false as
@@ -1002,6 +1050,7 @@ Generated by `python3 scripts/lang_table.py`; edit the JSON, not the table.
 | `op.mul` | `*` | `*` | `*` | `*` | `*` | `*` | `*` | `*` | `*` | `*` |
 | `op.div` | `/` | `/` | `/` | - | - | `/` | `/` | `/` | - | - |
 | `op.div.result` | `rational` | `rational` | `real` | - | - | `real` | `real` | `whole_or_real` | - | - |
+| `op.mod.whole` | `false` | `false` | `false` | `false` | `false` | `false` | `false` | `true` | `false` | `false` |
 | `op.quot` | `//` | `//` | `//` | `/` | `/` | - | `div` | - | `/` | `/` |
 | `op.rem` | `%` | `%` | `%` | `%` | `%` | `%` | `mod` | `%` | `%` | `%` |
 | `op.pow` | `**` | `**` | `**` | - | - | `**` | - | `**` | `**` | - |
@@ -1074,7 +1123,7 @@ Generated by `python3 scripts/lang_table.py`; edit the JSON, not the table.
 | `builtin.to_string` | (library: `to_string`) | `to_string` | `str` | `to_string` | - | `String` | - | `strval` | `to_s` `String` | `String` |
 | `builtin.to_int` | (library: `to_int`) | `to_int` | `int` | - | - | `Math.trunc` | - | `intval` | `to_i` `Integer` | `Int` |
 | `builtin.to_real` | (library: `to_real`) | `to_real` | `float` | - | - | `Number` | - | `floatval` | `to_f` `Float` | `Double` |
-| `system.args` | `ARGS` | - | - | - | - | - | - | `$argv` | - | - |
+| `system.args` | `ARGS` | - | - | - | - | - | - | - | - | - |
 | `system.memoization` | `MEMOIZATION` | - | - | - | - | - | - | - | - | - |
 | `system.real_default_precision` | `REAL_DEFAULT_PRECISION` | - | - | - | - | - | - | - | - | - |
 | `system.entry` | - | - | - | `main` | `main` | - | - | - | - | - |
@@ -1171,6 +1220,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.index.absent` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.index.append` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.index.makes` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.op.index.nothing` | - | - | - | - | - | - | - | `Using null as an array offset is deprecated, use an empty string instead` | - | - |
 | `ext.op.index.plain_keys` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.index.scalar` | - | - | - | - | - | - | - | `Cannot use a scalar value as an array` | - | - |
 | `ext.op.index.text` | - | - | - | - | - | - | - | `true` | - | - |
@@ -1192,6 +1242,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.walk.giver` | - | - | - | - | - | - | - | `getIterator` | - | - |
 | `ext.op.walk.giver.class` | - | - | - | - | - | - | - | `IteratorAggregate` | - | - |
 | `ext.op.walk.key` | - | - | - | - | - | - | - | `key` | - | - |
+| `ext.op.walk.key.no_cell` | - | - | - | - | - | - | - | `Key element cannot be a reference` | - | - |
 | `ext.op.walk.more` | - | - | - | - | - | - | - | `valid` | - | - |
 | `ext.op.walk.no_cell` | - | - | - | - | - | - | - | `An iterator cannot be used with foreach by reference` | - | - |
 | `ext.op.walk.onward` | - | - | - | - | - | - | - | `next` | - | - |
@@ -1202,20 +1253,25 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.break.levels` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.stmt.case` | - | - | - | - | - | - | - | `case` | - | - |
 | `ext.stmt.case.mark` | - | - | - | - | - | - | - | `:` | - | - |
+| `ext.stmt.case.mark.instead` | - | - | - | - | - | - | - | `Case statements followed by a semicolon (;) are deprecated, use a colon (:) instead` | - | - |
 | `ext.stmt.catch` | - | - | - | - | - | - | - | `catch` | - | - |
 | `ext.stmt.catch.separator` | - | - | - | - | - | - | - | `\|` | - | - |
 | `ext.stmt.class` | - | - | - | - | - | - | - | `class` | - | - |
 | `ext.stmt.class.constructor` | - | - | - | - | - | - | - | `__construct` | - | - |
 | `ext.stmt.class.destructor` | - | - | - | - | - | - | - | `__destruct` | - | - |
 | `ext.stmt.class.extends` | - | - | - | - | - | - | - | `extends` | - | - |
+| `ext.stmt.class.guarded` | - | - | - | - | - | - | - | `protected` | - | - |
+| `ext.stmt.class.hidden` | - | - | - | - | - | - | - | `private` | - | - |
 | `ext.stmt.class.implements` | - | - | - | - | - | - | - | `implements` | - | - |
 | `ext.stmt.class.interface` | - | - | - | - | - | - | - | `interface` | - | - |
 | `ext.stmt.class.modifier` | - | - | - | - | - | - | - | `public` `private` `protected` `final` `abstract` `readonly` `var` | - | - |
 | `ext.stmt.class.new` | - | - | - | - | - | - | - | `new` | - | - |
 | `ext.stmt.class.parent` | - | - | - | - | - | - | - | `parent` | - | - |
+| `ext.stmt.class.reader` | - | - | - | - | - | - | - | `__get` | - | - |
 | `ext.stmt.class.self` | - | - | - | - | - | - | - | `self` | - | - |
 | `ext.stmt.class.shared` | - | - | - | - | - | - | - | `static` | - | - |
 | `ext.stmt.class.this` | - | - | - | - | - | - | - | `$this` | - | - |
+| `ext.stmt.class.writer` | - | - | - | - | - | - | - | `__set` | - | - |
 | `ext.stmt.const` | - | - | - | - | - | - | - | `const` | - | - |
 | `ext.stmt.default` | - | - | - | - | - | - | - | `default` | - | - |
 | `ext.stmt.do` | - | - | - | - | - | - | - | `do` | - | - |
@@ -1233,6 +1289,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.try` | - | - | - | - | - | - | - | `try` | - | - |
 | `ext.stmt.unpack` | - | - | - | - | - | - | - | `list` | - | - |
 | `ext.syntax.call.bare` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.system.args.count` | - | - | - | - | - | - | - | `$argc` | - | - |
+| `ext.system.args.list` | - | - | - | - | - | - | - | `$argv` | - | - |
 | `ext.system.class.folded` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.system.complaint.deprecated` | - | - | - | - | - | - | - | `Deprecated` | - | - |
 | `ext.system.complaint.fatal` | - | - | - | - | - | - | - | `Fatal error` | - | - |

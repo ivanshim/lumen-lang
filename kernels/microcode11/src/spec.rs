@@ -39,7 +39,7 @@ const SCHEMA: &[(&str, Shape)] = &[
     ("literal.true", Words), ("literal.false", Words), ("literal.null", Words), ("literal.null.silent", Flag),
     ("system.flag.counts", Flag),
     ("op.precedence", Tiers), ("op.right_associative", Words),
-    ("op.add", Words), ("op.sub", Words), ("op.mul", Words), ("op.div", Words), ("op.div.result", TextOrNull),
+    ("op.add", Words), ("op.sub", Words), ("op.mul", Words), ("op.div", Words), ("op.div.result", TextOrNull), ("op.mod.whole", Flag),
     ("op.quot", Words), ("op.rem", Words), ("op.pow", Words),
     ("op.eq", Words), ("op.ne", Words), ("op.lt", Words), ("op.le", Words), ("op.gt", Words), ("op.ge", Words),
     ("op.and", Words), ("op.or", Words), ("op.not", Words), ("op.negate", Words), ("op.concat", Words), ("op.range", Words),
