@@ -131,6 +131,9 @@ pub struct Compiler<'a> {
     /// The line the routine now being read was written on, which a
     /// fault raised on the way into it names.
     declared_at: u32,
+    /// The slots the routine being put together fills from what it
+    /// carried away, while its parameters are being read.
+    carrying: Vec<usize>,
     /// How many lines stand before the program's own text.
     before: u32,
     /// Where each key of the index chain just read begins, so that a
@@ -245,7 +248,7 @@ pub fn compile_within(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, declared_at: 0, within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new() };
+    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new() };
     if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;
@@ -314,7 +317,7 @@ pub fn compile_within(
         a.piece().instrs.extend(shifted);
     }
     let unit = a.pieces.pop().expect("the top unit");
-    Ok(Rc::new(Routine { ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, declared_on: 0, instrs: peephole(unit.instrs) }))
+    Ok(Rc::new(Routine { ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), instrs: Rc::new(peephole(unit.instrs)) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -706,6 +709,9 @@ impl<'a> Compiler<'a> {
     /// its value is left on the stack at the end.
     fn routine(&mut self, name: &str, formals: Vec<String>, least: usize, returns_value: bool, body: impl FnOnce(&mut Self) -> Res<()>) -> Res<Rc<Routine>> {
         let declared_on = self.declared_at;
+        // What the routine around this one carries is put aside while
+        // this one is put together, so that each keeps its own.
+        let around = std::mem::take(&mut self.carrying);
         // The classes the parameters were declared to take, gathered as
         // they were read. A method is given the object it is for before
         // them, so the list is brought level with the names.
@@ -747,7 +753,8 @@ impl<'a> Compiler<'a> {
         let unit = self.pieces.pop().expect("the unit");
         let instrs = if returns_value && !used { relocated(unit.instrs.into_iter().skip(2).collect(), -2) } else { unit.instrs };
         let within = self.within.as_ref().map(|(named, _)| Rc::from(named.as_str()));
-        Ok(Rc::new(Routine { ident: unit.ident, formals, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, instrs: peephole(instrs) }))
+        let carried = std::mem::replace(&mut self.carrying, around);
+        Ok(Rc::new(Routine { ident: unit.ident, formals, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), instrs: Rc::new(peephole(instrs)) }))
     }
 
     // ---------- statements ----------
@@ -2485,6 +2492,11 @@ impl<'a> Compiler<'a> {
         let (formals, spares, _) = self.parameters(&name, &call)?;
         let least = formals.len() - spares.len();
         let given = formals.clone();
+        // A routine written where a value stands may carry names from
+        // around it away with it, since the names around it are gone by
+        // the time it is called.
+        let carried = self.carried_names(&call)?;
+        let taken = carried.clone();
         if self.look().shape == Shape::Sign && Lang::spells(&lang.return_marks, &self.look().lexeme) {
             self.take();
             self.skip_nothing_mark();
@@ -2492,6 +2504,13 @@ impl<'a> Compiler<'a> {
         }
         let declarations = self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme);
         let program = self.routine(name, formals, least, true, |a| {
+            // The names carried away take the slots after the
+            // parameters, and are filled from what was carried when the
+            // routine is called.
+            for (named, _) in &taken {
+                let cell = a.cell_to_write(named);
+                a.carrying.push(cell.near[0]);
+            }
             a.spare_values(&spares, &given)?;
             if declarations {
                 loop {
@@ -2505,8 +2524,50 @@ impl<'a> Compiler<'a> {
             }
             a.body()
         })?;
+        // What is carried is read where the routine is written, and the
+        // routine takes it away with it.
+        for (named, by_cell) in &carried {
+            match by_cell {
+                true => {
+                    let cell = self.cell_to_read(named, false);
+                    self.put(Instr::Bond(cell));
+                }
+                false => self.read(named),
+            }
+        }
         self.constant(Value::Routine(program));
+        if !carried.is_empty() {
+            self.act(Action::Close, carried.len() + 1);
+        }
         Ok(())
+    }
+
+    /// `use ($a, &$b)` after a routine written where a value stands: the
+    /// names it carries away with it, and whether each is carried as it
+    /// stands or as the cell it shares with the name it was read from.
+    fn carried_names(&mut self, call: &Brackets) -> Res<Vec<(String, bool)>> {
+        let lang = self.lang;
+        if lang.carries_words.is_empty() || !self.on_keyword(&lang.carries_words) {
+            return Ok(Vec::new());
+        }
+        self.take();
+        self.want_sign(&call.open, "after the word for what a routine carries")?;
+        let mut names = Vec::new();
+        while !self.at_symbol(&call.close) {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", call.close));
+            }
+            let by_cell = self.skip_reference();
+            let named = self.want_name("as a name to carry")?;
+            names.push((named, by_cell));
+            if let Some(sep) = &call.between {
+                if self.at_symbol(sep) {
+                    self.take();
+                }
+            }
+        }
+        self.want_sign(&call.close, "after what a routine carries")?;
+        Ok(names)
     }
 
     fn function_body(&mut self, name: String) -> Res<()> {

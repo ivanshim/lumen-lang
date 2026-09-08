@@ -680,6 +680,9 @@
   "ext.stmt.class.trait": [
     "trait"
   ],
+  "ext.stmt.function.carries": [
+    "use"
+  ],
   "ext.stmt.class.uses": [
     "use"
   ],

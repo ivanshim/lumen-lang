@@ -1857,6 +1857,27 @@ impl<'a> Machine<'a> {
                     self.raised_on = self.row;
                     Err(Escape::Thrown(raised))
                 }
+                // A routine written where a value stands takes names
+                // from around it away with it: it is bound to a frame of
+                // its own holding them, and the frame of a call is
+                // filled from that one.
+                Prim::Carry => {
+                    let mut values = self.value_list(args, frame)?;
+                    if values.is_empty() {
+                        return Err("Nothing was given to take away".to_string().into());
+                    }
+                    let Value::Bound(program, env) = values.remove(0) else {
+                        return Err("Only a routine can take names away with it".to_string().into());
+                    };
+                    let took = Env::make(program.idents.len(), Some(env));
+                    {
+                        let mut cells = took.cells.borrow_mut();
+                        for (slot, held) in program.carried.iter().zip(values) {
+                            cells[*slot] = held;
+                        }
+                    }
+                    Ok(Value::Bound(program, took))
+                }
                 Prim::Spawn => {
                     let mut values = self.value_list(args, frame)?;
                     if values.is_empty() {
@@ -2200,6 +2221,27 @@ impl<'a> Machine<'a> {
         self.bound(&args[if test { 1 } else { 2 }], frame)
     }
 
+    /// The frame a call runs in. A routine that took names away with it
+    /// is bound to a frame of its own holding them: the call runs in a
+    /// fresh frame filled from that one and standing where it stands, so
+    /// that a name reached further out is reached from the same place
+    /// whether the routine took anything away or not.
+    fn frame_for(&self, program: &Rc<Routine>, env: &Rc<Env>) -> Rc<Env> {
+        if program.carried.is_empty() {
+            return Env::make(program.idents.len(), Some(env.clone()));
+        }
+        let frame = Env::make(program.idents.len(), env.outer.clone());
+        let took = env.cells.borrow();
+        let mut cells = frame.cells.borrow_mut();
+        for slot in &program.carried {
+            if let Some(held) = took.get(*slot) {
+                cells[*slot] = held.clone();
+            }
+        }
+        drop(cells);
+        frame
+    }
+
     fn env_for(&mut self, program: &Rc<Routine>, env: Rc<Env>, args: &[Form], caller: &Rc<Env>) -> Res<Rc<Env>> {
         let most = if self.reads_handed { usize::MAX } else { program.formals.len() };
         if args.len() > most || args.len() < program.least {
@@ -2214,7 +2256,7 @@ impl<'a> Machine<'a> {
             for at in 0..all.len() {
                 self.of_the_class_written(program, at, &all)?;
             }
-            let frame = if program.frameless { env } else { Env::make(program.idents.len(), Some(env)) };
+            let frame = if program.frameless { env.clone() } else { self.frame_for(program, &env) };
             if !program.frameless {
                 let mut cells = frame.cells.borrow_mut();
                 for (i, v) in program.formal_slots.iter().zip(all.iter()) {
@@ -2227,7 +2269,7 @@ impl<'a> Machine<'a> {
         if program.frameless {
             return Ok(env);
         }
-        let frame = Env::make(program.idents.len(), Some(env));
+        let frame = self.frame_for(program, &env);
         let mut so_far = Vec::with_capacity(args.len());
         for (at, (i, a)) in program.formal_slots.iter().zip(args).enumerate() {
             let v = self.value_of(a, caller)?;
@@ -2432,7 +2474,7 @@ impl<'a> Machine<'a> {
         let frame = if program.frameless {
             env
         } else {
-            let frame = Env::make(program.idents.len(), Some(env));
+            let frame = self.frame_for(&program, &env);
             {
                 let mut slots = frame.cells.borrow_mut();
                 for (i, a) in program.formal_slots.iter().zip(args) {
@@ -3047,6 +3089,7 @@ impl<'a> Machine<'a> {
             }
             // The words the language has of its own, by name: what a
             // program may call though nobody wrote them.
+            Prim::Carry => return Err("A routine takes names away where it is written and nowhere else".to_string()),
             Prim::WordsSpelled => {
                 n(0)?;
                 let mut words: Vec<String> = self.table.prims.keys().cloned().collect();

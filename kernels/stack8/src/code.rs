@@ -227,6 +227,10 @@ pub enum Action {
     /// Whether a thing is of the class a value stands for, where the
     /// class to test against is only known as the run reaches it.
     KindredTo,
+    /// A routine written where a value stands, carrying away the values
+    /// under it: the routine is on top, and each value below it fills
+    /// one of the slots the routine names as carried.
+    Close,
     /// The name of the class of the value above.
     Titled,
     /// Raise the value above as a fault to be caught.
@@ -445,7 +449,7 @@ pub enum Instr {
 }
 
 /// A compiled program.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Routine {
     pub ident: String,
     pub formals: Vec<String>,
@@ -477,7 +481,14 @@ pub struct Routine {
     /// way into it names: such a fault belongs where the program is
     /// written and not where the call stood.
     pub declared_on: u32,
-    pub instrs: Vec<Instr>,
+    /// The slots a routine written where a value stands fills from what
+    /// it carried away with it, in the order the names were written.
+    pub carried: Vec<usize>,
+    /// What one such routine carried away: a value for each of those
+    /// slots. Empty for every routine written out under a name, which
+    /// carries nothing.
+    pub held: Vec<crate::value::Value>,
+    pub instrs: Rc<Vec<Instr>>,
 }
 
 /// What a class declaration comes to: everything about the class that is

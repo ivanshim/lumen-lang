@@ -144,6 +144,10 @@ pub enum Prim {
     RoutinesBound,
     /// The words the language has of its own, by name.
     WordsSpelled,
+    /// A routine written where a value stands, taking away with it the
+    /// values after it: the routine comes first, and each value after
+    /// fills one of the slots the routine names as carried.
+    Carry,
     /// How many seconds have passed since the start of the year the
     /// system counts from (ext.builtin.clock).
     SinceEpoch,
@@ -485,5 +489,9 @@ pub struct Routine {
     /// the way into it names: such a fault belongs where the program
     /// stands and not where the call did.
     pub declared_on: u32,
+    /// The slots a routine written where a value stands fills from what
+    /// it carried away with it, in the order the names were written.
+    /// Empty for every routine written out under a name.
+    pub carried: Vec<usize>,
     pub body: Form,
 }

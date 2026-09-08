@@ -720,6 +720,14 @@ only. The extension labels so far, all from PHP:
   another is there for the whole run once the routine holding it has
   run. Without it a routine written inside another is that one's own,
   as it is in a language where a nested routine closes over its place.
+- `ext.stmt.function.carries`: the word a routine written where a value
+  stands says, after its parameters, before the names it takes away from
+  around it — PHP's `function ($x) use ($k, &$n) { … }`. The names
+  around such a routine are gone by the time anybody calls it, so it
+  takes what it needs with it: each name is read where the routine is
+  written and fills a slot of its own inside it. A name written with the
+  reference mark is taken as the cell it shares with the name it came
+  from, so writing to it there writes to the name here.
 - `ext.stmt.do`: the words opening a body that runs before its test is
   asked, the test standing after it — `do { … } while (c);`. The body
   runs at least once, and a `continue` within it goes to the test, as it
@@ -1369,6 +1377,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.finally` | - | - | - | - | - | - | - | `finally` | - | - |
 | `ext.stmt.for.c` | - | - | - | - | - | - | - | `for` | - | - |
 | `ext.stmt.for.collection` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.stmt.function.carries` | - | - | - | - | - | - | - | `use` | - | - |
 | `ext.stmt.function.hoisted` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.stmt.function.outermost` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.stmt.function.returns` | - | - | - | - | - | - | - | `:` | - | - |

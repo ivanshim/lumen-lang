@@ -1277,6 +1277,11 @@ impl<'a> Engine<'a> {
             return Err(fault);
         }
         frame.resize(program.idents.len(), Value::Blank);
+        // A routine written where a value stands carried names away
+        // from around it: each fills the slot it was given here.
+        for (slot, held) in program.carried.iter().zip(program.held.iter()) {
+            frame[*slot] = held.clone();
+        }
         let base = self.data.len();
         // A routine written in a file of its own is run as being in it:
         // a complaint names that file, and a file the routine asks for
@@ -2265,6 +2270,18 @@ impl<'a> Engine<'a> {
                 Value::Object(o) => Value::Flag(o.class.named(&name, self.lang.classes_folded)),
                 _ => Value::Flag(false),
             },
+            // A routine written where a value stands, taking away with
+            // it the values under it: one for each slot it names.
+            Action::Close => {
+                let held = self.drop_top()?;
+                let Value::Routine(program) = held else {
+                    return Err("Only a routine can carry names away with it".to_string().into());
+                };
+                let carried = self.drop_many(argc - 1)?;
+                let mut made = (*program).clone();
+                made.held = carried;
+                Value::Routine(Rc::new(made))
+            }
             Action::KindredTo => {
                 let pair = self.drop_many(2)?;
                 let against = match &pair[1] {
