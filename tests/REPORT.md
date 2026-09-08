@@ -52,11 +52,11 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: NAN in <file> | 1 |
 | Fatal error: Uncaught Error: Expected ')' to close a group, got ';' in <file> | 1 |
 
-### Reserved words: 58 of 68 spelled
+### Reserved words: 59 of 68 spelled
 
-Spelled: `abstract`, `and`, `array`, `as`, `break`, `callable`, `case`, `catch`, `class`, `const`, `continue`, `default`, `do`, `echo`, `else`, `elseif`, `empty`, `endfor`, `endforeach`, `endif`, `endswitch`, `endwhile`, `eval`, `exit`, `extends`, `final`, `finally`, `for`, `foreach`, `function`, `global`, `if`, `implements`, `include`, `include_once`, `instanceof`, `interface`, `isset`, `list`, `new`, `or`, `print`, `private`, `protected`, `public`, `readonly`, `require`, `require_once`, `return`, `static`, `switch`, `throw`, `trait`, `try`, `unset`, `use`, `var`, `while`
+Spelled: `abstract`, `and`, `array`, `as`, `break`, `callable`, `case`, `catch`, `class`, `const`, `continue`, `default`, `do`, `echo`, `else`, `elseif`, `empty`, `endfor`, `endforeach`, `endif`, `endswitch`, `endwhile`, `eval`, `exit`, `extends`, `final`, `finally`, `fn`, `for`, `foreach`, `function`, `global`, `if`, `implements`, `include`, `include_once`, `instanceof`, `interface`, `isset`, `list`, `new`, `or`, `print`, `private`, `protected`, `public`, `readonly`, `require`, `require_once`, `return`, `static`, `switch`, `throw`, `trait`, `try`, `unset`, `use`, `var`, `while`
 
-Not spelled: `clone`, `declare`, `enddeclare`, `fn`, `goto`, `insteadof`, `match`, `namespace`, `xor`, `yield`
+Not spelled: `clone`, `declare`, `enddeclare`, `goto`, `insteadof`, `match`, `namespace`, `xor`, `yield`
 
 ### Most-called functions in the suite, and whether the definition spells them
 

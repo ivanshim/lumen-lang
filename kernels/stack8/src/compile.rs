@@ -2542,6 +2542,84 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// A routine written short: its parameters, the mark, and the one
+    /// expression it gives back. Every name standing around it is taken
+    /// away with it as it stands, since a routine written this short has
+    /// nowhere to say which of them it wants.
+    fn short_value(&mut self) -> Res<()> {
+        let lang = self.lang;
+        let (_, mark) = lang.short_function.clone().expect("a word for a short routine");
+        self.declared_at = (self.look().row as u32).saturating_sub(self.before);
+        let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
+        self.want_sign(&call.open, "after the word for a short routine")?;
+        let (formals, spares, _) = self.parameters(ANONYMOUS, &call)?;
+        let least = formals.len() - spares.len();
+        let given = formals.clone();
+        if self.look().shape == Shape::Sign && Lang::spells(&lang.return_marks, &self.look().lexeme) {
+            self.take();
+            self.skip_nothing_mark();
+            self.want_name("as a return type")?;
+        }
+        self.want_sign(&mark, "before the body of a short routine")?;
+        // Which names the body wants cannot be said in a routine written
+        // this short, so the body is read once to find out: it is read
+        // through, the names it writes are noted, what was put together
+        // is thrown away, and it is read again for the routine itself.
+        let began = self.pos;
+        let held = self.mark();
+        let wanted = {
+            let spares = spares.clone();
+            let given = given.clone();
+            let named_here = formals.clone();
+            self.routine(ANONYMOUS, formals.clone(), least, true, |a| {
+                a.spare_values(&spares, &given)?;
+                a.expr(0)?;
+                a.piece().result_touched = true;
+                a.write(RESULT_CELL);
+                Ok(())
+            })?;
+            let ended = self.pos;
+            let mut names = std::collections::BTreeSet::new();
+            for tok in &self.tokens[began..ended] {
+                let a_binding = tok.shape == Shape::Instr && lang.sigil.map_or(false, |m| tok.lexeme.starts_with(m));
+                if a_binding && !named_here.contains(&tok.lexeme) {
+                    names.insert(tok.lexeme.clone());
+                }
+            }
+            names
+        };
+        self.piece().instrs.truncate(held);
+        self.pos = began;
+        let carried: Vec<(String, bool)> = wanted.into_iter().map(|named| (named, false)).collect();
+        let taken = carried.clone();
+        let program = self.routine(ANONYMOUS, formals, least, true, |a| {
+            for (named, _) in &taken {
+                let cell = a.cell_to_write(named);
+                a.carrying.push(cell.near[0]);
+            }
+            a.spare_values(&spares, &given)?;
+            a.expr(0)?;
+            a.piece().result_touched = true;
+            a.write(RESULT_CELL);
+            Ok(())
+        })?;
+        // A name never written to is taken as nothing at all, quietly:
+        // what such a routine wants of the names around it cannot be
+        // said, so it is not for it to complain of any of them.
+        if !carried.is_empty() {
+            self.put(Instr::Mute(true));
+            for (named, _) in &carried {
+                self.read(named);
+            }
+            self.put(Instr::Mute(false));
+        }
+        self.constant(Value::Routine(program));
+        if !carried.is_empty() {
+            self.act(Action::Close, carried.len() + 1);
+        }
+        Ok(())
+    }
+
     /// `use ($a, &$b)` after a routine written where a value stands: the
     /// names it carries away with it, and whether each is carried as it
     /// stands or as the cell it shares with the name it was read from.
@@ -3442,6 +3520,14 @@ impl<'a> Compiler<'a> {
                     self.constant(Value::Flag(false));
                 } else if Lang::spells(&lang.null_words, &tok.lexeme) {
                     self.constant(Value::Null);
+                } else if lang.short_function.as_ref().map_or(false, |(word, _)| word == &tok.lexeme)
+                    && lang.calling.as_ref().map_or(false, |c| self.at_symbol(&c.open))
+                {
+                    // A routine written short is one expression, and
+                    // takes with it every name standing around it: what
+                    // it wants of them cannot be said, so it takes them
+                    // all as they stand.
+                    self.short_value()?;
                 } else if Lang::spells(&lang.function_words, &tok.lexeme)
                     && lang
                         .calling
@@ -3544,6 +3630,7 @@ impl<'a> Compiler<'a> {
                         self.take();
                         self.expr(0)?;
                         self.want_sign(&group.close, "to close a group")?;
+                        self.called_on_value()?;
                         return self.indexing(from);
                     }
                 }
@@ -4162,6 +4249,23 @@ impl<'a> Compiler<'a> {
     }
 
     /// `expr[i]`, `expr->member` and `expr::member`, repeatable.
+    /// A value standing in a group may be called outright: `(f)(x)`,
+    /// and one call after another, `(f)(x)(y)`. What is called is held
+    /// aside while the arguments are worked out, since a call wants what
+    /// it calls above them.
+    fn called_on_value(&mut self) -> Res<()> {
+        let Some(call) = self.lang.calling.clone() else { return Ok(()) };
+        while self.at_symbol(&call.open) {
+            let callee = self.gensym("callee");
+            self.write(&callee);
+            self.take();
+            let argc = self.arguments(&call)?;
+            self.read(&callee);
+            self.act(Action::Invoke(Rc::from("the value the group came to")), argc + 1);
+        }
+        Ok(())
+    }
+
     fn indexing(&mut self, from: usize) -> Res<()> {
         let lang = self.lang;
         loop {

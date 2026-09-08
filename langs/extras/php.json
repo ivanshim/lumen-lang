@@ -680,6 +680,10 @@
   "ext.stmt.class.trait": [
     "trait"
   ],
+  "ext.stmt.function.short": [
+    "fn",
+    "=>"
+  ],
   "ext.stmt.function.carries": [
     "use"
   ],

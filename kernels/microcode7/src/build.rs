@@ -2491,6 +2491,88 @@ impl<'a> Builder<'a> {
         Ok(sequence(items))
     }
 
+    /// A routine written short: its parameters, the mark, and the one
+    /// expression it answers with. Every name standing around it goes
+    /// with it as it stands, since a routine written this short has
+    /// nowhere to say which of them it wants.
+    fn short_func(&mut self) -> Res<Form> {
+        let table = self.table;
+        self.declared_at = (self.look().row as u32).saturating_sub(self.before);
+        let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
+        self.need_sign(open, "after the word for a short routine")?;
+        let (params, spares, _, said) = self.parameters(ANONYMOUS)?;
+        let least = params.len() - spares.len();
+        let formals = params.clone();
+        let returns_here = self.look().shape == Shape::Sign
+            && (table.spells("stmt.function.returns", &self.look().lexeme) || table.spells("ext.stmt.function.returns", &self.look().lexeme));
+        if returns_here {
+            self.advance();
+            self.skip_nothing_mark();
+            self.need_word("as a return type")?;
+        }
+        let mark = table.strings("ext.stmt.function.short").get(1).cloned().ok_or_else(|| "A short routine needs a mark before its body".to_string())?;
+        self.need_sign(&mark, "before the body of a short routine")?;
+        // The names standing around it, save the ones it names itself
+        // and the ones the kernel keeps for its own working.
+        // A routine written this short has nowhere to say which names it
+        // wants, so its body is read once to find out: it is read
+        // through, the names it writes are noted, what came of it is
+        // thrown away, and it is read again for the routine itself.
+        let began = self.pos;
+        let statics_here = self.statics.len();
+        let wanted = {
+            let taking = params.clone();
+            let over = spares.clone();
+            let named_here = formals.clone();
+            self.routine(ANONYMOUS, Holds::Every, Traps::Yields, taking, least, |r| {
+                let mut items = r.spare_values(over, &named_here)?;
+                items.push(r.expr(0)?);
+                Ok(sequence(items))
+            })?;
+            let ended = self.pos;
+            let sigil = table.letter("identifier.variable_prefix");
+            let mut names = std::collections::BTreeSet::new();
+            for tok in &self.tokens[began..ended] {
+                let a_binding = tok.shape == Shape::Bare && sigil.map_or(false, |m| tok.lexeme.starts_with(m));
+                if a_binding && !formals.contains(&tok.lexeme) {
+                    names.insert(tok.lexeme.clone());
+                }
+            }
+            names
+        };
+        self.statics.truncate(statics_here);
+        self.pos = began;
+        let carried: Vec<(String, bool)> = wanted.into_iter().map(|named| (named, false)).collect();
+        let taken = carried.clone();
+        let program = self.routine(ANONYMOUS, Holds::Every, Traps::Yields, params, least, |r| {
+            for (named, _) in &taken {
+                let slot = r.address_to_write(named);
+                r.carrying.push(slot.at);
+            }
+            let mut items = r.spare_values(spares, &formals)?;
+            items.push(r.expr(0)?);
+            Ok(sequence(items))
+        })?;
+        let program = match carried.is_empty() {
+            true => program,
+            false => {
+                let mut given = vec![program];
+                for (named, _) in &carried {
+                    // A name never written to is taken as nothing at
+                    // all, and quietly: such a routine cannot say what
+                    // it wants of the names around it, so it is not for
+                    // it to complain of any of them.
+                    let read = self.read(named);
+                    given.push(Form::Muted(Box::new(read)));
+                }
+                prim_call(Prim::Carry, given)
+            }
+        };
+        let mut items: Vec<Form> = said;
+        items.push(program);
+        Ok(sequence(items))
+    }
+
     /// `use ($a, &$b)` after a routine written where a value stands: the
     /// names it takes away with it, and whether each is taken as it
     /// stands or as the cell it shares with the name it came from.
@@ -3261,6 +3343,14 @@ impl<'a> Builder<'a> {
                     constant(Value::Flag(false))
                 } else if table.spells("literal.null", &t.lexeme) {
                     constant(Value::Nil)
+                } else if table.strings("ext.stmt.function.short").first().map_or(false, |word| word == &t.lexeme)
+                    && table.single("syntax.call.open").map_or(false, |o| self.sign(o))
+                {
+                    // A routine written short is one expression, and
+                    // takes with it every name standing around it: it
+                    // has nowhere to say which of them it wants.
+                    let built = self.short_func()?;
+                    return self.subscript(built);
                 } else if table.spells("stmt.function", &t.lexeme)
                     && table.single("syntax.call.open").map_or(false, |o| {
                         self.sign(o)
@@ -3337,7 +3427,7 @@ impl<'a> Builder<'a> {
                     self.advance();
                     let inner = self.expr(0)?;
                     self.need_sign(table.single("syntax.group.close").unwrap(), "to close a group")?;
-                    inner
+                    self.called_on_value(inner)?
                 } else if table.single("syntax.array.open") == Some(t.lexeme.as_str()) {
                     self.advance();
                     let items = self.elements("syntax.array.close", "syntax.array.separator")?;
@@ -3924,6 +4014,20 @@ impl<'a> Builder<'a> {
                 (true, true) => prim_call(Prim::Bid, given),
             };
         }
+    }
+
+    /// A value standing in a group may be called straight off: `(f)(x)`,
+    /// and one call after another, `(f)(x)(y)`.
+    fn called_on_value(&mut self, mut node: Form) -> Res<Form> {
+        let Some(open) = self.table.single("syntax.call.open").map(str::to_string) else {
+            return Ok(node);
+        };
+        while self.sign(&open) {
+            self.advance();
+            let given = self.args("syntax.call.close", "syntax.call.separator")?;
+            node = Form::Apply(Callee::Code(Box::new(node)), given);
+        }
+        Ok(node)
     }
 
     fn subscript(&mut self, mut node: Form) -> Res<Form> {

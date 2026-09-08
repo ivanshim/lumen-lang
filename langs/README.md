@@ -728,6 +728,14 @@ only. The extension labels so far, all from PHP:
   written and fills a slot of its own inside it. A name written with the
   reference mark is taken as the cell it shares with the name it came
   from, so writing to it there writes to the name here.
+- `ext.stmt.function.short`: two words — the one a routine written short
+  opens with, and the mark standing between its parameters and the one
+  expression it answers with: PHP's `fn ($x) => $x + $k`. Such a routine
+  has nowhere to say which of the names around it it wants, so its body
+  is read once to find out and every name it writes goes with it, taken
+  as it stands where the routine is written. A name never written to is
+  taken as nothing at all, and quietly, since it is not for such a
+  routine to complain of names it was never told to want.
 - `ext.stmt.do`: the words opening a body that runs before its test is
   asked, the test standing after it — `do { … } while (c);`. The body
   runs at least once, and a `continue` within it goes to the test, as it
@@ -1381,6 +1389,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.function.hoisted` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.stmt.function.outermost` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.stmt.function.returns` | - | - | - | - | - | - | - | `:` | - | - |
+| `ext.stmt.function.short` | - | - | - | - | - | - | - | `fn` `=>` | - | - |
 | `ext.stmt.global` | - | - | - | - | - | - | - | `global` | - | - |
 | `ext.stmt.static` | - | - | - | - | - | - | - | `static` | - | - |
 | `ext.stmt.switch` | - | - | - | - | - | - | - | `switch` | - | - |

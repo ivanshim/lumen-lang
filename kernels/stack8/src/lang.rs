@@ -445,6 +445,10 @@ pub struct Lang {
     /// The word a routine written where a value stands says, before the
     /// names it carries away from around it.
     pub carries_words: Vec<String>,
+    /// The word a routine written short says, and the mark standing
+    /// between its parameters and the one expression it is: `fn ($x) =>
+    /// $x + 1`. Such a routine takes with it every name around it.
+    pub short_function: Option<(String, String)>,
     pub uses_alias: Vec<String>,
     pub interface_words: Vec<String>,
     pub implements_words: Vec<String>,
@@ -545,7 +549,7 @@ w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.co
 w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
-w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.spelled | w ext.builtin.class.beneath | b ext.builtin.write.operator | w ext.system.kind.loose | w ext.builtin.clock | w ext.stmt.class.trait | w ext.stmt.class.uses | w ext.stmt.class.uses.alias | w ext.stmt.function.carries
+w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.spelled | w ext.builtin.class.beneath | b ext.builtin.write.operator | w ext.system.kind.loose | w ext.builtin.clock | w ext.stmt.class.trait | w ext.stmt.class.uses | w ext.stmt.class.uses.alias | w ext.stmt.function.carries | w ext.stmt.function.short
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
 w ext.system.fault.operands | w ext.op.increment.text | w ext.op.decrement.text
 w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind | w ext.system.fault.class.value | w ext.system.fault.class.walk | w ext.op.walk.giver.unwalkable
@@ -1284,6 +1288,11 @@ impl Lang {
             trait_words: r.strings("ext.stmt.class.trait")?,
             uses_words: r.strings("ext.stmt.class.uses")?,
             carries_words: r.strings("ext.stmt.function.carries")?,
+            short_function: match r.strings("ext.stmt.function.short")?.as_slice() {
+                [] => None,
+                [word, mark] => Some((word.clone(), mark.clone())),
+                _ => return Err("ext.stmt.function.short takes exactly two words, the one it opens with and the mark before its body".to_string()),
+            },
             uses_alias: r.strings("ext.stmt.class.uses.alias")?,
             interface_words: r.strings("ext.stmt.class.interface")?,
             implements_words: r.strings("ext.stmt.class.implements")?,
