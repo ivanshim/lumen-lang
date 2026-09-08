@@ -451,21 +451,88 @@ pub struct Thing {
 /// A ratio as the nearest binary number of sixty-four bits. One too
 /// large for such a number to hold stands past all of them.
 pub fn nearest_binary(above: &BigInt, beneath: &BigInt) -> f64 {
-    let past = || if above.is_negative() { f64::NEG_INFINITY } else { f64::INFINITY };
-    if beneath.is_one() {
-        return above.to_f64().unwrap_or_else(past);
+    if above.is_zero() {
+        return 0.0;
     }
-    match (above.to_f64(), beneath.to_f64()) {
-        (Some(x), Some(y)) if x.is_finite() && y.is_finite() && y != 0.0 => x / y,
-        _ => {
-            let down = above.bits().max(beneath.bits()).saturating_sub(900);
-            let (x, y) = (above >> down, beneath >> down);
-            match (x.to_f64(), y.to_f64()) {
-                (Some(x), Some(y)) if y != 0.0 => x / y,
-                _ => past(),
-            }
+    let under_nought = above.is_negative() != beneath.is_negative();
+    let (over, under) = (above.abs(), beneath.abs());
+    // Both standing exactly as such numbers, the machine dividing one
+    // by the other gives the nearest one to the ratio already: that is
+    // what dividing them means.
+    let held = match over.bits() <= 53 && under.bits() <= 53 {
+        true => over.to_f64().unwrap_or(f64::INFINITY) / under.to_f64().unwrap_or(f64::INFINITY),
+        false => closest_of_width(&over, &under),
+    };
+    match under_nought {
+        true => -held,
+        false => held,
+    }
+}
+
+/// The nearest number of the width to a ratio of two whole numbers, each
+/// above nought. The ratio is taken as a whole number fifty-four bits
+/// wide: the last bit tells the fifty-three above it which way to go and
+/// what the division leaves over tells whether they stand at a tie. The
+/// powers of two borrowed to reach that width are handed back at the end.
+fn closest_of_width(over: &BigInt, under: &BigInt) -> f64 {
+    use num_integer::Integer as _;
+    let split = |borrowed: i64| -> (BigInt, BigInt) {
+        let (top, bottom) = match borrowed >= 0 {
+            true => (over << borrowed as usize, under.clone()),
+            false => (over.clone(), under << borrowed.unsigned_abs() as usize),
+        };
+        top.div_rem(&bottom)
+    };
+    let mut borrowed = 54 + under.bits() as i64 - over.bits() as i64;
+    let (mut counted, mut spare) = split(borrowed);
+    // How wide the answer comes out is known to within a bit, so one
+    // more go settles it.
+    let by = match counted.bits() {
+        wide if wide > 54 => -1,
+        wide if wide < 54 => 1,
+        _ => 0,
+    };
+    if by != 0 {
+        borrowed += by;
+        let (retried, rest) = split(borrowed);
+        if retried.bits() == 54 {
+            counted = retried;
+            spare = rest;
+        } else {
+            borrowed -= by;
         }
     }
+    // Halfway between two of the width, the one with the even last bit
+    // is taken; past halfway, whatever the division left over settles it.
+    let halfway = counted.is_odd();
+    let anything_left = !spare.is_zero();
+    let mut held = counted >> 1u32;
+    if halfway && (anything_left || held.is_odd()) {
+        held += 1u32;
+    }
+    let mut twos = 1 - borrowed;
+    if held.bits() > 53 {
+        held >>= 1u32;
+        twos += 1;
+    }
+    times_two_so_often(held.to_f64().unwrap_or(f64::INFINITY), twos)
+}
+
+/// A number of the width times a power of two, taken a thousand powers
+/// at a time so that each power is a number of the width itself, which
+/// the whole of it need not be.
+fn times_two_so_often(x: f64, twos: i64) -> f64 {
+    let mut held = x;
+    let mut twos = twos;
+    while twos > 1000 {
+        held *= 2f64.powi(1000);
+        twos -= 1000;
+    }
+    while twos < -1000 {
+        held *= 2f64.powi(-1000);
+        twos += 1000;
+    }
+    held * 2f64.powi(twos as i32)
 }
 
 /// What a binary real is worth, held as a ratio: so many halves,

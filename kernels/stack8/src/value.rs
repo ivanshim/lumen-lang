@@ -488,23 +488,88 @@ pub struct Instance {
 /// large for one to hold stands beyond every one of them, which is what
 /// such a language means by an unbounded number.
 pub fn as_binary(p: &BigInt, q: &BigInt) -> f64 {
-    let beyond = || if p.is_negative() { f64::NEG_INFINITY } else { f64::INFINITY };
-    if q.is_one() {
-        return p.to_f64().unwrap_or_else(beyond);
+    if p.is_zero() {
+        return 0.0;
     }
-    match (p.to_f64(), q.to_f64()) {
-        (Some(a), Some(b)) if a.is_finite() && b.is_finite() && b != 0.0 => a / b,
-        // Too large for the division to be done straight off: bring
-        // both down by the same power of two and divide those.
-        _ => {
-            let shift = p.bits().max(q.bits()).saturating_sub(900);
-            let (a, b) = (p >> shift, q >> shift);
-            match (a.to_f64(), b.to_f64()) {
-                (Some(a), Some(b)) if b != 0.0 => a / b,
-                _ => beyond(),
-            }
+    let below = p.is_negative() != q.is_negative();
+    let (top, bottom) = (p.abs(), q.abs());
+    // Where both stand exactly as reals of the width, the machine's own
+    // division of the two is the nearest real to the ratio, which is
+    // what dividing reals means.
+    let worth = match top.bits() <= 53 && bottom.bits() <= 53 {
+        true => top.to_f64().unwrap_or(f64::INFINITY) / bottom.to_f64().unwrap_or(f64::INFINITY),
+        false => nearest_real(&top, &bottom),
+    };
+    match below {
+        true => -worth,
+        false => worth,
+    }
+}
+
+/// The nearest real of the width to a ratio of two whole numbers, both
+/// above nought. The ratio is worked out as a whole number of fifty-four
+/// bits, the last of them saying which way the fifty-three before it
+/// round and whatever is left over saying whether the round is a tie;
+/// the powers of two lent to reach that width are taken back after.
+fn nearest_real(top: &BigInt, bottom: &BigInt) -> f64 {
+    use num_integer::Integer as _;
+    let divided = |lent: i64| -> (BigInt, BigInt) {
+        let (over, under) = match lent >= 0 {
+            true => (top << lent as usize, bottom.clone()),
+            false => (top.clone(), bottom << lent.unsigned_abs() as usize),
+        };
+        over.div_rem(&under)
+    };
+    let mut lent = 54 + bottom.bits() as i64 - top.bits() as i64;
+    let (mut whole, mut over) = divided(lent);
+    // The width of the answer is known within one either way, so at
+    // most one step brings it to the fifty-four bits wanted.
+    let step = match whole.bits() {
+        n if n > 54 => -1,
+        n if n < 54 => 1,
+        _ => 0,
+    };
+    if step != 0 {
+        lent += step;
+        let (again, rest) = divided(lent);
+        if again.bits() == 54 {
+            whole = again;
+            over = rest;
+        } else {
+            lent -= step;
         }
     }
+    // The last bit of the fifty-four says which way the rest round: up
+    // where anything is left over, and to the even one where nothing is.
+    let tie = whole.is_odd();
+    let left_over = !over.is_zero();
+    let mut kept = whole >> 1u32;
+    if tie && (left_over || kept.is_odd()) {
+        kept += 1u32;
+    }
+    let mut power = 1 - lent;
+    if kept.bits() > 53 {
+        kept >>= 1u32;
+        power += 1;
+    }
+    by_powers_of_two(kept.to_f64().unwrap_or(f64::INFINITY), power)
+}
+
+/// A real times a power of two, taken in steps small enough that each
+/// power is itself a real of the width, since the whole of it need not
+/// be even where the answer is.
+fn by_powers_of_two(x: f64, power: i64) -> f64 {
+    let mut worth = x;
+    let mut power = power;
+    while power > 1000 {
+        worth *= 2f64.powi(1000);
+        power -= 1000;
+    }
+    while power < -1000 {
+        worth *= 2f64.powi(-1000);
+        power += 1000;
+    }
+    worth * 2f64.powi(power as i32)
 }
 
 /// What a binary real is worth, held exactly: a whole number of halves,
@@ -608,3 +673,4 @@ fn laid_flat(figures: &str, power: i32) -> String {
     }
     format!("{}.{}", &figures[..point], &figures[point..])
 }
+
