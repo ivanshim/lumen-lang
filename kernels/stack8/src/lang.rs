@@ -226,6 +226,9 @@ pub struct Lang {
     /// The ext.* labels: extensions of the core, read by the full
     /// kernels and ignored by the reference ones; absent means none.
     pub epilogue: Vec<String>,
+    /// A second prologue, opening a run of code whose value is written
+    /// out where it stands: PHP's `<?=`.
+    pub prologue_echo: Option<String>,
     pub bare_calls: bool,
     pub increments: Vec<String>,
     pub decrements: Vec<String>,
@@ -435,7 +438,7 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
-w ext.lexical.epilogue | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
+w ext.lexical.epilogue | w ext.lexical.prologue.echo | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.stmt.for.c | b ext.op.assign.compound
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.const | w ext.builtin.define
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
@@ -1076,6 +1079,7 @@ impl Lang {
                 found
             },
             epilogue: r.strings("ext.lexical.epilogue")?,
+            prologue_echo: r.head("ext.lexical.prologue.echo")?,
             bare_calls: r.flag("ext.syntax.call.bare")?,
             increments: r.strings("ext.op.increment")?,
             decrements: r.strings("ext.op.decrement")?,

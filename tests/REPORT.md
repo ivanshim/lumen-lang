@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 81, differs 5, error 18, skipped 10 | pass 81, differs 5, error 18, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 129, differs 42, error 37, skipped 5 | pass 129, differs 42, error 37, skipped 5 |
+| `php/lang` | 213 | pass 133, differs 41, error 34, skipped 5 | pass 133, differs 41, error 34, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 46, differs 10, error 2, skipped 6 | pass 46, differs 10, error 2, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 282, differs 58, error 57, skipped 25 | pass 282, differs 58, error 57, skipped 25 |
+| all | 422 | pass 286, differs 57, error 54, skipped 25 | pass 286, differs 57, error 54, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 58 |
+| ran, printed something else | 57 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | Fatal error: Uncaught Error: Undefined variable: iterator in <file> | 5 |
@@ -58,9 +58,6 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: mktime in <file> | 1 |
 | Fatal error: Uncaught Error: Cannot call method 'GetMyName' on a value that is not an object in <file> | 1 |
 | skip Can't find german locale | 1 |
-| Fatal error: Uncaught Error: Cannot reach 'b' in B in <file> | 1 |
-| Fatal error: Uncaught Error: Cannot reach 'B' in B in <file> | 1 |
-| Fatal error: Uncaught Error: Cannot call 'foo' on a value that is not a class in <file> | 1 |
 | Fatal error: Uncaught Error: Call to undefined method A::$methodname() in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_declared_classes in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: get_parent_class in <file> | 1 |
@@ -68,6 +65,9 @@ is listed, since the full kernels are meant to behave alike.
 | Parse error: Expected identifier after the global keyword, got '$' in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: debug_backtrace in <file> | 1 |
 | Fatal error: Uncaught Error: Function typehint_ref expects 2 arguments, got 1 in <file> | 1 |
+| Fatal error: Uncaught Error: Cannot call method 'get_name' on a value that is not an object in <file> | 1 |
+| skip setlocale() failed | 1 |
+| skip only for Windows | 1 |
 
 ### Reserved words: 55 of 68 spelled
 
@@ -361,9 +361,9 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/038.phpt` | error | error | thrown in <file> |
 | `php/lang/039.phpt` | pass | pass |  |
 | `php/lang/040.phpt` | pass | pass |  |
-| `php/lang/041.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'b' in B in <file> |
-| `php/lang/042.phpt` | error | error | Fatal error: Uncaught Error: Cannot reach 'B' in B in <file> |
-| `php/lang/043.phpt` | error | error | Fatal error: Uncaught Error: Cannot call 'foo' on a value that is not a class in <file> |
+| `php/lang/041.phpt` | pass | pass |  |
+| `php/lang/042.phpt` | pass | pass |  |
+| `php/lang/043.phpt` | pass | pass |  |
 | `php/lang/044.phpt` | error | error | Fatal error: Uncaught Error: Call to undefined method A::$methodname() in <file> |
 | `php/lang/045.phpt` | error | error | timeout |
 | `php/lang/array_shortcut_001.phpt` | pass | pass |  |
@@ -595,7 +595,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/returnByReference.009.phpt` | pass | pass |  |
 | `php/lang/short_tags.001.phpt` | differs | differs | ran, printed something else |
 | `php/lang/short_tags.002.phpt` | pass | pass |  |
-| `php/lang/short_tags.004.phpt` | differs | differs | ran, printed something else |
+| `php/lang/short_tags.004.phpt` | pass | pass |  |
 | `php/lang/static_basic_001.phpt` | pass | pass |  |
 | `php/lang/static_basic_002.phpt` | differs | differs | ran, printed something else |
 | `php/lang/static_variation_001.phpt` | differs | differs | ran, printed something else |

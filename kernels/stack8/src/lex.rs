@@ -624,10 +624,21 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
     };
     let mut rest = source;
     let mut row = 1;
-    while let Some(at) = rest.find(opening.as_str()) {
+    loop {
+        // Either marker may open a run of code, whichever stands first.
+        // The short one says the run is a thing to be written out, and
+        // the word that writes it is put before it.
+        let plainly = rest.find(opening.as_str());
+        let briefly = lang.prologue_echo.as_ref().and_then(|mark| rest.find(mark.as_str()));
+        let (at, mark, writes) = match (plainly, briefly) {
+            (Some(a), Some(b)) if b < a => (b, lang.prologue_echo.clone().expect("the short marker"), true),
+            (Some(a), _) => (a, opening.clone(), false),
+            (None, Some(b)) => (b, lang.prologue_echo.clone().expect("the short marker"), true),
+            (None, None) => break,
+        };
         told(&rest[..at], &mut out);
         row += rest[..at].matches('\n').count();
-        let after = &rest[at + opening.len()..];
+        let after = &rest[at + mark.len()..];
         let (code, tail) = match closing.as_ref().and_then(|e| after.find(e.as_str())) {
             Some(end) => (&after[..end], &after[end + closing.as_ref().map_or(0, String::len)..]),
             None => (after, ""),
@@ -638,6 +649,9 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
             return Err((said, cur.row));
         }
         // A run of code stands as its own statement, however it ended.
+        if writes {
+            out.push(Token { shape: Shape::Instr, lexeme: telling.clone(), width: 0, row, column: 1 });
+        }
         out.append(&mut cur.out);
         out.push(Token { shape: Shape::Sign, lexeme: ending.clone(), width: 0, row: cur.row, column: 1 });
         row = cur.row;

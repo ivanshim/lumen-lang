@@ -311,6 +311,10 @@ only. The extension labels so far, all from PHP:
   block may be opened in one run and closed in another, which is how a
   page is written around a loop. One line end straight after the closing
   marker belongs to it.
+- `ext.lexical.prologue.echo`: a second opening marker, PHP's `<?=`,
+  opening a run of code whose value is written out where it stands: the
+  word that writes is put before the run, so `<?= $a ?>` says what
+  `echo $a;` says. Either marker opens a run, whichever stands first.
 - `ext.stmt.class.interface` and `ext.stmt.class.implements`: a class of
   method names only, and the word saying a class answers to one. A
   method may be named and not written out there; it answers with
@@ -1123,6 +1127,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.number.octal_lead` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.lexical.number.octal_prefix` | - | - | - | - | - | - | - | `0o` `0O` | - | - |
 | `ext.lexical.number.separator` | - | - | - | - | - | - | - | `_` | - | - |
+| `ext.lexical.prologue.echo` | - | - | - | - | - | - | - | `<?=` | - | - |
 | `ext.lexical.template` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.assign.compound` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.assign.value` | - | - | - | - | - | - | - | `true` | - | - |

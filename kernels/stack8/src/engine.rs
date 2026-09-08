@@ -443,6 +443,17 @@ impl<'a> Engine<'a> {
     /// Where a language lets a name be worked out as the run goes, a
     /// piece of text spells one of the outermost bindings, and that
     /// binding is what stands there.
+    /// Where a language lets a name spelled out stand for the class of
+    /// that name, a name no class answers to is that much said: which
+    /// class it is that there is none of, rather than that a piece of
+    /// text is not a class.
+    fn no_such_class(&self, v: &Value) -> Option<String> {
+        match (self.lang.spelled_stands, v) {
+            (true, Value::Text(spelled)) => Some(format!("Class \"{}\" not found", spelled)),
+            _ => None,
+        }
+    }
+
     fn what_it_spells(&self, v: Value) -> Value {
         let Value::Text(name) = &v else { return v };
         if !self.lang.spelled_stands {
@@ -1442,7 +1453,10 @@ impl<'a> Engine<'a> {
                         None => return Err(format!("Undefined constant {}::{}", c.name, name).into()),
                     },
                 },
-                v => return Err(format!("Cannot reach '{}' in {}", name, v.plain()).into()),
+                v => {
+                    let told = self.no_such_class(&v).unwrap_or_else(|| format!("Cannot reach '{}' in {}", name, v.plain()));
+                    return Err(told.into());
+                }
             },
             Action::Sow(name) => {
                 let mut pair = self.drop_many(2)?;
@@ -1458,7 +1472,10 @@ impl<'a> Engine<'a> {
                         }
                         Value::Null
                     }
-                    v => return Err(format!("Cannot write '{}' in {}", name, v.plain()).into()),
+                    v => {
+                        let told = self.no_such_class(&v).unwrap_or_else(|| format!("Cannot write '{}' in {}", name, v.plain()));
+                        return Err(told.into());
+                    }
                 }
             }
             Action::Summon(name) => {
@@ -1466,7 +1483,8 @@ impl<'a> Engine<'a> {
                 let this = args.remove(0);
                 let stands = self.what_it_spells(args.remove(0));
                 let Value::Class(class) = stands else {
-                    return Err(format!("Cannot call '{}' on a value that is not a class", name).into());
+                    let told = self.no_such_class(&stands).unwrap_or_else(|| format!("Cannot call '{}' on a value that is not a class", name));
+                    return Err(told.into());
                 };
                 let method = class.method(&name).cloned();
                 let method = method.ok_or_else(|| format!("Call to undefined method {}::{}()", class.name, name))?;

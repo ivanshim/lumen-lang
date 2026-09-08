@@ -111,10 +111,20 @@ pub fn scan_at(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)>
     // The rows of the page are counted through the weave, so that what
     // a run of code says of itself names the page's own lines.
     let mut row: u32 = 1;
-    while let Some(at) = rest.find(opening) {
+    let briefly = table.single("ext.lexical.prologue.echo");
+    loop {
+        // A run of code may be opened by either marker, whichever comes
+        // first. The brief one asks for what the run comes to be
+        // written out, so the word that writes stands before it.
+        let (at, mark, writes) = match (rest.find(opening), briefly.and_then(|m| rest.find(m))) {
+            (Some(a), Some(b)) if b < a => (b, briefly.expect("the brief marker"), true),
+            (Some(a), _) => (a, opening, false),
+            (None, Some(b)) => (b, briefly.expect("the brief marker"), true),
+            (None, None) => break,
+        };
         says(&rest[..at], row, &mut out);
         row += rest[..at].matches('\n').count() as u32;
-        let after = &rest[at + opening.len()..];
+        let after = &rest[at + mark.len()..];
         let (code, tail) = match closing.and_then(|e| after.find(e)) {
             Some(end) => (&after[..end], &after[end + closing.map_or(0, str::len)..]),
             None => (after, ""),
@@ -122,6 +132,9 @@ pub fn scan_at(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)>
         let mut inside = scan_code_marking(code, table, row)?;
         inside.pop();
         let ended = inside.last().map_or(row, |t| t.row);
+        if writes {
+            out.push(Token { shape: Shape::Bare, lexeme: telling.clone(), span: 0, row });
+        }
         out.append(&mut inside);
         // Each run of code stands as a statement, however it ended.
         out.push(Token { shape: Shape::Sign, lexeme: ending.clone(), span: 0, row: ended });

@@ -51,6 +51,9 @@
   "lexical.prologue": [
     "<?php"
   ],
+  "ext.lexical.prologue.echo": [
+    "<?="
+  ],
   "lexical.name_quote": [],
   "lexical.number.decimal_point": [
     "."

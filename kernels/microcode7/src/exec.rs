@@ -302,6 +302,19 @@ impl<'a> Machine<'a> {
     /// Where a language lets a name be worked out as the run goes, a
     /// piece of text spells one of the outermost bindings, and that
     /// binding is what stands there.
+    /// Where a name written out stands for the class it names, text
+    /// that names no class says so by name: the class wanted is the one
+    /// there is none of, not a piece of text put where a class belongs.
+    fn class_lacking(&self, x: &Value) -> Option<String> {
+        if !self.spelled_stands {
+            return None;
+        }
+        match x {
+            Value::Text(written) => Some(format!("Class \"{}\" not found", written)),
+            _ => None,
+        }
+    }
+
     fn what_it_spells(&self, v: Value) -> Value {
         let Value::Text(name) = &v else { return v };
         if !self.spelled_stands {
@@ -1307,7 +1320,8 @@ impl<'a> Machine<'a> {
                     let holder = self.what_it_spells(values.remove(0));
                     let called = values.remove(0).bare();
                     let Value::Blueprint(class) = holder else {
-                        return Err(format!("Cannot call '{}' on something that is not a class", called).into());
+                        let said = self.class_lacking(&holder).unwrap_or_else(|| format!("Cannot call '{}' on something that is not a class", called));
+                        return Err(said.into());
                     };
                     let program = class.program(&called).cloned();
                     let program = program.ok_or_else(|| format!("Call to undefined method {}::{}()", class.name, called))?;
@@ -1761,7 +1775,7 @@ impl<'a> Machine<'a> {
                             None => return Err(format!("Undefined constant {}::{}", class.name, called)),
                         },
                     },
-                    other => return Err(format!("Cannot reach '{}' in {}", called, other.bare())),
+                    other => return Err(self.class_lacking(other).unwrap_or_else(|| format!("Cannot reach '{}' in {}", called, other.bare()))),
                 }
             }
             Prim::Into => {
@@ -1778,7 +1792,7 @@ impl<'a> Machine<'a> {
                         }
                         Value::Nil
                     }
-                    other => return Err(format!("Cannot write '{}' in {}", called, other.bare())),
+                    other => return Err(self.class_lacking(other).unwrap_or_else(|| format!("Cannot write '{}' in {}", called, other.bare()))),
                 }
             }
             Prim::Akin => {
