@@ -454,6 +454,24 @@ function is_long($value) { return is_int($value); }
 function is_string($value) { return gettype($value) === "string"; }
 function is_bool($value) { return gettype($value) === "boolean"; }
 function is_array($value) { return gettype($value) === "array"; }
+// The place an array is looked at from. Nothing here moves that place —
+// a walk leaves it where it stood, and this language has no word for
+// moving it — so it is always the first place, and these two say what
+// stands there. The words for moving it are left out rather than
+// written to move nothing, since a word that lies is worse than none.
+// Both take the array as a value and not as a cell: what they answer is
+// read out of it and nothing is written back, and asking them of
+// something that is not a binding is nothing to complain of.
+function current($array) {
+    if (!is_array($array)) { return false; }
+    foreach ($array as $value) { return $value; }
+    return false;
+}
+function key($array) {
+    if (!is_array($array)) { return null; }
+    foreach ($array as $at => $value) { return $at; }
+    return null;
+}
 function is_null($value) { return $value === null; }
 function is_float($value) { return gettype($value) === "double"; }
 function is_double($value) { return is_float($value); }

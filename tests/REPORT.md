@@ -19,12 +19,12 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 77, differs 5, error 22, skipped 10 | pass 77, differs 5, error 22, skipped 10 |
 | `php/func` | 14 | pass 13, differs 0, error 1, skipped 0 | pass 13, differs 0, error 1, skipped 0 |
-| `php/lang` | 213 | pass 119, differs 42, error 47, skipped 5 | pass 119, differs 42, error 47, skipped 5 |
+| `php/lang` | 213 | pass 122, differs 42, error 44, skipped 5 | pass 122, differs 42, error 44, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 46, differs 10, error 2, skipped 6 | pass 46, differs 10, error 2, skipped 6 |
 | `php/lang/string` | 9 | pass 2, differs 1, error 6, skipped 0 | pass 2, differs 1, error 6, skipped 0 |
-| all | 422 | pass 261, differs 58, error 78, skipped 25 | pass 261, differs 58, error 78, skipped 25 |
+| all | 422 | pass 264, differs 58, error 75, skipped 25 | pass 264, differs 58, error 75, skipped 25 |
 
 | Reason | Tests |
 |---|---|
@@ -35,7 +35,6 @@ is listed, since the full kernels are meant to behave alike.
 | Invalid UTF-8 codepoint escape sequence | 5 |
 | Fatal error: Uncaught Error: count() requires a string or array argument in <file> | 4 |
 | Fatal error: Uncaught Error: Cannot reassign $argv (system-provided immutable value) in <file> | 3 |
-| Fatal error: Uncaught Error: Undefined variable: current in <file> | 3 |
 | skip php-cgi not available | 2 |
 | Expected an expression | 2 |
 | Unexpected token: { | 2 |
@@ -68,6 +67,7 @@ is listed, since the full kernels are meant to behave alike.
 | skip Can't find german locale | 1 |
 | Fatal error: Uncaught Error: Cannot reach 'b' in null in <file> | 1 |
 | Fatal error: Uncaught Error: Cannot reach 'B' in null in <file> | 1 |
+| Fatal error: Uncaught Error: Cannot call 'foo' on a value that is not a class in <file> | 1 |
 
 ### Reserved words: 55 of 68 spelled
 
@@ -389,7 +389,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug23489.phpt` | pass | pass |  |
 | `php/lang/bug23524.phpt` | pass | pass |  |
 | `php/lang/bug23584.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug23624.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: current in <file> |
+| `php/lang/bug23624.phpt` | pass | pass |  |
 | `php/lang/bug24054.phpt` | pass | pass |  |
 | `php/lang/bug24396.phpt` | error | error | Expected identifier after the global keyword, got '$' |
 | `php/lang/bug24436.phpt` | pass | pass |  |
@@ -431,7 +431,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug44654.phpt` | pass | pass |  |
 | `php/lang/bug44827.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug45392.phpt` | differs | differs | ran, printed something else |
-| `php/lang/bug55754.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: current in <file> |
+| `php/lang/bug55754.phpt` | pass | pass |  |
 | `php/lang/bug71897.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug73172.phpt` | pass | pass |  |
 | `php/lang/bug73329.phpt` | pass | pass |  |
@@ -456,7 +456,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/engine_assignExecutionOrder_009.phpt` | pass | pass |  |
 | `php/lang/error_2_exception_001.phpt` | pass | pass |  |
 | `php/lang/execution_order.phpt` | differs | differs | ran, printed something else |
-| `php/lang/foreachLoop.001.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: current in <file> |
+| `php/lang/foreachLoop.001.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.002.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.003.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.004.phpt` | pass | pass |  |
