@@ -291,9 +291,9 @@ only. The extension labels so far, all from PHP:
   present. Doubled braces in formatted text stand for single braces;
   fields may carry conversions, format specifications and a debug equals
   sign. Each field and each field in its specification is read as code.
-  Text conversions quote strings and make escapes visible; simple field
-  alignment and fixed decimal places are honoured. Other specifications
-  are evaluated and the value is rendered plainly at present.
+  Text conversions quote strings and make escapes visible. Where
+  `ext.builtin.format` is spelled, specifications use its full account;
+  otherwise the former small set of presentations remains in force.
 - `ext.lexical.string.adjacent`: whether string literals standing beside
   one another make one string, including within brackets over lines.
 - `ext.lexical.string.amiss`: what is said of a string or a formatted
@@ -587,6 +587,9 @@ only. The extension labels so far, all from PHP:
   names around where it was written.
 - `ext.lexical.number.exponent`: the letters that open a decimal exponent
   in a number (`1e9`, `2.5E-3`), always a real.
+- `ext.lexical.number.point.open`: a switch; a decimal point may have
+  figures on just one side (`.5`, `3.`, `1.e2`). The point still makes a
+  real, and alone it is no number.
 - `ext.op.plus`: a sign that leaves its operand as it is (`+5`), bound as
   tightly as negation.
 - `ext.stmt.break.levels`: a switch; `break n` and `continue n` leave n
@@ -1734,7 +1737,7 @@ only. The extension labels so far, all from PHP:
   `ext.text.format.sign.character` and `.alternate.character` give the
   corresponding complaints for a whole number written as one character.
   `ext.text.format.character` says a character lies beyond the held range.
-- `ext.text.format.spec.type`: words before and after the kind of a second
+- `ext.text.format.spec.type`: words before the kind of a second
   builtin argument which ought to have been text.
 - `ext.text.format.numbered.auto` and `.numbered.manual`: what is said of
   changing from manual to automatic field numbering, or the other way.
@@ -1742,17 +1745,17 @@ only. The extension labels so far, all from PHP:
   `ext.text.format.key` encloses a missing map or keyword name.
 - `ext.text.format.brace.open` and `.brace.close`: complaints for an
   unfinished field or a lone closing brace. `ext.text.format.conversion`
-  encloses an unknown conversion letter. `ext.text.format.recursion` says
+  precedes an unknown conversion letter. `ext.text.format.recursion` says
   that nested specifications have gone deeper than two levels.
 - `ext.op.rem.format.few`, `.many` and `.mapping`: complaints for too few
   or too many positional arguments, or a keyed mark given no map.
-  `ext.op.rem.format.number` and `.integer` each hold three pieces, around
-  the conversion letter and the kind of value that cannot supply it.
-  `ext.op.rem.format.real` encloses the kind of a nonnumeric real argument.
+  `ext.op.rem.format.number` and `.integer` each hold two pieces, before
+  the conversion letter and between it and the kind that cannot supply it.
+  `ext.op.rem.format.real` precedes the kind of a nonnumeric real argument.
 - `ext.op.rem.format.character`, `.star` and `.incomplete`: complaints for
   a character mark without a character or whole number, a starred count
   without a whole number, and an unfinished percent mark.
-  `ext.op.rem.format.code` has four pieces enclosing an unknown letter,
+  `ext.op.rem.format.code` has three pieces preceding an unknown letter,
   its hexadecimal ordinal, and its place within the format string.
 - `ext.op.bit.and`, `ext.op.bit.or`, `ext.op.bit.xor`, `ext.op.bit.not`,
   `ext.op.bit.left` and `ext.op.bit.right`: the bits of a value taken
@@ -2215,9 +2218,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.name_lead` | - | - | - | - | `\` | - | - | - | - | - |
 | `ext.lexical.number.amiss` | - | - | - | - | `Invalid numeric literal` | - | - | - | - | - |
 | `ext.lexical.number.binary_prefix` | - | - | - | - | `0b` `0B` | - | - | - | - | - |
-| `ext.lexical.number.exponent` | - | - | - | - | `e` `E` | - | - | - | - | - |
+| `ext.lexical.number.exponent` | - | - | `e` `E` | - | `e` `E` | - | - | - | - | - |
 | `ext.lexical.number.octal_lead` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.lexical.number.octal_prefix` | - | - | - | - | `0o` `0O` | - | - | - | - | - |
+| `ext.lexical.number.point.open` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.lexical.number.separator` | - | - | `_` | - | `_` | - | - | - | - | - |
 | `ext.lexical.prologue.brief` | - | - | - | - | `<?` | - | - | - | - | - |
 | `ext.lexical.prologue.brief.setting` | - | - | - | - | `short_open_tag` | - | - | - | - | - |
@@ -2300,14 +2304,14 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.reference.unshared.written` | - | - | - | - | `Only variables should be assigned by reference` | - | - | - | - | - |
 | `ext.op.rem.format.arguments` | - | - | `String format arguments do not match` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.character` | - | - | `TypeError: %c requires int or char` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.code` | - | - | `ValueError: unsupported format character '` `' (0x` `) at index ` `` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.code` | - | - | `ValueError: unsupported format character '` `' (0x` `) at index ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.few` | - | - | `TypeError: not enough arguments for format string` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.incomplete` | - | - | `ValueError: incomplete format` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.integer` | - | - | `TypeError: %` ` format: an integer is required, not ` `` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.integer` | - | - | `TypeError: %` ` format: an integer is required, not ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.many` | - | - | `TypeError: not all arguments converted during string formatting` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.mapping` | - | - | `TypeError: format requires a mapping` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.number` | - | - | `TypeError: %` ` format: a real number is required, not ` `` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.real` | - | - | `TypeError: must be real number, not ` `` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.number` | - | - | `TypeError: %` ` format: a real number is required, not ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.real` | - | - | `TypeError: must be real number, not ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.star` | - | - | `TypeError: * wants int` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.unsupported` | - | - | `Unsupported string format` | - | - | - | - | - | - | - |
 | `ext.op.rem.formats_text` | - | - | `true` | - | - | - | - | - | - | - |
@@ -2516,7 +2520,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.text.format.brace.close` | - | - | `ValueError: Single '}' encountered in format string` | - | - | - | - | - | - | - |
 | `ext.text.format.brace.open` | - | - | `ValueError: expected '}' before end of string` | - | - | - | - | - | - | - |
 | `ext.text.format.character` | - | - | `OverflowError: %c arg not in range(0x110000)` | - | - | - | - | - | - | - |
-| `ext.text.format.conversion` | - | - | `ValueError: Unknown conversion specifier ` `` | - | - | - | - | - | - | - |
+| `ext.text.format.conversion` | - | - | `ValueError: Unknown conversion specifier ` | - | - | - | - | - | - | - |
 | `ext.text.format.index` | - | - | `IndexError: Replacement index ` ` out of range for positional args tuple` | - | - | - | - | - | - | - |
 | `ext.text.format.invalid` | - | - | `ValueError: Invalid format specifier` | - | - | - | - | - | - | - |
 | `ext.text.format.key` | - | - | `KeyError: '` `'` | - | - | - | - | - | - | - |
@@ -2528,7 +2532,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.text.format.recursion` | - | - | `ValueError: Max string recursion exceeded` | - | - | - | - | - | - | - |
 | `ext.text.format.sign.character` | - | - | `ValueError: Sign not allowed with integer format specifier 'c'` | - | - | - | - | - | - | - |
 | `ext.text.format.sign.string` | - | - | `ValueError: Sign not allowed in string format specifier` | - | - | - | - | - | - | - |
-| `ext.text.format.spec.type` | - | - | `TypeError: format() argument 2 must be str, not ` `` | - | - | - | - | - | - | - |
+| `ext.text.format.spec.type` | - | - | `TypeError: format() argument 2 must be str, not ` | - | - | - | - | - | - | - |
 | `ext.text.format.unknown` | - | - | `ValueError: Unknown format code '` `' for object of type '` `'` | - | - | - | - | - | - | - |
 | `ext.text.format.unready` | - | - | `NotImplementedError: this format cannot be represented` | - | - | - | - | - | - | - |
 <!-- table:end -->

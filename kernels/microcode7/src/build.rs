@@ -6669,7 +6669,10 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
             let (w, f) = (&text[..dot], &text[dot + p.len_utf8()..]);
             let scale = BigInt::from(10).pow(f.len() as u32);
             let w: BigInt = if w.is_empty() { BigInt::from(0) } else { w.parse().map_err(|_| unreadable_numeral(text, table))? };
-            let f: BigInt = f.parse().map_err(|_| unreadable_numeral(text, table))?;
+            let f: BigInt = match (f.is_empty(), table.flag("ext.lexical.number.point.open")) {
+                (true, true) => BigInt::from(0),
+                _ => f.parse().map_err(|_| unreadable_numeral(text, table))?,
+            };
             return Ok(math::make_number(w * &scale + f, scale, Some(digit_run(text))));
         }
     }

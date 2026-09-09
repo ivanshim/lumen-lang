@@ -78,6 +78,7 @@ impl Writer<'_> {
                 Ok(format!("{{{}}}", parts.join(", ")))
             }
             Value::Real(r) => {
+                if r.outside() { return Ok(if r.no_number() { "nan" } else if r.p.is_negative() { "-inf" } else { "inf" }.to_string()); }
                 let mut text = value.display(&self.words);
                 if !r.outside() && !text.contains(['.', 'e', 'E']) { text.push_str(".0"); }
                 Ok(text)
@@ -166,6 +167,7 @@ impl Writer<'_> {
         let letters: Vec<char> = spec.chars().collect();
         let mut at = 0;
         let mut rule = Rule::default();
+        let fill_given = letters.get(1).map_or(false, |c| "<>=^".contains(*c));
         if letters.get(1).map_or(false, |c| "<>=^".contains(*c)) {
             rule.fill = letters[0]; rule.align = letters[1]; at = 2;
         } else if letters.first().map_or(false, |c| "<>=^".contains(*c)) { rule.align = letters[0]; at = 1; }
@@ -173,7 +175,7 @@ impl Writer<'_> {
         if letters.get(at) == Some(&'z') { return Err(self.fault("ext.text.format.unready", &[])); }
         if letters.get(at) == Some(&'#') { rule.alternate = true; at += 1; }
         if letters.get(at) == Some(&'0') {
-            if rule.fill == ' ' { rule.fill = '0'; }
+            if !fill_given { rule.fill = '0'; }
             rule.zero = true;
             at += 1;
         }
@@ -223,6 +225,7 @@ impl Writer<'_> {
                 if !brackets && matches!(c, '!' | ':' | '}') { break; }
                 at += 1;
             }
+            if at == chars.len() { return Err(self.fault("ext.text.format.brace.open", &[])); }
             let name: String = chars[from..at].iter().collect();
             let value = self.lookup(&name, args, next, manual)?;
             let mut conversion = String::new();
@@ -327,6 +330,7 @@ impl Writer<'_> {
                 keyed = Some(pairs.iter().find(|(k, _)| matches!(k, Value::Text(s) if s.as_ref() == key)).map(|(_, v)| v)
                     .ok_or_else(|| self.fault("ext.text.format.key", &[&key]))?);
                 mapped = true;
+                used = args.len();
             }
             let mut rule = Rule::default();
             while let Some(&flag) = chars.get(at).filter(|c| "-+ #0".contains(**c)) {
@@ -340,6 +344,7 @@ impl Writer<'_> {
             if rule.align == '<' { rule.fill = ' '; }
             else if rule.fill == '0' { rule.align = '='; }
             rule.width = if chars.get(at) == Some(&'*') {
+                if keyed.is_some() { return Err(self.fault("ext.text.format.unready", &[])); }
                 at += 1;
                 let n = self.star(&args, &mut used)?;
                 if n < 0 { rule.align = '<'; rule.fill = ' '; }
@@ -348,6 +353,7 @@ impl Writer<'_> {
             if chars.get(at) == Some(&'.') {
                 at += 1;
                 rule.precision = Some(if chars.get(at) == Some(&'*') {
+                    if keyed.is_some() { return Err(self.fault("ext.text.format.unready", &[])); }
                     at += 1; self.star(&args, &mut used)?.max(0) as usize
                 } else { self.count(&chars, &mut at)?.unwrap_or(0) });
             }
@@ -393,7 +399,7 @@ impl Writer<'_> {
             } else {
                 let n = match value {
                     Value::Real(r) => { let n = crate::value::as_binary(&r.p, &r.q); if r.below && n == 0.0 { -0.0 } else { n } },
-                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => value.as_big()?.to_f64().ok_or_else(|| self.fault("ext.text.format.unready", &[]))?,
+                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => value.as_big()?.to_f64().filter(|n| n.is_finite()).ok_or_else(|| self.fault("ext.text.format.unready", &[]))?,
                     _ => return Err(self.fault("ext.op.rem.format.real", &[self.kind(value)])),
                 };
                 let mut body = if n.is_nan() { "nan".into() } else if n.is_infinite() { "inf".into() } else { decimal(n.abs(), &rule) };
@@ -438,7 +444,8 @@ impl Rule {
     }
 
     fn group_digits(&mut self, body: &mut String, head: usize, span: usize) {
-        let point = body.find(['.', 'e', 'E', '%']).unwrap_or(body.len());
+        let point = if matches!(self.code, 'b' | 'o' | 'x' | 'X' | 'd') { body.len() }
+            else { body.find(['.', 'e', 'E', '%']).unwrap_or(body.len()) };
         let mut tail = body[point..].to_string();
         if self.fraction_group != '\0' && tail.starts_with('.') {
             let end = tail[1..].find(['e', 'E', '%']).map_or(tail.len(), |n| n + 1);

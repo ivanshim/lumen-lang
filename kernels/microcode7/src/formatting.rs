@@ -49,6 +49,11 @@ impl Layout<'_> {
                 format!("[{}]", rendered.join(", "))
             }
             Value::Frac(r) => {
+                if r.past_numbers() {
+                    return Ok(match (r.answers_none(), r.above.is_negative()) {
+                        (true, _) => "nan", (false, true) => "-inf", _ => "inf",
+                    }.to_owned());
+                }
                 let said = item.render(self.names);
                 if r.past_numbers() || said.contains(['.', 'e', 'E']) { said } else { said + ".0" }
             }
@@ -67,7 +72,7 @@ impl Layout<'_> {
                 let n = crate::data::nearest_binary(&r.above, &r.beneath);
                 Ok(if n == 0.0 && r.under { -0.0 } else { n })
             }
-            Value::Small(_) | Value::Huge(_) | Value::Flag(_) => value.as_big()?.to_f64().ok_or_else(|| self.refused()),
+            Value::Small(_) | Value::Huge(_) | Value::Flag(_) => value.as_big()?.to_f64().filter(|n| n.is_finite()).ok_or_else(|| self.refused()),
             _ => Err(self.complain("ext.op.rem.format.real", &[self.typename(value)])),
         }
     }
@@ -93,7 +98,7 @@ impl Layout<'_> {
         if marks.peek() == Some(&'#') { marks.next(); shape.alternative = true; }
         if marks.peek() == Some(&'0') {
             marks.next(); shape.zero = true;
-            if shape.padding == ' ' { shape.padding = '0'; }
+            if !second.map_or(false, |c| matches!(c, '<' | '>' | '=' | '^')) { shape.padding = '0'; }
         }
         shape.extent = self.read_count(&mut marks)?.unwrap_or_default();
         if marks.peek().map_or(false, |c| matches!(c, ',' | '_')) { shape.separator = marks.next(); }
@@ -297,6 +302,7 @@ impl Layout<'_> {
                 }
                 let Value::Dict(pairs) = supplied else { return Err(self.complain("ext.op.rem.format.mapping", &[])); };
                 named_seen = true;
+                used = positional.len();
                 Some(pairs.iter().find(|(k, _)| matches!(k, Value::Text(s) if s.as_ref() == key)).map(|(_, v)| v)
                     .ok_or_else(|| self.complain("ext.text.format.key", &[&key]))?)
             } else { None };
@@ -313,6 +319,7 @@ impl Layout<'_> {
                 input.next();
             }
             if input.peek() == Some(&'*') {
+                if named.is_some() { return Err(self.refused()); }
                 input.next();
                 let width = self.dynamic(positional, &mut used)?;
                 shape.extent = width.unsigned_abs() as usize;
@@ -321,6 +328,7 @@ impl Layout<'_> {
             if input.peek() == Some(&'.') {
                 input.next();
                 shape.digits = Some(if input.peek() == Some(&'*') {
+                    if named.is_some() { return Err(self.refused()); }
                     input.next(); self.dynamic(positional, &mut used)?.max(0) as usize
                 } else { self.read_count(&mut input)?.unwrap_or(0) });
             }
@@ -439,7 +447,8 @@ impl Presentation {
     }
 
     fn grouped(&self, text: String, prefix: usize, chunk: usize) -> String {
-        let stop = text.find(['e', 'E', '%']).unwrap_or(text.len());
+        let stop = if self.letter.map_or(false, |c| matches!(c, 'b' | 'o' | 'x' | 'X' | 'd')) { text.len() }
+            else { text.find(['e', 'E', '%']).unwrap_or(text.len()) };
         let (integer, fraction) = text[..stop].split_once('.').map_or((&text[..stop], None), |(a, b)| (a, Some(b)));
         let mut ending = String::new();
         if let Some(fraction) = fraction {

@@ -462,6 +462,11 @@
   "ext.lexical.escape.unavailable": [
     "Unicode escape cannot be represented"
   ],
+  "ext.lexical.number.exponent": [
+    "e",
+    "E"
+  ],
+  "ext.lexical.number.point.open": true,
   "ext.lexical.number.separator": [
     "_"
   ],
@@ -608,8 +613,7 @@
   "ext.op.rem.format.code": [
     "ValueError: unsupported format character '",
     "' (0x",
-    ") at index ",
-    ""
+    ") at index "
   ],
   "ext.op.rem.format.few": [
     "TypeError: not enough arguments for format string"
@@ -619,8 +623,7 @@
   ],
   "ext.op.rem.format.integer": [
     "TypeError: %",
-    " format: an integer is required, not ",
-    ""
+    " format: an integer is required, not "
   ],
   "ext.op.rem.format.many": [
     "TypeError: not all arguments converted during string formatting"
@@ -630,12 +633,10 @@
   ],
   "ext.op.rem.format.number": [
     "TypeError: %",
-    " format: a real number is required, not ",
-    ""
+    " format: a real number is required, not "
   ],
   "ext.op.rem.format.real": [
-    "TypeError: must be real number, not ",
-    ""
+    "TypeError: must be real number, not "
   ],
   "ext.op.rem.format.star": [
     "TypeError: * wants int"
@@ -900,8 +901,7 @@
     "OverflowError: %c arg not in range(0x110000)"
   ],
   "ext.text.format.conversion": [
-    "ValueError: Unknown conversion specifier ",
-    ""
+    "ValueError: Unknown conversion specifier "
   ],
   "ext.text.format.index": [
     "IndexError: Replacement index ",
@@ -946,8 +946,7 @@
     "ValueError: Sign not allowed in string format specifier"
   ],
   "ext.text.format.spec.type": [
-    "TypeError: format() argument 2 must be str, not ",
-    ""
+    "TypeError: format() argument 2 must be str, not "
   ],
   "ext.text.format.unknown": [
     "ValueError: Unknown format code '",
