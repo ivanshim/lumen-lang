@@ -136,6 +136,7 @@ pub struct Builder<'a> {
     formal_kinds: Vec<Option<Rc<str>>>,
     taking: Option<Vec<char>>,
     tells_place: bool,
+    generator_seen: bool,
 }
 
 pub struct Built {
@@ -241,7 +242,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         layers.push(Layer { holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
     let outer_layers = layers.len();
-    let mut r = Builder { within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { generator_seen: false, within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
@@ -915,7 +916,13 @@ impl<'a> Builder<'a> {
         formal_kinds.truncate(params.len());
         let param_slots = (0..params.len()).collect();
         self.layers.push(Layer { holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new() });
-        let body = body(self)?;
+        let enclosing_yield = self.generator_seen;
+        if holds == Holds::Every { self.generator_seen = false; }
+        let mut body = body(self)?;
+        if holds == Holds::Every {
+            if self.generator_seen { body = self.scope_unrun("ext.stmt.yield.unrun"); }
+            self.generator_seen = enclosing_yield;
+        }
         let scope = self.layers.pop().unwrap();
         self.naming.pop();
         let carried = std::mem::replace(&mut self.carrying, around);
@@ -1214,6 +1221,7 @@ impl<'a> Builder<'a> {
             return Ok(self.scope_unrun("ext.system.scope.unready"));
         }
         let yields = self.table.spells("ext.stmt.yield", &head);
+        self.generator_seen |= yields;
         if yields && self.key("ext.stmt.yield.from") { self.advance(); }
         if !self.on_stmt_end() && !matches!(self.look().shape, Shape::Finish | Shape::Close) {
             let _value = self.comma_value()?;

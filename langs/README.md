@@ -1583,6 +1583,11 @@ remain deferred as stated above. A deferred context body discards its
 outgoing returns, breaks and continues together with its other work, so
 no later loop or routine tries to mend a jump that no longer stands.
 
+A routine containing `ext.stmt.yield` is marked while its own body is
+read. Until suspension is provided, calling it says `ext.stmt.yield.unrun`
+before any of its body runs, even when the yield lies in an unchosen arm.
+A yield within a nested routine marks that routine alone.
+
 ## The web
 
 A program may be run for a web request. The host gathers the request the

@@ -104,6 +104,7 @@ struct Piece {
     /// Whether an expression statement stored into the result slot; a
     /// function without one needs neither the slot nor its prologue.
     result_touched: bool,
+    generator: bool,
     /// Which line the last marker in this unit named, so that a run of
     /// statements on one line marks it once.
     line: u32,
@@ -248,6 +249,7 @@ pub fn compile_within(
         cycles: Vec::new(),
         escapes: Vec::new(),
         result_touched: false,
+        generator: false,
         line: 0,
         instrs: Vec::new(),
     };
@@ -812,6 +814,7 @@ impl<'a> Compiler<'a> {
             cycles: Vec::new(),
             escapes: Vec::new(),
             result_touched: false,
+            generator: false,
             line: 0,
             instrs: Vec::new(),
         });
@@ -832,7 +835,11 @@ impl<'a> Compiler<'a> {
             self.patch_jump(at, end);
         }
         let unit = self.pieces.pop().expect("the unit");
-        let instrs = if returns_value && !used { relocated(unit.instrs.into_iter().skip(2).collect(), -2) } else { unit.instrs };
+        let mut instrs = if returns_value && !used { relocated(unit.instrs.into_iter().skip(2).collect(), -2) } else { unit.instrs };
+        if unit.generator {
+            instrs = vec![Instr::Const(Value::text(self.lang.yield_unrun.first().map_or("", String::as_str))),
+                Instr::Act(Action::Builtin(Builtin::Raise, Rc::from("")), 1)];
+        }
         let within = self.within.as_ref().map(|(named, _)| Rc::from(named.as_str()));
         let carried = std::mem::replace(&mut self.carrying, around);
         Ok(Rc::new(Routine { ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), instrs: Rc::new(peephole(instrs)) }))
@@ -997,6 +1004,7 @@ impl<'a> Compiler<'a> {
     fn scoped_statement(&mut self) -> Res<()> {
         let lang = self.lang;
         let word = self.take().lexeme;
+        if Lang::spells(&lang.yield_words, &word) { self.piece().generator = true; }
         let from = self.mark();
         let message;
         if Lang::spells(&lang.nonlocal_words, &word) {
