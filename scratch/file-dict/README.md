@@ -32,19 +32,17 @@ routine. The routine is not called: this probe proves reading alone,
 not the provision of dictionary methods. `op.pipe` and the existing
 `ext.syntax.call.spread.pairs` supply the written forms.
 
-The four whole reference files still need the earlier class,
-block, expression, lexical, and string pieces. In particular, the base
-leaves class declarations, `with`, `del`, `yield`, and
-several operators unread. No class body is passed over here, and no
-new label is supplied for a construct belonging to those pieces.
+Full-file reading remains incomplete. All four reference files
+(`test_dict.py`, `test_dictcomps.py`, `test_set.py`, `test_setcomps.py`)
+still stop at `Unexpected token: :` on both kernels. Class declarations
+are the next reader blocker; no class body is skipped. The files also
+contain context managers, deletion, yields and other forms still to be
+implemented. Passing these focused probes does not establish that a whole
+reference file can be read or run.
 
-The first Actions run on the given base reports `Unexpected character
-'&'` for `test_dict.py` and `test_set.py`, and `Unexpected token: :`
-for `test_dictcomps.py` and `test_setcomps.py`, on both kernels. The
-Python reasons table counts six files at the former complaint and
-21 at the latter. The bit spellings are now enabled. The second green run advances all four
-files to `Unexpected token: :` on both kernels. Class declarations remain
-unread; no class body is skipped. Full-file reading has not been proved.
+The original run rejected `&` in `test_dict.py` and `test_set.py` before
+parsing. Enabling the bit spellings removed that lexical blocker. The
+unchanged examples and reference suites remain the regression measures.
 
 `6.py` spells the remaining bit operators used by dictionary and set view
 expressions, using the kernels' existing operations and Python precedence.
