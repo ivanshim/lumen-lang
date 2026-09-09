@@ -1101,7 +1101,7 @@ impl<'a> Compiler<'a> {
         self.take();
         if from {
             let mut relative = false;
-            while self.on_any(&lang.pipe_words) {
+            while self.on_any(&lang.pipe_words) || self.on_any(&lang.slice_ellipsis) {
                 relative = true;
                 self.take();
             }
@@ -3236,6 +3236,17 @@ impl<'a> Compiler<'a> {
             _ => None,
         };
         let appending = matches!(target.last(), Some(Instr::Act(Action::AtEnd, 1)));
+        // A slice write works out its value before it asks for bounds.
+        let was_waiting = self.waiting.clone();
+        if compound.is_some() && keys.iter().any(|key| matches!(key.last(), Some(Instr::Act(Action::Slice, 3)))) {
+            self.act(Action::SliceUnavailable, 0);
+        }
+        if compound.is_none() && keys.iter().any(|key| matches!(key.last(), Some(Instr::Act(Action::Slice, 3)))) {
+            let value = self.gensym("slice_value");
+            self.value_written(None)?;
+            self.write(&value);
+            self.waiting = Some(value);
+        }
         let done = match target.as_slice() {
             // `b = &a`: b is fastened to a's cell, not given a copy.
             [Instr::Read(slot)]
@@ -3633,7 +3644,7 @@ impl<'a> Compiler<'a> {
                     && self.lang.reference_mark.as_ref().map_or(false, |m| self.at_symbol(m)) =>
             {
                 let name = slot.ident.to_string();
-                for w in relocated(index.to_vec(), -1) {
+                for w in relocated(index.to_vec(), self.mark() as i64 - from as i64 - 1) {
                     self.put(w);
                 }
                 self.take();
@@ -3649,7 +3660,7 @@ impl<'a> Compiler<'a> {
             }
             [Instr::Read(slot), index @ .., Instr::Act(Action::At, 2)] if !slot.moving => {
                 let name = slot.ident.to_string();
-                for w in relocated(index.to_vec(), -1) {
+                for w in relocated(index.to_vec(), self.mark() as i64 - from as i64 - 1) {
                     self.put(w);
                 }
                 // Where a language writes into text, only the thing
@@ -3677,6 +3688,7 @@ impl<'a> Compiler<'a> {
             }
             _ => Err(format!("Invalid assignment target before '{}'", assign)),
         };
+        self.waiting = was_waiting;
         if hushed || silenced {
             self.put(match silenced {
                 true => Instr::Mute(false),
@@ -4829,6 +4841,43 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// One place or span within brackets. Commas belong to the row
+    /// of places, and are left for the brackets themselves to gather.
+    fn slice_part(&mut self, close: &str, separator: Option<&str>) -> Res<()> {
+        let marks = self.lang.slice_marks.clone();
+        let ellipsis = self.lang.slice_ellipsis.clone();
+        if ellipsis.iter().any(|word| self.at_symbol(word)) {
+            self.take();
+            self.act(Action::SliceUnavailable, 0);
+            return Ok(());
+        }
+        if marks.iter().any(|m| self.at_symbol(m)) {
+            self.constant(Value::Null);
+        } else {
+            self.expr(0)?;
+        }
+        if !marks.iter().any(|m| self.at_symbol(m)) { return Ok(()); }
+        self.take();
+        let ended = |reader: &Self| reader.at_symbol(close) || separator.map_or(false, |sep| reader.at_symbol(sep));
+        if ended(self) || marks.iter().any(|m| self.at_symbol(m)) {
+            self.constant(Value::Null);
+        } else {
+            self.expr(0)?;
+        }
+        if marks.iter().any(|m| self.at_symbol(m)) {
+            self.take();
+            if ended(self) {
+                self.constant(Value::Null);
+            } else {
+                self.expr(0)?;
+            }
+        } else {
+            self.constant(Value::Null);
+        }
+        self.act(Action::Slice, 3);
+        Ok(())
+    }
+
     fn indexing(&mut self, from: usize) -> Res<()> {
         let lang = self.lang;
         loop {
@@ -4947,7 +4996,18 @@ impl<'a> Compiler<'a> {
             }
             self.take();
             let began = self.mark();
-            self.expr(0)?;
+            let separator = self.lang.calling.as_ref().and_then(|b| b.between.clone());
+            self.slice_part(&index.close, separator.as_deref())?;
+            if !self.lang.slice_marks.is_empty() && separator.as_ref().map_or(false, |sep| self.at_symbol(sep)) {
+                let mut many = 1;
+                while separator.as_ref().map_or(false, |sep| self.at_symbol(sep)) {
+                    self.take();
+                    if self.at_symbol(&index.close) { break; }
+                    self.slice_part(&index.close, separator.as_deref())?;
+                    many += 1;
+                }
+                self.act(Action::SliceUnavailable, many);
+            }
             self.want_sign(&index.close, "after array index")?;
             keyed.push(began);
             self.act(Action::At, 2);

@@ -2200,6 +2200,17 @@ impl<'a> Machine<'a> {
                     let mut values = values;
                     let value = values.pop().unwrap();
                     let key = values.pop().map(|k| self.as_key_spoken(&k));
+                    if let Some(Value::Span(bounds)) = &key {
+                        let old = f.cells.borrow()[i].clone();
+                        match old {
+                            Value::Shared(cell) => {
+                                let mut row = cell.borrow_mut();
+                                self.span_written(&mut row, bounds, &value)?;
+                            }
+                            _ => self.span_written(&mut f.cells.borrow_mut()[i], bounds, &value)?,
+                        }
+                        return Ok(Value::Nil);
+                    }
                     // Worked out before the place is reached, since
                     // reaching it holds the frame the name lives in.
                     let letter = self.letter_places.then(|| value.render(self.wording()));
@@ -3082,6 +3093,8 @@ impl<'a> Machine<'a> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
         };
         Ok(match op {
+            Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
+            Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
             // A step onward or back adds or takes away one, save on text
             // spelling no number: a language may walk such text along
             // its letters instead, or leave it standing, and says so.
@@ -4067,6 +4080,7 @@ impl<'a> Machine<'a> {
             }
             // Reaching in makes the place where nothing is there yet,
             // which is what a write into it asks for.
+            Prim::Inward if matches!(&v[1], Value::Span(_)) => return Err(self.span_complaint("detached")),
             Prim::Inward if !self.builds_places => self.element(&v[0], &v[1], Reading::Plain)?,
             Prim::Inward => {
                 self.quieted += 1;
@@ -4518,7 +4532,106 @@ impl<'a> Machine<'a> {
         });
     }
 
+    fn span_complaint(&self, part: &str) -> String {
+        self.table.single(&format!("ext.op.index.slice.{}", part)).unwrap_or("").to_owned()
+    }
+
+    fn span_number(&self, part: &Value) -> Result<Option<BigInt>, String> {
+        match part {
+            Value::Nil => Ok(None),
+            Value::Huge(whole) => Ok(Some(whole.as_ref().clone())),
+            Value::Small(whole) => Ok(Some(BigInt::from(*whole))),
+            Value::Flag(truth) => Ok(Some(BigInt::from(u8::from(*truth)))),
+            _ => Err(self.span_complaint("bounds")),
+        }
+    }
+
+    /// Count the places first, then gather them. The step need never
+    /// reach farther than the row's whole length and one place beyond.
+    fn span_selection(&self, bounds: &[Value], length: usize) -> Result<(std::ops::Range<usize>, Vec<usize>, bool), String> {
+        let step = self.span_number(&bounds[2])?.unwrap_or_else(|| BigInt::from(1));
+        if step == BigInt::from(0) {
+            return Err(self.span_complaint("zero"));
+        }
+        let unit = step == BigInt::from(1);
+        let reverse = step < BigInt::from(0);
+        let extent = length as i128;
+        let reach = BigInt::from(extent + 1);
+        let stride = step.max(-&reach).min(reach).to_i128().expect("a step within the row");
+        let mut ends = [0_i128; 2];
+        for side in 0..2 {
+            let omitted = match (side, reverse) {
+                (0, true) => extent - 1,
+                (0, false) => 0,
+                (_, true) => -1,
+                (_, false) => extent,
+            };
+            ends[side] = match self.span_number(&bounds[side])? {
+                None => omitted,
+                Some(mut whole) => {
+                    if whole < BigInt::from(0) {
+                        whole += BigInt::from(extent);
+                    }
+                    let least = if reverse { -1 } else { 0 };
+                    let most = if reverse { extent - 1 } else { extent };
+                    whole.max(BigInt::from(least)).min(BigInt::from(most)).to_i128().expect("a bound within the row")
+                }
+            };
+        }
+        let distance = if reverse { ends[0] - ends[1] } else { ends[1] - ends[0] };
+        let many = if distance <= 0 { 0 } else { (distance - 1) / stride.abs() + 1 };
+        let picked = (0..many).map(|turn| (ends[0] + turn * stride) as usize).collect();
+        let begin = ends[0].max(0) as usize;
+        let end = ends[1].max(ends[0]).max(0) as usize;
+        Ok((begin..end, picked, unit))
+    }
+
+    fn span_written(&self, held: &mut Value, bounds: &[Value], handed: &Value) -> Result<(), String> {
+        let Value::Vector(row) = held else { return Err(self.span_complaint("unsupported")) };
+        let (span, picked, unit) = self.span_selection(bounds, row.len())?;
+        let coming: Vec<Value> = match handed {
+            Value::Text(letters) => letters.chars().map(|c| Value::text(&c.to_string())).collect(),
+            Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
+            Value::Vector(values) => values.iter().cloned().collect(),
+            _ => return Err(self.span_complaint("assign")),
+        };
+        if !unit && picked.len() != coming.len() {
+            let wording = self.table.strings("ext.op.index.slice.length");
+            let before = wording.first().map(String::as_str).unwrap_or("");
+            let between = wording.get(1).map(String::as_str).unwrap_or("");
+            return Err(format!("{before} {} {between} {}", coming.len(), picked.len()));
+        }
+        let written = Rc::make_mut(row);
+        if unit {
+            let mut tail = written.split_off(span.end);
+            written.truncate(span.start);
+            written.extend(coming);
+            written.append(&mut tail);
+        } else {
+            for (value, place) in coming.into_iter().zip(picked) {
+                written[place] = value;
+            }
+        }
+        Ok(())
+    }
+
     fn element_within(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {
+        if let Value::Span(bounds) = at {
+            let row = match target {
+                Value::Vector(values) => values.as_ref().clone(),
+                Value::Text(text) if self.table.flag("op.index.strings") => {
+                    text.chars().map(|letter| Value::text(&letter.to_string())).collect()
+                }
+                _ => return Err(self.span_complaint("unsupported")),
+            };
+            let (_, picked, _) = self.span_selection(bounds, row.len())?;
+            let selected: Vec<Value> = picked.iter().map(|&i| row[i].clone()).collect();
+            return Ok(if matches!(target, Value::Text(_)) {
+                Value::text(&selected.iter().map(Value::bare).collect::<String>())
+            } else {
+                Value::Vector(Rc::new(selected))
+            });
+        }
         // A language may say that a place an array does not hold reads as
         // nothing rather than stopping the program.
         // A language that reads an absent place as nothing, and has a

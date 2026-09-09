@@ -2264,6 +2264,13 @@ impl<'a> Engine<'a> {
                     _ => return Err("Cannot walk a value that is not an array".to_string().into()),
                 }
             }
+            Action::SliceUnavailable => return Err(self.lang.slice_unsupported.clone().unwrap_or_default().into()),
+            Action::Slice => {
+                let step = self.drop_top()?;
+                let stop = self.drop_top()?;
+                let start = self.drop_top()?;
+                Value::Slice(Rc::new([start, stop, step]))
+            }
             Action::AtEnd => return Err("An empty index belongs on the left of an assignment".to_string().into()),
             // A place in text holds one letter and no more, so what is
             // written there is the first letter of what was handed
@@ -2953,6 +2960,9 @@ impl<'a> Engine<'a> {
             Action::Toward => self.element(a, b, Reading::Toward)?,
             // Reaching inside makes the place on the way where nothing
             // is there yet, which is what a write to it means.
+            Action::Nested if matches!(b, Value::Slice(_)) => {
+                return Err(self.lang.slice_detached.clone().unwrap_or_default());
+            }
             Action::Nested if self.lang.makes_places => {
                 self.hushed.set(self.hushed.get() + 1);
                 let found = self.element(a, b, Reading::Plain).unwrap_or(Value::Null);
@@ -3448,7 +3458,95 @@ impl<'a> Engine<'a> {
         return self.element_held(target, at, how).map(seen);
     }
 
+    /// Bring the bounds within the row before walking it. A missing
+    /// last bound on a backward walk lies before the first place;
+    /// an expressly written minus one lies at the last place instead.
+    fn slice_places(&self, parts: &[Value; 3], size: usize) -> Res<(usize, usize, i128, Vec<usize>)> {
+        let count = |v: &Value| -> Res<Option<i128>> {
+            Ok(match v {
+                Value::Null => None,
+                Value::Small(n) => Some(*n as i128),
+                Value::Flag(b) => Some(i128::from(*b)),
+                Value::Huge(n) => Some(n.to_i128().unwrap_or_else(|| {
+                    if n.sign() == num_bigint::Sign::Minus { i128::MIN } else { i128::MAX }
+                })),
+                _ => return Err(self.lang.slice_bounds.clone().unwrap_or_default()),
+            })
+        };
+        let stride = count(&parts[2])?.unwrap_or(1);
+        if stride == 0 {
+            return Err(self.lang.slice_zero.clone().unwrap_or_default());
+        }
+        let length = size as i128;
+        let backwards = stride < 0;
+        let lower = if backwards { -1 } else { 0 };
+        let upper = if backwards { length - 1 } else { length };
+        let bound = |v: &Value, absent: i128| -> Res<i128> {
+            Ok(match count(v)? {
+                None => absent,
+                Some(n) => {
+                    let n = if n < 0 { n.saturating_add(length) } else { n };
+                    n.clamp(lower, upper)
+                }
+            })
+        };
+        let start = bound(&parts[0], if backwards { length - 1 } else { 0 })?;
+        let stop = bound(&parts[1], if backwards { -1 } else { length })?;
+        let mut places = Vec::new();
+        let mut at = start;
+        while if backwards { at > stop } else { at < stop } {
+            places.push(at as usize);
+            at = at.saturating_add(stride);
+        }
+        Ok((start.max(0) as usize, stop.max(start).max(0) as usize, stride, places))
+    }
+
+    fn read_slice(&self, target: &Value, parts: &[Value; 3]) -> Res<Value> {
+        match target {
+            Value::Array(items) => {
+                let (_, _, _, places) = self.slice_places(parts, items.len())?;
+                Ok(Value::array(places.into_iter().map(|i| items[i].clone()).collect()))
+            }
+            Value::Text(text) if self.lang.text_indexable => {
+                let letters: Vec<char> = text.chars().collect();
+                let (_, _, _, places) = self.slice_places(parts, letters.len())?;
+                Ok(Value::text(&places.into_iter().map(|i| letters[i]).collect::<String>()))
+            }
+            _ => Err(self.lang.slice_unsupported.clone().unwrap_or_default()),
+        }
+    }
+
+    fn write_slice(&self, target: Value, parts: &[Value; 3], given: Value) -> Res<Value> {
+        let Value::Array(mut items) = target else {
+            return Err(self.lang.slice_unsupported.clone().unwrap_or_default());
+        };
+        let (start, stop, step, places) = self.slice_places(parts, items.len())?;
+        let replacement = match given {
+            Value::Array(values) => values.as_ref().clone(),
+            Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
+            Value::Map(pairs) => pairs.iter().map(|(key, _)| key.clone()).collect(),
+            _ => return Err(self.lang.slice_assign.clone().unwrap_or_default()),
+        };
+        if step == 1 {
+            Rc::make_mut(&mut items).splice(start..stop, replacement);
+        } else {
+            if replacement.len() != places.len() {
+                let words = &self.lang.slice_length;
+                return Err(format!("{} {} {} {}", words.first().map_or("", String::as_str), replacement.len(),
+                    words.get(1).map_or("", String::as_str), places.len()));
+            }
+            let row = Rc::make_mut(&mut items);
+            for (at, value) in places.into_iter().zip(replacement) {
+                row[at] = value;
+            }
+        }
+        Ok(Value::Array(items))
+    }
+
     fn element_held(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
+        if let Value::Slice(parts) = at {
+            return self.read_slice(target, parts);
+        }
         // A language may say that a place an array does not hold reads as
         // nothing rather than stopping the program, and one with a word
         // for a warning says so before reading nothing there.
@@ -4221,6 +4319,9 @@ impl<'a> Engine<'a> {
                 let target = args.pop().expect("the array");
                 let v = args.pop().expect("the value");
                 let at = self.key(&args.pop().expect("the key"));
+                if let Value::Slice(parts) = &at {
+                    return self.write_slice(target, parts, v);
+                }
                 // A language that makes a place on writing into it finds
                 // an array where nothing at all was there.
                 let target = match target {
