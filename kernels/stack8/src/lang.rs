@@ -340,6 +340,28 @@ pub struct Lang {
     pub compound: HashMap<String, Action>,
     pub static_words: Vec<String>,
     pub global_words: Vec<String>,
+    pub type_params_open: Vec<String>,
+    pub type_params_close: Vec<String>,
+    pub type_alias_words: Vec<String>,
+    pub with_words: Vec<String>,
+    pub with_as: Vec<String>,
+    pub with_open: Vec<String>,
+    pub with_close: Vec<String>,
+    pub with_unsupported: Vec<String>,
+    pub nonlocal_words: Vec<String>,
+    pub nonlocal_unsupported: Vec<String>,
+    pub delete_words: Vec<String>,
+    pub delete_unsupported: Vec<String>,
+    pub yield_words: Vec<String>,
+    pub yield_from: Vec<String>,
+    pub yield_unsupported: Vec<String>,
+    pub tuple_separator: Vec<String>,
+    pub tuple_unsupported: Vec<String>,
+    pub value_spread: Vec<String>,
+    pub value_spread_unsupported: Vec<String>,
+    pub index_spread_unsupported: Vec<String>,
+    pub conditional_words: Vec<String>,
+    pub short_bare: bool,
     pub import_words: Vec<String>,
     pub import_from_words: Vec<String>,
     pub import_as_words: Vec<String>,
@@ -686,6 +708,7 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+w ext.stmt.type_params.open | w ext.stmt.type_params.close | w ext.stmt.type_alias | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.with.group.open | w ext.stmt.with.group.close | w ext.stmt.with.unsupported | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unsupported | w ext.stmt.delete | w ext.stmt.delete.unsupported | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unsupported | w ext.syntax.tuple.separator | w ext.syntax.tuple.unsupported | w ext.syntax.value.spread | w ext.syntax.value.spread.unsupported | w ext.op.index.spread.unsupported | w ext.op.conditional | b ext.stmt.function.short.bare
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
 w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
@@ -1429,6 +1452,28 @@ impl Lang {
             compound: HashMap::new(),
             static_words: r.strings("ext.stmt.static")?,
             global_words: r.strings("ext.stmt.global")?,
+            type_params_open: r.strings("ext.stmt.type_params.open")?,
+            type_params_close: r.strings("ext.stmt.type_params.close")?,
+            type_alias_words: r.strings("ext.stmt.type_alias")?,
+            with_words: r.strings("ext.stmt.with")?,
+            with_as: r.strings("ext.stmt.with.as")?,
+            with_open: r.strings("ext.stmt.with.group.open")?,
+            with_close: r.strings("ext.stmt.with.group.close")?,
+            with_unsupported: r.strings("ext.stmt.with.unsupported")?,
+            nonlocal_words: r.strings("ext.stmt.nonlocal")?,
+            nonlocal_unsupported: r.strings("ext.stmt.nonlocal.unsupported")?,
+            delete_words: r.strings("ext.stmt.delete")?,
+            delete_unsupported: r.strings("ext.stmt.delete.unsupported")?,
+            yield_words: r.strings("ext.stmt.yield")?,
+            yield_from: r.strings("ext.stmt.yield.from")?,
+            yield_unsupported: r.strings("ext.stmt.yield.unsupported")?,
+            tuple_separator: r.strings("ext.syntax.tuple.separator")?,
+            tuple_unsupported: r.strings("ext.syntax.tuple.unsupported")?,
+            value_spread: r.strings("ext.syntax.value.spread")?,
+            value_spread_unsupported: r.strings("ext.syntax.value.spread.unsupported")?,
+            index_spread_unsupported: r.strings("ext.op.index.spread.unsupported")?,
+            conditional_words: r.strings("ext.op.conditional")?,
+            short_bare: r.flag("ext.stmt.function.short.bare")?,
             import_words: r.strings("ext.stmt.import")?,
             import_from_words: r.strings("ext.stmt.import.from")?,
             import_as_words: r.strings("ext.stmt.import.as")?,
@@ -1673,6 +1718,9 @@ impl Lang {
         if let Some((question, mark)) = &self.ternary {
             place(question);
             place(mark);
+        }
+        for words in [&self.type_params_open, &self.type_params_close, &self.type_alias_words, &self.with_words, &self.with_as, &self.with_open, &self.with_close, &self.nonlocal_words, &self.delete_words, &self.yield_words, &self.yield_from, &self.tuple_separator, &self.value_spread, &self.conditional_words] {
+            for lex in words { place(lex); }
         }
         for lex in &self.plus_words {
             place(lex);

@@ -1,1 +1,1 @@
-NotImplementedError: context managers are not supported
+PythonError: NotImplementedError: context managers are not supported

@@ -1876,7 +1876,7 @@ impl<'a> Machine<'a> {
                 }))))
             }
             Form::Attempt { body, clauses, last, otherwise } => {
-                if clauses.iter().any(|part| part.grouped) {
+                if self.table.has_any("ext.stmt.catch.group.unsupported") && clauses.iter().any(|part| part.grouped) {
                     return Err(self.table.single("ext.stmt.catch.group.unsupported").unwrap_or_default().to_string().into());
                 }
                 let preceding = self.holding_fault.len();
@@ -3690,6 +3690,7 @@ impl<'a> Machine<'a> {
                 }
                 Value::Vector(Rc::new(told))
             }
+            Prim::Unready => return Err(v[0].render(self.wording()).to_string()),
             Prim::Complain => {
                 n(2)?;
                 let w = self.wording();

@@ -954,7 +954,34 @@ impl<'a> Compiler<'a> {
                 self.take();
                 let gives_cell = self.skip_reference();
                 let name = self.want_name("after the function keyword")?;
+                self.type_parameters()?;
                 return self.function(name, gives_cell);
+            }
+            if Lang::spells(&lang.type_alias_words, &w) && self.look_ahead(1).shape == Shape::Instr {
+                self.take();
+                self.want_name("as the alias name")?;
+                self.type_parameters()?;
+                self.expect_assign("after the alias name")?;
+                return self.annotation_expression(&[]);
+            }
+            if Lang::spells(&lang.with_words, &w) { return self.with_statement(); }
+            if Lang::spells(&lang.nonlocal_words, &w) {
+                self.take();
+                loop {
+                    self.want_name("as a nonlocal name")?;
+                    if !self.on_any(&lang.tuple_separator) { break; }
+                    self.take();
+                }
+                self.unready(&lang.nonlocal_unsupported);
+                return Ok(());
+            }
+            if Lang::spells(&lang.delete_words, &w) {
+                self.take();
+                let start = self.mark();
+                self.expression_row()?;
+                self.piece().instrs.truncate(start);
+                self.unready(&lang.delete_unsupported);
+                return Ok(());
             }
             if Lang::spells(&lang.pass_words, &w) {
                 self.take();
@@ -1231,7 +1258,7 @@ impl<'a> Compiler<'a> {
             // to hold nothing where it held nothing at all: reading it
             // is then reading a name written to.
             let cell = Cell { ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false };
-            self.put(Instr::Ready(cell));
+            if !self.lang.bind_names { self.put(Instr::Ready(cell)); }
             self.piece().globals.push((name.clone(), name));
             match &sep {
                 Some(s) if self.at_symbol(s) => {
@@ -2083,7 +2110,7 @@ impl<'a> Compiler<'a> {
         } else {
             let tier = lang.range_marks.iter().filter_map(|r| lang.precedence.get(r)).min().copied().unwrap_or(0);
             let from = self.mark();
-            self.expr(tier + 1)?;
+            if !lang.tuple_separator.is_empty() { self.expression_row()?; } else { self.expr(tier + 1)?; }
             if !(self.look().shape == Shape::Sign && Lang::spells(&lang.range_marks, &self.look().lexeme)) {
                 // Not a range: what was read is a thing to walk through.
                 if !lang.for_collections {
@@ -2130,6 +2157,67 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    fn unready(&mut self, words: &[String]) {
+        self.act(Action::Unready(Rc::from(words.first().map_or("", String::as_str))), 0);
+    }
+
+    /// Parameters naming kinds are read with their bounds and then put by.
+    fn type_parameters(&mut self) -> Res<()> {
+        let lang = self.lang;
+        if !self.on_any(&lang.type_params_open) { return Ok(()); }
+        self.take();
+        self.annotation_expression(&lang.type_params_close)?;
+        self.want_sign(lang.type_params_close.first().map_or("", String::as_str), "after type parameters")
+    }
+
+    /// A row is read to its end even where tuples cannot yet be kept.
+    fn expression_row(&mut self) -> Res<()> {
+        let lang = self.lang;
+        let from = self.mark();
+        let empty = lang.grouping.as_ref().map_or(false, |b| self.at_symbol(&b.close));
+        if !empty { self.expr(0)?; }
+        let mut tuple = empty;
+        while self.on_any(&lang.tuple_separator) {
+            tuple = true;
+            self.take();
+            if self.on_sep() || matches!(self.look().shape, Shape::Close | Shape::Finish)
+                || self.on_any(&lang.block_intros)
+                || lang.grouping.as_ref().map_or(false, |b| self.at_symbol(&b.close)) { break; }
+            self.expr(0)?;
+        }
+        if tuple {
+            self.piece().instrs.truncate(from);
+            self.unready(&lang.tuple_unsupported);
+        }
+        Ok(())
+    }
+
+    fn with_statement(&mut self) -> Res<()> {
+        let lang = self.lang;
+        self.take();
+        let from = self.mark();
+        let enclosed = self.on_any(&lang.with_open);
+        if enclosed { self.take(); }
+        loop {
+            self.expr(0)?;
+            if self.on_keyword(&lang.with_as) {
+                self.take();
+                self.expr(0)?;
+            }
+            if !self.on_any(&lang.tuple_separator) { break; }
+            self.take();
+            if enclosed && self.on_any(&lang.with_close) { break; }
+        }
+        if enclosed {
+            self.want_sign(lang.with_close.first().map_or("", String::as_str), "after context managers")?;
+            if self.on_keyword(&lang.with_as) { self.take(); self.expr(0)?; }
+        }
+        self.attempt_body()?;
+        self.piece().instrs.truncate(from);
+        self.unready(&lang.with_unsupported);
+        Ok(())
+    }
+
     fn return_stmt(&mut self) -> Res<()> {
         self.take();
         // A routine that gives back a cell answers with the cell of
@@ -2142,6 +2230,8 @@ impl<'a> Compiler<'a> {
             self.constant(Value::Null);
         } else if by_cell {
             self.a_cell(&self.lang.unshared_given.clone(), true, None)?;
+        } else if !self.lang.tuple_separator.is_empty() {
+            self.expression_row()?;
         } else {
             self.expr(0)?;
         }
@@ -2474,6 +2564,7 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let word = self.take().lexeme;
         let name = self.want_name("as the class name")?;
+        self.type_parameters()?;
         // A class of method names only may stand on several at once; a
         // class stands on one and answers to any number.
         let bare = Lang::spells(&lang.interface_words, &word);
@@ -2790,7 +2881,7 @@ impl<'a> Compiler<'a> {
                 self.formal_kinds.push(kind.clone());
                 kinded.push(kind);
                 formals.push(self.want_name("as a parameter name")?);
-                if self.on_any(&lang.annotation_marks) {
+                if self.on_any(&lang.annotation_marks) && !self.at_symbol(&call.close) {
                     self.take();
                     let mut ends = lang.assign_words.clone();
                     ends.push(call.close.clone());
@@ -2819,7 +2910,9 @@ impl<'a> Compiler<'a> {
                 self.take();
                 spares.push((formals.len() - 1, self.pos));
                 // Read once here only to step over it.
+                let kinds_before = self.formal_kinds.clone();
                 let spare = self.member_value()?;
+                self.formal_kinds = kinds_before;
                 // A parameter written with a kind and given nothing to
                 // fall back on takes nothing as well as that kind, which
                 // the reference asks to be written out rather than left
@@ -3033,7 +3126,30 @@ impl<'a> Compiler<'a> {
     /// expression it gives back. Every name standing around it is taken
     /// away with it as it stands, since a routine written this short has
     /// nowhere to say which of them it wants.
+    fn bare_short_value(&mut self) -> Res<()> {
+        let lang = self.lang;
+        let mut call = lang.calling.clone().ok_or_else(|| "A routine needs call brackets".to_string())?;
+        call.close = lang.short_function.as_ref().unwrap().1.clone();
+        let (names, defaults, _) = self.parameters(ANONYMOUS, &call)?;
+        let least = names.len() - defaults.len();
+        let held_defaults = defaults.clone();
+        let program = self.routine(ANONYMOUS, names, least, true, |a| {
+            a.carrying.extend(defaults.iter().map(|(slot, _)| *slot));
+            a.expr(0)?;
+            a.piece().result_touched = true;
+            a.write(RESULT_CELL);
+            Ok(())
+        })?;
+        let after = self.pos;
+        for (_, at) in &held_defaults { self.pos = *at; self.expr(0)?; }
+        self.pos = after;
+        self.constant(Value::Routine(program));
+        if !held_defaults.is_empty() { self.act(Action::Close, held_defaults.len() + 1); }
+        Ok(())
+    }
+
     fn short_value(&mut self) -> Res<()> {
+        if self.lang.short_bare { return self.bare_short_value(); }
         let lang = self.lang;
         let (_, mark) = lang.short_function.clone().expect("a word for a short routine");
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
@@ -3908,6 +4024,22 @@ impl<'a> Compiler<'a> {
                 self.act(Action::Kindred(Rc::from(named.as_str())), 1);
                 continue;
             }
+            if floor == 0 && lang.conditional_words.first() == Some(&text) {
+                self.take();
+                let first: Vec<Instr> = self.piece().instrs.drain(from..).collect();
+                self.expr(1)?;
+                let otherwise = self.skip();
+                let at = self.mark();
+                for word in relocated(first, at as i64 - from as i64) { self.put(word); }
+                let after = self.leap();
+                self.land(otherwise);
+                let word = lang.conditional_words.get(1).cloned().unwrap_or_default();
+                if !self.look().is_lexeme(Shape::Instr, &word) { return Err(format!("Expected '{}'", word)); }
+                self.take();
+                self.expr(0)?;
+                self.land(after);
+                continue;
+            }
             let Some(infix) = lang.dyadic.get(&text).cloned() else {
                 if floor == 0 && lang.ternary.as_ref().map_or(false, |(q, _)| self.at_symbol(q)) {
                     self.ternary()?;
@@ -4070,6 +4202,26 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let from = self.mark();
         let tok = self.look().clone();
+        if Lang::spells(&lang.yield_words, &tok.lexeme) {
+            self.take();
+            if self.on_keyword(&lang.yield_from) { self.take(); }
+            let at = self.mark();
+            if !self.on_sep() && !matches!(self.look().shape, Shape::Close | Shape::Finish)
+                && !lang.grouping.as_ref().map_or(false, |b| self.at_symbol(&b.close)) {
+                self.expression_row()?;
+            }
+            self.piece().instrs.truncate(at);
+            self.unready(&lang.yield_unsupported);
+            return Ok(());
+        }
+        if self.on_any(&lang.value_spread) {
+            self.take();
+            let began = self.mark();
+            self.expr(0)?;
+            self.piece().instrs.truncate(began);
+            self.unready(&lang.value_spread_unsupported);
+            return Ok(());
+        }
         // `list($a, $b) = v`: the places named on the left each take
         // the matching place of the value on the right.
         if Lang::spells(&lang.unpack_words, &tok.lexeme) && matches!(tok.shape, Shape::Instr | Shape::Sign) {
@@ -4190,7 +4342,7 @@ impl<'a> Compiler<'a> {
                 } else if Lang::spells(&lang.null_words, &tok.lexeme) {
                     self.constant(Value::Null);
                 } else if lang.short_function.as_ref().map_or(false, |(word, _)| word == &tok.lexeme)
-                    && lang.calling.as_ref().map_or(false, |c| self.at_symbol(&c.open))
+                    && (lang.short_bare || lang.calling.as_ref().map_or(false, |c| self.at_symbol(&c.open)))
                 {
                     // A routine written short is one expression, and
                     // takes with it every name standing around it: what
@@ -4327,7 +4479,7 @@ impl<'a> Compiler<'a> {
                 if let Some(group) = lang.grouping.clone() {
                     if tok.lexeme == group.open {
                         self.take();
-                        self.expr(0)?;
+                        if !lang.tuple_separator.is_empty() { self.expression_row()?; } else { self.expr(0)?; }
                         self.want_sign(&group.close, "to close a group")?;
                         self.called_on_value()?;
                         return self.indexing(from);
@@ -4974,6 +5126,14 @@ impl<'a> Compiler<'a> {
     /// One place or span within brackets. Commas belong to the row
     /// of places, and are left for the brackets themselves to gather.
     fn slice_part(&mut self, close: &str, separator: Option<&str>) -> Res<()> {
+        if self.on_any(&self.lang.value_spread) {
+            self.take();
+            let start = self.mark();
+            self.expr(0)?;
+            self.piece().instrs.truncate(start);
+            self.unready(&self.lang.index_spread_unsupported);
+            return Ok(());
+        }
         let marks = self.lang.slice_marks.clone();
         let ellipsis = self.lang.slice_ellipsis.clone();
         if ellipsis.iter().any(|word| self.at_symbol(word)) {

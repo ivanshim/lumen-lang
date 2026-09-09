@@ -82,6 +82,7 @@ system.kind.array:L system.kind.null:L \
 /// Extension labels beyond the core: optional, an absent one is empty
 /// (or off). The reference kernels skip them; this one reads them.
 const EXT_TAGS: &str = "\
+ext.stmt.type_params.open:L ext.stmt.type_params.close:L ext.stmt.type_alias:L ext.stmt.with:L ext.stmt.with.as:L ext.stmt.with.group.open:L ext.stmt.with.group.close:L ext.stmt.with.unsupported:L ext.stmt.nonlocal:L ext.stmt.nonlocal.unsupported:L ext.stmt.delete:L ext.stmt.delete.unsupported:L ext.stmt.yield:L ext.stmt.yield.from:L ext.stmt.yield.unsupported:L ext.syntax.tuple.separator:L ext.syntax.tuple.unsupported:L ext.syntax.value.spread:L ext.syntax.value.spread.unsupported:L ext.op.index.spread.unsupported:L ext.op.conditional:L ext.stmt.function.short.bare:B \
 ext.op.index.slice.ellipsis:L ext.op.index.slice:L ext.op.index.slice.zero:L ext.op.index.slice.bounds:L ext.op.index.slice.unsupported:L ext.op.index.slice.assign:L ext.op.index.slice.length:L ext.op.index.slice.detached:L \
 ext.lexical.epilogue:L ext.builtin.echo:L ext.syntax.call.bare:B ext.op.increment:L ext.op.decrement:L \
 ext.lexical.interpolating_quotes:L ext.lexical.heredoc:L ext.stmt.for.c:L ext.op.assign.compound:B ext.stmt.static:L ext.stmt.global:L \
@@ -585,7 +586,7 @@ impl Table {
             }
         }
         let mut all: Vec<String> = self.dyadic.keys().chain(self.monadic.keys()).chain(self.precedence.keys()).chain(self.compound.keys()).cloned().collect();
-        let symbol_labels = ["ext.op.index.slice.ellipsis", "ext.op.index.slice", "syntax.group.open", "syntax.group.close", "syntax.call.open", "syntax.call.separator", "syntax.call.close",
+        let symbol_labels = ["ext.stmt.type_params.open", "ext.stmt.type_params.close", "ext.stmt.type_alias", "ext.stmt.with", "ext.stmt.with.as", "ext.stmt.with.group.open", "ext.stmt.with.group.close", "ext.stmt.nonlocal", "ext.stmt.delete", "ext.stmt.yield", "ext.stmt.yield.from", "ext.syntax.tuple.separator", "ext.syntax.value.spread", "ext.op.conditional", "ext.op.index.slice.ellipsis", "ext.op.index.slice", "syntax.group.open", "syntax.group.close", "syntax.call.open", "syntax.call.separator", "syntax.call.close",
             "syntax.call.label", "syntax.array.open", "syntax.array.separator", "syntax.array.close", "op.index.open", "op.index.close",
             "block.intro", "stmt.assign", "stmt.terminator", "stmt.let.annotation", "stmt.function.returns", "stack.dup", "stack.drop",
             "stack.swap", "stack.over", "stack.rot", "stack.eval", "stack.program.open", "stack.program.close", "stmt.let",

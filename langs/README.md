@@ -270,6 +270,9 @@ only. The extension labels so far, all from PHP:
   `x = x op e` (`+=`, `.=`, `**=`), except where that spelling is already
   an operator (`<=`) or the operator ends in the sign (`==`, so `===`
   stays an operator).
+- With `ext.syntax.call.bind_names`, a global declaration binds its names
+  without creating values for names not yet written. It may stand at the
+  top level as well as within a routine.
 - `ext.stmt.static`, `ext.stmt.global`: inside a function, `static x = e;`
   makes x a name for a hidden global set when the function is defined,
   so the value lasts from call to call; `global a, b;` makes the names
@@ -507,13 +510,54 @@ only. The extension labels so far, all from PHP:
   and set aside. Where spelled, a throw without a value raises again what
   the innermost clause is holding. `ext.stmt.throw.empty` gives the words
   said when there is no such value.
+- `ext.stmt.type_params.open` and `.close`: brackets after a routine or
+  class name enclosing type parameters, their bounds and defaults. The
+  reader takes the whole list and puts it by. `ext.stmt.type_alias` is a
+  soft word before an alias name and a write sign; a call using the same
+  word remains a call. The alias's type expression is read and put by;
+  this stage keeps no alias value.
+- `ext.stmt.with`, `ext.stmt.with.as`: a context statement and the word
+  binding what a context gives. `ext.stmt.with.group.open` and `.close`
+  enclose a row of contexts, with a last comma allowed. Contexts, targets
+  and body are read whole. Reaching the statement stops in the words of
+  `ext.stmt.with.unsupported`; entering and leaving contexts is wanting.
+- `ext.stmt.nonlocal`: a row of names belonging to an enclosing routine.
+  The row is read, but reaching it stops with
+  `ext.stmt.nonlocal.unsupported`; sharing those cells is still wanting.
+  At module level it is likewise read and refused when reached.
+- `ext.stmt.delete`: a row of places to remove, including grouped rows,
+  members and spans. The places are read without fetching them. Reaching
+  the statement stops in `ext.stmt.delete.unsupported` words; the existing
+  unset operation does not give every such place its required meaning.
+- `ext.stmt.yield` and `ext.stmt.yield.from`: a value given by a suspended
+  routine, or values given from another. The value, including a starred
+  row, is read whole. Reaching it stops with `ext.stmt.yield.unsupported`;
+  these readers do not yet make suspended routines.
+- `ext.syntax.tuple.separator`: the sign joining expressions into a tuple
+  in a group, a return, or a loop's source. Empty groups and a last comma
+  are read too. `ext.syntax.tuple.unsupported` gives the complaint on
+  reaching a tuple, since an array would have a different meaning.
+- `ext.syntax.value.spread`: a sign handing out a value's items in an
+  expression row. Such an expression is read and refused when reached
+  with `ext.syntax.value.spread.unsupported`. In a subscript the complaint
+  is `ext.op.index.spread.unsupported`. Call spreading retains the
+  working given by `ext.syntax.call.spread`.
+- `ext.op.conditional`: two words, the first before the test following a
+  value, the second before its other value. The test runs first and only
+  the chosen value is worked out; the other arm may itself be conditional.
+- `ext.stmt.function.short.bare`: a switch; a short routine has no brackets
+  about its parameters. Its body mark ends the parameter list. Gathering,
+  positional and keyword marks follow the ordinary parameter rules, and
+  defaults are kept where the short routine is written.
 - `ext.stmt.assert`: a condition that must hold, followed, if wished, by
   the call separator and a message. Only a false condition works out the
   message and raises it; `ext.stmt.assert.kind` names the kind so raised.
 - `ext.stmt.catch.group`: a sign before the classes of a clause taking
-  parts of an exception group. The clause is read whole, but reaching the
-  attempt stops with `ext.stmt.catch.group.unsupported`, since the kernels
-  cannot yet part such groups.
+  parts of an exception group. Where `ext.stmt.catch.group.unsupported`
+  is spelled, reaching the attempt stops in those words. Without those
+  words the clause runs as an ordinary catch. Python presently chooses
+  this narrower meaning: `except*` reads and runs as `except`; groups
+  are not parted.
 - `ext.lexical.name_lead`: signs a name may be led by that say nothing,
   PHP's `\TypeError`.
 - `ext.lexical.template`: a switch; the source is text with code in it.
@@ -1785,6 +1829,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.bit.xor` | - | - | - | - | `^` | - | - | - | - | - |
 | `ext.op.cast` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.compare` | - | - | - | - | `<=>` | - | - | - | - | - |
+| `ext.op.conditional` | - | - | `if` `else` | - | - | - | - | - | - | - |
 | `ext.op.decrement` | - | - | - | - | `--` | - | - | - | - | - |
 | `ext.op.decrement.text` | - | - | - | - | `Decrement on non-numeric string has no effect and is deprecated` | - | - | - | - | - |
 | `ext.op.hush` | - | - | - | - | `@` | - | - | - | - | - |
@@ -1805,6 +1850,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.index.slice.length` | - | - | `attempt to assign sequence of size` `to extended slice of size` | - | - | - | - | - | - | - |
 | `ext.op.index.slice.unsupported` | - | - | `this slice operation is not supported` | - | - | - | - | - | - | - |
 | `ext.op.index.slice.zero` | - | - | `slice step cannot be zero` | - | - | - | - | - | - | - |
+| `ext.op.index.spread.unsupported` | - | - | `NotImplementedError: starred subscripts are not supported` | - | - | - | - | - | - | - |
 | `ext.op.index.text` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.text.first` | - | - | - | - | `Only the first byte will be assigned to the string offset` | - | - | - | - | - |
 | `ext.op.instanceof` | - | - | - | - | `instanceof` | - | - | - | - | - |
@@ -1847,7 +1893,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.catch` | - | - | `except` | - | `catch` | - | - | - | - | - |
 | `ext.stmt.catch.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.group` | - | - | `*` | - | - | - | - | - | - | - |
-| `ext.stmt.catch.group.unsupported` | - | - | `Exception groups are not supported` | - | - | - | - | - | - | - |
+| `ext.stmt.catch.group.unsupported` | - | - | - | - | - | - | - | - | - | - |
 | `ext.stmt.catch.invalid` | - | - | `catching classes that do not inherit from BaseException is not allowed` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.separator` | - | - | `,` | - | `\|` | - | - | - | - | - |
 | `ext.stmt.catch.tuple.close` | - | - | `)` | - | - | - | - | - | - | - |
@@ -1876,6 +1922,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.decorator` | - | - | `@` | - | - | - | - | - | - | - |
 | `ext.stmt.decorator.amiss` | - | - | `A decorator must stand on its own line before a function definition` | - | - | - | - | - | - | - |
 | `ext.stmt.default` | - | - | - | - | `default` | - | - | - | - | - |
+| `ext.stmt.delete` | - | - | `del` | - | - | - | - | - | - | - |
+| `ext.stmt.delete.unsupported` | - | - | `NotImplementedError: deletion is not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.do` | - | - | - | - | `do` | - | - | - | - | - |
 | `ext.stmt.finally` | - | - | `finally` | - | `finally` | - | - | - | - | - |
 | `ext.stmt.for.c` | - | - | - | - | `for` | - | - | - | - | - |
@@ -1890,11 +1938,14 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.function.parameters.amiss` | - | - | `SyntaxError: invalid parameter list` | - | - | - | - | - | - | - |
 | `ext.stmt.function.positional_only` | - | - | `/` | - | - | - | - | - | - | - |
 | `ext.stmt.function.returns` | - | - | `->` | - | `:` | - | - | - | - | - |
-| `ext.stmt.function.short` | - | - | - | - | `fn` `=>` | - | - | - | - | - |
-| `ext.stmt.global` | - | - | - | - | `global` | - | - | - | - | - |
+| `ext.stmt.function.short` | - | - | `lambda` `:` | - | `fn` `=>` | - | - | - | - | - |
+| `ext.stmt.function.short.bare` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.stmt.global` | - | - | `global` | - | `global` | - | - | - | - | - |
 | `ext.stmt.import` | - | - | `import` | - | - | - | - | - | - | - |
 | `ext.stmt.import.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.import.from` | - | - | `from` | - | - | - | - | - | - | - |
+| `ext.stmt.nonlocal` | - | - | `nonlocal` | - | - | - | - | - | - | - |
+| `ext.stmt.nonlocal.unsupported` | - | - | `NotImplementedError: nonlocal bindings are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.static` | - | - | - | - | `static` | - | - | - | - | - |
 | `ext.stmt.static.read_in` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.switch` | - | - | - | - | `switch` | - | - | - | - | - |
@@ -1905,7 +1956,18 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.throw.from` | - | - | `from` | - | - | - | - | - | - | - |
 | `ext.stmt.try` | - | - | `try` | - | `try` | - | - | - | - | - |
 | `ext.stmt.try.else` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.stmt.type_alias` | - | - | `type` | - | - | - | - | - | - | - |
+| `ext.stmt.type_params.close` | - | - | `]` | - | - | - | - | - | - | - |
+| `ext.stmt.type_params.open` | - | - | `[` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack` | - | - | - | - | `list` | - | - | - | - | - |
+| `ext.stmt.with` | - | - | `with` | - | - | - | - | - | - | - |
+| `ext.stmt.with.as` | - | - | `as` | - | - | - | - | - | - | - |
+| `ext.stmt.with.group.close` | - | - | `)` | - | - | - | - | - | - | - |
+| `ext.stmt.with.group.open` | - | - | `(` | - | - | - | - | - | - | - |
+| `ext.stmt.with.unsupported` | - | - | `NotImplementedError: context managers are not supported` | - | - | - | - | - | - | - |
+| `ext.stmt.yield` | - | - | `yield` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.from` | - | - | `from` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.unsupported` | - | - | `NotImplementedError: generators are not supported` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss` | - | - | `TypeError: invalid arguments` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.builtin` | - | - | `TypeError: keyword arguments for this builtin are not supported` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.duplicate` | - | - | `TypeError: multiple values for argument '` `'` | - | - | - | - | - | - | - |
@@ -1917,6 +1979,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.syntax.call.spread.amiss` | - | - | `TypeError: argument after * must be an iterable` | - | - | - | - | - | - | - |
 | `ext.syntax.call.spread.pairs` | - | - | `**` | - | - | - | - | - | - | - |
 | `ext.syntax.call.spread.pairs.amiss` | - | - | `TypeError: argument after ** must be a mapping with string keys` | - | - | - | - | - | - | - |
+| `ext.syntax.tuple.separator` | - | - | `,` | - | - | - | - | - | - | - |
+| `ext.syntax.tuple.unsupported` | - | - | `NotImplementedError: tuple expressions are not supported` | - | - | - | - | - | - | - |
+| `ext.syntax.value.spread` | - | - | `*` | - | - | - | - | - | - | - |
+| `ext.syntax.value.spread.unsupported` | - | - | `NotImplementedError: starred expressions are not supported` | - | - | - | - | - | - | - |
 | `ext.system.args.count` | - | - | - | - | `$argc` | - | - | - | - | - |
 | `ext.system.args.list` | - | - | - | - | `$argv` | - | - | - | - | - |
 | `ext.system.class.folded` | - | - | - | - | `true` | - | - | - | - | - |

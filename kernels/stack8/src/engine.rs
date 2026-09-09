@@ -1644,7 +1644,7 @@ impl<'a> Engine<'a> {
     /// Each arm runs in the same frame. A leap beyond its span is an
     /// outward return or loop step, and the last part runs before it goes.
     fn run_attempt(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], plan: &crate::code::Attempt) -> Flow<Passage> {
-        if plan.clauses.iter().any(|arm| arm.grouped) {
+        if self.lang.catch_group_unsupported.is_some() && plan.clauses.iter().any(|arm| arm.grouped) {
             return Err(self.lang.catch_group_unsupported.as_deref().unwrap_or("Exception groups are not supported").into());
         }
         let depth = self.data.len();
@@ -2372,6 +2372,7 @@ impl<'a> Engine<'a> {
                     _ => return Err("Cannot walk a value that is not an array".to_string().into()),
                 }
             }
+            Action::Unready(words) => return Err(words.to_string().into()),
             Action::SliceUnavailable => return Err(self.lang.slice_unsupported.clone().unwrap_or_default().into()),
             Action::Slice => {
                 let step = self.drop_top()?;

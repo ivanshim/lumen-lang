@@ -1,1 +1,1 @@
-NotImplementedError: starred subscripts are not supported
+PythonError: NotImplementedError: tuple expressions are not supported

@@ -162,6 +162,8 @@ pub enum Prim {
     /// a complaint of its own and has it told as the run's own are, in
     /// its place and through whatever stands in their way.
     Complain,
+    /// Words explaining why a read form cannot yet run.
+    Unready,
     /// The names of the classes, and of the routines, the run has bound
     /// (ext.builtin.classes, ext.builtin.routines).
     ClassesBound,

@@ -95,6 +95,8 @@ pub enum Action {
     Slice,
     /// A span whose meaning the run cannot yet honour.
     SliceUnavailable,
+    /// A shape read whole whose working is still wanting.
+    Unready(Rc<str>),
     Not,
     Negate,
     /// Whether a value is true, as a boolean.
