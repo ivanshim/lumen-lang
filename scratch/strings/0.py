@@ -1,3 +1,3 @@
 print("""first
-second 'quoted'
+second "?" and 'quoted'
 third""")
