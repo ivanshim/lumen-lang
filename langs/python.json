@@ -324,6 +324,7 @@
   "ext.op.lambda.enclosing": ["Lambda cannot read an enclosing function variable"],
   "ext.op.identical": ["is"],
   "ext.op.identical.negated": ["not"],
+  "ext.op.identical.unsupported": ["Identity of these values is not supported"],
   "ext.op.in": ["in"],
   "ext.op.in.negated": ["not"],
   "ext.op.in.unsupported": ["Membership requires an array, string or map"],

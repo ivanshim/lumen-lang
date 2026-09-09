@@ -988,12 +988,32 @@ impl<'a> Machine<'a> {
         number_spelled_in(v).map(|n| self.at_width(n))
     }
 
-    fn quoted_remainder(&self, item: &Value) -> String {
-        if let Value::Vector(elements) = item {
-            let parts: Vec<_> = elements.iter().map(|e| self.quoted_remainder(e)).collect();
-            return format!("[{}]", parts.join(", "));
+    fn quoted_remainder(&self, item: &Value) -> Result<String, String> {
+        match item {
+            Value::Vector(elements) => {
+                let mut shown = Vec::new();
+                for element in elements.iter() { shown.push(self.quoted_remainder(element)?); }
+                return Ok(format!("[{}]", shown.join(", ")));
+            }
+            Value::Dict(entries) => {
+                let mut shown = Vec::new();
+                for (key, value) in entries.iter() {
+                    let key = self.quoted_remainder(key)?;
+                    let value = self.quoted_remainder(value)?;
+                    shown.push(format!("{}: {}", key, value));
+                }
+                return Ok(format!("{{{}}}", shown.join(", ")));
+            }
+            Value::Frac(n) if n.places.is_some() => {
+                let mut shown = item.render(self.wording());
+                if !n.past_numbers() && !shown.chars().any(|c| matches!(c, '.' | 'e' | 'E')) { shown += ".0"; }
+                return Ok(shown);
+            }
+            Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Nil | Value::Ellipsis => return Ok(item.render(self.wording())),
+            Value::Text(_) => {}
+            _ => return Err(self.table.single("ext.op.rem.format.unsupported").unwrap_or_default().to_string()),
         }
-        let Value::Text(text) = item else { return item.render(self.wording()); };
+        let Value::Text(text) = item else { unreachable!() };
         let delimiter = if !text.contains('"') && text.contains('\'') { '"' } else { '\'' };
         let middle: String = text.chars().map(|letter| match letter {
             '\\' => "\\\\".to_string(),
@@ -1004,7 +1024,7 @@ impl<'a> Machine<'a> {
             c if c.is_control() => format!("\\x{:02x}", c as u32),
             c => c.to_string(),
         }).collect();
-        format!("{}{}{}", delimiter, middle, delimiter)
+        Ok(format!("{}{}{}", delimiter, middle, delimiter))
     }
 
     fn text_remainder(&self, pattern: &str, rhs: &Value) -> Result<String, String> {
@@ -1034,9 +1054,9 @@ impl<'a> Machine<'a> {
             if specified && code != 'f' { return Err(unsupported.to_string()); }
             let worth = arguments.next().ok_or_else(|| mismatch.to_string())?;
             match code {
-                'r' => result.push_str(&self.quoted_remainder(worth)),
+                'r' => result.push_str(&self.quoted_remainder(worth)?),
                 's' => {
-                    let text = if matches!(worth, Value::Vector(_)) { self.quoted_remainder(worth) } else { worth.render(self.wording()) };
+                    let text = match worth { Value::Text(s) => s.to_string(), other => self.quoted_remainder(other)? };
                     result.push_str(&text);
                 }
                 'x' | 'd' => {
@@ -4009,7 +4029,12 @@ impl<'a> Machine<'a> {
                 let identical = match (&v[0], &v[1]) {
                     (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
                     (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
-                    _ => v[0].selfsame(&v[1]),
+                    (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
+                    (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
+                    (Value::Flag(a), Value::Flag(b)) => a == b,
+                    (Value::Small(n), Value::Small(m)) if *n >= -5 && *n <= 256 => n == m,
+                    _ if !v[0].selfsame(&v[1]) => false,
+                    _ => return Err(self.table.single("ext.op.identical.unsupported").unwrap_or_default().to_string()),
                 };
                 Value::Flag(if op == Prim::Unlike { !identical } else { identical })
             }

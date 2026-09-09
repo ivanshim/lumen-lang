@@ -378,6 +378,7 @@ pub struct Lang {
     pub lambda_unsupported: Option<String>,
     pub lambda_enclosing: Option<String>,
     pub identity_not: Vec<String>,
+    pub identity_unsupported: Option<String>,
     pub membership_words: Vec<String>,
     pub membership_not: Vec<String>,
     pub membership_unsupported: Option<String>,
@@ -664,7 +665,7 @@ w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decora
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
 w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
 w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.request.amiss.boundary.wrong | w ext.system.request.amiss.part | w ext.system.request.amiss.body.large | w ext.system.request.body
-w ext.op.if_else | w ext.op.lambda | w ext.op.lambda.unsupported | w ext.op.lambda.enclosing | w ext.op.identical.negated | w ext.op.in | w ext.op.in.negated | w ext.op.in.unsupported | b ext.op.compare.chained | w ext.op.assign.expression | w ext.literal.ellipsis | b ext.op.rem.formats_text | w ext.op.rem.format.unsupported | w ext.op.rem.format.arguments
+w ext.op.if_else | w ext.op.lambda | w ext.op.lambda.unsupported | w ext.op.lambda.enclosing | w ext.op.identical.negated | w ext.op.identical.unsupported | w ext.op.in | w ext.op.in.negated | w ext.op.in.unsupported | b ext.op.compare.chained | w ext.op.assign.expression | w ext.literal.ellipsis | b ext.op.rem.formats_text | w ext.op.rem.format.unsupported | w ext.op.rem.format.arguments
 w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
 w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
@@ -1431,6 +1432,7 @@ impl Lang {
             lambda_unsupported: r.head("ext.op.lambda.unsupported")?,
             lambda_enclosing: r.head("ext.op.lambda.enclosing")?,
             identity_not: r.strings("ext.op.identical.negated")?,
+            identity_unsupported: r.head("ext.op.identical.unsupported")?,
             membership_words: r.strings("ext.op.in")?,
             membership_not: r.strings("ext.op.in.negated")?,
             membership_unsupported: r.head("ext.op.in.unsupported")?,

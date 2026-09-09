@@ -2776,8 +2776,8 @@ impl<'a> Engine<'a> {
         number_spelled(s).map(|n| self.at_real_width(n))
     }
 
-    fn rem_repr(&self, value: &Value) -> String {
-        match value {
+    fn rem_repr(&self, value: &Value) -> Res<String> {
+        Ok(match value {
             Value::Text(s) => {
                 let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
                 let mut out = String::from(quote);
@@ -2795,9 +2795,23 @@ impl<'a> Engine<'a> {
                 out.push(quote);
                 out
             }
-            Value::Array(items) => format!("[{}]", items.iter().map(|v| self.rem_repr(v)).collect::<Vec<_>>().join(", ")),
-            _ => value.display(&self.wording()),
-        }
+            Value::Array(items) => {
+                let parts = items.iter().map(|v| self.rem_repr(v)).collect::<Res<Vec<_>>>()?;
+                format!("[{}]", parts.join(", "))
+            }
+            Value::Map(entries) => {
+                let mut parts = Vec::new();
+                for (key, worth) in entries.iter() { parts.push(format!("{}: {}", self.rem_repr(key)?, self.rem_repr(worth)?)); }
+                format!("{{{}}}", parts.join(", "))
+            }
+            Value::Real(real) => {
+                let mut text = value.display(&self.wording());
+                if !real.outside() && !text.contains(['.', 'e', 'E']) { text.push_str(".0"); }
+                text
+            }
+            Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Null | Value::Ellipsis => value.display(&self.wording()),
+            _ => return Err(self.lang.format_unsupported.clone().unwrap_or_default()),
+        })
     }
 
     /// Remainder over text fills one mark at a time. A list supplies
@@ -2827,8 +2841,8 @@ impl<'a> Engine<'a> {
             let value = values.get(used).copied().ok_or_else(wrong)?;
             used += 1;
             let filled = match kind {
-                's' => match value { Value::Array(_) => self.rem_repr(value), _ => value.display(&self.wording()) },
-                'r' => self.rem_repr(value),
+                's' => match value { Value::Text(text) => text.to_string(), _ => self.rem_repr(value)? },
+                'r' => self.rem_repr(value)?,
                 'd' | 'x' => {
                     if !matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Real(_)) { return Err(wrong()); }
                     if kind == 'x' && matches!(value, Value::Real(_)) { return Err(wrong()); }
@@ -2957,7 +2971,12 @@ impl<'a> Engine<'a> {
                 let same = match (a, b) {
                     (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y),
                     (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
-                    _ => a.identical(b),
+                    (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
+                    (Value::Flag(x), Value::Flag(y)) => x == y,
+                    (Value::Small(x), Value::Small(y)) if (-5..=256).contains(x) => x == y,
+                    (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+                    _ if !a.identical(b) => false,
+                    _ => return Err(self.lang.identity_unsupported.clone().unwrap_or_default()),
                 };
                 Value::Flag(same != matches!(op, Action::Unsame))
             }

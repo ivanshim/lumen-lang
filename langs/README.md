@@ -1244,10 +1244,12 @@ only. The extension labels so far, all from PHP:
 - `ext.op.identical.negated`: the word directly after the identity
   operator that turns it about (`is not`). With this spelling, equality
   keeps its ordinary meaning; it does not take the looser rules above.
-  Arrays and maps ask whether both names hold the same collection. The
-  scalar values ask whether they are of one kind and alike, as the
-  identity operator does; the kernels do not keep separate identities
-  for equal scalar values.
+  Arrays, maps and objects ask whether both names hold the same thing.
+  Nothing, ellipsis, flags and the small whole numbers from -5 through
+  256 have fixed identities. Unlike values cannot be identical. For
+  other alike values the kernels keep no identity that answers this
+  question; `ext.op.identical.unsupported` gives the plain complaint,
+  rather than answering equality in its stead.
 - `ext.op.if_else`: two words, the first before the condition and the
   second before the other arm (`a if c else b`). It binds below every
   binary operator and above a lambda. The condition runs first, and
@@ -1284,7 +1286,8 @@ only. The extension labels so far, all from PHP:
   order; any other value supplies one. The marks are `%d`, `%s`, `%r`,
   `%f`, `%x` and `%%`, with a decimal precision permitted before `f`.
   `ext.op.rem.format.unsupported` gives the plain complaint for any
-  other mark; `ext.op.rem.format.arguments` gives it for the wrong
+  other mark or a value whose representation is not provided;
+  `ext.op.rem.format.arguments` gives it for the wrong
   number or kind of arguments. Numeric remainder keeps its meaning.
 - `ext.op.bit.and`, `ext.op.bit.or`, `ext.op.bit.xor`, `ext.op.bit.not`,
   `ext.op.bit.left` and `ext.op.bit.right`: the bits of a value taken
@@ -1723,6 +1726,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.hush` | - | - | - | - | `@` | - | - | - | - | - |
 | `ext.op.identical` | - | - | `is` | - | `===` | - | - | - | - | - |
 | `ext.op.identical.negated` | - | - | `not` | - | - | - | - | - | - | - |
+| `ext.op.identical.unsupported` | - | - | `Identity of these values is not supported` | - | - | - | - | - | - | - |
 | `ext.op.if_else` | - | - | `if` `else` | - | - | - | - | - | - | - |
 | `ext.op.in` | - | - | `in` | - | - | - | - | - | - | - |
 | `ext.op.in.negated` | - | - | `not` | - | - | - | - | - | - | - |
