@@ -836,7 +836,7 @@ pub fn figured(x: f64, figures: Option<usize>) -> String {
 /// Rounding the display hides the remaining digits of its binary ratio.
 fn ordinary_real(worth: f64, figures: usize) -> String {
     let shown = spelled_out(worth, Some(figures));
-    match shown.split_once('E') {
+    let expanded = match shown.split_once('E') {
         None => shown,
         Some((head, power)) => {
             let negative = head.starts_with('-');
@@ -855,6 +855,15 @@ fn ordinary_real(worth: f64, figures: usize) -> String {
                 }
             }
             result
+        }
+    };
+    // Match the ordinary writer's budget, including the zero before a
+    // fraction; figures past that budget are simply left unwritten.
+    match expanded.find('.') {
+        None => expanded,
+        Some(dot) => {
+            let whole = expanded[..dot].trim_start_matches('-').len();
+            expanded.chars().take(dot + 1 + figures.saturating_sub(whole)).collect()
         }
     }
 }

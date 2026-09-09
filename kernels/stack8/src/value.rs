@@ -890,9 +890,20 @@ fn laid_flat(figures: &str, power: i32) -> String {
 /// width, without exposing the tail of the stored binary ratio.
 fn expanded_real(number: f64, places: usize) -> String {
     let text = written_out(number, Some(places));
-    let Some((front, power)) = text.split_once('E') else { return text };
-    let sign = if front.starts_with('-') { "-" } else { "" };
-    let digits = front.trim_start_matches('-').replace('.', "");
-    let digits = digits.trim_end_matches('0');
-    format!("{}{}", sign, laid_flat(digits, power.parse().unwrap_or(0)))
+    let mut text = match text.split_once('E') {
+        None => text,
+        Some((front, power)) => {
+            let sign = if front.starts_with('-') { "-" } else { "" };
+            let digits = front.trim_start_matches('-').replace('.', "");
+            let digits = digits.trim_end_matches('0');
+            format!("{}{}", sign, laid_flat(digits, power.parse().unwrap_or(0)))
+        }
+    };
+    // The ordinary writer counts the leading zero among the places and
+    // stops the fraction when those places are used, without rounding it.
+    if let Some(point) = text.find('.') {
+        let whole = point - usize::from(text.starts_with('-'));
+        text.truncate(text.len().min(point + 1 + places.saturating_sub(whole)));
+    }
+    text
 }

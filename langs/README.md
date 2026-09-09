@@ -592,6 +592,8 @@ only. The extension labels so far, all from PHP:
   Python retains 64-bit real arithmetic but uses the existing kernel
   rendering, not CPython's shortest round-trip spelling: whole reals
   omit `.0`, powers of ten remain expanded, and negative zero is `-0`.
+  The usual precision budget includes the leading zero before a fraction;
+  `2 / 3` is shown as `0.66666666666666`, not CPython's `0.6666666666666666`.
   For example, the kernels show `0.3`, `10000000000000000`,
   `1`, `0.00001`, `-0`, `INF` and `NAN` where CPython shows
   `0.30000000000000004`, `1e+16`, `1.0`, `1e-05`, `-0.0`, `inf` and `nan`.
