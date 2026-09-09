@@ -250,6 +250,12 @@ only. The extension labels so far, all from PHP:
   a string ended by three equal quotes. Single quotes and pairs within
   it are text, as are comment marks and line ends. Escapes keep their
   ordinary meaning, and the reader resumes after the whole closing mark.
+- `ext.lexical.string.raw_prefix` and `.text_prefix`: words joined to
+  the opening quote. A raw prefix keeps every backslash, including one
+  shielding a quote; a text prefix leaves the string's meaning alone.
+  Both may precede triple quotes. A prefix separated from its quote is
+  an ordinary name. `ext.syntax.string.adjacent` joins neighboring string
+  literals into one value, including across lines within brackets.
 - `ext.lexical.heredoc`: the mark that opens a string written over lines,
   PHP's `<<<`. After it stands a label — a name, or a name in string
   quotes, with spaces or tabs about it if the program likes — and then a
@@ -1842,6 +1848,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.prologue.brief.setting` | - | - | - | - | `short_open_tag` | - | - | - | - | - |
 | `ext.lexical.prologue.echo` | - | - | - | - | `<?=` | - | - | - | - | - |
 | `ext.lexical.prologue.folded` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.lexical.string.raw_prefix` | - | - | `r` `R` | - | - | - | - | - | - | - |
+| `ext.lexical.string.text_prefix` | - | - | `u` `U` | - | - | - | - | - | - | - |
 | `ext.lexical.string.triple` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
@@ -2007,6 +2015,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.syntax.call.spread.amiss` | - | - | `TypeError: argument after * must be an iterable` | - | - | - | - | - | - | - |
 | `ext.syntax.call.spread.pairs` | - | - | `**` | - | - | - | - | - | - | - |
 | `ext.syntax.call.spread.pairs.amiss` | - | - | `TypeError: argument after ** must be a mapping with string keys` | - | - | - | - | - | - | - |
+| `ext.syntax.string.adjacent` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.syntax.tuple.separator` | - | - | `,` | - | - | - | - | - | - | - |
 | `ext.syntax.tuple.unsupported` | - | - | `NotImplementedError: tuple expressions are not supported` | - | - | - | - | - | - | - |
 | `ext.syntax.value.spread` | - | - | `*` | - | - | - | - | - | - | - |

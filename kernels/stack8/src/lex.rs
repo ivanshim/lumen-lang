@@ -429,7 +429,7 @@ impl<'a> Cursor<'a> {
         Ok(())
     }
 
-    fn string(&mut self, quote: char) -> Result<(), String> {
+    fn string(&mut self, quote: char, verbatim: bool) -> Result<(), String> {
         let (line, col) = (self.row, self.column);
         let wide = if self.lang.triple_quotes && self.look(1) == Some(quote) && self.look(2) == Some(quote) { 3 } else { 1 };
         for _ in 0..wide { self.step(); }
@@ -450,6 +450,11 @@ impl<'a> Cursor<'a> {
         loop {
             let Some(c) = self.look(0) else { return Err(format!("Unterminated {} string", quote)) };
             if c == '\\' && self.look(1).is_some() {
+                if verbatim {
+                    s.push(self.step());
+                    s.push(self.step());
+                    continue;
+                }
                 self.escape(&how, &mut s, &mut shielded)?;
                 continue;
             }
@@ -805,6 +810,15 @@ impl<'a> Cursor<'a> {
                 }
             }
             let c = self.text[self.at];
+            let prefixed = lang.raw_string_prefixes.iter().map(|p| (p, true))
+                .chain(lang.text_string_prefixes.iter().map(|p| (p, false)))
+                .find(|(p, _)| at_word(&self.text, self.at, p)
+                    && self.look(p.chars().count()).map_or(false, |q| lang.quotes.contains(&q)));
+            if let Some((mark, verbatim)) = prefixed {
+                for _ in mark.chars() { self.step(); }
+                self.string(self.look(0).expect("the quote after its prefix"), verbatim)?;
+                continue;
+            }
             if c == '\n' {
                 let (line, col) = (self.row, self.column);
                 self.step();
@@ -815,7 +829,7 @@ impl<'a> Cursor<'a> {
             } else if lang.heredoc.as_deref().map_or(false, |mark| at_word(&self.text, self.at, mark)) {
                 self.heredoc()?;
             } else if lang.quotes.contains(&c) {
-                self.string(c)?;
+                self.string(c, false)?;
             } else if c.is_ascii_digit() {
                 self.number();
             } else if lang.quote_for_names == Some(c) {

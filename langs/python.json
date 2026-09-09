@@ -16,6 +16,9 @@
   ],
   "lexical.raw_quotes": [],
   "ext.lexical.string.triple": true,
+  "ext.lexical.string.raw_prefix": ["r", "R"],
+  "ext.lexical.string.text_prefix": ["u", "U"],
+  "ext.syntax.string.adjacent": true,
   "lexical.string_escapes": [
     "n",
     "t",

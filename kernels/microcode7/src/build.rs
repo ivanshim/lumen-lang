@@ -4166,8 +4166,14 @@ impl<'a> Builder<'a> {
                 constant(numeral(&t.lexeme, table)?)
             }
             Shape::Quote => {
-                self.advance();
-                constant(Value::text(&t.lexeme))
+                let mut parts = vec![self.advance().lexeme];
+                if table.flag("ext.syntax.string.adjacent") {
+                    loop {
+                        if self.look().shape != Shape::Quote { break; }
+                        parts.push(self.advance().lexeme);
+                    }
+                }
+                constant(Value::text(&parts.concat()))
             }
             Shape::Bare if table.spells("ext.stmt.class.new", &t.lexeme) => {
                 self.advance();

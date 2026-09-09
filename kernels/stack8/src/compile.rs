@@ -4421,7 +4421,11 @@ impl<'a> Compiler<'a> {
             }
             Shape::Quote => {
                 self.take();
-                self.constant(Value::text(&tok.lexeme));
+                let mut text = tok.lexeme.clone();
+                while lang.adjacent_strings && self.look().shape == Shape::Quote {
+                    text.push_str(&self.take().lexeme);
+                }
+                self.constant(Value::text(&text));
             }
             Shape::Instr if Lang::spells(&lang.new_words, &tok.lexeme) => {
                 self.take();

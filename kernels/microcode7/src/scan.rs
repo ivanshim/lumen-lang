@@ -508,6 +508,10 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
     let raw = table.letters("lexical.raw_quotes");
     let weaving = table.letters("ext.lexical.interpolating_quotes");
     let escapes = table.letters("lexical.string_escapes");
+    let literal_prefixes: Vec<(Vec<char>, bool)> = table.strings("ext.lexical.string.raw_prefix").iter()
+        .map(|s| (s.chars().collect(), true))
+        .chain(table.strings("ext.lexical.string.text_prefix").iter().map(|s| (s.chars().collect(), false)))
+        .collect();
     // A character an escape names by its number: the letter that begins
     // one, the brackets the number stands in, and what the language
     // says of a number badly written or of one beyond the last there is.
@@ -579,6 +583,15 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             tokens.push(Token { shape: Shape::Lead, lexeme: String::new(), span: width, row: row });
             pos = k;
         }
+        let mut verbatim = false;
+        for (mark, keep_slashes) in &literal_prefixes {
+            if !mark.is_empty() && src.get(pos..pos + mark.len()) == Some(mark.as_slice())
+                && src.get(pos + mark.len()).map_or(false, |q| quotes.contains(q)) {
+                pos += mark.len();
+                verbatim = *keep_slashes;
+                break;
+            }
+        }
         let c = src[pos];
         if c == '\n' {
             tokens.push(tok(Shape::LineEnd, "\n".into(), row));
@@ -615,6 +628,12 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             while k < src.len() {
                 let d = src[k];
                 if d == '\\' && k + 1 < src.len() {
+                    if verbatim {
+                        s.extend(&src[k..k + 2]);
+                        row += u32::from(src[k + 1] == '\n');
+                        k += 2;
+                        continue;
+                    }
                     let after = slash.reads(&src, k, &mut s, &mut plain)?;
                     row += src[k..after].iter().filter(|ch| **ch == '\n').count() as u32;
                     k = after;
