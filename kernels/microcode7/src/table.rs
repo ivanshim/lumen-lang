@@ -82,6 +82,13 @@ system.kind.array:L system.kind.null:L \
 /// Extension labels beyond the core: optional, an absent one is empty
 /// (or off). The reference kernels skip them; this one reads them.
 const EXT_TAGS: &str = "\
+ext.stmt.for.target.unready:L \
+ext.op.identity.unready:L \
+ext.op.identity.negated:L \
+ext.op.identity:L \
+ext.op.in.unready:L \
+ext.op.in.negated:L \
+ext.op.in:L \
 ext.stmt.del.unrun:L \
 ext.stmt.del:L \
 ext.stmt.nonlocal.unrun:L \
@@ -576,7 +583,8 @@ impl Table {
         if self.has_any("ext.stmt.switch") && (!self.has_any("ext.stmt.case") || !self.has_any("ext.stmt.case.mark")) {
             return Err("ext.stmt.switch needs ext.stmt.case and ext.stmt.case.mark".to_string());
         }
-        if self.has_any("ext.stmt.class") && (!self.has_any("ext.op.member") || !self.has_any("ext.stmt.class.new")) {
+        let enclosed_class = ["ext.stmt.class.bases.open", "ext.stmt.class.bases.close", "ext.stmt.class.unready"].iter().all(|k| self.has_any(k));
+        if self.has_any("ext.stmt.class") && (!self.has_any("ext.op.member") || (!self.has_any("ext.stmt.class.new") && !enclosed_class)) {
             return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
         }
         if self.has_any("stmt.foreach") && !self.has_any("stmt.foreach.as") {
@@ -614,7 +622,7 @@ impl Table {
             }
         }
         let mut all: Vec<String> = self.dyadic.keys().chain(self.monadic.keys()).chain(self.precedence.keys()).chain(self.compound.keys()).cloned().collect();
-        let symbol_labels = ["ext.stmt.del", "ext.stmt.nonlocal", "ext.stmt.yield.from", "ext.stmt.yield", "ext.op.await", "ext.stmt.async", "ext.stmt.with.as", "ext.stmt.with", "ext.op.lambda", "ext.op.tuple", "ext.stmt.class.bases.close", "ext.stmt.class.bases.open", "ext.lexical.number.imaginary", "ext.lexical.string.long", "ext.lexical.line_continuation", "ext.op.index.slice.ellipsis", "ext.op.index.slice", "ext.op.comprehension.async", "ext.op.comprehension.for", "ext.op.comprehension.in", "ext.op.comprehension.if", "ext.syntax.array.spread", "ext.syntax.map.spread", "syntax.group.open", "syntax.group.close", "syntax.call.open", "syntax.call.separator", "syntax.call.close",
+        let symbol_labels = ["ext.op.identity.negated", "ext.op.identity", "ext.op.in.negated", "ext.op.in", "ext.stmt.del", "ext.stmt.nonlocal", "ext.stmt.yield.from", "ext.stmt.yield", "ext.op.await", "ext.stmt.async", "ext.stmt.with.as", "ext.stmt.with", "ext.op.lambda", "ext.op.tuple", "ext.stmt.class.bases.close", "ext.stmt.class.bases.open", "ext.lexical.number.imaginary", "ext.lexical.string.long", "ext.lexical.line_continuation", "ext.op.index.slice.ellipsis", "ext.op.index.slice", "ext.op.comprehension.async", "ext.op.comprehension.for", "ext.op.comprehension.in", "ext.op.comprehension.if", "ext.syntax.array.spread", "ext.syntax.map.spread", "syntax.group.open", "syntax.group.close", "syntax.call.open", "syntax.call.separator", "syntax.call.close",
             "syntax.call.label", "syntax.array.open", "syntax.array.separator", "syntax.array.close", "op.index.open", "op.index.close",
             "block.intro", "stmt.assign", "stmt.terminator", "stmt.let.annotation", "stmt.function.returns", "stack.dup", "stack.drop",
             "stack.swap", "stack.over", "stack.rot", "stack.eval", "stack.program.open", "stack.program.close", "stmt.let",

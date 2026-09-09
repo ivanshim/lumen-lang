@@ -257,8 +257,25 @@ only. The extension labels so far, all from PHP:
   class takes as bases. With `ext.stmt.class.unready` spelled, this small
   reading reads the head and every statement within, then refuses the
   declaration at the run with those words. The class piece supplies the
-  fuller meaning. `ext.op.member.pipes` keeps the old builtin pipe for
+  fuller meaning. These three class labels supply the reading in place
+  of a separate `ext.stmt.class.new` word. Decorators before a class or
+  an asynchronous declaration are read before its deferred body.
+  `ext.op.member.pipes` keeps the old builtin pipe for
   a plain named receiver, while other member forms use `ext.op.member`.
+- `ext.op.in` asks whether its left value is in its right; the preceding
+  `ext.op.in.negated` word reverses the question. Both operands are read
+  before `ext.op.in.unready` refuses the operation at the run.
+- `ext.op.identity` asks whether its two operands are the very same
+  value, with a following `ext.op.identity.negated` reversing it.
+  `ext.op.identity.unready` refuses the question at the run. The strict
+  equality of `ext.op.identical` is a different question and is not
+  borrowed for identity. The expression piece supplies both operations.
+- `ext.stmt.for.target.unready` says that a loop target which takes a
+  value apart cannot yet run. The target, iterable and whole body are
+  read; a plain named target keeps its former meaning. A language which
+  spells `ext.builtin.range.value` may give a loop any supported range
+  call, including a one-bound call or one with a step. A bare comma list
+  as the source is read by the tuple reading above.
 - `ext.op.lambda` reads a parameter list without outer brackets, then
   a colon and one expression. `ext.op.lambda.unready` refuses this value
   at the run; the expression piece supplies the function and its cells.
@@ -1907,6 +1924,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.decrement.text` | - | - | - | - | `Decrement on non-numeric string has no effect and is deprecated` | - | - | - | - | - |
 | `ext.op.hush` | - | - | - | - | `@` | - | - | - | - | - |
 | `ext.op.identical` | - | - | - | - | `===` | - | - | - | - | - |
+| `ext.op.identity` | - | - | `is` | - | - | - | - | - | - | - |
+| `ext.op.identity.negated` | - | - | `not` | - | - | - | - | - | - | - |
+| `ext.op.identity.unready` | - | - | `NotImplementedError: identity is not supported` | - | - | - | - | - | - | - |
+| `ext.op.in` | - | - | `in` | - | - | - | - | - | - | - |
+| `ext.op.in.negated` | - | - | `not` | - | - | - | - | - | - | - |
+| `ext.op.in.unready` | - | - | `NotImplementedError: membership is not supported` | - | - | - | - | - | - | - |
 | `ext.op.increment` | - | - | - | - | `++` | - | - | - | - | - |
 | `ext.op.increment.text` | - | - | - | - | `Increment on non-numeric string is deprecated, use str_increment() instead` | - | - | - | - | - |
 | `ext.op.index.absent` | - | - | - | - | `true` | - | - | - | - | - |
@@ -2010,6 +2033,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.finally` | - | - | `finally` | - | `finally` | - | - | - | - | - |
 | `ext.stmt.for.c` | - | - | - | - | `for` | - | - | - | - | - |
 | `ext.stmt.for.collection` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.stmt.for.target.unready` | - | - | `NotImplementedError: unpacking loop targets are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.function.carries` | - | - | `*` | - | `use` | - | - | - | - | - |
 | `ext.stmt.function.carries.pairs` | - | - | `**` | - | - | - | - | - | - | - |
 | `ext.stmt.function.defaults.amiss` | - | - | `TypeError: mutable parameter defaults are not supported` | - | - | - | - | - | - | - |

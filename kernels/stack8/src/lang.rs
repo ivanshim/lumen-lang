@@ -43,6 +43,13 @@ pub struct Lang {
     pub ident: String,
     pub extensions: Vec<String>,
     pub banner: String,
+    pub for_target_unready: Vec<String>,
+    pub identity_unready: Vec<String>,
+    pub identity_not: Vec<String>,
+    pub identity_words: Vec<String>,
+    pub membership_unready: Vec<String>,
+    pub membership_not: Vec<String>,
+    pub membership_words: Vec<String>,
     pub del_unrun: Vec<String>,
     pub del_words: Vec<String>,
     pub nonlocal_unrun: Vec<String>,
@@ -739,6 +746,13 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+w ext.stmt.for.target.unready
+w ext.op.identity.unready
+w ext.op.identity.negated
+w ext.op.identity
+w ext.op.in.unready
+w ext.op.in.negated
+w ext.op.in
 w ext.stmt.del.unrun
 w ext.stmt.del
 w ext.stmt.nonlocal.unrun
@@ -1360,6 +1374,13 @@ impl Lang {
             names_folded: r.flag("identifier.case_insensitive")?,
             quote_for_names: r.letter("lexical.name_quote")?,
             symbols: Vec::new(),
+            for_target_unready: r.strings("ext.stmt.for.target.unready")?,
+            identity_unready: r.strings("ext.op.identity.unready")?,
+            identity_not: r.strings("ext.op.identity.negated")?,
+            identity_words: r.strings("ext.op.identity")?,
+            membership_unready: r.strings("ext.op.in.unready")?,
+            membership_not: r.strings("ext.op.in.negated")?,
+            membership_words: r.strings("ext.op.in")?,
             del_unrun: r.strings("ext.stmt.del.unrun")?,
             del_words: r.strings("ext.stmt.del")?,
             nonlocal_unrun: r.strings("ext.stmt.nonlocal.unrun")?,
@@ -1752,7 +1773,8 @@ impl Lang {
         if !lang.try_words.is_empty() && lang.catch_words.is_empty() {
             return Err("ext.stmt.try needs ext.stmt.catch".to_string());
         }
-        if !lang.class_words.is_empty() && (lang.member_mark.is_none() || lang.new_words.is_empty()) {
+        let read_class = !lang.class_bases_open.is_empty() && !lang.class_bases_close.is_empty() && !lang.class_unready.is_empty();
+        if !lang.class_words.is_empty() && (lang.member_mark.is_none() || (lang.new_words.is_empty() && !read_class)) {
             return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
         }
         if !lang.foreach_words.is_empty() && lang.foreach_as_words.is_empty() {
@@ -1831,6 +1853,10 @@ impl Lang {
             }
         }
         let mut lists: Vec<&Vec<String>> = vec![
+            &self.identity_not,
+            &self.identity_words,
+            &self.membership_not,
+            &self.membership_words,
             &self.del_words,
             &self.nonlocal_words,
             &self.yield_from,

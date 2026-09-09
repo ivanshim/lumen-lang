@@ -1159,6 +1159,7 @@ impl<'a> Compiler<'a> {
             self.take();
             if self.on_sep() || self.on_assign() || self.exhausted()
                 || self.lang.grouping.as_ref().map_or(false, |p| self.at_symbol(&p.close)) { break; }
+            if self.on_any(&self.lang.array_spread) { self.take(); }
             self.expr_at(0, false)?;
         }
         self.piece().instrs.truncate(from);
@@ -1212,6 +1213,8 @@ impl<'a> Compiler<'a> {
                 self.take();
             }
         }
+        if self.on_any(&lang.class_words) && !lang.class_unready.is_empty() { return self.class_reading(); }
+        if self.on_any(&lang.async_words) { return self.stmt(); }
         if !self.on_keyword(&lang.function_words) {
             return Err(amiss());
         }
@@ -2183,12 +2186,33 @@ impl<'a> Compiler<'a> {
     fn for_stmt(&mut self) -> Res<()> {
         let lang = self.lang;
         self.take();
+        if !lang.tuple_marks.is_empty() && !(self.look().shape == Shape::Instr && Lang::spells(&lang.in_words, &self.look_ahead(1).lexeme)) {
+            let from = self.mark();
+            loop {
+                if self.on_any(&lang.array_spread) { self.take(); }
+                self.prefix()?;
+                if !self.on_any(&lang.tuple_marks) { break; }
+                self.take();
+                if self.on_any(&lang.in_words) { break; }
+            }
+            if !self.on_any(&lang.in_words) { return Err(lang.parameters_amiss.first().cloned().unwrap_or_default()); }
+            self.take();
+            self.expr(0)?;
+            self.tuple_tail(from)?;
+            self.enter_cycle(None);
+            self.body()?;
+            let end = self.mark();
+            self.leave_cycle(end);
+            self.piece().instrs.truncate(from);
+            self.refuse_reading(&lang.for_target_unready);
+            return Ok(());
+        }
         let var = self.want_name("as the loop variable")?;
         if !self.on_keyword(&lang.in_words) {
             return Err(format!("Expected '{}' after for loop variable, got: {}", lang.in_words[0], self.look().lexeme));
         }
         self.take();
-        let range_call = self.look().shape == Shape::Instr
+        let range_call = !lang.range_value && self.look().shape == Shape::Instr
             && lang.builtins.get(&self.look().lexeme) == Some(&Builtin::Span)
             && lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).is_lexeme(Shape::Sign, &c.open));
         if range_call {
@@ -2206,6 +2230,7 @@ impl<'a> Compiler<'a> {
             let tier = lang.range_marks.iter().filter_map(|r| lang.precedence.get(r)).min().copied().unwrap_or(0);
             let from = self.mark();
             self.expr(tier + 1)?;
+            self.tuple_tail(from)?;
             if !(self.look().shape == Shape::Sign && Lang::spells(&lang.range_marks, &self.look().lexeme)) {
                 // Not a range: what was read is a thing to walk through.
                 if !lang.for_collections {
@@ -3403,7 +3428,11 @@ impl<'a> Compiler<'a> {
         // before each of its places.
         match self.waiting.clone() {
             Some(cell) => self.read(&cell),
-            None => self.expr(0)?,
+            None => {
+                let from = self.mark();
+                self.expr(0)?;
+                self.tuple_tail(from)?;
+            }
         }
         self.kept(keep);
         Ok(())
@@ -3996,6 +4025,19 @@ impl<'a> Compiler<'a> {
                 break;
             }
             let text = t.lexeme.clone();
+            let negated_in = self.on_any(&lang.membership_not) && Lang::spells(&lang.membership_words, &self.look_ahead(1).lexeme);
+            let member = self.on_any(&lang.membership_words) || negated_in;
+            let identity = self.on_any(&lang.identity_words);
+            if member || identity {
+                let level = lang.dyadic.values().filter(|op| matches!(op.action, Action::Eq | Action::Lt)).map(|op| op.level).min().unwrap_or(0);
+                if level < floor { break; }
+                self.take();
+                if negated_in || (identity && self.on_any(&lang.identity_not)) { self.take(); }
+                self.expr(level + 1)?;
+                self.piece().instrs.truncate(from);
+                self.refuse_reading(if member { &lang.membership_unready } else { &lang.identity_unready });
+                continue;
+            }
             if Lang::spells(&lang.pipe_words, &text) {
                 if lang.precedence.get(&text).copied().unwrap_or(0) < floor {
                     break;
@@ -4490,7 +4532,11 @@ impl<'a> Compiler<'a> {
                         } else {
                             let empty = !lang.tuple_marks.is_empty() && self.at_symbol(&group.close);
                             if empty { self.refuse_reading(&lang.tuple_unready); }
-                            else { self.expr(0)?; self.tuple_tail(from)?; }
+                            else {
+                                if self.on_any(&lang.array_spread) { self.take(); }
+                                self.expr(0)?;
+                                self.tuple_tail(from)?;
+                            }
                             self.want_sign(&group.close, "to close a group")?;
                         }
                         self.called_on_value()?;

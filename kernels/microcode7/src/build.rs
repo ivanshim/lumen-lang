@@ -1419,6 +1419,10 @@ impl<'a> Builder<'a> {
                 break;
             }
         }
+        if (self.key("ext.stmt.class") && self.table.has_any("ext.stmt.class.unready")) || self.key("ext.stmt.async") {
+            forms.push(self.stmt()?);
+            return Ok(sequence(forms));
+        }
         if !self.key("stmt.function") {
             return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
         }
@@ -2497,6 +2501,7 @@ impl<'a> Builder<'a> {
             self.advance();
             if self.on_stmt_end() || self.exhausted() || self.on_assign()
                 || self.on_any("syntax.group.close") { break; }
+            if self.on_any("ext.syntax.array.spread") { self.advance(); }
             self.expr_at(0, false)?;
             if !self.on_any("ext.op.tuple") { break; }
         }
@@ -2615,12 +2620,28 @@ impl<'a> Builder<'a> {
     fn for_stmt(&mut self) -> Res<Form> {
         let table = self.table;
         self.advance();
+        let simple = self.look().shape == Shape::Bare && table.spells("stmt.for.in", &self.glance(1).lexeme);
+        if table.has_any("ext.op.tuple") && !simple {
+            loop {
+                if self.on_any("ext.syntax.array.spread") { self.advance(); }
+                self.monadic_expr()?;
+                if !self.on_any("ext.op.tuple") { break; }
+                self.advance();
+                if self.key("stmt.for.in") { break; }
+            }
+            if !self.key("stmt.for.in") { return Err(table.single("ext.stmt.function.parameters.amiss").unwrap_or_default().into()); }
+            self.advance();
+            let source = self.expr(0)?;
+            self.tuple_tail(source)?;
+            self.body()?;
+            return Ok(self.reading_refusal("ext.stmt.for.target.unready"));
+        }
         let var = self.need_word("as the loop variable")?;
         if !self.key("stmt.for.in") {
             return Err(format!("Expected '{}' after for loop variable, got: {}", table.single("stmt.for.in").unwrap_or("in"), self.look().lexeme));
         }
         self.advance();
-        let ranged = self.look().shape == Shape::Bare
+        let ranged = !table.flag("ext.builtin.range.value") && self.look().shape == Shape::Bare
             && table.prims.get(&self.look().lexeme) == Some(&Prim::Span)
             && table.single("syntax.call.open").map_or(false, |o| self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == o);
         let (start, end) = if ranged {
@@ -2636,6 +2657,7 @@ impl<'a> Builder<'a> {
         } else {
             let tier = table.strings("op.range").iter().filter_map(|r| table.precedence.get(r.as_str())).min().copied().unwrap_or(0);
             let start = self.expr(tier + 1)?;
+            let start = self.tuple_tail(start)?;
             if !(self.look().shape == Shape::Sign && table.spells("op.range", &self.look().lexeme)) {
                 // No range mark: what was read is something to walk through.
                 if !table.flag("ext.stmt.for.collection") {
@@ -3391,7 +3413,10 @@ impl<'a> Builder<'a> {
             // source of its own after the sign.
             (Some(by), _, None) => constant(Value::Small(by)),
             (None, Some(cell), None) => self.read(&cell),
-            (None, None, None) => self.expr(0)?,
+            (None, None, None) => {
+                let first = self.expr(0)?;
+                self.tuple_tail(first)?
+            },
         };
         // The value comes before the bounds of a slice assignment.
         let before_bounds = if plain && slice_target(&expr) {
@@ -3815,6 +3840,18 @@ impl<'a> Builder<'a> {
                 break;
             }
             let text = t.lexeme.clone();
+            let pair = self.on_any("ext.op.in.negated") && table.spells("ext.op.in", &self.glance(1).lexeme);
+            let membership = self.on_any("ext.op.in") || pair;
+            let identity = self.on_any("ext.op.identity");
+            if membership || identity {
+                let level = table.strings("op.eq").iter().filter_map(|w| table.precedence.get(w)).copied().next().unwrap_or(0);
+                if floor > level { break; }
+                self.advance();
+                if pair || (identity && self.on_any("ext.op.identity.negated")) { self.advance(); }
+                self.expr(level + 1)?;
+                left = self.reading_refusal(if membership { "ext.op.in.unready" } else { "ext.op.identity.unready" });
+                continue;
+            }
             if table.spells("op.pipe", &text) {
                 if table.precedence.get(&text).copied().unwrap_or(0) < floor {
                     break;
@@ -4196,6 +4233,7 @@ impl<'a> Builder<'a> {
                             let expression = if table.has_any("ext.op.tuple") && self.on_any("syntax.group.close") {
                                 self.reading_refusal("ext.op.tuple.unready")
                             } else {
+                                if self.on_any("ext.syntax.array.spread") { self.advance(); }
                                 let value = self.expr(0)?;
                                 self.tuple_tail(value)?
                             };
