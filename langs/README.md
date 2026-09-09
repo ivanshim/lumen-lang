@@ -526,7 +526,10 @@ only. The extension labels so far, all from PHP:
   `ext.stmt.class.unready`; `8.py` and `11.py` witness them. A pipe's
   result may be indexed under `ext.op.tuple`, using the ordinary index
   reading and running; `10.py` reads the condition found in the float
-  suite. No new word is needed for these readings.
+  suite. A chain of plain names before one source is read under the
+  same tuple scope and says `ext.system.scope.unready`; `16.py` bears
+  witness. Its full binding remains with the tuple piece. No new word
+  is needed for these readings.
 - `ext.lexical.number.imaginary`: suffix letters for an imaginary
   decimal numeral (`1j`, `.5J`, `2.e-3j`). The coefficient is read whole,
   including its point and exponent. The run cannot yet hold a complex

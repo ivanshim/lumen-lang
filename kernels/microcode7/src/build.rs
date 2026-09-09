@@ -3381,6 +3381,19 @@ impl<'a> Builder<'a> {
             }
         });
         let expr = self.expr_at(0, false)?;
+        let chained_names = self.table.has_any("ext.op.tuple") && matches!(&expr, Form::Read(_))
+            && self.on_assign() && self.glance(1).shape == Shape::Bare
+            && self.table.spells("stmt.assign", &self.glance(2).lexeme);
+        if chained_names {
+            self.advance();
+            loop {
+                if self.look().shape != Shape::Bare || !self.table.spells("stmt.assign", &self.glance(1).lexeme) { break; }
+                self.advance();
+                self.advance();
+            }
+            let _source = self.comma_value()?;
+            return Ok(self.scope_unrun("ext.system.scope.unready"));
+        }
         if self.on_any("ext.op.tuple") {
             let _target = self.comma_tail(expr)?;
             if self.on_assign() { self.advance(); let _value = self.comma_value()?; }

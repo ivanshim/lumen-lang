@@ -3488,6 +3488,20 @@ impl<'a> Compiler<'a> {
                     || Lang::spells(&self.lang.block_intros, &before.lexeme)))
         };
         self.expr_at(0, false)?;
+        if !self.lang.tuple_marks.is_empty() && self.on_assign()
+            && matches!(&self.piece().instrs[from..], [Instr::Read(_)])
+            && self.look_ahead(1).shape == Shape::Instr
+            && Lang::spells(&self.lang.assign_words, &self.look_ahead(2).lexeme)
+        {
+            self.take();
+            while self.look().shape == Shape::Instr && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme) {
+                self.take(); self.take();
+            }
+            self.scope_value()?;
+            self.discard_scope_code(from);
+            self.scope_fault(&self.lang.scope_unready.clone());
+            return Ok(());
+        }
         if self.on_any(&self.lang.tuple_marks) {
             self.scope_tail(from)?;
             if self.on_assign() { self.take(); self.scope_value()?; }
