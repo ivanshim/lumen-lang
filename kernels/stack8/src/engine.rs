@@ -1997,7 +1997,12 @@ impl<'a> Engine<'a> {
                                 .collect(),
                         ))
                     }
-                    Value::Map(pairs) => Value::Map(Rc::new(pairs.iter().filter(|(k, _)| !k.equals(&at)).cloned().collect())),
+                    Value::Map(pairs) => {
+                        if !self.lang.del_words.is_empty() && !pairs.iter().any(|(k, _)| k.equals(&at)) {
+                            return Err(self.lang.del_unrun.clone().into());
+                        }
+                        Value::Map(Rc::new(pairs.iter().filter(|(k, _)| !k.equals(&at)).cloned().collect()))
+                    },
                     v => return Err(format!("Cannot take a place out of {}", v.plain()).into()),
                 };
                 *inside = left;
@@ -2349,7 +2354,12 @@ impl<'a> Engine<'a> {
                         // step under its feet.
                         let mut held = o.fields.borrow_mut();
                         if let Some(at) = self.member_at(&held, name) {
+                            if !self.lang.del_words.is_empty() && matches!(held[at].1, Value::Blank) {
+                                return Err(self.lang.del_unrun.clone().into());
+                            }
                             held[at].1 = Value::Blank;
+                        } else if !self.lang.del_words.is_empty() {
+                            return Err(self.lang.del_unrun.clone().into());
                         }
                         Value::Null
                     }
@@ -4271,6 +4281,9 @@ impl<'a> Engine<'a> {
                         Value::Map(Rc::new(kept))
                     }
                     Value::Map(pairs) => {
+                        if !self.lang.del_words.is_empty() && !pairs.iter().any(|(k, _)| k.equals(&at)) {
+                            return Err(self.lang.del_unrun.clone());
+                        }
                         let kept: Vec<(Value, Value)> = pairs.iter().filter(|(k, _)| !k.equals(&at)).cloned().collect();
                         Value::Map(Rc::new(kept))
                     }

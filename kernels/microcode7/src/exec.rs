@@ -1802,7 +1802,13 @@ impl<'a> Machine<'a> {
                                 .collect(),
                         ))
                     }
-                    Value::Dict(pairs) => Value::Dict(Rc::new(pairs.iter().filter(|(k, _)| !k.equals(&at)).cloned().collect())),
+                    Value::Dict(pairs) => {
+                        let present = pairs.iter().any(|entry| entry.0.equals(&at));
+                        if self.table.has_any("ext.stmt.del") && !present {
+                            return Err(self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string().into());
+                        }
+                        Value::Dict(Rc::new(pairs.iter().filter(|(k, _)| !k.equals(&at)).cloned().collect()))
+                    },
                     held => return Err(format!("Cannot take a place out of {}", held.bare()).into()),
                 };
                 *inside = left;
@@ -3137,9 +3143,11 @@ impl<'a> Machine<'a> {
                         // way counts places, and closing one up would
                         // draw every later member back a step beneath it.
                         let mut holds = thing.holds.borrow_mut();
-                        if let Some(at) = self.member_place(&holds, &called) {
-                            holds[at].1 = Value::Unset;
+                        let place = self.member_place(&holds, &called);
+                        if self.table.has_any("ext.stmt.del") && place.map_or(true, |at| matches!(holds[at].1, Value::Unset)) {
+                            return Err(self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string());
                         }
+                        if let Some(at) = place { holds[at].1 = Value::Unset; }
                         Value::Nil
                     }
                     other => return Err(format!("Cannot take property '{}' off {}", called, other.bare())),
@@ -3781,6 +3789,9 @@ impl<'a> Machine<'a> {
                     }
                     Value::Dict(entries) => {
                         let at = self.as_key(&v[1]);
+                        if self.table.has_any("ext.stmt.del") && entries.iter().all(|entry| !entry.0.equals(&at)) {
+                            return Err(self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string());
+                        }
                         let kept: Vec<(Value, Value)> = entries.iter().filter(|(k, _)| !k.equals(&at)).cloned().collect();
                         Value::Dict(Rc::new(kept))
                     }
