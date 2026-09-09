@@ -45,7 +45,7 @@
     ":"
   ],
   "block.indent_size": 4,
-  "stmt.terminator": [";"],
+  "stmt.terminator": [],
   "syntax.notation": "infix",
   "syntax.group.open": [
     "("
@@ -323,5 +323,6 @@
   "ext.stmt.decorator": ["@"],
   "ext.stmt.decorator.amiss": ["A decorator must stand on its own line before a function definition"],
   "ext.stmt.for.collection": true,
-  "ext.stmt.function.returns": ["->"]
+  "ext.stmt.function.returns": ["->"],
+  "ext.stmt.terminator": [";"]
 }

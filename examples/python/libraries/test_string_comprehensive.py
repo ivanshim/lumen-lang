@@ -1,215 +1,215 @@
 # Ported from examples/lumen/libraries/test_string_comprehensive.lm by scripts/port_examples.py; edit the Lumen original, not this file.
-print("=== Text Processing Pipeline ===");
-print("");
-print("Password Strength Validator:");
+print("=== Text Processing Pipeline ===")
+print("")
+print("Password Strength Validator:")
 def has_digit_char(s):
-    digit_i = 0;
+    digit_i = 0
     while digit_i < len(s):
         if is_digit(s[digit_i]):
-            return True;
-        digit_i = digit_i + 1;
-    return False;
+            return True
+        digit_i = digit_i + 1
+    return False
 
 def has_alpha_char(s):
-    alpha_i = 0;
+    alpha_i = 0
     while alpha_i < len(s):
         if is_alpha(s[alpha_i]):
-            return True;
-        alpha_i = alpha_i + 1;
-    return False;
+            return True
+        alpha_i = alpha_i + 1
+    return False
 
 def has_upper_char(s):
-    upper_i = 0;
-    c = "";
-    o = 0;
+    upper_i = 0
+    c = ""
+    o = 0
     while upper_i < len(s):
-        c = s[upper_i];
-        o = ord(c);
+        c = s[upper_i]
+        o = ord(c)
         if o >= ord("A") and o <= ord("Z"):
-            return True;
-        upper_i = upper_i + 1;
-    return False;
+            return True
+        upper_i = upper_i + 1
+    return False
 
 def has_lower_char(s):
-    lower_i = 0;
-    c = "";
-    o = 0;
+    lower_i = 0
+    c = ""
+    o = 0
     while lower_i < len(s):
-        c = s[lower_i];
-        o = ord(c);
+        c = s[lower_i]
+        o = ord(c)
         if o >= ord("a") and o <= ord("z"):
-            return True;
-        lower_i = lower_i + 1;
-    return False;
+            return True
+        lower_i = lower_i + 1
+    return False
 
 def validate_password(pwd):
-    print("  Password: '" + pwd + "'");
+    print("  Password: '" + pwd + "'")
     if len(pwd) < 8:
-        print("    WEAK: Too short (minimum 8 characters)");
-        return False;
+        print("    WEAK: Too short (minimum 8 characters)")
+        return False
     if not has_digit_char(pwd):
-        print("    WEAK: Must contain at least one digit");
-        return False;
+        print("    WEAK: Must contain at least one digit")
+        return False
     if not has_alpha_char(pwd):
-        print("    WEAK: Must contain at least one letter");
-        return False;
+        print("    WEAK: Must contain at least one letter")
+        return False
     if not has_upper_char(pwd):
-        print("    WEAK: Must contain at least one uppercase letter");
-        return False;
+        print("    WEAK: Must contain at least one uppercase letter")
+        return False
     if not has_lower_char(pwd):
-        print("    WEAK: Must contain at least one lowercase letter");
-        return False;
-    print("    STRONG: All requirements met");
-    return True;
+        print("    WEAK: Must contain at least one lowercase letter")
+        return False
+    print("    STRONG: All requirements met")
+    return True
 
-passwords = ["abc123", "PASSWORD123", "Pass123", "MyP@ssw0rd"];
-pwd_i = 0;
+passwords = ["abc123", "PASSWORD123", "Pass123", "MyP@ssw0rd"]
+pwd_i = 0
 while pwd_i < len(passwords):
-    validate_password(passwords[pwd_i]);
-    pwd_i = pwd_i + 1;
-print("");
-print("Extract and Sum Numbers from Text:");
+    validate_password(passwords[pwd_i])
+    pwd_i = pwd_i + 1
+print("")
+print("Extract and Sum Numbers from Text:")
 def extract_all_numbers(s):
-    numbers = [];
-    current_num = "";
-    extract_i = 0;
-    c = "";
+    numbers = []
+    current_num = ""
+    extract_i = 0
+    c = ""
     while extract_i < len(s):
-        c = s[extract_i];
+        c = s[extract_i]
         if is_digit(c):
-            current_num = current_num + c;
+            current_num = current_num + c
         elif len(current_num) > 0:
-            numbers.append(string_to_value(current_num));
-            current_num = "";
-        extract_i = extract_i + 1;
+            numbers.append(string_to_value(current_num))
+            current_num = ""
+        extract_i = extract_i + 1
     if len(current_num) > 0:
-        numbers.append(string_to_value(current_num));
-    return numbers;
+        numbers.append(string_to_value(current_num))
+    return numbers
 
 def sum_numbers_in_text(s):
-    nums = extract_all_numbers(s);
-    sum = 0;
-    sum_i = 0;
+    nums = extract_all_numbers(s)
+    sum = 0
+    sum_i = 0
     while sum_i < len(nums):
-        sum = sum + nums[sum_i];
-        sum_i = sum_i + 1;
-    return sum;
+        sum = sum + nums[sum_i]
+        sum_i = sum_i + 1
+    return sum
 
-texts = ["I have 5 apples and 3 oranges", "Order #123 total: 45 items", "No numbers here", "Year 2025 day 17"];
-text_i = 0;
-text = "";
-sum = 0;
+texts = ["I have 5 apples and 3 oranges", "Order #123 total: 45 items", "No numbers here", "Year 2025 day 17"]
+text_i = 0
+text = ""
+sum = 0
 while text_i < len(texts):
-    text = texts[text_i];
-    sum = sum_numbers_in_text(text);
-    print("  '" + text + "'");
-    print("    Sum: " + str(sum));
-    text_i = text_i + 1;
-print("");
-print("Normalize and Compare Strings:");
+    text = texts[text_i]
+    sum = sum_numbers_in_text(text)
+    print("  '" + text + "'")
+    print("    Sum: " + str(sum))
+    text_i = text_i + 1
+print("")
+print("Normalize and Compare Strings:")
 def normalize_string(s):
-    lower = string_to_lower(s);
-    result = "";
-    normalize_i = 0;
-    c = "";
+    lower = string_to_lower(s)
+    result = ""
+    normalize_i = 0
+    c = ""
     while normalize_i < len(lower):
-        c = lower[normalize_i];
+        c = lower[normalize_i]
         if is_alnum(c):
-            result = result + c;
-        normalize_i = normalize_i + 1;
-    return result;
+            result = result + c
+        normalize_i = normalize_i + 1
+    return result
 
 def strings_match_normalized(a, b):
-    return normalize_string(a) == normalize_string(b);
+    return normalize_string(a) == normalize_string(b)
 
-pairs = [["Hello World", "hello world"], ["Test-123", "TEST123"], ["Lumen Lang", "LumenLang"], ["Different", "Strings"]];
-pair_i = 0;
-a = "";
-b = "";
-match = False;
+pairs = [["Hello World", "hello world"], ["Test-123", "TEST123"], ["Lumen Lang", "LumenLang"], ["Different", "Strings"]]
+pair_i = 0
+a = ""
+b = ""
+match = False
 while pair_i < len(pairs):
-    a = pairs[pair_i][0];
-    b = pairs[pair_i][1];
-    match = strings_match_normalized(a, b);
-    print("  '" + a + "' vs '" + b + "': " + str(match));
-    pair_i = pair_i + 1;
-print("");
-print("Generate Acronym from Phrase:");
+    a = pairs[pair_i][0]
+    b = pairs[pair_i][1]
+    match = strings_match_normalized(a, b)
+    print("  '" + a + "' vs '" + b + "': " + str(match))
+    pair_i = pair_i + 1
+print("")
+print("Generate Acronym from Phrase:")
 def generate_acronym(phrase):
-    words = [];
-    current_word = "";
-    acronym_i = 0;
-    c = "";
+    words = []
+    current_word = ""
+    acronym_i = 0
+    c = ""
     while acronym_i < len(phrase):
-        c = phrase[acronym_i];
+        c = phrase[acronym_i]
         if c == " ":
             if len(current_word) > 0:
-                words.append(current_word);
-                current_word = "";
+                words.append(current_word)
+                current_word = ""
         else:
-            current_word = current_word + c;
-        acronym_i = acronym_i + 1;
+            current_word = current_word + c
+        acronym_i = acronym_i + 1
     if len(current_word) > 0:
-        words.append(current_word);
-    acronym = "";
-    acronym_j = 0;
-    word = "";
+        words.append(current_word)
+    acronym = ""
+    acronym_j = 0
+    word = ""
     while acronym_j < len(words):
-        word = words[acronym_j];
+        word = words[acronym_j]
         if len(word) > 0:
-            acronym = acronym + char_to_upper(word[0]);
-        acronym_j = acronym_j + 1;
-    return acronym;
+            acronym = acronym + char_to_upper(word[0])
+        acronym_j = acronym_j + 1
+    return acronym
 
-phrases = ["As Soon As Possible", "Frequently Asked Questions", "Light Amplification by Stimulated Emission of Radiation", "You Only Live Once"];
-phrase_i = 0;
-phrase = "";
-acronym = "";
+phrases = ["As Soon As Possible", "Frequently Asked Questions", "Light Amplification by Stimulated Emission of Radiation", "You Only Live Once"]
+phrase_i = 0
+phrase = ""
+acronym = ""
 while phrase_i < len(phrases):
-    phrase = phrases[phrase_i];
-    acronym = generate_acronym(phrase);
-    print("  '" + phrase + "' -> " + acronym);
-    phrase_i = phrase_i + 1;
-print("");
-print("Simple Caesar Cipher (letters only, shift by 3):");
+    phrase = phrases[phrase_i]
+    acronym = generate_acronym(phrase)
+    print("  '" + phrase + "' -> " + acronym)
+    phrase_i = phrase_i + 1
+print("")
+print("Simple Caesar Cipher (letters only, shift by 3):")
 def caesar_shift_char(c):
     if not is_alpha(c):
-        return c;
-    o = ord(c);
+        return c
+    o = ord(c)
     if o >= ord("a") and o <= ord("z"):
-        shifted = ((o - ord("a") + 3) % 26) + ord("a");
-        return chr(shifted);
+        shifted = ((o - ord("a") + 3) % 26) + ord("a")
+        return chr(shifted)
     else:
-        shifted = ((o - ord("A") + 3) % 26) + ord("A");
-        return chr(shifted);
+        shifted = ((o - ord("A") + 3) % 26) + ord("A")
+        return chr(shifted)
 
 def caesar_encrypt(s):
-    result = "";
-    caesar_i = 0;
-    c = "";
-    o = 0;
-    shifted = 0;
+    result = ""
+    caesar_i = 0
+    c = ""
+    o = 0
+    shifted = 0
     while caesar_i < len(s):
-        c = s[caesar_i];
+        c = s[caesar_i]
         if not is_alpha(c):
-            result = result + c;
+            result = result + c
         else:
-            o = ord(c);
+            o = ord(c)
             if o >= ord("a") and o <= ord("z"):
-                shifted = ((o - ord("a") + 3) % 26) + ord("a");
-                result = result + chr(shifted);
+                shifted = ((o - ord("a") + 3) % 26) + ord("a")
+                result = result + chr(shifted)
             else:
-                shifted = ((o - ord("A") + 3) % 26) + ord("A");
-                result = result + chr(shifted);
-        caesar_i = caesar_i + 1;
-    return result;
+                shifted = ((o - ord("A") + 3) % 26) + ord("A")
+                result = result + chr(shifted)
+        caesar_i = caesar_i + 1
+    return result
 
-messages = ["hello world", "LUMEN LANG", "Test 123"];
-msg_i = 0;
-msg = "";
-encrypted = "";
+messages = ["hello world", "LUMEN LANG", "Test 123"]
+msg_i = 0
+msg = ""
+encrypted = ""
 while msg_i < len(messages):
-    msg = messages[msg_i];
-    encrypted = caesar_encrypt(msg);
-    print("  '" + msg + "' -> '" + encrypted + "'");
-    msg_i = msg_i + 1;
+    msg = messages[msg_i]
+    encrypted = caesar_encrypt(msg)
+    print("  '" + msg + "' -> '" + encrypted + "'")
+    msg_i = msg_i + 1

@@ -1,3 +1,3 @@
 # Ported from examples/lumen/constructs/array_simple.lm by scripts/port_examples.py; edit the Lumen original, not this file.
-a = [1, 2, 3];
-print(a);
+a = [1, 2, 3]
+print(a)

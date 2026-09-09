@@ -2872,8 +2872,22 @@ impl<'a> Builder<'a> {
     /// a subscript without a value still works out its two parts.
     fn with_annotation(&mut self, place: Form, began: usize) -> Res<Form> {
         let table = self.table;
-        let through_pipe = self.tokens[began..self.pos].iter().any(|word|
-            word.shape == Shape::Sign && table.spells("op.pipe", &word.lexeme));
+        let mut depth = 0usize;
+        let through_pipe = self.tokens[began..self.pos].iter().any(|word| {
+            if word.shape != Shape::Sign {
+                return false;
+            }
+            let opens = ["syntax.call.open", "syntax.array.open", "syntax.map.open"];
+            let closes = ["syntax.call.close", "syntax.array.close", "syntax.map.close"];
+            if opens.iter().any(|label| table.spells(label, &word.lexeme)) {
+                depth += 1;
+            } else if closes.iter().any(|label| table.spells(label, &word.lexeme)) {
+                depth = depth.saturating_sub(1);
+            } else if depth == 0 {
+                return table.spells("op.pipe", &word.lexeme);
+            }
+            false
+        });
         let ordinary = matches!(&place, Form::Read(_)
             | Form::Apply(Callee::Prim(Prim::At | Prim::Of, _), _));
         if !ordinary && !through_pipe {
@@ -3439,6 +3453,10 @@ impl<'a> Builder<'a> {
                 }
                 self.advance();
                 let name = self.need_word("after the pipe")?;
+                if self.on_any("ext.stmt.annotation") {
+                    left = invoke(self.read(&name), vec![left]);
+                    break;
+                }
                 let mut args = vec![left];
                 if let Some(open) = table.single("syntax.call.open") {
                     if self.sign(open) {

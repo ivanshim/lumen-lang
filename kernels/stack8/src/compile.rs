@@ -2882,8 +2882,21 @@ impl<'a> Compiler<'a> {
         let name = matches!(words, [Instr::Read(_)]);
         let index = matches!(words.last(), Some(Instr::Act(Action::At, 2)));
         let member = matches!(words.last(), Some(Instr::Act(Action::Grab(_), 1)));
-        let piped = self.tokens[target_at..target_end].iter().any(|t|
-            t.shape == Shape::Sign && Lang::spells(&lang.pipe_words, &t.lexeme));
+        let mut brackets = 0usize;
+        let mut piped = false;
+        for t in &self.tokens[target_at..target_end] {
+            if t.shape != Shape::Sign {
+                continue;
+            }
+            let pairs = [&lang.calling, &lang.array_brackets, &lang.map_brackets];
+            if pairs.iter().flatten().any(|pair| pair.open == t.lexeme) {
+                brackets += 1;
+            } else if pairs.iter().flatten().any(|pair| pair.close == t.lexeme) {
+                brackets = brackets.saturating_sub(1);
+            } else if brackets == 0 && Lang::spells(&lang.pipe_words, &t.lexeme) {
+                piped = true;
+            }
+        }
         if !name && !index && !member && !piped {
             return Err(lang.annotation_amiss.clone().unwrap_or_else(|| "Expected an assignment target".into()));
         }
@@ -3660,6 +3673,12 @@ impl<'a> Compiler<'a> {
     /// a call with no other argument.
     fn pipe_target(&mut self, left: usize) -> Res<()> {
         let name = self.want_name("after the pipe")?;
+        if self.on_any(&self.lang.annotation_marks) {
+            // The statement reader will speak of the unsupported place;
+            // its member name must not be mistaken for a builtin call.
+            self.read(&name);
+            return Ok(());
+        }
         let native = self.lang.builtins.get(&name).copied();
         if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace)) {
             // arr.push(x): the piped value must be the array's name.
