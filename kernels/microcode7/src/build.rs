@@ -3890,6 +3890,27 @@ impl<'a> Builder<'a> {
 
     // ---------- expressions
 
+    fn comparison_chain(&mut self, first: Form, precedence: u32) -> Res<Form> {
+        let word = self.advance();
+        let operation = self.table.dyadic[&word.lexeme].prim;
+        let reverse = operation == Prim::OneObject && self.table.monadic.get(&self.look().lexeme).map_or(false, |op| op.prim == Prim::Invert);
+        if reverse { self.advance(); }
+        let before = self.gensym("before");
+        let after = self.gensym("after");
+        let second = self.expr(precedence + 1)?;
+        let mut test = prim_call(operation, vec![self.read(&before), self.read(&after)]);
+        if reverse { test = prim_call(Prim::Invert, vec![test]); }
+        let more = self.table.dyadic.get(&self.look().lexeme).map_or(false, |next| {
+            next.level == precedence && matches!(next.prim, Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::OneObject)
+        });
+        if more {
+            let middle = self.read(&after);
+            let remaining = self.comparison_chain(middle, precedence)?;
+            test = self.choose(test, remaining, constant(Value::Flag(false)));
+        }
+        Ok(sequence(vec![self.write(&before, first), self.write(&after, second), test]))
+    }
+
     fn expr(&mut self, floor: u32) -> Res<Form> {
         self.expr_at(floor, true)
     }
@@ -3986,6 +4007,10 @@ impl<'a> Builder<'a> {
             };
             if op.level < floor {
                 break;
+            }
+            if table.flag("ext.op.comparison.chain") && matches!(op.prim, Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::OneObject) {
+                left = self.comparison_chain(left, op.level)?;
+                continue;
             }
             self.advance();
             let floor_right = if op.right_assoc { op.level } else { op.level + 1 };

@@ -244,6 +244,10 @@ only. The extension labels so far, all from PHP:
   and builtin kinds are singletons. Equal unboxed whole numbers stop
   in `ext.op.identity.unsupported` words:
   those values do not yet retain separate object identities.
+- `ext.op.comparison.chain`: a switch; neighboring equality, ordering
+  and identity comparisons form one chain. Each middle operand runs
+  once and belongs to the comparisons on either side. A false comparison
+  ends the chain without running the operands still to come.
 - `ext.op.increment`, `ext.op.decrement`: `++` and `--`, as statements
   and in expressions, before or after the name (`++$i` is the stepped
   value, `$i++` the value before).
@@ -1869,6 +1873,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.bit.xor` | - | - | - | - | `^` | - | - | - | - | - |
 | `ext.op.cast` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.compare` | - | - | - | - | `<=>` | - | - | - | - | - |
+| `ext.op.comparison.chain` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.conditional` | - | - | `if` `else` | - | - | - | - | - | - | - |
 | `ext.op.decrement` | - | - | - | - | `--` | - | - | - | - | - |
 | `ext.op.decrement.text` | - | - | - | - | `Decrement on non-numeric string has no effect and is deprecated` | - | - | - | - | - |

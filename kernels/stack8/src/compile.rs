@@ -4056,6 +4056,36 @@ impl<'a> Compiler<'a> {
 
     // ---------- expressions ----------
 
+    fn comparisons(&mut self, level: u32) -> Res<()> {
+        let held = self.gensym("compared");
+        self.write(&held);
+        let mut stopped = Vec::new();
+        loop {
+            let word = self.take();
+            let action = self.lang.dyadic[&word.lexeme].action.clone();
+            let negate = matches!(action, Action::Identity)
+                && self.lang.monadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Not));
+            if negate { self.take(); }
+            self.read(&held);
+            self.expr(level + 1)?;
+            self.write(&held);
+            self.read(&held);
+            self.act(action, 2);
+            if negate { self.act(Action::Not, 1); }
+            let follows = self.lang.dyadic.get(&self.look().lexeme).map_or(false, |op| op.level == level
+                && matches!(op.action, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge | Action::Identity));
+            if !follows { break; }
+            stopped.push(self.skip());
+        }
+        if !stopped.is_empty() {
+            let done = self.leap();
+            for place in stopped { self.land(place); }
+            self.constant(Value::Flag(false));
+            self.land(done);
+        }
+        Ok(())
+    }
+
     fn expr(&mut self, floor: u32) -> Res<()> {
         self.expr_at(floor, true)
     }
@@ -4159,6 +4189,10 @@ impl<'a> Compiler<'a> {
             };
             if infix.level < floor {
                 break;
+            }
+            if lang.comparison_chains && matches!(infix.action, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge | Action::Identity) {
+                self.comparisons(infix.level)?;
+                continue;
             }
             self.take();
             let right_floor = if infix.right_assoc { infix.level } else { infix.level + 1 };
