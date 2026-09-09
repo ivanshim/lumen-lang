@@ -35,6 +35,7 @@ struct Layer {
     rpn: bool,
     /// Names bound to a global (by `global`, the same name; by `static`, a hidden one).
     aliases: Vec<(String, String)>,
+    suspended: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -227,7 +228,7 @@ type Knows<'w> = (&'w HashMap<String, Vec<bool>>, &'w HashMap<String, Vec<String
 type Within<'w> = (&'w [String], Knows<'w>);
 
 fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool) -> Res<Built> {
-    let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
+    let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new(), suspended: false };
     let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, table);
     let mut layers = vec![top];
     if let Some((inside, (args, spellings, backs))) = within {
@@ -238,7 +239,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
             arg_names.entry(named.clone()).or_insert_with(|| spelt.clone());
         }
         gives_back.extend(backs.iter().cloned());
-        layers.push(Layer { holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
+        layers.push(Layer { holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new(), suspended: false });
     }
     let outer_layers = layers.len();
     let mut r = Builder { within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
@@ -914,9 +915,13 @@ impl<'a> Builder<'a> {
         }
         formal_kinds.truncate(params.len());
         let param_slots = (0..params.len()).collect();
-        self.layers.push(Layer { holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new() });
+        self.layers.push(Layer { holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new(), suspended: false });
         let body = body(self)?;
         let scope = self.layers.pop().unwrap();
+        let body = match scope.suspended {
+            false => body,
+            true => self.scope_unrun("ext.stmt.yield.unrun"),
+        };
         self.naming.pop();
         let carried = std::mem::replace(&mut self.carrying, around);
         Ok(constant(Value::Routine(Rc::new(Routine { ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, traps: catches, carried, body }))))
@@ -1199,6 +1204,11 @@ impl<'a> Builder<'a> {
             return Ok(self.scope_unrun("ext.system.scope.unready"));
         }
         let yields = self.table.spells("ext.stmt.yield", &head);
+        if yields {
+            if let Some(function) = self.layers.iter_mut().rev().find(|layer| layer.holds == Holds::Every) {
+                function.suspended = true;
+            }
+        }
         if yields && self.key("ext.stmt.yield.from") { self.advance(); }
         if !self.on_stmt_end() && !matches!(self.look().shape, Shape::Finish | Shape::Close) {
             let _value = self.comma_value()?;
@@ -2511,7 +2521,28 @@ impl<'a> Builder<'a> {
 
     /// A statement without a keyword: a step, a bare call, an
     /// assignment or an expression.
+    fn member_write_ahead(&self) -> Option<usize> {
+        if !self.table.has_any("ext.system.scope.unready") || self.table.has_any("ext.op.member") {
+            return None;
+        }
+        let mut n = 0;
+        loop {
+            if self.glance(n).shape != Shape::Bare { return None; }
+            n += 1;
+            let next = self.glance(n);
+            if next.shape != Shape::Sign { return None; }
+            if self.table.spells("op.pipe", &next.lexeme) { n += 1; continue; }
+            let writes = self.table.spells("stmt.assign", &next.lexeme) || self.table.compound.contains_key(&next.lexeme);
+            return (n > 1 && writes).then_some(n + 1);
+        }
+    }
+
     fn plain_stmt(&mut self) -> Res<Form> {
+        if let Some(length) = self.member_write_ahead() {
+            self.pos += length;
+            let _assigned = self.comma_value()?;
+            return Ok(self.scope_unrun("ext.system.scope.unready"));
+        }
         let (here, next) = (self.look().clone(), self.glance(1).clone());
         if self.table.flag("ext.syntax.call.bare") && here.shape == Shape::Bare {
             // A builtin with no bracket after it; echo always, since a
@@ -2628,7 +2659,7 @@ impl<'a> Builder<'a> {
             return Err(format!("Expected '{}' after for loop variable, got: {}", table.single("stmt.for.in").unwrap_or("in"), self.look().lexeme));
         }
         self.advance();
-        let ranged = self.look().shape == Shape::Bare
+        let ranged = !table.flag("ext.builtin.range.value") && self.look().shape == Shape::Bare
             && table.prims.get(&self.look().lexeme) == Some(&Prim::Span)
             && table.single("syntax.call.open").map_or(false, |o| self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == o);
         let (start, end) = if ranged {
@@ -5572,7 +5603,7 @@ impl<'a> Builder<'a> {
             let close = table.strings("stack.program.close")[k].clone();
             self.gensyms += 1;
             let name = format!("<program{}>", self.gensyms);
-            self.layers.push(Layer { holds: Holds::Every, idents: Vec::new(), formals: Vec::new(), formal_slots: Vec::new(), rpn: true, aliases: Vec::new() });
+            self.layers.push(Layer { holds: Holds::Every, idents: Vec::new(), formals: Vec::new(), formal_slots: Vec::new(), rpn: true, aliases: Vec::new(), suspended: false });
             let (mut s, left) = self.rpn_block(std::slice::from_ref(&close), Mode::Quoted)?;
             self.need_lexeme(&close)?;
             if let Some(v) = left {

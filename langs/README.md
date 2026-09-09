@@ -295,8 +295,9 @@ only. The extension labels so far, all from PHP:
   kept. `ext.stmt.global` instead uses the existing outermost bindings.
 - `ext.stmt.yield` reads a value handed out from a routine, or no value;
   `ext.stmt.yield.from` precedes a source of further values. The reader
-  keeps the whole expression. `ext.stmt.yield.unrun` stops the run when
-  it reaches the handing-out, since suspended routines are still owed.
+  keeps the whole expression. `ext.stmt.yield.unrun` stops a call of
+  the enclosing routine before its body runs, since suspended routines
+  are still owed. Merely binding that routine does not run its body.
 - `ext.stmt.with` reads a context expression and its suite;
   `ext.stmt.with.as` gives a name to what that context hands in. Further
   contexts may be separated as arguments are. The suite is read whole,
@@ -310,6 +311,16 @@ only. The extension labels so far, all from PHP:
   over several lines. Quotes within it do not close it unless the whole
   mark stands there, and comment marks remain text. The ordinary string
   escapes are read. Prefixes and other string forms are not added here.
+- `ext.builtin.range.value` also makes a range used as a loop's source
+  an ordinary collection. Its one-bound and three-bound forms therefore
+  use the same bounds and step as a range standing elsewhere; languages
+  without this switch retain their two-bound counted loop.
+- `ext.system.scope.unready` also governs the lesser reading of member
+  writes before the full member machinery is spelled. A chain of names
+  joined by `op.pipe`, followed by an assignment or compound assignment,
+  is read as a place and a value. Reaching the write raises the complaint;
+  the member names are not mistaken for calls. `ext.op.member`, when
+  spelled, takes back this work for the ordinary member reader.
 - `ext.system.scope.unready` holds plain words for a scope form whose
   reading is provided before its running. The complaint is part of the
   read program and is raised only when that form is reached, never while

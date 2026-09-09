@@ -104,6 +104,8 @@ struct Piece {
     /// Whether an expression statement stored into the result slot; a
     /// function without one needs neither the slot nor its prologue.
     result_touched: bool,
+    /// A handing-out makes the whole routine a suspended one.
+    suspends: bool,
     /// Which line the last marker in this unit named, so that a run of
     /// statements on one line marks it once.
     line: u32,
@@ -248,6 +250,7 @@ pub fn compile_within(
         cycles: Vec::new(),
         escapes: Vec::new(),
         result_touched: false,
+        suspends: false,
         line: 0,
         instrs: Vec::new(),
     };
@@ -798,6 +801,7 @@ impl<'a> Compiler<'a> {
             cycles: Vec::new(),
             escapes: Vec::new(),
             result_touched: false,
+            suspends: false,
             line: 0,
             instrs: Vec::new(),
         });
@@ -806,6 +810,12 @@ impl<'a> Compiler<'a> {
             self.write(RESULT_CELL);
         }
         body(self)?;
+        if self.piece().suspends {
+            self.piece().instrs.clear();
+            self.piece().escapes.clear();
+            self.piece().result_touched = true;
+            self.scope_fault(&self.lang.yield_unrun.clone());
+        }
         // A function whose value only ever comes from a return
         // drops the result slot: its prologue goes, and a fall off the
         // end leaves nothing, which the machine reads as null.
@@ -983,6 +993,7 @@ impl<'a> Compiler<'a> {
     fn scoped_statement(&mut self) -> Res<()> {
         let lang = self.lang;
         let word = self.take().lexeme;
+        if Lang::spells(&lang.yield_words, &word) { self.piece().suspends = true; }
         let from = self.mark();
         let message;
         if Lang::spells(&lang.nonlocal_words, &word) {
@@ -1164,7 +1175,33 @@ impl<'a> Compiler<'a> {
 
     /// A statement without a keyword: a step, a bare call, an
     /// assignment or an expression.
+    /// A member written through the pipe mark is a place, not a call.
+    fn scope_member_write(&mut self) -> Res<bool> {
+        let lang = self.lang;
+        if lang.scope_unready.is_empty() || lang.member_mark.is_some() || self.look().shape != Shape::Instr {
+            return Ok(false);
+        }
+        let mut ahead = 1;
+        while self.look_ahead(ahead).shape == Shape::Sign
+            && Lang::spells(&lang.pipe_words, &self.look_ahead(ahead).lexeme)
+            && self.look_ahead(ahead + 1).shape == Shape::Instr {
+            ahead += 2;
+        }
+        let sign = self.look_ahead(ahead);
+        if ahead == 1 || sign.shape != Shape::Sign
+            || !(Lang::spells(&lang.assign_words, &sign.lexeme) || lang.compound.contains_key(&sign.lexeme)) {
+            return Ok(false);
+        }
+        for _ in 0..=ahead { self.take(); }
+        let from = self.mark();
+        self.scope_value()?;
+        self.piece().instrs.truncate(from);
+        self.scope_fault(&lang.scope_unready);
+        Ok(true)
+    }
+
     fn simple_stmt(&mut self) -> Res<()> {
+        if self.scope_member_write()? { return Ok(()); }
         let lang = self.lang;
         if lang.bare_calls && self.look().shape == Shape::Instr {
             // A builtin without brackets after it; echo always, since a
@@ -2186,7 +2223,7 @@ impl<'a> Compiler<'a> {
             return Err(format!("Expected '{}' after for loop variable, got: {}", lang.in_words[0], self.look().lexeme));
         }
         self.take();
-        let range_call = self.look().shape == Shape::Instr
+        let range_call = !lang.range_value && self.look().shape == Shape::Instr
             && lang.builtins.get(&self.look().lexeme) == Some(&Builtin::Span)
             && lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).is_lexeme(Shape::Sign, &c.open));
         if range_call {

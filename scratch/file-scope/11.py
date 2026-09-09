@@ -1,0 +1,1 @@
+Foo.count += 1
