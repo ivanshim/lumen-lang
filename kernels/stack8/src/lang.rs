@@ -492,6 +492,13 @@ pub struct Lang {
     pub append_index: bool,
     /// `for v in a` walks what a holds when a is not a range.
     pub for_collections: bool,
+    pub comprehension_async: Vec<String>,
+    pub comprehension_async_unavailable: Vec<String>,
+    pub comprehension_target_unavailable: Vec<String>,
+    pub sum_non_number: Vec<String>,
+    pub range_non_integer: Vec<String>,
+    pub range_zero_step: Vec<String>,
+
     pub comprehension_for: Vec<String>,
     pub comprehension_in: Vec<String>,
     pub comprehension_if: Vec<String>,
@@ -655,6 +662,8 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+w ext.op.comprehension.async | w ext.op.comprehension.async.unavailable | w ext.op.comprehension.target.unavailable | w ext.builtin.sum.non_number | w ext.builtin.range.non_integer | w ext.builtin.range.zero_step
+
 w ext.op.comprehension.for | w ext.op.comprehension.in | w ext.op.comprehension.if | b ext.syntax.set | w ext.syntax.array.spread | w ext.syntax.map.spread | w ext.syntax.collection.unwalkable | w ext.syntax.map.spread.unmapped | w ext.op.comprehension.unpack.amiss | b ext.system.collection.literal | b ext.builtin.range.value | w ext.builtin.sum | w ext.builtin.list | w ext.builtin.any
 
 w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
@@ -1468,6 +1477,13 @@ impl Lang {
             template: r.flag("ext.lexical.template")?,
             append_index: r.flag("ext.op.index.append")?,
             for_collections: r.flag("ext.stmt.for.collection")?,
+            comprehension_async: r.strings("ext.op.comprehension.async")?,
+            comprehension_async_unavailable: r.strings("ext.op.comprehension.async.unavailable")?,
+            comprehension_target_unavailable: r.strings("ext.op.comprehension.target.unavailable")?,
+            sum_non_number: r.strings("ext.builtin.sum.non_number")?,
+            range_non_integer: r.strings("ext.builtin.range.non_integer")?,
+            range_zero_step: r.strings("ext.builtin.range.zero_step")?,
+
             comprehension_for: r.strings("ext.op.comprehension.for")?,
             comprehension_in: r.strings("ext.op.comprehension.in")?,
             comprehension_if: r.strings("ext.op.comprehension.if")?,
@@ -1634,7 +1650,7 @@ impl Lang {
             }
         }
         let mut lists: Vec<&Vec<String>> = vec![
-            &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread,
+            &self.comprehension_async, &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread,
             &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.return_marks,
             &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open,
             &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words,

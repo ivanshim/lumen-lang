@@ -4716,7 +4716,9 @@ impl<'a> Compiler<'a> {
         for (at, tok) in self.tokens.iter().enumerate().skip(self.pos) {
             if !matches!(tok.shape, Shape::Instr | Shape::Sign) { continue; }
             let word = &tok.lexeme;
-            if depth == 0 && Lang::spells(&self.lang.comprehension_for, word) { return Some(at); }
+            if depth == 0 && Lang::spells(&self.lang.comprehension_for, word) {
+                return Some(if at > self.pos && Lang::spells(&self.lang.comprehension_async, &self.tokens[at - 1].lexeme) { at - 1 } else { at });
+            }
             let opens = [&self.lang.grouping, &self.lang.array_brackets, &self.lang.map_brackets];
             if opens.into_iter().flatten().any(|b| b.open == *word) { depth += 1; }
             else if opens.into_iter().flatten().any(|b| b.close == *word) {
@@ -4785,24 +4787,48 @@ impl<'a> Compiler<'a> {
     }
 
     /// The head is read last, once all its names have their own cells.
+    fn comprehension_target(&mut self) -> Res<Option<String>> {
+        let written = self.look().lexeme.clone();
+        let from = self.mark();
+        self.prefix()?;
+        let target: Vec<Instr> = self.piece().instrs.drain(from..).collect();
+        match target.as_slice() {
+            [Instr::Read(_)] => Ok(Some(written)),
+            [.., Instr::Act(Action::At, 2)] => Ok(None),
+            _ => Err("Expected a name or indexed place as a comprehension target".to_string()),
+        }
+    }
+
     fn comprehension_clause(&mut self, head: usize, result: &str, map: bool) -> Res<()> {
+        if self.on_any(&self.lang.comprehension_async) {
+            self.take();
+            if !self.on_any(&self.lang.comprehension_for) { return Err("Expected a walk after the asynchronous word".to_string()); }
+            let said = self.lang.comprehension_async_unavailable.first().cloned().unwrap_or_else(|| "Asynchronous walks are not provided".to_string());
+            self.constant(Value::text(&said));
+            self.act(Action::Builtin(Builtin::Raise, Rc::from("comprehension")), 1);
+        }
         if self.on_any(&self.lang.comprehension_for) {
             self.take();
             let group = self.lang.grouping.clone();
             let grouped = group.as_ref().map_or(false, |g| self.at_symbol(&g.open));
             if grouped { self.take(); }
-            let mut names = vec![self.want_name("in a comprehension target")?];
+            let mut names = vec![self.comprehension_target()?];
             let separator = self.lang.calling.as_ref().and_then(|c| c.between.clone());
             let mut unpack = false;
             while separator.as_ref().map_or(false, |s| self.at_symbol(s)) {
                 self.take();
                 unpack = true;
                 if self.on_any(&self.lang.comprehension_in) || group.as_ref().map_or(false, |g| self.at_symbol(&g.close)) { break; }
-                names.push(self.want_name("in a comprehension target")?);
+                names.push(self.comprehension_target()?);
             }
             if grouped { self.want_sign(&group.expect("target group").close, "after comprehension names")?; }
             if !self.on_any(&self.lang.comprehension_in) { return Err("Expected the comprehension's collection word".to_string()); }
             self.take();
+            if names.iter().any(Option::is_none) {
+                let said = self.lang.comprehension_target_unavailable.first().cloned().unwrap_or_else(|| "Indexed comprehension targets are not provided".to_string());
+                self.constant(Value::text(&said));
+                self.act(Action::Builtin(Builtin::Raise, Rc::from("comprehension")), 1);
+            }
             self.expr(0)?;
             self.act(Action::ComprehensionItems, 1);
             let bag = self.gensym("comprehension_source");
@@ -4830,7 +4856,7 @@ impl<'a> Compiler<'a> {
                     self.act(Action::At, 2);
                 }
                 self.write(&own);
-                self.comprehension_names.push((name, own));
+                if let Some(name) = name { self.comprehension_names.push((name, own)); }
             }
             self.comprehension_clause(head, result, map)?;
             self.read(&at);
@@ -4850,14 +4876,17 @@ impl<'a> Compiler<'a> {
             let tail = self.pos;
             self.pos = head;
             self.read(result);
+            let spread = self.on_any(if map { &self.lang.map_spread } else { &self.lang.array_spread });
+            if spread { self.take(); }
             self.expr(0)?;
-            if map {
+            if map && !spread {
                 let mark = self.lang.pair_mark.clone().expect("map pair mark");
                 self.want_sign(&mark, "between a comprehension key and value")?;
                 self.expr(0)?;
                 self.act(Action::Tie, 2);
             }
-            self.act(Action::GatherItem { map, spread: false }, 2);
+            if !self.on_any(&self.lang.comprehension_for) && !self.on_any(&self.lang.comprehension_async) { return Err("Expected a comprehension clause after its expression".to_string()); }
+            self.act(Action::GatherItem { map, spread }, 2);
             self.write(result);
             self.pos = tail;
         }

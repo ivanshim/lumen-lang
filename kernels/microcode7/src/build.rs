@@ -4347,7 +4347,10 @@ impl<'a> Builder<'a> {
             if !matches!(token.shape, Shape::Bare | Shape::Sign) { continue; }
             let text = token.lexeme.as_str();
             if nesting.is_empty() {
-                if table.spells(label, text) { return Some(index); }
+                if table.spells(label, text) {
+                    let begins = if label == "ext.op.comprehension.for" && index > self.pos && table.spells("ext.op.comprehension.async", &self.tokens[index - 1].lexeme) { index - 1 } else { index };
+                    return Some(begins);
+                }
                 if table.spells("syntax.call.separator", text) { return None; }
             }
             if let Some((_, end)) = pairs.iter().find(|(start, _)| table.spells(start, text)) {
@@ -4411,18 +4414,29 @@ impl<'a> Builder<'a> {
             let accepted = self.gather_tail(expression_at, answer, dictionary)?;
             return Ok(self.choose(condition, accepted, constant(Value::Nil)));
         }
+        if self.on_any("ext.op.comprehension.async") {
+            self.advance();
+            if !self.on_any("ext.op.comprehension.for") { return Err("Expected a walk after the asynchronous word".into()); }
+            let words = self.table.single("ext.op.comprehension.async.unavailable").unwrap_or("Asynchronous walks are not provided");
+            let refusal = prim_call(Prim::Raise, vec![constant(Value::text(words))]);
+            let read = self.gather_tail(expression_at, answer, dictionary)?;
+            return Ok(sequence(vec![refusal, read]));
+        }
         if !self.on_any("ext.op.comprehension.for") {
             let after_clauses = self.pos;
             self.pos = expression_at;
+            let spread = self.on_any(if dictionary { "ext.syntax.map.spread" } else { "ext.syntax.array.spread" });
+            if spread { self.advance(); }
             let mut term = self.expr(0)?;
-            if dictionary {
+            if dictionary && !spread {
                 self.need_sign(self.table.single("syntax.map.pair").unwrap(), "in a map comprehension")?;
                 let worth = self.expr(0)?;
                 term = prim_call(Prim::Couple, vec![term, worth]);
             }
+            if !self.on_any("ext.op.comprehension.for") && !self.on_any("ext.op.comprehension.async") { return Err("Expected a comprehension clause after its expression".into()); }
             self.pos = after_clauses;
             let so_far = self.read(answer);
-            let enlarged = prim_call(Prim::ExtendLiteral(dictionary, false), vec![so_far, term]);
+            let enlarged = prim_call(Prim::ExtendLiteral(dictionary, spread), vec![so_far, term]);
             return Ok(self.write(answer, enlarged));
         }
         self.advance();
@@ -4431,7 +4445,13 @@ impl<'a> Builder<'a> {
         let mut targets = Vec::new();
         let mut taken_apart = false;
         loop {
-            targets.push(self.need_word("as a comprehension name")?);
+            let spelled = self.look().lexeme.clone();
+            let target = self.monadic_expr()?;
+            targets.push(match target {
+                Form::Read(_) => Some(spelled),
+                Form::Apply(Callee::Prim(Prim::At, _), _) => None,
+                _ => return Err("Expected a name or indexed place as a comprehension target".into()),
+            });
             if !self.on_any("syntax.call.separator") { break; }
             self.advance();
             taken_apart = true;
@@ -4440,6 +4460,7 @@ impl<'a> Builder<'a> {
         if grouped { self.need_sign(self.table.single("syntax.group.close").unwrap(), "after the target")?; }
         if !self.on_any("ext.op.comprehension.in") { return Err("Expected the word before a comprehension source".into()); }
         self.advance();
+        let unavailable = targets.iter().any(Option::is_none);
         let source = self.expr(0)?;
         let source_name = self.gather_name("gather_source");
         let hold = self.write(&source_name, prim_call(Prim::Iterated, vec![source]));
@@ -4459,13 +4480,18 @@ impl<'a> Builder<'a> {
             let mut value = self.read(&item_name);
             if taken_apart { value = prim_call(Prim::At, vec![value, constant(Value::Small(part as i64))]); }
             body.push(self.write(&private, value));
-            self.gather_names.push((original, private));
+            if let Some(original) = original { self.gather_names.push((original, private)); }
         }
         body.push(self.gather_tail(expression_at, answer, dictionary)?);
         let before = self.read(&cursor);
         let onward = self.write(&cursor, prim_call(Prim::Plus, vec![before, constant(Value::Small(1))]));
         let cycle = Form::Cycle { test: Box::new(test), body: Box::new(sequence(body)), step: Some(Box::new(onward)), after: false };
-        Ok(sequence(vec![hold, begin, cycle]))
+        let mut work = vec![hold, begin, cycle];
+        if unavailable {
+            let words = self.table.single("ext.op.comprehension.target.unavailable").unwrap_or("Indexed comprehension targets are not provided");
+            work.insert(0, prim_call(Prim::Raise, vec![constant(Value::text(words))]));
+        }
+        Ok(sequence(work))
     }
 
     fn elements(&mut self, close_key: &str, sep_key: &str) -> Res<Vec<Form>> {

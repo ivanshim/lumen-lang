@@ -4184,8 +4184,9 @@ impl<'a> Machine<'a> {
                 if !(1..=2).contains(&v.len()) { return Err(format!("{}() expects one or two arguments", name)); }
                 let members = self.gathered_members(&v[0])?;
                 let start = v.get(1).cloned().unwrap_or(Value::Small(0));
-                members.into_iter().try_fold(start, |prior, item| {
-                    math::compute(Calc::Plus, &prior, &item).unwrap_or_else(|| Err("TypeError: sum needs numbers".into()))
+                let number = |x| match x { Value::Flag(flag) => Value::Small(flag as i64), x => x };
+                members.into_iter().try_fold(number(start), |prior, item| {
+                    math::compute(Calc::Plus, &prior, &number(item)).unwrap_or_else(|| Err(self.table.single("ext.builtin.sum.non_number").unwrap_or("Invalid collection argument").into()))
                 })?
             }
             Prim::Span if self.table.flag("ext.builtin.range.value") => {
@@ -4193,13 +4194,14 @@ impl<'a> Machine<'a> {
                 let integer = |x: &Value| match x {
                     Value::Small(k) => Ok(BigInt::from(*k)),
                     Value::Huge(k) => Ok(k.as_ref().clone()),
-                    _ => Err("TypeError: range needs whole-number bounds".to_string()),
+                    Value::Flag(flag) => Ok(BigInt::from(*flag as i64)),
+                    _ => Err(self.table.single("ext.builtin.range.non_integer").unwrap_or("Invalid collection argument").to_string()),
                 };
                 let stop = integer(&v[if v.len() == 1 { 0 } else { 1 }])?;
                 let mut now = if v.len() == 1 { BigInt::from(0) } else { integer(&v[0])? };
                 let stride = match v.get(2) { Some(x) => integer(x)?, None => BigInt::from(1) };
                 let direction = stride.cmp(&BigInt::from(0));
-                if direction == std::cmp::Ordering::Equal { return Err("ValueError: range step must not be zero".into()); }
+                if direction == std::cmp::Ordering::Equal { return Err(self.table.single("ext.builtin.range.zero_step").unwrap_or("Invalid collection argument").into()); }
                 let mut values = Vec::new();
                 while now.cmp(&stop) == direction.reverse() {
                     values.push(Value::from_big(now.clone()));

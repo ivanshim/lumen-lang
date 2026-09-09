@@ -4066,8 +4066,10 @@ impl<'a> Engine<'a> {
             Builtin::Sum => {
                 if args.is_empty() || args.len() > 2 { return Err(format!("{}() expects one or two arguments", name)); }
                 let mut total = args.get(1).cloned().unwrap_or(Value::Small(0));
+                if let Value::Flag(b) = total { total = Value::Small(i64::from(b)); }
                 for item in self.comprehension_items(&args[0])? {
-                    total = arith::calculate(Operation::Plus, &total, &item).ok_or_else(|| "TypeError: sum needs numbers".to_string())??;
+                    let item = match item { Value::Flag(b) => Value::Small(i64::from(b)), other => other };
+                    total = arith::calculate(Operation::Plus, &total, &item).ok_or_else(|| self.lang.sum_non_number.first().cloned().unwrap_or_else(|| "Invalid collection argument".to_string()))??;
                 }
                 total
             }
@@ -4075,11 +4077,12 @@ impl<'a> Engine<'a> {
                 if args.is_empty() || args.len() > 3 { return Err(format!("{}() expects one to three arguments", name)); }
                 let bounds = args.iter().map(|v| match v {
                     Value::Small(n) => Ok(BigInt::from(*n)), Value::Huge(n) => Ok(n.as_ref().clone()),
-                    _ => Err("TypeError: range needs whole-number bounds".to_string()),
+                    Value::Flag(b) => Ok(BigInt::from(i64::from(*b))),
+                    _ => Err(self.lang.range_non_integer.first().cloned().unwrap_or_else(|| "Invalid collection argument".to_string())),
                 }).collect::<Res<Vec<_>>>()?;
                 let (mut at, end) = if bounds.len() == 1 { (BigInt::from(0), bounds[0].clone()) } else { (bounds[0].clone(), bounds[1].clone()) };
                 let step = bounds.get(2).cloned().unwrap_or_else(|| BigInt::from(1));
-                if step == BigInt::from(0) { return Err("ValueError: range step must not be zero".to_string()); }
+                if step == BigInt::from(0) { return Err(self.lang.range_zero_step.first().cloned().unwrap_or_else(|| "Invalid collection argument".to_string())); }
                 let forward = step > BigInt::from(0);
                 let mut items = Vec::new();
                 while if forward { at < end } else { at > end } { items.push(Value::of_big(at.clone())); at += &step; }

@@ -355,5 +355,24 @@
   ],
   "ext.builtin.any": [
     "any"
-  ]
+  ],
+  "ext.op.comprehension.async": [
+    "async"
+  ],
+  "ext.op.comprehension.async.unavailable": [
+    "NotImplementedError: asynchronous comprehensions are not supported"
+  ],
+  "ext.op.comprehension.target.unavailable": [
+    "NotImplementedError: indexed comprehension targets are not supported"
+  ],
+  "ext.builtin.sum.non_number": [
+    "TypeError: sum needs numbers"
+  ],
+  "ext.builtin.range.non_integer": [
+    "TypeError: range needs whole-number bounds"
+  ],
+  "ext.builtin.range.zero_step": [
+    "ValueError: range step must not be zero"
+  ],
+  "ext.system.untrue.empty_array": true
 }

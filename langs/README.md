@@ -507,11 +507,19 @@ only. The extension labels so far, all from PHP:
   item apart into names, with optional grouping. Brackets gather a list,
   braces with pairs gather a map, and parentheses gather eagerly into
   an array, even where they stand as the sole argument of a call.
+  A spread mark may lead the gathered expression too.
+  `ext.op.comprehension.async` marks an asynchronous walk, read in full
+  but refused when reached in the words of
+  `ext.op.comprehension.async.unavailable`; no asynchronous walk is
+  yet provided. Indexed targets likewise read, but stop the run with
+  `ext.op.comprehension.target.unavailable` until their binding rules
+  are provided.
   `ext.op.comprehension.unpack.amiss` says that an item has the wrong
   number of parts for its target.
 - `ext.syntax.set`: a switch; a brace literal without pairs is read as
   an array, keeping order and repeated items. An empty brace literal
-  remains a map. This stage does not provide a distinct set value.
+  remains a map. Line ends within these braces are space. This stage
+  does not provide a distinct set value.
 - `ext.syntax.array.spread` and `ext.syntax.map.spread`: a mark before
   a literal item takes all its members; the former takes array items,
   letters of text or map keys, the latter takes map pairs, later keys
@@ -526,6 +534,9 @@ only. The extension labels so far, all from PHP:
   `ext.builtin.list` gathers one collection into an array;
   `ext.builtin.sum` adds its members to an optional starting value,
   and `ext.builtin.any` asks whether any member holds true.
+  `ext.builtin.sum.non_number`, `ext.builtin.range.non_integer` and
+  `ext.builtin.range.zero_step` give their words for a member that
+  cannot be added, a bound that is not whole, and a step of nought.
 - `ext.op.walk.class` and its family: a thing may be its own walk.
   `ext.op.walk.class` is the class of method names saying so (PHP's
   `Iterator`), and `ext.op.walk.rewind`, `.more`, `.this`, `.key` and
@@ -1650,7 +1661,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.output.held` | - | - | - | - | `__output_held` | - | - | - | - | - |
 | `ext.builtin.output.hold` | - | - | - | - | `__output_hold` | - | - | - | - | - |
 | `ext.builtin.print_r` | - | - | - | - | `print_r` | - | - | - | - | - |
+| `ext.builtin.range.non_integer` | - | - | `TypeError: range needs whole-number bounds` | - | - | - | - | - | - | - |
 | `ext.builtin.range.value` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.builtin.range.zero_step` | - | - | `ValueError: range step must not be zero` | - | - | - | - | - | - | - |
 | `ext.builtin.room.limit` | - | - | - | - | `__room_limit` | - | - | - | - | - |
 | `ext.builtin.room.most` | - | - | - | - | `__room_most` | - | - | - | - | - |
 | `ext.builtin.room.most.forget` | - | - | - | - | `__room_most_forget` | - | - | - | - | - |
@@ -1661,6 +1674,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.shell` | - | - | - | - | `shell_exec` | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
+| `ext.builtin.sum.non_number` | - | - | `TypeError: sum needs numbers` | - | - | - | - | - | - | - |
 | `ext.builtin.time_limit` | - | - | - | - | `set_time_limit` | - | - | - | - | - |
 | `ext.builtin.uncaught` | - | - | - | - | `__uncaught_handler` | - | - | - | - | - |
 | `ext.builtin.unset` | - | - | - | - | `unset` | - | - | - | - | - |
@@ -1701,9 +1715,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.bit.xor` | - | - | - | - | `^` | - | - | - | - | - |
 | `ext.op.cast` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.compare` | - | - | - | - | `<=>` | - | - | - | - | - |
+| `ext.op.comprehension.async` | - | - | `async` | - | - | - | - | - | - | - |
+| `ext.op.comprehension.async.unavailable` | - | - | `NotImplementedError: asynchronous comprehensions are not supported` | - | - | - | - | - | - | - |
 | `ext.op.comprehension.for` | - | - | `for` | - | - | - | - | - | - | - |
 | `ext.op.comprehension.if` | - | - | `if` | - | - | - | - | - | - | - |
 | `ext.op.comprehension.in` | - | - | `in` | - | - | - | - | - | - | - |
+| `ext.op.comprehension.target.unavailable` | - | - | `NotImplementedError: indexed comprehension targets are not supported` | - | - | - | - | - | - | - |
 | `ext.op.comprehension.unpack.amiss` | - | - | `ValueError: comprehension target has the wrong number of values` | - | - | - | - | - | - | - |
 | `ext.op.decrement` | - | - | - | - | `--` | - | - | - | - | - |
 | `ext.op.decrement.text` | - | - | - | - | `Decrement on non-numeric string has no effect and is deprecated` | - | - | - | - | - |
@@ -1866,6 +1883,6 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.source.method` | - | - | - | - | `__METHOD__` | - | - | - | - | - |
 | `ext.system.source.routine` | - | - | - | - | `__FUNCTION__` | - | - | - | - | - |
 | `ext.system.text.bytes` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.system.untrue.empty_array` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.system.untrue.empty_array` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.system.untrue.text` | - | - | - | - | `0` | - | - | - | - | - |
 <!-- table:end -->
