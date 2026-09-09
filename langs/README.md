@@ -243,6 +243,22 @@ only. The extension labels so far, all from PHP:
   in; the scanner turns such a string into a bracketed concatenation
   (`op.concat` inside `syntax.group`) starting from the empty string, so
   the result is always text. `\$` is a literal sigil.
+- `ext.lexical.heredoc`: the mark that opens a string written over lines,
+  PHP's `<<<`. After it stands a label — a name, or a name in string
+  quotes, with spaces or tabs about it if the program likes — and then a
+  line end; the body runs to the first line whose
+  first word is that label again, and the line end before that line
+  belongs to the label and not to the body. What the closing label is
+  written in front of is written in front of every line of the body and
+  is none of what those lines say, so it comes off; a line written in
+  less far gives up what indentation it has. The body reads as a string
+  in `ext.lexical.interpolating_quotes` does, weaving values in and
+  taking escapes, save that the quote marks stand for themselves there,
+  the body being ended by its label and not by a mark. A label written
+  in quotes the language calls raw (`lexical.raw_quotes`) asks instead
+  for a body that spells only itself, weaving nothing in and reading no
+  escapes. After the closing label the reading goes on as it stood, so
+  the statement is ended in the ordinary way.
 - `ext.stmt.for.c`: the three-part loop, `for (init; test; step) body`,
   the clauses separated as call arguments are; an empty test is true and
   `continue` goes to the step.
@@ -1305,6 +1321,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.escape.codepoint.beyond` | - | - | - | - | - | - | - | `Invalid UTF-8 codepoint escape sequence: Codepoint too large` | - | - |
 | `ext.lexical.escape.codepoint.close` | - | - | - | - | - | - | - | `}` | - | - |
 | `ext.lexical.escape.codepoint.open` | - | - | - | - | - | - | - | `{` | - | - |
+| `ext.lexical.heredoc` | - | - | - | - | - | - | - | `<<<` | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | - | - | - | `"` | - | - |
 | `ext.lexical.name_lead` | - | - | - | - | - | - | - | `\` | - | - |
 | `ext.lexical.number.amiss` | - | - | - | - | - | - | - | `Invalid numeric literal` | - | - |

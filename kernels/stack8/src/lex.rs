@@ -95,6 +95,15 @@ fn drop_comments(source: &str, lang: &Lang) -> String {
                 }
                 ahead = &ahead[w..];
             }
+            None if lang.heredoc.as_deref().map_or(false, |mark| ahead.starts_with(mark)) => {
+                // A string written over lines says what it spells,
+                // comment marks and quote marks and all, so the whole
+                // of it is carried over untouched. One left unclosed is
+                // carried over whole too, for the scanner to speak of.
+                let over = heredoc_at(ahead, lang).map_or(ahead.len(), |here| here.done);
+                kept.push_str(&ahead[..over]);
+                ahead = &ahead[over..];
+            }
             None if lang.quotes.contains(&c) => {
                 quote = Some(c);
                 kept.push(c);
@@ -116,6 +125,83 @@ fn drop_comments(source: &str, lang: &Lang) -> String {
         }
     }
     kept
+}
+
+/// What a backslash may do in a run of text: the letters that stand for
+/// characters of their own, the mark that closes the run — which may
+/// always be written escaped — whether a character may be named by its
+/// number, and whether an escaped sigil is a sigil and opens no name.
+struct Escapes<'a> {
+    letters: &'a [char],
+    quote: Option<char>,
+    numbered: bool,
+    woven: bool,
+}
+
+/// Where the parts of a string written over lines lie, counted in bytes
+/// from the mark that opened it: the body, the place the body ends,
+/// which is before the line end the closing label's line begins after,
+/// and the place past that label, where the reading goes on.
+struct Heredoc {
+    raw: bool,
+    indent: usize,
+    body: usize,
+    ended: usize,
+    done: usize,
+}
+
+/// The string a mark opens where this text begins, if one is opened and
+/// its label stands alone again further down. The label is a name, or a
+/// name in quotes; quotes the language calls raw make a body that says
+/// what it spells and no more.
+fn heredoc_at(text: &str, lang: &Lang) -> Option<Heredoc> {
+    let blank = |s: &str| s.len() - s.trim_start_matches([' ', '\t']).len();
+    let mark = lang.heredoc.as_deref()?;
+    if !text.starts_with(mark) {
+        return None;
+    }
+    let mut at = mark.len() + blank(&text[mark.len()..]);
+    let quote = text[at..].chars().next().filter(|c| lang.quotes.contains(c));
+    at += quote.map_or(0, char::len_utf8);
+    let from = at;
+    for (step, c) in text[from..].char_indices() {
+        let fits = match step {
+            0 => lang.begins_name(c),
+            _ => lang.extends_name(c),
+        };
+        if !fits {
+            break;
+        }
+        at = from + step + c.len_utf8();
+    }
+    let label = &text[from..at];
+    if label.is_empty() {
+        return None;
+    }
+    if let Some(q) = quote {
+        if !text[at..].starts_with(q) {
+            return None;
+        }
+        at += q.len_utf8();
+    }
+    at += blank(&text[at..]);
+    let after = text[at..].strip_prefix("\r\n").or_else(|| text[at..].strip_prefix('\n'))?;
+    let body = text.len() - after.len();
+    let mut line = body;
+    loop {
+        let indent = blank(&text[line..]);
+        let word = &text[line + indent..];
+        // The label ends the body where nothing goes on from it: a
+        // longer word that merely begins with it is a word of the body.
+        if word.starts_with(label) && word[label.len()..].chars().next().map_or(true, |c| !lang.extends_name(c)) {
+            let over = &text[body..line];
+            let ended = over.strip_suffix('\n').map_or(over, |cut| cut.strip_suffix('\r').unwrap_or(cut));
+            let done = line + indent + label.len();
+            let raw = quote.map_or(false, |q| lang.raw_quotes.contains(&q));
+            return Some(Heredoc { raw, indent, body, ended: body + ended.len(), done });
+        }
+        line += text[line..].find('\n')? + 1;
+    }
 }
 
 struct Cursor<'a> {
@@ -224,58 +310,74 @@ impl<'a> Cursor<'a> {
         Ok((char::from_u32(number), written))
     }
 
+    /// One escape, from the backslash to the end of what it names: the
+    /// character it stands for goes into the text and the reading goes
+    /// on after it. A letter the language says nothing of keeps its
+    /// backslash, since text nobody spoke for is text as it was written.
+    fn escape(&mut self, how: &Escapes, s: &mut String, shielded: &mut Vec<usize>) -> Result<(), String> {
+        self.step();
+        let next = self.step();
+        if how.woven && Some(next) == self.lang.sigil {
+            // An escaped sigil is just the sigil.
+            shielded.push(s.chars().count());
+            s.push(next);
+            return Ok(());
+        }
+        // A character named by its number: the letter, the number
+        // written in sixteens between its brackets, and the character
+        // of that number in its place.
+        if how.numbered && Some(next) == self.lang.codepoint_letter && self.look(0) == self.lang.codepoint_open {
+            let (made, written) = self.codepoint()?;
+            match made {
+                Some(made) => {
+                    shielded.push(s.chars().count());
+                    s.push(made);
+                }
+                None => {
+                    s.push('\\');
+                    s.push(next);
+                    s.push_str(&written);
+                }
+            }
+            return Ok(());
+        }
+        if next == '\\' || Some(next) == how.quote || how.letters.contains(&next) {
+            s.push(match next {
+                'n' => '\n',
+                't' => '\t',
+                'r' => '\r',
+                '0' => '\0',
+                c => c,
+            });
+        } else {
+            s.push('\\');
+            s.push(next);
+        }
+        Ok(())
+    }
+
     fn string(&mut self, quote: char) -> Result<(), String> {
         let (line, col) = (self.row, self.column);
         self.step();
         let raw = self.lang.raw_quotes.contains(&quote);
         let woven = self.lang.interpolating.contains(&quote);
+        let how = Escapes {
+            letters: match raw {
+                true => &[],
+                false => &self.lang.escape_letters,
+            },
+            quote: Some(quote),
+            numbered: !raw,
+            woven,
+        };
         let mut s = String::new();
         // Char positions in s that came escaped: text, never code.
         let mut shielded: Vec<usize> = Vec::new();
         loop {
             let Some(c) = self.look(0) else { return Err(format!("Unterminated {} string", quote)) };
-            if c == '\\' {
-                if let Some(next) = self.look(1) {
-                    self.step();
-                    self.step();
-                    if woven && Some(next) == self.lang.sigil {
-                        // An escaped sigil is just the sigil.
-                        shielded.push(s.chars().count());
-                        s.push(next);
-                        continue;
-                    }
-                    // A character named by its number: the letter, the
-                    // number written in sixteens between its brackets,
-                    // and the character of that number in its place.
-                    if !raw && Some(next) == self.lang.codepoint_letter && self.look(0) == self.lang.codepoint_open {
-                        let (made, written) = self.codepoint()?;
-                        match made {
-                            Some(made) => {
-                                shielded.push(s.chars().count());
-                                s.push(made);
-                            }
-                            None => {
-                                s.push('\\');
-                                s.push(next);
-                                s.push_str(&written);
-                            }
-                        }
-                        continue;
-                    }
-                    if next == '\\' || next == quote || (!raw && self.lang.escape_letters.contains(&next)) {
-                        s.push(match next {
-                            'n' => '\n',
-                            't' => '\t',
-                            'r' => '\r',
-                            '0' => '\0',
-                            c => c,
-                        });
-                    } else {
-                        s.push('\\');
-                        s.push(next);
-                    }
-                    continue;
-                }
+            if c == '\\' && self.look(1).is_some() {
+                self.escape(&how, &mut s, &mut shielded)?;
+                continue;
             }
             self.step();
             if c == quote {
@@ -288,6 +390,63 @@ impl<'a> Cursor<'a> {
         }
         self.push(Shape::Quote, s, 0, line, col);
         Ok(())
+    }
+
+    /// A string written over lines (ext.lexical.heredoc): the mark, a
+    /// label, and a body running to the line that label stands on
+    /// again. What the closing label is written in front of is written
+    /// in front of every line of the body and belongs to none of them,
+    /// so it comes off. A label in raw quotes makes a body that stands
+    /// as it is written, weaving nothing in and reading no escapes.
+    fn heredoc(&mut self) -> Result<(), String> {
+        let (line, col) = (self.row, self.column);
+        let tail: String = self.text[self.at..].iter().collect();
+        let Some(here) = heredoc_at(&tail, self.lang) else {
+            return Err("Unterminated string over lines".to_string());
+        };
+        let far = |bytes: usize| self.at + tail[..bytes].chars().count();
+        let (from, to, done) = (far(here.body), far(here.ended), far(here.done));
+        while self.at < from {
+            self.step();
+        }
+        // The quote marks are no escapes here: the body is ended by its
+        // label and not by a mark, so a mark in it stands for itself.
+        let letters: Vec<char> =
+            self.lang.escape_letters.iter().copied().filter(|c| !self.lang.quotes.contains(c)).collect();
+        let how = Escapes { letters: &letters, quote: None, numbered: true, woven: true };
+        let mut s = String::new();
+        let mut shielded: Vec<usize> = Vec::new();
+        let mut fresh = true;
+        while self.at < to {
+            if fresh {
+                fresh = false;
+                let mut wide = here.indent;
+                while wide > 0 && self.at < to && matches!(self.look(0), Some(' ') | Some('\t')) {
+                    self.step();
+                    wide -= 1;
+                }
+                continue;
+            }
+            let c = self.look(0).expect("the body ends where the closing label begins");
+            // A backslash at the end of a line says nothing: the line
+            // end after it opens a line like any other, and that line
+            // gives up its indentation with the rest.
+            if !here.raw && c == '\\' && self.at + 1 < to && self.look(1).map_or(false, |n| n != '\n') {
+                self.escape(&how, &mut s, &mut shielded)?;
+                continue;
+            }
+            self.step();
+            s.push(c);
+            fresh = c == '\n';
+        }
+        while self.at < done {
+            self.step();
+        }
+        if here.raw {
+            self.push(Shape::Quote, s, 0, line, col);
+            return Ok(());
+        }
+        self.woven(s, &shielded, line, col)
     }
 
     /// A string that weaves values in (ext.lexical.interpolating_quotes):
@@ -570,6 +729,8 @@ impl<'a> Cursor<'a> {
                 at_line_start = true;
             } else if c == ' ' || c == '\t' || c == '\r' {
                 self.step();
+            } else if lang.heredoc.as_deref().map_or(false, |mark| at_word(&self.text, self.at, mark)) {
+                self.heredoc()?;
             } else if lang.quotes.contains(&c) {
                 self.string(c)?;
             } else if c.is_ascii_digit() {

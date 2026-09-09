@@ -34,7 +34,7 @@ is listed, since the full kernels are meant to behave alike.
 | skip php-cgi not available | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
-| Parse error: Unexpected token: << in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: stream_context_create in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: ENT_HTML5 in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> | 1 |
 | timeout | 1 |
@@ -220,7 +220,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/bug54514.phpt` | pass | pass |  |
 | `php/basic/bug55500.phpt` | pass | pass |  |
 | `php/basic/bug61000.phpt` | pass | pass |  |
-| `php/basic/bug67198.phpt` | error | error | Parse error: Unexpected token: << in <file> |
+| `php/basic/bug67198.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: stream_context_create in <file> |
 | `php/basic/bug67988.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ENT_HTML5 in <file> |
 | `php/basic/bug71273.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> |
 | `php/basic/bug73969.phpt` | pass | pass |  |

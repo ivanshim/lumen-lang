@@ -401,6 +401,9 @@
   "ext.lexical.interpolating_quotes": [
     "\""
   ],
+  "ext.lexical.heredoc": [
+    "<<<"
+  ],
   "ext.stmt.for.c": [
     "for"
   ],
