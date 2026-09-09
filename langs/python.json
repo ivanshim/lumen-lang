@@ -331,6 +331,8 @@
   "ext.builtin.sum.non_number": ["TypeError: sum needs numbers"],
   "ext.lexical.escape.continued": true,
   "ext.lexical.line_continuation": ["\\"],
+  "ext.lexical.number.imaginary": ["j", "J"],
+  "ext.lexical.number.imaginary.unrun": ["NotImplementedError: imaginary numbers cannot be run"],
   "ext.lexical.string.adjacent": true,
   "ext.lexical.string.long": ["\"\"\"", "'''"],
   "ext.lexical.string.prefix.raw": ["r", "R"],

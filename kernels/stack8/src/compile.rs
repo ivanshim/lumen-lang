@@ -4777,8 +4777,13 @@ impl<'a> Compiler<'a> {
         match tok.shape {
             Shape::Numeral => {
                 self.take();
-                let v = parse_number(&tok.lexeme, lang)?;
-                self.constant(v);
+                if tok.lexeme.chars().last().map_or(false, |c| lang.imaginary_suffixes.contains(&c)) {
+                    self.constant(Value::text(&lang.imaginary_unrun));
+                    self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
+                } else {
+                    let v = parse_number(&tok.lexeme, lang)?;
+                    self.constant(v);
+                }
             }
             Shape::Quote => {
                 self.take();

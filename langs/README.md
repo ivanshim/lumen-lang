@@ -438,6 +438,11 @@ only. The extension labels so far, all from PHP:
   names around where it was written.
 - `ext.lexical.number.exponent`: the letters that open a decimal exponent
   in a number (`1e9`, `2.5E-3`), always a real.
+- `ext.lexical.number.imaginary`: single letters following a numeral,
+  as `2j` or `2.5J`. The reader keeps the numeral and its suffix whole.
+  The kernels have no imaginary values; reaching one stops the run with
+  the words in `ext.lexical.number.imaginary.unrun`. A routine holding
+  one may still be read and bound without reaching it.
 - `ext.op.plus`: a sign that leaves its operand as it is (`+5`), bound as
   tightly as negation.
 - `ext.stmt.break.levels`: a switch; `break n` and `continue n` leave n
@@ -1935,6 +1940,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.number.amiss` | - | - | - | - | `Invalid numeric literal` | - | - | - | - | - |
 | `ext.lexical.number.binary_prefix` | - | - | - | - | `0b` `0B` | - | - | - | - | - |
 | `ext.lexical.number.exponent` | - | - | - | - | `e` `E` | - | - | - | - | - |
+| `ext.lexical.number.imaginary` | - | - | `j` `J` | - | - | - | - | - | - | - |
+| `ext.lexical.number.imaginary.unrun` | - | - | `NotImplementedError: imaginary numbers cannot be run` | - | - | - | - | - | - | - |
 | `ext.lexical.number.octal_lead` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.lexical.number.octal_prefix` | - | - | - | - | `0o` `0O` | - | - | - | - | - |
 | `ext.lexical.number.separator` | - | - | - | - | `_` | - | - | - | - | - |

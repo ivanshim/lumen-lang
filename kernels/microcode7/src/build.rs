@@ -4530,7 +4530,11 @@ impl<'a> Builder<'a> {
         let node = match t.shape {
             Shape::Numeral => {
                 self.advance();
-                constant(numeral(&t.lexeme, table)?)
+                match t.lexeme.chars().last() {
+                    Some(end) if table.spells("ext.lexical.number.imaginary", &end.to_string()) =>
+                        prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.lexical.number.imaginary.unrun").unwrap_or_default()))]),
+                    _ => constant(numeral(&t.lexeme, table)?),
+                }
             }
             Shape::Quote => {
                 self.advance();

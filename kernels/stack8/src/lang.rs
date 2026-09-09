@@ -406,6 +406,8 @@ pub struct Lang {
     pub amiss_words: Vec<(&'static str, String)>,
     /// Letters that open a decimal exponent in a number (1e9).
     pub exponent_letters: Vec<char>,
+    pub imaginary_suffixes: Vec<char>,
+    pub imaginary_unrun: String,
     /// A sign that leaves its operand as it is.
     pub plus_words: Vec<String>,
     pub lambda_words: Vec<String>,
@@ -762,6 +764,7 @@ w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.defaul
 w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
 w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.request.amiss.boundary.wrong | w ext.system.request.amiss.part | w ext.system.request.amiss.body.large | w ext.system.request.body
 w ext.op.lambda | w ext.op.lambda.unsupported | w ext.op.lambda.enclosing | w ext.op.identical.negated | w ext.op.identical.unsupported | w ext.op.in | w ext.op.in.negated | w ext.op.in.unsupported | b ext.op.compare.chained
+w ext.lexical.number.imaginary | w ext.lexical.number.imaginary.unrun
 w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
 w ext.stmt.terminator | w ext.stmt.annotation | w ext.stmt.annotation.amiss | w ext.stmt.annotation.target.unready | w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
@@ -1561,6 +1564,8 @@ impl Lang {
                 said
             },
             exponent_letters: r.letters("ext.lexical.number.exponent")?,
+            imaginary_suffixes: r.letters("ext.lexical.number.imaginary")?,
+            imaginary_unrun: r.head("ext.lexical.number.imaginary.unrun")?.unwrap_or_default(),
             plus_words: r.strings("ext.op.plus")?,
             lambda_words: r.strings("ext.op.lambda")?,
             lambda_unsupported: r.head("ext.op.lambda.unsupported")?,
