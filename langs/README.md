@@ -258,7 +258,8 @@ only. The extension labels so far, all from PHP:
   fields may carry conversions, format specifications and a debug equals
   sign. Each field and each field in its specification is read as code.
   Text conversions quote strings and make escapes visible; simple field
-  alignment and fixed decimal places are honoured. A bare width pads numbers on the left and text on the right.
+  alignment and fixed decimal places are honoured. Reals keep a decimal
+  point or a power of ten, with at least two figures in that power. A bare width pads numbers on the left and text on the right.
   Other specifications are evaluated and then refused.
 - `ext.lexical.string.bytes.unavailable`: the words said upon reaching
   a byte literal where the run cannot yet hold bytes apart from text.

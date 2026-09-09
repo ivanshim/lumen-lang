@@ -313,6 +313,20 @@ impl Value {
             _ => return None,
         }
         let mut result = self.render(names);
+        if let Self::Frac(ratio) = self {
+            if ratio.places.is_some() {
+                let mut worth = nearest_binary(&ratio.above, &ratio.beneath);
+                if ratio.under && worth == 0.0 { worth = -0.0; }
+                let raw = format!("{:?}", worth).to_lowercase();
+                result = match raw.find('e') {
+                    None => raw,
+                    Some(cut) => {
+                        let power: i32 = raw[cut + 1..].parse().ok()?;
+                        format!("{}e{:+03}", &raw[..cut], power)
+                    },
+                };
+            }
+        }
         if matches!(manner, "a" | "r") {
             if let Value::Text(chars) = self {
                 let delimiter = match (chars.contains('\''), chars.contains('"')) { (true, false) => '"', _ => '\'' };

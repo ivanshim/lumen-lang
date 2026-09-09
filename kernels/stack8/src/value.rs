@@ -334,6 +334,14 @@ impl Value {
         if !matches!(self, Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Real(_) | Value::Text(_) | Value::Flag(_) | Value::Null) { return None; }
         if !spec.is_empty() && conversion.is_empty() && matches!(self, Value::Flag(_) | Value::Null) { return None; }
         let mut shown = self.display(words);
+        if let Value::Real(real) = self {
+            let number = if real.below && real.p.is_zero() { -0.0 } else { as_binary(&real.p, &real.q) };
+            shown = format!("{number:?}").to_ascii_lowercase();
+            if let Some((mantissa, exponent)) = shown.split_once('e') {
+                let power = exponent.parse::<i32>().ok()?;
+                shown = format!("{mantissa}e{power:+03}");
+            }
+        }
         if let Value::Text(text) = self {
             if conversion == "r" || conversion == "a" {
                 let quote = if text.contains('\'') && !text.contains('"') { '"' } else { '\'' };
