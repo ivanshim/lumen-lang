@@ -770,6 +770,9 @@ impl<'a> Engine<'a> {
             // Words the definition itself gave for a place outside the
             // range a value may take are known by being those very words.
             _ if self.lang.args_below.as_deref() == Some(told) || self.lang.args_beyond.as_deref() == Some(told) => &self.lang.fault_value,
+            // So too the words for a name that spells one of a class's
+            // own values where a constant's name was wanted.
+            _ if self.lang.define_scoped.as_deref() == Some(told) => &self.lang.fault_value,
             // The words a definition gave for the remainder by nought
             // and for a shift below nought are known by being those
             // very words; each is a fault of the same kind as the one
@@ -2087,6 +2090,30 @@ impl<'a> Engine<'a> {
                 }
             }
             Action::AtEnd => return Err("An empty index belongs on the left of an assignment".to_string().into()),
+            // A place in text holds one letter and no more, so what is
+            // written there is the first letter of what was handed
+            // over, and the write is worth that letter and not the
+            // whole. The language says as much where it has words for
+            // it. The thing written into is looked at and handed back
+            // as it was: only the value beneath it changes.
+            Action::Fitted => {
+                let into = self.drop_top()?;
+                if let (Value::Text(_), true) = (&into, self.lang.text_places) {
+                    let sp = self.wording();
+                    let handed = self.data.last().ok_or("Stack underflow")?.display(&sp);
+                    let mut letters = handed.chars();
+                    let Some(letter) = letters.next() else {
+                        return Err("Cannot write nothing into a place in text".to_string().into());
+                    };
+                    if letters.next().is_some() {
+                        if let Some(said) = self.lang.text_place_first.clone() {
+                            self.complain(Complaint::Warning, &said);
+                        }
+                    }
+                    *self.data.last_mut().expect("the value written") = Value::text(&letter.to_string());
+                }
+                into
+            }
             Action::Forge(plan) => {
                 // What was pushed: the class to stand on, then a value for
                 // every property, every value of the class's own, and
@@ -3864,9 +3891,17 @@ impl<'a> Engine<'a> {
                 // spaces, as a language that writes into text does.
                 if let (Value::Text(held), true) = (&target, self.lang.text_places) {
                     let put = v.display(&sp);
-                    let Some(letter) = put.chars().next() else {
+                    let mut letters = put.chars();
+                    let Some(letter) = letters.next() else {
                         return Err("Cannot write nothing into a place in text".to_string());
                     };
+                    // More than one letter handed to a place that holds
+                    // one: the first goes in and the language says so.
+                    if letters.next().is_some() {
+                        if let Some(said) = self.lang.text_place_first.clone() {
+                            self.complain(Complaint::Warning, &said);
+                        }
+                    }
                     let mut letters: Vec<char> = held.chars().collect();
                     // A place named by text is the number that text
                     // opens with, as a language that reads a number out

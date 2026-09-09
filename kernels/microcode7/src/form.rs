@@ -258,6 +258,13 @@ pub enum Prim {
     Front,
     /// `a[]`, a place only a store reaches.
     AtEnd,
+    /// The first value made what a place in the second will hold. Where
+    /// the second is text and the language writes into text, a place
+    /// there holds one letter, so only the first letter of the value
+    /// goes in, and the language says as much where more than one was
+    /// handed over; anything else is answered with as it stands. It is
+    /// what tells a write into text what the write itself is worth.
+    Letter,
     /// A thing of the class given, its maker run over the rest.
     Spawn,
     /// The property named by the second value, of the thing in the first.

@@ -427,6 +427,9 @@
   "ext.builtin.define": [
     "define"
   ],
+  "ext.builtin.define.class_constant": [
+    "define(): Argument #1 ($constant_name) cannot be a class constant"
+  ],
   "ext.builtin.var_dump": [
     "var_dump"
   ],
@@ -465,6 +468,9 @@
   "ext.op.index.append": true,
   "ext.op.index.makes": true,
   "ext.op.index.text": true,
+  "ext.op.index.text.first": [
+    "Only the first byte will be assigned to the string offset"
+  ],
   "ext.op.spelled": true,
   "ext.system.class.folded": true,
   "ext.builtin.output.hold": [

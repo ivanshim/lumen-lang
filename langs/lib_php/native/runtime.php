@@ -1249,7 +1249,22 @@ function defined($name) {
     }
     return true;
 }
+// A name may spell one of a class's own values rather than a constant
+// standing on its own: what comes before the last scope mark names the
+// class, and a class nowhere to be found is said so outright, since
+// there is nothing there to look in.
 function constant($name) {
+    $at = -1;
+    $from = 0;
+    while (true) {
+        $found = strpos($name, '::', $from);
+        if ($found === false) { break; }
+        $at = $found;
+        $from = $found + 1;
+    }
+    if ($at >= 0 && !class_exists(substr($name, 0, $at))) {
+        throw new Error('Class "' . substr($name, 0, $at) . '" not found');
+    }
     return eval("return " . $name . ";");
 }
 // A claim a program makes about itself. Where the run is set to let

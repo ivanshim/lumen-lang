@@ -333,6 +333,14 @@ pub struct Lang {
     /// by text is the number that text opens with. Text that may be read
     /// letter by letter is not always text with places in this sense.
     pub text_places: bool,
+    /// What a language says when more than one letter is handed to a
+    /// place in text, only the first of them going in. Nothing where a
+    /// language holds its peace about it.
+    pub text_place_first: Option<String>,
+    /// What a language says of a name given to its binder of constants
+    /// that spells one of a class's own values rather than a constant.
+    /// Nothing where a language takes such a name as it comes.
+    pub define_scoped: Option<String>,
     /// The words standing for all the outermost bindings taken as an
     /// array, so that a place in it is the binding whose name the place
     /// spells: how a language reaches a global from inside a routine.
@@ -576,7 +584,7 @@ b system.flag.counts
 const EXT_LABELS: &str = "
 w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | w ext.stmt.for.c | b ext.op.assign.compound
-w ext.stmt.static | w ext.stmt.global | w ext.stmt.const | w ext.builtin.define
+w ext.stmt.static | w ext.stmt.global | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
 w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
 w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.request.amiss.boundary.wrong | w ext.system.request.amiss.part | w ext.system.request.amiss.body.large | w ext.system.request.body
@@ -608,7 +616,7 @@ w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.
 w ext.system.fault.modulo | w ext.system.fault.shift | b ext.op.bit.shift.numbers
 w ext.op.name_by_value | b ext.op.cast | w ext.stmt.unpack
 w ext.system.source.routine | w ext.system.source.class | w ext.system.source.method
-b ext.op.member.by_value | b ext.op.index.text | w ext.system.globals
+b ext.op.member.by_value | b ext.op.index.text | w ext.op.index.text.first | w ext.system.globals
 w ext.op.reference.unshared.written | w ext.op.reference.unshared.given | w ext.op.reference.unshared.handed
 b ext.stmt.terminator.only
 w ext.stmt.block.instead | w ext.stmt.block.instead.close | b ext.op.spelled | b ext.system.class.folded
@@ -1305,6 +1313,8 @@ impl Lang {
             casts_kinds: r.flag("ext.op.cast")?,
             members_by_value: r.flag("ext.op.member.by_value")?,
             text_places: r.flag("ext.op.index.text")?,
+            text_place_first: r.head("ext.op.index.text.first")?,
+            define_scoped: r.head("ext.builtin.define.class_constant")?,
             globals_words: r.strings("ext.system.globals")?,
             unshared_written: r.strings("ext.op.reference.unshared.written")?,
             unshared_given: r.strings("ext.op.reference.unshared.given")?,

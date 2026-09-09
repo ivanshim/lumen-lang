@@ -958,6 +958,9 @@ impl<'a> Machine<'a> {
             // Words the definition itself gave for a place outside the
             // range a value may take are known by being those very words.
             _ if told_of("ext.builtin.args.at.below") || told_of("ext.builtin.args.at.beyond") => Some("ext.system.fault.class.value"),
+            // So too the words for a name spelling one of a class's own
+            // values where the name of a constant was wanted.
+            _ if told_of("ext.builtin.define.class_constant") => Some("ext.system.fault.class.value"),
             // Words a definition gave for the remainder by nought and
             // for a shift below nought are known by being those very
             // words, each a fault of the kind the kernel words itself.
@@ -2095,13 +2098,23 @@ impl<'a> Machine<'a> {
                         Value::Shared(cell) => Some(cell.clone()),
                         _ => None,
                     };
-                    if let Some(cell) = shared {
-                        let mut held = cell.borrow_mut();
-                        written_into(&mut held, key, value, &self.no_places(), self.builds_places, letter)?;
-                        return Ok(Value::Nil);
+                    let over = match shared {
+                        Some(cell) => {
+                            let mut held = cell.borrow_mut();
+                            written_into(&mut held, key, value, &self.no_places(), self.builds_places, letter)?
+                        }
+                        None => {
+                            let mut slots = f.cells.borrow_mut();
+                            written_into(&mut slots[i], key, value, &self.no_places(), self.builds_places, letter)?
+                        }
+                    };
+                    // More letters handed to a place in text than it has
+                    // room for: the first went in and the language says so.
+                    if over {
+                        if let Some(said) = self.table.single("ext.op.index.text.first") {
+                            self.grumble("warning", said);
+                        }
                     }
-                    let mut slots = f.cells.borrow_mut();
-                    written_into(&mut slots[i], key, value, &self.no_places(), self.builds_places, letter)?;
                     Ok(Value::Nil)
                 }
                 // Values put before everything the named array holds.
@@ -2922,6 +2935,29 @@ impl<'a> Machine<'a> {
                 }
             }
             Prim::AtEnd => return Err("An empty index belongs on the left of an assignment".to_string()),
+            // A place in text has room for one letter, so a write there
+            // is worth that letter and not the whole of what was handed
+            // over. Where more was handed over the language says so, and
+            // where nothing was there is nothing to put.
+            Prim::Letter => {
+                n(2)?;
+                match &v[1] {
+                    Value::Text(_) if self.letter_places => {
+                        let handed = v[0].render(w);
+                        let mut spelling = handed.chars();
+                        let Some(first) = spelling.next() else {
+                            return Err("Cannot write nothing into a place in text".to_string());
+                        };
+                        if spelling.next().is_some() {
+                            if let Some(said) = self.table.single("ext.op.index.text.first") {
+                                self.grumble("warning", said);
+                            }
+                        }
+                        Value::text(&first.to_string())
+                    }
+                    _ => v[0].clone(),
+                }
+            }
             // The steps of a walk that a thing may answer for itself are
             // worked out where a call can be made, not here.
             Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn | Prim::PastHeld => {
@@ -3102,7 +3138,15 @@ impl<'a> Machine<'a> {
             Prim::Placed => {
                 n(3)?;
                 match &v[0] {
-                    Value::Text(had) if self.letter_places => letter_put(had, &v[1], &v[2].render(w))?,
+                    Value::Text(had) if self.letter_places => {
+                        let (made, over) = letter_put(had, &v[1], &v[2].render(w))?;
+                        if over {
+                            if let Some(said) = self.table.single("ext.op.index.text.first") {
+                                self.grumble("warning", said);
+                            }
+                        }
+                        made
+                    }
                     Value::Vector(items) if as_index(&v[1]).map_or(false, |at| at < items.len()) => {
                         let mut all = items.as_ref().clone();
                         all[as_index(&v[1])?] = v[2].clone();
@@ -4366,10 +4410,14 @@ fn over_lines(v: &Value, along: usize, w: Names) -> String {
 /// text a language lets a program write into. Only the first letter of
 /// what is handed over is put there; a place beyond the end is reached
 /// over spaces, and one counted from the end reaches back from it.
-fn letter_put(had: &str, at: &Value, put: &str) -> Result<Value, String> {
-    let Some(letter) = put.chars().next() else {
+fn letter_put(had: &str, at: &Value, put: &str) -> Result<(Value, bool), String> {
+    let mut spelling = put.chars();
+    let Some(letter) = spelling.next() else {
         return Err("Cannot write nothing into a place in text".to_string());
     };
+    // Whether more was handed over than the place has room for, which
+    // the caller is the one placed to say anything about.
+    let over = spelling.next().is_some();
     let mut letters: Vec<char> = had.chars().collect();
     // Text standing for a place counts as the number it opens with,
     // the way text counts as a number anywhere else.
@@ -4391,7 +4439,7 @@ fn letter_put(had: &str, at: &Value, put: &str) -> Result<Value, String> {
         letters.resize(step + 1, ' ');
     }
     letters[step] = letter;
-    Ok(Value::text(&letters.into_iter().collect::<String>()))
+    Ok((Value::text(&letters.into_iter().collect::<String>()), over))
 }
 
 /// Where the cell a walk handed out is to be found in the array now.
@@ -4444,12 +4492,13 @@ fn put_before(held: &mut Value, coming: Vec<Value>, name: &str) -> Result<usize,
     Ok(many)
 }
 
-fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &str, builds: bool, letter: Option<String>) -> Result<(), String> {
+fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &str, builds: bool, letter: Option<String>) -> Result<bool, String> {
     // Where a language writes into text, a named place in text takes a
     // letter and the name goes on holding text.
     if let (Value::Text(had), Some(put), Some(at)) = (&*held, &letter, &key) {
-        *held = letter_put(had, at, put)?;
-        return Ok(());
+        let (made, over) = letter_put(had, at, put)?;
+        *held = made;
+        return Ok(over);
     }
     if builds && matches!(held, Value::Nil | Value::Unset) {
         *held = Value::Vector(Rc::new(Vec::new()));
@@ -4465,7 +4514,7 @@ fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &
         if let Some(k) = &key {
             if let Some(Value::Shared(cell)) = items.get(as_index(k)?) {
                 *cell.borrow_mut() = value;
-                return Ok(());
+                return Ok(false);
             }
         }
         let items = Rc::make_mut(items);
@@ -4473,7 +4522,7 @@ fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &
             Some(k) => items[as_index(&k)?] = value,
             None => items.push(value),
         }
-        return Ok(());
+        return Ok(false);
     }
     if let Value::Vector(items) = &*held {
         let spread = items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect();
@@ -4487,7 +4536,7 @@ fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &
     let entries = Rc::make_mut(entries);
     let key = key.unwrap_or_else(|| Value::Small(after_keys(entries)));
     set_key(entries, key, value);
-    Ok(())
+    Ok(false)
 }
 
 /// The place an array holds, made a shared cell, so that a name tied to

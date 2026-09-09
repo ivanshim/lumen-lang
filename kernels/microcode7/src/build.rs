@@ -2801,6 +2801,25 @@ impl<'a> Builder<'a> {
             (None, Some(cell), None) => self.read(&cell),
             (None, None, None) => self.expr(0)?,
         };
+        // Where a language writes into text, a place there holds one
+        // letter and no more, so a write into a single named place is
+        // worth the letter that went in and not the whole of what was
+        // handed over. Only what is written into can say whether this
+        // is text, so it is read once, quietly, after the value: a name
+        // holding nothing has nothing to answer for here.
+        if plain && shared_value.is_none() && self.table.flag("ext.op.index.text") {
+            let named = match &expr {
+                Form::Apply(Callee::Prim(Prim::At, _), args) if args.len() == 2 => match args.first() {
+                    Some(Form::Read(slot)) => Some(slot.ident.to_string()),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(named) = named {
+                let into = Form::Muted(Box::new(self.read(&named)));
+                value = prim_call(Prim::Letter, vec![value, into]);
+            }
+        }
         let keep = (gives_back && plain).then(|| {
             self.gensyms += 1;
             format!("#written{}", self.gensyms)
@@ -3485,9 +3504,21 @@ impl<'a> Builder<'a> {
                         let (Some(Form::Const(Value::Text(name))), 2) = (args.first(), args.len()) else {
                             return Err(format!("{}() needs a quoted name and a value", t.lexeme));
                         };
-                        let slot = self.global_address(&name.to_string());
+                        let name = name.to_string();
                         let value = args.pop().unwrap();
-                        sequence(vec![Form::Write(slot, Box::new(value)), constant(Value::Flag(true))])
+                        // A name carrying the scope mark spells one of a
+                        // class's own values and no constant at all. A
+                        // language with words for that turns the name
+                        // down, saying them where the run reaches the
+                        // call, so a program may take it as any fault.
+                        let scoped = table.single("ext.op.scope").map_or(false, |m| name.contains(m));
+                        match (scoped, table.single("ext.builtin.define.class_constant")) {
+                            (true, Some(said)) => sequence(vec![value, prim_call(Prim::Raise, vec![constant(Value::text(said))])]),
+                            _ => {
+                                let slot = self.global_address(&name);
+                                sequence(vec![Form::Write(slot, Box::new(value)), constant(Value::Flag(true))])
+                            }
+                        }
                     } else {
                         self.named_call(&t.lexeme, args)?
                     }

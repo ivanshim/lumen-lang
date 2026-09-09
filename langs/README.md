@@ -274,6 +274,14 @@ only. The extension labels so far, all from PHP:
 - `ext.stmt.const`, `ext.builtin.define`: `const NAME = e;` and
   `define("NAME", e)` bind the global NAME, which a bare word then reads;
   the definition must give the name as a quoted literal.
+- `ext.builtin.define.class_constant`: what a language says of a name
+  handed to the binder above that carries the scope mark
+  (`ext.op.scope`), since such a name spells one of a class's own values
+  and no constant standing on its own. The words are said where the run
+  reaches the call and not while the program is read, so a program may
+  take the fault as it takes any other; it is of the kind
+  `ext.system.fault.class.value` names. A language that says nothing
+  here takes such a name as it comes.
 - `ext.builtin.var_dump`: a builtin printing each argument with its kind,
   one per line, as PHP's `var_dump` does (`int(1)`, `float(2.5)`,
   `string(3) "abc"`, `bool(true)`, `NULL`, and an array one entry per
@@ -601,6 +609,16 @@ only. The extension labels so far, all from PHP:
   is said apart from `op.index.strings`, which only says that text may
   be read letter by letter: a language may let a program read letters
   without letting it write them.
+- `ext.op.index.text.first`: what a language says when more than one
+  letter is handed to a place in text, only the first of them going in.
+  It is said of what was handed over as text, so a whole number of two
+  figures is said of as much as a word of two letters is, and one
+  letter, however it was written, is said of not at all. Nothing at all
+  handed over is another matter and stops the run, there being no letter
+  to put. What such a write is worth is the letter that went in and not
+  the whole of what was handed over, so `$b = $s[3] = "string"` leaves
+  `$b` holding `"s"`. Where a language says nothing here the first
+  letter still goes in, quietly.
 - `ext.system.untrue.text` and `ext.system.untrue.empty_array`: what a
   language counts as untrue past nought and nothing. The first names
   pieces of text held untrue besides text with nothing in it — PHP
@@ -1416,6 +1434,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.complaint.handler` | - | - | - | - | - | - | - | `__complaint_handler` | - | - |
 | `ext.builtin.complaint.say` | - | - | - | - | - | - | - | `__complaint_say` | - | - |
 | `ext.builtin.define` | - | - | - | - | - | - | - | `define` | - | - |
+| `ext.builtin.define.class_constant` | - | - | - | - | - | - | - | `define(): Argument #1 ($constant_name) cannot be a class constant` | - | - |
 | `ext.builtin.echo` | - | - | - | - | - | - | - | `echo` | - | - |
 | `ext.builtin.empty` | - | - | - | - | - | - | - | `empty` | - | - |
 | `ext.builtin.eval` | - | - | - | - | - | - | - | `eval` | - | - |
@@ -1487,6 +1506,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.index.plain_keys` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.index.scalar` | - | - | - | - | - | - | - | `Cannot use a scalar value as an array` | - | - |
 | `ext.op.index.text` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.op.index.text.first` | - | - | - | - | - | - | - | `Only the first byte will be assigned to the string offset` | - | - |
 | `ext.op.instanceof` | - | - | - | - | - | - | - | `instanceof` | - | - |
 | `ext.op.member` | - | - | - | - | - | - | - | `->` | - | - |
 | `ext.op.member.by_value` | - | - | - | - | - | - | - | `true` | - | - |

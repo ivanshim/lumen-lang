@@ -85,6 +85,14 @@ pub enum Action {
     Toward,
     /// `a[]`, which only an assignment may write to.
     AtEnd,
+    /// The value under the thing it is about to be written into, made
+    /// what a place in that thing will hold. Where the thing is text
+    /// and the language writes into text, a place holds one letter, so
+    /// only the first of what was handed over goes in and that letter
+    /// is what the write itself is worth; anything else is left as it
+    /// stands. The thing is handed back untouched, the write still
+    /// wanting it.
+    Fitted,
     /// How many places an array or a map holds.
     Extent,
     /// Whether the place a walk has reached holds a member the walk may

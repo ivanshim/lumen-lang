@@ -3238,8 +3238,25 @@ impl<'a> Compiler<'a> {
                 for w in relocated(index.to_vec(), -1) {
                     self.put(w);
                 }
-                self.value_written(keep)?;
-                self.read_to_rewrite(&name);
+                // Where a language writes into text, only the thing
+                // written into can say whether this place holds a
+                // letter, so it is read before the value is put away:
+                // what such a write is worth is the letter that went
+                // in and not the whole of what was handed over.
+                if self.lang.text_places {
+                    self.value_written(None)?;
+                    self.read_to_rewrite(&name);
+                    self.act(Action::Fitted, 1);
+                    if keep.is_some() {
+                        let aside = self.gensym("into");
+                        self.write(&aside);
+                        self.kept(keep);
+                        self.read_to_rewrite(&aside);
+                    }
+                } else {
+                    self.value_written(keep)?;
+                    self.read_to_rewrite(&name);
+                }
                 self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
                 self.rewritten(&name);
                 Ok(())
@@ -3682,8 +3699,24 @@ impl<'a> Compiler<'a> {
                                 for w in relocated(given[1..].to_vec(), -1) {
                                     self.put(w);
                                 }
-                                self.write_global(&name);
-                                self.constant(Value::Flag(true));
+                                // A name carrying the scope mark spells
+                                // one of a class's own values and no
+                                // constant at all. A language with words
+                                // for that refuses the name, saying them
+                                // where the run reaches the call, so the
+                                // program may take the fault as any other.
+                                let scoped = self.lang.scope_mark.as_ref().map_or(false, |m| name.contains(m.as_str()));
+                                match (scoped, self.lang.define_scoped.clone()) {
+                                    (true, Some(said)) => {
+                                        self.put_away();
+                                        self.constant(Value::text(&said));
+                                        self.act(Action::Builtin(Builtin::Raise, tok.lexeme.as_str().into()), 1);
+                                    }
+                                    _ => {
+                                        self.write_global(&name);
+                                        self.constant(Value::Flag(true));
+                                    }
+                                }
                             } else {
                                 let argc = self.arguments_of(&tok.lexeme, &call)?;
                                 self.call(&tok.lexeme, argc)?;
