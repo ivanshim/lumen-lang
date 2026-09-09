@@ -985,7 +985,11 @@ impl<'a> Builder<'a> {
             Some(step) => Some(Box::new(step(self)?)),
             None => None,
         };
-        Ok(Form::Cycle { test: Box::new(test), body: Box::new(body), step, after: false })
+        let otherwise = if self.table.flag("ext.stmt.loop.else") {
+            self.skip_line_ends();
+            if self.key("stmt.else") { self.advance(); Some(Box::new(self.body()?)) } else { None }
+        } else { None };
+        Ok(Form::Cycle { test: Box::new(test), body: Box::new(body), step, after: false, otherwise })
     }
 
     /// `loop = « body; if test {} else { loop() } »; loop()`.
@@ -997,7 +1001,7 @@ impl<'a> Builder<'a> {
         // Read in source order: the test is written before the body.
         let test = test(self)?;
         let body = body(self)?;
-        Ok(Form::Cycle { test: Box::new(test), body: Box::new(body), step: None, after: true })
+        Ok(Form::Cycle { test: Box::new(test), body: Box::new(body), step: None, after: true, otherwise: None })
     }
 
     /// The counted loop: bound and variable set, then a loop stepping by one.
@@ -1147,16 +1151,52 @@ impl<'a> Builder<'a> {
     }
 
     fn plain_or_kind(&mut self) -> Res<Form> {
-        let next = self.glance(1);
-        let ends = matches!(next.shape, Shape::Finish | Shape::Close | Shape::LineEnd)
-            || self.table.spells("stmt.terminator", &next.lexeme);
-        if ends && self.on_any("ext.literal.ellipsis") {
-            self.advance();
-            return Ok(constant(Value::Nil));
-        }
         if self.look().shape == Shape::Bare || self.on_any("ext.stmt.decorator") {
             if self.key("stmt.let") {
                 return self.bind();
+            }
+            if self.key("ext.stmt.nonlocal") {
+                self.advance();
+                loop {
+                    self.need_word("after the nonlocal keyword")?;
+                    if !self.on_any("syntax.call.separator") { break; }
+                    self.advance();
+                }
+                return Ok(prim_call(Prim::Raise, vec![constant(Value::text(self.table.single("ext.stmt.nonlocal.unrun").unwrap_or_default()))]));
+            }
+            if self.key("ext.stmt.del") {
+                self.advance();
+                let mut deletion = Vec::new();
+                loop {
+                    let name = self.need_word("as a name to delete")?;
+                    deletion.push(self.read(&name));
+                    deletion.push(Form::Forget(self.address_to_write(&name)));
+                    if !self.on_any("syntax.call.separator") { break; }
+                    self.advance();
+                }
+                return Ok(sequence(deletion));
+            }
+            if self.key("ext.stmt.with") {
+                self.advance();
+                loop {
+                    let _context = self.expr(0)?;
+                    if self.on_any("ext.stmt.with.as") {
+                        self.advance();
+                        let _place = self.expr_at(0, false)?;
+                    }
+                    if !self.on_any("syntax.call.separator") { break; }
+                    self.advance();
+                }
+                let _body = self.body()?;
+                let message = self.table.single("ext.stmt.with.unrun").unwrap_or_default();
+                return Ok(prim_call(Prim::Raise, vec![constant(Value::text(message))]));
+            }
+            if self.key("ext.stmt.async") {
+                self.advance();
+                if !self.key("stmt.function") { return Err("Expected a function after the asynchronous word".into()); }
+                let _definition = self.stmt()?;
+                let message = self.table.single("ext.stmt.async.unrun").unwrap_or_default();
+                return Ok(prim_call(Prim::Raise, vec![constant(Value::text(message))]));
             }
             if self.key("stmt.if") {
                 return self.if_stmt();
@@ -1176,7 +1216,7 @@ impl<'a> Builder<'a> {
                 let test = self.expr(0)?;
                 self.need_sign(self.table.single("syntax.group.close").unwrap(), "after the condition")?;
                 let stops = prim_call(Prim::Invert, vec![test]);
-                return Ok(Form::Cycle { test: Box::new(stops), body: Box::new(body), step: None, after: true });
+                return Ok(Form::Cycle { test: Box::new(stops), body: Box::new(body), step: None, after: true, otherwise: None });
             }
             if self.key("stmt.while") {
                 self.advance();
@@ -2503,7 +2543,7 @@ impl<'a> Builder<'a> {
         let step = self.clauses(close)?;
         self.need_sign(close, "after the for clauses")?;
         let body = self.body_limb(Traps::Naught)?;
-        let looped = Form::Cycle { test: Box::new(test), body: Box::new(body), step: Some(Box::new(step)), after: false };
+        let looped = Form::Cycle { test: Box::new(test), body: Box::new(body), step: Some(Box::new(step)), after: false, otherwise: None };
         Ok(sequence(vec![init, looped]))
     }
 
@@ -2601,7 +2641,7 @@ impl<'a> Builder<'a> {
             let skip = constant(Value::Nil);
             run.push(self.choose(reached, body, skip));
         }
-        let pass = Form::Cycle { test: Box::new(constant(Value::Flag(true))), body: Box::new(sequence(run)), step: None, after: true };
+        let pass = Form::Cycle { test: Box::new(constant(Value::Flag(true))), body: Box::new(sequence(run)), step: None, after: true, otherwise: None };
         Ok(sequence(vec![keep, Form::Write(start, Box::new(choice)), pass]))
     }
 
@@ -3423,7 +3463,7 @@ impl<'a> Builder<'a> {
         }
         self.advance();
         self.put_by_annotation(&["stmt.assign", "ext.stmt.annotation", "syntax.call.separator"])?;
-        if through_pipe && !table.has_any("ext.op.member") {
+        if through_pipe && (!table.has_any("ext.op.member") || table.flag("ext.op.member.pipes")) {
             let mut steps = Vec::new();
             if self.on_assign() {
                 self.advance();
@@ -3541,7 +3581,7 @@ impl<'a> Builder<'a> {
         let cuts = self.divided_at(lo, hi, "ext.op.tuple");
         if cuts.is_empty() && !array {
             self.pos = lo;
-            let place = self.expr_at(0, false)?;
+            let place = self.monadic_expr()?;
             if self.pos != hi { return Err(bad); }
             let sign = self.look().clone();
             let old = self.waiting.replace(source.to_string());
@@ -4152,23 +4192,7 @@ impl<'a> Builder<'a> {
     /// statement, which is read as a statement.
     fn expr_at(&mut self, floor: u32, may_write: bool) -> Res<Form> {
         let table = self.table;
-        if floor == 0 && self.look().shape == Shape::Bare && table.spells("ext.op.assign.expression", &self.glance(1).lexeme) {
-            let word = self.advance().lexeme;
-            self.advance();
-            let target = self.address_to_write(&word);
-            let expression = self.expr(0)?;
-            return Ok(sequence(vec![Form::Write(target.clone(), Box::new(expression)), Form::Read(target)]));
-        }
         let mut left = self.monadic_expr()?;
-        if floor == 0 && table.spells("ext.op.assign.expression", &self.look().lexeme) {
-            let Form::Read(target) = left else {
-                return Err("Named expression needs a variable".to_string());
-            };
-            self.advance();
-            let rhs = self.expr(0)?;
-            let bind = self.write(&target.ident, rhs);
-            return Ok(sequence(vec![bind, self.read(&target.ident)]));
-        }
         if floor == 0 && may_write && table.flag("ext.op.assign.value") && self.on_writing() {
             return self.written(left, true);
         }
@@ -4178,19 +4202,6 @@ impl<'a> Builder<'a> {
                 break;
             }
             let text = t.lexeme.clone();
-            let conditional = table.strings("ext.op.if_else");
-            if floor == 0 && conditional.first() == Some(&text) {
-                self.advance();
-                let test = self.expr(1)?;
-                let end = conditional.get(1).ok_or("Conditional expression needs two words")?;
-                if self.look().lexeme != *end {
-                    return Err(format!("Expected '{}' in conditional expression", end));
-                }
-                self.advance();
-                let no = self.expr(0)?;
-                left = self.choose(test, left, no);
-                continue;
-            }
             if table.flag("ext.op.compare.chained") {
                 if let Some((operation, level, words)) = self.comparison_head() {
                     if floor > level { break; }
@@ -4407,10 +4418,6 @@ impl<'a> Builder<'a> {
             }
             self.reading_yield = previous_yield;
             return Ok(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.stmt.yield.unrun").unwrap_or_default()))]));
-        }
-        if table.spells("ext.literal.ellipsis", &t.lexeme) {
-            self.advance();
-            return self.subscript(constant(Value::Ellipsis));
         }
         if table.spells("ext.op.lambda", &t.lexeme) {
             self.advance();
@@ -5528,7 +5535,7 @@ impl<'a> Builder<'a> {
         body.push(self.gather_tail(expression_at, answer, dictionary)?);
         let before = self.read(&cursor);
         let onward = self.write(&cursor, prim_call(Prim::Plus, vec![before, constant(Value::Small(1))]));
-        let cycle = Form::Cycle { test: Box::new(test), body: Box::new(sequence(body)), step: Some(Box::new(onward)), after: false };
+        let cycle = Form::Cycle { test: Box::new(test), body: Box::new(sequence(body)), step: Some(Box::new(onward)), after: false, otherwise: None };
         let mut work = vec![hold, begin, cycle];
         if unavailable {
             let words = self.table.single("ext.op.comprehension.target.unavailable").unwrap_or("Indexed comprehension targets are not provided");

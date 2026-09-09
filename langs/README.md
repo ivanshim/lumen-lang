@@ -81,7 +81,8 @@ only names what its language spells; the floor is the same for all.
    (`langs/lib_<language>/`, `docs/LIBRARY_PORTS.md`).
 6. A lexeme may appear under at most one label per parsing position. `-`
    under both `op.sub` (infix) and `op.negate` (prefix) is allowed; the same
-   string under two infix labels is an error.
+   string under two infix labels is an error, save for `op.pipe` and
+   `ext.op.member` where `ext.op.member.pipes` is set.
 7. Every lexeme under `stmt.*` and `literal.*`, and every word-shaped
    operator (`and`, `not`), is a reserved word and must be shaped like an
    identifier.
@@ -523,6 +524,31 @@ only. The extension labels so far, all from PHP:
   block may be opened in one run and closed in another, which is how a
   page is written around a loop. One line end straight after the closing
   marker belongs to it.
+- `ext.lexical.line_continuation`: the lexical reader's mark joining
+  physical lines. It must stand straight before the line end; a comment
+  after it does not make a join. `ext.lexical.escape.continued` is the
+  string reader's switch for dropping an escaped line end in plain text.
+- `ext.op.bit.whole`: the lexical branch's switch for bit operations on
+  whole numbers of any width. Text and reals are refused with
+  `ext.system.fault.operands`; a negative shift count is refused with
+  `ext.system.fault.shift`. This piece spells only the bit signs found
+  outside the generator tests' strings: and, or, complement and left shift.
+- `ext.stmt.nonlocal` and `ext.stmt.nonlocal.unrun`: the enclosing-binding
+  word of the block reader and its complaint. Its names are read, but the
+  statement cannot run until enclosing cells may be shared.
+- `ext.stmt.del`: the deletion word of the block reader. This piece reads
+  only the comma-parted names it needs; each must exist before it is
+  forgotten. The fuller target reader remains in the block branch.
+- `ext.stmt.with` and `ext.stmt.with.as`: the context header and its target
+  word from the block reader. This piece reads ordinary expression items
+  and targets followed by a body; `ext.stmt.with.unrun` stops the run before
+  an item or body is worked out, since context entry and exit are wanting.
+- `ext.stmt.async`: the block reader's word before an asynchronous
+  declaration. Here only a function follows it; the whole function is
+  read, then `ext.stmt.async.unrun` refuses the declaration when reached.
+- `ext.stmt.loop.else`: the block reader's switch for a last arm after a
+  loop. Exhaustion reaches it; a break passes over it. A continue leaves
+  the last arm still to be reached when the loop is done.
 - `ext.stmt.yield`, `ext.stmt.yield.from` and `ext.stmt.yield.unrun`:
   a suspended value, with no operand, one operand or comma-parted operands,
   or a delegation to another walk. These are the names of the suspended
@@ -593,11 +619,7 @@ only. The extension labels so far, all from PHP:
   other alike values the kernels keep no identity that answers this
   question; `ext.op.identical.unsupported` gives the plain complaint,
   rather than answering equality in its stead.
-- `ext.op.if_else`: two words, the first before the condition and the
-  second before the other arm (`a if c else b`). It binds below every
-  binary operator and above a lambda. The condition runs first, and
-  only the arm it chooses runs; a further conditional belongs to the
-  other arm unless brackets say otherwise.
+
 - `ext.op.lambda`: the word before an unbracketed parameter list and
   one expression, parted by `block.intro`. The value is a routine;
   its defaults are worked out where it is made and kept for later
@@ -618,20 +640,9 @@ only. The extension labels so far, all from PHP:
   ask each adjacent pair in turn. A middle value is worked out once
   and kept; after a false comparison no further operand runs. Equality,
   ordering, identity and membership may be mixed in one chain.
-- `ext.op.assign.expression`: a sign that writes a named variable and
-  gives back what it wrote (`:=`). Its right side is a whole expression,
-  and brackets let the write stand inside any larger expression.
-- `ext.literal.ellipsis`: a literal value (`...`), distinct from text
-  and nothing, written out as `Ellipsis`. Alone after the block mark it
-  may stand for an empty body on the same line.
-- `ext.op.rem.formats_text`: a switch; remainder with text on the left
-  fills its format marks from the right. An array supplies arguments in
-  order; any other value supplies one. The marks are `%d`, `%s`, `%r`,
-  `%f`, `%x` and `%%`, with a decimal precision permitted before `f`.
-  `ext.op.rem.format.unsupported` gives the plain complaint for any
-  other mark or a value whose representation is not provided;
-  `ext.op.rem.format.arguments` gives it for the wrong
-  number or kind of arguments. Numeric remainder keeps its meaning.
+
+
+
 - **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` `is` `in` < `|` < `+` `-` < `*` `/` `//` `%` < `-` < `**` < `.`
 - `ext.op.comprehension.for`, `ext.op.comprehension.in` and
   `ext.op.comprehension.if`: the words after a literal's first expression
@@ -1912,10 +1923,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.escape.codepoint.beyond` | - | - | - | - | `Invalid UTF-8 codepoint escape sequence: Codepoint too large` | - | - | - | - | - |
 | `ext.lexical.escape.codepoint.close` | - | - | - | - | `}` | - | - | - | - | - |
 | `ext.lexical.escape.codepoint.open` | - | - | - | - | `{` | - | - | - | - | - |
+| `ext.lexical.escape.continued` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.octal` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.lexical.heredoc` | - | - | - | - | `<<<` | - | - | - | - | - |
 | `ext.lexical.interpolating.index.amiss` | - | - | - | - | `string content, expecting "-" or identifier or variable or number` | - | - | - | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | `"` | - | - | - | - | - |
+| `ext.lexical.line_continuation` | - | - | `\` | - | - | - | - | - | - | - |
 | `ext.lexical.name_lead` | - | - | - | - | `\` | - | - | - | - | - |
 | `ext.lexical.number.amiss` | - | - | - | - | `Invalid numeric literal` | - | - | - | - | - |
 | `ext.lexical.number.binary_prefix` | - | - | - | - | `0b` `0B` | - | - | - | - | - |
@@ -1939,6 +1952,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.bit.or` | - | - | `\|` | - | `\|` | - | - | - | - | - |
 | `ext.op.bit.right` | - | - | - | - | `>>` | - | - | - | - | - |
 | `ext.op.bit.shift.numbers` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.op.bit.whole` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.bit.xor` | - | - | - | - | `^` | - | - | - | - | - |
 | `ext.op.cast` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.compare` | - | - | - | - | `<=>` | - | - | - | - | - |
@@ -2014,6 +2028,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.assert` | - | - | `assert` | - | - | - | - | - | - | - |
 | `ext.stmt.assert.kind` | - | - | `AssertionError` | - | - | - | - | - | - | - |
 | `ext.stmt.assign.chain` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.stmt.async` | - | - | `async` | - | - | - | - | - | - | - |
+| `ext.stmt.async.unrun` | - | - | `NotImplementedError: asynchronous functions cannot be run` | - | - | - | - | - | - | - |
 | `ext.stmt.block.instead` | - | - | - | - | `:` | - | - | - | - | - |
 | `ext.stmt.block.instead.close` | - | - | - | - | `endif` `endwhile` `endfor` `endforeach` `endswitch` | - | - | - | - | - |
 | `ext.stmt.break.levels` | - | - | - | - | `true` | - | - | - | - | - |
@@ -2056,6 +2072,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.decorator` | - | - | `@` | - | - | - | - | - | - | - |
 | `ext.stmt.decorator.amiss` | - | - | `A decorator must stand on its own line before a function definition` | - | - | - | - | - | - | - |
 | `ext.stmt.default` | - | - | - | - | `default` | - | - | - | - | - |
+| `ext.stmt.del` | - | - | `del` | - | - | - | - | - | - | - |
 | `ext.stmt.do` | - | - | - | - | `do` | - | - | - | - | - |
 | `ext.stmt.finally` | - | - | `finally` | - | `finally` | - | - | - | - | - |
 | `ext.stmt.for.c` | - | - | - | - | `for` | - | - | - | - | - |
@@ -2075,6 +2092,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.import` | - | - | `import` | - | - | - | - | - | - | - |
 | `ext.stmt.import.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.import.from` | - | - | `from` | - | - | - | - | - | - | - |
+| `ext.stmt.loop.else` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.stmt.nonlocal` | - | - | `nonlocal` | - | - | - | - | - | - | - |
+| `ext.stmt.nonlocal.unrun` | - | - | `Nonlocal bindings cannot be run without enclosing function cells` | - | - | - | - | - | - | - |
 | `ext.stmt.static` | - | - | - | - | `static` | - | - | - | - | - |
 | `ext.stmt.static.read_in` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.switch` | - | - | - | - | `switch` | - | - | - | - | - |
@@ -2091,6 +2111,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.unpack.rest` | - | - | `*` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack.short` | - | - | `not enough values to unpack` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack.unwalkable` | - | - | `cannot unpack non-iterable object` | - | - | - | - | - | - | - |
+| `ext.stmt.with` | - | - | `with` | - | - | - | - | - | - | - |
+| `ext.stmt.with.as` | - | - | `as` | - | - | - | - | - | - | - |
+| `ext.stmt.with.unrun` | - | - | `NotImplementedError: context managers cannot be run` | - | - | - | - | - | - | - |
 | `ext.stmt.yield` | - | - | `yield` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.from` | - | - | `from` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.unrun` | - | - | `Generators cannot be run` | - | - | - | - | - | - | - |
@@ -2134,8 +2157,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class.value` | - | - | - | - | `ValueError` | - | - | - | - | - |
 | `ext.system.fault.class.walk` | - | - | - | - | `Exception` | - | - | - | - | - |
 | `ext.system.fault.modulo` | - | - | - | - | `Modulo by zero` | - | - | - | - | - |
-| `ext.system.fault.operands` | - | - | - | - | `Unsupported operand types` | - | - | - | - | - |
-| `ext.system.fault.shift` | - | - | - | - | `Bit shift by negative number` | - | - | - | - | - |
+| `ext.system.fault.operands` | - | - | `unsupported operand type(s)` | - | `Unsupported operand types` | - | - | - | - | - |
+| `ext.system.fault.shift` | - | - | `negative shift count` | - | `Bit shift by negative number` | - | - | - | - | - |
 | `ext.system.globals` | - | - | - | - | `$GLOBALS` | - | - | - | - | - |
 | `ext.system.integer.bits` | - | - | - | - | `64` | - | - | - | - | - |
 | `ext.system.kind.brief` | - | - | - | - | `int` `-` `float` `string` `bool` `array` `null` | - | - | - | - | - |

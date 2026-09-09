@@ -99,7 +99,6 @@ pub enum Value {
     Text(Rc<str>),
     Flag(bool),
     Nil,
-    Ellipsis,
     Vector(Rc<Vec<Value>>),
     /// A span awaiting the length of what it is to read.
     Span(Rc<Vec<Value>>),
@@ -173,7 +172,7 @@ impl Value {
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Ellipsis | Value::Span(_) => return None,
+            Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) => return None,
         })
     }
 
@@ -207,7 +206,6 @@ impl Value {
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
-            Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
             Value::Span(_) => return Err("Cannot coerce slice to number".to_string()),
             Value::KindOf(_) => return Err("Cannot coerce kind meta-value to number".to_string()),
         })
@@ -231,7 +229,7 @@ impl Value {
         match (self, other) {
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
-            (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
+            (Value::Nil, Value::Nil) => true,
             (Value::Vector(a), Value::Vector(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Dict(a), Value::Dict(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
@@ -310,7 +308,6 @@ impl Value {
 
     pub fn bare(&self) -> String {
         match self {
-            Value::Ellipsis => String::from("Ellipsis"),
             Value::Small(n) => n.to_string(),
             Value::Huge(n) => n.to_string(),
             Value::Frac(e) if e.past_numbers() => e.written().to_string(),

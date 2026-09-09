@@ -953,6 +953,14 @@ impl<'a> Engine<'a> {
     /// A value with no places at all cannot be walked. A language with
     /// a word for a warning is told so and walks it no times, rather
     /// than having the run stopped over it.
+    fn whole_for_bits(&self, v: &Value) -> Res<BigInt> {
+        if matches!(v.sort(), Some(Sort::Integer | Sort::Boolean)) {
+            v.as_big()
+        } else {
+            Err(self.lang.operand_fault.clone().unwrap_or_else(|| "Working on bits needs a whole number".to_string()))
+        }
+    }
+
     /// The bits of a value, with a word said where a real is too wide
     /// for the whole numbers this language holds and working on its bits
     /// means taking something else. A language with no word for a
@@ -2234,6 +2242,7 @@ impl<'a> Engine<'a> {
             Action::BitTurn => {
                 let v = self.drop_top()?;
                 match &v {
+                    _ if self.lang.whole_bits => Value::of_big(!self.whole_for_bits(&v)?),
                     Value::Text(s) => {
                         let out: Vec<u8> = self.lang.bytes_of(s).iter().map(|c| !c).collect();
                         Value::text(&self.lang.text_of(&out))
@@ -3141,99 +3150,6 @@ impl<'a> Engine<'a> {
         number_spelled(s).map(|n| self.at_real_width(n))
     }
 
-    fn rem_repr(&self, value: &Value) -> Res<String> {
-        Ok(match value {
-            Value::Text(s) => {
-                let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
-                let mut out = String::from(quote);
-                for c in s.chars() {
-                    match c {
-                        '\n' => out.push_str("\\n"),
-                        '\r' => out.push_str("\\r"),
-                        '\t' => out.push_str("\\t"),
-                        '\\' => out.push_str("\\\\"),
-                        c if c == quote => { out.push('\\'); out.push(c); }
-                        c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
-                        c => out.push(c),
-                    }
-                }
-                out.push(quote);
-                out
-            }
-            Value::Array(items) => {
-                let parts = items.iter().map(|v| self.rem_repr(v)).collect::<Res<Vec<_>>>()?;
-                format!("[{}]", parts.join(", "))
-            }
-            Value::Map(entries) => {
-                let mut parts = Vec::new();
-                for (key, worth) in entries.iter() { parts.push(format!("{}: {}", self.rem_repr(key)?, self.rem_repr(worth)?)); }
-                format!("{{{}}}", parts.join(", "))
-            }
-            Value::Real(real) => {
-                let mut text = value.display(&self.wording());
-                if !real.outside() && !text.contains(['.', 'e', 'E']) { text.push_str(".0"); }
-                text
-            }
-            Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Null | Value::Ellipsis => value.display(&self.wording()),
-            _ => return Err(self.lang.format_unsupported.clone().unwrap_or_default()),
-        })
-    }
-
-    /// Remainder over text fills one mark at a time. A list supplies
-    /// the marks in order; every other value supplies just one.
-    fn rem_text(&self, template: &str, arguments: &Value) -> Res<String> {
-        let bad = || self.lang.format_unsupported.clone().unwrap_or_default();
-        let wrong = || self.lang.format_arguments.clone().unwrap_or_default();
-        let values: Vec<&Value> = match arguments {
-            Value::Array(items) => items.iter().collect(),
-            one => vec![one],
-        };
-        let mut used = 0;
-        let mut out = String::new();
-        let mut chars = template.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c != '%' { out.push(c); continue; }
-            if chars.peek() == Some(&'%') { chars.next(); out.push('%'); continue; }
-            let mut precision = None;
-            if chars.peek() == Some(&'.') {
-                chars.next();
-                let mut digits = String::new();
-                while chars.peek().map_or(false, char::is_ascii_digit) { digits.push(chars.next().unwrap()); }
-                precision = Some(digits.parse::<usize>().map_err(|_| bad())?);
-            }
-            let kind = chars.next().ok_or_else(bad)?;
-            if precision.is_some() && kind != 'f' { return Err(bad()); }
-            let value = values.get(used).copied().ok_or_else(wrong)?;
-            used += 1;
-            let filled = match kind {
-                's' => match value { Value::Text(text) => text.to_string(), _ => self.rem_repr(value)? },
-                'r' => self.rem_repr(value)?,
-                'd' | 'x' => {
-                    if !matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Real(_)) { return Err(wrong()); }
-                    if kind == 'x' && matches!(value, Value::Real(_)) { return Err(wrong()); }
-                    let whole = value.as_big().map_err(|_| wrong())?;
-                    if kind == 'x' { whole.to_str_radix(16) } else { whole.to_string() }
-                }
-                'f' => {
-                    let number = match value {
-                        Value::Small(n) => *n as f64,
-                        Value::Huge(n) => n.to_f64().ok_or_else(wrong)?,
-                        Value::Flag(b) => u8::from(*b) as f64,
-                        Value::Real(r) => crate::value::as_binary(&r.p, &r.q),
-                        _ => return Err(wrong()),
-                    };
-                    let places = precision.unwrap_or(6);
-                    if places > 10000 { return Err(bad()); }
-                    format!("{:.*}", places, number)
-                }
-                _ => return Err(bad()),
-            };
-            out.push_str(&filled);
-        }
-        if used != values.len() { return Err(wrong()); }
-        Ok(out)
-    }
-
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
@@ -3328,15 +3244,11 @@ impl<'a> Engine<'a> {
                 };
                 Value::Flag(found != matches!(op, Action::Lacks))
             }
-            Action::Mod if self.lang.rem_formats_text && matches!(a, Value::Text(_)) => {
-                let Value::Text(template) = a else { unreachable!() };
-                Value::text(&self.rem_text(template, b)?)
-            }
             Action::Same | Action::Unsame if !self.lang.identity_not.is_empty() => {
                 let same = match (a, b) {
                     (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y),
                     (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
-                    (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
+                    (Value::Null, Value::Null) => true,
                     (Value::Flag(x), Value::Flag(y)) => x == y,
                     (Value::Small(x), Value::Small(y)) if (-5..=256).contains(x) => x == y,
                     (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
@@ -3400,6 +3312,35 @@ impl<'a> Engine<'a> {
             // is what a language that spells these operators means by
             // them; the shorter side decides the length, save for `or`,
             // where the longer one stands on as it is.
+            Action::BitBoth | Action::BitEither | Action::BitOne | Action::BitUp | Action::BitDown if self.lang.whole_bits => {
+                let (x, y) = (self.whole_for_bits(a)?, self.whole_for_bits(b)?);
+                let joined = match op {
+                    Action::BitBoth => x & y,
+                    Action::BitEither => x | y,
+                    Action::BitOne => x ^ y,
+                    _ => {
+                        if y < BigInt::from(0) {
+                            return Err(self.lang.fault_shift.clone().unwrap_or_else(|| "Bit shift by a negative number".to_string()));
+                        }
+                        if matches!(op, Action::BitDown) && y >= BigInt::from(x.bits()) {
+                            BigInt::from(if x < BigInt::from(0) { -1 } else { 0 })
+                        } else if x == BigInt::from(0) {
+                            x
+                        } else {
+                            let by = y.to_usize().ok_or_else(|| self.lang.operand_fault.clone()
+                                .unwrap_or_else(|| "Bit shift count is too large".to_string()))?;
+                            if matches!(op, Action::BitUp) { x << by } else { x >> by }
+                        }
+                    }
+                };
+                if matches!((a, b), (Value::Flag(_), Value::Flag(_)))
+                    && matches!(op, Action::BitBoth | Action::BitEither | Action::BitOne)
+                {
+                    Value::Flag(joined != BigInt::from(0))
+                } else {
+                    Value::of_big(joined)
+                }
+            }
             Action::BitBoth | Action::BitEither | Action::BitOne if matches!(a, Value::Text(_)) && matches!(b, Value::Text(_)) => {
                 let (x, y) = (a.display(&sp), b.display(&sp));
                 let (x, y) = (self.lang.bytes_of(&x), self.lang.bytes_of(&y));

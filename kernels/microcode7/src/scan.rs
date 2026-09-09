@@ -109,6 +109,9 @@ fn drop_comments(source: &str, table: &Table) -> String {
             kept.extend(after[..stop].chars().filter(|c| *c == '\n'));
             ahead = &after[stop..];
         } else if lines.iter().any(|m| ahead.starts_with(m.as_str())) {
+            for mark in table.strings("ext.lexical.line_continuation") {
+                if kept.ends_with(mark.as_str()) { kept.push(' '); break; }
+            }
             ahead = ahead.find('\n').map_or("", |p| &ahead[p..]);
         } else {
             kept.push(c);
@@ -587,6 +590,24 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             pos = k;
         }
         let c = src[pos];
+        let mut carried = false;
+        for mark in table.strings("ext.lexical.line_continuation") {
+            if written_at(&src, pos, mark) {
+                let mut end = pos + mark.chars().count();
+                if src.get(end) == Some(&'\r') {
+                    end += 1;
+                }
+                if src.get(end) == Some(&'\n') {
+                    pos = end + 1;
+                    row += 1;
+                    carried = true;
+                    break;
+                }
+            }
+        }
+        if carried {
+            continue;
+        }
         if c == '\n' {
             tokens.push(tok(Shape::LineEnd, "\n".into(), row));
             row += 1;
@@ -638,6 +659,14 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                     continue;
                 }
                 if d == '\\' && k + 1 < src.len() {
+                    if !is_raw && table.flag("ext.lexical.escape.continued") {
+                        let end = k + 1 + usize::from(src[k + 1] == '\r');
+                        if src.get(end) == Some(&'\n') {
+                            row += 1;
+                            k = end + 1;
+                            continue;
+                        }
+                    }
                     k = slash.reads(&src, k, &mut s, &mut plain)?;
                     continue;
                 }

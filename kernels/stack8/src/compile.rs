@@ -750,6 +750,19 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    fn complete_cycle(&mut self, again: usize) -> Res<()> {
+        if !self.lang.loop_else { self.leave_cycle(again); return Ok(()); }
+        let cycle = self.piece().cycles.pop().expect("an open loop");
+        for at in cycle.resumes { self.piece().instrs[at] = Instr::Skip(again); }
+        self.skip_seps();
+        if self.on_keyword(&self.lang.else_words) {
+            self.take();
+            self.body()?;
+        }
+        for at in cycle.leaves { self.land(at); }
+        Ok(())
+    }
+
     /// How many loops a break or continue leaves: the number after the
     /// word when the definition allows one (ext.stmt.break.levels), else one.
     fn levels(&mut self) -> Res<usize> {
@@ -949,12 +962,6 @@ impl<'a> Compiler<'a> {
 
     fn stmt(&mut self) -> Res<()> {
         let lang = self.lang;
-        if Lang::spells(&lang.ellipsis_words, &self.look().lexeme)
-            && (matches!(self.look_ahead(1).shape, Shape::LineEnd | Shape::Close | Shape::Finish)
-                || lang.ends_stmt(&self.look_ahead(1).lexeme)) {
-            self.take();
-            return Ok(());
-        }
         // A language that tells where a complaint happened needs to
         // know which line is running, so each statement says so.
         // Only the program's own lines are marked: what stands before it
@@ -974,6 +981,58 @@ impl<'a> Compiler<'a> {
             }
             if !lang.do_words.is_empty() && Lang::spells(&lang.do_words, &w) {
                 return self.do_stmt();
+            }
+            if Lang::spells(&lang.nonlocal_words, &w) {
+                self.take();
+                loop {
+                    self.want_name("after the nonlocal word")?;
+                    if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
+                    self.take();
+                }
+                self.constant(Value::text(lang.nonlocal_unrun.first().map_or("", String::as_str)));
+                self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
+                return Ok(());
+            }
+            if Lang::spells(&lang.del_words, &w) {
+                self.take();
+                loop {
+                    let name = self.want_name("as the name to delete")?;
+                    self.read(&name);
+                    self.discard();
+                    let cell = self.cell_to_write(&name);
+                    self.put(Instr::Forget(cell));
+                    if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
+                    self.take();
+                }
+                return Ok(());
+            }
+            if Lang::spells(&lang.with_words, &w) {
+                self.take();
+                let start = self.mark();
+                loop {
+                    self.expr(0)?;
+                    if self.on_keyword(&lang.with_as_words) {
+                        self.take();
+                        self.expr_at(0, false)?;
+                    }
+                    if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
+                    self.take();
+                }
+                self.body()?;
+                self.piece().instrs.truncate(start);
+                self.constant(Value::text(lang.with_unrun.first().map_or("", String::as_str)));
+                self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
+                return Ok(());
+            }
+            if Lang::spells(&lang.async_words, &w) {
+                self.take();
+                if !self.on_keyword(&lang.function_words) { return Err("Expected a function after the asynchronous word".into()); }
+                let start = self.mark();
+                self.stmt()?;
+                self.piece().instrs.truncate(start);
+                self.constant(Value::text(lang.async_unrun.first().map_or("", String::as_str)));
+                self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
+                return Ok(());
             }
             if Lang::spells(&lang.if_words, &w) {
                 return self.branch();
@@ -1704,7 +1763,7 @@ impl<'a> Compiler<'a> {
         self.read(&at);
         self.act(Action::WalkMore, 2);
         self.loop_back(top);
-        self.leave_cycle(again);
+        self.complete_cycle(again)?;
         // The walk lets its last item go once it is over, so that the
         // place holding it is a place two names share only while some
         // name of the program's own still holds it.
@@ -1784,7 +1843,7 @@ impl<'a> Compiler<'a> {
             self.put(Instr::Skip(top));
         }
         self.pos = after;
-        self.leave_cycle(again);
+        self.complete_cycle(again)?;
         Ok(())
     }
 
@@ -1878,7 +1937,7 @@ impl<'a> Compiler<'a> {
                 None => self.land(at),
             }
         }
-        self.leave_cycle(end);
+        self.complete_cycle(end)?;
         Ok(())
     }
 
@@ -2069,7 +2128,7 @@ impl<'a> Compiler<'a> {
         self.expr(0)?;
         self.want_sign(&group.close, "after the condition")?;
         self.loop_back(top);
-        self.leave_cycle(again);
+        self.complete_cycle(again)?;
         Ok(())
     }
 
@@ -2096,7 +2155,7 @@ impl<'a> Compiler<'a> {
         self.expr(0)?;
         self.pos = after;
         self.loop_back(top);
-        self.leave_cycle(test);
+        self.complete_cycle(test)?;
         Ok(())
     }
 
@@ -2116,7 +2175,7 @@ impl<'a> Compiler<'a> {
             self.put(w);
         }
         self.put(Instr::Skip(top));
-        self.leave_cycle(again);
+        self.complete_cycle(again)?;
         Ok(())
     }
 
@@ -2200,7 +2259,7 @@ impl<'a> Compiler<'a> {
         self.read(bound);
         self.act(Action::Lt, 2);
         self.loop_back(top);
-        self.leave_cycle(again);
+        self.complete_cycle(again)?;
         Ok(())
     }
 
@@ -3482,7 +3541,7 @@ impl<'a> Compiler<'a> {
             ends.extend(call.between.iter().cloned());
         }
         self.annotation_expression(&ends)?;
-        if piped && lang.member_mark.is_none() {
+        if piped && (lang.member_mark.is_none() || lang.member_pipes) {
             self.piece().instrs.truncate(from);
             if self.on_assign() {
                 self.take();
@@ -3599,7 +3658,7 @@ impl<'a> Compiler<'a> {
         if !listed {
             self.pos = begin;
             let from = self.mark();
-            self.expr_at(0, false)?;
+            self.prefix()?;
             if self.pos != end { return Err(amiss.clone()); }
             let previous = self.waiting.replace(held.to_string());
             let done = self.store_into(from, None, None, "=");
@@ -4295,28 +4354,7 @@ impl<'a> Compiler<'a> {
     fn expr_at(&mut self, floor: u32, may_write: bool) -> Res<()> {
         let lang = self.lang;
         let from = self.mark();
-        if floor == 0 && self.look().shape == Shape::Instr && Lang::spells(&lang.expression_assign, &self.look_ahead(1).lexeme) {
-            let named = self.take().lexeme;
-            self.take();
-            self.cell_to_write(&named);
-            self.expr(0)?;
-            self.write(&named);
-            self.read(&named);
-            return Ok(());
-        }
         self.prefix()?;
-        if floor == 0 && Lang::spells(&lang.expression_assign, &self.look().lexeme) {
-            let name = match &self.piece().instrs[from..] {
-                [Instr::Read(cell)] => cell.ident.to_string(),
-                _ => return Err("Named expression needs a variable".to_string()),
-            };
-            self.piece().instrs.truncate(from);
-            self.take();
-            self.expr(0)?;
-            self.write(&name);
-            self.read(&name);
-            return Ok(());
-        }
         if floor == 0 && may_write && lang.assign_gives_value && self.on_writing() {
             let keep = self.gensym("written");
             self.assignment(from, Some(&keep))?;
@@ -4329,26 +4367,6 @@ impl<'a> Compiler<'a> {
                 break;
             }
             let text = t.lexeme.clone();
-            if floor == 0 && lang.if_else_words.first() == Some(&text) {
-                self.take();
-                let yes: Vec<Instr> = self.piece().instrs.drain(from..).collect();
-                self.expr(1)?;
-                let no = self.skip();
-                let here = self.mark();
-                for word in relocated(yes, here as i64 - from as i64) {
-                    self.put(word);
-                }
-                let done = self.leap();
-                self.land(no);
-                let other = lang.if_else_words.get(1).ok_or("Conditional expression needs two words")?;
-                if !self.at_lexeme(other) {
-                    return Err(format!("Expected '{}' in conditional expression", other));
-                }
-                self.take();
-                self.expr(0)?;
-                self.land(done);
-                continue;
-            }
             if lang.chained_comparisons {
                 if let Some((op, tier, width)) = self.comparison() {
                     if tier < floor { break; }
@@ -4647,11 +4665,6 @@ impl<'a> Compiler<'a> {
             self.constant(Value::text(&lang.yield_unrun));
             self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
             return Ok(());
-        }
-        if Lang::spells(&lang.ellipsis_words, &tok.lexeme) {
-            self.take();
-            self.constant(Value::Ellipsis);
-            return self.indexing(from);
         }
         if Lang::spells(&lang.lambda_words, &tok.lexeme) {
             self.take();
@@ -6448,7 +6461,7 @@ impl<'a> Compiler<'a> {
             self.rpn_test()?;
             self.pos = after;
             self.loop_back(top);
-            self.leave_cycle(test);
+            self.complete_cycle(test)?;
             return Ok(());
         }
         if Lang::spells(&lang.until_words, word) {
@@ -6464,7 +6477,7 @@ impl<'a> Compiler<'a> {
                 self.put(w);
             }
             self.put(Instr::Skip(top));
-            self.leave_cycle(again);
+            self.complete_cycle(again)?;
             return Ok(());
         }
         if Lang::spells(&lang.return_words, word) {

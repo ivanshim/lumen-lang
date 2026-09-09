@@ -990,101 +990,6 @@ impl<'a> Machine<'a> {
         number_spelled_in(v).map(|n| self.at_width(n))
     }
 
-    fn quoted_remainder(&self, item: &Value) -> Result<String, String> {
-        match item {
-            Value::Vector(elements) => {
-                let mut shown = Vec::new();
-                for element in elements.iter() { shown.push(self.quoted_remainder(element)?); }
-                return Ok(format!("[{}]", shown.join(", ")));
-            }
-            Value::Dict(entries) => {
-                let mut shown = Vec::new();
-                for (key, value) in entries.iter() {
-                    let key = self.quoted_remainder(key)?;
-                    let value = self.quoted_remainder(value)?;
-                    shown.push(format!("{}: {}", key, value));
-                }
-                return Ok(format!("{{{}}}", shown.join(", ")));
-            }
-            Value::Frac(n) if n.places.is_some() => {
-                let mut shown = item.render(self.wording());
-                if !n.past_numbers() && !shown.chars().any(|c| matches!(c, '.' | 'e' | 'E')) { shown += ".0"; }
-                return Ok(shown);
-            }
-            Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Nil | Value::Ellipsis => return Ok(item.render(self.wording())),
-            Value::Text(_) => {}
-            _ => return Err(self.table.single("ext.op.rem.format.unsupported").unwrap_or_default().to_string()),
-        }
-        let Value::Text(text) = item else { unreachable!() };
-        let delimiter = if !text.contains('"') && text.contains('\'') { '"' } else { '\'' };
-        let middle: String = text.chars().map(|letter| match letter {
-            '\\' => "\\\\".to_string(),
-            '\t' => "\\t".to_string(),
-            '\n' => "\\n".to_string(),
-            '\r' => "\\r".to_string(),
-            c if c == delimiter => format!("\\{}", c),
-            c if c.is_control() => format!("\\x{:02x}", c as u32),
-            c => c.to_string(),
-        }).collect();
-        Ok(format!("{}{}{}", delimiter, middle, delimiter))
-    }
-
-    fn text_remainder(&self, pattern: &str, rhs: &Value) -> Result<String, String> {
-        let unsupported = self.table.single("ext.op.rem.format.unsupported").unwrap_or_default();
-        let mismatch = self.table.single("ext.op.rem.format.arguments").unwrap_or_default();
-        let supplied = match rhs { Value::Vector(list) => list.as_slice(), _ => std::slice::from_ref(rhs) };
-        let mut arguments = supplied.iter();
-        let letters: Vec<char> = pattern.chars().collect();
-        let mut at = 0;
-        let mut result = String::new();
-        while at < letters.len() {
-            let letter = letters[at];
-            at += 1;
-            if letter != '%' { result.push(letter); continue; }
-            if letters.get(at) == Some(&'%') { result.push('%'); at += 1; continue; }
-            let mut places = 6usize;
-            let specified = letters.get(at) == Some(&'.');
-            if specified {
-                at += 1;
-                let start = at;
-                while letters.get(at).map_or(false, char::is_ascii_digit) { at += 1; }
-                places = letters[start..at].iter().collect::<String>().parse().map_err(|_| unsupported.to_string())?;
-                if places > 10000 { return Err(unsupported.to_string()); }
-            }
-            let code = *letters.get(at).ok_or_else(|| unsupported.to_string())?;
-            at += 1;
-            if specified && code != 'f' { return Err(unsupported.to_string()); }
-            let worth = arguments.next().ok_or_else(|| mismatch.to_string())?;
-            match code {
-                'r' => result.push_str(&self.quoted_remainder(worth)?),
-                's' => {
-                    let text = match worth { Value::Text(s) => s.to_string(), other => self.quoted_remainder(other)? };
-                    result.push_str(&text);
-                }
-                'x' | 'd' => {
-                    let permitted = matches!(worth, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) || (code == 'd' && matches!(worth, Value::Frac(n) if n.places.is_some()));
-                    if !permitted { return Err(mismatch.to_string()); }
-                    let n = worth.as_big().map_err(|_| mismatch.to_string())?;
-                    result.push_str(&n.to_str_radix(if code == 'x' { 16 } else { 10 }));
-                }
-                'f' => {
-                    if !matches!(worth, Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Flag(_)) { return Err(mismatch.to_string()); }
-                    let binary = match worth {
-                        Value::Flag(truth) => if *truth { 1.0 } else { 0.0 },
-                        other => {
-                            let ratio = math::ratio_of(other).ok_or_else(|| mismatch.to_string())?;
-                            crate::data::nearest_binary(&ratio.above, &ratio.beneath)
-                        }
-                    };
-                    result.push_str(&format!("{:.1$}", binary, places));
-                }
-                _ => return Err(unsupported.to_string()),
-            }
-        }
-        if arguments.next().is_some() { return Err(mismatch.to_string()); }
-        Ok(result)
-    }
-
     fn wording(&self) -> Names<'a> {
         Names {
             truth: self.table.single("literal.true").unwrap_or("true"),
@@ -2077,7 +1982,8 @@ impl<'a> Machine<'a> {
                     shared: RefCell::new(shared),
                 })))
             }
-            Form::Cycle { test, body, step, after } => {
+            Form::Cycle { test, body, step, after, otherwise } => {
+                let mut broken = false;
                 loop {
                     // A pass of a loop is a fair place to look at the
                     // clock as well as a statement is, since a loop whose
@@ -2100,7 +2006,7 @@ impl<'a> Machine<'a> {
                     }
                     match self.value_of(body, frame) {
                         Ok(_) | Err(Escape::Resume(1)) => {}
-                        Err(Escape::Leave(1)) => break,
+                        Err(Escape::Leave(1)) => { broken = true; break; },
                         Err(Escape::Leave(n)) => return Err(Escape::Leave(n - 1)),
                         Err(Escape::Resume(n)) => return Err(Escape::Resume(n - 1)),
                         Err(other) => return Err(other),
@@ -2114,6 +2020,9 @@ impl<'a> Machine<'a> {
                             break;
                         }
                     }
+                }
+                if !broken {
+                    if let Some(arm) = otherwise { self.value_of(arm, frame)?; }
                 }
                 Ok(Value::Nil)
             }
@@ -3316,6 +3225,45 @@ impl<'a> Machine<'a> {
         let n = |k: usize| -> Result<(), String> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
         };
+        if self.table.flag("ext.op.bit.whole") && matches!(op,
+            Prim::BitsOver | Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::BitsUp | Prim::BitsDown)
+        {
+            let fault = || self.table.single("ext.system.fault.operands").unwrap_or("Working on bits needs a whole number").to_string();
+            let number = |value: &Value| {
+                match value.kind() {
+                    Some(Kind::Whole) | Some(Kind::Truth) => value.as_big(),
+                    _ => Err(fault()),
+                }
+            };
+            let left = number(&v[0])?;
+            if op == Prim::BitsOver {
+                return Ok(Value::from_big(!left));
+            }
+            let right = number(&v[1])?;
+            let answer = if matches!(op, Prim::BitsUp | Prim::BitsDown) {
+                if right.sign() == num_bigint::Sign::Minus {
+                    return Err(self.table.single("ext.system.fault.shift").unwrap_or("Bit shift by a negative number").to_string());
+                }
+                match op {
+                    Prim::BitsDown if right >= BigInt::from(left.bits()) => BigInt::from(i32::from(left.sign() == num_bigint::Sign::Minus) * -1),
+                    _ if left == BigInt::from(0) => left,
+                    Prim::BitsUp => left << right.to_usize().ok_or_else(fault)?,
+                    _ => left >> right.to_usize().ok_or_else(fault)?,
+                }
+            } else {
+                match op {
+                    Prim::BitsOne => left ^ right,
+                    Prim::BitsBoth => left & right,
+                    _ => left | right,
+                }
+            };
+            let flags = v.iter().all(|x| x.kind() == Some(Kind::Truth));
+            return Ok(if flags && !matches!(op, Prim::BitsUp | Prim::BitsDown) {
+                Value::Flag(answer != BigInt::from(0))
+            } else {
+                Value::from_big(answer)
+            });
+        }
         Ok(match op {
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
@@ -4350,16 +4298,12 @@ impl<'a> Machine<'a> {
                 };
                 Value::Flag(if op == Prim::Absent { !present } else { present })
             }
-            Prim::Mod if self.table.flag("ext.op.rem.formats_text") && matches!(v[0], Value::Text(_)) => {
-                let Value::Text(pattern) = &v[0] else { unreachable!() };
-                Value::text(&self.text_remainder(pattern, &v[1])?)
-            }
             Prim::Selfsame | Prim::Unlike if self.table.has_any("ext.op.identical.negated") => {
                 let identical = match (&v[0], &v[1]) {
                     (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
                     (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
                     (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
-                    (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
+                    (Value::Nil, Value::Nil) => true,
                     (Value::Flag(a), Value::Flag(b)) => a == b,
                     (Value::Small(n), Value::Small(m)) if *n >= -5 && *n <= 256 => n == m,
                     _ if !v[0].selfsame(&v[1]) => false,
