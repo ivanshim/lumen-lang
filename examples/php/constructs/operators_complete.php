@@ -28,8 +28,8 @@ print(10 ** 0 . "\n");
 $result = 2 ** 3 + 1;
 print("2 ** 3 + 1 = \n");
 print($result . "\n");
-function power($base, $exp) {
-    return $base ** $exp;
+function power($base, $exp_) {
+    return $base ** $exp_;
 }
 
 print("power(3, 4):\n");

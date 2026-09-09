@@ -22,13 +22,13 @@ is listed, since the full kernels are meant to behave alike.
 | `php/lang` | 213 | pass 198, differs 10, error 0, skipped 5 | pass 198, differs 10, error 0, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
-| `php/lang/operators` | 64 | pass 49, differs 8, error 1, skipped 6 | pass 49, differs 8, error 1, skipped 6 |
+| `php/lang/operators` | 64 | pass 54, differs 4, error 0, skipped 6 | pass 54, differs 4, error 0, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 371, differs 23, error 3, skipped 25 | pass 371, differs 23, error 3, skipped 25 |
+| all | 422 | pass 376, differs 19, error 2, skipped 25 | pass 376, differs 19, error 2, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 23 |
+| ran, printed something else | 19 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | skip php-cgi not available | 2 |
@@ -42,7 +42,6 @@ is listed, since the full kernels are meant to behave alike.
 | skip setlocale() failed | 1 |
 | skip only for Windows | 1 |
 | skip this test is for 32-bit platforms only | 1 |
-| Fatal error: Uncaught Error: Undefined variable: NAN in <file> | 1 |
 
 ### Reserved words: 59 of 68 spelled
 
@@ -492,11 +491,11 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/bitwiseNot_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/bitwiseOr_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseOr_variationStr.phpt` | pass | pass |  |
-| `php/lang/operators/bitwiseShiftLeft_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/bitwiseShiftLeft_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseShiftLeft_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/bitwiseShiftLeft_variationStr2.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseShiftLeft_variationStr_64bit.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/bitwiseShiftRight_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/bitwiseShiftRight_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseShiftRight_variationStr.phpt` | differs | differs | ran, printed something else |
 | `php/lang/operators/bitwiseShiftRight_variationStr2.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseXor_basiclong_64bit.phpt` | pass | pass |  |
@@ -504,11 +503,11 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/coalesce.phpt` | pass | pass |  |
 | `php/lang/operators/divide_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/divide_variationStr.phpt` | pass | pass |  |
-| `php/lang/operators/modulus_basiclong_64bit.phpt` | differs | differs | ran, printed something else |
-| `php/lang/operators/modulus_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/modulus_basiclong_64bit.phpt` | pass | pass |  |
+| `php/lang/operators/modulus_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/multiply_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/multiply_variationStr.phpt` | pass | pass |  |
-| `php/lang/operators/nan-comparison-false.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: NAN in <file> |
+| `php/lang/operators/nan-comparison-false.phpt` | pass | pass |  |
 | `php/lang/operators/negate_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/negate_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/operator_equals_basic.phpt` | pass | pass |  |
