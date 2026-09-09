@@ -1,4 +1,4 @@
-print((x * x for x in [1, 2, 3]))
+print(list(x * x for x in [1, 2, 3]))
 print(list(x + 1 for x in [2, 3]), any(x > 2 for x in [1, 3]))
 print(sum(x for x in (y for y in [1, 2, 3]) if x > 1))
 print([1, *"xy"], {*[1, 2], *[2, 3]}, {**{"a": 1}, "a": 2})
