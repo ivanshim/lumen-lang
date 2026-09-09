@@ -2456,7 +2456,7 @@ impl<'a> Machine<'a> {
         if let Some(value) = class.constant(name) { return Some(value.clone()); }
         class.program(name).map(|body| match value {
             Value::Thing(o) => Value::Method(body.clone(), o.clone()),
-            _ => Value::Routine(body.clone()),
+            _ => Value::Bound(body.clone(), self.outermost.clone()),
         })
     }
 
