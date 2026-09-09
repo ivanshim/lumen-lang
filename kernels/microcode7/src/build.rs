@@ -4297,9 +4297,27 @@ impl<'a> Builder<'a> {
                 continue;
             }
             self.advance();
-            let index = self.expr(0)?;
+            let separators = self.table.strings("ext.op.index.slice").to_vec();
+            let mut parts = Vec::new();
+            let mut spanning = false;
+            loop {
+                let at_mark = separators.iter().any(|word| self.sign(word));
+                let missing = at_mark || (spanning && self.sign(close));
+                parts.push(if missing { constant(Value::Nil) } else { self.expr(0)? });
+                if parts.len() == 3 || !separators.iter().any(|word| self.sign(word)) {
+                    break;
+                }
+                spanning = true;
+                self.advance();
+            }
+            let key = if spanning {
+                parts.resize_with(3, || constant(Value::Nil));
+                prim_call(Prim::Span, parts)
+            } else {
+                parts.pop().expect("the single place")
+            };
             self.need_sign(close, "after array index")?;
-            node = prim_call(Prim::At, vec![node, index]);
+            node = prim_call(Prim::At, vec![node, key]);
             // What a look comes to may itself be called.
             if self.table.single("syntax.call.open").map_or(false, |o| self.sign(o)) {
                 self.advance();

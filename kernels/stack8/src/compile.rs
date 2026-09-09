@@ -4658,7 +4658,31 @@ impl<'a> Compiler<'a> {
             }
             self.take();
             let began = self.mark();
-            self.expr(0)?;
+            let marks = self.lang.slice_marks.clone();
+            if marks.iter().any(|m| self.at_symbol(m)) {
+                self.constant(Value::Null);
+            } else {
+                self.expr(0)?;
+            }
+            if marks.iter().any(|m| self.at_symbol(m)) {
+                self.take();
+                if self.at_symbol(&index.close) || marks.iter().any(|m| self.at_symbol(m)) {
+                    self.constant(Value::Null);
+                } else {
+                    self.expr(0)?;
+                }
+                if marks.iter().any(|m| self.at_symbol(m)) {
+                    self.take();
+                    if self.at_symbol(&index.close) {
+                        self.constant(Value::Null);
+                    } else {
+                        self.expr(0)?;
+                    }
+                } else {
+                    self.constant(Value::Null);
+                }
+                self.act(Action::Slice, 3);
+            }
             self.want_sign(&index.close, "after array index")?;
             keyed.push(began);
             self.act(Action::At, 2);

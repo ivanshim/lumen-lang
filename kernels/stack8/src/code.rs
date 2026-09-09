@@ -53,6 +53,8 @@ pub enum Action {
     Or,
     Join,
     At,
+    /// The three bounds of a span, kept until its array is known.
+    Slice,
     Not,
     Negate,
     /// Whether a value is true, as a boolean.
