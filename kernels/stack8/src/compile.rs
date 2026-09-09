@@ -753,7 +753,7 @@ impl<'a> Compiler<'a> {
     fn complete_cycle(&mut self, again: usize) -> Res<()> {
         if !self.lang.loop_else { self.leave_cycle(again); return Ok(()); }
         let cycle = self.piece().cycles.pop().expect("an open loop");
-        for at in cycle.resumes { self.piece().instrs[at] = Instr::Skip(again); }
+        for at in cycle.resumes { self.patch_jump(at, again); }
         self.skip_seps();
         if self.on_keyword(&self.lang.else_words) {
             self.take();
@@ -2199,7 +2199,30 @@ impl<'a> Compiler<'a> {
         let range_call = self.look().shape == Shape::Instr
             && lang.builtins.get(&self.look().lexeme) == Some(&Builtin::Span)
             && lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).is_lexeme(Shape::Sign, &c.open));
-        if range_call && target.is_none() {
+        let two_bounds = if range_call && lang.range_value {
+            let call = lang.calling.as_ref().expect("call brackets");
+            let mut nesting = 0usize;
+            let mut count = 0usize;
+            let mut item = false;
+            for token in &self.tokens[self.pos + 2..] {
+                if token.shape == Shape::Sign {
+                    if nesting == 0 && token.lexeme == call.close { count += usize::from(item); break; }
+                    if nesting == 0 && call.between.as_ref() == Some(&token.lexeme) {
+                        count += usize::from(item);
+                        item = false;
+                        continue;
+                    }
+                    if [&lang.grouping, &lang.array_brackets, &lang.map_brackets].into_iter().flatten().any(|b| b.open == token.lexeme) {
+                        nesting += 1;
+                    } else if [&lang.grouping, &lang.array_brackets, &lang.map_brackets].into_iter().flatten().any(|b| b.close == token.lexeme) {
+                        nesting = nesting.saturating_sub(1);
+                    }
+                }
+                item = true;
+            }
+            count == 2
+        } else { true };
+        if range_call && two_bounds && target.is_none() {
             self.take();
             let call = lang.calling.clone().expect("call brackets");
             self.take();

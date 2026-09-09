@@ -674,7 +674,9 @@ only. The extension labels so far, all from PHP:
   `ext.syntax.map.spread.unmapped` for spreading pairs from no map.
 - `ext.builtin.range.value`: a switch; a call of the range builtin
   yields an eager array from one, two or three whole-number bounds,
-  the last a nonzero step. Without it the range remains loop syntax.
+  the last a nonzero step. A loop may walk these values too, so its
+  one-bound and stepped forms need no second bound put in by hand.
+  Without it the range remains loop syntax.
   `ext.builtin.list` gathers one collection into an array;
   `ext.builtin.sum` adds its members to an optional starting value,
   and `ext.builtin.any` asks whether any member holds true.

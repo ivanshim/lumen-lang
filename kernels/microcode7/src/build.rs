@@ -2777,7 +2777,32 @@ impl<'a> Builder<'a> {
         let ranged = self.look().shape == Shape::Bare
             && table.prims.get(&self.look().lexeme) == Some(&Prim::Span)
             && table.single("syntax.call.open").map_or(false, |o| self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == o);
-        let (start, end) = if ranged && place.is_none() {
+        let counted = if table.flag("ext.builtin.range.value") && ranged {
+            let mut depth = Vec::new();
+            let mut portions = 0;
+            let mut occupied = false;
+            for word in self.tokens.iter().skip(self.pos + 2) {
+                if word.shape != Shape::Sign { occupied = true; continue; }
+                if depth.is_empty() {
+                    if table.spells("syntax.call.close", &word.lexeme) { portions += i32::from(occupied); break; }
+                    if table.spells("syntax.call.separator", &word.lexeme) {
+                        portions += i32::from(occupied);
+                        occupied = false;
+                        continue;
+                    }
+                }
+                occupied = true;
+                if depth.last() == Some(&word.lexeme) { depth.pop(); continue; }
+                for family in ["syntax.group", "syntax.array", "syntax.map"] {
+                    if table.spells(&format!("{}.open", family), &word.lexeme) {
+                        if let Some(end) = table.single(&format!("{}.close", family)) { depth.push(end.to_string()); }
+                        break;
+                    }
+                }
+            }
+            portions == 2
+        } else { true };
+        let (start, end) = if ranged && counted && place.is_none() {
             self.advance();
             self.advance();
             let start = self.expr(0)?;
