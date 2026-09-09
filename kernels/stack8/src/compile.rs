@@ -2186,7 +2186,8 @@ impl<'a> Compiler<'a> {
             return Err(format!("Expected '{}' after for loop variable, got: {}", lang.in_words[0], self.look().lexeme));
         }
         self.take();
-        let range_call = self.look().shape == Shape::Instr
+        // A range value uses the builtin's arity and step, then is walked.
+        let range_call = !lang.range_value && self.look().shape == Shape::Instr
             && lang.builtins.get(&self.look().lexeme) == Some(&Builtin::Span)
             && lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).is_lexeme(Shape::Sign, &c.open));
         if range_call {
@@ -3367,6 +3368,24 @@ impl<'a> Compiler<'a> {
         }
         if starts_here && self.on_any(&self.lang.annotation_marks) {
             return self.annotated_statement(from, target_at);
+        }
+        // Stores through attributes or call results can be read before
+        // scopes can keep them. Their fault belongs to the run.
+        let dotted = matches!(&self.tokens[target_at..self.pos],
+            [.., mark, name] if mark.shape == Shape::Sign && name.shape == Shape::Instr
+                && Lang::spells(&self.lang.pipe_words, &mark.lexeme));
+        let instructions = &self.pieces.last().expect("open piece").instrs;
+        let (_, keys) = keys_apart(&instructions[from..], from, &self.keyed);
+        let temporary_index = keys.first().map_or(false, |at| {
+            matches!(instructions.get(at - 1), Some(Instr::Act(Action::Invoke(_), _)))
+        });
+        if (dotted && self.lang.member_mark.is_none() || temporary_index)
+            && !self.lang.scope_unready.is_empty() && self.on_writing() {
+            self.take();
+            self.scope_value()?;
+            self.piece().instrs.truncate(from);
+            self.scope_fault(&self.lang.scope_unready.clone());
+            return Ok(());
         }
         let done = if self.on_writing() {
             self.assignment(from, None)
