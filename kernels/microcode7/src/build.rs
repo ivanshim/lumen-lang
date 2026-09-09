@@ -2680,16 +2680,24 @@ impl<'a> Builder<'a> {
         let ranged = self.look().shape == Shape::Bare
             && table.prims.get(&self.look().lexeme) == Some(&Prim::Span)
             && table.single("syntax.call.open").map_or(false, |o| self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == o);
+        let mut from_zero = false;
         let (start, end) = if ranged {
             self.advance();
             self.advance();
             let start = self.expr(0)?;
-            if let Some(sep) = table.single("syntax.call.separator") {
-                self.need_sign(sep, "between the range bounds")?;
-            }
-            let end = self.expr(0)?;
-            self.need_sign(table.single("syntax.call.close").unwrap(), "after the range")?;
-            (start, end)
+            let shut = table.single("syntax.call.close").unwrap();
+            let sep = table.single("syntax.call.separator");
+            from_zero = table.flag("ext.stmt.for.range.stop") && (self.sign(shut)
+                || sep.map_or(false, |mark| self.sign(mark) && self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == shut));
+            let bounds = if from_zero {
+                if !self.sign(shut) { self.advance(); }
+                (constant(Value::Small(0)), start)
+            } else {
+                if let Some(mark) = sep { self.need_sign(mark, "between the range bounds")?; }
+                (start, self.expr(0)?)
+            };
+            self.need_sign(shut, "after the range")?;
+            bounds
         } else {
             let tier = table.strings("op.range").iter().filter_map(|r| table.precedence.get(r.as_str())).min().copied().unwrap_or(0);
             let start = if table.has_any("ext.syntax.value.spread") { self.walk_row()? } else { self.expr(tier + 1)? };
@@ -2706,7 +2714,16 @@ impl<'a> Builder<'a> {
             (start, end)
         };
         self.address_to_write(&var);
-        self.count_loop(&var, start, end, |r| r.body())
+        if from_zero {
+            let counter = self.gensym("range").ident.to_string();
+            self.count_loop(&counter, start, end, |r| {
+                let item = r.read(&counter);
+                let bind = r.write(&var, item);
+                Ok(sequence(vec![bind, r.body()?]))
+            })
+        } else {
+            self.count_loop(&var, start, end, |r| r.body())
+        }
     }
 
     fn bind(&mut self) -> Res<Form> {
@@ -3898,17 +3915,17 @@ impl<'a> Builder<'a> {
         let before = self.gensym("before");
         let after = self.gensym("after");
         let second = self.expr(precedence + 1)?;
-        let mut test = prim_call(operation, vec![self.read(&before), self.read(&after)]);
+        let mut test = prim_call(operation, vec![Form::Read(before.clone()), Form::Read(after.clone())]);
         if reverse { test = prim_call(Prim::Invert, vec![test]); }
         let more = self.table.dyadic.get(&self.look().lexeme).map_or(false, |next| {
             next.level == precedence && matches!(next.prim, Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::OneObject)
         });
         if more {
-            let middle = self.read(&after);
+            let middle = Form::Read(after.clone());
             let remaining = self.comparison_chain(middle, precedence)?;
             test = self.choose(test, remaining, constant(Value::Flag(false)));
         }
-        Ok(sequence(vec![self.write(&before, first), self.write(&after, second), test]))
+        Ok(sequence(vec![Form::Write(before, Box::new(first)), Form::Write(after, Box::new(second)), test]))
     }
 
     fn expr(&mut self, floor: u32) -> Res<Form> {

@@ -21,6 +21,7 @@
   "ext.syntax.string.adjacent": true,
   "ext.op.identity": ["is"],
   "ext.op.comparison.chain": true,
+  "ext.stmt.for.range.stop": true,
   "ext.op.identity.unsupported": ["NotImplementedError: identity of unboxed integers is not retained"],
   "lexical.string_escapes": [
     "n",

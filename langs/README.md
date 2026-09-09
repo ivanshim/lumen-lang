@@ -469,6 +469,11 @@ only. The extension labels so far, all from PHP:
 - `ext.op.index.append`: a switch; `a[] = v` appends.
 - `ext.stmt.for.collection`: a switch; `for v in a`, where a is not a
   range, walks what a holds. Python's `for x in [1, 2]`.
+- `ext.stmt.for.range.stop`: a switch; a range call in a loop may give
+  only its stopping bound, with a last comma allowed. It starts at zero
+  and takes the bound once. This form keeps a private counter, binding
+  the loop's name only when an item is handed out, so an empty range
+  leaves that name alone and a finished loop keeps its last item.
 - `ext.builtin.print_r`: a builtin writing a value over lines, as PHP's
   `print_r` does: a scalar on its own, an array as `Array` and its places
   in brackets, each array within eight spaces further along.
@@ -1977,6 +1982,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.finally` | - | - | `finally` | - | `finally` | - | - | - | - | - |
 | `ext.stmt.for.c` | - | - | - | - | `for` | - | - | - | - | - |
 | `ext.stmt.for.collection` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.stmt.for.range.stop` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.function.carries` | - | - | `*` | - | `use` | - | - | - | - | - |
 | `ext.stmt.function.carries.pairs` | - | - | `**` | - | - | - | - | - | - | - |
 | `ext.stmt.function.defaults.amiss` | - | - | `TypeError: mutable parameter defaults are not supported` | - | - | - | - | - | - | - |

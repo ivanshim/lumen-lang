@@ -2116,16 +2116,27 @@ impl<'a> Compiler<'a> {
         let range_call = self.look().shape == Shape::Instr
             && lang.builtins.get(&self.look().lexeme) == Some(&Builtin::Span)
             && lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).is_lexeme(Shape::Sign, &c.open));
+        let mut counter = var.clone();
         if range_call {
             self.take();
             let call = lang.calling.clone().expect("call brackets");
             self.take();
             self.expr(0)?;
-            self.write(&var);
-            if let Some(sep) = &call.between {
-                self.want_sign(sep, "between the range bounds")?;
+            let single = lang.range_stop_only && (self.at_symbol(&call.close)
+                || call.between.as_ref().map_or(false, |sep| self.at_symbol(sep)
+                    && self.look_ahead(1).is_lexeme(Shape::Sign, &call.close)));
+            if single {
+                if !self.at_symbol(&call.close) { self.take(); }
+                counter = self.gensym("range");
+                self.constant(Value::Small(0));
+                self.write(&counter);
+            } else {
+                self.write(&var);
+                if let Some(sep) = &call.between {
+                    self.want_sign(sep, "between the range bounds")?;
+                }
+                self.expr(0)?;
             }
-            self.expr(0)?;
             self.want_sign(&call.close, "after the range")?;
         } else {
             let tier = lang.range_marks.iter().filter_map(|r| lang.precedence.get(r)).min().copied().unwrap_or(0);
@@ -2150,14 +2161,19 @@ impl<'a> Compiler<'a> {
         }
         let bound = self.gensym("end");
         self.write(&bound);
-        self.count_loop(&var, &bound, false)
+        let binding = if counter == var { None } else { Some(var.as_str()) };
+        self.count_loop(&counter, &bound, false, binding)
     }
 
     /// The loop itself, the variable holding the start and the bound stored.
-    fn count_loop(&mut self, var: &str, bound: &str, postfix: bool) -> Res<()> {
+    fn count_loop(&mut self, var: &str, bound: &str, postfix: bool, binding: Option<&str>) -> Res<()> {
         let to_test = self.leap();
         let top = self.mark();
         self.enter_cycle(None);
+        if let Some(name) = binding {
+            self.read(var);
+            self.write(name);
+        }
         if postfix {
             self.rpn_block()?;
         } else {
@@ -5793,7 +5809,7 @@ impl<'a> Compiler<'a> {
             let bound = self.gensym("end");
             self.write(&bound);
             self.write(name);
-            return self.count_loop(name, &bound, true);
+            return self.count_loop(name, &bound, true, None);
         }
         match lang.builtins.get(word).copied() {
             Some(native @ (Builtin::Append | Builtin::Replace)) => {

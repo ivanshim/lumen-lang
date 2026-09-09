@@ -54,6 +54,7 @@ pub struct Lang {
     pub adjacent_strings: bool,
     pub identity_unready: Option<String>,
     pub comparison_chains: bool,
+    pub range_stop_only: bool,
     pub escape_letters: Vec<char>,
     /// The letter that, after the escape mark, begins a character
     /// named by its number, and the brackets that number stands in.
@@ -719,6 +720,7 @@ const EXT_LABELS: &str = "
 w ext.stmt.class.suite | w ext.stmt.class.suite.unsupported
 w ext.lexical.string.raw_prefix | w ext.lexical.string.text_prefix | b ext.syntax.string.adjacent
 w ext.op.identity | w ext.op.identity.unsupported | b ext.op.comparison.chain
+b ext.stmt.for.range.stop
 w ext.stmt.type_params.open | w ext.stmt.type_params.close | w ext.stmt.type_alias | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.with.group.open | w ext.stmt.with.group.close | w ext.stmt.with.unsupported | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unsupported | w ext.stmt.delete | w ext.stmt.delete.unsupported | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unsupported | w ext.syntax.tuple.separator | w ext.syntax.tuple.unsupported | w ext.syntax.value.spread | w ext.syntax.value.spread.unsupported | w ext.op.index.spread.unsupported | w ext.op.conditional | b ext.stmt.function.short.bare
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
 w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
@@ -1290,6 +1292,7 @@ impl Lang {
             adjacent_strings: r.flag("ext.syntax.string.adjacent")?,
             identity_unready: r.head("ext.op.identity.unsupported")?,
             comparison_chains: r.flag("ext.op.comparison.chain")?,
+            range_stop_only: r.flag("ext.stmt.for.range.stop")?,
             escape_letters: escapes,
             codepoint_letter: r.letter("ext.lexical.escape.codepoint")?,
             codepoint_open: r.letter("ext.lexical.escape.codepoint.open")?,
