@@ -58,6 +58,7 @@ pub struct Lang {
     pub async_words: Vec<String>,
     pub async_unrun: Vec<String>,
     pub del_words: Vec<String>,
+    pub del_unrun: String,
     pub loop_else: bool,
     pub line_continuations: Vec<String>,
     pub whole_bits: bool,
@@ -749,7 +750,7 @@ b system.flag.counts
 const EXT_LABELS: &str = "
 w ext.lexical.line_continuation | b ext.op.bit.whole | b ext.lexical.escape.continued
 b ext.stmt.loop.else
-w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.with.unrun | w ext.stmt.async | w ext.stmt.async.unrun | w ext.stmt.del
+w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.with.unrun | w ext.stmt.async | w ext.stmt.async.unrun | w ext.stmt.del | w ext.stmt.del.unrun
 w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.lexical.string.long | w ext.lexical.string.prefix.raw | b ext.lexical.string.adjacent
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
 w ext.op.comprehension.async | w ext.op.comprehension.async.unavailable | w ext.op.comprehension.target.unavailable | w ext.builtin.sum.non_number | w ext.builtin.range.non_integer | w ext.builtin.range.zero_step
@@ -1335,6 +1336,7 @@ impl Lang {
             async_words: r.strings("ext.stmt.async")?,
             async_unrun: r.strings("ext.stmt.async.unrun")?,
             del_words: r.strings("ext.stmt.del")?,
+            del_unrun: r.head("ext.stmt.del.unrun")?.unwrap_or_default(),
             line_continuations: r.strings("ext.lexical.line_continuation")?,
             whole_bits: r.flag("ext.op.bit.whole")?,
             continued_escapes: r.flag("ext.lexical.escape.continued")?,

@@ -996,14 +996,32 @@ impl<'a> Compiler<'a> {
             }
             if Lang::spells(&lang.del_words, &w) {
                 self.take();
+                let began = self.mark();
+                let mut refused = false;
                 loop {
-                    let name = self.want_name("as the name to delete")?;
-                    self.read(&name);
-                    self.discard();
-                    let cell = self.cell_to_write(&name);
-                    self.put(Instr::Forget(cell));
+                    let at = self.mark();
+                    let reading = std::mem::replace(&mut self.writing_place, true);
+                    let read = self.prefix();
+                    self.writing_place = reading;
+                    read?;
+                    let name = match &self.piece().instrs[at..] {
+                        [Instr::Read(slot)] => Some(slot.ident.to_string()),
+                        _ => None,
+                    };
+                    self.piece().instrs.truncate(at);
+                    if let Some(name) = name {
+                        self.read(&name);
+                        self.discard();
+                        let cell = self.cell_to_write(&name);
+                        self.put(Instr::Forget(cell));
+                    } else { refused = true; }
                     if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
                     self.take();
+                }
+                if refused {
+                    self.piece().instrs.truncate(began);
+                    self.constant(Value::text(&lang.del_unrun));
+                    self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
                 }
                 return Ok(());
             }

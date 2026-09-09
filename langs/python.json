@@ -397,6 +397,7 @@
   "ext.stmt.decorator": ["@"],
   "ext.stmt.decorator.amiss": ["A decorator must stand on its own line before a function definition"],
   "ext.stmt.del": ["del"],
+  "ext.stmt.del.unrun": ["This deletion cannot be run"],
   "ext.stmt.finally": ["finally"],
   "ext.stmt.for.collection": true,
   "ext.stmt.function.carries": ["*"],

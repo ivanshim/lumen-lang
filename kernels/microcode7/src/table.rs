@@ -84,7 +84,7 @@ system.kind.array:L system.kind.null:L \
 const EXT_TAGS: &str = "\
 ext.lexical.line_continuation:L ext.op.bit.whole:B ext.lexical.escape.continued:B \
 ext.stmt.loop.else:B \
-ext.stmt.nonlocal:L ext.stmt.nonlocal.unrun:L ext.stmt.with:L ext.stmt.with.as:L ext.stmt.with.unrun:L ext.stmt.async:L ext.stmt.async.unrun:L ext.stmt.del:L \
+ext.stmt.nonlocal:L ext.stmt.nonlocal.unrun:L ext.stmt.with:L ext.stmt.with.as:L ext.stmt.with.unrun:L ext.stmt.async:L ext.stmt.async.unrun:L ext.stmt.del:L ext.stmt.del.unrun:L \
 ext.stmt.yield:L ext.stmt.yield.from:L ext.stmt.yield.unrun:L ext.lexical.string.long:L ext.lexical.string.prefix.raw:L ext.lexical.string.adjacent:B \
 ext.op.index.slice.ellipsis:L ext.op.index.slice:L ext.op.index.slice.zero:L ext.op.index.slice.bounds:L ext.op.index.slice.unsupported:L ext.op.index.slice.assign:L ext.op.index.slice.length:L ext.op.index.slice.detached:L \
 ext.op.comprehension.async:L ext.op.comprehension.async.unavailable:L ext.op.comprehension.target.unavailable:L ext.builtin.sum.non_number:L ext.builtin.range.non_integer:L ext.builtin.range.zero_step:L \

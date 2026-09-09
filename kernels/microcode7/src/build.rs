@@ -1168,14 +1168,24 @@ impl<'a> Builder<'a> {
             if self.key("ext.stmt.del") {
                 self.advance();
                 let mut deletion = Vec::new();
+                let mut unavailable = false;
                 loop {
-                    let name = self.need_word("as a name to delete")?;
-                    deletion.push(self.read(&name));
-                    deletion.push(Form::Forget(self.address_to_write(&name)));
+                    self.place_depth += 1;
+                    let read = self.monadic_expr();
+                    self.place_depth -= 1;
+                    match read? {
+                        Form::Read(slot) => {
+                            deletion.push(Form::Read(slot.clone()));
+                            deletion.push(Form::Forget(slot));
+                        }
+                        _ => unavailable = true,
+                    }
                     if !self.on_any("syntax.call.separator") { break; }
                     self.advance();
                 }
-                return Ok(sequence(deletion));
+                return Ok(if unavailable {
+                    prim_call(Prim::Raise, vec![constant(Value::text(self.table.single("ext.stmt.del.unrun").unwrap_or_default()))])
+                } else { sequence(deletion) });
             }
             if self.key("ext.stmt.with") {
                 self.advance();

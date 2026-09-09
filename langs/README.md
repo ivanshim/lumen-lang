@@ -542,9 +542,11 @@ only. The extension labels so far, all from PHP:
 - `ext.stmt.nonlocal` and `ext.stmt.nonlocal.unrun`: the enclosing-binding
   word of the block reader and its complaint. Its names are read, but the
   statement cannot run until enclosing cells may be shared.
-- `ext.stmt.del`: the deletion word of the block reader. This piece reads
-  only the comma-parted names it needs; each must exist before it is
-  forgotten. The fuller target reader remains in the block branch.
+- `ext.stmt.del`: the deletion word of the block reader. Comma-parted
+  names must exist before they are forgotten. Indexed and slice targets
+  are read, but the words in `ext.stmt.del.unrun` stop the whole deletion
+  before its targets are reached. The fuller target runner remains in
+  the block branch.
 - `ext.stmt.with` and `ext.stmt.with.as`: the context header and its target
   word from the block reader. This piece reads ordinary expression items
   and targets followed by a body; `ext.stmt.with.unrun` stops the run before
@@ -651,7 +653,7 @@ only. The extension labels so far, all from PHP:
 
 
 
-- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` `is` `in` < `|` < `+` `-` < `*` `/` `//` `%` < `-` < `**` < `.`
+- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` `is` `in` < `|` < `&` < `<<` < `+` `-` < `*` `/` `//` `%` < `-` `~` < `**` < `.`
 - `ext.op.comprehension.for`, `ext.op.comprehension.in` and
   `ext.op.comprehension.if`: the words after a literal's first expression
   that bind names over a collection and keep only the passes whose
@@ -2085,6 +2087,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.decorator.amiss` | - | - | `A decorator must stand on its own line before a function definition` | - | - | - | - | - | - | - |
 | `ext.stmt.default` | - | - | - | - | `default` | - | - | - | - | - |
 | `ext.stmt.del` | - | - | `del` | - | - | - | - | - | - | - |
+| `ext.stmt.del.unrun` | - | - | `This deletion cannot be run` | - | - | - | - | - | - | - |
 | `ext.stmt.do` | - | - | - | - | `do` | - | - | - | - | - |
 | `ext.stmt.finally` | - | - | `finally` | - | `finally` | - | - | - | - | - |
 | `ext.stmt.for.c` | - | - | - | - | `for` | - | - | - | - | - |
