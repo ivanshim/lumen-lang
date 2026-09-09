@@ -1569,6 +1569,20 @@ the older class grammar keeps its member and constructor requirements.
   makes a real, so a range bound written thus is still turned down by
   `ext.builtin.range.non_integer` when the run reaches it.
 
+A member read may be followed by an index or a slice. The deferred scope
+reader keeps these attached to that member, including bounds which are
+member reads themselves, instead of beginning another array literal.
+This narrow reading uses `ext.system.scope.unready` alongside the common
+index and slice labels.
+
+An indexed collection-loop target uses the ordinary indexed assignment
+on each pass, with the item already at hand. Its brackets are read before
+the collection word, which cannot become part of the target. This is
+`ext.stmt.for.collection` with the common index labels; grouped targets
+remain deferred as stated above. A deferred context body discards its
+outgoing returns, breaks and continues together with its other work, so
+no later loop or routine tries to mend a jump that no longer stands.
+
 ## The web
 
 A program may be run for a web request. The host gathers the request the

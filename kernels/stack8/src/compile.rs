@@ -400,8 +400,7 @@ impl<'a> Compiler<'a> {
 
     fn want_sign(&mut self, text: &str, why: &str) -> Res<()> {
         if !self.at_symbol(text) {
-            let said = format!("Expected '{}' {}, got '{}'", text, why, self.look().lexeme);
-            return Err(if self.lang.scope_unready.is_empty() { said } else { format!("{}\n{}", said, self.look().row) });
+            return Err(format!("Expected '{}' {}, got '{}'", text, why, self.look().lexeme));
         }
         self.take();
         Ok(())
@@ -1026,7 +1025,13 @@ impl<'a> Compiler<'a> {
             }
             message = if Lang::spells(&lang.yield_words, &word) { &lang.yield_unrun } else { &lang.scope_unready };
         }
-        self.piece().instrs.truncate(from);
+        let piece = self.piece();
+        piece.instrs.truncate(from);
+        piece.escapes.retain(|at| *at < from);
+        for cycle in &mut piece.cycles {
+            cycle.leaves.retain(|at| *at < from);
+            cycle.resumes.retain(|at| *at < from);
+        }
         self.scope_fault(message);
         Ok(())
     }
@@ -1746,7 +1751,8 @@ impl<'a> Compiler<'a> {
             let after = self.pos;
             self.pos = began;
             let from = self.mark();
-            self.expr_at(0, false)?;
+            if lang.for_collections && !lang.tuple_marks.is_empty() { self.prefix()?; }
+            else { self.expr_at(0, false)?; }
             let was = self.waiting.replace(value.to_string());
             let done = self.store_into(from, None, None, "=");
             self.waiting = was;
@@ -2216,7 +2222,17 @@ impl<'a> Compiler<'a> {
                 let spread = self.on_any(&self.lang.array_spread);
                 if spread { self.take(); }
                 let name = self.want_name("as a loop target")?;
-                if spread { None } else { Some(name) }
+                let plain_end = self.pos;
+                let mark = self.mark();
+                self.read(&name);
+                self.indexing(mark)?;
+                while self.on_any(&self.lang.pipe_words) {
+                    self.take();
+                    self.want_name("after the member mark")?;
+                    self.indexing(mark)?;
+                }
+                self.piece().instrs.truncate(mark);
+                if spread || self.pos != plain_end { None } else { Some(name) }
             };
             count += 1;
             if count == 1 { simple = name; }
@@ -2234,11 +2250,19 @@ impl<'a> Compiler<'a> {
     fn for_stmt(&mut self) -> Res<()> {
         let lang = self.lang;
         self.take();
+        let target_start = self.pos;
+        let mut place = None;
         let var = if !lang.tuple_marks.is_empty() {
             match self.loop_places()? {
                 Some(name) => name,
                 None => {
-                    self.scope_fault(&lang.scope_unready.clone());
+                    let written = &self.tokens[target_start..self.pos];
+                    let indexed = lang.index_brackets.as_ref().map_or(false, |g| written.len() > 2
+                        && written[0].shape == Shape::Instr && written[1].is_lexeme(Shape::Sign, &g.open)
+                        && written.last().map_or(false, |t| t.is_lexeme(Shape::Sign, &g.close)))
+                        && !written.iter().any(|t| Lang::spells(&lang.pipe_words, &t.lexeme));
+                    if indexed { place = Some(target_start); }
+                    else { self.scope_fault(&lang.scope_unready.clone()); }
                     self.gensym("loop_item")
                 }
             }
@@ -2280,7 +2304,7 @@ impl<'a> Compiler<'a> {
                     self.act(Action::ComprehensionItems, 1);
                 }
                 self.write(&bag);
-                return self.walk(&bag, None, &var, false, None);
+                return self.walk(&bag, None, &var, false, place);
             }
             self.take();
             self.write(&var);
@@ -4103,6 +4127,7 @@ impl<'a> Compiler<'a> {
                 }
                 self.take();
                 self.pipe_target(from)?;
+                if !lang.scope_unready.is_empty() { self.indexing(from)?; }
                 continue;
             }
             if lang.otherwise_mark.as_ref().map_or(false, |m| self.at_symbol(m)) {

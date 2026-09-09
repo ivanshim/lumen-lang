@@ -692,8 +692,7 @@ impl<'a> Builder<'a> {
             self.advance();
             Ok(())
         } else {
-            let said = format!("Expected '{}' {}, got '{}'", s, why, self.look().lexeme);
-            Err(if self.table.has_any("ext.system.scope.unready") { format!("{}\n{}", said, self.look().row) } else { said })
+            Err(format!("Expected '{}' {}, got '{}'", s, why, self.look().lexeme))
         }
     }
 
@@ -2346,7 +2345,9 @@ impl<'a> Builder<'a> {
                 if let Some(began) = place {
                     let after = r.pos;
                     r.pos = began;
-                    let target = r.expr_at(0, false)?;
+                    let target = if r.table.flag("ext.stmt.for.collection") && r.table.has_any("ext.op.tuple") {
+                        r.monadic_expr()?
+                    } else { r.expr_at(0, false)? };
                     let was = r.waiting.replace(item.clone());
                     let stood = r.look().clone();
                     let done = r.write_into(target, false, None, stood);
@@ -2661,7 +2662,15 @@ impl<'a> Builder<'a> {
                     let starred = self.on_any("ext.syntax.array.spread");
                     if starred { self.advance(); }
                     let name = self.need_word("in a walk target")?;
-                    if starred { None } else { Some(name) }
+                    let end_of_name = self.pos;
+                    let value = self.read(&name);
+                    let _indexed = self.subscript(value)?;
+                    while self.on_any("op.pipe") {
+                        self.advance();
+                        self.need_word("after the member mark")?;
+                        let _member = self.subscript(constant(Value::Nil))?;
+                    }
+                    if starred || end_of_name != self.pos { None } else { Some(name) }
                 }
             };
             names.push(item);
@@ -2677,9 +2686,15 @@ impl<'a> Builder<'a> {
     fn for_stmt(&mut self) -> Res<Form> {
         let table = self.table;
         self.advance();
+        let began = self.pos;
         let target = if table.has_any("ext.op.tuple") { self.walk_targets()? }
             else { Some(self.need_word("as the loop variable")?) };
-        let pending = target.is_none();
+        let tokens = &self.tokens[began..self.pos];
+        let placed = target.is_none() && tokens.len() > 2 && tokens[0].shape == Shape::Bare
+            && table.spells("op.index.open", &tokens[1].lexeme)
+            && tokens.last().map_or(false, |t| table.spells("op.index.close", &t.lexeme))
+            && !tokens.iter().any(|t| table.spells("op.pipe", &t.lexeme));
+        let pending = target.is_none() && !placed;
         let var = target.unwrap_or_else(|| self.gensym("walk_item").ident.to_string());
         if !self.key("stmt.for.in") {
             return Err(format!("Expected '{}' after for loop variable, got: {}", table.single("stmt.for.in").unwrap_or("in"), self.look().lexeme));
@@ -2713,7 +2728,7 @@ impl<'a> Builder<'a> {
                     None => start,
                 };
                 self.address_to_write(&var);
-                let walked = self.walk(source, None, var, None, None)?;
+                let walked = self.walk(source, None, var, None, placed.then_some(began))?;
                 return Ok(if pending { sequence(vec![self.scope_unrun("ext.system.scope.unready"), walked]) } else { walked });
             }
             self.advance();
@@ -3948,6 +3963,7 @@ impl<'a> Builder<'a> {
                 left = if mutation && table.has_any("ext.system.scope.unready") && !matches!(args.first(), Some(Form::Read(_))) {
                     self.scope_unrun("ext.system.scope.unready")
                 } else { self.named_call(&name, args)? };
+                if table.has_any("ext.system.scope.unready") { left = self.subscript(left)?; }
                 continue;
             }
             if table.single("ext.op.otherwise").map_or(false, |m| self.sign(m)) {
