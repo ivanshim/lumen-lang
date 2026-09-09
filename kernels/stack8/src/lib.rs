@@ -117,6 +117,16 @@ fn settle_brief(lang: &mut Lang, request: &[(String, String, String, bool)]) {
 
 fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     go_inner(lang, source, program_args, request).map_err(|e| {
+        // These complaints already carry the kind the language gave them.
+        if !lang.division_zero.is_empty() {
+            let numeric = [&lang.division_zero, &lang.quotient_zero, &lang.quotient_real_zero,
+                &lang.remainder_real_zero, &lang.power_zero, &lang.power_overflow,
+                &lang.power_nonreal, &lang.bits_integer, &lang.bits_beyond];
+            let plain = numeric.iter().any(|words| words.first() == Some(&e))
+                || lang.fault_modulo.as_ref() == Some(&e) || lang.fault_shift.as_ref() == Some(&e)
+                || lang.integer_text_detail.first().map_or(false, |head| e.starts_with(head));
+            if plain { return e; }
+        }
         let words = &lang.call_builtin_amiss;
         if words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]) { e }
         else { format!("{}: {}", lang.banner, e) }

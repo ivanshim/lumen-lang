@@ -1097,6 +1097,8 @@ impl<'a> Machine<'a> {
             flag_counted: self.table.flag("system.flag.counts"),
             // A language may show nothing as no text at all, as PHP does,
             // rather than as the word a program writes for it.
+            infinity: self.table.single("ext.builtin.to_real.infinity"),
+            not_number: self.table.single("ext.builtin.to_real.nan"),
             real_figures: self.table.count("ext.system.real.bits").and(self.table.count("ext.system.real.digits")),
             nil: match self.table.flag("literal.null.silent") {
                 true => "",
@@ -3462,6 +3464,15 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if self.table.flag("ext.op.arithmetic.flags") && v.iter().any(|x| matches!(x, Value::Flag(_))) {
+            let arithmetic = matches!(op, Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power | Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Negate | Prim::AsReal);
+            if arithmetic {
+                let counted: Vec<Value> = v.iter().map(|x| match x {
+                    Value::Flag(false) => Value::Small(0), Value::Flag(true) => Value::Small(1), other => other.clone(),
+                }).collect();
+                return self.prim(op, name, &counted);
+            }
+        }
         if op == Prim::Power && self.table.flag("ext.op.pow.real_exponent") {
             if let Some(result) = self.powered_real(v)? { return Ok(result); }
         }
@@ -4819,6 +4830,15 @@ impl<'a> Machine<'a> {
             }
             Prim::AsReal if self.table.flag("ext.builtin.to_real.text") && (v.is_empty() || matches!(v.first(), Some(Value::Text(_)))) => {
                 if v.len() > 1 { return Err(self.argument_fault("ext.syntax.call.amiss", None)); }
+                if let Some(Value::Text(source)) = v.first() {
+                    let source = source.trim().to_ascii_lowercase();
+                    let letters = source.strip_prefix(['+', '-']).unwrap_or(&source);
+                    let special = if self.table.spells("ext.builtin.to_real.nan", letters) { Some(f64::NAN) }
+                        else if self.table.spells("ext.builtin.to_real.infinity", letters) {
+                            Some(if source.starts_with('-') { -f64::INFINITY } else { f64::INFINITY })
+                        } else { None };
+                    if let Some(real) = special { return Ok(crate::data::worth_of_binary(real, math::DEFAULT_PLACES)); }
+                }
                 let failure = || self.argument_fault("ext.builtin.to_real.text.amiss", None);
                 let worth = if v.is_empty() { Value::Small(0) } else { number_spelled_in(&v[0]).ok_or_else(failure)? };
                 math::to_decimal(&worth, math::DEFAULT_PLACES).ok_or_else(failure)?

@@ -253,6 +253,10 @@ only. The extension labels so far, all from PHP:
   are admitted. `ext.builtin.to_int.base.amiss`, `.text.amiss` and
   `.text.required` give plain complaints for a base outside its bounds,
   ill-written digits, and a base given with something other than text.
+- `ext.builtin.to_real.infinity` and `.nan`: lists of words the real
+  reader takes without regard to case, with a sign before them if given.
+  They stand for the number past all finite numbers and the value no
+  number equals. The first spelling is how each is written out.
 - `ext.builtin.to_real.text`: a switch admitting text to the real reader,
   including a decimal point and a power of ten. An empty call gives
   nought. `ext.builtin.to_real.text.amiss` gives its complaint for text
@@ -578,6 +582,10 @@ only. The extension labels so far, all from PHP:
   names around where it was written.
 - `ext.lexical.number.point_open`: a switch allowing the decimal point
   to stand before all the digits or after them, as in `.5` and `5.`.
+- `ext.op.arithmetic.flags`: a switch making flags count as nought and
+  one in arithmetic, numeric comparison and conversion to a real.
+  Identity keeps the kinds apart, and bit operations keep their own
+  rule for two flags.
 - `ext.op.pow.real_exponent`: a switch; a real operand or an exponent
   below nought makes a real power. Whole nonnegative powers stay exact.
   `ext.op.pow.overflow`, `.zero` and `.nonreal` give plain complaints
@@ -587,6 +595,9 @@ only. The extension labels so far, all from PHP:
   `ext.op.rem.real_zero`: lists of plain words for division by nought,
   whole quotient by nought, real quotient by nought and real remainder
   by nought. Whole remainder uses `ext.system.fault.modulo` as before.
+  With `ext.op.div.zero`, these numeric complaints, the power and bit
+  complaints, and the detailed integer complaint carry their own kind
+  and reach the caller without the usual language banner.
 - `ext.builtin.to_int.text.detail`: two pieces framing the base in the
   complaint for ill-written integer text; the quoted text follows.
 - `ext.lexical.number.exponent`: the letters that open a decimal exponent
@@ -2018,6 +2029,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.to_int.text.amiss` | - | - | `ValueError: invalid literal for int()` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.text.detail` | - | - | `ValueError: invalid literal for int() with base ` `: ` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.text.required` | - | - | `TypeError: int() can't convert non-string with explicit base` | - | - | - | - | - | - | - |
+| `ext.builtin.to_real.infinity` | - | - | `inf` `infinity` | - | - | - | - | - | - | - |
+| `ext.builtin.to_real.nan` | - | - | `nan` | - | - | - | - | - | - | - |
 | `ext.builtin.to_real.text` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.to_real.text.amiss` | - | - | `ValueError: could not convert string to float` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.encoding` | - | - | `encoding` | - | - | - | - | - | - | - |
@@ -2069,6 +2082,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.string.prefix.raw` | - | - | `r` `R` | - | - | - | - | - | - | - |
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.literal.ellipsis` | - | - | `...` | - | - | - | - | - | - | - |
+| `ext.op.arithmetic.flags` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.expression` | - | - | `:=` | - | - | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | - | - | `true` | - | - | - | - | - |

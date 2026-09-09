@@ -405,6 +405,13 @@
   "ext.builtin.to_int.text.required": [
     "TypeError: int() can't convert non-string with explicit base"
   ],
+  "ext.builtin.to_real.infinity": [
+    "inf",
+    "infinity"
+  ],
+  "ext.builtin.to_real.nan": [
+    "nan"
+  ],
   "ext.builtin.to_real.text": true,
   "ext.builtin.to_real.text.amiss": [
     "ValueError: could not convert string to float"
@@ -496,6 +503,7 @@
   "ext.literal.ellipsis": [
     "..."
   ],
+  "ext.op.arithmetic.flags": true,
   "ext.op.assign.compound": true,
   "ext.op.assign.expression": [
     ":="

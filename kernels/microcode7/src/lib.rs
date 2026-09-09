@@ -55,6 +55,17 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
     markup_settled(&mut table, request);
     let prefix = table.banner();
     go(&table, source, program_args, request).map_err(|e| {
+        if table.has_any("ext.op.div.zero") {
+            let labels = ["ext.op.pow.overflow", "ext.op.pow.zero", "ext.op.pow.nonreal",
+                "ext.op.div.zero", "ext.op.quot.zero", "ext.op.quot.real_zero", "ext.op.rem.real_zero",
+                "ext.system.fault.modulo", "ext.system.fault.shift", "ext.op.bit.integer", "ext.op.bit.beyond"];
+            for label in labels {
+                if table.single(label) == Some(e.as_str()) { return e; }
+            }
+            if let Some((begin, _)) = table.around("ext.builtin.to_int.text.detail") {
+                if e.starts_with(begin) { return e; }
+            }
+        }
         match table.strings("ext.syntax.call.amiss.builtin") {
             [head, tail] if e.starts_with(head) && e.ends_with(tail) => e,
             _ => format!("{}: {}", prefix, e),

@@ -159,6 +159,8 @@ pub struct Wording<'a> {
     /// Where a language's reals are binary numbers of a fixed width,
     /// how many significant digits one shows when simply written out.
     /// Where it says nothing, a real is shown to its own precision.
+    pub infinity_word: Option<&'a str>,
+    pub nan_word: Option<&'a str>,
     pub real_digits: Option<usize>,
     /// The words for a member the class shares only with those standing
     /// on it, and for one it keeps to itself, as they are marked beside
@@ -353,6 +355,10 @@ impl Value {
             Value::Tie(pair) => format!("{} => {}", pair.0.display(sp), pair.1.display(sp)),
             // What stands outside the numbers is written by its name at
             // any width, since there are no figures to write.
+            Value::Real(r) if r.outside() && sp.infinity_word.is_some() && sp.nan_word.is_some() => {
+                if r.no_number() { sp.nan_word.unwrap().to_owned() }
+                else { format!("{}{}", if r.p.is_negative() { "-" } else { "" }, sp.infinity_word.unwrap()) }
+            }
             Value::Real(r) if r.outside() => r.spelled().to_string(),
             // A language whose reals are binary numbers writes one out
             // to its own count of significant figures.

@@ -4481,7 +4481,10 @@ impl<'a> Builder<'a> {
                 // A plus sign leaves its operand as it is, bound like a negation.
                 self.advance();
                 let tier = table.monadic.values().map(|m| m.level).max().unwrap_or(0);
-                return self.expr(tier);
+                let value = self.expr(tier)?;
+                return Ok(if table.flag("ext.op.arithmetic.flags") {
+                    prim_call(Prim::Negate, vec![prim_call(Prim::Negate, vec![value])])
+                } else { value });
             }
         }
         let node = match t.shape {

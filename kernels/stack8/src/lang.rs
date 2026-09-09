@@ -99,6 +99,9 @@ pub struct Lang {
     /// How many bits wide a real is, where a language says its reals
     /// are binary numbers rather than exact ones, and how many
     /// significant digits one shows when simply written out.
+    pub arithmetic_flags: bool,
+    pub infinity_words: Vec<String>,
+    pub nan_words: Vec<String>,
     pub point_open: bool,
     pub power_real: bool,
     pub power_overflow: Vec<String>,
@@ -788,6 +791,8 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+b ext.op.arithmetic.flags
+w ext.builtin.to_real.infinity | w ext.builtin.to_real.nan
 b ext.lexical.number.point_open | b ext.op.pow.real_exponent | w ext.op.pow.overflow | w ext.op.pow.nonreal | w ext.op.pow.zero | w ext.op.div.zero | w ext.op.quot.zero | w ext.op.quot.real_zero | w ext.op.rem.real_zero | w ext.builtin.to_int.text.detail
 b ext.op.bit.unbounded | w ext.op.bit.integer | w ext.op.bit.beyond
 w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready
@@ -1396,6 +1401,9 @@ impl Lang {
             octal_lead: r.flag("ext.lexical.number.octal_lead")?,
             digit_separators: r.letters("ext.lexical.number.separator")?,
             integer_bits: r.count("ext.system.integer.bits")?,
+            arithmetic_flags: r.flag("ext.op.arithmetic.flags")?,
+            infinity_words: r.strings("ext.builtin.to_real.infinity")?,
+            nan_words: r.strings("ext.builtin.to_real.nan")?,
             point_open: r.flag("ext.lexical.number.point_open")?,
             power_real: r.flag("ext.op.pow.real_exponent")?,
             power_overflow: r.strings("ext.op.pow.overflow")?,

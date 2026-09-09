@@ -1121,6 +1121,8 @@ impl<'a> Engine<'a> {
             false_word: word(&self.lang.false_words, "false"),
             null_word: nothing,
             flag_counts: self.lang.flags_count,
+            infinity_word: self.lang.infinity_words.first().map(String::as_str),
+            nan_word: self.lang.nan_words.first().map(String::as_str),
             real_digits: self.lang.real_bits.and(self.lang.real_digits),
             text_is_bytes: self.lang.text_is_bytes,
             guarded_word: self.lang.guarded_words.first().map(String::as_str),
@@ -2265,6 +2267,7 @@ impl<'a> Engine<'a> {
             Action::Negate => {
                 // 0 - x, so a real keeps its precision.
                 let v = self.drop_top()?;
+                let v = if self.lang.arithmetic_flags { match v { Value::Flag(b) => Value::Small(i64::from(b)), other => other } } else { v };
                 // Text turned about is text taken times minus one, which
                 // is how a language that reads a number out of text does
                 // it: the number the text opens with is turned about, and
@@ -3200,6 +3203,11 @@ impl<'a> Engine<'a> {
     }
 
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if self.lang.arithmetic_flags && matches!(op, Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv | Action::Mod | Action::Power | Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge)
+            && (matches!(a, Value::Flag(_)) || matches!(b, Value::Flag(_))) {
+            let counted = |v: &Value| match v { Value::Flag(t) => Value::Small(i64::from(*t)), _ => v.clone() };
+            return self.dyadic(op, &counted(a), &counted(b));
+        }
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
         if let Value::Bond(shared) = a {
@@ -4770,8 +4778,19 @@ impl<'a> Engine<'a> {
             Builtin::AsReal if self.lang.to_real_text && matches!(args.first(), Some(Value::Text(_))) => {
                 arity(1)?;
                 let Value::Text(text) = &args[0] else { unreachable!() };
+                let plain = text.trim().to_ascii_lowercase();
+                let unsigned = plain.strip_prefix(['+', '-']).unwrap_or(&plain);
+                if Lang::spells(&self.lang.infinity_words, unsigned) || Lang::spells(&self.lang.nan_words, unsigned) {
+                    let special = if Lang::spells(&self.lang.nan_words, unsigned) { f64::NAN }
+                        else if plain.starts_with('-') { f64::NEG_INFINITY } else { f64::INFINITY };
+                    return Ok(crate::value::real_of(special, arith::DEFAULT_PLACES));
+                }
                 let number = number_spelled(text).ok_or_else(|| self.lang.to_real_text_amiss[0].clone())?;
                 arith::to_real(&number, arith::DEFAULT_PLACES).ok_or_else(|| self.lang.to_real_text_amiss[0].clone())?
+            }
+            Builtin::AsReal if self.lang.arithmetic_flags && matches!(args.as_slice(), [Value::Flag(_)]) => {
+                let Value::Flag(b) = args[0] else { unreachable!() };
+                arith::to_real(&Value::Small(i64::from(b)), arith::DEFAULT_PLACES).unwrap()
             }
             Builtin::AsReal => {
                 arity(1)?;
