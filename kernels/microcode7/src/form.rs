@@ -38,6 +38,13 @@ pub enum Callee {
 pub enum Prim {
     /// Whether a member, rather than the pipe, takes the name.
     HasMember,
+    /// Gather the parts naming a span within brackets.
+    SliceBounds,
+    /// A slice form kept readable while its running remains wanting.
+    SliceRefused,
+    Total,
+    Listed,
+    SomeTrue,
     /// A step onward or back (`++`, `--`): adding or taking away one,
     /// save where a language walks text along its letters instead.
     Onward(bool),
@@ -78,6 +85,10 @@ pub enum Prim {
     AsDecimal,
     /// The value made text.
     AsChars,
+    /// The value, specification and conversion of a field in text.
+    RenderField,
+    /// Stop upon reaching a character the run cannot represent.
+    UnheldText,
     /// The value made a flag.
     AsTruth,
     /// The value made an array; anything that is not one becomes an
@@ -209,6 +220,8 @@ pub enum Prim {
     /// equal without being the same.
     Selfsame,
     Unlike,
+    Contains,
+    Absent,
     /// The bits of a value, sixty-four of them, sign and all: both set,
     /// either set, one alone set, all turned over, and moved up or down.
     /// Two pieces of text take their bits letter by letter instead.
@@ -343,6 +356,10 @@ pub enum Prim {
     /// place to write, so it is turned down as a write to one is.
     Toward,
     MakeArray,
+    /// The growing literal and the next part of it.
+    ExtendLiteral(bool, bool),
+    Iterated,
+    CheckUnpack(usize),
     // control
     Seq,
     Choose,
@@ -365,7 +382,7 @@ pub enum Form {
     Apply(Callee, Vec<Form>),
     /// A loop as a form, run in the frame it appears in, instead
     /// of a program that calls itself. `after` tests after the body.
-    Cycle { test: Box<Form>, body: Box<Form>, step: Option<Box<Form>>, after: bool },
+    Cycle { test: Box<Form>, body: Box<Form>, step: Option<Box<Form>>, after: bool, otherwise: Option<Box<Form>> },
     /// An operation of two operands, evaluated without a vector
     /// of arguments.
     Dyad { op: Prim, name: Rc<str>, a: Input, b: Input },
@@ -376,7 +393,9 @@ pub enum Form {
     Class { plan: Rc<Plan>, values: Vec<Form> },
     /// A body run with clauses ready to take what it raises, and a last
     /// part that runs however the body ends.
-    Attempt { body: Box<Form>, clauses: Vec<Clause>, last: Option<Box<Form>> },
+    Again,
+    Assert { condition: Box<Form>, message: Box<Form> },
+    Attempt { body: Box<Form>, clauses: Vec<Clause>, last: Option<Box<Form>>, otherwise: Option<Box<Form>> },
     /// Whether the call left this binding without a value.
     Missing(Address),
     /// A statement together with the line of the source it was written
@@ -462,6 +481,9 @@ pub enum Form {
 #[derive(Debug)]
 pub struct Clause {
     pub classes: Vec<String>,
+    pub choices: Option<Vec<Form>>,
+    pub grouped: bool,
+    pub takes_all: bool,
     pub held: Option<Address>,
     pub body: Form,
 }
@@ -515,11 +537,16 @@ pub enum Traps {
 
 #[derive(Debug)]
 pub struct Routine {
+    /// Method parameters whose fallback is evaluated in the body.
+    pub local_defaults: Vec<usize>,
     /// How many arguments must be given; the rest carry a value of their
     /// own, written by the body's first forms.
     pub least: usize,
+    pub gather_from: Option<usize>,
     pub ident: String,
     pub formals: Vec<String>,
+    /// How each place is filled: both ways, by position, by name, or gathered.
+    pub taking: Option<Vec<char>>,
     /// The class each parameter is written to take, where one was
     /// written and it names a class. Nothing for a parameter with none,
     /// or with a kind that is no class.

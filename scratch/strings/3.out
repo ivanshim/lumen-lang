@@ -1,0 +1,9 @@
+'ab' 2
+'ab' 2
+'AAAA' 4
+'\x07\x08\x0c\x0b\x00\r\n\t' 8
+'ab' 2
+'a\\"b\\\\c' 7
+'one "quote"\n# two \'quotes\'\nthree' 32
+'Āǿ' 2
+'{}' 2

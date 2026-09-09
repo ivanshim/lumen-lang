@@ -1,0 +1,1 @@
+type(object=1)
