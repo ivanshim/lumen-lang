@@ -970,6 +970,7 @@ impl<'a> Compiler<'a> {
             }
             let names_class = |word: &str| Lang::spells(&lang.class_words, word) || Lang::spells(&lang.interface_words, word);
             if names_class(&w) {
+                if !lang.class_unready.is_empty() { return self.class_reading(); }
                 return self.class_decl();
             }
             // A class may be marked before it is named: `abstract class C`.
@@ -1049,6 +1050,45 @@ impl<'a> Compiler<'a> {
 
     /// A statement without a keyword: a step, a bare call, an
     /// assignment or an expression.
+    /// The class piece supplies objects and namespaces. Until then its
+    /// head and every statement of its body are read, and reaching the
+    /// declaration says plainly why it cannot yet be run.
+    fn class_reading(&mut self) -> Res<()> {
+        self.take();
+        self.want_name("after the class word")?;
+        let from = self.mark();
+        if self.on_any(&self.lang.class_bases_open) {
+            self.take();
+            let mut call = self.lang.calling.clone().unwrap();
+            if let Some(close) = self.lang.class_bases_close.first() { call.close = close.clone(); }
+            self.arguments(&call)?;
+        }
+        self.body()?;
+        self.piece().instrs.truncate(from);
+        self.refuse_reading(&self.lang.class_unready.clone());
+        Ok(())
+    }
+
+    fn refuse_reading(&mut self, words: &[String]) {
+        self.constant(Value::text(words.first().map_or("", String::as_str)));
+        self.act(Action::Builtin(Builtin::Raise, Rc::from("form")), 1);
+    }
+
+    /// A comma belongs to a tuple only where the caller has allowed a
+    /// whole value list, never where it separates call arguments.
+    fn tuple_tail(&mut self, from: usize) -> Res<bool> {
+        if !self.on_any(&self.lang.tuple_marks) { return Ok(false); }
+        while self.on_any(&self.lang.tuple_marks) {
+            self.take();
+            if self.on_sep() || self.on_assign() || self.exhausted()
+                || self.lang.grouping.as_ref().map_or(false, |p| self.at_symbol(&p.close)) { break; }
+            self.expr_at(0, false)?;
+        }
+        self.piece().instrs.truncate(from);
+        self.refuse_reading(&self.lang.tuple_unready.clone());
+        Ok(true)
+    }
+
     fn simple_stmt(&mut self) -> Res<()> {
         let lang = self.lang;
         if lang.bare_calls && self.look().shape == Shape::Instr {
@@ -2148,7 +2188,9 @@ impl<'a> Compiler<'a> {
         } else if by_cell {
             self.a_cell(&self.lang.unshared_given.clone(), true, None)?;
         } else {
+            let from = self.mark();
             self.expr(0)?;
+            self.tuple_tail(from)?;
         }
         // The value is worked out first, then the last parts of any open
         // try statements run, and only then does the program leave.
@@ -3243,6 +3285,7 @@ impl<'a> Compiler<'a> {
                     || Lang::spells(&self.lang.block_intros, &before.lexeme)))
         };
         self.expr_at(0, false)?;
+        self.tuple_tail(from)?;
         if starts_here && self.on_any(&self.lang.annotation_marks) {
             return self.annotated_statement(from, target_at);
         }
@@ -3328,8 +3371,16 @@ impl<'a> Compiler<'a> {
     /// Turn the load of a target, already assembled from `from`, into a
     /// store of what follows the assignment sign.
     fn assignment(&mut self, from: usize, keep: Option<&str>) -> Res<()> {
+        let tuple = self.piece().instrs[from..].iter().any(|word| matches!(word, Instr::Const(Value::Text(s)) if self.lang.tuple_unready.first().map_or(false, |said| s.as_ref() == said)));
         let compound = self.lang.compound.get(&self.look().lexeme).filter(|_| self.look().shape == Shape::Sign).cloned();
         let assign = self.take().lexeme;
+        if tuple {
+            self.expr(0)?;
+            self.tuple_tail(from)?;
+            self.piece().instrs.truncate(from);
+            self.refuse_reading(&self.lang.tuple_unready.clone());
+            return Ok(());
+        }
         self.store_into(from, keep, compound, &assign)
     }
 
@@ -4340,7 +4391,9 @@ impl<'a> Compiler<'a> {
                         if let Some(clause) = self.comprehension_ahead() {
                             self.comprehension(&group, clause, false)?;
                         } else {
-                            self.expr(0)?;
+                            let empty = !lang.tuple_marks.is_empty() && self.at_symbol(&group.close);
+                            if empty { self.refuse_reading(&lang.tuple_unready); }
+                            else { self.expr(0)?; self.tuple_tail(from)?; }
                             self.want_sign(&group.close, "to close a group")?;
                         }
                         self.called_on_value()?;
@@ -5036,6 +5089,10 @@ impl<'a> Compiler<'a> {
             let member = lang.member_mark.as_ref().map_or(false, |m| self.at_symbol(m));
             let scope = lang.scope_mark.as_ref().map_or(false, |m| self.at_symbol(m));
             if !member && !scope {
+                break;
+            }
+            if member && lang.member_pipes && lang.builtins.contains_key(&self.look_ahead(1).lexeme)
+                && matches!(&self.piece().instrs[from..], [Instr::Read(_)]) {
                 break;
             }
             self.take();

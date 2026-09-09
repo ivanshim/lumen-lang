@@ -663,7 +663,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             pos = k;
             continue;
         }
-        if c.is_ascii_digit() {
+        if c.is_ascii_digit() || (table.flag("ext.lexical.number.point.bare") && Some(c) == point && src.get(pos + 1).map_or(false, |n| n.is_ascii_digit())) {
             let mut k = pos;
             while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                 k += 1;
@@ -689,7 +689,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                     }
                 }
             } else {
-                if point.is_some() && at(k) == point && at(k + 1).map_or(false, |x| x.is_ascii_digit()) {
+                if point.is_some() && at(k) == point && (table.flag("ext.lexical.number.point.bare") || at(k + 1).map_or(false, |x| x.is_ascii_digit())) {
                     k += 1;
                     while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                         k += 1;
@@ -704,7 +704,14 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                     }
                 }
             }
-            tokens.push(tok(Shape::Numeral, src[pos..k].iter().collect(), row));
+            if src.get(k).map_or(false, |c| table.spells("ext.lexical.number.imaginary", &c.to_string())) {
+                k += 1;
+                tokens.push(tok(Shape::Unready, table.single("ext.lexical.number.imaginary.unready").unwrap_or_default().into(), row));
+            } else {
+                let mut number: String = src[pos..k].iter().collect();
+                if table.flag("ext.lexical.number.point.bare") && point.map_or(false, |p| number.ends_with(p)) { number += "0"; }
+                tokens.push(tok(Shape::Numeral, number, row));
+            }
             pos = k;
             continue;
         }

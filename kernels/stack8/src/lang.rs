@@ -43,6 +43,15 @@ pub struct Lang {
     pub ident: String,
     pub extensions: Vec<String>,
     pub banner: String,
+    pub member_pipes: bool,
+    pub tuple_unready: Vec<String>,
+    pub tuple_marks: Vec<String>,
+    pub class_unready: Vec<String>,
+    pub class_bases_close: Vec<String>,
+    pub class_bases_open: Vec<String>,
+    pub imaginary_unready: Vec<String>,
+    pub imaginary_letters: Vec<String>,
+    pub bare_point: bool,
 
     pub line_comments: Vec<String>,
     pub block_comments: Vec<(String, String)>,
@@ -715,6 +724,15 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+b ext.op.member.pipes
+w ext.op.tuple.unready
+w ext.op.tuple
+w ext.stmt.class.unready
+w ext.stmt.class.bases.close
+w ext.stmt.class.bases.open
+w ext.lexical.number.imaginary.unready
+w ext.lexical.number.imaginary
+b ext.lexical.number.point.bare
 w ext.lexical.string.amiss | w ext.lexical.line_continuation.amiss
 w ext.lexical.string.long | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.format | b ext.lexical.string.adjacent | w ext.lexical.string.unready | w ext.lexical.line_continuation
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
@@ -1312,6 +1330,15 @@ impl Lang {
             names_folded: r.flag("identifier.case_insensitive")?,
             quote_for_names: r.letter("lexical.name_quote")?,
             symbols: Vec::new(),
+            member_pipes: r.flag("ext.op.member.pipes")?,
+            tuple_unready: r.strings("ext.op.tuple.unready")?,
+            tuple_marks: r.strings("ext.op.tuple")?,
+            class_unready: r.strings("ext.stmt.class.unready")?,
+            class_bases_close: r.strings("ext.stmt.class.bases.close")?,
+            class_bases_open: r.strings("ext.stmt.class.bases.open")?,
+            imaginary_unready: r.strings("ext.lexical.number.imaginary.unready")?,
+            imaginary_letters: r.strings("ext.lexical.number.imaginary")?,
+            bare_point: r.flag("ext.lexical.number.point.bare")?,
             keywords: HashSet::new(),
             blocks: style,
             rpn: postfix,
@@ -1759,6 +1786,10 @@ impl Lang {
             }
         }
         let mut lists: Vec<&Vec<String>> = vec![
+            &self.tuple_marks,
+            &self.class_bases_close,
+            &self.class_bases_open,
+            &self.imaginary_letters,
             &self.long_quotes, &self.line_continuations,
             &self.comprehension_async, &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread,
             &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks,

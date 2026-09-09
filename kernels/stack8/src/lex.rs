@@ -695,7 +695,7 @@ impl<'a> Cursor<'a> {
                 self.step();
             }
         } else {
-            if lang.point.is_some() && self.look(0) == lang.point && self.look(1).map_or(false, |c| c.is_ascii_digit()) {
+            if lang.point.is_some() && self.look(0) == lang.point && (lang.bare_point || self.look(1).map_or(false, |c| c.is_ascii_digit())) {
                 s.push(self.step());
                 while let Some(c) = self.look(0).filter(|c| c.is_ascii_digit() || broken(c)) {
                     s.push(c);
@@ -716,7 +716,13 @@ impl<'a> Cursor<'a> {
                 }
             }
         }
-        self.push(Shape::Numeral, s, 0, line, col);
+        if self.look(0).map_or(false, |c| lang.imaginary_letters.iter().any(|s| s == &c.to_string())) {
+            self.step();
+            self.push(Shape::Unready, lang.imaginary_unready.first().cloned().unwrap_or_default(), 0, line, col);
+        } else {
+            if lang.bare_point && lang.point.map_or(false, |p| s.ends_with(p)) { s.push('0'); }
+            self.push(Shape::Numeral, s, 0, line, col);
+        }
     }
 
     fn word(&mut self, prefixed: bool) {
@@ -824,7 +830,7 @@ impl<'a> Cursor<'a> {
                 self.marked_string(before, &mark, raw, unready)?;
             } else if lang.quotes.contains(&c) {
                 self.string(c)?;
-            } else if c.is_ascii_digit() {
+            } else if c.is_ascii_digit() || (lang.bare_point && Some(c) == lang.point && self.look(1).map_or(false, |d| d.is_ascii_digit())) {
                 self.number();
             } else if lang.quote_for_names == Some(c) {
                 self.quoted_name(c)?;

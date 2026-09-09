@@ -1217,6 +1217,7 @@ impl<'a> Builder<'a> {
                 return self.bag_decl();
             }
             if self.key("ext.stmt.class") || self.key("ext.stmt.class.interface") {
+                if self.table.has_any("ext.stmt.class.unready") { return self.class_reading(); }
                 return self.class_decl();
             }
             // A class may be marked before it is named: `abstract class C`.
@@ -2413,6 +2414,34 @@ impl<'a> Builder<'a> {
 
     /// A statement without a keyword: a step, a bare call, an
     /// assignment or an expression.
+    fn class_reading(&mut self) -> Res<Form> {
+        self.advance();
+        self.need_word("after the class word")?;
+        if self.on_any("ext.stmt.class.bases.open") {
+            self.advance();
+            self.args("ext.stmt.class.bases.close", "syntax.call.separator")?;
+        }
+        self.body()?;
+        Ok(self.reading_refusal("ext.stmt.class.unready"))
+    }
+
+    fn reading_refusal(&self, label: &str) -> Form {
+        let message = self.table.single(label).unwrap_or_default();
+        prim_call(Prim::Raise, vec![constant(Value::text(message))])
+    }
+
+    fn tuple_tail(&mut self, first: Form) -> Res<Form> {
+        if !self.on_any("ext.op.tuple") { return Ok(first); }
+        loop {
+            self.advance();
+            if self.on_stmt_end() || self.exhausted() || self.on_assign()
+                || self.on_any("syntax.group.close") { break; }
+            self.expr_at(0, false)?;
+            if !self.on_any("ext.op.tuple") { break; }
+        }
+        Ok(self.reading_refusal("ext.op.tuple.unready"))
+    }
+
     fn plain_stmt(&mut self) -> Res<Form> {
         let (here, next) = (self.look().clone(), self.glance(1).clone());
         if self.table.flag("ext.syntax.call.bare") && here.shape == Shape::Bare {
@@ -3171,7 +3200,8 @@ impl<'a> Builder<'a> {
                 _ => false,
             }
         });
-        let expr = self.expr_at(0, false)?;
+        let first = self.expr_at(0, false)?;
+        let expr = self.tuple_tail(first)?;
         if boundary && self.on_any("ext.stmt.annotation") {
             return self.with_annotation(expr, began);
         }
@@ -3194,6 +3224,12 @@ impl<'a> Builder<'a> {
     fn written(&mut self, expr: Form, gives_back: bool) -> Res<Form> {
         let compound = if self.look().shape == Shape::Sign { self.table.compound.get(&self.look().lexeme).copied() } else { None };
         let assign = self.advance();
+        let tuple = matches!(&expr, Form::Apply(Callee::Prim(Prim::Raise, _), args) if matches!(args.first(), Some(Form::Const(Value::Text(s))) if Some(s.as_ref()) == self.table.single("ext.op.tuple.unready")));
+        if tuple {
+            let value = self.expr(0)?;
+            self.tuple_tail(value)?;
+            return Ok(self.reading_refusal("ext.op.tuple.unready"));
+        }
         self.write_into(expr, gives_back, compound, assign)
     }
 
@@ -4081,7 +4117,12 @@ impl<'a> Builder<'a> {
                     let inner = match self.ahead_in_item("ext.op.comprehension.for") {
                         Some(at) => self.gather_comprehension(at, table.single("syntax.group.close").unwrap(), false)?,
                         None => {
-                            let expression = self.expr(0)?;
+                            let expression = if table.has_any("ext.op.tuple") && self.on_any("syntax.group.close") {
+                                self.reading_refusal("ext.op.tuple.unready")
+                            } else {
+                                let value = self.expr(0)?;
+                                self.tuple_tail(value)?
+                            };
                             self.need_sign(table.single("syntax.group.close").unwrap(), "to close a group")?;
                             expression
                         }
@@ -4617,6 +4658,8 @@ impl<'a> Builder<'a> {
             if !reaching && !owning {
                 return Ok(node);
             }
+            if !owning && table.flag("ext.op.member.pipes") && table.prims.contains_key(&self.glance(1).lexeme)
+                && matches!(&node, Form::Read(_)) { break; }
             self.advance();
             // A value may stand where a member's name stands: the member
             // is the one that value spells, worked out as the run goes.
