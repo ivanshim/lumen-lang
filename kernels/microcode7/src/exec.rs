@@ -483,6 +483,7 @@ impl<'a> Machine<'a> {
                     }
                     None => {
                         let far = match &v[0] {
+                            Value::Set(store) => store.borrow().keys.len(),
                             Value::Vector(items) => items.len(),
                             Value::Dict(pairs) => pairs.len(),
                             Value::Thing(thing) => thing.holds.borrow().len(),
@@ -535,7 +536,7 @@ impl<'a> Machine<'a> {
     /// a word for a warning is told so and walks it no times, instead of
     /// having the run stopped over it.
     fn can_be_walked(&mut self, x: &Value) -> Result<(), Escape> {
-        if matches!(x, Value::Vector(_) | Value::Dict(_) | Value::Thing(_) | Value::Progression(_)) {
+        if matches!(x, Value::Set(_) | Value::Vector(_) | Value::Dict(_) | Value::Thing(_) | Value::Progression(_)) {
             return Ok(());
         }
         if !self.complaint_words.iter().any(|(k, _)| *k == "warning") {
@@ -3396,7 +3397,7 @@ impl<'a> Machine<'a> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
         };
         if v.len() == 2 && v.iter().any(|item| matches!(item, Value::Set(_))) {
-            let rule = match op { Prim::BitsEither => Some(0), Prim::BitsBoth => Some(1), Prim::Sub => Some(2), Prim::BitsOne => Some(3), _ => None };
+            let rule = match op { Prim::BitsEither => Some(0), Prim::BitsBoth => Some(1), Prim::Minus => Some(2), Prim::BitsOne => Some(3), _ => None };
             if rule.is_some() || matches!(op, Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
                 let (Value::Set(x), Value::Set(y)) = (&v[0], &v[1]) else { return Err(self.set_complaint("operands", "")); };
                 let x = x.borrow();
@@ -3413,6 +3414,18 @@ impl<'a> Machine<'a> {
             }
         }
         Ok(match op {
+            Prim::SetAssign(operation) => {
+                n(2)?;
+                let ordinary = [Prim::BitsEither, Prim::BitsBoth, Prim::Minus, Prim::BitsOne][operation as usize];
+                let answer = self.prim(ordinary, name, v)?;
+                match (&v[0], &answer) {
+                    (Value::Set(place), Value::Set(updated)) => {
+                        place.replace(updated.borrow().clone());
+                        v[0].clone()
+                    }
+                    _ => answer,
+                }
+            }
             Prim::SetCall(which) => self.work_set(which, v)?,
             Prim::EmptySet => Value::Set(Rc::new(RefCell::new(self.gather_set(None)?))),
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
@@ -4425,6 +4438,7 @@ impl<'a> Machine<'a> {
             Prim::Selfsame | Prim::Unlike if self.table.has_any("ext.op.identical.negated") => {
                 let identical = match (&v[0], &v[1]) {
                     (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
+                    (Value::Set(a), Value::Set(b)) => Rc::ptr_eq(a, b),
                     (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
                     (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
                     (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,

@@ -356,6 +356,7 @@ pub enum Prim {
     Toward,
     MakeArray,
     EmptySet,
+    SetAssign(u8),
     /// The growing literal and the next part of it.
     ExtendLiteral(bool, bool),
     Iterated,

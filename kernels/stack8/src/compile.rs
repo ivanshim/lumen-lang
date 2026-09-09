@@ -3786,6 +3786,9 @@ impl<'a> Compiler<'a> {
     /// store of what follows the assignment sign.
     fn assignment(&mut self, from: usize, keep: Option<&str>) -> Res<()> {
         let compound = self.lang.compound.get(&self.look().lexeme).filter(|_| self.look().shape == Shape::Sign).cloned();
+        let compound = compound.map(|op| if self.lang.set_literals {
+            match op { Action::BitEither => Action::SetWrite(0), Action::BitBoth => Action::SetWrite(1), Action::Sub => Action::SetWrite(2), Action::BitOne => Action::SetWrite(3), other => other }
+        } else { op });
         let assign = self.take().lexeme;
         self.store_into(from, keep, compound, &assign)
     }

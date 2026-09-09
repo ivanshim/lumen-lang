@@ -113,6 +113,7 @@ pub enum Action {
     /// The arguments as an array.
     MakeArray,
     MakeSet,
+    SetWrite(u8),
     /// A literal grows by one item, or by all the items of a spread.
     GatherItem { map: bool, spread: bool },
     /// The values walked by a comprehension, with maps handing out keys.

@@ -118,7 +118,15 @@ fn settle_brief(lang: &mut Lang, request: &[(String, String, String, bool)]) {
 fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     go_inner(lang, source, program_args, request).map_err(|e| {
         let words = &lang.call_builtin_amiss;
-        if words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]) { e }
+        let set_fault = ["unhashable", "missing", "empty", "operands", "arguments", "unsupported", "unsortable"].iter().any(|name| {
+            let words = &lang.set_words[&format!("ext.builtin.set.{name}")];
+            match words.as_slice() {
+                [said] => e == *said,
+                [head, tail] => e.starts_with(head) && e.ends_with(tail),
+                _ => false,
+            }
+        });
+        if set_fault || words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]) { e }
         else { format!("{}: {}", lang.banner, e) }
     })
 }

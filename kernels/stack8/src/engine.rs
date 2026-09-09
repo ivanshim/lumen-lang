@@ -984,7 +984,7 @@ impl<'a> Engine<'a> {
     }
 
     fn walkable(&mut self, held: &Value) -> Result<(), Fault> {
-        if matches!(held, Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_)) {
+        if matches!(held, Value::Set(_) | Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_)) {
             return Ok(());
         }
         if !self.lang.warns_of_unwritten {
@@ -2955,6 +2955,7 @@ impl<'a> Engine<'a> {
                     }
                     None => {
                         let reach = match &pair[0] {
+                            Value::Set(s) => s.borrow().held.len(),
                             Value::Array(items) => items.len(),
                             Value::Map(pairs) => pairs.len(),
                             Value::Object(o) => o.fields.borrow().len(),
@@ -3182,6 +3183,15 @@ impl<'a> Engine<'a> {
             let held = shared.borrow().clone();
             return self.dyadic(op, a, &held);
         }
+        if let Action::SetWrite(how) = op {
+            let plain = match how { 0 => Action::BitEither, 1 => Action::BitBoth, 2 => Action::Sub, _ => Action::BitOne };
+            let answer = self.dyadic(&plain, a, b)?;
+            if let (Value::Set(cell), Value::Set(result)) = (a, &answer) {
+                *cell.borrow_mut() = result.borrow().clone();
+                return Ok(a.clone());
+            }
+            return Ok(answer);
+        }
         if matches!(a, Value::Set(_)) || matches!(b, Value::Set(_)) {
             let how = match op { Action::BitEither => Some(0), Action::BitBoth => Some(1), Action::Sub => Some(2), Action::BitOne => Some(3), _ => None };
             if how.is_some() || matches!(op, Action::Lt | Action::Le | Action::Gt | Action::Ge) {
@@ -3287,6 +3297,7 @@ impl<'a> Engine<'a> {
             }
             Action::Same | Action::Unsame if !self.lang.identity_not.is_empty() => {
                 let same = match (a, b) {
+                    (Value::Set(x), Value::Set(y)) => Rc::ptr_eq(x, y),
                     (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y),
                     (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
                     (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
