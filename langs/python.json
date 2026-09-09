@@ -15,6 +15,7 @@
     "'"
   ],
   "lexical.raw_quotes": [],
+  "ext.lexical.string.triple": true,
   "lexical.string_escapes": [
     "n",
     "t",

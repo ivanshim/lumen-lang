@@ -65,6 +65,7 @@ fn drop_comments(source: &str, table: &Table) -> String {
     let mut ahead = text;
     let mut inside: Option<char> = None;
     let mut escaped = false;
+    let mut closing = String::new();
     while let Some(c) = ahead.chars().next() {
         let w = c.len_utf8();
         if let Some(opener) = inside {
@@ -73,8 +74,11 @@ fn drop_comments(source: &str, table: &Table) -> String {
                 escaped = false;
             } else if c == '\\' {
                 escaped = true;
-            } else if c == opener {
+            } else if c == opener && ahead.starts_with(&closing) {
                 inside = None;
+                kept.push_str(&closing[w..]);
+                ahead = &ahead[closing.len()..];
+                continue;
             }
             ahead = &ahead[w..];
         } else if folding.map_or(false, |mark| ahead.starts_with(mark)) {
@@ -88,8 +92,10 @@ fn drop_comments(source: &str, table: &Table) -> String {
             ahead = &ahead[reach..];
         } else if quotes.contains(&c) {
             inside = Some(c);
-            kept.push(c);
-            ahead = &ahead[w..];
+            let three = c.to_string().repeat(3);
+            closing = if table.flag("ext.lexical.string.triple") && ahead.starts_with(&three) { three } else { c.to_string() };
+            kept.push_str(&closing);
+            ahead = &ahead[closing.len()..];
         } else if let Some(which) = opens.iter().position(|o| ahead.starts_with(o.as_str())) {
             let after = &ahead[opens[which].len()..];
             let stop = after.find(closes[which].as_str()).map_or(after.len(), |p| p + closes[which].len());
@@ -586,6 +592,8 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             continue;
         }
         if quotes.contains(&c) {
+            let start_row = row;
+            let delimiter = if table.flag("ext.lexical.string.triple") && src.get(pos..pos + 3) == Some(&[c, c, c]) { 3 } else { 1 };
             let is_raw = raw.contains(&c);
             let woven = weaving.contains(&c);
             let slash = Backslash {
@@ -603,18 +611,21 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             };
             // Positions in s that were escaped, so never open a variable.
             let mut plain: Vec<usize> = Vec::new();
-            let (mut s, mut k, mut closed) = (String::new(), pos + 1, false);
+            let (mut s, mut k, mut closed) = (String::new(), pos + delimiter, false);
             while k < src.len() {
                 let d = src[k];
                 if d == '\\' && k + 1 < src.len() {
-                    k = slash.reads(&src, k, &mut s, &mut plain)?;
+                    let after = slash.reads(&src, k, &mut s, &mut plain)?;
+                    row += src[k..after].iter().filter(|ch| **ch == '\n').count() as u32;
+                    k = after;
                     continue;
                 }
-                k += 1;
-                if d == c {
+                if src.get(k..k + delimiter).map_or(false, |mark| mark.iter().all(|q| *q == c)) {
+                    k += delimiter;
                     closed = true;
                     break;
                 }
+                k += 1;
                 if d == '\n' {
                     row += 1;
                 }
@@ -626,7 +637,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             if woven {
                 weave(&s, &plain, table, row, &mut tokens)?;
             } else {
-                tokens.push(tok(Shape::Quote, s, row));
+                tokens.push(tok(Shape::Quote, s, start_row));
             }
             pos = k;
             continue;

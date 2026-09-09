@@ -1,0 +1,9 @@
+first "pair" # kept
+second 'quote'""
+third
+one ' two '' # kept
+three "four"
+kept
+  with its spaces
+
+after

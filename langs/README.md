@@ -246,6 +246,10 @@ only. The extension labels so far, all from PHP:
   in; the scanner turns such a string into a bracketed concatenation
   (`op.concat` inside `syntax.group`) starting from the empty string, so
   the result is always text. `\$` is a literal sigil.
+- `ext.lexical.string.triple`: a switch; three equal string quotes open
+  a string ended by three equal quotes. Single quotes and pairs within
+  it are text, as are comment marks and line ends. Escapes keep their
+  ordinary meaning, and the reader resumes after the whole closing mark.
 - `ext.lexical.heredoc`: the mark that opens a string written over lines,
   PHP's `<<<`. After it stands a label — a name, or a name in string
   quotes, with spaces or tabs about it if the program likes — and then a
@@ -1838,6 +1842,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.prologue.brief.setting` | - | - | - | - | `short_open_tag` | - | - | - | - | - |
 | `ext.lexical.prologue.echo` | - | - | - | - | `<?=` | - | - | - | - | - |
 | `ext.lexical.prologue.folded` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.lexical.string.triple` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | - | - | `true` | - | - | - | - | - |

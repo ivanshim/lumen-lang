@@ -86,6 +86,7 @@ fn drop_comments(source: &str, lang: &Lang) -> String {
     let mut ahead = source;
     let mut quote: Option<char> = None;
     let mut escaped = false;
+    let mut quoted_width = 1;
     while let Some(c) = ahead.chars().next() {
         let w = c.len_utf8();
         match quote {
@@ -95,8 +96,11 @@ fn drop_comments(source: &str, lang: &Lang) -> String {
                     escaped = false;
                 } else if c == '\\' {
                     escaped = true;
-                } else if c == opener {
+                } else if c == opener && ahead.chars().take(quoted_width).filter(|q| *q == opener).count() == quoted_width {
                     quote = None;
+                    for _ in 1..quoted_width { kept.push(c); }
+                    ahead = &ahead[w * quoted_width..];
+                    continue;
                 }
                 ahead = &ahead[w..];
             }
@@ -111,8 +115,9 @@ fn drop_comments(source: &str, lang: &Lang) -> String {
             }
             None if lang.quotes.contains(&c) => {
                 quote = Some(c);
-                kept.push(c);
-                ahead = &ahead[w..];
+                quoted_width = if lang.triple_quotes && ahead.chars().take(3).filter(|q| *q == c).count() == 3 { 3 } else { 1 };
+                kept.push_str(&ahead[..w * quoted_width]);
+                ahead = &ahead[w * quoted_width..];
             }
             None => {
                 if let Some((open, close)) = lang.block_comments.iter().find(|(o, _)| ahead.starts_with(o.as_str())) {
@@ -426,7 +431,8 @@ impl<'a> Cursor<'a> {
 
     fn string(&mut self, quote: char) -> Result<(), String> {
         let (line, col) = (self.row, self.column);
-        self.step();
+        let wide = if self.lang.triple_quotes && self.look(1) == Some(quote) && self.look(2) == Some(quote) { 3 } else { 1 };
+        for _ in 0..wide { self.step(); }
         let raw = self.lang.raw_quotes.contains(&quote);
         let woven = self.lang.interpolating.contains(&quote);
         let how = Escapes {
@@ -447,10 +453,11 @@ impl<'a> Cursor<'a> {
                 self.escape(&how, &mut s, &mut shielded)?;
                 continue;
             }
-            self.step();
-            if c == quote {
+            if (0..wide).all(|at| self.look(at) == Some(quote)) {
+                for _ in 0..wide { self.step(); }
                 break;
             }
+            self.step();
             s.push(c);
         }
         if woven {

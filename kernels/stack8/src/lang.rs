@@ -48,6 +48,7 @@ pub struct Lang {
     pub block_comments: Vec<(String, String)>,
     pub quotes: Vec<char>,
     pub raw_quotes: Vec<char>,
+    pub triple_quotes: bool,
     pub escape_letters: Vec<char>,
     /// The letter that, after the escape mark, begins a character
     /// named by its number, and the brackets that number stands in.
@@ -714,7 +715,7 @@ w ext.stmt.class.suite | w ext.stmt.class.suite.unsupported
 w ext.stmt.type_params.open | w ext.stmt.type_params.close | w ext.stmt.type_alias | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.with.group.open | w ext.stmt.with.group.close | w ext.stmt.with.unsupported | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unsupported | w ext.stmt.delete | w ext.stmt.delete.unsupported | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unsupported | w ext.syntax.tuple.separator | w ext.syntax.tuple.unsupported | w ext.syntax.value.spread | w ext.syntax.value.spread.unsupported | w ext.op.index.spread.unsupported | w ext.op.conditional | b ext.stmt.function.short.bare
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
 w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
-w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
+w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.string.triple | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
 w ext.stmt.import | w ext.stmt.import.from | w ext.stmt.import.as | w ext.system.module.name
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
@@ -1275,6 +1276,7 @@ impl Lang {
             block_comments: comment_opens.into_iter().zip(comment_closes).collect(),
             quotes,
             raw_quotes,
+            triple_quotes: r.flag("ext.lexical.string.triple")?,
             escape_letters: escapes,
             codepoint_letter: r.letter("ext.lexical.escape.codepoint")?,
             codepoint_open: r.letter("ext.lexical.escape.codepoint.open")?,
