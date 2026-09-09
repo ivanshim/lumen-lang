@@ -327,6 +327,14 @@ only. The extension labels so far, all from PHP:
   Commas in a collection loop's target have the same reading, including
   grouped targets and a final comma. The whole source and body are read;
   reaching such a loop raises the same complaint before binding a part.
+  `ext.syntax.array.spread` also marks a starred part in a comma tuple,
+  on either side of an assignment or within a loop target. Its operand
+  is read whole; tuple gathering and binding retain the same refusal.
+- `ext.stmt.function.async` precedes a function definition whose calls
+  would make a suspended computation. The ordinary function reader reads
+  its names and suite, including asynchronous comprehensions within it.
+  `ext.stmt.function.async.unavailable` refuses the definition when
+  reached; no ordinary callable is put in its stead.
 - `ext.stmt.nonlocal` declares a list of names belonging to an enclosing
   function. Every name is read; when the declaration is reached,
   `ext.stmt.nonlocal.unrun` says that the enclosing cells are not yet
@@ -2115,6 +2123,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.finally` | - | - | `finally` | - | `finally` | - | - | - | - | - |
 | `ext.stmt.for.c` | - | - | - | - | `for` | - | - | - | - | - |
 | `ext.stmt.for.collection` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.stmt.function.async` | - | - | `async` | - | - | - | - | - | - | - |
+| `ext.stmt.function.async.unavailable` | - | - | `NotImplementedError: asynchronous functions are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.function.carries` | - | - | `*` | - | `use` | - | - | - | - | - |
 | `ext.stmt.function.carries.pairs` | - | - | `**` | - | - | - | - | - | - | - |
 | `ext.stmt.function.defaults.amiss` | - | - | `TypeError: mutable parameter defaults are not supported` | - | - | - | - | - | - | - |

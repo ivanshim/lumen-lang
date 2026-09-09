@@ -601,6 +601,12 @@
     "finally"
   ],
   "ext.stmt.for.collection": true,
+  "ext.stmt.function.async": [
+    "async"
+  ],
+  "ext.stmt.function.async.unavailable": [
+    "NotImplementedError: asynchronous functions are not supported"
+  ],
   "ext.stmt.function.carries": [
     "*"
   ],

@@ -955,7 +955,10 @@ impl<'a> Compiler<'a> {
     /// Commas here join one value, unlike commas between call arguments.
     fn scope_value(&mut self) -> Res<()> {
         let from = self.mark();
+        let spread = self.on_any(&self.lang.array_spread);
+        if spread { self.take(); }
         self.expr_at(0, false)?;
+        if spread && !self.on_any(&self.lang.tuple_marks) { return Err("Expected a comma after a starred value".into()); }
         self.scope_tail(from)
     }
 
@@ -966,6 +969,7 @@ impl<'a> Compiler<'a> {
             if self.on_sep() || matches!(self.look().shape, Shape::Close | Shape::Finish)
                 || self.on_assign()
                 || self.lang.grouping.as_ref().map_or(false, |g| self.at_symbol(&g.close)) { break; }
+            if self.on_any(&self.lang.array_spread) { self.take(); }
             self.expr_at(0, false)?;
         }
         self.piece().instrs.truncate(from);
@@ -1067,6 +1071,17 @@ impl<'a> Compiler<'a> {
                 let levels = self.levels()?;
                 self.leaving_lasts()?;
                 return self.resume(levels);
+            }
+            if Lang::spells(&lang.async_functions, &w) {
+                self.take();
+                if !self.on_keyword(&lang.function_words) { return Err("Expected a function after the asynchronous word".into()); }
+                self.take();
+                let name = self.want_name("after the function keyword")?;
+                let began = self.mark();
+                self.function(name, false)?;
+                self.piece().instrs.truncate(began);
+                self.scope_fault(&lang.async_functions_unavailable.clone());
+                return Ok(());
             }
             if Lang::spells(&lang.function_words, &w) {
                 self.take();
@@ -2184,6 +2199,7 @@ impl<'a> Compiler<'a> {
             let began = self.mark();
             let tier = lang.dyadic.get(&lang.in_words[0]).map_or(0, |op| op.level);
             loop {
+                if self.on_any(&lang.array_spread) { self.take(); }
                 self.expr_at(tier + 1, false)?;
                 if !self.on_any(&lang.tuple_marks) { break; }
                 self.take();
@@ -3454,7 +3470,10 @@ impl<'a> Compiler<'a> {
                 || (before.shape == Shape::Sign && (self.lang.ends_stmt(&before.lexeme)
                     || Lang::spells(&self.lang.block_intros, &before.lexeme)))
         };
+        let spread = !self.lang.tuple_marks.is_empty() && self.on_any(&self.lang.array_spread);
+        if spread { self.take(); }
         self.expr_at(0, false)?;
+        if spread && !self.on_any(&self.lang.tuple_marks) { return Err("Expected a comma after a starred target".into()); }
         if self.on_any(&self.lang.tuple_marks) {
             self.scope_tail(from)?;
             if self.on_assign() { self.take(); self.scope_value()?; }
@@ -3473,7 +3492,7 @@ impl<'a> Compiler<'a> {
         let instructions = &self.pieces.last().expect("open piece").instrs;
         let (_, keys) = keys_apart(&instructions[from..], from, &self.keyed);
         let temporary_index = keys.first().map_or(false, |at| {
-            matches!(instructions.get(at - 1), Some(Instr::Act(Action::Invoke(_), _)))
+            matches!(instructions.get(at - 1), Some(Instr::Act(Action::Invoke(_) | Action::Builtin(Builtin::Raise, _), _)))
         });
         if (dotted && self.lang.member_mark.is_none() || temporary_index)
             && !self.lang.scope_unready.is_empty() && self.on_writing() {

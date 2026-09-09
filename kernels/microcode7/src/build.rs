@@ -1150,7 +1150,12 @@ impl<'a> Builder<'a> {
 
     /// Read a value whose following commas may gather a tuple.
     fn comma_value(&mut self) -> Res<Form> {
+        let spread = self.on_any("ext.syntax.array.spread");
+        if spread { self.advance(); }
         let first = self.expr_at(0, false)?;
+        if spread && !self.on_any("ext.op.tuple") {
+            return Err("Expected a comma after a starred value".to_string());
+        }
         self.comma_tail(first)
     }
 
@@ -1161,6 +1166,7 @@ impl<'a> Builder<'a> {
             self.advance();
             if self.on_stmt_end() || self.on_assign() || self.on_any("syntax.group.close")
                 || matches!(self.look().shape, Shape::Finish | Shape::Close) { break; }
+            if self.on_any("ext.syntax.array.spread") { self.advance(); }
             let _item = self.expr_at(0, false)?;
             if !self.on_any("ext.op.tuple") { break; }
         }
@@ -1295,6 +1301,14 @@ impl<'a> Builder<'a> {
                 self.advance();
                 let levels = self.loop_levels()?;
                 return Ok(prim_call(Prim::Resume, levels));
+            }
+            if self.key("ext.stmt.function.async") {
+                self.advance();
+                if !self.key("stmt.function") {
+                    return Err("Expected a function after the asynchronous word".to_owned());
+                }
+                let _definition = self.stmt()?;
+                return Ok(self.scope_unrun("ext.stmt.function.async.unavailable"));
             }
             if self.key("stmt.function") {
                 self.advance();
@@ -2627,6 +2641,7 @@ impl<'a> Builder<'a> {
             let above_in = table.strings("stmt.for.in").iter()
                 .filter_map(|word| table.dyadic.get(word).map(|op| op.level + 1)).max().unwrap_or(1);
             loop {
+                if self.on_any("ext.syntax.array.spread") { self.advance(); }
                 let _place = self.expr_at(above_in, false)?;
                 if !self.on_any("ext.op.tuple") { break; }
                 self.advance();
@@ -3364,7 +3379,12 @@ impl<'a> Builder<'a> {
                 _ => false,
             }
         });
+        let spread = self.table.has_any("ext.op.tuple") && self.on_any("ext.syntax.array.spread");
+        if spread { self.advance(); }
         let expr = self.expr_at(0, false)?;
+        if spread && !self.on_any("ext.op.tuple") {
+            return Err("Expected a comma after a starred target".into());
+        }
         if self.on_any("ext.op.tuple") {
             let _target = self.comma_tail(expr)?;
             if self.on_assign() { self.advance(); let _value = self.comma_value()?; }
@@ -3383,7 +3403,9 @@ impl<'a> Builder<'a> {
             && self.table.spells("op.pipe", &tail[tail.len() - 2].lexeme);
         let temporary_index = matches!(&expr,
             Form::Apply(Callee::Prim(Prim::At, _), args)
-                if matches!(args.first(), Some(Form::Apply(Callee::Code(_), _))));
+                if matches!(args.first(), Some(Form::Apply(Callee::Code(_), _)))
+                    || matches!(args.first(), Some(Form::Apply(Callee::Prim(Prim::Seq, _), parts))
+                        if matches!(parts.last(), Some(Form::Apply(Callee::Prim(Prim::Raise, _), _)))));
         // Attributes and call results cannot yet retain writes in these scopes.
         if (attribute && !self.table.has_any("ext.op.member") || temporary_index)
             && self.table.has_any("ext.system.scope.unready") {
