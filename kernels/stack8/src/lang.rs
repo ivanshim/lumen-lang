@@ -47,6 +47,12 @@ pub struct Lang {
     pub line_comments: Vec<String>,
     pub block_comments: Vec<(String, String)>,
     pub quotes: Vec<char>,
+    pub long_quotes: Vec<String>,
+    pub raw_prefixes: Vec<String>,
+    pub adjacent_strings: bool,
+    pub yield_words: Vec<String>,
+    pub yield_from_words: Vec<String>,
+    pub yield_unrun: String,
     pub raw_quotes: Vec<char>,
     pub escape_letters: Vec<char>,
     /// The letter that, after the escape mark, begins a character
@@ -704,6 +710,7 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.lexical.string.long | w ext.lexical.string.prefix.raw | b ext.lexical.string.adjacent
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
 w ext.op.comprehension.async | w ext.op.comprehension.async.unavailable | w ext.op.comprehension.target.unavailable | w ext.builtin.sum.non_number | w ext.builtin.range.non_integer | w ext.builtin.range.zero_step
 
@@ -1271,6 +1278,12 @@ impl Lang {
             line_comments: r.strings("lexical.comment_line")?,
             block_comments: comment_opens.into_iter().zip(comment_closes).collect(),
             quotes,
+            long_quotes: r.strings("ext.lexical.string.long")?,
+            raw_prefixes: r.strings("ext.lexical.string.prefix.raw")?,
+            adjacent_strings: r.flag("ext.lexical.string.adjacent")?,
+            yield_words: r.strings("ext.stmt.yield")?,
+            yield_from_words: r.strings("ext.stmt.yield.from")?,
+            yield_unrun: r.head("ext.stmt.yield.unrun")?.unwrap_or_default(),
             raw_quotes,
             escape_letters: escapes,
             codepoint_letter: r.letter("ext.lexical.escape.codepoint")?,
@@ -1735,6 +1748,7 @@ impl Lang {
             }
         }
         let mut lists: Vec<&Vec<String>> = vec![
+            &self.long_quotes, &self.yield_words, &self.yield_from_words,
             &self.comprehension_async, &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread,
             &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks,
             &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open,

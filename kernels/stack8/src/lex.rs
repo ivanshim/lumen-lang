@@ -109,6 +109,20 @@ fn drop_comments(source: &str, lang: &Lang) -> String {
                 kept.push_str(&ahead[..over]);
                 ahead = &ahead[over..];
             }
+            None if lang.long_quotes.iter().any(|q| ahead.starts_with(q)) => {
+                let mark = lang.long_quotes.iter().find(|q| ahead.starts_with(*q)).unwrap();
+                let mut end = mark.len();
+                while end < ahead.len() {
+                    if ahead[end..].starts_with(mark) { end += mark.len(); break; }
+                    let ch = ahead[end..].chars().next().unwrap();
+                    end += ch.len_utf8();
+                    if ch == '\\' && end < ahead.len() {
+                        end += ahead[end..].chars().next().unwrap().len_utf8();
+                    }
+                }
+                kept.push_str(&ahead[..end]);
+                ahead = &ahead[end..];
+            }
             None if lang.quotes.contains(&c) => {
                 quote = Some(c);
                 kept.push(c);
@@ -424,10 +438,11 @@ impl<'a> Cursor<'a> {
         Ok(())
     }
 
-    fn string(&mut self, quote: char) -> Result<(), String> {
+    fn string(&mut self, quote: char, prefixed_raw: bool) -> Result<(), String> {
         let (line, col) = (self.row, self.column);
-        self.step();
-        let raw = self.lang.raw_quotes.contains(&quote);
+        let width = self.lang.long_quotes.iter().find(|q| at_word(&self.text, self.at, q)).map_or(1, |q| q.chars().count());
+        for _ in 0..width { self.step(); }
+        let raw = prefixed_raw || self.lang.raw_quotes.contains(&quote);
         let woven = self.lang.interpolating.contains(&quote);
         let how = Escapes {
             letters: match raw {
@@ -443,14 +458,20 @@ impl<'a> Cursor<'a> {
         let mut shielded: Vec<usize> = Vec::new();
         loop {
             let Some(c) = self.look(0) else { return Err(format!("Unterminated {} string", quote)) };
+            if c == '\\' && self.look(1).is_some() && prefixed_raw {
+                s.push(self.step());
+                s.push(self.step());
+                continue;
+            }
             if c == '\\' && self.look(1).is_some() {
                 self.escape(&how, &mut s, &mut shielded)?;
                 continue;
             }
-            self.step();
-            if c == quote {
+            if (0..width).all(|offset| self.look(offset) == Some(quote)) {
+                for _ in 0..width { self.step(); }
                 break;
             }
+            self.step();
             s.push(c);
         }
         if woven {
@@ -807,8 +828,11 @@ impl<'a> Cursor<'a> {
                 self.step();
             } else if lang.heredoc.as_deref().map_or(false, |mark| at_word(&self.text, self.at, mark)) {
                 self.heredoc()?;
+            } else if let Some(prefix) = lang.raw_prefixes.iter().find(|p| at_word(&self.text, self.at, p) && self.look(p.chars().count()).map_or(false, |q| lang.quotes.contains(&q))) {
+                for _ in prefix.chars() { self.step(); }
+                self.string(self.look(0).unwrap(), true)?;
             } else if lang.quotes.contains(&c) {
-                self.string(c)?;
+                self.string(c, false)?;
             } else if c.is_ascii_digit() {
                 self.number();
             } else if lang.quote_for_names == Some(c) {

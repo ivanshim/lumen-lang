@@ -86,6 +86,19 @@ fn drop_comments(source: &str, table: &Table) -> String {
             let reach = folded(ahead, table).map_or(ahead.len(), |(_, _, far)| far);
             kept.push_str(&ahead[..reach]);
             ahead = &ahead[reach..];
+        } else if let Some(delimiter) = table.strings("ext.lexical.string.long").iter().find(|d| ahead.starts_with(d.as_str())) {
+            let mut tail = &ahead[delimiter.len()..];
+            loop {
+                if tail.is_empty() { break; }
+                if tail.starts_with(delimiter.as_str()) { tail = &tail[delimiter.len()..]; break; }
+                let letter = tail.chars().next().unwrap();
+                tail = &tail[letter.len_utf8()..];
+                if letter == '\\' {
+                    if let Some(escaped) = tail.chars().next() { tail = &tail[escaped.len_utf8()..]; }
+                }
+            }
+            kept.push_str(&ahead[..ahead.len() - tail.len()]);
+            ahead = tail;
         } else if quotes.contains(&c) {
             inside = Some(c);
             kept.push(c);
@@ -585,8 +598,20 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             pos += 1;
             continue;
         }
+        let raw_prefix = table.strings("ext.lexical.string.prefix.raw").iter().find(|word| {
+            let size = word.chars().count();
+            src.get(pos..pos + size).map_or(false, |part| part.iter().copied().eq(word.chars()))
+                && src.get(pos + size).map_or(false, |ch| quotes.contains(ch))
+        });
+        let prefixed = raw_prefix.is_some();
+        if let Some(word) = raw_prefix { pos += word.chars().count(); }
+        let c = src[pos];
         if quotes.contains(&c) {
-            let is_raw = raw.contains(&c);
+            let width = table.strings("ext.lexical.string.long").iter().find_map(|word| {
+                let size = word.chars().count();
+                src.get(pos..pos + size).filter(|part| part.iter().copied().eq(word.chars())).map(|_| size)
+            }).unwrap_or(1);
+            let is_raw = prefixed || raw.contains(&c);
             let woven = weaving.contains(&c);
             let slash = Backslash {
                 letters: if is_raw { &[] } else { &escapes },
@@ -603,18 +628,25 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             };
             // Positions in s that were escaped, so never open a variable.
             let mut plain: Vec<usize> = Vec::new();
-            let (mut s, mut k, mut closed) = (String::new(), pos + 1, false);
+            let (mut s, mut k, mut closed) = (String::new(), pos + width, false);
             while k < src.len() {
                 let d = src[k];
+                if prefixed && d == '\\' && k + 1 < src.len() {
+                    s.extend(&src[k..k + 2]);
+                    if src[k + 1] == '\n' { row += 1; }
+                    k += 2;
+                    continue;
+                }
                 if d == '\\' && k + 1 < src.len() {
                     k = slash.reads(&src, k, &mut s, &mut plain)?;
                     continue;
                 }
-                k += 1;
-                if d == c {
+                if src.get(k..k + width).map_or(false, |part| part.iter().all(|ch| *ch == c)) {
+                    k += width;
                     closed = true;
                     break;
                 }
+                k += 1;
                 if d == '\n' {
                     row += 1;
                 }

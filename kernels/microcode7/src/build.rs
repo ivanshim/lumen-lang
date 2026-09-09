@@ -136,6 +136,8 @@ pub struct Builder<'a> {
     formal_kinds: Vec<Option<Rc<str>>>,
     taking: Option<Vec<char>>,
     tells_place: bool,
+    generator_seen: bool,
+    reading_yield: bool,
 }
 
 pub struct Built {
@@ -242,6 +244,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
     }
     let outer_layers = layers.len();
     let mut r = Builder { within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+        generator_seen: false, reading_yield: false,
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
@@ -915,7 +918,15 @@ impl<'a> Builder<'a> {
         formal_kinds.truncate(params.len());
         let param_slots = (0..params.len()).collect();
         self.layers.push(Layer { holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new() });
-        let body = body(self)?;
+        let enclosing_yield = self.generator_seen;
+        if holds == Holds::Every { self.generator_seen = false; }
+        let mut body = body(self)?;
+        if holds == Holds::Every {
+            if self.generator_seen {
+                body = prim_call(Prim::Raise, vec![constant(Value::text(self.table.single("ext.stmt.yield.unrun").unwrap_or_default()))]);
+            }
+            self.generator_seen = enclosing_yield;
+        }
         let scope = self.layers.pop().unwrap();
         self.naming.pop();
         let carried = std::mem::replace(&mut self.carrying, around);
@@ -3865,6 +3876,29 @@ impl<'a> Builder<'a> {
     fn monadic_piece(&mut self) -> Res<Form> {
         let table = self.table;
         let t = self.look().clone();
+        if self.reading_yield && self.on_any("ext.syntax.array.spread") {
+            self.advance();
+            return self.monadic_expr();
+        }
+        if self.key("ext.stmt.yield") {
+            self.advance();
+            self.generator_seen = true;
+            let previous_yield = std::mem::replace(&mut self.reading_yield, true);
+            let from = self.key("ext.stmt.yield.from");
+            if from { self.advance(); }
+            let at_end = |r: &Self| r.on_stmt_end() || r.exhausted() || r.look().shape == Shape::Close
+                || r.on_any("syntax.group.close") || r.on_any("syntax.array.close");
+            if from || !at_end(self) {
+                loop {
+                    let _ = self.expr(0)?;
+                    if from || !self.on_any("syntax.call.separator") { break; }
+                    self.advance();
+                    if at_end(self) { break; }
+                }
+            }
+            self.reading_yield = previous_yield;
+            return Ok(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.stmt.yield.unrun").unwrap_or_default()))]));
+        }
         // `list($a, $b) = v`: the places named on the left each take
         // the matching place of the value on the right.
         if table.spells("ext.stmt.unpack", &t.lexeme) && matches!(t.shape, Shape::Sign | Shape::Bare) {
@@ -3951,7 +3985,11 @@ impl<'a> Builder<'a> {
             }
             Shape::Quote => {
                 self.advance();
-                constant(Value::text(&t.lexeme))
+                let mut words = t.lexeme.clone();
+                if table.flag("ext.lexical.string.adjacent") {
+                    while self.look().shape == Shape::Quote { words.push_str(&self.advance().lexeme); }
+                }
+                constant(Value::text(&words))
             }
             Shape::Bare if table.spells("ext.stmt.class.new", &t.lexeme) => {
                 self.advance();
