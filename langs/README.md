@@ -435,6 +435,11 @@ only. The extension labels so far, all from PHP:
   routine is bound to no name and stands for itself; it reaches the
   outermost bindings, as a routine written out does, and none of the
   names around where it was written.
+- `ext.lexical.line_continuation`: marks which, immediately before a line
+  end outside a string or comment, join the next line to this one. The
+  mark and line end say nothing, and the next line's indentation opens
+  no block. A backslash so spelled also drops an escaped line end in a
+  string whose escapes are read. A comment never carries a line on.
 - `ext.lexical.number.exponent`: the letters that open a decimal exponent
   in a number (`1e9`, `2.5E-3`), always a real.
 - `ext.op.plus`: a sign that leaves its operand as it is (`+5`), bound as
@@ -1825,6 +1830,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.heredoc` | - | - | - | - | `<<<` | - | - | - | - | - |
 | `ext.lexical.interpolating.index.amiss` | - | - | - | - | `string content, expecting "-" or identifier or variable or number` | - | - | - | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | `"` | - | - | - | - | - |
+| `ext.lexical.line_continuation` | - | - | `\` | - | - | - | - | - | - | - |
 | `ext.lexical.name_lead` | - | - | - | - | `\` | - | - | - | - | - |
 | `ext.lexical.number.amiss` | - | - | `invalid numeric literal` | - | `Invalid numeric literal` | - | - | - | - | - |
 | `ext.lexical.number.binary_prefix` | - | - | `0b` `0B` | - | `0b` `0B` | - | - | - | - | - |

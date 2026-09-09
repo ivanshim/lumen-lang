@@ -33,3 +33,9 @@ through `ext.lexical.number.separator`. The lexical piece's
 `ext.lexical.number.separator.after_prefix` admits a separator straight
 after a prefix and checks that other separators have digits on both
 sides. `12.py` asks for its `ext.lexical.number.amiss` complaint.
+
+`13.py` takes `ext.lexical.line_continuation` and its scanner from the
+lexical piece, so an integer expression may carry on after a backslash.
+The same spelling carries a quoted string across a line end. This is
+the small reading needed after the bit signs expose the continued line
+in the long-number tests; the merge should keep the lexical account.

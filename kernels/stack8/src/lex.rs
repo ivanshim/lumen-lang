@@ -121,6 +121,9 @@ fn drop_comments(source: &str, lang: &Lang) -> String {
                     kept.extend(body[..end].chars().filter(|c| *c == '\n'));
                     ahead = &body[end..];
                 } else if lang.line_comments.iter().any(|m| ahead.starts_with(m.as_str())) {
+                    if lang.line_continuations.iter().any(|mark| kept.ends_with(mark.as_str())) {
+                        kept.push(' ');
+                    }
                     ahead = ahead.find('\n').map_or("", |at| &ahead[at..]);
                 } else {
                     kept.push(c);
@@ -341,6 +344,15 @@ impl<'a> Cursor<'a> {
     fn escape(&mut self, how: &Escapes, s: &mut String, shielded: &mut Vec<usize>) -> Result<(), String> {
         self.step();
         let next = self.step();
+        if how.numbered && self.lang.line_continuations.iter().any(|mark| mark == "\\") {
+            if next == '\n' {
+                return Ok(());
+            }
+            if next == '\r' && self.look(0) == Some('\n') {
+                self.step();
+                return Ok(());
+            }
+        }
         if how.woven && Some(next) == self.lang.sigil {
             // An escaped sigil is just the sigil.
             shielded.push(s.chars().count());
@@ -800,6 +812,23 @@ impl<'a> Cursor<'a> {
                 }
             }
             let c = self.text[self.at];
+            let joined = lang.line_continuations.iter().find_map(|mark| {
+                if !at_word(&self.text, self.at, mark) {
+                    return None;
+                }
+                let width = mark.chars().count();
+                match (self.look(width), self.look(width + 1)) {
+                    (Some('\n'), _) => Some(width + 1),
+                    (Some('\r'), Some('\n')) => Some(width + 2),
+                    _ => None,
+                }
+            });
+            if let Some(width) = joined {
+                for _ in 0..width {
+                    self.step();
+                }
+                continue;
+            }
             if c == '\n' {
                 let (line, col) = (self.row, self.column);
                 self.step();

@@ -337,6 +337,7 @@
   "ext.builtin.range.zero_step": ["ValueError: range step must not be zero"],
   "ext.builtin.sum": ["sum"],
   "ext.builtin.sum.non_number": ["TypeError: sum needs numbers"],
+  "ext.lexical.line_continuation": ["\\"],
   "ext.lexical.number.amiss": ["invalid numeric literal"],
   "ext.lexical.number.binary_prefix": ["0b", "0B"],
   "ext.lexical.number.octal_prefix": ["0o", "0O"],
