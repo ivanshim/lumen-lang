@@ -1072,9 +1072,17 @@ pub fn number_spelling(text: &str, lang: &Lang) -> Result<(), String> {
                 8 => (&lang.octal_amiss, &lang.octal_digit_amiss),
                 _ => (&lang.hex_amiss, &lang.binary_digit_amiss),
             };
-            if *radix < 10 && pieces.len() == 2 {
-                if let Some(c) = body.chars().find(|c| c.is_ascii_digit() && !c.is_digit(*radix)) {
-                    return Err(format!("{}{}{}", pieces[0], c, pieces[1]));
+            let mut may_separate = true;
+            for c in body.chars() {
+                if c.is_digit(*radix) {
+                    may_separate = true;
+                } else if lang.digit_separators.contains(&c) && may_separate {
+                    may_separate = false;
+                } else {
+                    if *radix < 10 && pieces.len() == 2 && c.is_ascii_digit() {
+                        return Err(format!("{}{}{}", pieces[0], c, pieces[1]));
+                    }
+                    return Err(plain.clone().unwrap_or_else(amiss));
                 }
             }
             return if separated(body, *radix, true) { Ok(()) } else { Err(plain.clone().unwrap_or_else(amiss)) };

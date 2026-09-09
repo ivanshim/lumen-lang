@@ -247,7 +247,7 @@ impl Value {
         }
         match (self, other) {
             (Value::Imaginary(a, _), Value::Imaginary(b, _)) => a == b,
-            (Value::Imaginary(a, _), b) | (b, Value::Imaginary(a, _)) => *a == 0.0 && b.equals(&Value::Small(0)),
+            (Value::Imaginary(a, _), b) | (b, Value::Imaginary(a, _)) => *a == 0.0 && (matches!(b, Value::Flag(false)) || b.equals(&Value::Small(0))),
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Null, Value::Null) => true,

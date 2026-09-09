@@ -1003,13 +1003,17 @@ pub fn check_numeral(word: &str, table: &Table) -> Result<(), String> {
     ] {
         for opening in table.strings(label) {
             let Some(tail) = word.strip_prefix(opening.as_str()) else { continue };
-            if !bad_digit.is_empty() {
-                let pieces = table.strings(bad_digit);
-                for letter in tail.chars() {
-                    if letter.is_ascii_digit() && !letter.is_digit(base) && pieces.len() == 2 {
+            let mut last_was_break = false;
+            for letter in tail.chars() {
+                if letter.is_digit(base) { last_was_break = false; continue; }
+                if breaks.contains(&letter) && !last_was_break { last_was_break = true; continue; }
+                if !bad_digit.is_empty() && letter.is_ascii_digit() {
+                    let pieces = table.strings(bad_digit);
+                    if pieces.len() == 2 {
                         return Err([pieces[0].as_str(), &letter.to_string(), pieces[1].as_str()].concat());
                     }
                 }
+                return Err(failure(complaint));
             }
             return digits(tail, base, true).then_some(()).ok_or_else(|| failure(complaint));
         }
