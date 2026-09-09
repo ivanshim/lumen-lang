@@ -120,6 +120,12 @@ function __ini_default($name) {
     if ($name === "input_encoding") { return ""; }
     if ($name === "internal_encoding") { return ""; }
     if ($name === "output_encoding") { return ""; }
+    if ($name === "error_log") { return ""; }
+    if ($name === "error_log_mode") { return "0644"; }
+    if ($name === "session.name") { return "PHPSESSID"; }
+    if ($name === "session.save_path") { return ""; }
+    if ($name === "session.save_handler") { return "files"; }
+    if ($name === "session.auto_start") { return "0"; }
     return false;
 }
 function ini_get($name) {
@@ -140,7 +146,7 @@ function ini_get($name) {
 // are the ones this definition knows.
 function ini_set($name, $value) {
     global $__settings;
-    $known = array('precision', 'serialize_precision', 'memory_limit', 'max_execution_time', 'error_reporting', 'display_errors', 'log_errors', 'default_charset', 'internal_encoding', 'input_encoding', 'output_encoding', 'include_path', 'date.timezone', 'output_buffering', 'zend.assertions', 'assert.exception');
+    $known = array('precision', 'serialize_precision', 'memory_limit', 'max_execution_time', 'error_reporting', 'display_errors', 'log_errors', 'error_log', 'error_log_mode', 'default_charset', 'internal_encoding', 'input_encoding', 'output_encoding', 'include_path', 'date.timezone', 'output_buffering', 'zend.assertions', 'assert.exception');
     if (!in_array($name, $known)) { return false; }
     $was = ini_get($name);
     if ($name === 'memory_limit') {
@@ -309,13 +315,6 @@ function restore_exception_handler() {
     __uncaught_handler(null);
     return true;
 }
-// A message put where the run keeps them. Sending one on as mail is not
-// something a run of this kind does, so saying to send one with nowhere
-// to send it to is turned down.
-function error_log($message, $sort = 0, $where = null, $headers = null) {
-    if ($sort == 1) { return $where !== null; }
-    return true;
-}
 function extension_loaded($name) { return false; }
 // The classes this run has bound, and the routines. Everything this PHP
 // has of its own is written in PHP, so there are no functions from
@@ -348,7 +347,11 @@ function function_exists($name) {
     return false;
 }
 function gc_collect_cycles() { return 0; }
+// The run does not count the room it takes, and has no way to ask the
+// host for the tally, so it owns to none rather than making a number up.
 function memory_get_usage($real = false) { return 0; }
+function memory_get_peak_usage($real = false) { return 0; }
+function memory_reset_peak_usage() { return null; }
 
 // A key is taken as the array takes one, so 7 and "7" name one place.
 // Nothing standing where a key should is still read as the empty piece

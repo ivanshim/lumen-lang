@@ -17,29 +17,25 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 95, differs 3, error 6, skipped 10 | pass 95, differs 3, error 6, skipped 10 |
+| `php/basic` | 114 | pass 98, differs 4, error 2, skipped 10 | pass 98, differs 4, error 2, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
 | `php/lang` | 213 | pass 198, differs 10, error 0, skipped 5 | pass 198, differs 10, error 0, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 49, differs 8, error 1, skipped 6 | pass 49, differs 8, error 1, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 368, differs 22, error 7, skipped 25 | pass 368, differs 22, error 7, skipped 25 |
+| all | 422 | pass 371, differs 23, error 3, skipped 25 | pass 371, differs 23, error 3, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 22 |
+| ran, printed something else | 23 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | skip php-cgi not available | 2 |
 | no --FILE-- section | 2 |
-| Fatal error: Uncaught Error: Undefined variable: session_id in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: stream_context_create in <file> | 1 |
-| Fatal error: Uncaught Error: Undefined variable: ENT_HTML5 in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> | 1 |
-| timeout | 1 |
 | skip locale needed for this test is not supported on this platform | 1 |
-| Fatal error: Uncaught Error: Undefined variable: umask in <file> | 1 |
 | skip for Windows only | 1 |
 | skip Run only on Windows | 1 |
 | skip Can't find german locale | 1 |
@@ -210,7 +206,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/GHSA-9pqp-7h25-4f32.phpt` | skipped | skipped | skip php-cgi not available |
 | `php/basic/array_key_exists_null_deprecation.phpt` | pass | pass |  |
 | `php/basic/array_null_offset_deprecation.phpt` | pass | pass |  |
-| `php/basic/bug20539.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: session_id in <file> |
+| `php/basic/bug20539.phpt` | differs | differs | ran, printed something else |
 | `php/basic/bug29971.phpt` | pass | pass |  |
 | `php/basic/bug31875.phpt` | pass | pass |  |
 | `php/basic/bug45986.phpt` | pass | pass |  |
@@ -219,13 +215,13 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/bug55500.phpt` | pass | pass |  |
 | `php/basic/bug61000.phpt` | pass | pass |  |
 | `php/basic/bug67198.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: stream_context_create in <file> |
-| `php/basic/bug67988.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: ENT_HTML5 in <file> |
+| `php/basic/bug67988.phpt` | pass | pass |  |
 | `php/basic/bug71273.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> |
 | `php/basic/bug73969.phpt` | pass | pass |  |
 | `php/basic/bug78236.phpt` | pass | pass |  |
 | `php/basic/bug78929.phpt` | pass | pass |  |
 | `php/basic/bug79699.phpt` | pass | pass |  |
-| `php/basic/bug80384.phpt` | error | error | timeout |
+| `php/basic/bug80384.phpt` | pass | pass |  |
 | `php/basic/build_date.phpt` | pass | pass |  |
 | `php/basic/consistent_float_string_casts.phpt` | skipped | skipped | skip locale needed for this test is not supported on this platform |
 | `php/basic/enable_post_data_reading_01.phpt` | pass | pass |  |
@@ -236,7 +232,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/enable_post_data_reading_06.phpt` | pass | pass |  |
 | `php/basic/enable_post_data_reading_07.phpt` | pass | pass |  |
 | `php/basic/encoding.phpt` | pass | pass |  |
-| `php/basic/errorlog_permission.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: umask in <file> |
+| `php/basic/errorlog_permission.phpt` | pass | pass |  |
 | `php/basic/gh15905.phpt` | pass | pass |  |
 | `php/basic/gh16998.phpt` | skipped | skipped | skip php-cgi not available |
 | `php/basic/gh17951_ini_parse_1.phpt` | pass | pass |  |

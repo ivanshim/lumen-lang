@@ -251,34 +251,6 @@ function stripslashes($string) {
     return $out;
 }
 
-// The characters that mean something to a mark-up reader, written out
-// as the names that stand for them.
-function htmlspecialchars($string, $flags = 11, $encoding = null, $double_encode = true) {
-    $out = "";
-    $at = 0;
-    while ($at < strlen($string)) {
-        $c = $string[$at];
-        if ($c === "&") { $out = $out . "&amp;"; }
-        else if ($c === "<") { $out = $out . "&lt;"; }
-        else if ($c === ">") { $out = $out . "&gt;"; }
-        else if ($c === '"') { $out = $out . "&quot;"; }
-        else if ($c === "'") { $out = $out . "&#039;"; }
-        else { $out = $out . $c; }
-        $at = $at + 1;
-    }
-    return $out;
-}
-function htmlspecialchars_decode($string, $flags = 11) {
-    $out = str_replace("&lt;", "<", $string);
-    $out = str_replace("&gt;", ">", $out);
-    $out = str_replace("&quot;", '"', $out);
-    $out = str_replace("&#039;", "'", $out);
-    return str_replace("&amp;", "&", $out);
-}
-function htmlentities($string, $flags = 11, $encoding = null, $double_encode = true) {
-    return htmlspecialchars($string, $flags, $encoding, $double_encode);
-}
-
 // Everything between a `<` and the `>` that closes it taken out.
 function strip_tags($string, $allowed_tags = null) {
     $out = "";
