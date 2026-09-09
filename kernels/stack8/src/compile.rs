@@ -4557,6 +4557,10 @@ impl<'a> Compiler<'a> {
             self.read(&name);
             return Ok(());
         }
+        if let Some(operation) = self.lang.value_methods.get(&name).cloned() {
+            self.act(Action::BindValueMethod(Rc::from(operation)), 1);
+            return self.called_on_value();
+        }
         let native = self.lang.builtins.get(&name).copied();
         if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace)) {
             // arr.push(x): the piped value must be the array's name.

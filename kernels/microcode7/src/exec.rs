@@ -1525,6 +1525,7 @@ impl<'a> Machine<'a> {
     }
 
     fn store(&self, slot: &Address, frame: &Rc<Env>, value: Value) -> Result<(), String> {
+        let value = if self.table.has_any("ext.builtin.method.append") { value.keep(false) } else { value };
         // A cell becomes a name's own only by being tied to it. A plain
         // write of one writes what it holds, so a routine giving back a
         // cell, called without the mark that shares one, hands over a
@@ -2147,6 +2148,11 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if let Value::Member(receiver, operation) = &stands {
+                    let raw = self.value_list(args, frame)?;
+                    let (given, named) = self.open_arguments(raw)?;
+                    return self.value_member(receiver, operation, given, named);
+                }
                 if let Some(done) = self.paired_call(&stands, args, frame) {
                     return done;
                 }
@@ -2158,6 +2164,18 @@ impl<'a> Machine<'a> {
                 self.drive(p, callee)
             }
             Form::Apply(Callee::Prim(op, name), args) => match op {
+                Prim::BindValueMethod => {
+                    let receiver = self.value_of(&args[0], frame)?.keep(false);
+                    let operation = self.value_of(&args[1], frame)?.bare();
+                    Ok(Value::Member(Rc::new(receiver), operation))
+                }
+                Prim::SortedValues => {
+                    let raw = self.value_list(args, frame)?;
+                    let (given, keywords) = self.open_arguments(raw)?;
+                    if given.len() != 1 { return Err(self.method_fault("arguments").into()); }
+                    let sorted = self.ordered_members(&given[0], &keywords)?;
+                    Ok(Value::Vector(Rc::new(sorted)).keep(true))
+                }
                 Prim::Seq => {
                     let mut last = Value::Nil;
                     for a in args {
@@ -2655,6 +2673,11 @@ impl<'a> Machine<'a> {
                 if let Some(done) = self.paired_call(&stands, args, frame) {
                     return Ok(Next::Value(done?));
                 }
+                if let Value::Member(receiver, operation) = &stands {
+                    let raw = self.value_list(args, frame)?;
+                    let (positions, keywords) = self.open_arguments(raw)?;
+                    return Ok(Next::Value(self.value_member(receiver, operation, positions, keywords)?));
+                }
                 if let Some(done) = self.word_it_spells(&stands, args, frame) {
                     return Ok(Next::Value(done?));
                 }
@@ -2707,6 +2730,60 @@ impl<'a> Machine<'a> {
         }
         drop(cells);
         frame
+    }
+
+    fn method_fault(&self, kind: &str) -> String {
+        self.table.single(&format!("ext.builtin.method.error.{kind}")).unwrap_or_default().to_string()
+    }
+
+    fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if name != "sort" {
+            let says = |kind: &str| self.method_fault(kind);
+            return crate::members::Request { target: receiver, operation: name, given: arguments, named: &keywords, names: self.wording(), complaint: &says }.answer().map_err(Escape::from);
+        }
+        if !arguments.is_empty() || !matches!(receiver.settled(), Value::Vector(_)) { return Err(self.method_fault("arguments").into()); }
+        let ordered = self.ordered_members(receiver, &keywords)?;
+        if let Value::Mutable(place, _) = receiver { place.replace(Value::Vector(Rc::new(ordered))); Ok(Value::Nil) }
+        else { Err(self.method_fault("unready").into()) }
+    }
+
+    fn ordered_members(&mut self, receiver: &Value, keywords: &[(String, Value)]) -> Res<Vec<Value>> {
+        let mut reverse = false;
+        let mut using = Value::Nil;
+        let mut seen = Vec::new();
+        for (word, value) in keywords {
+            if seen.contains(word) { return Err(self.method_fault("arguments").into()); }
+            seen.push(word.clone());
+            if word == "key" { using = value.clone(); }
+            else if word == "reverse" { reverse = self.stands_true(value); }
+            else { return Err(self.method_fault("arguments").into()); }
+        }
+        let items = crate::members::gather(receiver, &|kind| self.method_fault(kind))?;
+        let mut keys = Vec::new();
+        for value in items {
+            let compared = match &using {
+                Value::Nil => value.clone(),
+                Value::Bound(routine, environment) => self.invoke(routine.clone(), environment.clone(), vec![value.clone()])?,
+                Value::Member(subject, word) => self.value_member(subject, word, vec![value.clone()], Vec::new())?,
+                Value::Text(word) => {
+                    let operation = self.table.prims.get(word.as_ref()).copied().ok_or_else(|| self.method_fault("arguments"))?;
+                    self.prim(operation, word, &[value.clone()])?
+                }
+                _ => return Err(self.method_fault("unready").into()),
+            };
+            keys.push((compared, value));
+        }
+        let mut sorted: Vec<(Value, Value)> = Vec::new();
+        for pair in keys {
+            let mut at = sorted.len();
+            while at != 0 {
+                let arguments = if reverse { [sorted[at-1].0.clone(), pair.0.clone()] } else { [pair.0.clone(), sorted[at-1].0.clone()] };
+                if !self.prim(Prim::Lt, "", &arguments)?.is_true() { break; }
+                at -= 1;
+            }
+            sorted.insert(at, pair);
+        }
+        Ok(sorted.into_iter().map(|entry| entry.1).collect())
     }
 
     fn builtin_keyword_fault(&self, written: &str) -> String {
@@ -3391,11 +3468,16 @@ impl<'a> Machine<'a> {
     // ---------- operations
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if v.iter().any(|value| matches!(value, Value::Mutable(..))) && !matches!(op, Prim::Say | Prim::Out | Prim::Listed) {
+            let settled: Vec<Value> = v.iter().map(Value::settled).collect();
+            return self.prim(op, name, &settled);
+        }
         let w = self.wording();
         let n = |k: usize| -> Result<(), String> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
         };
         Ok(match op {
+            Prim::ValueMethod | Prim::BindValueMethod | Prim::SortedValues => return Err(self.method_fault("attribute")),
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
             // A step onward or back adds or takes away one, save on text
@@ -5138,7 +5220,8 @@ impl<'a> Machine<'a> {
     fn gathered_members(&self, source: &Value) -> Result<Vec<Value>, String> {
         Ok(match source {
             Value::Text(word) => word.chars().map(|letter| Value::text(&String::from(letter))).collect(),
-            Value::Vector(values) => values.to_vec(),
+            Value::Mutable(cell, _) => return self.gathered_members(&cell.borrow()),
+            Value::Vector(values) | Value::Row(values) => values.to_vec(),
             Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
             Value::Progression(walk) => {
                 let mut values = Vec::new();

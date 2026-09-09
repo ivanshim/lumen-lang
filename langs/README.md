@@ -701,6 +701,20 @@ only. The extension labels so far, all from PHP:
   `ext.builtin.sum.non_number`, `ext.builtin.range.non_integer` and
   `ext.builtin.range.zero_step` give their words for a member that
   cannot be added, a bound that is not whole, and a step of nought.
+- `ext.builtin.method.*`: each list names a method of a value after the
+  pipe mark. Text may change case, trim, split, join, replace, search,
+  count, test its letters, pad, or fill fields. Arrays may grow, lose
+  members, sort, reverse, copy, or clear; maps may look up, gather keys,
+  values or pairs, pop, set a default, update, copy, or clear. Numbers
+  may give their bit length, whole status, hexadecimal form, or ratio.
+  A method kept aside keeps its receiver. Mutable receivers keep one
+  holding place through aliases. No spelling leaves the pipe as before.
+  `ext.builtin.sorted` gathers and orders a collection. The lists under
+  `ext.builtin.method.error.*` give the words for bad arguments, missing
+  members, empty separators, bad fields, and work the run cannot yet do;
+  `.key` precedes the missing key. Encoding asks for bytes, which these
+  values cannot hold, and says so. Wider formats and character properties
+  requiring a table likewise stop rather than return a guess.
 - `ext.op.walk.class` and its family: a thing may be its own walk.
   `ext.op.walk.class` is the class of method names saying so (PHP's
   `Iterator`), and `ext.op.walk.rewind`, `.more`, `.this`, `.key` and
@@ -1960,6 +1974,71 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | - | - | `__math` | - | - | - | - | - |
+| `ext.builtin.method.append` | - | - | `append` | - | - | - | - | - | - | - |
+| `ext.builtin.method.as_integer_ratio` | - | - | `as_integer_ratio` | - | - | - | - | - | - | - |
+| `ext.builtin.method.bit_length` | - | - | `bit_length` | - | - | - | - | - | - | - |
+| `ext.builtin.method.capitalize` | - | - | `capitalize` | - | - | - | - | - | - | - |
+| `ext.builtin.method.center` | - | - | `center` | - | - | - | - | - | - | - |
+| `ext.builtin.method.clear` | - | - | `clear` | - | - | - | - | - | - | - |
+| `ext.builtin.method.copy` | - | - | `copy` | - | - | - | - | - | - | - |
+| `ext.builtin.method.count` | - | - | `count` | - | - | - | - | - | - | - |
+| `ext.builtin.method.encode` | - | - | `encode` | - | - | - | - | - | - | - |
+| `ext.builtin.method.endswith` | - | - | `endswith` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.arguments` | - | - | `TypeError: invalid method arguments` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.attribute` | - | - | `AttributeError: value has no such method` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.bytes` | - | - | `NotImplementedError: bytes are not available` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.fill` | - | - | `TypeError: The fill character must be exactly one character long` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.format` | - | - | `ValueError: invalid format string` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.index` | - | - | `IndexError: pop index out of range` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.key` | - | - | `KeyError: ` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.list_index` | - | - | `ValueError: value is not in list` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.missing` | - | - | `IndexError: Replacement index out of range for positional args tuple` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.mixed` | - | - | `ValueError: cannot switch from automatic field numbering to manual field specification` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.pop` | - | - | `IndexError: pop from empty list` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.remove` | - | - | `ValueError: list.remove(x): x not in list` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.separator` | - | - | `ValueError: empty separator` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.spec` | - | - | `NotImplementedError: this format specification cannot be rendered` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.substring` | - | - | `ValueError: substring not found` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.unicode` | - | - | `NotImplementedError: this Unicode character needs a character property table` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.unready` | - | - | `NotImplementedError: this value method cannot run yet` | - | - | - | - | - | - | - |
+| `ext.builtin.method.extend` | - | - | `extend` | - | - | - | - | - | - | - |
+| `ext.builtin.method.find` | - | - | `find` | - | - | - | - | - | - | - |
+| `ext.builtin.method.format` | - | - | `format` | - | - | - | - | - | - | - |
+| `ext.builtin.method.get` | - | - | `get` | - | - | - | - | - | - | - |
+| `ext.builtin.method.hex` | - | - | `hex` | - | - | - | - | - | - | - |
+| `ext.builtin.method.index` | - | - | `index` | - | - | - | - | - | - | - |
+| `ext.builtin.method.insert` | - | - | `insert` | - | - | - | - | - | - | - |
+| `ext.builtin.method.is_integer` | - | - | `is_integer` | - | - | - | - | - | - | - |
+| `ext.builtin.method.isalnum` | - | - | `isalnum` | - | - | - | - | - | - | - |
+| `ext.builtin.method.isalpha` | - | - | `isalpha` | - | - | - | - | - | - | - |
+| `ext.builtin.method.isdigit` | - | - | `isdigit` | - | - | - | - | - | - | - |
+| `ext.builtin.method.islower` | - | - | `islower` | - | - | - | - | - | - | - |
+| `ext.builtin.method.isspace` | - | - | `isspace` | - | - | - | - | - | - | - |
+| `ext.builtin.method.isupper` | - | - | `isupper` | - | - | - | - | - | - | - |
+| `ext.builtin.method.items` | - | - | `items` | - | - | - | - | - | - | - |
+| `ext.builtin.method.join` | - | - | `join` | - | - | - | - | - | - | - |
+| `ext.builtin.method.keys` | - | - | `keys` | - | - | - | - | - | - | - |
+| `ext.builtin.method.ljust` | - | - | `ljust` | - | - | - | - | - | - | - |
+| `ext.builtin.method.lower` | - | - | `lower` | - | - | - | - | - | - | - |
+| `ext.builtin.method.lstrip` | - | - | `lstrip` | - | - | - | - | - | - | - |
+| `ext.builtin.method.pop` | - | - | `pop` | - | - | - | - | - | - | - |
+| `ext.builtin.method.remove` | - | - | `remove` | - | - | - | - | - | - | - |
+| `ext.builtin.method.replace` | - | - | `replace` | - | - | - | - | - | - | - |
+| `ext.builtin.method.reverse` | - | - | `reverse` | - | - | - | - | - | - | - |
+| `ext.builtin.method.rfind` | - | - | `rfind` | - | - | - | - | - | - | - |
+| `ext.builtin.method.rjust` | - | - | `rjust` | - | - | - | - | - | - | - |
+| `ext.builtin.method.rsplit` | - | - | `rsplit` | - | - | - | - | - | - | - |
+| `ext.builtin.method.rstrip` | - | - | `rstrip` | - | - | - | - | - | - | - |
+| `ext.builtin.method.setdefault` | - | - | `setdefault` | - | - | - | - | - | - | - |
+| `ext.builtin.method.sort` | - | - | `sort` | - | - | - | - | - | - | - |
+| `ext.builtin.method.split` | - | - | `split` | - | - | - | - | - | - | - |
+| `ext.builtin.method.startswith` | - | - | `startswith` | - | - | - | - | - | - | - |
+| `ext.builtin.method.strip` | - | - | `strip` | - | - | - | - | - | - | - |
+| `ext.builtin.method.title` | - | - | `title` | - | - | - | - | - | - | - |
+| `ext.builtin.method.update` | - | - | `update` | - | - | - | - | - | - | - |
+| `ext.builtin.method.upper` | - | - | `upper` | - | - | - | - | - | - | - |
+| `ext.builtin.method.values` | - | - | `values` | - | - | - | - | - | - | - |
+| `ext.builtin.method.zfill` | - | - | `zfill` | - | - | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
 | `ext.builtin.output.depth` | - | - | - | - | `__output_depth` | - | - | - | - | - |
@@ -1990,6 +2069,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.run.begin` | - | - | - | - | `__run_begin` | - | - | - | - | - |
 | `ext.builtin.run.end` | - | - | - | - | `__run_end` | - | - | - | - | - |
 | `ext.builtin.shell` | - | - | - | - | `shell_exec` | - | - | - | - | - |
+| `ext.builtin.sorted` | - | - | `sorted` | - | - | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
 | `ext.builtin.sum.non_number` | - | - | `TypeError: sum needs numbers` | - | - | - | - | - | - | - |

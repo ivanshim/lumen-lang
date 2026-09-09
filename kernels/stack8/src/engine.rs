@@ -1291,6 +1291,7 @@ impl<'a> Engine<'a> {
     /// A store: into the hole a taking load left, if one is addressed;
     /// else the first local, or the global when there is none.
     fn store_cell(&mut self, slot: &Cell, frame: &mut [Value], v: Value) -> Res<()> {
+        let v = if self.lang.value_methods.is_empty() { v } else { v.held(false) };
         // A cell only ever becomes a name's own through fastening. A
         // plain write of one writes what it holds, so that a routine
         // giving back a cell, called without the mark that shares one,
@@ -2037,7 +2038,15 @@ impl<'a> Engine<'a> {
     }
 
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        if !self.lang.value_methods.is_empty() && !matches!(op, Action::BindValueMethod(_) | Action::Invoke(_) | Action::Builtin(..) | Action::MakeArray | Action::MakeMap | Action::Tie | Action::GatherItem { .. }) {
+            let from = self.data.len().saturating_sub(argc);
+            for value in &mut self.data[from..] { *value = value.contents(); }
+        }
         let result = match op {
+            Action::BindValueMethod(operation) => {
+                let target = self.drop_top()?.held(false);
+                Value::Method(Rc::new((target, operation.to_string())))
+            }
             Action::Not => {
                 let held = self.drop_top()?;
                 Value::Flag(!self.truth(&held))
@@ -2289,6 +2298,16 @@ impl<'a> Engine<'a> {
                 let top = self.drop_top()?;
                 let callee = self.what_it_spells(top);
                 return match callee {
+                    Value::Method(method) => {
+                        let raw = self.drop_many(argc - 1)?;
+                        let items = self.call_items(raw)?;
+                        let mut positional = Vec::new();
+                        let mut named = Vec::new();
+                        for (key, value) in items { if let Some(key) = key { named.push((key, value)); } else { positional.push(value); } }
+                        let result = self.value_method(&method.0, &method.1, positional, named)?;
+                        self.data.push(result);
+                        Ok(())
+                    }
                     Value::Routine(p) => self.invoke_top(&p, argc - 1),
                     // A pair of a thing and a method's name stands for
                     // that method of that thing, which is how a language
@@ -3165,6 +3184,7 @@ impl<'a> Engine<'a> {
     }
 
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if matches!(a, Value::Native(..)) || matches!(b, Value::Native(..)) { return self.dyadic(op, &a.contents(), &b.contents()); }
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
         if let Value::Bond(shared) = a {
@@ -3964,7 +3984,8 @@ impl<'a> Engine<'a> {
     /// The collections this reader can walk without asking a protocol.
     fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {
         match value {
-            Value::Array(items) => Ok(items.as_ref().clone()),
+            Value::Native(cell, _) => self.comprehension_items(&cell.borrow()),
+            Value::Array(items) | Value::Tuple(items) => Ok(items.as_ref().clone()),
             Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
             Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
             Value::Counted(range) => {
@@ -4048,6 +4069,10 @@ impl<'a> Engine<'a> {
             if error { eprint!("{}", text); } else { self.utter(&text); }
             return Ok(Value::Null);
         }
+        if builtin == Builtin::Sorted {
+            if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
+            return self.order_values(&args[0], &named).map(|v| Value::array(v).held(true));
+        }
         for (key, value) in named {
             let place = if builtin == Builtin::ToInt && Lang::spells(&self.lang.to_int_base, &key) {
                 1
@@ -4065,6 +4090,53 @@ impl<'a> Engine<'a> {
             args.push(value);
         }
         self.builtin(builtin, name, &mut args)
+    }
+
+    fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if operation == "sort" {
+            if !args.is_empty() || !matches!(receiver.contents(), Value::Array(_)) { return Err(self.lang.method_errors["arguments"].clone()); }
+            let row = self.order_values(receiver, &named)?;
+            let Value::Native(cell, _) = receiver else { return Err(self.lang.method_errors["unready"].clone()); };
+            *cell.borrow_mut() = Value::array(row);
+            return Ok(Value::Null);
+        }
+        crate::methods::call(receiver, operation, &args, &named, &self.wording(), &|key| self.lang.method_errors[key].clone())
+    }
+
+    fn order_values(&mut self, source: &Value, named: &[(String, Value)]) -> Res<Vec<Value>> {
+        let mut backwards = false;
+        let mut key = Value::Null;
+        let mut seen = std::collections::HashSet::new();
+        for (name, value) in named {
+            if !seen.insert(name) { return Err(self.lang.method_errors["arguments"].clone()); }
+            match name.as_str() { "reverse" => backwards = self.truth(value), "key" => key = value.clone(), _ => return Err(self.lang.method_errors["arguments"].clone()) }
+        }
+        let mut decorated = Vec::new();
+        for item in crate::methods::members(source, &|key| self.lang.method_errors[key].clone())? {
+            let rank = match &key {
+                Value::Null => item.clone(),
+                Value::Routine(routine) => {
+                    self.invoke(routine, vec![item.clone()]).map_err(|_| self.lang.method_errors["unready"].clone())?;
+                    self.drop_top()?
+                }
+                Value::Method(method) => self.value_method(&method.0, &method.1, vec![item.clone()], Vec::new())?,
+                Value::Text(word) => {
+                    let native = self.lang.builtins.get(word.as_ref()).copied().ok_or_else(|| self.lang.method_errors["arguments"].clone())?;
+                    self.builtin(native, word, &mut vec![item.clone()])?
+                }
+                _ => return Err(self.lang.method_errors["unready"].clone()),
+            };
+            decorated.push((rank, item));
+        }
+        for i in 1..decorated.len() {
+            let mut j = i;
+            while j > 0 {
+                let (left, right) = if backwards { (&decorated[j-1].0, &decorated[j].0) } else { (&decorated[j].0, &decorated[j-1].0) };
+                if !self.truth(&self.dyadic(&Action::Lt, left, right)?) { break; }
+                decorated.swap(j, j-1); j -= 1;
+            }
+        }
+        Ok(decorated.into_iter().map(|(_, value)| value).collect())
     }
 
     fn integer_call(&self, args: &[Value]) -> Res<Value> {
@@ -4102,6 +4174,7 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if !matches!(builtin, Builtin::Say | Builtin::List | Builtin::Out) { for value in args.iter_mut() { *value = value.contents(); } }
         let sp = self.wording();
         let arity = |n: usize| -> Res<()> {
             if args.len() == n {
@@ -4418,6 +4491,8 @@ impl<'a> Engine<'a> {
                 let mut here = of;
                 while let Some(class) = here {
                     match builtin {
+            Builtin::ValueMethod => Err(self.lang.method_errors["attribute"].clone()),
+            Builtin::Sorted => { if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); } self.order_values(&args[0], &[]).map(|v| Value::array(v).held(true)) },
                         Builtin::ClassMethods => named.extend(class.methods.iter().map(|(n, _)| n.clone())),
                         _ => named.extend(class.fields.iter().map(|(n, _)| crate::value::who_keeps(n).0.to_string())),
                     }

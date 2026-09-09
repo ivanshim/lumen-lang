@@ -119,6 +119,9 @@ impl Progression {
 
 #[derive(Clone)]
 pub enum Value {
+    Mutable(Rc<RefCell<Value>>, bool),
+    Member(Rc<Value>, String),
+    Row(Rc<Vec<Value>>),
     Channel(u8),
     Progression(Rc<Progression>),
     Small(i64),
@@ -179,6 +182,33 @@ pub struct Names<'a> {
 }
 
 impl Value {
+    pub fn settled(&self) -> Value {
+        if let Value::Mutable(place, _) = self { place.borrow().settled() } else { self.clone() }
+    }
+
+    pub fn keep(self, quoted: bool) -> Value {
+        if matches!(self, Value::Vector(_) | Value::Dict(_)) {
+            Value::Mutable(Rc::new(RefCell::new(self)), quoted)
+        } else { self }
+    }
+
+    pub fn repr(&self, names: &Names) -> String {
+        let settled = self.settled();
+        match &settled {
+            Value::Text(_) => settled.in_field(*names, "", "r"),
+            Value::Vector(v) | Value::Row(v) => {
+                let body = v.iter().map(|item| item.repr(names)).collect::<Vec<_>>().join(", ");
+                if matches!(settled, Value::Row(_)) { format!("({body}{})", if v.len() == 1 { "," } else { "" }) }
+                else { format!("[{body}]") }
+            }
+            Value::Dict(entries) => {
+                let body = entries.iter().map(|entry| entry.0.repr(names) + ": " + &entry.1.repr(names)).collect::<Vec<_>>().join(", ");
+                format!("{{{body}}}")
+            }
+            _ => settled.render(*names),
+        }
+    }
+
     pub fn from_big(n: BigInt) -> Value {
         match n.to_i64() {
             Some(i) => Value::Small(i),
@@ -196,7 +226,9 @@ impl Value {
             Value::Frac(e) => if e.places.is_some() { Kind::Decimal } else { Kind::Fraction },
             Value::Text(_) => Kind::Chars,
             Value::Flag(_) => Kind::Truth,
-            Value::Vector(_) | Value::Dict(_) => Kind::Vector,
+            Value::Vector(_) | Value::Dict(_) | Value::Row(_) => Kind::Vector,
+            Value::Mutable(place, _) => return place.borrow().kind(),
+            Value::Member(..) => return None,
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
@@ -206,6 +238,8 @@ impl Value {
 
     pub fn is_true(&self) -> bool {
         match self {
+            Value::Mutable(cell, _) => cell.borrow().is_true(),
+            Value::Row(items) => !items.is_empty(),
             Value::Progression(walk) => walk.count() != BigInt::zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -231,9 +265,11 @@ impl Value {
             Value::Flag(b) => BigInt::from(*b as i64),
             Value::Nil | Value::Unset => BigInt::zero(),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
-            Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
+            Value::Vector(_) | Value::Dict(_) | Value::Couple(_) | Value::Row(_) => return Err("Cannot coerce array to number".to_string()),
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
+            Value::Mutable(place, _) => return place.borrow().as_big(),
+            Value::Member(..) => return Err("Cannot coerce method to number".to_string()),
             Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
             Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
@@ -243,6 +279,8 @@ impl Value {
     }
 
     pub fn equals(&self, other: &Value) -> bool {
+        if let Value::Mutable(cell, _) = self { return cell.borrow().equals(&other.settled()); }
+        if let Value::Mutable(cell, _) = other { return self.equals(&cell.borrow()); }
         if let (Some(a), Some(b)) = (crate::math::ratio_of(self), crate::math::ratio_of(other)) {
             // Nought beneath is no ratio to cross-multiply: what lies
             // past every number is equal to another only where both lie
@@ -321,6 +359,9 @@ impl Value {
 
     pub fn render(&self, w: Names) -> String {
         match self {
+            Value::Mutable(cell, true) => cell.borrow().repr(&w),
+            Value::Mutable(cell, false) => cell.borrow().render(w),
+            Value::Row(_) => self.repr(&w),
             // A cell that names share is written as what it holds.
             Value::Shared(cell) => cell.borrow().render(w),
             Value::Flag(true) if w.flag_counted => "1".to_string(),
@@ -395,6 +436,9 @@ impl Value {
 
     pub fn bare(&self) -> String {
         match self {
+            Value::Mutable(place, _) => place.borrow().bare(),
+            Value::Member(..) => String::from("<built-in method>"),
+            Value::Row(v) => format!("({})", v.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
             Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),
             Value::Progression(p) => {
                 let tail = if p.stride == BigInt::one() { String::new() } else { format!(", {}", p.stride) };

@@ -92,6 +92,7 @@ pub enum Action {
     Join,
     /// A field rendered with its specification and conversion.
     StringRender,
+    BindValueMethod(Rc<str>),
     /// Text whose reading succeeded but whose value cannot be held.
     StringFault,
     At,
@@ -315,6 +316,8 @@ pub enum Action {
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    ValueMethod,
+    Sorted,
     Sum,
     List,
     Any,
