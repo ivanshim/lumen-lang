@@ -2468,9 +2468,6 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    /// A class and its members: properties, constants, the values it
-    /// keeps for itself, and its methods. The class becomes a value
-    /// bound to its name, so `new C` and `C::X` are ordinary reads.
     fn with_target(&mut self) -> Res<()> {
         let lang = self.lang;
         let pair = [&lang.grouping, &lang.array_brackets].into_iter().flatten()
@@ -2523,6 +2520,9 @@ impl<'a> Compiler<'a> {
         self.body()
     }
 
+    /// A class and its members: properties, constants, the values it
+    /// keeps for itself, and its methods. The class becomes a value
+    /// bound to its name, so `new C` and `C::X` are ordinary reads.
     fn class_decl(&mut self) -> Res<()> {
         let lang = self.lang;
         let word = self.take().lexeme;
@@ -4185,6 +4185,12 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let from = self.mark();
         let tok = self.look().clone();
+        if Lang::spells(&lang.ellipsis_words, &tok.lexeme) {
+            self.take();
+            self.constant(Value::text(lang.ellipsis_unready.as_deref().unwrap_or_default()));
+            self.act(Action::Builtin(Builtin::Raise, Rc::from("ellipsis")), 1);
+            return self.indexing(from);
+        }
         // `list($a, $b) = v`: the places named on the left each take
         // the matching place of the value on the right.
         if Lang::spells(&lang.unpack_words, &tok.lexeme) && matches!(tok.shape, Shape::Instr | Shape::Sign) {

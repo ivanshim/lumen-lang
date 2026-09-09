@@ -361,6 +361,8 @@
   "ext.lexical.string.prefix.plain": ["u", "U"],
   "ext.lexical.string.prefix.raw": ["r", "R"],
   "ext.lexical.string.unready": ["NotImplementedError: this string form is not supported"],
+  "ext.literal.ellipsis": ["..."],
+  "ext.literal.ellipsis.unready": ["NotImplementedError: ellipsis values are not supported"],
   "ext.op.assign.compound": true,
   "ext.op.bit.and": ["&"],
   "ext.op.bit.left": ["<<"],

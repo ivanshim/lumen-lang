@@ -82,3 +82,80 @@ its body can print. The existing block-piece spellings are
 `ext.stmt.with` (`with`) and `ext.stmt.with.as` (`as`), both lists;
 `ext.stmt.with.unready` holds the complaint as a list. The body is
 read whole; entry and exit calls remain for the block piece.
+
+`22.py` reads an ellipsis literal in an uncalled routine and prints
+`read`; `23.py` reaches it and stops with
+`NotImplementedError: ellipsis values are not supported`. The
+expression piece owns the value. Its `ext.literal.ellipsis` list
+spells `...`; the `.unready` list supplies these words for this small
+reading. An indexed ellipsis keeps the slice piece's own meaning.
+
+## Spellings in this piece
+
+The table gives every new or changed spelling against the required base.
+Lists, switches and counts retain the definition's types. The operator
+tiers are shown whole, lowest first.
+
+| Label | Type | Spelling or value |
+|---|---|---|
+| `lexical.string_escapes` | list | `["n", "t", "r", "0", "\\", "\"", "'"]` |
+| `lexical.number.hex_prefix` | list | `["0x", "0X"]` |
+| `op.precedence` | tiers | `[["or"], ["and"], ["not"], ["==", "!=", "<", ">", "<=", ">="], ["\|"], ["^"], ["&"], ["<<", ">>"], ["+", "-"], ["*", "@", "/", "//", "%"], ["-", "~"], ["**"], ["."]]` |
+| `ext.lexical.escape.byte` | list | `["x"]` |
+| `ext.lexical.escape.byte.digits` | count | `2` |
+| `ext.lexical.escape.codepoint` | list | `["u"]` |
+| `ext.lexical.escape.codepoint.amiss` | list | `["invalid Unicode escape"]` |
+| `ext.lexical.escape.codepoint.beyond` | list | `["Unicode code point out of range"]` |
+| `ext.lexical.escape.codepoint.digits` | count | `4` |
+| `ext.lexical.escape.codepoint.wide` | list | `["U"]` |
+| `ext.lexical.escape.codepoint.wide.digits` | count | `8` |
+| `ext.lexical.escape.continued` | switch | `true` |
+| `ext.lexical.escape.controls` | list | `["a", "b", "f", "v"]` |
+| `ext.lexical.escape.named` | list | `["N"]` |
+| `ext.lexical.escape.octal` | switch | `true` |
+| `ext.lexical.escape.unavailable` | list | `["Unicode escape cannot be represented"]` |
+| `ext.lexical.line_continuation` | list | `["\\"]` |
+| `ext.lexical.number.amiss` | list | `["invalid numeric literal"]` |
+| `ext.lexical.number.binary_prefix` | list | `["0b", "0B"]` |
+| `ext.lexical.number.exponent` | list | `["e", "E"]` |
+| `ext.lexical.number.octal_prefix` | list | `["0o", "0O"]` |
+| `ext.lexical.number.point.bare` | switch | `true` |
+| `ext.lexical.number.separator` | list | `["_"]` |
+| `ext.lexical.number.separator.after_prefix` | switch | `true` |
+| `ext.lexical.string.adjacent` | switch | `true` |
+| `ext.lexical.string.amiss` | list | `["invalid string literal"]` |
+| `ext.lexical.string.long` | list | `["\"\"\"", "'''"]` |
+| `ext.lexical.string.prefix.bytes` | list | `["b", "B"]` |
+| `ext.lexical.string.prefix.format` | list | `["f", "F"]` |
+| `ext.lexical.string.prefix.plain` | list | `["u", "U"]` |
+| `ext.lexical.string.prefix.raw` | list | `["r", "R"]` |
+| `ext.lexical.string.unready` | list | `["NotImplementedError: this string form is not supported"]` |
+| `ext.literal.ellipsis` | list | `["..."]` |
+| `ext.literal.ellipsis.unready` | list | `["NotImplementedError: ellipsis values are not supported"]` |
+| `ext.op.bit.and` | list | `["&"]` |
+| `ext.op.bit.left` | list | `["<<"]` |
+| `ext.op.bit.not` | list | `["~"]` |
+| `ext.op.bit.right` | list | `[">>"]` |
+| `ext.op.bit.whole` | switch | `true` |
+| `ext.op.bit.xor` | list | `["^"]` |
+| `ext.op.matrix` | list | `["@"]` |
+| `ext.op.matrix.unready` | list | `["NotImplementedError: matrix multiplication is not supported"]` |
+| `ext.op.tuple` | list | `[","]` |
+| `ext.op.tuple.unready` | list | `["NotImplementedError: tuple values are not supported"]` |
+| `ext.stmt.class` | list | `["class"]` |
+| `ext.stmt.class.unready` | list | `["NotImplementedError: this class form cannot run yet"]` |
+| `ext.stmt.with` | list | `["with"]` |
+| `ext.stmt.with.as` | list | `["as"]` |
+| `ext.stmt.with.unready` | list | `["NotImplementedError: context managers are not supported"]` |
+| `ext.system.fault.operands` | list | `["unsupported operand type(s)"]` |
+| `ext.system.fault.shift` | list | `["negative shift count"]` |
+
+The borrowed lexical reading is from `a3d8d6c`;
+the borrowed string reading is from `ab5ff7c`. The class, tuple, context, and
+ellipsis readings here are deliberately small and await their pieces.
+
+The old `scratch/annotations/10.err` expects a class to fail in the
+reader. Reading classes changes that result to the class complaint
+described above. That expectation is outside this piece's permitted
+files, so it is left for the coordinator; no source is made unreadable
+to preserve it.

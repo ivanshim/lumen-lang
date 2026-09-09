@@ -3966,6 +3966,12 @@ impl<'a> Builder<'a> {
     fn monadic_piece(&mut self) -> Res<Form> {
         let table = self.table;
         let t = self.look().clone();
+        if table.spells("ext.literal.ellipsis", &t.lexeme) {
+            self.advance();
+            let words = table.single("ext.literal.ellipsis.unready").unwrap_or_default();
+            let refused = prim_call(Prim::Raise, vec![constant(Value::text(words))]);
+            return self.subscript(refused);
+        }
         // `list($a, $b) = v`: the places named on the left each take
         // the matching place of the value on the right.
         if table.spells("ext.stmt.unpack", &t.lexeme) && matches!(t.shape, Shape::Sign | Shape::Bare) {

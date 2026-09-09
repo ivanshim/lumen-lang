@@ -950,9 +950,7 @@ impl<'a> Engine<'a> {
         })
     }
 
-    /// A value with no places at all cannot be walked. A language with
-    /// a word for a warning is told so and walks it no times, rather
-    /// than having the run stopped over it.
+    /// A whole number, with the language's complaint for another kind.
     fn whole_for_bits(&self, v: &Value) -> Res<BigInt> {
         if matches!(v.sort(), Some(Sort::Integer | Sort::Boolean)) {
             v.as_big()

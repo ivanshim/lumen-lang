@@ -1405,6 +1405,11 @@ only. The extension labels so far, all from PHP:
   the other does not leaving them past telling apart. Text spelling a
   number stands for that number, and a number met by text spelling
   none is itself read as text.
+- `ext.literal.ellipsis`: the literal mark standing for an ellipsis
+  value, distinct from its use within an index. The expression piece
+  gives it its full meaning. This small reading says the words in
+  `ext.literal.ellipsis.unready` when the value is reached; an ellipsis
+  in an uncalled routine is read without raising a complaint.
 - `ext.op.tuple`: the comma joining values within grouping brackets or
   in the collection a loop walks. Empty brackets and a trailing comma
   likewise name tuples. The small reading uses `ext.op.tuple.unready`
@@ -1874,6 +1879,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.string.prefix.raw` | - | - | `r` `R` | - | - | - | - | - | - | - |
 | `ext.lexical.string.unready` | - | - | `NotImplementedError: this string form is not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.literal.ellipsis` | - | - | `...` | - | - | - | - | - | - | - |
+| `ext.literal.ellipsis.unready` | - | - | `NotImplementedError: ellipsis values are not supported` | - | - | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.bit.and` | - | - | `&` | - | `&` | - | - | - | - | - |
