@@ -81,7 +81,9 @@ only names what its language spells; the floor is the same for all.
    (`langs/lib_<language>/`, `docs/LIBRARY_PORTS.md`).
 6. A lexeme may appear under at most one label per parsing position. `-`
    under both `op.sub` (infix) and `op.negate` (prefix) is allowed; the same
-   string under two infix labels is an error.
+   string under two infix labels is an error, save for `op.pipe` and
+   `ext.op.member` when `ext.op.member.pipes` is set. Then a member found
+   on an object or a class takes the name, and otherwise the pipe does.
 7. Every lexeme under `stmt.*` and `literal.*`, and every word-shaped
    operator (`and`, `not`), is a reserved word and must be shaped like an
    identifier.
@@ -483,6 +485,24 @@ only. The extension labels so far, all from PHP:
 - `ext.op.member` and `ext.op.scope`: `object->member` and
   `class::member`, each reading a property, a constant or a method, and
   `class::class` giving the class's name.
+- `ext.stmt.class.bases.open` and `ext.stmt.class.bases.close`: lists of
+  marks enclosing the classes a declaration stands on. The first base is
+  its parent; further bases are read and set aside, without running them.
+  A header may name a base by an expression, and may end with a separator.
+- `ext.stmt.class.this.explicit`: a switch; a method writes the parameter
+  for its object first, rather than having an unwritten parameter put there.
+  Calling a class makes its object without a word for making; assignments
+  in its body belong to the class, and the parent word is called before
+  reaching a parent's method. Classes bind as ordinary names.
+- `ext.op.member.pipes`: a switch; a mark shared by the pipe and member
+  signs reads a member when the object or class holds that name, and pipes
+  otherwise. A method takes its object before the written arguments; a
+  pipe keeps the ordinary rules for changing the array named on its left.
+- `ext.stmt.class.unready`: words said when a class form has been read but
+  cannot yet run: header keywords, annotations, or statements in a class
+  body beyond methods, assignments, nested classes, plain strings and pass.
+  A parent call outside a method, or one given explicit arguments, also
+  stops with these words. Nothing in such a form is silently carried out.
 - `ext.op.instanceof`: whether a value is an object of a class or of one
   beneath it.
 - `ext.stmt.try`, `ext.stmt.catch`, `ext.stmt.finally`, `ext.stmt.throw`
@@ -1685,8 +1705,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.index.text` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.text.first` | - | - | - | - | `Only the first byte will be assigned to the string offset` | - | - | - | - | - |
 | `ext.op.instanceof` | - | - | - | - | `instanceof` | - | - | - | - | - |
-| `ext.op.member` | - | - | - | - | `->` | - | - | - | - | - |
+| `ext.op.member` | - | - | `.` | - | `->` | - | - | - | - | - |
 | `ext.op.member.by_value` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.op.member.pipes` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.name_by_value` | - | - | - | - | `$` | - | - | - | - | - |
 | `ext.op.not_identical` | - | - | - | - | `!==` | - | - | - | - | - |
 | `ext.op.otherwise` | - | - | - | - | `??` | - | - | - | - | - |
@@ -1718,9 +1739,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.case.mark.instead` | - | - | - | - | `Case statements followed by a semicolon (;) are deprecated, use a colon (:) instead` | - | - | - | - | - |
 | `ext.stmt.catch` | - | - | - | - | `catch` | - | - | - | - | - |
 | `ext.stmt.catch.separator` | - | - | - | - | `\|` | - | - | - | - | - |
-| `ext.stmt.class` | - | - | - | - | `class` | - | - | - | - | - |
+| `ext.stmt.class` | - | - | `class` | - | `class` | - | - | - | - | - |
+| `ext.stmt.class.bases.close` | - | - | `)` | - | - | - | - | - | - | - |
+| `ext.stmt.class.bases.open` | - | - | `(` | - | - | - | - | - | - | - |
 | `ext.stmt.class.caller` | - | - | - | - | `__call` | - | - | - | - | - |
-| `ext.stmt.class.constructor` | - | - | - | - | `__construct` | - | - | - | - | - |
+| `ext.stmt.class.constructor` | - | - | `__init__` | - | `__construct` | - | - | - | - | - |
 | `ext.stmt.class.destructor` | - | - | - | - | `__destruct` | - | - | - | - | - |
 | `ext.stmt.class.extends` | - | - | - | - | `extends` | - | - | - | - | - |
 | `ext.stmt.class.guarded` | - | - | - | - | `protected` | - | - | - | - | - |
@@ -1729,12 +1752,14 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.interface` | - | - | - | - | `interface` | - | - | - | - | - |
 | `ext.stmt.class.modifier` | - | - | - | - | `public` `private` `protected` `final` `abstract` `readonly` `var` | - | - | - | - | - |
 | `ext.stmt.class.new` | - | - | - | - | `new` | - | - | - | - | - |
-| `ext.stmt.class.parent` | - | - | - | - | `parent` | - | - | - | - | - |
+| `ext.stmt.class.parent` | - | - | `super` | - | `parent` | - | - | - | - | - |
 | `ext.stmt.class.reader` | - | - | - | - | `__get` | - | - | - | - | - |
 | `ext.stmt.class.self` | - | - | - | - | `self` | - | - | - | - | - |
 | `ext.stmt.class.shared` | - | - | - | - | `static` | - | - | - | - | - |
 | `ext.stmt.class.this` | - | - | - | - | `$this` | - | - | - | - | - |
+| `ext.stmt.class.this.explicit` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.class.trait` | - | - | - | - | `trait` | - | - | - | - | - |
+| `ext.stmt.class.unready` | - | - | `NotImplementedError: this class form cannot run yet` | - | - | - | - | - | - | - |
 | `ext.stmt.class.uses` | - | - | - | - | `use` | - | - | - | - | - |
 | `ext.stmt.class.uses.alias` | - | - | - | - | `as` | - | - | - | - | - |
 | `ext.stmt.class.writer` | - | - | - | - | `__set` | - | - | - | - | - |

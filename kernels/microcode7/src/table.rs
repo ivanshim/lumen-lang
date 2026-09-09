@@ -87,7 +87,7 @@ ext.lexical.interpolating_quotes:L ext.lexical.heredoc:L ext.stmt.for.c:L ext.op
 ext.stmt.decorator:L ext.stmt.decorator.amiss:L ext.stmt.const:L ext.builtin.define:L ext.builtin.define.class_constant:L ext.builtin.var_dump:L ext.stmt.switch:L ext.stmt.case:L \
 ext.stmt.default:L ext.stmt.case.mark:L ext.op.ternary:L ext.block.lone_statement:B ext.stmt.function.hoisted:B ext.stmt.function.outermost:B ext.system.request.amiss:L ext.system.request.amiss.boundary:L ext.system.request.amiss.boundary.wrong:L ext.system.request.amiss.part:L ext.system.request.amiss.body.large:L ext.system.request.body:L \
 ext.lexical.number.exponent:L ext.op.plus:L ext.stmt.break.levels:B ext.builtin.array:L ext.op.index.append:B ext.stmt.for.collection:B ext.builtin.print_r:L \
-ext.stmt.function.returns:L ext.stmt.class:L ext.stmt.class.extends:L ext.stmt.class.new:L ext.stmt.class.this:L \
+ext.stmt.function.returns:L ext.stmt.class:L ext.stmt.class.extends:L ext.stmt.class.new:L ext.stmt.class.this:L ext.stmt.class.this.explicit:B ext.stmt.class.bases.open:L ext.stmt.class.bases.close:L ext.op.member.pipes:B ext.stmt.class.unready:L \
 ext.stmt.class.constructor:L ext.stmt.class.modifier:L ext.stmt.class.hidden:L ext.stmt.class.guarded:L ext.stmt.class.shared:L ext.op.member:L ext.op.scope:L \
 ext.op.instanceof:L ext.stmt.class.parent:L ext.stmt.class.self:L ext.lexical.name_lead:L ext.stmt.try:L \
 ext.stmt.catch:L ext.stmt.finally:L ext.stmt.throw:L ext.stmt.catch.separator:L ext.op.reference:L \
@@ -541,7 +541,7 @@ impl Table {
         if self.has_any("ext.stmt.switch") && (!self.has_any("ext.stmt.case") || !self.has_any("ext.stmt.case.mark")) {
             return Err("ext.stmt.switch needs ext.stmt.case and ext.stmt.case.mark".to_string());
         }
-        if self.has_any("ext.stmt.class") && (!self.has_any("ext.op.member") || !self.has_any("ext.stmt.class.new")) {
+        if self.has_any("ext.stmt.class") && (!self.has_any("ext.op.member") || (!self.has_any("ext.stmt.class.new") && !self.flag("ext.stmt.class.this.explicit"))) {
             return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
         }
         if self.has_any("stmt.foreach") && !self.has_any("stmt.foreach.as") {
@@ -589,7 +589,7 @@ impl Table {
             "ext.stmt.global", "ext.stmt.decorator", "ext.stmt.const", "ext.stmt.switch", "ext.stmt.case", "ext.stmt.default", "ext.op.plus",
             "syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close", "stmt.foreach", "stmt.foreach.as",
             "ext.stmt.function.returns", "ext.op.member", "ext.op.scope", "ext.stmt.class", "ext.stmt.class.extends",
-            "ext.stmt.class.new", "ext.stmt.class.modifier", "ext.stmt.class.shared", "ext.op.instanceof",
+            "ext.stmt.class.bases.open", "ext.stmt.class.bases.close", "ext.stmt.class.new", "ext.stmt.class.modifier", "ext.stmt.class.shared", "ext.op.instanceof",
             "ext.stmt.class.parent", "ext.stmt.class.self", "ext.stmt.class.interface", "ext.stmt.class.implements",
             "ext.stmt.try", "ext.stmt.catch", "ext.stmt.finally",
             "ext.stmt.throw", "ext.stmt.catch.separator", "ext.op.reference", "ext.op.otherwise", "ext.op.hush", "ext.op.name_by_value", "ext.stmt.unpack"];

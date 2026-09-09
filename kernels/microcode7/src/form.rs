@@ -36,6 +36,8 @@ pub enum Callee {
 /// forms for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prim {
+    /// Whether a member, rather than the pipe, takes the name.
+    HasMember,
     /// A step onward or back (`++`, `--`): adding or taking away one,
     /// save where a language walks text along its letters instead.
     Onward(bool),

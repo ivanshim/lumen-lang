@@ -495,6 +495,11 @@ pub struct Lang {
 
     /// Classes and their objects.
     pub class_words: Vec<String>,
+    pub bases_open: Option<String>,
+    pub bases_close: Option<String>,
+    pub explicit_this: bool,
+    pub member_pipes: bool,
+    pub class_unready: Option<String>,
     pub extends_words: Vec<String>,
     pub new_words: Vec<String>,
     /// The name a method knows its own object by.
@@ -693,6 +698,8 @@ w ext.system.reading.unclosed | w ext.system.reading.unclosed.line | w ext.syste
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 w ext.system.real.figures | w ext.system.real.figures.shown
+w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | b ext.stmt.class.this.explicit
+b ext.op.member.pipes | w ext.stmt.class.unready
 b ext.stmt.function.own_names | b ext.stmt.static.read_in
 ";
 
@@ -1454,6 +1461,11 @@ impl Lang {
             append_index: r.flag("ext.op.index.append")?,
             for_collections: r.flag("ext.stmt.for.collection")?,
             class_words: r.strings("ext.stmt.class")?,
+            bases_open: r.head("ext.stmt.class.bases.open")?,
+            bases_close: r.head("ext.stmt.class.bases.close")?,
+            explicit_this: r.flag("ext.stmt.class.this.explicit")?,
+            member_pipes: r.flag("ext.op.member.pipes")?,
+            class_unready: r.head("ext.stmt.class.unready")?,
             extends_words: r.strings("ext.stmt.class.extends")?,
             new_words: r.strings("ext.stmt.class.new")?,
             this_word: r.head("ext.stmt.class.this")?,
@@ -1528,7 +1540,7 @@ impl Lang {
         if !lang.try_words.is_empty() && lang.catch_words.is_empty() {
             return Err("ext.stmt.try needs ext.stmt.catch".to_string());
         }
-        if !lang.class_words.is_empty() && (lang.member_mark.is_none() || lang.new_words.is_empty()) {
+        if !lang.class_words.is_empty() && (lang.member_mark.is_none() || (lang.new_words.is_empty() && !lang.explicit_this)) {
             return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
         }
         if !lang.foreach_words.is_empty() && lang.foreach_as_words.is_empty() {
@@ -1596,7 +1608,7 @@ impl Lang {
         if let Some(mark) = &self.pair_mark {
             place(mark);
         }
-        for mark in [&self.member_mark, &self.scope_mark, &self.catch_between, &self.reference_mark, &self.otherwise_mark].into_iter().flatten() {
+        for mark in [&self.bases_open, &self.bases_close, &self.member_mark, &self.scope_mark, &self.catch_between, &self.reference_mark, &self.otherwise_mark].into_iter().flatten() {
             place(mark);
         }
         for pair in [&self.grouping, &self.calling, &self.array_brackets, &self.map_brackets, &self.index_brackets].into_iter().flatten() {
