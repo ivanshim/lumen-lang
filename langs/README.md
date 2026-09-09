@@ -324,6 +324,9 @@ only. The extension labels so far, all from PHP:
   a tuple of one, and empty grouping marks hold a tuple of none. This
   reading does not give arrays the name of tuples: reaching a tuple or
   a taking-apart raises `ext.system.scope.unready` pending tuple values.
+  Commas in a collection loop's target have the same reading, including
+  grouped targets and a final comma. The whole source and body are read;
+  reaching such a loop raises the same complaint before binding a part.
 - `ext.stmt.nonlocal` declares a list of names belonging to an enclosing
   function. Every name is read; when the declaration is reached,
   `ext.stmt.nonlocal.unrun` says that the enclosing cells are not yet
@@ -892,7 +895,10 @@ only. The extension labels so far, all from PHP:
   spells an ellipsis among the places in brackets. Several places
   separated by the call separator, an ellipsis, and a compound slice
   write are read whole but stop with `.unsupported`: their running
-  is still wanting.
+  is still wanting. Index brackets may follow a piped member or method
+  call as well as a bare value, so a member's slice stays with its base. A
+  bare member with no builtin meaning raises `ext.system.scope.unready`
+  where object attributes are still owed.
 - `ext.op.index.text`: a switch; a piece of text is a row of places,
   each holding one letter. Such a place takes a letter as well as
   giving one: only the first letter of what is written there is put

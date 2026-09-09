@@ -2180,6 +2180,26 @@ impl<'a> Compiler<'a> {
     fn for_stmt(&mut self) -> Res<()> {
         let lang = self.lang;
         self.take();
+        if !lang.tuple_marks.is_empty() && !self.look_ahead(1).is_lexeme(Shape::Instr, &lang.in_words[0]) {
+            let began = self.mark();
+            let tier = lang.dyadic.get(&lang.in_words[0]).map_or(0, |op| op.level);
+            loop {
+                self.expr_at(tier + 1, false)?;
+                if !self.on_any(&lang.tuple_marks) { break; }
+                self.take();
+                if self.on_keyword(&lang.in_words) { break; }
+            }
+            if !self.on_keyword(&lang.in_words) { return Err("Expected the loop's collection word".into()); }
+            self.take();
+            self.scope_value()?;
+            self.enter_cycle(None);
+            self.body()?;
+            let after = self.mark();
+            self.leave_cycle(after);
+            self.piece().instrs.truncate(began);
+            self.scope_fault(&lang.scope_unready.clone());
+            return Ok(());
+        }
         let var = self.want_name("as the loop variable")?;
         if !self.on_keyword(&lang.in_words) {
             return Err(format!("Expected '{}' after for loop variable, got: {}", lang.in_words[0], self.look().lexeme));
@@ -4140,6 +4160,7 @@ impl<'a> Compiler<'a> {
                 }
                 self.take();
                 self.pipe_target(from)?;
+                if !lang.slice_marks.is_empty() { self.indexing(from)?; }
                 continue;
             }
             if lang.otherwise_mark.as_ref().map_or(false, |m| self.at_symbol(m)) {
@@ -4320,6 +4341,11 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         let native = self.lang.builtins.get(&name).copied();
+        if native.is_none() && !self.lang.slice_marks.is_empty()
+            && self.lang.index_brackets.as_ref().map_or(false, |b| self.at_symbol(&b.open)) {
+            self.scope_fault(&self.lang.scope_unready.clone());
+            return Ok(());
+        }
         if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace)) {
             // arr.push(x): the piped value must be the array's name.
             let target = match &self.piece().instrs[left..] {

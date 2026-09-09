@@ -2622,6 +2622,22 @@ impl<'a> Builder<'a> {
     fn for_stmt(&mut self) -> Res<Form> {
         let table = self.table;
         self.advance();
+        let simple = self.glance(1).shape == Shape::Bare && table.spells("stmt.for.in", &self.glance(1).lexeme);
+        if table.has_any("ext.op.tuple") && !simple {
+            let above_in = table.strings("stmt.for.in").iter()
+                .filter_map(|word| table.dyadic.get(word).map(|op| op.level + 1)).max().unwrap_or(1);
+            loop {
+                let _place = self.expr_at(above_in, false)?;
+                if !self.on_any("ext.op.tuple") { break; }
+                self.advance();
+                if self.key("stmt.for.in") { break; }
+            }
+            if !self.key("stmt.for.in") { return Err("Expected the loop's collection word".to_string()); }
+            self.advance();
+            let _source = self.comma_value()?;
+            let _body = self.body()?;
+            return Ok(self.scope_unrun("ext.system.scope.unready"));
+        }
         let var = self.need_word("as the loop variable")?;
         if !self.key("stmt.for.in") {
             return Err(format!("Expected '{}' after for loop variable, got: {}", table.single("stmt.for.in").unwrap_or("in"), self.look().lexeme));
@@ -3969,6 +3985,12 @@ impl<'a> Builder<'a> {
                     left = invoke(self.read(&name), vec![left]);
                     break;
                 }
+                if table.has_any("ext.op.index.slice") && !table.prims.contains_key(&name)
+                    && table.single("op.index.open").map_or(false, |open| self.sign(open)) {
+                    left = sequence(vec![left, self.scope_unrun("ext.system.scope.unready")]);
+                    left = self.subscript(left)?;
+                    continue;
+                }
                 let mut args = vec![left];
                 if let Some(open) = table.single("syntax.call.open") {
                     if self.sign(open) {
@@ -3977,6 +3999,7 @@ impl<'a> Builder<'a> {
                     }
                 }
                 left = self.named_call(&name, args)?;
+                if table.has_any("ext.op.index.slice") { left = self.subscript(left)?; }
                 continue;
             }
             if table.single("ext.op.otherwise").map_or(false, |m| self.sign(m)) {
