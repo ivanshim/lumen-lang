@@ -3982,6 +3982,14 @@ impl<'a> Compiler<'a> {
                 self.rewritten(&name);
                 Ok(())
             }
+            // A place in a value returned by a call has valid writing
+            // syntax, though this run cannot yet keep its owning cell.
+            [.., Instr::Act(Action::At, 2)] if !self.lang.scope_unready.is_empty() => {
+                self.value_written(keep)?;
+                self.piece().instrs.truncate(from);
+                self.scope_fault(&self.lang.scope_unready.clone());
+                Ok(())
+            }
             _ => Err(format!("Invalid assignment target before '{}'", assign)),
         };
         self.waiting = was_waiting;

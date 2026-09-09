@@ -321,6 +321,10 @@ only. The extension labels so far, all from PHP:
   is read as a place and a value. Reaching the write raises the complaint;
   the member names are not mistaken for calls. `ext.op.member`, when
   spelled, takes back this work for the ordinary member reader.
+- An indexed place may stand on the result of a call as well as on a
+  named array. Such a write is read whole. Where the kernel cannot keep
+  that result's owning cell, `ext.system.scope.unready` refuses the
+  write when reached; a value returned by a call is no new binding.
 - `ext.system.scope.unready` holds plain words for a scope form whose
   reading is provided before its running. The complaint is part of the
   read program and is raised only when that form is reached, never while
