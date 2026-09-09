@@ -309,7 +309,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         Some(under) => under.idents,
         None => top.idents.clone(),
     };
-    let program = Routine { ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: top.idents, frameless: false, written_in: r.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
+    let program = Routine { gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: top.idents, frameless: false, written_in: r.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
     Ok(Built { program: Rc::new(program), globals, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back })
 }
 
@@ -912,7 +912,7 @@ impl<'a> Builder<'a> {
         let scope = self.layers.pop().unwrap();
         self.naming.pop();
         let carried = std::mem::replace(&mut self.carrying, around);
-        Ok(constant(Value::Routine(Rc::new(Routine { ident: name.to_string(), least, formals: params, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, traps: catches, carried, body }))))
+        Ok(constant(Value::Routine(Rc::new(Routine { gather_from: None, ident: name.to_string(), least, formals: params, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, traps: catches, carried, body }))))
     }
 
     /// A branch arm or a loop body: a program that holds no names.
@@ -929,7 +929,7 @@ impl<'a> Builder<'a> {
     /// that own no names, so the chosen one runs in the frame around it.
     fn choose(&mut self, test: Form, then: Form, otherwise: Form) -> Form {
         let wrap = |name: &str, body: Form| {
-            let program = Routine { ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
+            let program = Routine { gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
             constant(Value::Routine(Rc::new(program)))
         };
         prim_call(Prim::Choose, vec![test, wrap("<then>", then), wrap("<else>", otherwise)])
@@ -1021,6 +1021,10 @@ impl<'a> Builder<'a> {
             return Ok(constant(Value::Nil));
         }
         self.skip_lead_word();
+        if self.table.blocks == Blocks::Indented && self.table.spells("ext.literal.ellipsis", &self.look().lexeme) {
+            self.advance();
+            return Ok(constant(Value::Nil));
+        }
         self.skip_line_ends();
         match self.table.blocks {
             Blocks::Indented => {
@@ -2682,6 +2686,83 @@ impl<'a> Builder<'a> {
         Ok(sequence(items))
     }
 
+    /// A lambda gives its single expression back. Only its defaults
+    /// are carried from the place where it was made.
+    fn lambda_form(&mut self) -> Res<Form> {
+        let table = self.table;
+        let colon = table.single("block.intro").ok_or("Lambda needs a body mark")?;
+        let comma = table.single("syntax.call.separator").ok_or("Lambda needs a parameter separator")?;
+        let mut names = Vec::new();
+        let mut spares = Vec::new();
+        let mut before = Vec::new();
+        let mut gather = None;
+        let mut named_only = false;
+        let mut cannot_call = false;
+        loop {
+            if self.sign(colon) { self.advance(); break; }
+            if self.exhausted() { return Err("Expected lambda body".to_string()); }
+            if table.spells("op.div", &self.look().lexeme) {
+                self.advance();
+            } else {
+                let many = table.spells("op.mul", &self.look().lexeme);
+                let mapping = table.spells("op.pow", &self.look().lexeme);
+                if many || mapping {
+                    self.advance();
+                    cannot_call |= mapping || named_only;
+                    named_only = true;
+                    if self.sign(comma) {
+                        self.advance();
+                        cannot_call = true;
+                        continue;
+                    }
+                    gather = Some(names.len());
+                } else { cannot_call |= named_only; }
+                let parameter = self.need_word("as a lambda parameter")?;
+                if names.contains(&parameter) { return Err("Duplicate lambda parameter".to_string()); }
+                names.push(parameter);
+                if self.on_assign() {
+                    self.advance();
+                    let worth = self.expr(0)?;
+                    let hidden = self.gensym("spare");
+                    before.push(Form::Write(hidden.clone(), Box::new(worth)));
+                    spares.push((names.len() - 1, hidden));
+                }
+            }
+            if !self.sign(colon) { self.need_sign(comma, "between lambda parameters")?; }
+        }
+        let required = gather.unwrap_or(names.len()).saturating_sub(spares.len());
+        let parameters = names.clone();
+        let enclosing: Vec<String> = self.layers.iter().skip(1).filter(|l| l.holds == Holds::Every).flat_map(|l| l.idents.clone()).collect();
+        let start = self.pos;
+        let mut function = self.routine(ANONYMOUS, Holds::Every, Traps::Yields, names, required, |b| {
+            let mut steps = Vec::new();
+            for (index, source) in &spares {
+                let cell = b.address_to_write(&source.ident);
+                b.carrying.push(cell.at);
+                let target = b.address_to_write(&parameters[*index]);
+                let absent = Form::Missing(target.clone());
+                let fill = Form::Write(target, Box::new(Form::Read(cell)));
+                steps.push(b.choose(absent, fill, constant(Value::Nil)));
+            }
+            let body = b.expr(0)?;
+            let wants_outer = b.tokens[start..b.pos].iter().any(|word| word.shape == Shape::Bare && enclosing.contains(&word.lexeme) && !parameters.contains(&word.lexeme));
+            let complaint = if cannot_call { table.single("ext.op.lambda.unsupported") } else if wants_outer { table.single("ext.op.lambda.enclosing") } else { None };
+            if let Some(words) = complaint { steps.push(prim_call(Prim::Raise, vec![constant(Value::text(words))])); }
+            steps.push(body);
+            Ok(sequence(steps))
+        })?;
+        if let Form::Const(Value::Routine(routine)) = &mut function {
+            Rc::get_mut(routine).expect("new lambda").gather_from = gather;
+        }
+        if !spares.is_empty() {
+            let mut carrying = vec![function];
+            carrying.extend(spares.into_iter().map(|(_, slot)| Form::Read(slot)));
+            function = prim_call(Prim::Carry, carrying);
+        }
+        before.push(function);
+        Ok(sequence(before))
+    }
+
     /// A routine written short: its parameters, the mark, and the one
     /// expression it answers with. Every name standing around it goes
     /// with it as it stands, since a routine written this short has
@@ -3319,6 +3400,15 @@ impl<'a> Builder<'a> {
     fn expr_at(&mut self, floor: u32, may_write: bool) -> Res<Form> {
         let table = self.table;
         let mut left = self.monadic_expr()?;
+        if floor == 0 && table.spells("ext.op.assign.expression", &self.look().lexeme) {
+            let Form::Read(target) = left else {
+                return Err("Named expression needs a variable".to_string());
+            };
+            self.advance();
+            let rhs = self.expr(0)?;
+            let bind = self.write(&target.ident, rhs);
+            return Ok(sequence(vec![bind, self.read(&target.ident)]));
+        }
         if floor == 0 && may_write && table.flag("ext.op.assign.value") && self.on_writing() {
             return self.written(left, true);
         }
@@ -3328,6 +3418,29 @@ impl<'a> Builder<'a> {
                 break;
             }
             let text = t.lexeme.clone();
+            let conditional = table.strings("ext.op.if_else");
+            if floor == 0 && conditional.first() == Some(&text) {
+                self.advance();
+                let test = self.expr(1)?;
+                let end = conditional.get(1).ok_or("Conditional expression needs two words")?;
+                if self.look().lexeme != *end {
+                    return Err(format!("Expected '{}' in conditional expression", end));
+                }
+                self.advance();
+                let no = self.expr(0)?;
+                left = self.choose(test, left, no);
+                continue;
+            }
+            if table.flag("ext.op.compare.chained") {
+                if let Some((operation, level, words)) = self.comparison_head() {
+                    if floor > level { break; }
+                    let saved = self.gensym("middle");
+                    let keep = Form::Write(saved.clone(), Box::new(left));
+                    let links = self.comparison_tail(saved, operation, level, words)?;
+                    left = sequence(vec![keep, links]);
+                    continue;
+                }
+            }
             if table.spells("op.pipe", &text) {
                 if table.precedence.get(&text).copied().unwrap_or(0) < floor {
                     break;
@@ -3369,7 +3482,10 @@ impl<'a> Builder<'a> {
                 left = prim_call(Prim::Akin, vec![left, against]);
                 continue;
             }
-            let Some(op) = table.dyadic.get(&text).copied() else {
+            let head = self.comparison_head();
+            let Some(mut op) = table.dyadic.get(&text).copied().or_else(|| {
+                head.map(|(prim, level, _)| crate::table::Infix { prim, level, right_assoc: false })
+            }) else {
                 // test ? a : b, at the bottom of an expression.
                 let signs = table.strings("ext.op.ternary");
                 if floor == 0 && signs.first().map_or(false, |q| self.sign(q)) {
@@ -3385,7 +3501,8 @@ impl<'a> Builder<'a> {
             if op.level < floor {
                 break;
             }
-            self.advance();
+            let consumed = if let Some((prim, _, width)) = head { op.prim = prim; width } else { 1 };
+            for _ in 0..consumed { self.advance(); }
             let floor_right = if op.right_assoc { op.level } else { op.level + 1 };
             left = match op.prim {
                 // The right side is a program, run only when the left leaves it open.
@@ -3423,6 +3540,39 @@ impl<'a> Builder<'a> {
             };
         }
         Ok(left)
+    }
+
+    fn comparison_head(&self) -> Option<(Prim, u32, usize)> {
+        let t = self.table;
+        let first = &self.look().lexeme;
+        if t.spells("ext.op.in.negated", first) && t.spells("ext.op.in", &self.glance(1).lexeme) {
+            let membership = t.dyadic.get(&self.glance(1).lexeme)?;
+            return Some((Prim::Absent, membership.level, 2));
+        }
+        let binary = t.dyadic.get(first)?;
+        match binary.prim {
+            Prim::Selfsame if t.spells("ext.op.identical.negated", &self.glance(1).lexeme) => Some((Prim::Unlike, binary.level, 2)),
+            Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Selfsame | Prim::Unlike | Prim::Contains | Prim::Absent => Some((binary.prim, binary.level, 1)),
+            _ => None,
+        }
+    }
+
+    /// The next link runs beneath the true arm of this one. Its near
+    /// side is the cell this link filled, so no middle is read twice.
+    fn comparison_tail(&mut self, near: Address, operation: Prim, level: u32, words: usize) -> Res<Form> {
+        for _ in 0..words { self.advance(); }
+        let side = self.expr(level + 1)?;
+        let far = self.gensym("next");
+        let put = Form::Write(far.clone(), Box::new(side));
+        let test = prim_call(operation, vec![Form::Read(near), Form::Read(far.clone())]);
+        let answer = match self.comparison_head() {
+            Some((following, tier, width)) if tier == level => {
+                let rest = self.comparison_tail(far, following, tier, width)?;
+                self.choose(test, rest, constant(Value::Flag(false)))
+            }
+            _ => test,
+        };
+        Ok(sequence(vec![put, answer]))
     }
 
     /// `++p` and `p--` over any place a write reaches: the place is
@@ -3466,6 +3616,14 @@ impl<'a> Builder<'a> {
     fn monadic_piece(&mut self) -> Res<Form> {
         let table = self.table;
         let t = self.look().clone();
+        if table.spells("ext.literal.ellipsis", &t.lexeme) {
+            self.advance();
+            return self.subscript(constant(Value::Ellipsis));
+        }
+        if table.spells("ext.op.lambda", &t.lexeme) {
+            self.advance();
+            return self.lambda_form();
+        }
         // `list($a, $b) = v`: the places named on the left each take
         // the matching place of the value on the right.
         if table.spells("ext.stmt.unpack", &t.lexeme) && matches!(t.shape, Shape::Sign | Shape::Bare) {
@@ -4845,7 +5003,7 @@ impl<'a> Builder<'a> {
             let mut param_slots = scope.formal_slots;
             params.reverse();
             param_slots.reverse();
-            let program = Routine { ident: name, least: 0, formals: params, formal_kinds: Vec::new(), formal_slots: param_slots, idents: scope.idents, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Yields, carried: Vec::new(), body: sequence(s) };
+            let program = Routine { gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), formal_slots: param_slots, idents: scope.idents, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Yields, carried: Vec::new(), body: sequence(s) };
             stack.push(constant(Value::Routine(Rc::new(program))));
             return Ok(());
         }

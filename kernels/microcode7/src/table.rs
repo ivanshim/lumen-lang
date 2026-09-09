@@ -86,6 +86,7 @@ ext.lexical.epilogue:L ext.builtin.echo:L ext.syntax.call.bare:B ext.op.incremen
 ext.lexical.interpolating_quotes:L ext.lexical.heredoc:L ext.stmt.for.c:L ext.op.assign.compound:B ext.stmt.static:L ext.stmt.global:L \
 ext.stmt.decorator:L ext.stmt.decorator.amiss:L ext.stmt.const:L ext.builtin.define:L ext.builtin.define.class_constant:L ext.builtin.var_dump:L ext.stmt.switch:L ext.stmt.case:L \
 ext.stmt.default:L ext.stmt.case.mark:L ext.op.ternary:L ext.block.lone_statement:B ext.stmt.function.hoisted:B ext.stmt.function.outermost:B ext.system.request.amiss:L ext.system.request.amiss.boundary:L ext.system.request.amiss.boundary.wrong:L ext.system.request.amiss.part:L ext.system.request.amiss.body.large:L ext.system.request.body:L \
+ext.op.if_else:L ext.op.lambda:L ext.op.lambda.unsupported:L ext.op.lambda.enclosing:L ext.op.identical.negated:L ext.op.in:L ext.op.in.negated:L ext.op.in.unsupported:L ext.op.compare.chained:B ext.op.assign.expression:L ext.literal.ellipsis:L ext.op.rem.formats_text:B ext.op.rem.format.unsupported:L ext.op.rem.format.arguments:L \
 ext.lexical.number.exponent:L ext.op.plus:L ext.stmt.break.levels:B ext.builtin.array:L ext.op.index.append:B ext.stmt.for.collection:B ext.builtin.print_r:L \
 ext.stmt.function.returns:L ext.stmt.class:L ext.stmt.class.extends:L ext.stmt.class.new:L ext.stmt.class.this:L \
 ext.stmt.class.constructor:L ext.stmt.class.modifier:L ext.stmt.class.hidden:L ext.stmt.class.guarded:L ext.stmt.class.shared:L ext.op.member:L ext.op.scope:L \
@@ -179,7 +180,7 @@ const BINARY_LABELS: [(&str, Prim); 24] = [
     ("op.gt", Prim::Gt), ("op.ge", Prim::Ge), ("op.and", Prim::Both), ("op.or", Prim::Either), ("op.concat", Prim::Join),
     ("ext.op.compare", Prim::Rank), ("ext.op.bit.and", Prim::BitsBoth), ("ext.op.bit.or", Prim::BitsEither),
     ("ext.op.bit.xor", Prim::BitsOne), ("ext.op.bit.left", Prim::BitsUp), ("ext.op.bit.right", Prim::BitsDown),
-    ("ext.op.identical", Prim::Selfsame), ("ext.op.not_identical", Prim::Unlike),
+    ("ext.op.in", Prim::Contains), ("ext.op.identical", Prim::Selfsame), ("ext.op.not_identical", Prim::Unlike),
 ];
 
 fn top_object(text: &str) -> Result<serde_json::Map<String, Json>, String> {
@@ -579,7 +580,7 @@ impl Table {
             }
         }
         let mut all: Vec<String> = self.dyadic.keys().chain(self.monadic.keys()).chain(self.precedence.keys()).chain(self.compound.keys()).cloned().collect();
-        let symbol_labels = ["syntax.group.open", "syntax.group.close", "syntax.call.open", "syntax.call.separator", "syntax.call.close",
+        let symbol_labels = ["ext.op.if_else", "ext.op.lambda", "ext.op.identical.negated", "ext.op.in.negated", "ext.op.assign.expression", "ext.literal.ellipsis", "syntax.group.open", "syntax.group.close", "syntax.call.open", "syntax.call.separator", "syntax.call.close",
             "syntax.call.label", "syntax.array.open", "syntax.array.separator", "syntax.array.close", "op.index.open", "op.index.close",
             "block.intro", "stmt.assign", "stmt.terminator", "stmt.let.annotation", "stmt.function.returns", "stack.dup", "stack.drop",
             "stack.swap", "stack.over", "stack.rot", "stack.eval", "stack.program.open", "stack.program.close", "stmt.let",

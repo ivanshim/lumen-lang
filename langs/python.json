@@ -111,7 +111,9 @@
       "<",
       ">",
       "<=",
-      ">="
+      ">=",
+      "is",
+      "in"
     ],
     [
       "+",
@@ -315,5 +317,21 @@
   "system.kind.null": [],
   "ext.stmt.decorator": ["@"],
   "ext.stmt.decorator.amiss": ["A decorator must stand on its own line before a function definition"],
-  "ext.stmt.for.collection": true
+  "ext.stmt.for.collection": true,
+  "ext.op.if_else": ["if", "else"],
+  "ext.op.lambda": ["lambda"],
+  "ext.op.lambda.unsupported": ["Lambda keyword parameters are not supported"],
+  "ext.op.lambda.enclosing": ["Lambda cannot read an enclosing function variable"],
+  "ext.op.identical": ["is"],
+  "ext.op.identical.negated": ["not"],
+  "ext.op.in": ["in"],
+  "ext.op.in.negated": ["not"],
+  "ext.op.in.unsupported": ["Membership requires an array, string or map"],
+  "ext.op.compare.chained": true,
+  "ext.op.assign.expression": [":="],
+  "ext.literal.ellipsis": ["..."],
+  "ext.op.rem.formats_text": true,
+  "ext.op.rem.format.unsupported": ["Unsupported string format"],
+  "ext.op.rem.format.arguments": ["String format arguments do not match"],
+  "ext.op.plus": ["+"]
 }

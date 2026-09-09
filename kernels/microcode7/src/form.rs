@@ -207,6 +207,8 @@ pub enum Prim {
     /// equal without being the same.
     Selfsame,
     Unlike,
+    Contains,
+    Absent,
     /// The bits of a value, sixty-four of them, sign and all: both set,
     /// either set, one alone set, all turned over, and moved up or down.
     /// Two pieces of text take their bits letter by letter instead.
@@ -516,6 +518,7 @@ pub struct Routine {
     /// How many arguments must be given; the rest carry a value of their
     /// own, written by the body's first forms.
     pub least: usize,
+    pub gather_from: Option<usize>,
     pub ident: String,
     pub formals: Vec<String>,
     /// The class each parameter is written to take, where one was

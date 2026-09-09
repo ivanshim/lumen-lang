@@ -1378,7 +1378,7 @@ impl<'a> Engine<'a> {
     pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
         // Where a language can read what a call was given, a call may
         // give more than the routine names; the rest is kept aside.
-        let most = if self.lang.spare_args { usize::MAX } else { program.formals.len() };
+        let most = if self.lang.spare_args || program.rest_at.is_some() { usize::MAX } else { program.formals.len() };
         if n > most || n < program.least {
             let wanted = program.formals.len();
             return Err(format!("Function {} expects {} arguments, got {}", program.ident, wanted, n).into());
@@ -1423,6 +1423,11 @@ impl<'a> Engine<'a> {
             });
         }
         frame.extend(self.data.drain(at..));
+        if let Some(start) = program.rest_at {
+            let tail = if frame.len() > start { frame.split_off(start) } else { Vec::new() };
+            frame.resize(start, Value::Blank);
+            frame.push(Value::array(tail));
+        }
         // What the routine does not name stays aside rather than
         // spilling into the slots its own names sit in.
         frame.truncate(program.formals.len());
@@ -2771,6 +2776,85 @@ impl<'a> Engine<'a> {
         number_spelled(s).map(|n| self.at_real_width(n))
     }
 
+    fn rem_repr(&self, value: &Value) -> String {
+        match value {
+            Value::Text(s) => {
+                let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
+                let mut out = String::from(quote);
+                for c in s.chars() {
+                    match c {
+                        '\n' => out.push_str("\\n"),
+                        '\r' => out.push_str("\\r"),
+                        '\t' => out.push_str("\\t"),
+                        '\\' => out.push_str("\\\\"),
+                        c if c == quote => { out.push('\\'); out.push(c); }
+                        c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
+                        c => out.push(c),
+                    }
+                }
+                out.push(quote);
+                out
+            }
+            Value::Array(items) => format!("[{}]", items.iter().map(|v| self.rem_repr(v)).collect::<Vec<_>>().join(", ")),
+            _ => value.display(&self.wording()),
+        }
+    }
+
+    /// Remainder over text fills one mark at a time. A list supplies
+    /// the marks in order; every other value supplies just one.
+    fn rem_text(&self, template: &str, arguments: &Value) -> Res<String> {
+        let bad = || self.lang.format_unsupported.clone().unwrap_or_default();
+        let wrong = || self.lang.format_arguments.clone().unwrap_or_default();
+        let values: Vec<&Value> = match arguments {
+            Value::Array(items) => items.iter().collect(),
+            one => vec![one],
+        };
+        let mut used = 0;
+        let mut out = String::new();
+        let mut chars = template.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c != '%' { out.push(c); continue; }
+            if chars.peek() == Some(&'%') { chars.next(); out.push('%'); continue; }
+            let mut precision = None;
+            if chars.peek() == Some(&'.') {
+                chars.next();
+                let mut digits = String::new();
+                while chars.peek().map_or(false, char::is_ascii_digit) { digits.push(chars.next().unwrap()); }
+                precision = Some(digits.parse::<usize>().map_err(|_| bad())?);
+            }
+            let kind = chars.next().ok_or_else(bad)?;
+            if precision.is_some() && kind != 'f' { return Err(bad()); }
+            let value = values.get(used).copied().ok_or_else(wrong)?;
+            used += 1;
+            let filled = match kind {
+                's' => match value { Value::Array(_) => self.rem_repr(value), _ => value.display(&self.wording()) },
+                'r' => self.rem_repr(value),
+                'd' | 'x' => {
+                    if !matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Real(_)) { return Err(wrong()); }
+                    if kind == 'x' && matches!(value, Value::Real(_)) { return Err(wrong()); }
+                    let whole = value.as_big().map_err(|_| wrong())?;
+                    if kind == 'x' { whole.to_str_radix(16) } else { whole.to_string() }
+                }
+                'f' => {
+                    let number = match value {
+                        Value::Small(n) => *n as f64,
+                        Value::Huge(n) => n.to_f64().ok_or_else(wrong)?,
+                        Value::Flag(b) => u8::from(*b) as f64,
+                        Value::Real(r) => crate::value::as_binary(&r.p, &r.q),
+                        _ => return Err(wrong()),
+                    };
+                    let places = precision.unwrap_or(6);
+                    if places > 10000 { return Err(bad()); }
+                    format!("{:.*}", places, number)
+                }
+                _ => return Err(bad()),
+            };
+            out.push_str(&filled);
+        }
+        if used != values.len() { return Err(wrong()); }
+        Ok(out)
+    }
+
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
@@ -2853,6 +2937,30 @@ impl<'a> Engine<'a> {
             }
             Action::Eq => Value::Flag(a.equals(b)),
             Action::Ne => Value::Flag(!a.equals(b)),
+            Action::Contains | Action::Lacks => {
+                let found = match b {
+                    Value::Array(items) => items.iter().any(|v| a.equals(v)),
+                    Value::Map(items) => items.iter().any(|(key, _)| a.equals(key)),
+                    Value::Text(haystack) => match a {
+                        Value::Text(needle) => haystack.contains(needle.as_ref()),
+                        _ => return Err(self.lang.membership_unsupported.clone().unwrap_or_default()),
+                    },
+                    _ => return Err(self.lang.membership_unsupported.clone().unwrap_or_default()),
+                };
+                Value::Flag(found != matches!(op, Action::Lacks))
+            }
+            Action::Mod if self.lang.rem_formats_text && matches!(a, Value::Text(_)) => {
+                let Value::Text(template) = a else { unreachable!() };
+                Value::text(&self.rem_text(template, b)?)
+            }
+            Action::Same | Action::Unsame if !self.lang.identity_not.is_empty() => {
+                let same = match (a, b) {
+                    (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y),
+                    (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
+                    _ => a.identical(b),
+                };
+                Value::Flag(same != matches!(op, Action::Unsame))
+            }
             Action::Same => Value::Flag(a.identical(b)),
             Action::Unsame => Value::Flag(!a.identical(b)),
             Action::Join => joined(),

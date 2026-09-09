@@ -295,7 +295,7 @@ impl<'a> Machine<'a> {
             plain_keys: table.flag("ext.op.index.plain_keys"),
             // A language with a word for being the very same means
             // something looser by being equal.
-            loose_equals: table.single("ext.op.identical").is_some(),
+            loose_equals: table.has_any("ext.op.identical") && !table.has_any("ext.op.identical.negated"),
         }
     }
 
@@ -986,6 +986,76 @@ impl<'a> Machine<'a> {
     /// having been brought to the width and the other not.
     fn number_said(&self, v: &Value) -> Option<Value> {
         number_spelled_in(v).map(|n| self.at_width(n))
+    }
+
+    fn quoted_remainder(&self, item: &Value) -> String {
+        if let Value::Vector(elements) = item {
+            let parts: Vec<_> = elements.iter().map(|e| self.quoted_remainder(e)).collect();
+            return format!("[{}]", parts.join(", "));
+        }
+        let Value::Text(text) = item else { return item.render(self.wording()); };
+        let delimiter = if !text.contains('"') && text.contains('\'') { '"' } else { '\'' };
+        let middle: String = text.chars().map(|letter| match letter {
+            '\\' => "\\\\".to_string(),
+            '\t' => "\\t".to_string(),
+            '\n' => "\\n".to_string(),
+            '\r' => "\\r".to_string(),
+            c if c == delimiter => format!("\\{}", c),
+            c if c.is_control() => format!("\\x{:02x}", c as u32),
+            c => c.to_string(),
+        }).collect();
+        format!("{}{}{}", delimiter, middle, delimiter)
+    }
+
+    fn text_remainder(&self, pattern: &str, rhs: &Value) -> Result<String, String> {
+        let unsupported = self.table.single("ext.op.rem.format.unsupported").unwrap_or_default();
+        let mismatch = self.table.single("ext.op.rem.format.arguments").unwrap_or_default();
+        let supplied = match rhs { Value::Vector(list) => list.as_slice(), _ => std::slice::from_ref(rhs) };
+        let mut arguments = supplied.iter();
+        let letters: Vec<char> = pattern.chars().collect();
+        let mut at = 0;
+        let mut result = String::new();
+        while at < letters.len() {
+            let letter = letters[at];
+            at += 1;
+            if letter != '%' { result.push(letter); continue; }
+            if letters.get(at) == Some(&'%') { result.push('%'); at += 1; continue; }
+            let mut places = 6usize;
+            let specified = letters.get(at) == Some(&'.');
+            if specified {
+                at += 1;
+                let start = at;
+                while letters.get(at).map_or(false, char::is_ascii_digit) { at += 1; }
+                places = letters[start..at].iter().collect::<String>().parse().map_err(|_| unsupported.to_string())?;
+                if places > 10000 { return Err(unsupported.to_string()); }
+            }
+            let code = *letters.get(at).ok_or_else(|| unsupported.to_string())?;
+            at += 1;
+            if specified && code != 'f' { return Err(unsupported.to_string()); }
+            let worth = arguments.next().ok_or_else(|| mismatch.to_string())?;
+            match code {
+                'r' => result.push_str(&self.quoted_remainder(worth)),
+                's' => {
+                    let text = if matches!(worth, Value::Vector(_)) { self.quoted_remainder(worth) } else { worth.render(self.wording()) };
+                    result.push_str(&text);
+                }
+                'x' | 'd' => {
+                    let permitted = matches!(worth, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) || (code == 'd' && matches!(worth, Value::Frac(n) if n.places.is_some()));
+                    if !permitted { return Err(mismatch.to_string()); }
+                    let n = worth.as_big().map_err(|_| mismatch.to_string())?;
+                    result.push_str(&n.to_str_radix(if code == 'x' { 16 } else { 10 }));
+                }
+                'f' => {
+                    if !matches!(worth, Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Flag(_)) { return Err(mismatch.to_string()); }
+                    let ratio = math::ratio_of(worth).ok_or_else(|| mismatch.to_string())?;
+                    let binary = crate::data::nearest_binary(&ratio.above, &ratio.beneath);
+                    result.push_str(&format!("{:.1$}", binary, places));
+                }
+                _ => return Err(unsupported.to_string()),
+            }
+        }
+        if arguments.next().is_some() { return Err(mismatch.to_string()); }
+        Ok(result)
     }
 
     fn wording(&self) -> Names<'a> {
@@ -2522,11 +2592,22 @@ impl<'a> Machine<'a> {
     }
 
     fn env_for(&mut self, program: &Rc<Routine>, env: Rc<Env>, args: &[Form], caller: &Rc<Env>) -> Res<Rc<Env>> {
-        let most = if self.reads_handed { usize::MAX } else { program.formals.len() };
+        let most = if self.reads_handed || program.gather_from.is_some() { usize::MAX } else { program.formals.len() };
         if args.len() > most || args.len() < program.least {
             self.value_list(args, caller)?;
             let wanted = program.formals.len();
             return Err(format!("Function {} expects {} arguments, got {}", program.ident, wanted, args.len()).into());
+        }
+        if let Some(start) = program.gather_from {
+            let mut values = self.value_list(args, caller)?;
+            let tail = values.split_off(start.min(values.len()));
+            values.resize(start, Value::Unset);
+            values.push(Value::Vector(Rc::new(tail)));
+            let frame = self.frame_for(program, &env);
+            for (slot, value) in program.formal_slots.iter().zip(values) {
+                frame.cells.borrow_mut()[*slot] = value;
+            }
+            return Ok(frame);
         }
         // Where what a call hands over can be read back, every argument
         // is worked out, even one the routine gives no name to.
@@ -2742,13 +2823,19 @@ impl<'a> Machine<'a> {
     }
 
     pub fn invoke(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
-        let most = if self.reads_handed { usize::MAX } else { program.formals.len() };
+        let most = if self.reads_handed || program.gather_from.is_some() { usize::MAX } else { program.formals.len() };
         if args.len() > most || args.len() < program.least {
             let wanted = program.formals.len();
             return Err(format!("Function {} expects {} arguments, got {}", program.ident, wanted, args.len()).into());
         }
         if self.reads_handed {
             self.pending = args.clone();
+        }
+        let mut args = args;
+        if let Some(first) = program.gather_from {
+            let rest = args.split_off(first.min(args.len()));
+            args.resize(first, Value::Unset);
+            args.push(Value::Vector(Rc::new(rest)));
         }
         let frame = if program.frameless {
             env
@@ -3900,6 +3987,27 @@ impl<'a> Machine<'a> {
             }
             Prim::Eq => Value::Flag(v[0].equals(&v[1])),
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
+            Prim::Contains | Prim::Absent => {
+                let present = match (&v[0], &v[1]) {
+                    (needle, Value::Vector(hay)) => hay.iter().any(|item| needle.equals(item)),
+                    (key, Value::Dict(entries)) => entries.iter().any(|(k, _)| key.equals(k)),
+                    (Value::Text(part), Value::Text(text)) => text.contains(part.as_ref()),
+                    _ => return Err(self.table.single("ext.op.in.unsupported").unwrap_or_default().to_string()),
+                };
+                Value::Flag(if op == Prim::Absent { !present } else { present })
+            }
+            Prim::Mod if self.table.flag("ext.op.rem.formats_text") && matches!(v[0], Value::Text(_)) => {
+                let Value::Text(pattern) = &v[0] else { unreachable!() };
+                Value::text(&self.text_remainder(pattern, &v[1])?)
+            }
+            Prim::Selfsame | Prim::Unlike if self.table.has_any("ext.op.identical.negated") => {
+                let identical = match (&v[0], &v[1]) {
+                    (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
+                    (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
+                    _ => v[0].selfsame(&v[1]),
+                };
+                Value::Flag(if op == Prim::Unlike { !identical } else { identical })
+            }
             Prim::Selfsame => Value::Flag(v[0].selfsame(&v[1])),
             Prim::Unlike => Value::Flag(!v[0].selfsame(&v[1])),
             Prim::Join => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),
