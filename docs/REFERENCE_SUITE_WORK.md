@@ -155,30 +155,38 @@ which files a piece of work owns and which it must not touch.
 
 ## What is left, and why
 
-At the time of writing 392 of the 397 runnable PHP tests pass on both kernels.
-What remains is listed here so that nobody spends a day rediscovering it. Each
-was checked by running the test's own body through `/usr/bin/php` from this
-directory, not reasoned about from the expectations.
+Of the 422 tests, 397 pass on both kernels, none differ, two stop with an
+error, and 23 are passed over. Each of the two, and every one of the 23, was
+checked by running the test's own body — or its own skip clause — through
+`/usr/bin/php` from this directory, rather than reasoned about from what the
+test says it wants.
 
-- **Two are asking for the reference implementation's own directory layout.**
-  One wants a file under `sapi/` that this repository does not carry; the other
-  resolves a session path against the working directory, which lands where the
-  reference's tree puts it and not where ours does. Run from here, the
-  reference fails both in the same way we do.
-- **One shells out to the binary under test** with switches for an extension
-  system this implementation does not have, and searches the output for the
-  words that system would say. Matching it would mean writing a diagnostic for
-  machinery that is not there.
-- **One wants the run to stop when it has taken more room than it was
-  allowed**, which needs the run to count the room it takes.
-- **One wants text converted between two ways of writing Japanese** on its way
-  in from a request, which needs that body of work in the library.
+**The two that stop.** Both want a running web server of their own. One
+requires a support file from the reference implementation's tree that this
+repository does not carry; the other builds a command line and asks the binary
+under test to say something about an extension system this implementation does
+not have. Both need the run to be able to start a process, open a connection,
+and speak to it — that is the work, and the tests are its measure rather than
+its point.
 
-A note on the last two, and on any test that seems to want a whole extension:
-the suite has a `--EXTENSIONS--` section naming what a test needs, and the
-reference's own runner passes such a test over where the extension is absent.
-Reading that section here would turn one honest failure into a skip — and would
-also pass over a test that names an extension it never uses and that we
-presently pass. That trades one true pass for one hidden failure and moves
-nothing forward, which is why it has not been done. The report says a test
-fails because it fails.
+**The 23 passed over are passed over honestly**, and none is reclaimable by
+writing code:
+
+- ten are for a machine whose whole numbers are half this width;
+- eight are for another operating system;
+- two want a second binary, built to answer a web server rather than a
+  terminal, which is not built here;
+- three want a language and country setting that this machine does not carry —
+  it has only the plain one.
+
+Every one of those verdicts is reached by running the test's own skip clause
+under our own binary, and the reference reaches the same verdict here, word for
+word. A skip is the test declining to run, not the implementation declining to
+try.
+
+**A note on the section naming what a test needs.** The suite has one, and the
+reference's own runner passes a test over where what it names is absent.
+Reading it here would turn an honest failure into a test passed over, and would
+also pass over a test we presently pass that names something it never uses.
+That trades one true pass for one hidden failure and moves nothing forward,
+which is why it is not read. The report says a test fails because it fails.
