@@ -530,6 +530,8 @@ only. The extension labels so far, all from PHP:
   the statement removes a lone name. Other targets stop in
   `ext.stmt.delete.unsupported` words; the existing
   unset operation does not give every such place its required meaning.
+  A removed name is unbound in the cells a lambda keeps too; a later
+  write fills that same cell again.
 - `ext.stmt.yield` and `ext.stmt.yield.from`: a value given by a suspended
   routine, or values given from another. The value, including a starred
   row, is read whole. Calling a routine containing it stops with

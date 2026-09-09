@@ -1410,10 +1410,16 @@ impl<'a> Machine<'a> {
         let f = ascend(frame, slot.up);
         let v = f.cells.borrow()[slot.at].clone();
         if let Value::Shared(cell) = v {
-            return Ok(cell.borrow().clone());
+            let held = cell.borrow().clone();
+            return if self.table.has_any("ext.stmt.delete") && matches!(held, Value::Unset) {
+                Err(format!("Undefined variable: {}", slot.ident))
+            } else { Ok(held) };
         }
         if !matches!(v, Value::Unset) {
             return Ok(v);
+        }
+        if self.table.has_any("ext.stmt.delete") && slot.fallback.is_some() {
+            return Err(format!("Undefined variable: {}", slot.ident));
         }
         if let Some(g) = slot.fallback {
             let v = self.outermost.cells.borrow()[g].clone();
@@ -1469,7 +1475,7 @@ impl<'a> Machine<'a> {
             return cell;
         }
         let cell = Rc::new(RefCell::new(match held {
-            Value::Unset => Value::Nil,
+            Value::Unset if !self.table.flag("ext.stmt.function.short.bare") => Value::Nil,
             other => other,
         }));
         f.cells.borrow_mut()[slot.at] = Value::Shared(cell.clone());
@@ -1771,7 +1777,11 @@ impl<'a> Machine<'a> {
             }
             Form::Forget(slot) => {
                 let f = ascend(frame, slot.up);
-                f.cells.borrow_mut()[slot.at] = Value::Unset;
+                let mut cells = f.cells.borrow_mut();
+                match &cells[slot.at] {
+                    Value::Shared(cell) if self.table.has_any("ext.stmt.delete") => *cell.borrow_mut() = Value::Unset,
+                    _ => cells[slot.at] = Value::Unset,
+                }
                 Ok(Value::Nil)
             }
             Form::ShareWithin(under, places) => {

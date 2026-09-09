@@ -1154,14 +1154,25 @@ impl<'a> Engine<'a> {
     fn load_cell(&mut self, slot: &Cell, frame: &mut [Value]) -> Res<Value> {
         for &s in &slot.near {
             if let Value::Bond(shared) = &frame[s] {
-                return Ok(shared.borrow().clone());
+                let value = shared.borrow().clone();
+                if !self.lang.delete_words.is_empty() && matches!(value, Value::Blank) {
+                    return Err(format!("Undefined variable: {}", slot.ident));
+                }
+                return Ok(value);
+            }
+            if !self.lang.delete_words.is_empty() && matches!(frame[s], Value::Blank) {
+                return Err(format!("Undefined variable: {}", slot.ident));
             }
             if !matches!(frame[s], Value::Blank) {
                 return Ok(if slot.moving { std::mem::replace(&mut frame[s], Value::Gap) } else { frame[s].clone() });
             }
         }
         if let Value::Bond(shared) = &self.world[slot.far] {
-            return Ok(shared.borrow().clone());
+            let value = shared.borrow().clone();
+            if !self.lang.delete_words.is_empty() && matches!(value, Value::Blank) {
+                return Err(format!("Undefined variable: {}", slot.ident));
+            }
+            return Ok(value);
         }
         // Where a language makes a place on writing into it, a name
         // that holds nothing holds an empty array as far as the write
@@ -1203,7 +1214,7 @@ impl<'a> Engine<'a> {
         // so where nothing has been written to it anywhere the cell is
         // made in the unit's own place and not the outermost one.
         if let Some(&s) = slot.near.first() {
-            let shared = Rc::new(RefCell::new(Value::Null));
+            let shared = Rc::new(RefCell::new(if self.lang.short_bare { Value::Blank } else { Value::Null }));
             frame[s] = Value::Bond(shared.clone());
             return Ok(shared);
         }
@@ -1213,7 +1224,7 @@ impl<'a> Engine<'a> {
         // A name nothing was ever written to becomes a shared cell
         // holding nothing, as a write to it would have made it.
         let held = match std::mem::replace(&mut self.world[slot.far], Value::Null) {
-            Value::Blank => Value::Null,
+            Value::Blank if !self.lang.short_bare => Value::Null,
             other => other,
         };
         let shared = Rc::new(RefCell::new(held));
@@ -1906,12 +1917,17 @@ impl<'a> Engine<'a> {
                 }
                 Instr::Nothing => {}
                 Instr::Forget(slot) => {
-                    for &s in &slot.near {
-                        frame[s] = Value::Blank;
-                    }
-                    if slot.near.is_empty() {
-                        self.world[slot.far] = Value::Blank;
-                    }
+                    let clear = |value: &mut Value| {
+                        if !self.lang.delete_words.is_empty() {
+                            if let Value::Bond(cell) = value {
+                                *cell.borrow_mut() = Value::Blank;
+                                return;
+                            }
+                        }
+                        *value = Value::Blank;
+                    };
+                    for &s in &slot.near { clear(&mut frame[s]); }
+                    if slot.near.is_empty() { clear(&mut self.world[slot.far]); }
                 }
                 Instr::Ready(slot) => {
                     self.world.resize(self.registry.idents.len(), Value::Blank);
