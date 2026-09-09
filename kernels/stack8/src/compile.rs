@@ -940,7 +940,7 @@ impl<'a> Compiler<'a> {
             let from = self.mark();
             let close = self.lang.class_bases_close.first().cloned().ok_or("Class bases need a closing mark")?;
             while !self.at_symbol(&close) {
-                if self.look().shape == Shape::Instr && Lang::spells(&lang.assign_words, &self.look_ahead(1).lexeme) {
+                if self.look().shape == Shape::Instr && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme) {
                     self.take(); self.take();
                 }
                 self.expr(0)?;
