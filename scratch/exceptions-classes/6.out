@@ -4,3 +4,6 @@ end
 TypeError
 AttributeError
 AssertionError
+('new',) new ValueError('new')
+(7,) 7 KeyError(7)
+('message',) message AssertionError('message') None

@@ -281,6 +281,15 @@ impl<'a> Machine<'a> {
         Value::Thing(Rc::new(Thing { of: kind, turn: self.made, holds: RefCell::new(holds) }))
     }
 
+    fn fault_methods(kind: &Blueprint) -> bool {
+        let mut current = Some(kind);
+        while let Some(class) = current {
+            if !class.methods.is_empty() { return true; }
+            current = class.under.as_deref();
+        }
+        false
+    }
+
     fn raise_class(&mut self, value: Value, frame: &Rc<Env>) -> Res {
         match value {
             Value::Blueprint(kind) if self.is_fault_kind(&kind) => {
@@ -1182,7 +1191,8 @@ impl<'a> Machine<'a> {
             for kind in self.table.strings("ext.builtin.exceptions") {
                 if told.starts_with(&format!("{kind}:")) { return Some(kind.clone()); }
             }
-            let label = if told.starts_with("Undefined variable") { Some("ext.system.fault.class.name") }
+            let label = if self.table.single("ext.stmt.catch.invalid") == Some(told) { Some("ext.system.fault.class.kind") }
+                else if told.starts_with("Undefined variable") { Some("ext.system.fault.class.name") }
                 else if told.starts_with("Undefined array key") { Some("ext.system.fault.class.key") }
                 else if told.contains("index") && told.contains("out of bounds") { Some("ext.system.fault.class.index") }
                 else if told.starts_with("Undefined property") || told.starts_with("Cannot read property") { Some("ext.system.fault.class.attribute") }
@@ -1243,7 +1253,8 @@ impl<'a> Machine<'a> {
         let prefix = format!("{kind}: ");
         if let Some(words) = raw.strip_prefix(&prefix) { return words.to_string(); }
         for (class_key, words_key) in [("ext.system.fault.class.division", "ext.system.fault.division"),
-            ("ext.system.fault.class.index", "ext.system.fault.index")] {
+            ("ext.system.fault.class.index", "ext.system.fault.index"),
+            ("ext.system.fault.class.kind", "ext.system.fault.kind")] {
             if self.table.single(class_key) == Some(kind) {
                 return self.table.single(words_key).unwrap_or(raw).to_string();
             }
@@ -1274,7 +1285,7 @@ impl<'a> Machine<'a> {
             return Some(self.make_fault(kind, vec![key], Value::Nil));
         }
         let named = self.class_of_fault(told)?;
-        let Some(Value::Blueprint(of)) = self.class_bound(&named) else { return None };
+        let Some(Value::Blueprint(of)) = self.fault_kinds.get(&named).cloned().or_else(|| self.class_bound(&named)) else { return None };
         if self.is_fault_kind(&of) {
             let words = self.fault_words(told, &named);
             let values = if words.is_empty() || words == format!("{named}:") { vec![] } else { vec![Value::text(&words)] };
@@ -1545,7 +1556,7 @@ impl<'a> Machine<'a> {
         let top = self.outermost.clone();
         let ran = self.value_of(body, &top);
         let ran = match ran {
-            Err(Escape::Error(words)) if self.table.has_any("ext.builtin.exceptions") && (words.starts_with('\0') || words.starts_with("Division by zero") || words.starts_with("Undefined variable") || words.starts_with("Undefined property") || words.starts_with("Cannot read property") || words.starts_with("Array index")) => {
+            Err(Escape::Error(words)) if self.table.has_any("ext.builtin.exceptions") && (words.starts_with('\0') || words.starts_with("Division by zero") || words.starts_with("Undefined property") || words.starts_with("Cannot read property") || words.starts_with("Array index")) => {
                 self.as_raised(&words).map_or(Err(Escape::Error(words)), |value| Err(Escape::Thrown(value)))
             }
             result => result,
@@ -2146,6 +2157,7 @@ impl<'a> Machine<'a> {
                                                 return Err(self.table.single("ext.stmt.catch.invalid").unwrap_or("A catch needs a class").to_string().into());
                                             }
                                             if let Value::Blueprint(kind) = class {
+                                                if self.table.has_any("ext.builtin.exceptions") && !self.is_fault_kind(&kind) { return Err(self.table.single("ext.stmt.catch.invalid").unwrap_or_default().to_string().into()); }
                                                 if let Value::Thing(value) = &raised {
                                                     fits |= value.of.goes_by(&kind.name, self.classes_either_way);
                                                 }
@@ -2172,6 +2184,12 @@ impl<'a> Machine<'a> {
                         chosen
                     }
                     escape => escape,
+                };
+                let ending = match ending {
+                    Err(Escape::Error(words)) if self.table.has_any("ext.builtin.exceptions") => {
+                        self.as_raised(&words).map_or(Err(Escape::Error(words)), |value| Err(Escape::Thrown(value)))
+                    }
+                    other => other,
                 };
                 if let Some(limb) = last {
                     if let Err(Escape::Thrown(value)) = &ending { self.holding_fault.push(value.clone()); }
@@ -2380,6 +2398,11 @@ impl<'a> Machine<'a> {
                     let raised = if self.table.has_any("ext.builtin.exceptions") { self.raise_class(raised, frame)? } else { raised };
                     if let Some(cause) = values.next() {
                         let cause = self.raise_class(cause, frame)?;
+                        match &cause {
+                            Value::Nil => {},
+                            Value::Thing(object) if self.is_fault_kind(&object.of) => {},
+                            _ => return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into()),
+                        }
                         if let (Value::Thing(thing), Some(key)) = (&raised, self.table.single("ext.builtin.exceptions.cause")) {
                             let mut holds = thing.holds.borrow_mut();
                             match holds.iter_mut().find(|(k, _)| k == key) {
@@ -2424,9 +2447,8 @@ impl<'a> Machine<'a> {
                     let Value::Blueprint(class) = stands else {
                         return Err("Only a class can be made into a thing".to_string().into());
                     };
-                    let maker_name = self.table.single("ext.stmt.class.constructor").unwrap_or("");
                     if self.is_fault_kind(&class) {
-                        if class.program(maker_name).is_some() { return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into()); }
+                        if Self::fault_methods(&class) { return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into()); }
                         return Ok(self.make_fault(class, values, Value::Nil));
                     }
                     self.made += 1;
@@ -2799,7 +2821,7 @@ impl<'a> Machine<'a> {
 
     fn make_instance(&mut self, class: Rc<Blueprint>, args: Vec<Value>) -> Res<Value> {
         if self.is_fault_kind(&class) {
-            if self.table.single("ext.stmt.class.constructor").and_then(|word| class.program(word)).is_some() {
+            if Self::fault_methods(&class) {
                 return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into());
             }
             return Ok(self.make_fault(class, args, Value::Nil));
@@ -3619,19 +3641,6 @@ impl<'a> Machine<'a> {
         let n = |k: usize| -> Result<(), String> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
         };
-        if self.table.has_any("ext.builtin.exceptions") && v.len() == 2
-            && matches!(op, Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power) {
-            let numbers = v.iter().all(|x| matches!(x, Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Flag(_)));
-            let special = match (op, &v[0], &v[1]) {
-                (Prim::Plus, Value::Text(_), Value::Text(_)) => true,
-                (Prim::Times, Value::Text(_), Value::Small(_)) | (Prim::Times, Value::Small(_), Value::Text(_)) => true,
-                (Prim::Mod, Value::Text(_), _) => self.table.flag("ext.op.rem.formats_text"),
-                _ => false,
-            };
-            if !numbers && !special {
-                return Err(format!("\0{}: {}", self.table.single("ext.system.fault.class.kind").unwrap_or_default(), self.table.single("ext.system.fault.kind").unwrap_or_default()));
-            }
-        }
         Ok(match op {
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
@@ -3838,7 +3847,7 @@ impl<'a> Machine<'a> {
                     Value::Blueprint(c) => (Some(c), false),
                     _ => (None, false),
                 };
-                Value::Flag((matches!(&v[0], Value::Blueprint(_)) && self.table.single("ext.builtin.class.name") == Some(word.as_str())) || own || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
+                Value::Flag((self.table.has_any("ext.builtin.exceptions") && matches!(&v[0], Value::Blueprint(_) | Value::Thing(_))) || own || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
             }
             Prim::Of => {
                 n(2)?;
@@ -3904,6 +3913,18 @@ impl<'a> Machine<'a> {
                 }
                 match &v[0] {
                     Value::Thing(thing) => {
+                        if self.is_fault_kind(&thing.of) && self.table.single("ext.builtin.exceptions.args") == Some(called.as_str()) {
+                            let contents = match &v[2] {
+                                Value::Arguments(r) | Value::Vector(r) => Value::Arguments(r.clone()),
+                                _ => return Err(self.argument_fault("ext.builtin.exceptions.unready", None)),
+                            };
+                            let mut places = thing.holds.borrow_mut();
+                            for word in [called.as_str(), "\0raised-values"] {
+                                if let Some(entry) = places.iter_mut().find(|(k, _)| k == word) { entry.1 = contents.clone(); }
+                                else { places.push((word.into(), contents.clone())); }
+                            }
+                            return Ok(Value::Nil);
+                        }
                         let mut holds = thing.holds.borrow_mut();
                         match self.member_place(&holds, &called) {
                             Some(at) => holds[at].1 = v[2].clone(),
@@ -5288,7 +5309,11 @@ impl<'a> Machine<'a> {
             }
         }
         if let Value::Arguments(row) = target {
-            return row.get(as_index(at)?).cloned().ok_or_else(|| self.table.single("ext.system.fault.index").unwrap_or_default().to_string());
+            let place = if let Value::Small(n) = at {
+                let n = if *n < 0 { row.len() as i128 + i128::from(*n) } else { i128::from(*n) };
+                usize::try_from(n).ok()
+            } else { as_index(at).ok() };
+            return place.and_then(|p| row.get(p)).cloned().ok_or_else(|| format!("\0{}: {}", self.table.single("ext.system.fault.class.index").unwrap_or_default(), self.table.single("ext.system.fault.index").unwrap_or_default()));
         }
         if let Value::Progression(walk) = target {
             match at {

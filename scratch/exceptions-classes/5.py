@@ -25,3 +25,15 @@ except Exception:
     print("wrong")
 else:
     print("else")
+try:
+    try:
+        pass
+    except Exception:
+        print("wrong")
+    else:
+        1 / 0
+    finally:
+        print("else finally")
+        raise
+except ZeroDivisionError:
+    print("else fault")

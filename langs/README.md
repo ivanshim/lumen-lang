@@ -1579,7 +1579,8 @@ only. The extension labels so far, all from PHP:
   argument to the latter stands when the walk ends; without one the
   class named by `ext.system.fault.class.stop` is raised. Other walkers
   heed `ext.builtin.exceptions.unready`, as do exception constructors
-  whose own initializer replaces the native one.
+  with methods of their own, whose initialization and rendering require
+  the fuller account of special methods.
 - `ext.builtin.repr`: a builtin showing text within quotes and exceptions
   as their class followed by their arguments within parentheses.
 - `ext.system.fault.class.index`, `.key`, `.name`, `.attribute` and `.stop`:

@@ -258,6 +258,7 @@ impl Value {
 
     pub fn is_true(&self) -> bool {
         match self {
+            Value::Arguments(row) => !row.is_empty(),
             Value::Progression(walk) => walk.count() != BigInt::zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,

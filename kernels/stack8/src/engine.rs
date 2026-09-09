@@ -241,6 +241,10 @@ impl<'a> Engine<'a> {
         !self.lang.exceptions.is_empty() && class.all_fields().iter().any(|(n, _)| n == "\0exception")
     }
 
+    fn exception_has_methods(class: &Class) -> bool {
+        !class.methods.is_empty() || class.base.as_ref().map_or(false, |parent| Self::exception_has_methods(parent))
+    }
+
     fn prepare_raised(&mut self, value: Value) -> Flow<Value> {
         if let Value::Class(class) = value {
             if self.exception_class(&class) {
@@ -883,7 +887,8 @@ impl<'a> Engine<'a> {
         let told = told.trim_start_matches('\0');
         if !self.lang.exceptions.is_empty() {
             if let Some(name) = self.lang.exceptions.iter().find(|n| told.starts_with(&format!("{}:", n))) { return Some(name.clone()); }
-            let kind = if told.starts_with("Undefined variable") { &self.lang.fault_name }
+            let kind = if self.lang.catch_invalid.as_deref() == Some(told) { &self.lang.fault_kind }
+                else if told.starts_with("Undefined variable") { &self.lang.fault_name }
                 else if told.starts_with("Undefined array key") { &self.lang.fault_key }
                 else if told.contains("index") && told.contains("out of bounds") { &self.lang.fault_index }
                 else if told.starts_with("Undefined property") || told.starts_with("Cannot read property") { &self.lang.fault_attribute }
@@ -940,6 +945,7 @@ impl<'a> Engine<'a> {
         if let Some(rest) = told.strip_prefix(&format!("{class}: ")) { return rest.to_string(); }
         if self.lang.fault_division.as_deref() == Some(class) { return self.lang.division_words.clone().unwrap_or_else(|| told.into()); }
         if self.lang.fault_index.as_deref() == Some(class) { return self.lang.index_words.clone().unwrap_or_else(|| told.into()); }
+        if self.lang.fault_kind.as_deref() == Some(class) { return self.lang.kind_words.clone().unwrap_or_else(|| told.into()); }
         if self.lang.fault_name.as_deref() == Some(class) && self.lang.name_words.len() == 2 {
             let name = told.trim_start_matches("Undefined variable").trim_start_matches(':').trim().trim_matches('\'');
             return format!("{}{}{}", self.lang.name_words[0], name, self.lang.name_words[1]);
@@ -965,7 +971,7 @@ impl<'a> Engine<'a> {
             return Some(self.exception_instance(class, vec![Value::of_big(number)], Value::Null));
         }
         let named = self.class_for(told)?;
-        let Some(Value::Class(class)) = self.class_named(&named).cloned() else { return None };
+        let Some(Value::Class(class)) = self.native_exceptions.get(&named).or_else(|| self.class_named(&named)).cloned() else { return None };
         if self.exception_class(&class) {
             let message = self.exception_words(told, &named);
             let args = if message == format!("{}:", named) || message.is_empty() { Vec::new() } else { vec![Value::text(&message)] };
@@ -1741,7 +1747,7 @@ impl<'a> Engine<'a> {
             self.hushed.set(quiet);
         }
         match outcome {
-            Err(Fault::Note(told)) if !self.lang.exceptions.is_empty() && (told.starts_with('\0') || told.starts_with("Division by zero") || told.starts_with("Undefined variable") || told.starts_with("Undefined property") || told.starts_with("Cannot read property") || told.starts_with("Array index")) => {
+            Err(Fault::Note(told)) if !self.lang.exceptions.is_empty() && (told.starts_with('\0') || told.starts_with("Division by zero") || told.starts_with("Undefined property") || told.starts_with("Cannot read property") || told.starts_with("Array index")) => {
                 match self.as_fault(&told) { Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(told)) }
             }
             other => other,
@@ -1786,6 +1792,7 @@ impl<'a> Engine<'a> {
                             match kind {
                                 Value::Blank => {},
                                 Value::Class(class) => {
+                                    if !self.lang.exceptions.is_empty() && !self.exception_class(&class) { return Err(self.lang.catch_invalid.clone().unwrap_or_default().into()); }
                                     if let Value::Object(object) = &raised {
                                         takes |= object.class.named(&class.name, self.lang.classes_folded);
                                     }
@@ -1812,6 +1819,14 @@ impl<'a> Engine<'a> {
             }
             other => other,
         };
+        if !self.lang.exceptions.is_empty() {
+            ending = match ending {
+                Err(Fault::Note(words)) => match self.as_fault(&words) {
+                    Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(words)),
+                },
+                other => other,
+            };
+        }
         if let Some(last) = plan.last {
             if let Err(Fault::Thrown(raised)) = &ending { self.caught.push(raised.clone()); }
             let saved = self.data.len();
@@ -2652,7 +2667,7 @@ impl<'a> Engine<'a> {
                     return Err("Only a class can be made into an object".to_string().into());
                 };
                 if self.exception_class(&class) {
-                    if class.method(self.lang.constructor.as_deref().unwrap_or("")).is_some() { return Err(self.lang.exception_unready.clone().unwrap_or_default().into()); }
+                    if Self::exception_has_methods(&class) { return Err(self.lang.exception_unready.clone().unwrap_or_default().into()); }
                     let object = self.exception_instance(class, args, Value::Null);
                     self.data.push(object);
                     return Ok(());
@@ -2689,7 +2704,7 @@ impl<'a> Engine<'a> {
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
                     _ => false,
                 };
-                Value::Flag((matches!(&held, Value::Class(_)) && self.lang.class_name.as_deref() == Some(name.as_ref())) || field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                Value::Flag((!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             Action::Grab(name) => match self.drop_top()? {
                 Value::Class(c) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&c.name),
@@ -2817,6 +2832,20 @@ impl<'a> Engine<'a> {
                         Value::Null
                     }
                     Value::Object(o) => {
+                        if self.exception_class(&o.class) && self.lang.exception_args.as_deref() == Some(name.as_ref()) {
+                            let row = match &value {
+                                Value::Tuple(row) | Value::Array(row) => Value::Tuple(row.clone()),
+                                _ => return Err(self.lang.exception_unready.clone().unwrap_or_default().into()),
+                            };
+                            let mut fields = o.fields.borrow_mut();
+                            for key in [name.as_ref(), "\0arguments"] {
+                                match fields.iter_mut().find(|(n, _)| n == key) {
+                                    Some((_, value)) => *value = row.clone(), None => fields.push((key.into(), row.clone())),
+                                }
+                            }
+                            self.data.push(Value::Null);
+                            return Ok(());
+                        }
                         let taken = {
                             let fields = o.fields.borrow();
                             self.member_at(&fields, name)
@@ -3052,6 +3081,9 @@ impl<'a> Engine<'a> {
                 let value = if self.lang.exceptions.is_empty() { value } else { self.prepare_raised(value)? };
                 if let (Value::Object(object), Some(cause)) = (&value, cause) {
                     let cause = self.prepare_raised(cause)?;
+                    if !matches!(&cause, Value::Null) && !matches!(&cause, Value::Object(o) if self.exception_class(&o.class)) {
+                        return Err(self.lang.exception_unready.clone().unwrap_or_default().into());
+                    }
                     if let Some(name) = &self.lang.exception_cause {
                         let mut fields = object.fields.borrow_mut();
                         if let Some((_, held)) = fields.iter_mut().find(|(n, _)| n == name) { *held = cause; }
@@ -3408,15 +3440,6 @@ impl<'a> Engine<'a> {
     }
 
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
-        if !self.lang.exceptions.is_empty() && matches!(op, Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv | Action::Mod | Action::Power) {
-            let number = |v: &Value| matches!(v, Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Real(_) | Value::Flag(_));
-            let texts = matches!((op, a, b), (Action::Add, Value::Text(_), Value::Text(_)) | (Action::Mul, Value::Text(_), Value::Small(_)) | (Action::Mul, Value::Small(_), Value::Text(_)));
-            let format = matches!((op, a), (Action::Mod, Value::Text(_))) && self.lang.rem_formats_text;
-            if !texts && !format && !(number(a) && number(b)) {
-                return Err(format!("\0{}: {}", self.lang.fault_kind.as_deref().unwrap_or(""), self.lang.kind_words.as_deref().unwrap_or("")));
-            }
-        }
-
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
         if let Value::Bond(shared) = a {
@@ -4035,8 +4058,11 @@ impl<'a> Engine<'a> {
             }
         }
         if let Value::Tuple(items) = target {
-            let index = as_index(at)?;
-            return items.get(index).cloned().ok_or_else(|| self.lang.index_words.clone().unwrap_or_default());
+            let index = match at {
+                Value::Small(n) if *n < 0 => usize::try_from(items.len() as i128 + i128::from(*n)).ok(),
+                _ => as_index(at).ok(),
+            };
+            return index.and_then(|i| items.get(i)).cloned().ok_or_else(|| format!("\0{}: {}", self.lang.fault_index.as_deref().unwrap_or(""), self.lang.index_words.as_deref().unwrap_or("")));
         }
         if let Value::Counted(r) = target {
             if matches!(at, Value::Slice(_)) { return Err(self.lang.slice_unsupported.clone().unwrap_or_default()); }
