@@ -118,7 +118,8 @@ fn settle_brief(lang: &mut Lang, request: &[(String, String, String, bool)]) {
 fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     go_inner(lang, source, program_args, request).map_err(|e| {
         let words = &lang.call_builtin_amiss;
-        if words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]) { e }
+        if (words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]))
+            || (lang.import_missing.len() == 2 && e.starts_with(&lang.import_missing[0]) && e.ends_with(&lang.import_missing[1])) { e }
         else { format!("{}: {}", lang.banner, e) }
     })
 }
@@ -212,6 +213,9 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     };
 
     let mut machine = engine::Engine::new(lang, registry);
+    if lang.import_values {
+        machine.module_sources = request.iter().filter(|(kind, ..)| kind == "MODULE").map(|(_, name, source, _)| (name.clone(), source.clone())).collect();
+    }
     for name in &lang.module_names {
         machine.define(name, Value::text("__main__"));
     }

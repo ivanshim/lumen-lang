@@ -70,6 +70,8 @@ pub struct Cell {
 /// Kernel operations a language can spell. `Apply` names one of these.
 #[derive(Debug, Clone)]
 pub enum Action {
+    Import(String, Option<String>, bool),
+    ImportAll,
     Add,
     /// A step onward or back (`++`, `--`), which is adding or taking
     /// away one save where a language steps text along its letters.
@@ -321,6 +323,10 @@ pub enum Action {
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    InstanceOf,
+    MemberSet,
+    MemberGet,
+    ProgramNamespace,
     Sum,
     List,
     Any,

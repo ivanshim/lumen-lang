@@ -26,6 +26,8 @@ enum Passage {
 pub struct Engine<'a> {
     lang: &'a Lang,
     world: Vec<Value>,
+    pub module_sources: HashMap<String, String>,
+    modules: HashMap<String, Value>,
     /// The names of the globals, kept whole so that source read while
     /// the program runs can be assembled against the same ones.
     registry: crate::compile::Registry,
@@ -247,6 +249,8 @@ impl<'a> Engine<'a> {
             args_cell: find(&lang.args_binding),
             memo_cell: find(&lang.memo_binding),
             reading_amiss: None,
+            module_sources: HashMap::new(),
+            modules: HashMap::new(),
             registry,
         }
     }
@@ -2565,6 +2569,29 @@ impl<'a> Engine<'a> {
                 }
                 Value::Object(object)
             }
+            Action::Import(path, member, root) => {
+                let module = self.import_module(path)?;
+                if let Some(name) = member {
+                    self.import_member(&module, path, name)?
+                } else if *root {
+                    self.import_module(path.split('.').next().unwrap_or(path))?
+                } else { module }
+            }
+            Action::ImportAll => {
+                let module = self.drop_top()?;
+                if let Value::Object(object) = module {
+                    let fields = object.fields.borrow().clone();
+                    for (name, held) in fields {
+                        if name.starts_with('_') || !self.lang.begins_name(name.chars().next().unwrap_or('\0')) { continue; }
+                        let value = match held { Value::Bond(cell) => cell.borrow().clone(), other => other };
+                        if matches!(value, Value::Blank) { continue; }
+                        let at = self.registry.slot(&name);
+                        self.world.resize(self.registry.idents.len(), Value::Blank);
+                        self.world[at] = value;
+                    }
+                }
+                Value::Null
+            }
             Action::HasMember(name) => {
                 let held = self.drop_top()?;
                 let class = match &held {
@@ -4484,6 +4511,49 @@ impl<'a> Engine<'a> {
             // The routine every complaint is to be handed to, or none.
             // What the run has bound under a name, by name: the
             // classes, and the routines.
+            Builtin::ProgramNamespace => {
+                arity(0)?;
+                Value::Map(Rc::new(self.registry.idents.iter().zip(&self.world).filter_map(|(name, value)| {
+                    if name.starts_with('\0') || name.contains(crate::code::OF_A_CLASS) || matches!(value, Value::Blank) { None }
+                    else { Some((Value::text(name), value.clone())) }
+                }).collect()))
+            }
+            Builtin::MemberGet => {
+                if args.len() != 2 && args.len() != 3 { return Err("attribute lookup wants two or three arguments".into()); }
+                let name = args[1].display(&sp);
+                let value = &args[0];
+                let class = match value { Value::Object(o) => Some(&o.class), Value::Class(c) => Some(c), _ => None };
+                let field = match value {
+                    Value::Object(o) => o.fields.borrow().iter().find(|(n, _)| n == &name).map(|(_, v)| v.clone()),
+                    _ => None,
+                };
+                let found = field.or_else(|| class.and_then(|c| {
+                    if let Some(holder) = c.holder(&name) { return holder.shared.borrow().iter().find(|(n, _)| n == &name).map(|(_, v)| v.clone()); }
+                    c.constant(&name).cloned().or_else(|| c.method(&name).map(|m| match value {
+                        Value::Object(o) => Value::Method(o.clone(), m.clone()), _ => Value::Routine(m.clone()),
+                    }))
+                }));
+                match found.or_else(|| args.get(2).cloned()) {
+                    Some(Value::Bond(cell)) => cell.borrow().clone(),
+                    Some(v) => v,
+                    None => return Err(format!("attribute '{}' is absent", name)),
+                }
+            }
+            Builtin::MemberSet => {
+                arity(3)?;
+                let name = args[1].display(&sp);
+                let value = args[2].clone();
+                let fields = match &args[0] { Value::Object(o) => &o.fields, Value::Class(c) => &c.shared, _ => return Err("attribute write needs a namespace or an object".into()) };
+                let mut fields = fields.borrow_mut();
+                if let Some((_, old)) = fields.iter_mut().find(|(n, _)| n == &name) {
+                    if let Value::Bond(cell) = old { *cell.borrow_mut() = value; } else { *old = value; }
+                } else { fields.push((name, value)); }
+                Value::Null
+            }
+            Builtin::InstanceOf => {
+                arity(2)?;
+                Value::Flag(instance_matches(&args[0], &args[1]))
+            }
             Builtin::ClassesBound | Builtin::RoutinesBound => {
                 arity(0)?;
                 let wanted = |v: &Value| match builtin {
@@ -5690,5 +5760,72 @@ fn number_opening(s: &str) -> (Option<Value>, bool) {
     match number_spelled(&text[..end]) {
         Some(opening) => (Some(opening), false),
         None => (None, false),
+    }
+}
+
+impl Engine<'_> {
+    /// A module owns cells in the same world, under names no source can
+    /// spell. Its routines keep those addresses after the reader returns.
+    fn import_module(&mut self, path: &str) -> Flow<Value> {
+        if path.starts_with('.') { return Err(self.lang.import_relative_unready.clone().into()); }
+        if let Some(held) = self.modules.get(path) { return Ok(held.clone()); }
+        let Some(source) = self.module_sources.get(path).cloned() else {
+            return Err(Self::named_fault(&self.lang.import_missing, path).into());
+        };
+        let parent = path.rsplit_once('.');
+        if let Some((above, _)) = parent { self.import_module(above)?; }
+        let mut local = crate::compile::Registry::default();
+        let offset = self.registry.idents.len();
+        for at in 0..offset { local.slot(&format!("\0outside:{at}")); }
+        let tokens = crate::layout::layout(crate::lex::lex(&source, self.lang)?, self.lang, 0).map_err(|(said, _)| said)?;
+        let program = crate::compile::compile(&tokens, self.lang, &mut local, 0)?;
+        let names: Vec<String> = local.idents[offset..].to_vec();
+        for name in &names { self.registry.slot(&format!("\0module:{path}:{name}")); }
+        self.world.resize(self.registry.idents.len(), Value::Blank);
+        let mut fields = Vec::new();
+        for (index, name) in names.iter().enumerate() {
+            let initial = if self.lang.module_names.contains(name) { Value::text(path) } else { Value::Blank };
+            let shared = Value::Bond(Rc::new(RefCell::new(initial)));
+            self.world[offset + index] = shared.clone();
+            fields.push((name.clone(), shared));
+        }
+        self.made += 1;
+        let object = Rc::new(Instance {
+            class: Rc::new(Class { name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) }),
+            fields: RefCell::new(fields), mark: self.made,
+        });
+        let module = Value::Object(object);
+        self.modules.insert(path.to_string(), module.clone());
+        let saved_depth = self.data.len();
+        let result = self.invoke(&program, Vec::new());
+        self.data.truncate(saved_depth);
+        if let Err(fault) = result { self.modules.remove(path); return Err(fault); }
+        if let Some((above, name)) = parent {
+            if let Some(Value::Object(parent)) = self.modules.get(above) {
+                parent.fields.borrow_mut().push((name.to_string(), module.clone()));
+            }
+        }
+        Ok(module)
+    }
+
+    fn import_member(&mut self, module: &Value, path: &str, name: &str) -> Flow<Value> {
+        if let Value::Object(object) = module {
+            if let Some((_, held)) = object.fields.borrow().iter().find(|(word, _)| word == name) {
+                let value = match held { Value::Bond(cell) => cell.borrow().clone(), other => other.clone() };
+                if !matches!(value, Value::Blank) { return Ok(value); }
+            }
+        }
+        let child = format!("{path}.{name}");
+        if self.module_sources.contains_key(&child) { return self.import_module(&child); }
+        Err(Self::named_fault(&self.lang.import_member_missing, name).into())
+    }
+}
+
+fn instance_matches(value: &Value, kind: &Value) -> bool {
+    if let Value::Array(kinds) = kind { return kinds.iter().any(|k| instance_matches(value, k)); }
+    match (value, kind) {
+        (Value::Object(object), Value::Class(class)) => object.class.named(&class.name, false),
+        (_, Value::SortOf(sort)) => value.sort() == Some(*sort),
+        _ => false,
     }
 }

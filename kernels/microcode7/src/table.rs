@@ -85,6 +85,11 @@ const EXT_TAGS: &str = "\
 ext.lexical.string.long:L ext.op.lambda:L ext.op.tuple:L ext.stmt.class.bases.open:L ext.stmt.class.bases.close:L ext.stmt.class.unready:L ext.stmt.del:L ext.stmt.nonlocal:L ext.stmt.nonlocal.unrun:L ext.stmt.with:L ext.stmt.with.as:L ext.stmt.yield:L ext.stmt.yield.from:L ext.stmt.yield.unrun:L ext.system.scope.unready:L ext.op.index.slice.ellipsis:L ext.op.index.slice:L ext.op.index.slice.zero:L ext.op.index.slice.bounds:L ext.op.index.slice.unsupported:L ext.op.index.slice.assign:L ext.op.index.slice.length:L ext.op.index.slice.detached:L ext.op.comprehension.async:L ext.op.comprehension.async.unavailable:L ext.op.comprehension.target.unavailable:L ext.builtin.sum.non_number:L ext.builtin.range.non_integer:L ext.builtin.range.zero_step:L ext.op.comprehension.for:L ext.op.comprehension.in:L ext.op.comprehension.if:L ext.syntax.set:B ext.syntax.array.spread:L ext.syntax.map.spread:L ext.syntax.collection.unwalkable:L ext.syntax.map.spread.unmapped:L ext.op.comprehension.unpack.amiss:L ext.builtin.range.value:B ext.builtin.sum:L ext.builtin.list:L ext.builtin.any:L ext.op.await:L ext.stmt.async:L ext.stmt.loop.else:B ext.stmt.del.unrun:L ext.stmt.binding.unrun:L \
 ext.lexical.epilogue:L ext.builtin.echo:L ext.syntax.call.bare:B ext.op.increment:L ext.op.decrement:L \
 ext.lexical.interpolating_quotes:L ext.lexical.heredoc:L ext.stmt.for.c:L ext.op.assign.compound:B ext.stmt.static:L ext.stmt.global:L \
+ext.stmt.import.value:B ext.stmt.import.missing:L ext.stmt.import.member.missing:L ext.stmt.import.relative.unready:L \
+ext.builtin.program.namespace:L \
+ext.builtin.member.get:L \
+ext.builtin.member.set:L \
+ext.builtin.instance:L \
 ext.stmt.import:L ext.stmt.import.from:L ext.stmt.import.as:L ext.system.module.name:L \
 ext.stmt.decorator:L ext.stmt.decorator.amiss:L ext.stmt.const:L ext.builtin.define:L ext.builtin.define.class_constant:L ext.builtin.var_dump:L ext.stmt.switch:L ext.stmt.case:L \
 ext.stmt.default:L ext.stmt.case.mark:L ext.op.ternary:L ext.block.lone_statement:B ext.stmt.function.hoisted:B ext.stmt.function.outermost:B ext.system.request.amiss:L ext.system.request.amiss.boundary:L ext.system.request.amiss.boundary.wrong:L ext.system.request.amiss.part:L ext.system.request.amiss.body.large:L ext.system.request.body:L \
@@ -146,7 +151,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 72] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 76] = [
     ("ext.builtin.sum", Prim::Total), ("ext.builtin.list", Prim::Listed), ("ext.builtin.any", Prim::SomeTrue),
     ("builtin.emit", Prim::Echo), ("builtin.print", Prim::Say), ("builtin.write", Prim::Out), ("builtin.len", Prim::Length),
     ("builtin.char_at", Prim::CharAtIndex), ("builtin.ord", Prim::CodeOf), ("builtin.chr", Prim::CharOf), ("builtin.typeof", Prim::SortOf),
@@ -167,6 +172,10 @@ pub const BUILTIN_LABELS: [(&str, Prim); 72] = [
     ("ext.builtin.uncaught", Prim::Untaken),
     ("ext.builtin.classes", Prim::ClassesBound), ("ext.builtin.routines", Prim::RoutinesBound), ("ext.builtin.spelled", Prim::WordsSpelled), ("ext.builtin.class.methods", Prim::ClassMethods), ("ext.builtin.class.properties", Prim::ClassProperties),
     ("ext.builtin.class.beneath", Prim::ClassBeneath), ("ext.builtin.math", Prim::Reckon),
+    ("ext.builtin.program.namespace", Prim::ProgramNames),
+    ("ext.builtin.member.get", Prim::ReadMember),
+    ("ext.builtin.member.set", Prim::WriteMember),
+    ("ext.builtin.instance", Prim::IsInstance),
     ("ext.builtin.clock", Prim::SinceEpoch),
     ("ext.builtin.room.used", Prim::RoomHeld), ("ext.builtin.room.most", Prim::RoomHighest),
     ("ext.builtin.room.most.forget", Prim::RoomAnew), ("ext.builtin.room.limit", Prim::RoomMark),

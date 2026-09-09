@@ -1582,11 +1582,28 @@ only. The extension labels so far, all from PHP:
   its alias. Relative paths may begin with one dot or more, and the
   wanted names may stand in parentheses over several lines, with a
   trailing comma. The multiplication sign asks for all names and binds
-  none. For now an import names what is wanted and gets nothing: every
-  name it binds holds null in the current scope, so that reading can
-  go on to the constructs that matter. The kernels carry no modules;
-  a later stage will give the names something. An import named by the
-  lexical prologue is read too where these words are spelled.
+  the public names of the module when values are carried. An import
+  named by the lexical prologue is read too where these words are spelled.
+- `ext.stmt.import.value`: a switch; imports fetch source the host has
+  kept under its module name, read it once in its own namespace, and
+  bind that namespace or the requested members. Without the switch the
+  old empty bindings remain. A dotted import binds its first component
+  unless given an alias. Imported routines retain their module's cells.
+- `ext.stmt.import.missing` and `ext.stmt.import.member.missing`: two
+  pieces of a complaint, surrounding the absent module or member name.
+  `ext.stmt.import.relative.unready` gives the words for a relative path
+  where the run has no package context to resolve it against.
+- `ext.builtin.program.namespace`: a builtin handing out a map of the
+  outer program's names and their present values. A module's private
+  cells are not part of that map; it lets a library find the classes the
+  program has declared without teaching the kernel a test runner.
+- `ext.builtin.member.get` and `ext.builtin.member.set`: builtins reading
+  and writing a member by its name, the owner given first. The reader
+  may be given a third value for an absent member; the writer takes the
+  new value third. Methods read from an object retain their owner.
+- `ext.builtin.instance`: a builtin asking whether a value belongs to a
+  class, one of its descendants, or one of a list of classes. A kind
+  value asks for that kind instead.
 - `ext.system.module.name`: a list of names bound to the text
   `"__main__"` before the file runs. These are ordinary bindings and
   may be written anew by the program.
@@ -2065,7 +2082,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.at_end` | - | - | - | - | `__at_end` | - | - | - | - | - |
 | `ext.builtin.calls` | - | - | - | - | `__calls` | - | - | - | - | - |
 | `ext.builtin.class.beneath` | - | - | - | - | `__class_beneath` | - | - | - | - | - |
-| `ext.builtin.class.methods` | - | - | - | - | `__class_methods` | - | - | - | - | - |
+| `ext.builtin.class.methods` | - | - | `__class_methods` | - | `__class_methods` | - | - | - | - | - |
 | `ext.builtin.class.properties` | - | - | - | - | `__class_properties` | - | - | - | - | - |
 | `ext.builtin.classes` | - | - | - | - | `__classes_bound` | - | - | - | - | - |
 | `ext.builtin.clock` | - | - | - | - | `__clock` | - | - | - | - | - |
@@ -2086,9 +2103,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.include.demanded` | - | - | - | - | `require` `require_once` | - | - | - | - | - |
 | `ext.builtin.include.demanded.missing` | - | - | - | - | `Failed opening required '` `' (include_path='.')` | - | - | - | - | - |
 | `ext.builtin.include.once` | - | - | - | - | `include_once` `require_once` | - | - | - | - | - |
+| `ext.builtin.instance` | - | - | `isinstance` | - | - | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
-| `ext.builtin.math` | - | - | - | - | `__math` | - | - | - | - | - |
+| `ext.builtin.math` | - | - | `__math` | - | `__math` | - | - | - | - | - |
+| `ext.builtin.member.get` | - | - | `getattr` | - | - | - | - | - | - | - |
+| `ext.builtin.member.set` | - | - | `setattr` | - | - | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
 | `ext.builtin.output.depth` | - | - | - | - | `__output_depth` | - | - | - | - | - |
@@ -2105,6 +2125,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.print.sep` | - | - | `sep` | - | - | - | - | - | - | - |
 | `ext.builtin.print.sep.amiss` | - | - | `TypeError: sep must be None or a string` | - | - | - | - | - | - | - |
 | `ext.builtin.print_r` | - | - | - | - | `print_r` | - | - | - | - | - |
+| `ext.builtin.program.namespace` | - | - | `__program_namespace` | - | - | - | - | - | - | - |
 | `ext.builtin.range.index` | - | - | `IndexError: range object index out of range` | - | - | - | - | - | - | - |
 | `ext.builtin.range.integer` | - | - | `TypeError: range() arguments must be integers` | - | - | - | - | - | - | - |
 | `ext.builtin.range.non_integer` | - | - | `TypeError: range needs whole-number bounds` | - | - | - | - | - | - | - |
@@ -2335,6 +2356,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.import` | - | - | `import` | - | - | - | - | - | - | - |
 | `ext.stmt.import.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.import.from` | - | - | `from` | - | - | - | - | - | - | - |
+| `ext.stmt.import.member.missing` | - | - | `ImportError: cannot import name '` `'` | - | - | - | - | - | - | - |
+| `ext.stmt.import.missing` | - | - | `ModuleNotFoundError: No module named '` `'` | - | - | - | - | - | - | - |
+| `ext.stmt.import.relative.unready` | - | - | `NotImplementedError: relative imports require a package context` | - | - | - | - | - | - | - |
+| `ext.stmt.import.value` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.loop.else` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.nonlocal` | - | - | `nonlocal` | - | - | - | - | - | - | - |
 | `ext.stmt.nonlocal.unrun` | - | - | `Nonlocal bindings cannot be run without enclosing function cells` | - | - | - | - | - | - | - |

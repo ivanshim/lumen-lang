@@ -1427,7 +1427,7 @@ impl<'a> Builder<'a> {
 
     /// Read the words of a module path as words, never as calls.
     fn module_path(&mut self, dotted: bool) -> Res<String> {
-        let mut head = None;
+        let mut path = Vec::new();
         loop {
             let said = self.need_word("among imported names")?;
             let pieces = match (dotted, self.table.single("op.pipe")) {
@@ -1437,25 +1437,27 @@ impl<'a> Builder<'a> {
             if pieces.iter().any(|part| !self.table.name_like(part) || self.table.keywords.contains(*part)) {
                 return Err(format!("Expected identifier among imported names, got '{}'", said));
             }
-            head.get_or_insert_with(|| pieces[0].to_string());
+            path.extend(pieces.iter().map(|s| s.to_string()));
             if !dotted || !self.on_any("op.pipe") {
-                return Ok(head.unwrap_or_default());
+                return Ok(path.join(self.table.single("op.pipe").unwrap_or(".")));
             }
             self.advance();
         }
     }
 
-    /// Each wanted name receives nothing until modules have values.
+    /// Paths remain whole, to be fetched when this statement is reached.
     fn import_bindings(&mut self) -> Res<Form> {
         let taking_names = self.key("ext.stmt.import.from");
         self.advance();
+        let mut path = String::new();
         if taking_names {
             let start = self.pos;
             while self.on_any("op.pipe") || self.on_any("ext.op.index.slice.ellipsis") {
+                path.push_str(&self.look().lexeme);
                 self.advance();
             }
             if self.pos == start || !self.key("ext.stmt.import") {
-                self.module_path(true)?;
+                path.push_str(&self.module_path(true)?);
             }
             if self.key("ext.stmt.import") {
                 self.advance();
@@ -1470,17 +1472,24 @@ impl<'a> Builder<'a> {
         let mut writes = Vec::new();
         if taking_names && !enclosed && self.on_any("op.mul") {
             self.advance();
+            if self.table.flag("ext.stmt.import.value") {
+                writes.push(prim_call(Prim::SpreadModule, vec![prim_call(Prim::BringModule, vec![constant(Value::text(&path)), constant(Value::Nil), constant(Value::Flag(false))])]));
+            }
         } else {
             loop {
                 let original = self.module_path(!taking_names)?;
-                let local = match self.key("ext.stmt.import.as") {
-                    false => original,
+                let alias = self.key("ext.stmt.import.as");
+                let local = match alias {
+                    false => original.split(self.table.single("op.pipe").unwrap_or(".")).next().unwrap_or(&original).to_string(),
                     true => {
                         self.advance();
                         self.module_path(false)?
                     }
                 };
-                writes.push(self.write(&local, constant(Value::Nil)));
+                let worth = if self.table.flag("ext.stmt.import.value") {
+                    prim_call(Prim::BringModule, vec![constant(Value::text(if taking_names { &path } else { &original })), constant(if taking_names { Value::text(&original) } else { Value::Nil }), constant(Value::Flag(!taking_names && !alias))])
+                } else { constant(Value::Nil) };
+                writes.push(self.write(&local, worth));
                 if !self.on_any("syntax.call.separator") {
                     break;
                 }

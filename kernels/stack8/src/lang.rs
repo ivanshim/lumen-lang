@@ -410,6 +410,10 @@ pub struct Lang {
     pub loop_else: bool,
     pub binding_unrun: String,
     pub del_unrun: String,
+    pub import_values: bool,
+    pub import_missing: Vec<String>,
+    pub import_member_missing: Vec<String>,
+    pub import_relative_unready: String,
     pub import_words: Vec<String>,
     pub import_from_words: Vec<String>,
     pub import_as_words: Vec<String>,
@@ -808,6 +812,11 @@ w ext.op.comprehension.for | w ext.op.comprehension.in | w ext.op.comprehension.
 w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
  | w ext.stmt.del.unrun | w ext.stmt.binding.unrun | b ext.stmt.loop.else | w ext.stmt.async | w ext.op.await | w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
+b ext.stmt.import.value | w ext.stmt.import.missing | w ext.stmt.import.member.missing | w ext.stmt.import.relative.unready
+w ext.builtin.program.namespace
+w ext.builtin.member.get
+w ext.builtin.member.set
+w ext.builtin.instance
 w ext.stmt.import | w ext.stmt.import.from | w ext.stmt.import.as | w ext.system.module.name
 
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
@@ -1316,6 +1325,10 @@ impl Lang {
             ("ext.builtin.uncaught", Builtin::Untaken),
             ("ext.builtin.classes", Builtin::ClassesBound), ("ext.builtin.routines", Builtin::RoutinesBound), ("ext.builtin.spelled", Builtin::Spelled), ("ext.builtin.class.methods", Builtin::ClassMethods), ("ext.builtin.class.properties", Builtin::ClassProperties),
             ("ext.builtin.class.beneath", Builtin::ClassBeneath), ("ext.builtin.math", Builtin::Math),
+            ("ext.builtin.program.namespace", Builtin::ProgramNamespace),
+            ("ext.builtin.member.get", Builtin::MemberGet),
+            ("ext.builtin.member.set", Builtin::MemberSet),
+            ("ext.builtin.instance", Builtin::InstanceOf),
             ("ext.builtin.clock", Builtin::Clock),
             ("ext.builtin.room.used", Builtin::RoomUsed), ("ext.builtin.room.most", Builtin::RoomMost),
             ("ext.builtin.room.most.forget", Builtin::RoomForget), ("ext.builtin.room.limit", Builtin::RoomLimit),
@@ -1612,6 +1625,10 @@ impl Lang {
             loop_else: r.flag("ext.stmt.loop.else")?,
             binding_unrun: r.head("ext.stmt.binding.unrun")?.unwrap_or_default(),
             del_unrun: r.head("ext.stmt.del.unrun")?.unwrap_or_default(),
+            import_values: r.flag("ext.stmt.import.value")?,
+            import_missing: r.strings("ext.stmt.import.missing")?,
+            import_member_missing: r.strings("ext.stmt.import.member.missing")?,
+            import_relative_unready: r.head("ext.stmt.import.relative.unready")?.unwrap_or_default(),
             import_words: r.strings("ext.stmt.import")?,
             import_from_words: r.strings("ext.stmt.import.from")?,
             import_as_words: r.strings("ext.stmt.import.as")?,

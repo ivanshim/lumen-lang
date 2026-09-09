@@ -104,6 +104,8 @@ enum Next {
 }
 
 pub struct Machine<'a> {
+    pub library_sources: HashMap<String, String>,
+    imported: HashMap<String, Value>,
     table: &'a Table,
     pub outermost: Rc<Env>,
     idents: Vec<String>,
@@ -244,6 +246,8 @@ impl<'a> Machine<'a> {
     pub fn new(table: &'a Table, idents: Vec<String>) -> Machine<'a> {
         let find = |key: &str| table.single(key).and_then(|n| idents.iter().position(|x| x == n));
         Machine {
+            library_sources: HashMap::new(),
+            imported: HashMap::new(),
             table,
             outermost: Env::make(idents.len(), None),
             args_cell: find("system.args"),
@@ -2627,7 +2631,9 @@ impl<'a> Machine<'a> {
         let class = match value {
             Value::Thing(thing) => {
                 let fields = thing.holds.borrow();
-                if let Some(at) = self.member_place(&fields, name) { return Some(fields[at].1.clone()); }
+                if let Some(at) = self.member_place(&fields, name) {
+                    return Some(match &fields[at].1 { Value::Shared(cell) => cell.borrow().clone(), value => value.clone() });
+                }
                 &thing.of
             }
             Value::Blueprint(class) => class,
@@ -3662,6 +3668,66 @@ impl<'a> Machine<'a> {
                     _ => Value::Flag(true),
                 }
             }
+            Prim::BringModule => {
+                let path = v[0].bare();
+                let namespace = self.load_namespace(&path)?;
+                match &v[1] {
+                    Value::Text(wanted) => self.namespace_item(&namespace, &path, wanted)?,
+                    _ if matches!(v[2], Value::Flag(true)) => self.load_namespace(path.split('.').next().unwrap_or(&path))?,
+                    _ => namespace,
+                }
+            }
+            Prim::SpreadModule => {
+                if let Value::Thing(namespace) = &v[0] {
+                    let names = namespace.holds.borrow().clone();
+                    for (name, entry) in names {
+                        if name.starts_with('_') || !self.table.name_like(&name) { continue; }
+                        let worth = if let Value::Shared(cell) = entry { cell.borrow().clone() } else { entry };
+                        if matches!(worth, Value::Unset) { continue; }
+                        let slot = match self.idents.iter().position(|word| word == &name) {
+                            Some(at) => at,
+                            None => { self.idents.push(name); self.idents.len() - 1 }
+                        };
+                        let mut cells = self.outermost.cells.borrow_mut();
+                        cells.resize(self.idents.len(), Value::Unset);
+                        cells[slot] = worth;
+                    }
+                }
+                Value::Nil
+            }
+            Prim::ProgramNames => {
+                n(0)?;
+                let cells = self.outermost.cells.borrow();
+                let mut bindings = Vec::new();
+                for (word, value) in self.idents.iter().zip(cells.iter()) {
+                    if !word.starts_with('\0') && !word.contains('\0') && !matches!(value, Value::Unset) {
+                        bindings.push((Value::text(word), value.clone()));
+                    }
+                }
+                Value::Dict(Rc::new(bindings))
+            }
+            Prim::ReadMember => {
+                if v.len() < 2 || v.len() > 3 { return Err("attribute lookup takes two or three values".into()); }
+                let word = v[1].bare();
+                self.attribute(&v[0], &word).or_else(|| v.get(2).cloned()).ok_or_else(|| format!("attribute '{}' is absent", word))?
+            }
+            Prim::WriteMember => {
+                n(3)?;
+                let key = v[1].bare();
+                let places = match &v[0] {
+                    Value::Thing(object) => &object.holds,
+                    Value::Blueprint(class) => &class.shared,
+                    _ => return Err("attribute write needs an object or namespace".into()),
+                };
+                let mut held = places.borrow_mut();
+                match held.iter_mut().find(|(word, _)| word == &key) {
+                    None => held.push((key, v[2].clone())),
+                    Some((_, Value::Shared(cell))) => *cell.borrow_mut() = v[2].clone(),
+                    Some((_, old)) => *old = v[2].clone(),
+                }
+                Value::Nil
+            }
+            Prim::IsInstance => { n(2)?; Value::Flag(belongs_to(&v[0], &v[1])) }
             Prim::HasMember => {
                 n(2)?;
                 let word = v[1].bare();
@@ -5928,5 +5994,83 @@ fn number_opening_in(v: &Value) -> (Option<Value>, bool) {
     match number_spelled_in(&Value::text(&text[..end])) {
         Some(opening) => (Some(opening), false),
         None => (None, false),
+    }
+}
+
+impl Machine<'_> {
+    /// Imported text is built above the world's old addresses. The new
+    /// names are then filed away, while its forms still reach their cells.
+    fn load_namespace(&mut self, path: &str) -> Result<Value, String> {
+        if let Some(value) = self.imported.get(path) { return Ok(value.clone()); }
+        if path.starts_with('.') {
+            return Err(self.table.single("ext.stmt.import.relative.unready").unwrap_or_default().to_string());
+        }
+        let text = self.library_sources.get(path).cloned().ok_or_else(|| {
+            let (before, after) = self.table.around("ext.stmt.import.missing").unwrap_or(("", ""));
+            format!("{before}{path}{after}")
+        })?;
+        let split = path.rsplit_once('.');
+        if let Some((owner, _)) = split { self.load_namespace(owner)?; }
+        let beginning = self.idents.len();
+        let hidden: Vec<String> = (0..beginning).map(|n| format!("\0prior/{n}")).collect();
+        let scanned = crate::scan::scan(&text, self.table)?;
+        let ready = crate::indent::indent(scanned, self.table, 0).map_err(|(words, _)| words)?;
+        let built = crate::build::build(&ready, self.table, &hidden, HashMap::new(), false, 0)?;
+        let exported = &built.globals[beginning..];
+        self.idents.extend(exported.iter().map(|name| format!("\0import/{path}/{name}")));
+        let mut members = Vec::with_capacity(exported.len());
+        {
+            let mut world = self.outermost.cells.borrow_mut();
+            world.resize(self.idents.len(), Value::Unset);
+            for (position, name) in exported.iter().enumerate() {
+                let initial = match self.table.strings("ext.system.module.name").contains(name) {
+                    true => Value::text(path), false => Value::Unset,
+                };
+                let link = Value::Shared(Rc::new(RefCell::new(initial)));
+                members.push((name.clone(), link.clone()));
+                world[beginning + position] = link;
+            }
+        }
+        let kind = Blueprint {
+            name: path.into(), under: None, methods: Vec::new(), constants: Vec::new(),
+            shared: RefCell::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(),
+        };
+        self.made += 1;
+        let value = Value::Thing(Rc::new(Thing { of: Rc::new(kind), holds: RefCell::new(members), turn: self.made }));
+        self.imported.insert(path.into(), value.clone());
+        let scope = self.outermost.clone();
+        if let Err(stopped) = self.value_of(&built.program.body, &scope) {
+            self.imported.remove(path);
+            return Err(match stopped { Escape::Error(said) => said, other => { self.got_away = Some(other); "module did not finish".into() } });
+        }
+        if let Some((owner, name)) = split {
+            if let Some(Value::Thing(parent)) = self.imported.get(owner) {
+                parent.holds.borrow_mut().push((name.into(), value.clone()));
+            }
+        }
+        Ok(value)
+    }
+
+    fn namespace_item(&mut self, value: &Value, path: &str, wanted: &str) -> Result<Value, String> {
+        if let Value::Thing(space) = value {
+            for (name, cell) in space.holds.borrow().iter() {
+                if name != wanted { continue; }
+                let read = match cell { Value::Shared(link) => link.borrow().clone(), worth => worth.clone() };
+                if !matches!(read, Value::Unset) { return Ok(read); }
+            }
+        }
+        let full = format!("{path}.{wanted}");
+        if self.library_sources.contains_key(&full) { return self.load_namespace(&full); }
+        let (head, tail) = self.table.around("ext.stmt.import.member.missing").unwrap_or(("", ""));
+        Err(format!("{head}{wanted}{tail}"))
+    }
+}
+
+fn belongs_to(worth: &Value, kind: &Value) -> bool {
+    match kind {
+        Value::Vector(choices) => choices.iter().any(|choice| belongs_to(worth, choice)),
+        Value::Blueprint(class) => match worth { Value::Thing(object) => object.of.goes_by(&class.name, false), _ => false },
+        Value::KindOf(tag) => worth.kind() == Some(*tag),
+        _ => false,
     }
 }

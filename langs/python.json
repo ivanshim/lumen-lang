@@ -1,5 +1,5 @@
 {
-  "$comment": "Python: indentation blocks introduced by a colon, word-form logic operators, true division yielding a real, floor division, method calls on builtins (arr.append(x)) as the pipe spelled with a dot, and indexing into strings. sys.stdout.write is emit, the string-only writer, and sys.exit the error; the `import sys` line that makes them Python is the prologue the reference kernels drop; the full kernels read imports and bind their names to null for now. str, int and float are the conversions. Comprehensions and generator expressions gather eagerly; sets stand as arrays in this stage.",
+  "$comment": "Python: indentation blocks introduced by a colon, word-form logic operators, true division yielding a real, floor division, method calls on builtins (arr.append(x)) as the pipe spelled with a dot, and indexing into strings. sys.stdout.write is emit, the string-only writer, and sys.exit the error; the `import sys` line that makes them Python is the prologue the reference kernels drop; the full kernels load embedded modules into separate namespaces. str, int and float are the conversions. Comprehensions and generator expressions gather eagerly; sets stand as arrays in this stage.",
   "format_version": 1,
   "language": "python",
   "extensions": [
@@ -328,8 +328,23 @@
   "ext.builtin.any": [
     "any"
   ],
+  "ext.builtin.class.methods": [
+    "__class_methods"
+  ],
+  "ext.builtin.instance": [
+    "isinstance"
+  ],
   "ext.builtin.list": [
     "list"
+  ],
+  "ext.builtin.math": [
+    "__math"
+  ],
+  "ext.builtin.member.get": [
+    "getattr"
+  ],
+  "ext.builtin.member.set": [
+    "setattr"
   ],
   "ext.builtin.print.end": [
     "end"
@@ -357,6 +372,9 @@
   ],
   "ext.builtin.print.sep.amiss": [
     "TypeError: sep must be None or a string"
+  ],
+  "ext.builtin.program.namespace": [
+    "__program_namespace"
   ],
   "ext.builtin.range.index": [
     "IndexError: range object index out of range"
@@ -723,6 +741,18 @@
   "ext.stmt.import.from": [
     "from"
   ],
+  "ext.stmt.import.member.missing": [
+    "ImportError: cannot import name '",
+    "'"
+  ],
+  "ext.stmt.import.missing": [
+    "ModuleNotFoundError: No module named '",
+    "'"
+  ],
+  "ext.stmt.import.relative.unready": [
+    "NotImplementedError: relative imports require a package context"
+  ],
+  "ext.stmt.import.value": true,
   "ext.stmt.loop.else": true,
   "ext.stmt.nonlocal": [
     "nonlocal"
