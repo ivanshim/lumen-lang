@@ -3175,6 +3175,11 @@ impl<'a> Builder<'a> {
         if boundary && self.on_any("ext.stmt.annotation") {
             return self.with_annotation(expr, began);
         }
+        if boundary && self.on_any("ext.op.tuple") {
+            if let Form::Read(slot) = &expr {
+                return self.unpack_names(slot.ident.to_string());
+            }
+        }
         if !self.on_writing() {
             return Ok(expr);
         }
@@ -3183,6 +3188,26 @@ impl<'a> Builder<'a> {
 
     /// Whether a sign that writes stands here: the assignment sign, or
     /// an operator run together with it.
+    fn unpack_names(&mut self, first: String) -> Res<Form> {
+        let mut targets = vec![first];
+        loop {
+            self.advance();
+            if self.on_assign() { break; }
+            targets.push(self.need_word("as an unpacking target")?);
+            if !self.on_any("ext.op.tuple") { break; }
+        }
+        self.need_assign("after unpacking targets")?;
+        let input = self.tuple_expression(0)?;
+        let checked = prim_call(Prim::CheckUnpack(targets.len()), vec![input]);
+        let held = self.gather_name("unpacked_names");
+        let mut steps = vec![self.write(&held, checked)];
+        for (index, name) in targets.into_iter().enumerate() {
+            let item = prim_call(Prim::At, vec![self.read(&held), constant(Value::Small(index as i64))]);
+            steps.push(self.write(&name, item));
+        }
+        Ok(sequence(steps))
+    }
+
     fn on_writing(&self) -> bool {
         let compound = self.look().shape == Shape::Sign && self.table.compound.contains_key(&self.look().lexeme);
         self.on_assign() || compound

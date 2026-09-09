@@ -84,3 +84,9 @@ of compound merge still need further work.
 
 `11.py` through `13.py` check constructor refusals for duplicate keyword
 names, pair length and positional argument count.
+
+`15.py` unpacks tuple and map values into bare names, as the dictionary
+suite does when setting up related mappings. The source is evaluated once
+and its length checked before any target changes; swaps therefore read
+both old values. Nested, starred and indexed assignment targets are not
+covered by this bare-name path.

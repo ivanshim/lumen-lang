@@ -52,7 +52,9 @@ tuple in the full kernels. Empty parentheses and a trailing separator are
 accepted, as are spread members. Tuples currently use the array value, as
 sets do; this extends reading without supplying tuple-specific identity,
 immutability or rendering. A parenthesized expression without a separator
-keeps its value.
+keeps its value. At a statement boundary the same separator also admits
+assignment to a flat sequence of bare names; the source is evaluated once
+and unpacked only after its length has been checked.
 
 ## Format rules
 

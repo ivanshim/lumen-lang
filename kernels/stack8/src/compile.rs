@@ -3246,7 +3246,15 @@ impl<'a> Compiler<'a> {
         if starts_here && self.on_any(&self.lang.annotation_marks) {
             return self.annotated_statement(from, target_at);
         }
-        let done = if self.on_writing() {
+        let first_name = match &self.piece().instrs[from..] {
+            [Instr::Read(slot)] => Some(slot.ident.to_string()),
+            _ => None,
+        };
+        let comma = self.lang.tuple_separator.as_ref().map_or(false, |s| self.at_symbol(s));
+        let done = if starts_here && comma && first_name.is_some() {
+            self.piece().instrs.truncate(from);
+            self.unpack_names(first_name.unwrap())
+        } else if self.on_writing() {
             self.assignment(from, None)
         } else {
             self.piece().result_touched = true;
@@ -3268,6 +3276,28 @@ impl<'a> Compiler<'a> {
 
     /// Whether a sign that writes stands here: the assignment sign, or
     /// one of an operator and the assignment sign run together.
+    fn unpack_names(&mut self, first: String) -> Res<()> {
+        let separator = self.lang.tuple_separator.clone().expect("tuple separator");
+        let mut names = vec![first];
+        while self.at_symbol(&separator) {
+            self.take();
+            if self.on_assign() { break; }
+            names.push(self.want_name("as an unpacking target")?);
+        }
+        self.expect_assign("after unpacking targets")?;
+        self.tuple_expression(0)?;
+        self.act(Action::UnpackCount(names.len()), 1);
+        let held = self.gensym("unpacked");
+        self.write(&held);
+        for (index, name) in names.iter().enumerate() {
+            self.read(&held);
+            self.constant(Value::Small(index as i64));
+            self.act(Action::At, 2);
+            self.write(name);
+        }
+        Ok(())
+    }
+
     fn on_writing(&self) -> bool {
         let compound = self.lang.compound.contains_key(&self.look().lexeme) && self.look().shape == Shape::Sign;
         self.on_assign() || compound
