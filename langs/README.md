@@ -571,6 +571,10 @@ only. The extension labels so far, all from PHP:
   precedence order.
 - `ext.block.lone_statement`: a switch; a single statement may stand
   where a block is expected (`if ($x) echo "y";`, `for (...) $n++;`).
+  In an indented language it may follow the block's introduction on
+  the same line (`def f(): return 1, 2`); statements parted by the
+  language's terminator or optional separator on that line all belong
+  to the body.
   In an indented language it stands on the same line as the head,
   after the block introducer (`if ready: print(1)`).
 - `ext.stmt.function.hoisted`: a switch; a function defined at the top
@@ -1145,6 +1149,10 @@ only. The extension labels so far, all from PHP:
   whatever happens when text is asked to be a class. It differs from
   `ext.op.name_by_value` in having no mark of its own: the value simply
   stands where the name would.
+- `ext.stmt.separator`: optional signs parting statements on one line.
+  Unlike `stmt.terminator`, which gives a statement its written ending,
+  these need not stand at the end of a line. An indented language may
+  use them within a body written on the same line as its introduction.
 - `ext.stmt.terminator`: further signs that end a statement, read
   beside the core `stmt.terminator`. A language whose line ends suffice
   may spell an optional separator here without asking the porter to
@@ -1465,6 +1473,31 @@ only. The extension labels so far, all from PHP:
   past the point, text is read for the number it opens with, a flag is
   one or nought, and anything that is not an array becomes an array
   holding only itself.
+- `ext.op.tuple`: the signs joining values into a tuple without an
+  array's brackets. Grouping marks may hold one, and an empty group is
+  an empty tuple; one value followed by the sign is a tuple of one.
+  A return or a write may give a tuple without grouping marks. At this
+  stage tuples are held as arrays: they have no separate kind, and are
+  printed with array brackets. Their places may be read and their extent
+  counted as an array's may; tuple immutability is not yet kept.
+- `ext.stmt.assign.chain`: a switch; several places may be joined by
+  the assignment sign before one value. The value is worked out once,
+  then written into each place from left to right.
+- `ext.stmt.unpack.rest`: the signs before a place taking all values
+  left between the places before and after it, as an array. Only one
+  such place may stand in each taking-apart. In a tuple expression the
+  same sign before a value puts all its items into the tuple, and may
+  stand more than once (`return 1, *rest`). Where `ext.op.tuple` is
+  spelt, `ext.stmt.unpack` may name the array's opening bracket; bare
+  tuples and grouped tuples may then stand as targets too, within one
+  another and as a loop's target. The value is taken apart before its
+  places are written, and a wrong number of values stops the run.
+- `ext.stmt.unpack.short`, `ext.stmt.unpack.long`, and
+  `ext.stmt.unpack.unwalkable`: the words said when a taking-apart has
+  too few values, too many, or no walk to take values from. Arrays and
+  text may be taken apart, and maps give their keys; other walks are
+  not yet taken apart. `ext.stmt.unpack.amiss` is what is said of a
+  taking-apart whose places are ill written.
 - `ext.stmt.unpack`: the words that open a taking-apart — a list of
   places written on the left of a write, each taking the matching place
   of the value on the right (`list($a, $b) = $v`). A place left out is
@@ -2305,6 +2338,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.loop.else` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.nonlocal` | - | - | `nonlocal` | - | - | - | - | - | - | - |
 | `ext.stmt.nonlocal.unrun` | - | - | `Nonlocal bindings cannot be run without enclosing function cells` | - | - | - | - | - | - | - |
+| `ext.stmt.separator` | - | - | `;` | - | - | - | - | - | - | - |
 | `ext.stmt.static` | - | - | - | - | `static` | - | - | - | - | - |
 | `ext.stmt.static.read_in` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.switch` | - | - | - | - | `switch` | - | - | - | - | - |
@@ -2315,7 +2349,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.throw.from` | - | - | `from` | - | - | - | - | - | - | - |
 | `ext.stmt.try` | - | - | `try` | - | `try` | - | - | - | - | - |
 | `ext.stmt.try.else` | - | - | `true` | - | - | - | - | - | - | - |
-| `ext.stmt.unpack` | - | - | - | - | `list` | - | - | - | - | - |
+| `ext.stmt.unpack` | - | - | `[` | - | `list` | - | - | - | - | - |
+| `ext.stmt.unpack.amiss` | - | - | `invalid unpacking assignment` | - | - | - | - | - | - | - |
+| `ext.stmt.unpack.long` | - | - | `too many values to unpack` | - | - | - | - | - | - | - |
+| `ext.stmt.unpack.rest` | - | - | `*` | - | - | - | - | - | - | - |
+| `ext.stmt.unpack.short` | - | - | `not enough values to unpack` | - | - | - | - | - | - | - |
+| `ext.stmt.unpack.unwalkable` | - | - | `cannot unpack non-iterable object` | - | - | - | - | - | - | - |
 | `ext.stmt.with` | - | - | `with` | - | - | - | - | - | - | - |
 | `ext.stmt.with.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.with.unready` | - | - | `NotImplementedError: context managers are not supported` | - | - | - | - | - | - | - |

@@ -730,6 +730,9 @@
   "ext.stmt.nonlocal.unrun": [
     "Nonlocal bindings cannot be run without enclosing function cells"
   ],
+  "ext.stmt.separator": [
+    ";"
+  ],
   "ext.stmt.terminator": [
     ";"
   ],
@@ -746,6 +749,24 @@
     "try"
   ],
   "ext.stmt.try.else": true,
+  "ext.stmt.unpack": [
+    "["
+  ],
+  "ext.stmt.unpack.amiss": [
+    "invalid unpacking assignment"
+  ],
+  "ext.stmt.unpack.long": [
+    "too many values to unpack"
+  ],
+  "ext.stmt.unpack.rest": [
+    "*"
+  ],
+  "ext.stmt.unpack.short": [
+    "not enough values to unpack"
+  ],
+  "ext.stmt.unpack.unwalkable": [
+    "cannot unpack non-iterable object"
+  ],
   "ext.stmt.with": [
     "with"
   ],

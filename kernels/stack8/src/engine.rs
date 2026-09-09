@@ -2369,6 +2369,37 @@ impl<'a> Engine<'a> {
                     }
                 };
             }
+            Action::TupleJoin => {
+                let portions = self.drop_many(2)?;
+                let mut together = Vec::new();
+                for portion in portions {
+                    let Value::Array(items) = portion else { return Err("Tuple portion is not an array".to_string().into()); };
+                    together.extend(items.iter().cloned());
+                }
+                Value::array(together)
+            }
+            Action::Unpack(count, rest) => {
+                let source = self.drop_top()?;
+                let mut items = match source {
+                    Value::Counted(_) => self.comprehension_items(&source)?,
+                    Value::Array(items) => items.as_ref().clone(),
+                    Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
+                    Value::Map(pairs) => pairs.iter().map(|(key, _)| key.clone()).collect(),
+                    _ => return Err(self.lang.unpack_unwalkable.clone().unwrap_or_else(|| "Value cannot be taken apart".to_string()).into()),
+                };
+                let least = count - usize::from(rest.is_some());
+                if items.len() < least {
+                    return Err(self.lang.unpack_short.clone().unwrap_or_else(|| "Too few values".to_string()).into());
+                }
+                if let Some(at) = rest {
+                    let until = items.len() - (count - at - 1);
+                    let middle = items.drain(*at..until).collect();
+                    items.insert(*at, Value::array(middle));
+                } else if items.len() > *count {
+                    return Err(self.lang.unpack_long.clone().unwrap_or_else(|| "Too many values".to_string()).into());
+                }
+                Value::array(items)
+            }
             Action::ComprehensionItems => {
                 let source = self.drop_top()?;
                 Value::array(self.comprehension_items(&source)?)

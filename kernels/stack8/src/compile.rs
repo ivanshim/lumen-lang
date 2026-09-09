@@ -993,23 +993,19 @@ impl<'a> Compiler<'a> {
     }
 
     /// Commas here join one value, unlike commas between call arguments.
-    fn scope_value(&mut self) -> Res<()> {
-        let from = self.mark();
-        self.expr_at(0, false)?;
-        self.scope_tail(from)
-    }
+    fn scope_value(&mut self) -> Res<()> { self.tuple_value() }
 
-    fn scope_tail(&mut self, from: usize) -> Res<()> {
+    fn scope_tail(&mut self, _from: usize) -> Res<()> {
         if !self.on_any(&self.lang.tuple_marks) { return Ok(()); }
+        self.act(Action::MakeArray, 1);
         while self.on_any(&self.lang.tuple_marks) {
             self.take();
             if self.on_sep() || matches!(self.look().shape, Shape::Close | Shape::Finish)
-                || self.on_assign()
+                || self.on_assign() || self.on_any(&self.lang.block_intros)
                 || self.lang.grouping.as_ref().map_or(false, |g| self.at_symbol(&g.close)) { break; }
-            self.expr_at(0, false)?;
+            if !self.tuple_piece()? { self.act(Action::MakeArray, 1); }
+            self.act(Action::TupleJoin, 2);
         }
-        self.piece().instrs.truncate(from);
-        self.scope_fault(&self.lang.scope_unready.clone());
         Ok(())
     }
 
@@ -1952,14 +1948,20 @@ impl<'a> Compiler<'a> {
         // again here, with the item waiting in the walk's own cell.
         if let Some(began) = place {
             let after = self.pos;
-            self.pos = began;
-            let from = self.mark();
-            self.expr_at(0, false)?;
-            let was = self.waiting.replace(value.to_string());
-            let done = self.store_into(from, None, None, "=");
-            self.waiting = was;
+            if !lang.tuple_marks.is_empty() && !lang.unpack_words.is_empty() {
+                let (marks, _) = self.outer_marks(began, self.tokens.len(), &lang.in_words);
+                let end = marks.first().copied().ok_or_else(|| "Expected loop target".to_string())?;
+                self.give_places(began, end, value)?;
+            } else {
+                self.pos = began;
+                let from = self.mark();
+                self.expr_at(0, false)?;
+                let was = self.waiting.replace(value.to_string());
+                let done = self.store_into(from, None, None, "=");
+                self.waiting = was;
+                done?;
+            }
             self.pos = after;
-            done?;
         }
         self.body()?;
         let again = self.mark();
@@ -2411,15 +2413,15 @@ impl<'a> Compiler<'a> {
     fn for_stmt(&mut self) -> Res<()> {
         let lang = self.lang;
         self.take();
-        let var = if lang.loop_else && !Lang::spells(&lang.in_words, &self.look_ahead(1).lexeme) {
-            let held = self.gensym("iteration");
-            let targets = self.pos;
-            let from = self.mark();
-            self.bind_for_targets(&held)?;
-            self.piece().instrs.truncate(from);
-            self.for_binding = Some((held.clone(), targets));
-            held
-        } else { self.want_name("as the loop variable")? };
+        let target = if !lang.tuple_marks.is_empty() && !lang.unpack_words.is_empty() {
+            let (marks, _) = self.outer_marks(self.pos, self.tokens.len(), &lang.in_words);
+            if let Some(end) = marks.first().copied() {
+                let begin = self.pos;
+                if end == begin + 1 && self.tokens[begin].shape == Shape::Instr { None }
+                else { self.pos = end; Some(begin) }
+            } else { None }
+        } else { None };
+        let var = if target.is_some() { self.gensym("loopitem") } else { self.want_name("as the loop variable")? };
         if !self.on_keyword(&lang.in_words) {
             return Err(format!("Expected '{}' after for loop variable, got: {}", lang.in_words[0], self.look().lexeme));
         }
@@ -2428,7 +2430,7 @@ impl<'a> Compiler<'a> {
         let range_call = !lang.range_value && self.look().shape == Shape::Instr
             && lang.builtins.get(&self.look().lexeme) == Some(&Builtin::Span)
             && lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).is_lexeme(Shape::Sign, &c.open));
-        if range_call {
+        if range_call && target.is_none() {
             self.take();
             let call = lang.calling.clone().expect("call brackets");
             self.take();
@@ -2446,6 +2448,9 @@ impl<'a> Compiler<'a> {
                 self.want_sign(sep, "between the range bounds")?;
             }
             self.expr(0)?;
+            if !lang.tuple_marks.is_empty() && call.between.as_ref().map_or(false, |sep| self.at_symbol(sep)) {
+                self.take();
+            }
             self.want_sign(&call.close, "after the range")?;
         } else {
             let tier = lang.range_marks.iter().filter_map(|r| lang.precedence.get(r)).min().copied().unwrap_or(0);
@@ -2463,7 +2468,7 @@ impl<'a> Compiler<'a> {
                     self.put(w);
                 }
                 self.write(&bag);
-                return self.walk(&bag, None, &var, false, None);
+                return self.walk(&bag, None, &var, false, target);
             }
             self.take();
             self.write(&var);
@@ -3502,11 +3507,7 @@ impl<'a> Compiler<'a> {
                     }
                 }
             }
-            if lang.bind_names && Lang::spells(&lang.block_intros, &a.look().lexeme)
-                && a.look_ahead(1).shape != Shape::LineEnd {
-                a.take();
-                a.stmt()
-            } else { a.body() }
+            a.body()
         })?;
         // What is carried is read where the routine is written, and the
         // routine takes it away with it.
@@ -3740,6 +3741,54 @@ impl<'a> Compiler<'a> {
     /// The target has been read as a value, as for an ordinary store.
     /// With no store, a name does nothing and an index works out only
     /// its footing and key, without asking what stands at that key.
+    fn outer_marks(&self, begin: usize, end: usize, marks: &[String]) -> (Vec<usize>, usize) {
+        let mut found = Vec::new();
+        let mut closes: Vec<&str> = Vec::new();
+        for at in begin..end {
+            let t = &self.tokens[at];
+            if closes.is_empty() {
+                if Lang::spells(&self.lang.lambda_words, &t.lexeme) { return (found, at); }
+                if matches!(t.shape, Shape::LineEnd | Shape::Close | Shape::Finish)
+                    || (t.shape == Shape::Sign && self.lang.ends_stmt(&t.lexeme)) {
+                    return (found, at);
+                }
+                if matches!(t.shape, Shape::Sign | Shape::Instr) && Lang::spells(marks, &t.lexeme) {
+                    found.push(at);
+                }
+            }
+            if t.shape != Shape::Sign { continue; }
+            if closes.last().copied() == Some(t.lexeme.as_str()) {
+                closes.pop();
+            } else {
+                for pair in [&self.lang.grouping, &self.lang.array_brackets, &self.lang.map_brackets].into_iter().flatten() {
+                    if pair.open == t.lexeme { closes.push(&pair.close); break; }
+                }
+            }
+        }
+        (found, end)
+    }
+
+    /// A comma joins complete expressions, never the arguments within
+    /// a call. The last comma may stand before a closing mark or line.
+    fn tuple_value(&mut self) -> Res<()> {
+        let first_spreads = self.tuple_piece()?;
+        if !self.on_any(&self.lang.tuple_marks) {
+            if first_spreads { return Err(self.lang.unpack_amiss.clone().unwrap_or_default()); }
+            return Ok(());
+        }
+        if !first_spreads { self.act(Action::MakeArray, 1); }
+        while self.on_any(&self.lang.tuple_marks) {
+            self.take();
+            let closes = [&self.lang.grouping, &self.lang.array_brackets, &self.lang.map_brackets].into_iter().flatten()
+                .any(|p| self.at_symbol(&p.close));
+            if closes || self.on_sep() || self.exhausted() || self.look().shape == Shape::Close
+                || self.on_any(&self.lang.block_intros) { break; }
+            if !self.tuple_piece()? { self.act(Action::MakeArray, 1); }
+            self.act(Action::TupleJoin, 2);
+        }
+        Ok(())
+    }
+
     fn annotated_statement(&mut self, from: usize, target_at: usize) -> Res<()> {
         let lang = self.lang;
         let target_end = self.pos;
@@ -3801,8 +3850,121 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    fn tuple_piece(&mut self) -> Res<bool> {
+        let spread = !self.lang.tuple_marks.is_empty() && self.on_any(&self.lang.unpack_rest);
+        if spread { self.take(); }
+        self.expr(0)?;
+        if spread {
+            self.act(Action::Unpack(1, Some(0)), 1);
+            self.constant(Value::Small(0));
+            self.act(Action::Apart, 2);
+        }
+        Ok(spread)
+    }
+
+    /// Give a held value to a target's places. The source spans are
+    /// read only when their turn to be written has come.
+    fn give_places(&mut self, mut begin: usize, mut end: usize, held: &str) -> Res<()> {
+        let amiss = self.lang.unpack_amiss.clone().unwrap_or_else(|| "Invalid assignment target".to_string());
+        if begin == end { return Err(amiss.clone()); }
+        let mut listed = false;
+        loop {
+            let bracket = [&self.lang.grouping, &self.lang.array_brackets].into_iter().flatten()
+                .find(|p| self.tokens[begin].shape == Shape::Sign && p.open == self.tokens[begin].lexeme).cloned();
+            let Some(pair) = bracket else { break; };
+            let mut depth = 0;
+            let mut last = begin;
+            for at in begin..end {
+                if self.tokens[at].shape != Shape::Sign { continue; }
+                if self.tokens[at].lexeme == pair.open { depth += 1; }
+                if self.tokens[at].lexeme == pair.close { depth -= 1; }
+                if depth == 0 { last = at; break; }
+            }
+            if last != end - 1 { break; }
+            listed |= self.lang.array_brackets.as_ref().map_or(false, |p| p.open == pair.open);
+            begin += 1;
+            end -= 1;
+            if begin == end { listed = true; break; }
+            if listed { break; }
+            let (commas, _) = self.outer_marks(begin, end, &self.lang.tuple_marks);
+            if !commas.is_empty() { listed = true; break; }
+        }
+        let (commas, _) = self.outer_marks(begin, end, &self.lang.tuple_marks);
+        listed |= !commas.is_empty();
+        if !listed {
+            self.pos = begin;
+            let from = self.mark();
+            self.expr_at(255, false)?;
+            if self.pos != end { return Err(amiss.clone()); }
+            let previous = self.waiting.replace(held.to_string());
+            let done = self.store_into(from, None, None, "=");
+            self.waiting = previous;
+            return done;
+        }
+        if self.lang.unpack_words.is_empty() { return Err(amiss); }
+        let mut spans = Vec::new();
+        let mut left = begin;
+        for right in commas.into_iter().chain(std::iter::once(end)) {
+            if left < right { spans.push((left, right)); }
+            else if right != end { return Err(amiss.clone()); }
+            left = right + 1;
+        }
+        let mut rest = None;
+        for (i, (a, _)) in spans.iter_mut().enumerate() {
+            if self.tokens[*a].shape == Shape::Sign && Lang::spells(&self.lang.unpack_rest, &self.tokens[*a].lexeme) {
+                if rest.replace(i).is_some() { return Err(amiss.clone()); }
+                *a += 1;
+            }
+        }
+        self.read(held);
+        self.act(Action::Unpack(spans.len(), rest), 1);
+        let checked = self.gensym("unpacked");
+        self.write(&checked);
+        for (i, (a, b)) in spans.into_iter().enumerate() {
+            self.read(&checked);
+            self.constant(Value::Small(i as i64));
+            self.act(Action::Apart, 2);
+            let item = self.gensym("item");
+            self.write(&item);
+            self.give_places(a, b, &item)?;
+        }
+        Ok(())
+    }
+
+    fn tuple_assignment(&mut self) -> Res<bool> {
+        if self.lang.tuple_marks.is_empty() && !self.lang.assign_chain { return Ok(false); }
+        let begin = self.pos;
+        let (signs, _) = self.outer_marks(begin, self.tokens.len(), &self.lang.assign_words);
+        let Some(last) = signs.last().copied() else { return Ok(false); };
+        if !self.outer_marks(begin, signs[0], &self.lang.annotation_marks).0.is_empty() { return Ok(false); }
+        let enclosed = [&self.lang.grouping, &self.lang.array_brackets].into_iter().flatten()
+            .any(|pair| self.tokens[begin].is_lexeme(Shape::Sign, &pair.open));
+        if signs.len() == 1 && !enclosed && self.outer_marks(begin, last, &self.lang.tuple_marks).0.is_empty() { return Ok(false); }
+        if signs.len() > 1 && !self.lang.assign_chain { return Ok(false); }
+        self.pos = last + 1;
+        self.tuple_value()?;
+        let held = self.gensym("assigned");
+        self.write(&held);
+        let after = self.pos;
+        let mut left = begin;
+        for sign in signs {
+            self.give_places(left, sign, &held)?;
+            left = sign + 1;
+        }
+        self.pos = after;
+        Ok(true)
+    }
+
     /// An assignment, an indexed assignment, or an expression statement.
     fn assign_or_expr(&mut self) -> Res<()> {
+        if self.tuple_assignment()? { return Ok(()); }
+        if !self.lang.tuple_marks.is_empty() && self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words).0.is_empty()
+            && !self.outer_marks(self.pos, self.tokens.len(), &self.lang.tuple_marks).0.is_empty() {
+            self.tuple_value()?;
+            self.piece().result_touched = true;
+            self.write(RESULT_CELL);
+            return Ok(());
+        }
         // The running result is emptied before the statement is worked
         // out rather than written over after it. A slot still holding
         // what the statement before came to keeps that value alive for
@@ -4885,7 +5047,7 @@ impl<'a> Compiler<'a> {
         }
         // `list($a, $b) = v`: the places named on the left each take
         // the matching place of the value on the right.
-        if Lang::spells(&lang.unpack_words, &tok.lexeme) && matches!(tok.shape, Shape::Instr | Shape::Sign) {
+        if lang.tuple_marks.is_empty() && Lang::spells(&lang.unpack_words, &tok.lexeme) && matches!(tok.shape, Shape::Instr | Shape::Sign) {
             self.take();
             // The value is worked out first and kept, since every place
             // reads from the one value.
@@ -5190,7 +5352,7 @@ impl<'a> Compiler<'a> {
                             self.comprehension(&group, clause, false)?;
                         } else {
                             if self.at_symbol(&group.close) && !lang.tuple_marks.is_empty() {
-                                self.scope_fault(&lang.scope_unready.clone());
+                                self.act(Action::MakeArray, 0);
                             } else if lang.tuple_marks.is_empty() { self.expr(0)?; }
                             else { self.scope_value()?; }
                             self.want_sign(&group.close, "to close a group")?;

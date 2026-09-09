@@ -138,6 +138,7 @@ pub struct Lang {
     pub block_closes: Vec<String>,
     pub block_intros: Vec<String>,
     pub stmt_ends: Vec<String>,
+    pub stmt_separators: Vec<String>,
     pub grouping: Option<Brackets>,
     pub calling: Option<Brackets>,
     pub argument_labels: Vec<String>,
@@ -576,6 +577,11 @@ pub struct Lang {
     /// The words that open a taking-apart: a list of places written on
     /// the left of a write, each taking the matching place of the value.
     pub unpack_words: Vec<String>,
+    pub unpack_rest: Vec<String>,
+    pub unpack_short: Option<String>,
+    pub unpack_long: Option<String>,
+    pub unpack_unwalkable: Option<String>,
+    pub unpack_amiss: Option<String>,
     /// Whether writing into a place makes what is needed to hold it:
     /// an array where a name holds nothing, and one at each place along
     /// the way that is not there yet.
@@ -839,10 +845,12 @@ w ext.system.fault.operands | w ext.op.increment.text | w ext.op.decrement.text
 w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind | w ext.system.fault.class.value | w ext.system.fault.class.walk | w ext.op.walk.giver.unwalkable
 w ext.system.fault.modulo | w ext.system.fault.shift
 w ext.op.name_by_value | b ext.op.cast | w ext.stmt.unpack
+w ext.op.tuple | w ext.stmt.unpack.rest | b ext.stmt.assign.chain
+w ext.stmt.unpack.short | w ext.stmt.unpack.long | w ext.stmt.unpack.unwalkable | w ext.stmt.unpack.amiss
 w ext.system.source.routine | w ext.system.source.class | w ext.system.source.method
 b ext.op.member.by_value | b ext.op.index.text | w ext.op.index.text.first | w ext.system.globals
 w ext.op.reference.unshared.written | w ext.op.reference.unshared.given | w ext.op.reference.unshared.handed
-b ext.stmt.terminator.only
+b ext.stmt.terminator.only | w ext.stmt.separator
 w ext.stmt.block.instead | w ext.stmt.block.instead.close | b ext.op.spelled | b ext.system.class.folded
 
  | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.format | b ext.lexical.string.adjacent | w ext.lexical.string.amiss | n ext.lexical.escape.byte.digits | n ext.lexical.escape.codepoint.digits | w ext.lexical.escape.codepoint.wide | n ext.lexical.escape.codepoint.wide.digits | w ext.lexical.escape.named | w ext.lexical.escape.unavailable
@@ -1440,6 +1448,7 @@ impl Lang {
             block_closes: closers,
             block_intros: r.strings("block.intro")?,
             stmt_ends: r.strings("stmt.terminator")?.into_iter().chain(r.strings("ext.stmt.terminator")?).collect(),
+            stmt_separators: r.strings("ext.stmt.separator")?,
             grouping: r.brackets("syntax.group.open", "syntax.group.close", None)?,
             calling: call,
             argument_labels: call_labels,
@@ -1696,6 +1705,11 @@ impl Lang {
             args_below: r.head("ext.builtin.args.at.below")?,
             args_beyond: r.head("ext.builtin.args.at.beyond")?,
             unpack_words: r.strings("ext.stmt.unpack")?,
+            unpack_rest: r.strings("ext.stmt.unpack.rest")?,
+            unpack_short: r.head("ext.stmt.unpack.short")?,
+            unpack_long: r.head("ext.stmt.unpack.long")?,
+            unpack_unwalkable: r.head("ext.stmt.unpack.unwalkable")?,
+            unpack_amiss: r.head("ext.stmt.unpack.amiss")?,
             makes_places: r.flag("ext.op.index.makes")?,
             untrue_text: r.strings("ext.system.untrue.text")?,
             untrue_empty: r.flag("ext.system.untrue.empty_array")?,
@@ -1930,11 +1944,7 @@ impl Lang {
             }
         }
         let mut lists: Vec<&Vec<String>> = vec![
-            &self.comprehension_async, &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread, &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks, &self.if_else_words, &self.lambda_words, &self.identity_not, &self.membership_words, &self.membership_not, &self.expression_assign, &self.ellipsis_words,
-            &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open,
-            &self.long_quotes, &self.tuple_marks, &self.class_bases_open, &self.class_bases_close, &self.del_words, &self.nonlocal_words, &self.with_words, &self.with_as_words, &self.yield_words, &self.yield_from_words,
-            &self.slice_ellipsis, &self.slice_marks, &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words,
-            &self.carries_words, &self.carries_pairs, &self.keyword_only, &self.positional_only, &self.call_spread, &self.call_spread_pairs,
+            &self.comprehension_async, &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread, &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks, &self.if_else_words, &self.lambda_words, &self.identity_not, &self.membership_words, &self.membership_not, &self.expression_assign, &self.ellipsis_words, &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open, &self.long_quotes, &self.tuple_marks, &self.class_bases_open, &self.class_bases_close, &self.del_words, &self.nonlocal_words, &self.with_words, &self.with_as_words, &self.yield_words, &self.yield_from_words, &self.slice_ellipsis, &self.slice_marks, &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words, &self.carries_words, &self.carries_pairs, &self.keyword_only, &self.positional_only, &self.call_spread, &self.call_spread_pairs, &self.stmt_separators, &self.unpack_rest, &self.unpack_words,
         ];
         if self.blocks != Blocks::Indented {
             lists.push(&self.block_opens);
@@ -1976,7 +1986,7 @@ impl Lang {
     }
 
     pub fn ends_stmt(&self, lex: &str) -> bool {
-        Lang::spells(&self.stmt_ends, lex)
+        Lang::spells(&self.stmt_ends, lex) || Lang::spells(&self.stmt_separators, lex)
     }
 
     /// Whether a kind written before a parameter names a class: a word
