@@ -32,7 +32,8 @@
   "lexical.number.base_marker": [],
   "lexical.number.exponent_marker": [],
   "lexical.number.hex_prefix": [
-    "0x"
+    "0x",
+    "0X"
   ],
   "lexical.keywords_case_insensitive": false,
   "identifier.unicode": true,
@@ -330,6 +331,13 @@
   "system.kind.null": [],
   "ext.block.lone_statement": true,
   "ext.lexical.line_continuation": ["\\"],
+  "ext.lexical.number.amiss": ["invalid numeric literal"],
+  "ext.lexical.number.binary_prefix": ["0b", "0B"],
+  "ext.lexical.number.exponent": ["e", "E"],
+  "ext.lexical.number.octal_prefix": ["0o", "0O"],
+  "ext.lexical.number.point.bare": true,
+  "ext.lexical.number.separator": ["_"],
+  "ext.lexical.number.separator.after_prefix": true,
   "ext.op.assign.compound": true,
   "ext.op.bit.and": ["&"],
   "ext.op.bit.left": ["<<"],
@@ -361,6 +369,8 @@
   "ext.stmt.catch.separator": [","],
   "ext.stmt.catch.tuple.close": [")"],
   "ext.stmt.catch.tuple.open": ["("],
+  "ext.stmt.class": ["class"],
+  "ext.stmt.class.unready": ["NotImplementedError: this class form cannot run yet"],
   "ext.stmt.decorator": ["@"],
   "ext.stmt.decorator.amiss": ["A decorator must stand on its own line before a function definition"],
   "ext.stmt.finally": ["finally"],

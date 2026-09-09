@@ -1744,6 +1744,16 @@ impl<'a> Builder<'a> {
         let table = self.table;
         let word = self.advance().lexeme;
         let name = self.need_word("as the class name")?;
+        if table.blocks == Blocks::Indented {
+            if let Some(words) = table.single("ext.stmt.class.unready") {
+                if self.on_any("syntax.call.open") {
+                    self.advance();
+                    self.args("syntax.call.close", "syntax.call.separator")?;
+                }
+                self.routine(&name, Holds::Every, Traps::Naught, Vec::new(), 0, |r| r.body())?;
+                return Ok(prim_call(Prim::Raise, vec![constant(Value::text(words))]));
+            }
+        }
         // A class of method names only may be built on several at once;
         // a class is built on one and answers to any number.
         let bare = table.spells("ext.stmt.class.interface", &word);
@@ -5470,6 +5480,26 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
     let apart = table.letters("ext.lexical.number.separator");
     let plain: String = text.chars().filter(|c| !apart.contains(c)).collect();
     if plain != text {
+        let mut base = 10;
+        let mut begins = 0;
+        for (label, worth) in [("lexical.number.hex_prefix", 16), ("ext.lexical.number.octal_prefix", 8), ("ext.lexical.number.binary_prefix", 2)] {
+            if let Some(prefix) = table.strings(label).iter().find(|p| text.starts_with(p.as_str())) {
+                base = worth;
+                begins = prefix.len();
+                break;
+            }
+        }
+        for (offset, mark) in text.char_indices().filter(|(_, c)| apart.contains(c)) {
+            let next_digit = text[offset + mark.len_utf8()..].chars().next().map_or(false, |c| c.is_digit(base));
+            let follows = if offset == begins && begins != 0 {
+                table.flag("ext.lexical.number.separator.after_prefix")
+            } else {
+                text[..offset].chars().next_back().map_or(false, |c| c.is_digit(base))
+            };
+            if !follows || !next_digit {
+                return Err(unreadable_numeral(text, table));
+            }
+        }
         return read_numeral(&plain, table);
     }
     for (key, radix) in [
@@ -5513,7 +5543,10 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
             let (w, f) = (&text[..dot], &text[dot + p.len_utf8()..]);
             let scale = BigInt::from(10).pow(f.len() as u32);
             let w: BigInt = if w.is_empty() { BigInt::from(0) } else { w.parse().map_err(|_| unreadable_numeral(text, table))? };
-            let f: BigInt = f.parse().map_err(|_| unreadable_numeral(text, table))?;
+            let f: BigInt = match (f.is_empty(), table.flag("ext.lexical.number.point.bare")) {
+                (true, true) => BigInt::from(0),
+                _ => f.parse().map_err(|_| unreadable_numeral(text, table))?,
+            };
             return Ok(math::make_number(w * &scale + f, scale, Some(digit_run(text))));
         }
     }

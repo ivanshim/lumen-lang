@@ -663,7 +663,9 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             pos = k;
             continue;
         }
-        if c.is_ascii_digit() {
+        if c.is_ascii_digit() || (table.flag("ext.lexical.number.point.bare")
+            && Some(c) == point && src.get(pos + 1).map_or(false, char::is_ascii_digit))
+        {
             let mut k = pos;
             while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                 k += 1;
@@ -671,7 +673,11 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             let at = |k: usize| src.get(k).copied();
             let opened = in_base
                 .iter()
-                .find(|(d, l, radix)| k - pos == 1 && src[pos] == *d && at(k) == Some(*l) && at(k + 1).map_or(false, |x| x.is_digit(*radix)))
+                .find(|(d, l, radix)| {
+                    let first = k + 1 + usize::from(table.flag("ext.lexical.number.separator.after_prefix")
+                        && at(k + 1).map_or(false, |x| apart.contains(&x)));
+                    k - pos == 1 && src[pos] == *d && at(k) == Some(*l) && at(first).map_or(false, |x| x.is_digit(*radix))
+                })
                 .copied();
             if let Some((_, _, radix)) = opened {
                 k += 1;
@@ -689,7 +695,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                     }
                 }
             } else {
-                if point.is_some() && at(k) == point && at(k + 1).map_or(false, |x| x.is_ascii_digit()) {
+                if point.is_some() && at(k) == point && (table.flag("ext.lexical.number.point.bare") || at(k + 1).map_or(false, |x| x.is_ascii_digit())) {
                     k += 1;
                     while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                         k += 1;
@@ -699,7 +705,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                 let sign_len = usize::from(matches!(at(k + 1), Some('+') | Some('-')));
                 if at(k).map_or(false, |c| powers.contains(&c)) && at(k + 1 + sign_len).map_or(false, |x| x.is_ascii_digit()) {
                     k += 1 + sign_len;
-                    while k < src.len() && src[k].is_ascii_digit() {
+                    while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                         k += 1;
                     }
                 }

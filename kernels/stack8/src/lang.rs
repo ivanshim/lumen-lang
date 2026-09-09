@@ -46,7 +46,10 @@ pub struct Lang {
 
     pub line_comments: Vec<String>,
     pub line_continuations: Vec<String>,
+    pub bare_number_point: bool,
+    pub separator_after_prefix: bool,
     pub whole_bits: bool,
+    pub class_unready: Option<String>,
     pub matrix_words: Vec<String>,
     pub matrix_unready: Option<String>,
     pub block_comments: Vec<(String, String)>,
@@ -691,7 +694,7 @@ b system.flag.counts
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
-b ext.op.bit.whole | w ext.op.matrix | w ext.op.matrix.unready | w ext.lexical.line_continuation | w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
+b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | w ext.stmt.class.unready | b ext.op.bit.whole | w ext.op.matrix | w ext.op.matrix.unready | w ext.lexical.line_continuation | w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
 w ext.stmt.import | w ext.stmt.import.from | w ext.stmt.import.as | w ext.system.module.name
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
@@ -1413,7 +1416,10 @@ impl Lang {
                 }
                 found
             },
+            bare_number_point: r.flag("ext.lexical.number.point.bare")?,
+            separator_after_prefix: r.flag("ext.lexical.number.separator.after_prefix")?,
             whole_bits: r.flag("ext.op.bit.whole")?,
+            class_unready: r.head("ext.stmt.class.unready")?,
             matrix_words: r.strings("ext.op.matrix")?,
             matrix_unready: r.head("ext.op.matrix.unready")?,
             line_continuations: r.strings("ext.lexical.line_continuation")?,

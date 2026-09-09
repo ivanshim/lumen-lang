@@ -31,3 +31,23 @@ and refusing text or reals. `6.py` reaches that refusal through
 `ext.system.fault.operands`, spelling `unsupported operand type(s)`.
 `7.py` reaches `ext.system.fault.shift`, spelling `negative shift count`.
 The coordinator should retain the lexical branch's complete account.
+
+`8.py` reads nested classes, empty base brackets, several bases, methods,
+and a one-line body in an uncalled routine, then prints `read`.
+`9.py` reaches a class declaration and stops with
+`NotImplementedError: this class form cannot run yet`.
+`ext.stmt.class` is the existing list spelling `class`;
+`ext.stmt.class.unready` takes its spelling from the class branch.
+This is only the small reading needed to reach what follows a class;
+all class execution remains for that branch, whose fuller reading
+should replace this one when the coordinator brings the pieces together.
+
+`10.py` covers the grammar suite's base prefixes, separators, decimal
+points with one side empty, and exponents. It prints `255`, `255`, `9`,
+`1000`, then four true comparisons. The numeric reading comes from the
+lexical branch; its printing changes remain there. The existing
+`ext.lexical.number.binary_prefix`, `.octal_prefix`, `.exponent`,
+`.separator`, and `.amiss` lists spell `0b`/`0B`, `0o`/`0O`, `e`/`E`,
+`_`, and `invalid numeric literal`. The `.point.bare` and
+`.separator.after_prefix` switches are true. The core hex prefix also
+spells `0X`. `11.py` refuses a doubled separator in a whole number.

@@ -1,0 +1,8 @@
+print(0Xff)
+print(0o377)
+print(0b1001)
+print(1_000)
+print(.314 == 0.314)
+print(314. == 314)
+print(3.e14 == 300000000000000)
+print(.3e2 == 30)
