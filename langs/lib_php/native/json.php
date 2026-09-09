@@ -37,7 +37,10 @@ function __json_written($value, $flags, $deep) {
             $whole = strval((int) $value);
             return $flags & JSON_PRESERVE_ZERO_FRACTION ? $whole . ".0" : $whole;
         }
-        return strval($value);
+        // Written as a value is shown with its kind, since that is the
+        // setting this writing follows, but with the power of ten
+        // marked by a small letter, which is how this writing marks it.
+        return str_replace("E", "e", __real_shown($value));
     }
     if (is_string($value)) { return __json_quoted($value, $flags); }
     if (is_object($value)) { return __json_pairs(get_object_vars($value), $flags, $deep); }

@@ -1531,7 +1531,12 @@ function one_conversion($letter, $value, $places) {
     if ($letter === "d" || $letter === "i") { return strval(whole_of($value)); }
     if ($letter === "u") { $n = whole_of($value); if ($n < 0) { $n = $n + 18446744073709551616; } return strval($n); }
     if ($letter === "s") { if ($places === null) { return strval($value); } return substr(strval($value), 0, $places); }
-    if ($letter === "f" || $letter === "F") { if ($places === null) { $places = 6; } return rounded_string(real_of($value), $places); }
+    if ($letter === "f" || $letter === "F") {
+        $words = __beyond_reals(strval(real_of($value)));
+        if ($words !== null) { return $words; }
+        if ($places === null) { $places = 6; }
+        return rounded_string(real_of($value), $places);
+    }
     if ($letter === "x") { return dechex(whole_of($value)); }
     if ($letter === "X") { return strtoupper(dechex(whole_of($value))); }
     if ($letter === "o") { return decoct(whole_of($value)); }
@@ -1627,7 +1632,11 @@ function sprintf_over($pattern, $values) {
         $taken = $taken + 1;
         $shown = one_conversion($letter, $value, $places);
         if ($signed && $letter !== "s" && !starts_with($shown, "-")) { $shown = "+" . $shown; }
-        $out = $out . pad_to($shown, $width, $filler, $to_the_left);
+        // Where a real has no figures to write and is said in words, the
+        // width asked for is left unfilled, as the reference leaves it.
+        $in_words = strpos("eEfFgG", $letter) !== false
+            && ($shown === "NaN" || $shown === "INF" || $shown === "-INF");
+        $out = $out . ($in_words ? $shown : pad_to($shown, $width, $filler, $to_the_left));
     }
     return $out;
 }
