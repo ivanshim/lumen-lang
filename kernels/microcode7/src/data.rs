@@ -108,7 +108,8 @@ pub enum Value {
     /// literal takes it in.
     Couple(Rc<(Value, Value)>),
     /// A cell more than one name stands for: what one writes, the others
-    /// read. Never a value a program holds by itself.
+    /// read. A language keeping collections between calls uses this
+    /// cell for the collection, without fastening its names together.
     Shared(Rc<RefCell<Value>>),
     Blueprint(Rc<Blueprint>),
     Thing(Rc<Thing>),

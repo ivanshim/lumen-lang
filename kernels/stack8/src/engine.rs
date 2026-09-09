@@ -3652,6 +3652,7 @@ impl<'a> Engine<'a> {
     }
 
     fn write_slice(&self, target: Value, parts: &[Value; 3], given: Value) -> Res<Value> {
+        let given = collection_contents(&given);
         let Value::Array(mut items) = target else {
             return Err(self.lang.slice_unsupported.clone().unwrap_or_default());
         };
@@ -3815,6 +3816,14 @@ impl<'a> Engine<'a> {
             *cell.borrow_mut() = result;
             Ok(Value::Bond(cell))
         } else { Ok(self.keep_collection(result)) }
+    }
+
+    fn replace_item(&self, pairs: &mut Vec<(Value, Value)>, key: Value, value: Value) {
+        if self.lang.bind_names {
+            if let Some((_, old)) = pairs.iter_mut().find(|(k, _)| k.equals(&key)) {
+                *old = value;
+            } else { pairs.push((key, value)); }
+        } else { put_key(pairs, key, value); }
     }
 
     fn builtin_values(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
@@ -4538,9 +4547,11 @@ impl<'a> Engine<'a> {
                         let i = as_index(&at)?;
                         // A place holding a cell that names share is
                         // written through, not written over.
-                        if let Value::Bond(shared) = &items[i] {
-                            *shared.borrow_mut() = v;
-                            return Ok(Value::Array(items));
+                        if !self.lang.bind_names {
+                            if let Value::Bond(shared) = &items[i] {
+                                *shared.borrow_mut() = v;
+                                return Ok(Value::Array(items));
+                            }
                         }
                         Rc::make_mut(&mut items)[i] = v;
                         Value::Array(items)
@@ -4549,11 +4560,11 @@ impl<'a> Engine<'a> {
                     Value::Array(items) => {
                         let mut pairs: Vec<(Value, Value)> =
                             items.iter().enumerate().map(|(i, x)| (Value::Small(i as i64), x.clone())).collect();
-                        put_key(&mut pairs, at, v);
+                        self.replace_item(&mut pairs, at, v);
                         Value::Map(Rc::new(pairs))
                     }
                     Value::Map(mut pairs) => {
-                        put_key(Rc::make_mut(&mut pairs), at, v);
+                        self.replace_item(Rc::make_mut(&mut pairs), at, v);
                         Value::Map(pairs)
                     }
                     _ => return Err(self.not_an_array()),

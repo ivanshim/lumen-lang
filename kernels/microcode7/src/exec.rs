@@ -2249,6 +2249,7 @@ impl<'a> Machine<'a> {
                     let value = values.pop().unwrap();
                     let key = values.pop().map(|k| self.as_key_spoken(&k));
                     if let Some(Value::Span(bounds)) = &key {
+                        let value = collection_read(&value);
                         let old = f.cells.borrow()[i].clone();
                         match old {
                             Value::Shared(cell) => {
@@ -2270,11 +2271,11 @@ impl<'a> Machine<'a> {
                     let over = match shared {
                         Some(cell) => {
                             let mut held = cell.borrow_mut();
-                            written_into(&mut held, key, value, &self.no_places(), self.builds_places, letter)?
+                            written_into(&mut held, key, value, &self.no_places(), self.builds_places, letter, !self.table.flag("ext.syntax.call.bind_names"))?
                         }
                         None => {
                             let mut slots = f.cells.borrow_mut();
-                            written_into(&mut slots[i], key, value, &self.no_places(), self.builds_places, letter)?
+                            written_into(&mut slots[i], key, value, &self.no_places(), self.builds_places, letter, !self.table.flag("ext.syntax.call.bind_names"))?
                         }
                     };
                     // More letters handed to a place in text than it has
@@ -4658,6 +4659,10 @@ impl<'a> Machine<'a> {
     }
 
     fn span_written(&self, held: &mut Value, bounds: &[Value], handed: &Value) -> Result<(), String> {
+        if let Value::Shared(cell) = handed {
+            let contents = cell.borrow().clone();
+            return self.span_written(held, bounds, &contents);
+        }
         let Value::Vector(row) = held else { return Err(self.span_complaint("unsupported")) };
         let (span, picked, unit) = self.span_selection(bounds, row.len())?;
         let coming: Vec<Value> = match handed {
@@ -5089,7 +5094,7 @@ fn put_before(held: &mut Value, coming: Vec<Value>, name: &str) -> Result<usize,
     Ok(many)
 }
 
-fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &str, builds: bool, letter: Option<String>) -> Result<bool, String> {
+fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &str, builds: bool, letter: Option<String>, cells_are_places: bool) -> Result<bool, String> {
     // Where a language writes into text, a named place in text takes a
     // letter and the name goes on holding text.
     if let (Value::Text(had), Some(put), Some(at)) = (&*held, &letter, &key) {
@@ -5108,7 +5113,7 @@ fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &
     if let (Value::Vector(items), true) = (&mut *held, stays) {
         // A place keeping a cell that names share is written through,
         // not written over.
-        if let Some(k) = &key {
+        if let Some(k) = key.as_ref().filter(|_| cells_are_places) {
             if let Some(Value::Shared(cell)) = items.get(as_index(k)?) {
                 *cell.borrow_mut() = value;
                 return Ok(false);
@@ -5132,7 +5137,11 @@ fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &
     };
     let entries = Rc::make_mut(entries);
     let key = key.unwrap_or_else(|| Value::Small(after_keys(entries)));
-    set_key(entries, key, value);
+    if cells_are_places {
+        set_key(entries, key, value);
+    } else if let Some(entry) = entries.iter_mut().find(|entry| entry.0.equals(&key)) {
+        entry.1 = value;
+    } else { entries.push((key, value)); }
     Ok(false)
 }
 

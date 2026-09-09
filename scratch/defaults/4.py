@@ -8,6 +8,7 @@ print(a)
 a.append(7)
 print(f())
 def reset(x=[]):
+    print(len(x))
     x = [9]
     return x
 print(reset())

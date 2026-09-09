@@ -1486,9 +1486,10 @@ is how ordinary values come out and not a thing only the full ones do.
 A parameter may be given a value for calls that leave it out
 (`function f($a, $b = 2)`), in every language whose definition spells
 assignment. It is not a label of its own: it falls out of the parameter
-list. The value is read again inside the program, where its names mean
-what they mean there, and written only when the call left that parameter
-out.
+list. Without `ext.syntax.call.bind_names`, the value is read again
+inside the program, where its names mean what they mean there, and written
+only when the call left that parameter out. With that switch, it is kept
+once where the routine is defined.
 
 ## Hand-written source in a mirror
 

@@ -105,7 +105,8 @@ pub enum Value {
     /// Keys and their values, in the order they were put there.
     Map(Rc<Vec<(Value, Value)>>),
     /// A cell two or more names share: a write through any of them is a
-    /// write all of them see. Never a value a program can hold itself.
+    /// write all of them see. Where calls bind by name, it also holds
+    /// a collection whose items may change whilst its names stay apart.
     Bond(Rc<RefCell<Value>>),
     Class(Rc<Class>),
     Object(Rc<Instance>),
