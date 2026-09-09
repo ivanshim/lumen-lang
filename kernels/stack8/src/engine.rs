@@ -2248,6 +2248,10 @@ impl<'a> Engine<'a> {
                     }
                 }
             }
+            Action::BitTurn if self.lang.bits_unbounded => {
+                let v = self.drop_top()?;
+                Value::of_big(!self.whole_bits(&v)?)
+            }
             Action::BitTurn => {
                 let v = self.drop_top()?;
                 match &v {
@@ -3164,6 +3168,37 @@ impl<'a> Engine<'a> {
         Ok(out)
     }
 
+    fn whole_bits(&self, value: &Value) -> Res<BigInt> {
+        match value {
+            Value::Small(n) => Ok(BigInt::from(*n)),
+            Value::Huge(n) => Ok((**n).clone()),
+            Value::Flag(b) => Ok(BigInt::from(i64::from(*b))),
+            _ => Err(self.lang.bits_integer[0].clone()),
+        }
+    }
+
+    fn wide_bits(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        let (left, right) = (self.whole_bits(a)?, self.whole_bits(b)?);
+        let result = match op {
+            Action::BitBoth => left & right,
+            Action::BitEither => left | right,
+            Action::BitOne => left ^ right,
+            _ => {
+                if right < BigInt::from(0) { return Err(self.lang.fault_shift.clone().unwrap_or_default()); }
+                if matches!(op, Action::BitDown) && right >= BigInt::from(left.bits()) {
+                    return Ok(Value::Small(if left < BigInt::from(0) { -1 } else { 0 }));
+                }
+                if left == BigInt::from(0) { return Ok(Value::Small(0)); }
+                let count = right.to_usize().ok_or_else(|| self.lang.bits_beyond[0].clone())?;
+                if matches!(op, Action::BitUp) { left << count } else { left >> count }
+            }
+        };
+        if matches!((a, b), (Value::Flag(_), Value::Flag(_)))
+            && matches!(op, Action::BitBoth | Action::BitEither | Action::BitOne) {
+            Ok(Value::Flag(result != BigInt::from(0)))
+        } else { Ok(Value::of_big(result)) }
+    }
+
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
@@ -3330,6 +3365,7 @@ impl<'a> Engine<'a> {
             // is what a language that spells these operators means by
             // them; the shorter side decides the length, save for `or`,
             // where the longer one stands on as it is.
+            Action::BitBoth | Action::BitEither | Action::BitOne | Action::BitUp | Action::BitDown if self.lang.bits_unbounded => self.wide_bits(op, a, b)?,
             Action::BitBoth | Action::BitEither | Action::BitOne if matches!(a, Value::Text(_)) && matches!(b, Value::Text(_)) => {
                 let (x, y) = (a.display(&sp), b.display(&sp));
                 let (x, y) = (self.lang.bytes_of(&x), self.lang.bytes_of(&y));
@@ -3477,7 +3513,44 @@ impl<'a> Engine<'a> {
     /// can be made so. Where a language holds its reals to a width, a
     /// whole number meeting a real is brought to that width first, so
     /// that the two are added as such a language adds them.
+    fn real_power(&self, a: &Value, b: &Value) -> Res<Option<Value>> {
+        let as_number = |v: &Value| match v { Value::Flag(b) => Value::Small(i64::from(*b)), _ => v.clone() };
+        let (a, b) = (as_number(a), as_number(b));
+        let (Some(x), Some(y)) = (arith::Exact::from_value(&a), arith::Exact::from_value(&b)) else { return Ok(None) };
+        if x.places.is_none() && y.places.is_none() && y.p >= BigInt::from(0) { return Ok(None); }
+        let binary = |v: &Value, e: &arith::Exact| {
+            if matches!(v, Value::Real(r) if r.below && r.p == BigInt::from(0)) { -0.0 }
+            else { crate::value::as_binary(&e.p, &e.q) }
+        };
+        let (left, right) = (binary(&a, &x), binary(&b, &y));
+        if left == 0.0 && right < 0.0 { return Err(self.lang.power_zero[0].clone()); }
+        if left.is_finite() && left < 0.0 && right.is_finite() && right.fract() != 0.0 {
+            return Err(self.lang.power_nonreal[0].clone());
+        }
+        let raised = left.powf(right);
+        if raised.is_infinite() && left.is_finite() && right.is_finite() {
+            return Err(self.lang.power_overflow[0].clone());
+        }
+        Ok(Some(crate::value::real_of(raised, arith::DEFAULT_PLACES)))
+    }
+
     fn dyadic_numbers(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if self.lang.power_real && matches!(op, Action::Power) {
+            if let Some(answer) = self.real_power(a, b)? { return Ok(answer); }
+        }
+        if !self.lang.division_zero.is_empty() && matches!(op, Action::Div | Action::DivReal | Action::IntDiv | Action::Mod) {
+            if arith::Exact::from_value(b).map_or(false, |e| e.p == BigInt::from(0) && e.q != BigInt::from(0)) || matches!(b, Value::Flag(false)) {
+                let real = matches!(a, Value::Real(_)) || matches!(b, Value::Real(_));
+                let words = match (op, real) {
+                    (Action::Mod, true) => &self.lang.remainder_real_zero,
+                    (Action::Mod, false) => return Err(self.lang.fault_modulo.clone().unwrap_or_default()),
+                    (Action::IntDiv, true) => &self.lang.quotient_real_zero,
+                    (Action::IntDiv, false) => &self.lang.quotient_zero,
+                    _ => &self.lang.division_zero,
+                };
+                return Err(words[0].clone());
+            }
+        }
         // A language whose division gives a real may still give a whole
         // number where two whole ones divide evenly, which is what the
         // exact division answers with when they do.
@@ -4082,6 +4155,11 @@ impl<'a> Engine<'a> {
             if let Value::Flag(b) = value { return Ok(Value::Small(i64::from(*b))); }
             return arith::whole_of(value).map(Value::of_big).ok_or_else(|| self.lang.call_amiss[0].clone());
         };
+        let invalid = || {
+            if self.lang.integer_text_detail.len() == 2 {
+                format!("{}{}{}{}", self.lang.integer_text_detail[0], base, self.lang.integer_text_detail[1], self.rem_repr(value).unwrap_or_default())
+            } else { self.lang.to_int_text_amiss[0].clone() }
+        };
         let text = text.trim();
         let (minus, digits) = if let Some(tail) = text.strip_prefix('-') { (true, tail) }
             else { (false, text.strip_prefix('+').unwrap_or(text)) };
@@ -4095,9 +4173,9 @@ impl<'a> Engine<'a> {
             && digits.chars().all(|c| c == '_' || c.is_ascii() && c.is_digit(radix));
         let cleaned = digits.replace('_', "");
         if !valid || (base == 0 && !prefixed && cleaned.starts_with('0') && cleaned.chars().any(|c| c != '0')) {
-            return Err(self.lang.to_int_text_amiss[0].clone());
+            return Err(invalid());
         }
-        let whole = BigInt::parse_bytes(cleaned.as_bytes(), radix).ok_or_else(|| self.lang.to_int_text_amiss[0].clone())?;
+        let whole = BigInt::parse_bytes(cleaned.as_bytes(), radix).ok_or_else(invalid)?;
         Ok(Value::of_big(if minus { -whole } else { whole }))
     }
 

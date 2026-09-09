@@ -99,6 +99,19 @@ pub struct Lang {
     /// How many bits wide a real is, where a language says its reals
     /// are binary numbers rather than exact ones, and how many
     /// significant digits one shows when simply written out.
+    pub point_open: bool,
+    pub power_real: bool,
+    pub power_overflow: Vec<String>,
+    pub power_nonreal: Vec<String>,
+    pub power_zero: Vec<String>,
+    pub division_zero: Vec<String>,
+    pub quotient_zero: Vec<String>,
+    pub quotient_real_zero: Vec<String>,
+    pub remainder_real_zero: Vec<String>,
+    pub integer_text_detail: Vec<String>,
+    pub bits_unbounded: bool,
+    pub bits_integer: Vec<String>,
+    pub bits_beyond: Vec<String>,
     pub real_bits: Option<usize>,
     pub real_digits: Option<usize>,
     /// The names the run keeps its counts of figures under: how many a
@@ -775,6 +788,8 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+b ext.lexical.number.point_open | b ext.op.pow.real_exponent | w ext.op.pow.overflow | w ext.op.pow.nonreal | w ext.op.pow.zero | w ext.op.div.zero | w ext.op.quot.zero | w ext.op.quot.real_zero | w ext.op.rem.real_zero | w ext.builtin.to_int.text.detail
+b ext.op.bit.unbounded | w ext.op.bit.integer | w ext.op.bit.beyond
 w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready
 
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
@@ -1381,6 +1396,19 @@ impl Lang {
             octal_lead: r.flag("ext.lexical.number.octal_lead")?,
             digit_separators: r.letters("ext.lexical.number.separator")?,
             integer_bits: r.count("ext.system.integer.bits")?,
+            point_open: r.flag("ext.lexical.number.point_open")?,
+            power_real: r.flag("ext.op.pow.real_exponent")?,
+            power_overflow: r.strings("ext.op.pow.overflow")?,
+            power_nonreal: r.strings("ext.op.pow.nonreal")?,
+            power_zero: r.strings("ext.op.pow.zero")?,
+            division_zero: r.strings("ext.op.div.zero")?,
+            quotient_zero: r.strings("ext.op.quot.zero")?,
+            quotient_real_zero: r.strings("ext.op.quot.real_zero")?,
+            remainder_real_zero: r.strings("ext.op.rem.real_zero")?,
+            integer_text_detail: r.strings("ext.builtin.to_int.text.detail")?,
+            bits_unbounded: r.flag("ext.op.bit.unbounded")?,
+            bits_integer: r.strings("ext.op.bit.integer")?,
+            bits_beyond: r.strings("ext.op.bit.beyond")?,
             real_bits: r.count("ext.system.real.bits")?,
             real_digits: r.count("ext.system.real.digits")?,
             figures_binding: r.head("ext.system.real.figures")?,

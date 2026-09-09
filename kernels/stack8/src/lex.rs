@@ -907,7 +907,7 @@ impl<'a> Cursor<'a> {
             let mut it = prefix.chars();
             let (Some(digit), Some(letter)) = (it.next(), it.next()) else { return false };
             s.len() == 1 && s.starts_with(digit) && self.look(0) == Some(letter)
-                && self.look(1).map_or(false, |c| c.is_digit(*base))
+                && self.look(1).map_or(false, |c| c.is_digit(*base) || broken(&c))
         });
         if let Some((prefix, base)) = in_base.cloned() {
             s.push(prefix.chars().nth(1).expect("a letter after the digit"));
@@ -930,7 +930,7 @@ impl<'a> Cursor<'a> {
                 self.step();
             }
         } else {
-            if lang.point.is_some() && self.look(0) == lang.point && self.look(1).map_or(false, |c| c.is_ascii_digit()) {
+            if lang.point.is_some() && self.look(0) == lang.point && (lang.point_open || self.look(1).map_or(false, |c| c.is_ascii_digit())) {
                 s.push(self.step());
                 while let Some(c) = self.look(0).filter(|c| c.is_ascii_digit() || broken(c)) {
                     s.push(c);
@@ -945,7 +945,7 @@ impl<'a> Cursor<'a> {
                 for _ in 0..digits_at {
                     s.push(self.step());
                 }
-                while let Some(c) = self.look(0).filter(char::is_ascii_digit) {
+                while let Some(c) = self.look(0).filter(|c| c.is_ascii_digit() || broken(c)) {
                     s.push(c);
                     self.step();
                 }
@@ -1065,7 +1065,7 @@ impl<'a> Cursor<'a> {
                 self.heredoc()?;
             } else if lang.quotes.contains(&c) {
                 self.string(c)?;
-            } else if c.is_ascii_digit() {
+            } else if c.is_ascii_digit() || (self.lang.point_open && Some(c) == self.lang.point && self.look(1).map_or(false, |d| d.is_ascii_digit())) {
                 self.number();
             } else if lang.quote_for_names == Some(c) {
                 self.quoted_name(c)?;
