@@ -108,6 +108,7 @@ pub struct Machine<'a> {
     pub outermost: Rc<Env>,
     idents: Vec<String>,
     memo: HashMap<String, Value>,
+    identities: Vec<(String, u64)>,
     args_cell: Option<usize>,
     memo_cell: Option<usize>,
     /// Whether the language can read what a call was handed. Where it
@@ -250,6 +251,7 @@ impl<'a> Machine<'a> {
             memo_cell: find("system.memoization"),
             idents,
             memo: HashMap::new(),
+            identities: Vec::new(),
             reads_handed: ["ext.builtin.args.all", "ext.builtin.args.count", "ext.builtin.args.at"]
                 .iter()
                 .any(|label| table.single(label).is_some()),
@@ -3725,6 +3727,7 @@ impl<'a> Machine<'a> {
             }
             Prim::Placed => {
                 n(3)?;
+                if matches!(v[0], Value::Tuple(_) | Value::Set(_)) { return Err(self.core_complaint("core.immutable", &v[0].kind_word())); }
                 match &v[0] {
                     Value::Text(had) if self.letter_places => {
                         let (made, over) = letter_put(had, &v[1], &v[2].render(w))?;
@@ -5074,6 +5077,7 @@ impl<'a> Machine<'a> {
     }
 
     fn element_within(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {
+        if matches!(target, Value::Set(_)) { return Err(self.core_complaint("core.unindexable", &target.kind_word())); }
         if let Value::Span(bounds) = at {
             let row = match target {
                 Value::Vector(values) | Value::Tuple(values) | Value::Set(values) => values.as_ref().clone(),
@@ -5086,9 +5090,9 @@ impl<'a> Machine<'a> {
             let selected: Vec<Value> = picked.iter().map(|&i| row[i].clone()).collect();
             return Ok(if matches!(target, Value::Text(_)) {
                 Value::text(&selected.iter().map(Value::bare).collect::<String>())
-            } else {
-                Value::Vector(Rc::new(selected))
-            });
+            } else if matches!(target, Value::Tuple(_)) {
+                Value::Tuple(Rc::new(selected))
+            } else { Value::Vector(Rc::new(selected)) });
         }
         // A language may say that a place an array does not hold reads as
         // nothing rather than stopping the program.
@@ -6002,7 +6006,16 @@ impl Machine<'_> {
             input[slot] = value;
         }
         let require = |lower, upper| -> Result<(), String> {
-            if input.len() < lower || input.len() > upper || input.iter().any(|v| matches!(v, Value::Unset)) { Err(self.core_complaint("core.arity", name)) } else { Ok(()) }
+            if input.len() < lower || input.len() > upper || input.iter().any(|v| matches!(v, Value::Unset)) {
+                let which = if lower == 1 && upper == 1 { "core.arity.one" } else if lower == upper { "core.arity.exact" } else { "core.arity" };
+                let parts = self.table.strings(&format!("ext.builtin.{}",which));
+                let complaint = match which {
+                    "core.arity.one" => format!("{}{}{}{}{}",parts[0],name,parts[1],input.len(),parts[2]),
+                    "core.arity.exact" => format!("{}{}{}{}{}{}",parts[0],name,parts[1],lower,parts[2],input.len()),
+                    _ => self.core_complaint(which,name),
+                };
+                Err(complaint)
+            } else { Ok(()) }
         };
         let as_number = |v: &Value| if let Value::Flag(b) = v { Value::Small(*b as i64) } else { v.clone() };
         let whole = |v: &Value| -> Result<BigInt, String> {
@@ -6038,7 +6051,9 @@ impl Machine<'_> {
                     Value::Frac(p) => Rc::as_ptr(p) as usize as u64,
                     _ => return Err(self.core_complaint("core.unready", name)),
                 };
-                Ok(Value::from_big(BigInt::from(address)))
+                let stamp = (input[0].kind_word(), address);
+                let found = self.identities.iter().position(|old| *old == stamp).unwrap_or_else(|| { self.identities.push(stamp); self.identities.len()-1 });
+                Ok(Value::Small(found as i64 + 1))
             }
             Tupling | Uniques => {
                 require(0, 1)?;
@@ -6047,7 +6062,7 @@ impl Machine<'_> {
                 let mut distinct: Vec<Value> = Vec::new();
                 for entry in entries {
                     if entry.hash_number().is_none() { return Err(self.core_complaint("core.unhashable", &entry.kind_word())); }
-                    if distinct.iter().all(|old| !old.equals(&entry)) { distinct.push(entry); }
+                    if distinct.iter().all(|old| !as_number(old).equals(&as_number(&entry))) { distinct.push(entry); }
                 }
                 Ok(Value::Set(Rc::new(distinct)))
             }
@@ -6057,9 +6072,12 @@ impl Machine<'_> {
                 if let Some(source) = input.first() {
                     if let Value::Dict(pairs) = source { incoming.extend(pairs.iter().cloned()); }
                     else {
-                        for row in self.core_collect(source)? {
+                        for (position,row) in self.core_collect(source)?.into_iter().enumerate() {
                             let fields = self.core_collect(&row)?;
-                            if fields.len() != 2 { return Err(self.core_complaint("core.dict.pair", "")); }
+                            if fields.len() != 2 {
+                                let parts = self.table.strings("ext.builtin.core.dict.pair");
+                                return Err(format!("{}{}{}{}{}",parts[0],position,parts[1],fields.len(),parts[2]));
+                            }
                             incoming.push((fields[0].clone(), fields[1].clone()));
                         }
                     }
@@ -6068,7 +6086,7 @@ impl Machine<'_> {
                 let mut entries: Vec<(Value, Value)> = Vec::new();
                 for pair in incoming {
                     if pair.0.hash_number().is_none() && !matches!(pair.0, Value::Nil | Value::Frac(_)) { return Err(self.core_complaint("core.unhashable", &pair.0.kind_word())); }
-                    if let Some(index) = entries.iter().position(|(key,_)| key.equals(&pair.0)) { entries[index].1 = pair.1; } else { entries.push(pair); }
+                    if let Some(index) = entries.iter().position(|(key,_)| as_number(key).equals(&as_number(&pair.0))) { entries[index].1 = pair.1; } else { entries.push(pair); }
                 }
                 Ok(Value::Dict(Rc::new(entries)))
             }
@@ -6161,14 +6179,44 @@ impl Machine<'_> {
             QuotRem => {
                 require(2, 2)?;
                 let one = as_number(&input[0]); let two = as_number(&input[1]);
-                if !matches!(two, Value::Frac(_)) && two.as_big().map_or(false, |n| n.is_zero()) { return Err(self.core_complaint("core.zero", "")); }
-                let mut both = Vec::new();
-                for operation in [Calc::IntDiv, Calc::Remainder] { both.push(math::compute(operation, &one, &two).ok_or_else(|| self.core_complaint("core.unready", name))??); }
-                Ok(Value::Tuple(Rc::new(both)))
+                let integral = |v: &Value| matches!(v, Value::Huge(_) | Value::Small(_));
+                if integral(&one) && integral(&two) {
+                    let divisor = two.as_big()?;
+                    if divisor.is_zero() { return Err(self.core_complaint("core.zero", "")); }
+                    let dividend = one.as_big()?;
+                    return Ok(Value::Tuple(Rc::new(vec![Value::from_big(dividend.div_floor(&divisor)),Value::from_big(dividend.mod_floor(&divisor))])));
+                }
+                let left = math::ratio_of(&one).ok_or_else(|| self.core_complaint("core.unready", name))?;
+                let right = math::ratio_of(&two).ok_or_else(|| self.core_complaint("core.unready", name))?;
+                let x = crate::data::nearest_binary(&left.above,&left.beneath);
+                let y = crate::data::nearest_binary(&right.above,&right.beneath);
+                if y == 0.0 { return Err(self.core_complaint("core.zero", "")); }
+                let residue = x % y;
+                let corrected = residue != 0.0 && residue.is_sign_negative() != y.is_sign_negative();
+                let remain = if residue == 0.0 { 0.0f64.copysign(y) } else if corrected { residue+y } else { residue };
+                let quotient = (x-residue)/y - if corrected { 1.0 } else { 0.0 };
+                let trunc = quotient.floor();
+                let floor = if quotient == 0.0 { 0.0f64.copysign(x/y) } else if quotient-trunc > 0.5 { trunc+1.0 } else { trunc };
+                let pair = [floor,remain].into_iter().map(|n| crate::data::worth_of_binary(n,math::DEFAULT_PLACES)).collect();
+                Ok(Value::Tuple(Rc::new(pair)))
             }
             Powered => {
                 require(2, 3)?;
-                if input.len() < 3 || matches!(input[2], Value::Nil) { return math::compute(Calc::Power, &as_number(&input[0]), &as_number(&input[1])).ok_or_else(|| self.core_complaint("core.unready", name))?; }
+                if input.len() < 3 || matches!(input[2], Value::Nil) {
+                    let base = as_number(&input[0]); let exponent = as_number(&input[1]);
+                    let e = math::ratio_of(&exponent).ok_or_else(|| self.core_complaint("core.unready", name))?;
+                    let b = math::ratio_of(&base).ok_or_else(|| self.core_complaint("core.unready", name))?;
+                    if e.above.is_negative() || e.beneath != BigInt::from(1) || e.places.is_some() || b.places.is_some() {
+                        let n = crate::data::nearest_binary(&b.above,&b.beneath);
+                        let power = crate::data::nearest_binary(&e.above,&e.beneath);
+                        if n == 0.0 && power < 0.0 { return Err(self.core_complaint("core.power.zero", "")); }
+                        let made = n.powf(power);
+                        if made.is_nan() { return Err(self.core_complaint("core.unready", name)); }
+                        if made.is_infinite() { return Err(self.core_complaint("core.power.overflow", "")); }
+                        return Ok(crate::data::worth_of_binary(made, math::DEFAULT_PLACES));
+                    }
+                    return math::compute(Calc::Power, &base, &exponent).ok_or_else(|| self.core_complaint("core.unready", name))?;
+                }
                 let modulus = whole(&input[2])?;
                 if modulus.is_zero() { return Err(self.core_complaint("core.mod.zero", "")); }
                 let m = modulus.abs();
@@ -6205,7 +6253,7 @@ impl Machine<'_> {
                     let factor = 10f64.powi((-places) as i32);
                     (binary / factor).round_ties_even() * factor
                 } else { format!("{:.*}", places as usize, binary).parse().map_err(|_| self.core_complaint("core.unready", name))? };
-                if input.len() == 1 || matches!(input.get(1), Some(Value::Nil)) { Ok(Value::from_big(crate::data::binary_worth(rounded).ok_or_else(|| self.core_complaint("core.unready", name))?.0)) }
+                if input.len() == 1 || matches!(input.get(1), Some(Value::Nil)) { { let (numerator,denominator) = crate::data::binary_worth(rounded).ok_or_else(|| self.core_complaint("core.unready", name))?; Ok(Value::from_big(numerator / denominator)) } }
                 else {
                     let decimal = format!("{:.*}", places.max(0) as usize, rounded);
                     let above: BigInt = decimal.chars().filter(|c| *c != '.').collect::<String>().parse().map_err(|_| self.core_complaint("core.unready", name))?;
@@ -6222,9 +6270,10 @@ impl Machine<'_> {
                     return Err(self.core_complaint(if op == MembersOf { "core.vars" } else { "core.unready" }, if op == MembersOf { "" } else { name }));
                 };
                 let mut members = thing.holds.borrow_mut();
-                if op == MembersOf { return Ok(Value::Dict(Rc::new(members.iter().map(|(n,v)| (Value::text(n),v.clone())).collect()))); }
+                if op == MembersOf { return Err(self.core_complaint("core.unready", name)); }
                 let Value::Text(word) = &input[1] else { return Err(self.core_complaint("core.attribute.name", "")); };
                 let position = members.iter().position(|(n,_)| n == word.as_ref());
+                if op == GetMember && position.is_none() && thing.of.program(word).is_some() { return Err(self.core_complaint("core.unready", name)); }
                 if op == HasMember { return Ok(Value::Flag(position.is_some() || thing.of.program(word).is_some())); }
                 if op == SetMember {
                     if input.len() != 3 { return Err(self.core_complaint("core.arity", name)); }

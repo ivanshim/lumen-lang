@@ -82,6 +82,17 @@ impl Value {
                 s.hash(&mut h);
                 Some(finish(h.finish() as i64))
             }
+            Value::Null => Some(0x9e3779b9),
+            Value::Real(r) => {
+                if r.q == BigInt::from(0) { return if r.p == BigInt::from(0) { Some((std::rc::Rc::as_ptr(r) as usize >> 4) as i64) } else { Some(if r.p.is_negative() { -314159 } else { 314159 }) }; }
+                let modulus = BigInt::from((1u64 << 61)-1);
+                let denom = &r.q % &modulus;
+                if denom == BigInt::from(0) { return Some(if r.p.is_negative() { -314159 } else { 314159 }); }
+                let inverse = denom.modpow(&(&modulus-2), &modulus);
+                let mut h = ((r.p.abs() % &modulus) * inverse % &modulus).to_i64()?;
+                if r.p.is_negative() { h = -h; }
+                Some(finish(h))
+            }
             Value::Tuple(items) => {
                 let mut h = 2870177450012600261u64;
                 for item in items.iter() {

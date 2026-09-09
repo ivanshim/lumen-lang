@@ -32,6 +32,7 @@ pub struct Engine<'a> {
     data: Vec<Value>,
     caught: Vec<Value>,
     memo: HashMap<String, Value>,
+    core_ids: HashMap<String, usize>,
     /// The arguments of a builtin call, one buffer reused across calls.
     buffer: Vec<Value>,
     /// What each call still running was given, the innermost last. Kept
@@ -218,6 +219,7 @@ impl<'a> Engine<'a> {
             data: Vec::new(),
             caught: Vec::new(),
             memo: HashMap::new(),
+            core_ids: HashMap::new(),
             buffer: Vec::new(),
             given: Vec::new(),
             made: 0,
@@ -3890,6 +3892,7 @@ impl<'a> Engine<'a> {
     }
 
     fn element_held(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
+        if matches!(target, Value::Set(_)) { return Err(self.core_fault("core.unindexable", &target.core_kind())); }
         if let Value::Slice(parts) = at {
             return self.read_slice(target, parts);
         }
@@ -4819,6 +4822,7 @@ impl<'a> Engine<'a> {
             Builtin::Append => {
                 arity(2)?;
                 let target = args.pop().expect("the array");
+                if matches!(target, Value::Tuple(_) | Value::Set(_)) { return Err(self.core_fault("core.immutable", &target.core_kind())); }
                 let v = args.pop().expect("the value");
                 // A language that makes a place on writing into it finds
                 // an array where nothing at all was there.
@@ -4843,6 +4847,7 @@ impl<'a> Engine<'a> {
             Builtin::Replace => {
                 arity(3)?;
                 let target = args.pop().expect("the array");
+                if matches!(target, Value::Tuple(_) | Value::Set(_)) { return Err(self.core_fault("core.immutable", &target.core_kind())); }
                 let v = args.pop().expect("the value");
                 let at = self.key(&args.pop().expect("the key"));
                 if let Value::Slice(parts) = &at {
@@ -5768,7 +5773,13 @@ impl Engine<'_> {
             if args.len() == place { args.push(value); } else { args[place] = value; }
         }
         let arity = |lo, hi| if (lo..=hi).contains(&args.len()) && !args.iter().any(|v| matches!(v, Value::Gap)) { Ok(()) }
-            else { Err(self.core_fault("core.arity", name)) };
+            else {
+                let label = if lo == 1 && hi == 1 { "core.arity.one" } else if lo == hi { "core.arity.exact" } else { "core.arity" };
+                let words = &self.lang.core_words[label];
+                Err(if label == "core.arity.one" { format!("{}{}{}{}{}",words[0],name,words[1],args.len(),words[2]) }
+                    else if label == "core.arity.exact" { format!("{}{}{}{}{}{}",words[0],name,words[1],lo,words[2],args.len()) }
+                    else { self.core_fault(label,name) })
+            };
         let number = |v: &Value| match v { Value::Flag(b) => Value::Small(i64::from(*b)), other => other.clone() };
         let integer = |v: &Value| match v { Value::Small(_) | Value::Huge(_) | Value::Flag(_) => v.as_big(), _ => Err(self.core_fault("core.unready", name)) };
         let result = match b {
@@ -5795,14 +5806,16 @@ impl Engine<'_> {
                     Value::Null => 0,
                     _ => return Err(self.core_fault("core.unready", name)),
                 };
-                Value::of_big(BigInt::from(id))
+                let filed = format!("{}:{}", args[0].core_kind(), id);
+                let fresh = self.core_ids.len() + 1;
+                Value::Small(*self.core_ids.entry(filed).or_insert(fresh) as i64)
             }
             Builtin::Tuple | Builtin::Set => {
                 arity(0, 1)?;
                 let mut items = args.first().map(|v| self.core_members(v)).transpose()?.unwrap_or_default();
                 if b == Builtin::Set {
                     let mut unique = Vec::new();
-                    for v in items { if v.core_hash().is_none() { return Err(self.core_fault("core.unhashable", &v.core_kind())); } if !unique.iter().any(|x: &Value| x.equals(&v)) { unique.push(v); } }
+                    for v in items { if v.core_hash().is_none() { return Err(self.core_fault("core.unhashable", &v.core_kind())); } if !unique.iter().any(|x: &Value| number(x).equals(&number(&v))) { unique.push(v); } }
                     items = unique;
                 }
                 if b == Builtin::Tuple { Value::Tuple(Rc::new(items)) } else { Value::Set(Rc::new(items)) }
@@ -5813,9 +5826,9 @@ impl Engine<'_> {
                     Some(Value::Map(p)) => p.as_ref().clone(),
                     Some(v) => {
                         let mut pairs = Vec::new();
-                        for item in self.core_members(v)? {
+                        for (at,item) in self.core_members(v)?.into_iter().enumerate() {
                             let row = self.core_members(&item)?;
-                            if row.len() != 2 { return Err(self.core_fault("core.dict.pair", "")); }
+                            if row.len() != 2 { let w = &self.lang.core_words["core.dict.pair"]; return Err(format!("{}{}{}{}{}", w[0],at,w[1],row.len(),w[2])); }
                             pairs.push((row[0].clone(), row[1].clone()));
                         }
                         pairs
@@ -5826,7 +5839,7 @@ impl Engine<'_> {
                 let mut made: Vec<(Value, Value)> = Vec::new();
                 for (k,v) in pairs {
                     if k.core_hash().is_none() && !matches!(k, Value::Null | Value::Real(_)) { return Err(self.core_fault("core.unhashable", &k.core_kind())); }
-                    if let Some(p) = made.iter_mut().find(|(old,_)| old.equals(&k)) { p.1 = v; } else { made.push((k,v)); }
+                    if let Some(p) = made.iter_mut().find(|(old,_)| number(old).equals(&number(&k))) { p.1 = v; } else { made.push((k,v)); }
                 }
                 Value::Map(Rc::new(made))
             }
@@ -5908,11 +5921,26 @@ impl Engine<'_> {
             }
             Builtin::Divmod => {
                 arity(2, 2)?;
-                let a = number(&args[0]); let z = number(&args[1]);
-                if z.as_big().map_or(false, |n| n.is_zero()) && !matches!(z, Value::Real(_)) { return Err(self.core_fault("core.zero", "")); }
-                let quotient = arith::calculate(Operation::Floor, &a, &z).ok_or_else(|| self.core_fault("core.unready", name))??;
-                let rest = arith::calculate(Operation::Remainder, &a, &z).ok_or_else(|| self.core_fault("core.unready", name))??;
-                Value::Tuple(Rc::new(vec![quotient, rest]))
+                let (a,z) = (number(&args[0]), number(&args[1]));
+                if matches!(a, Value::Small(_) | Value::Huge(_)) && matches!(z, Value::Small(_) | Value::Huge(_)) {
+                    let divisor = z.as_big()?;
+                    if divisor.is_zero() { return Err(self.core_fault("core.zero", "")); }
+                    let (q,r) = a.as_big()?.div_mod_floor(&divisor);
+                    Value::Tuple(Rc::new(vec![Value::of_big(q),Value::of_big(r)]))
+                } else {
+                    let (p,q) = arith::parts(&a).ok_or_else(|| self.core_fault("core.unready", name))?;
+                    let (r,s) = arith::parts(&z).ok_or_else(|| self.core_fault("core.unready", name))?;
+                    let (x,y) = (crate::value::as_binary(&p,&q),crate::value::as_binary(&r,&s));
+                    if y == 0.0 { return Err(self.core_fault("core.zero", "")); }
+                    let mut rem = x % y;
+                    let mut div = (x-rem)/y;
+                    if rem != 0.0 && rem.is_sign_negative() != y.is_sign_negative() { rem += y; div -= 1.0; }
+                    if rem == 0.0 { rem = 0.0f64.copysign(y); }
+                    let mut floor = div.floor();
+                    if div - floor > 0.5 { floor += 1.0; }
+                    if div == 0.0 { floor = 0.0f64.copysign(x/y); }
+                    Value::Tuple(Rc::new(vec![crate::value::real_of(floor,arith::DEFAULT_PLACES), crate::value::real_of(rem,arith::DEFAULT_PLACES)]))
+                }
             }
             Builtin::Power => {
                 arity(2, 3)?;
@@ -5928,7 +5956,19 @@ impl Engine<'_> {
                     let mut n = a.modpow(&exp, &positive);
                     if modulus.is_negative() && !n.is_zero() { n -= positive; }
                     Value::of_big(n)
-                } else { arith::calculate(Operation::Raise, &number(&args[0]), &number(&args[1])).ok_or_else(|| self.core_fault("core.unready", name))?? }
+                } else {
+                    let base = number(&args[0]); let exp = number(&args[1]);
+                    let (ep,eq) = arith::parts(&exp).ok_or_else(|| self.core_fault("core.unready", name))?;
+                    if ep.is_negative() || eq != BigInt::from(1) || matches!(base, Value::Real(_)) || matches!(exp, Value::Real(_)) {
+                        let (bp,bq) = arith::parts(&base).ok_or_else(|| self.core_fault("core.unready", name))?;
+                        let (x,y) = (crate::value::as_binary(&bp,&bq),crate::value::as_binary(&ep,&eq));
+                        if x == 0.0 && y < 0.0 { return Err(self.core_fault("core.power.zero", "")); }
+                        let answer = x.powf(y);
+                        if answer.is_nan() { return Err(self.core_fault("core.unready", name)); }
+                        if answer.is_infinite() { return Err(self.core_fault("core.power.overflow", "")); }
+                        crate::value::real_of(answer,arith::DEFAULT_PLACES)
+                    } else { arith::calculate(Operation::Raise, &base, &exp).ok_or_else(|| self.core_fault("core.unready", name))?? }
+                }
             }
             Builtin::Round => {
                 arity(1, 2)?;
@@ -5948,7 +5988,7 @@ impl Engine<'_> {
                     if !f.is_finite() || !(-308..=308).contains(&digits) { return Err(self.core_fault("core.unready", name)); }
                     let rounded = if digits >= 0 { format!("{:.*}", digits as usize, f).parse::<f64>().map_err(|_| self.core_fault("core.unready", name))? }
                         else { let scale = 10f64.powi(-digits as i32); (f / scale).round_ties_even() * scale };
-                    if args.len() == 1 || matches!(args.get(1), Some(Value::Null)) { Value::of_big(crate::value::from_binary(rounded).ok_or_else(|| self.core_fault("core.unready", name))?.0) }
+                    if args.len() == 1 || matches!(args.get(1), Some(Value::Null)) { { let (top,bottom) = crate::value::from_binary(rounded).ok_or_else(|| self.core_fault("core.unready", name))?; Value::of_big(top / bottom) } }
                     else {
                         let text = format!("{:.*}", digits.max(0) as usize, rounded);
                         let numerator = text.replace('.', "").parse::<BigInt>().map_err(|_| self.core_fault("core.unready", name))?;
@@ -5963,10 +6003,11 @@ impl Engine<'_> {
                     if b == Builtin::GetAttr && args.len() == 3 { return Ok(args[2].clone()); }
                     return Err(self.core_fault(if b == Builtin::Vars { "core.vars" } else { "core.unready" }, if b == Builtin::Vars { "" } else { name }));
                 };
-                if b == Builtin::Vars { return Ok(Value::Map(Rc::new(o.fields.borrow().iter().map(|(k,v)| (Value::text(k),v.clone())).collect()))); }
+                if b == Builtin::Vars { return Err(self.core_fault("core.unready", name)); }
                 let Value::Text(attr) = &args[1] else { return Err(self.core_fault("core.attribute.name", "")); };
                 let mut fields = o.fields.borrow_mut();
                 let at = fields.iter().position(|(k,_)| k == attr.as_ref());
+                if b == Builtin::GetAttr && at.is_none() && o.class.method(attr).is_some() { return Err(self.core_fault("core.unready", name)); }
                 match b {
                     Builtin::SetAttr => { if args.len() != 3 { return Err(self.core_fault("core.arity", name)); } if let Some(at) = at { fields[at].1 = args[2].clone(); } else { fields.push((attr.to_string(),args[2].clone())); } Value::Null }
                     Builtin::HasAttr => Value::Flag(at.is_some() || o.class.method(attr).is_some()),

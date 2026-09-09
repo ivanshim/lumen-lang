@@ -745,8 +745,14 @@ only. The extension labels so far, all from PHP:
   under several names; they do not resume generator bodies.
 - `ext.builtin.hasattr`, `.getattr`, `.setattr` and `.delattr` ask of,
   read, write and remove an instance's named fields. `ext.builtin.vars`
-  gathers those fields into a map. Descriptor methods and live maps of
-  fields remain wanting.
+  is read but refuses to run until a live map of fields can be handed out.
+  Descriptor methods and bound method values remain wanting.
+- `ext.builtin.core.unindexable` and `.immutable` put the kind between
+  the words for reading an unindexed value and writing an immutable one.
+  `ext.builtin.core.power.zero` and `.power.overflow` say that a negative
+  power of nought or an overflowing real power cannot be taken.
+  `ext.builtin.core.arity.one` and `.arity.exact` place the called name
+  and the given count in the complaint for the wrong number of arguments.
 - `ext.builtin.core.uniterable`, `.uncallable`, `.unhashable`, `.unready`,
   `.empty` and `.arity`: words before and after the offending kind or
   builtin name. The first three refuse a value of the wrong kind; the
@@ -2004,17 +2010,23 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.complaint.handler` | - | - | - | - | `__complaint_handler` | - | - | - | - | - |
 | `ext.builtin.complaint.say` | - | - | - | - | `__complaint_say` | - | - | - | - | - |
 | `ext.builtin.core.arity` | - | - | `TypeError: ` `() received invalid arguments` | - | - | - | - | - | - | - |
+| `ext.builtin.core.arity.exact` | - | - | `TypeError: ` ` expected ` ` arguments, got ` | - | - | - | - | - | - | - |
+| `ext.builtin.core.arity.one` | - | - | `TypeError: ` `() takes exactly one argument (` ` given)` | - | - | - | - | - | - | - |
 | `ext.builtin.core.attribute` | - | - | `AttributeError: '` `' object has no attribute '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.attribute.name` | - | - | `TypeError: attribute name must be string` | - | - | - | - | - | - | - |
 | `ext.builtin.core.default.many` | - | - | `TypeError: Cannot specify a default for min() or max() with multiple positional arguments` | - | - | - | - | - | - | - |
-| `ext.builtin.core.dict.pair` | - | - | `ValueError: dictionary update sequence element has length other than 2` | - | - | - | - | - | - | - |
+| `ext.builtin.core.dict.pair` | - | - | `ValueError: dictionary update sequence element #` ` has length ` `; 2 is required` | - | - | - | - | - | - | - |
 | `ext.builtin.core.empty` | - | - | `ValueError: ` `() iterable argument is empty` | - | - | - | - | - | - | - |
 | `ext.builtin.core.exhausted` | - | - | `StopIteration` | - | - | - | - | - | - | - |
+| `ext.builtin.core.immutable` | - | - | `TypeError: '` `' object does not support item assignment` | - | - | - | - | - | - | - |
 | `ext.builtin.core.inverse` | - | - | `ValueError: base is not invertible for the given modulus` | - | - | - | - | - | - | - |
 | `ext.builtin.core.isinstance.amiss` | - | - | `TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union` | - | - | - | - | - | - | - |
 | `ext.builtin.core.mod.zero` | - | - | `ValueError: pow() 3rd argument cannot be 0` | - | - | - | - | - | - | - |
+| `ext.builtin.core.power.overflow` | - | - | `OverflowError: math range error` | - | - | - | - | - | - | - |
+| `ext.builtin.core.power.zero` | - | - | `ZeroDivisionError: 0.0 cannot be raised to a negative power` | - | - | - | - | - | - | - |
 | `ext.builtin.core.uncallable` | - | - | `TypeError: '` `' object is not callable` | - | - | - | - | - | - | - |
 | `ext.builtin.core.unhashable` | - | - | `TypeError: unhashable type: '` `'` | - | - | - | - | - | - | - |
+| `ext.builtin.core.unindexable` | - | - | `TypeError: '` `' object is not subscriptable` | - | - | - | - | - | - | - |
 | `ext.builtin.core.uniterable` | - | - | `TypeError: '` `' object is not iterable` | - | - | - | - | - | - | - |
 | `ext.builtin.core.unready` | - | - | `NotImplementedError: ` `() is not supported for these values` | - | - | - | - | - | - | - |
 | `ext.builtin.core.vars` | - | - | `TypeError: vars() argument must have __dict__ attribute` | - | - | - | - | - | - | - |

@@ -71,6 +71,17 @@ impl Value {
                 chars.hash(&mut state);
                 state.finish() as i64
             }
+            Self::Nil => 0x9e3779b9,
+            Self::Frac(parts) if parts.places.is_some() => {
+                if parts.beneath == BigInt::from(0) {
+                    return Some(if parts.above == BigInt::from(0) { (std::rc::Rc::as_ptr(parts) as usize / 16) as i64 } else if parts.above.is_negative() { -314159 } else { 314159 });
+                }
+                let prime = BigInt::from(2_305_843_009_213_693_951u64);
+                let bottom = &parts.beneath % &prime;
+                let positive = if bottom == BigInt::from(0) { 314159 }
+                    else { ((parts.above.abs() % &prime) * bottom.modpow(&(&prime-2),&prime) % &prime).to_i64()? };
+                if parts.above.is_negative() { -positive } else { positive }
+            }
             Self::Tuple(parts) => {
                 let mut accum: u64 = 2_870_177_450_012_600_261;
                 for part in parts.iter() {
