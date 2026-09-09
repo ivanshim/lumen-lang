@@ -32,7 +32,8 @@
   "lexical.number.base_marker": [],
   "lexical.number.exponent_marker": [],
   "lexical.number.hex_prefix": [
-    "0x"
+    "0x",
+    "0X"
   ],
   "lexical.keywords_case_insensitive": false,
   "identifier.unicode": true,
@@ -336,6 +337,11 @@
   "ext.builtin.range.zero_step": ["ValueError: range step must not be zero"],
   "ext.builtin.sum": ["sum"],
   "ext.builtin.sum.non_number": ["TypeError: sum needs numbers"],
+  "ext.lexical.number.amiss": ["invalid numeric literal"],
+  "ext.lexical.number.binary_prefix": ["0b", "0B"],
+  "ext.lexical.number.octal_prefix": ["0o", "0O"],
+  "ext.lexical.number.separator": ["_"],
+  "ext.lexical.number.separator.after_prefix": true,
   "ext.op.assign.compound": true,
   "ext.op.bit.and": ["&"],
   "ext.op.bit.left": ["<<"],
@@ -410,7 +416,7 @@
   "ext.syntax.map.spread": ["**"],
   "ext.syntax.map.spread.unmapped": ["TypeError: value is not a mapping"],
   "ext.syntax.set": true,
-  "ext.system.fault.operands": ["TypeError: bitwise operations require integers"],
+  "ext.system.fault.operands": ["TypeError: unsupported operand type(s)"],
   "ext.system.fault.shift": ["ValueError: negative shift count"],
   "ext.system.module.name": ["__name__"],
   "ext.system.untrue.empty_array": true

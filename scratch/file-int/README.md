@@ -26,3 +26,10 @@ The whole-bit reading and running are taken from the lexical piece,
 using its `ext.op.bit.whole` label. The room complaint and the unary
 plus check are refinements here; the merge should keep that one account
 of whole-bit operations.
+
+`11.py` reads binary and octal prefixes under their existing labels,
+uppercase hexadecimal through the core prefix list, and underscores
+through `ext.lexical.number.separator`. The lexical piece's
+`ext.lexical.number.separator.after_prefix` admits a separator straight
+after a prefix and checks that other separators have digits on both
+sides. `12.py` asks for its `ext.lexical.number.amiss` complaint.
