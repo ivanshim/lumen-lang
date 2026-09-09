@@ -1,0 +1,10 @@
+[package]
+name = "lumen-room"
+version = "0.1.0"
+edition = "2021"
+description = "A tally of the room a run takes: an allocator that counts what it hands out"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]

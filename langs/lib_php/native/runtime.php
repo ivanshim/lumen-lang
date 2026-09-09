@@ -214,6 +214,11 @@ function ini_set($name, $value) {
         $held = __room_allowed((string)$value);
         if ($held[1]) { __complaint_say(__complaint_word(E_WARNING), __room_said((string)$value, $held[0])); }
         $__settings[$name] = $held[0];
+        // The run is told the mark as well as the setting, so that going
+        // past it stops the run rather than merely being written down.
+        // A setting at nought or below asks for no mark at all.
+        $mark = ini_parse_quantity($held[0]);
+        __room_limit($mark > 0 ? $mark : 0);
         return $was;
     }
     $__settings[$name] = (string)$value;
@@ -425,11 +430,16 @@ function function_exists($name) {
     return false;
 }
 function gc_collect_cycles() { return 0; }
-// The run does not count the room it takes, and has no way to ask the
-// host for the tally, so it owns to none rather than making a number up.
-function memory_get_usage($real = false) { return 0; }
-function memory_get_peak_usage($real = false) { return 0; }
-function memory_reset_peak_usage() { return null; }
+// The room the run has taken, in bytes, as the host has counted it. It
+// is not the same number the reference implementation gives: that one is
+// the room of its own arena, while this is the bytes the run has asked
+// the system for and not yet given back, counted from the moment the
+// program itself began. Asking for the room truly set aside rather than
+// the room asked for is answered with the same number, there being only
+// the one tally.
+function memory_get_usage($real = false) { return __room_used(); }
+function memory_get_peak_usage($real = false) { return __room_most(); }
+function memory_reset_peak_usage() { __room_most_forget(); return null; }
 
 // A key is taken as the array takes one, so 7 and "7" name one place.
 // Nothing standing where a key should is still read as the empty piece

@@ -67,6 +67,10 @@ pub struct Engine<'a> {
     /// nought is no limit at all.
     limit: std::cell::Cell<usize>,
     began: std::cell::Cell<Option<std::time::Instant>>,
+    /// How much room the run may take, in bytes; nought is no limit at
+    /// all. What the run has taken is not kept here: the tally of it
+    /// belongs to the allocator the host set up, and is only read.
+    ceiling: std::cell::Cell<usize>,
     /// How many pieces of the program now being found asked for quiet.
     /// Counted rather than flagged, since one hushed piece may hold
     /// another.
@@ -214,6 +218,7 @@ impl<'a> Engine<'a> {
             hurled_at: std::cell::Cell::new(0),
             limit: std::cell::Cell::new(0),
             began: std::cell::Cell::new(None),
+            ceiling: std::cell::Cell::new(0),
             hushed: std::cell::Cell::new(0),
             muted: std::cell::Cell::new(0),
             inside: Vec::new(),
@@ -1477,6 +1482,34 @@ impl<'a> Engine<'a> {
         Some(Fault::Stopped(format!("Maximum execution time of {} {} exceeded", seconds, ending)))
     }
 
+    /// Whether the run has taken more room than the language allowed it.
+    /// Looked at where the clock is looked at and for the same reason:
+    /// the tally the allocator keeps is exact at every byte, but reading
+    /// it at every word would cost more than the words between two
+    /// readings. A run may therefore pass the mark by whatever it takes
+    /// between one look and the next, and a single value grown past the
+    /// mark in one step is not caught until the step is done.
+    fn out_of_room(&self) -> Option<Fault> {
+        let ceiling = self.ceiling.get();
+        if ceiling == 0 {
+            return None;
+        }
+        let taken = lumen_room::used();
+        if taken <= ceiling {
+            return None;
+        }
+        // What the run was keeping rather than writing out is dropped
+        // where it stands: there is no room to hold it and none to write
+        // it with, and the words that end the run would otherwise be
+        // kept along with it and come out behind the whole of it.
+        self.holding.borrow_mut().clear();
+        // The mark is lifted now that it has been passed, so that the
+        // ending can be told and whatever was named to run at the end
+        // can run without meeting the same wall a second time.
+        self.ceiling.set(0);
+        Some(Fault::Stopped(format!("Allowed memory size of {} bytes exhausted ({} bytes were taken)", ceiling, taken)))
+    }
+
     /// What a call was given, brought level with what its parameters
     /// hold now. The reference reads back the values, not the cells, so
     /// a parameter handed one reads as what that cell holds.
@@ -1538,6 +1571,9 @@ impl<'a> Engine<'a> {
             counted = counted.wrapping_add(1);
             if counted % 4096 == 0 {
                 if let Some(over) = self.out_of_time() {
+                    return Err(over);
+                }
+                if let Some(over) = self.out_of_room() {
                     return Err(over);
                 }
             }
@@ -1660,6 +1696,13 @@ impl<'a> Engine<'a> {
                     };
                     self.data.push(Value::Bond(shared));
                 }
+                Instr::Shed => {
+                    self.drop_top()?;
+                }
+                Instr::Emptied(slot) => {
+                    self.store_cell(slot, frame, Value::Null)?;
+                }
+                Instr::Nothing => {}
                 Instr::Forget(slot) => {
                     for &s in &slot.near {
                         frame[s] = Value::Blank;
@@ -3499,6 +3542,30 @@ impl<'a> Engine<'a> {
                 let seconds = as_index(&args[0])?;
                 self.limit.set(seconds);
                 self.began.set(Some(std::time::Instant::now()));
+                Value::Flag(true)
+            }
+            // The room the run has taken, as the allocator the host set
+            // up has counted it: the bytes it holds at this moment, the
+            // most it ever held at once, and the forgetting of that
+            // highest reading so that it is counted afresh from here.
+            Builtin::RoomUsed => {
+                arity(0)?;
+                Value::Small(lumen_room::used() as i64)
+            }
+            Builtin::RoomMost => {
+                arity(0)?;
+                Value::Small(lumen_room::most() as i64)
+            }
+            Builtin::RoomForget => {
+                arity(0)?;
+                lumen_room::forget_most();
+                Value::Null
+            }
+            // How much room the run may take from here, in bytes.
+            Builtin::RoomLimit => {
+                arity(1)?;
+                let bytes = as_index(&args[0])?;
+                self.ceiling.set(bytes);
                 Value::Flag(true)
             }
             // Words said as a complaint of a kind the language names,

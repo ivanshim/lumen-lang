@@ -111,6 +111,17 @@ pub enum Prim {
     /// How long the run may take from here, counted in seconds; nought
     /// takes the limit away (ext.builtin.time_limit).
     Clock,
+    /// What the run has taken of the room the host hands out, counted in
+    /// bytes: what it holds as things stand (ext.builtin.room.used), the
+    /// highest it ever stood at (ext.builtin.room.most), and that highest
+    /// reading thrown away so that it is gathered again from this moment
+    /// (ext.builtin.room.most.forget).
+    RoomHeld,
+    RoomHighest,
+    RoomAnew,
+    /// How much room the run may take from here, counted in bytes;
+    /// nought takes the mark away (ext.builtin.room.limit).
+    RoomMark,
     /// Keeping what the run writes out instead of letting it go
     /// (ext.builtin.output.*): begin keeping, what has been kept since
     /// the last beginning, stop keeping and give up what was kept, and

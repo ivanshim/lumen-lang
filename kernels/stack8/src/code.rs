@@ -315,6 +315,17 @@ pub enum Builtin {
     /// How long the run may take from here, in seconds; nought lifts
     /// the limit (ext.builtin.time_limit).
     TimeLimit,
+    /// The room the run has taken, in bytes: what it holds at this
+    /// moment (ext.builtin.room.used), the most it ever held at once
+    /// (ext.builtin.room.most), and the forgetting of that highest
+    /// reading so that it is counted afresh from here
+    /// (ext.builtin.room.most.forget).
+    RoomUsed,
+    RoomMost,
+    RoomForget,
+    /// How much room the run may take, in bytes; nought lifts the
+    /// limit (ext.builtin.room.limit).
+    RoomLimit,
     /// Keeping what the run writes out rather than letting it go
     /// (ext.builtin.output.*): begin keeping, what has been kept since
     /// the last beginning, stop keeping and give up what was kept, and
@@ -456,6 +467,23 @@ pub enum Instr {
     BondPlace(Cell, usize),
     /// Leave this binding as though nothing were ever written to it.
     Forget(Cell),
+    /// Put nothing at all in this binding, letting go of whatever it
+    /// held. The slot a routine keeps its running result in is emptied
+    /// this way at the head of a statement, so that what the statement
+    /// before came to is finished with before the next is worked out
+    /// and not after it.
+    Emptied(Cell),
+    /// Pop the top of the stack and let it go. A statement written for
+    /// what it does rather than for what it comes to ends with this, so
+    /// that what it came to is finished with there and then and not held
+    /// alive until something else takes its place.
+    Shed,
+    /// A word that does nothing at all. One stands where a word already
+    /// written down has turned out not to be wanted and cannot be taken
+    /// out without moving everything after it; the peephole takes them
+    /// out at the end, when it is moving jumps in any case, so the
+    /// engine never meets one.
+    Nothing,
     /// From here until the mark that ends it, the run says nothing at
     /// all about itself: how a language lets a program silence a piece
     /// of itself outright, where Hush only keeps quiet about what is

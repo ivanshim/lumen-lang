@@ -1047,6 +1047,18 @@
   "ext.builtin.math": [
     "__math"
   ],
+  "ext.builtin.room.used": [
+    "__room_used"
+  ],
+  "ext.builtin.room.most": [
+    "__room_most"
+  ],
+  "ext.builtin.room.most.forget": [
+    "__room_most_forget"
+  ],
+  "ext.builtin.room.limit": [
+    "__room_limit"
+  ],
   "ext.system.fault.modulo": [
     "Modulo by zero"
   ],

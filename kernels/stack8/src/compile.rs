@@ -677,9 +677,13 @@ impl<'a> Compiler<'a> {
         format!("#{}{}", purpose, self.counter)
     }
 
-    /// Discard the top of the stack.
+    /// Discard the top of the stack. What is discarded is let go at
+    /// once rather than put in a spare slot: a slot would hold the value
+    /// alive until the next statement wrote over it, and a program
+    /// asking how much room it holds would be told of a value it had
+    /// already finished with.
     fn discard(&mut self) {
-        self.write(SPARE_CELLS[0]);
+        self.put(Instr::Shed);
     }
 
     fn enter_cycle(&mut self, again: Option<usize>) {
@@ -2777,14 +2781,33 @@ impl<'a> Compiler<'a> {
 
     /// An assignment, an indexed assignment, or an expression statement.
     fn assign_or_expr(&mut self) -> Res<()> {
+        // The running result is emptied before the statement is worked
+        // out rather than written over after it. A slot still holding
+        // what the statement before came to keeps that value alive for
+        // the whole of this one, and a program asking how much room it
+        // holds would be told of a value it had already finished with.
+        let running = self.cell_to_write(RESULT_CELL);
+        let emptied = self.put(Instr::Emptied(running));
         let from = self.mark();
         self.expr_at(0, false)?;
-        if !self.on_writing() {
+        let done = if self.on_writing() {
+            self.assignment(from, None)
+        } else {
             self.piece().result_touched = true;
             self.write(RESULT_CELL);
-            return Ok(());
+            Ok(())
+        };
+        // A statement that never calls out of itself has no need of the
+        // emptying: nothing within it can ask the run how much room it
+        // holds, and what the statement before came to is let go where
+        // the running result is written over anyway. The word is left
+        // standing but made to do nothing, so that everything already
+        // written down as an index into these words still points where
+        // it did; the peephole takes it out at the end.
+        if self.piece().instrs[from..].iter().all(word_alone) {
+            self.piece().instrs[emptied] = Instr::Nothing;
         }
-        self.assignment(from, None)
+        done
     }
 
     /// Whether a sign that writes stands here: the assignment sign, or
@@ -5178,6 +5201,14 @@ fn peephole(instrs: Vec<Instr>) -> Vec<Instr> {
                 }
             }
         }
+        // A word that does nothing is taken out here, where the map
+        // that follows moves every jump that pointed at it onto the
+        // word that took its place.
+        if matches!(instrs[i], Instr::Nothing) {
+            map[i] = out.len();
+            i += 1;
+            continue;
+        }
         match group {
             Some(w) => {
                 for j in i..i + width {
@@ -5201,6 +5232,30 @@ fn peephole(instrs: Vec<Instr>) -> Vec<Instr> {
         }
     }
     out
+}
+
+/// Whether a word keeps to itself: it works on the stack and on cells
+/// and calls nothing, so nothing within it can ask the run anything or
+/// take room that is not let go again straight away. An operation is
+/// counted as calling out unless it is plain arithmetic over numbers,
+/// since joining text and reaching into a value are both ways a class
+/// of the program's own can be called without saying so.
+fn word_alone(w: &Instr) -> bool {
+    let quiet = |op: &Action| {
+        matches!(op, Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv
+            | Action::Mod | Action::Power | Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt
+            | Action::Ge | Action::And | Action::Or | Action::Not | Action::Negate | Action::AsBool
+            | Action::Same | Action::Unsame | Action::Rank | Action::Extent | Action::Nothing
+            | Action::BitBoth | Action::BitEither | Action::BitOne | Action::BitTurn | Action::BitUp | Action::BitDown)
+    };
+    match w {
+        Instr::Const(_) | Instr::Read(_) | Instr::Glance(_) | Instr::Write(_) | Instr::Skip(_)
+        | Instr::Missing(_) | Instr::Unwritten(_) | Instr::Line(_) | Instr::Forget(_)
+        | Instr::Emptied(_) | Instr::Shed | Instr::Nothing | Instr::Ready(_) | Instr::Bump { .. } => true,
+        Instr::Act(op, _) => quiet(op),
+        Instr::Dyad { op, .. } | Instr::SkipCmp { op, .. } => quiet(op),
+        _ => false,
+    }
 }
 
 /// Words moved by `delta`, their jump targets moved with them.

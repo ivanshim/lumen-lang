@@ -282,6 +282,11 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
         counts.1 = Some(cell);
     }
     value::figures_kept_in(counts.0, counts.1);
+    // The room counted against the program is counted from here: what
+    // went before was the host reading the program and setting up the
+    // machine that runs it, and belongs to the host rather than to the
+    // program that asks how much room it has taken.
+    lumen_room::mark();
     // A value raised and never caught is a fault like any other, told
     // in the language's own words.
     if let Err(fault) = machine.invoke(&program, Vec::new()) {

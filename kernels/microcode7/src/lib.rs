@@ -303,6 +303,12 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         by_kind = Some(cell);
     }
     data::counts_kept_in(plainly, by_kind);
+    // Everything up to here was the reading of the program and the
+    // building of the machine to run it, which is the host's own doing.
+    // The tally of room starts afresh at this line, so that a program
+    // asked how much room it has taken answers for what it has taken
+    // itself and not for what it cost to be made ready.
+    lumen_room::mark();
     if let Err(told) = machine.run_main(&reduced.program.body) {
         let _ = machine.run_afterward();
         machine.let_things_go();

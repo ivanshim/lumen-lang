@@ -346,6 +346,30 @@ only. The extension labels so far, all from PHP:
   into a date, and a date back into it, is arithmetic and belongs in a
   language's own library; PHP's `time`, `mktime`, `getdate`, `date` and
   the rest are written there on it.
+- `ext.builtin.room.used`, `ext.builtin.room.most`,
+  `ext.builtin.room.most.forget` and `ext.builtin.room.limit`: four
+  builtins over the room the run takes. All the room the host hands out
+  goes through an allocator that keeps a tally beside it, so the first
+  answers with the bytes the run holds at this moment, the second with
+  the most it ever held at once, and the third throws that highest
+  reading away so it is gathered afresh from there. The count begins
+  where the program begins to run: reading the program and building the
+  machine that runs it is the host's own work and is not laid at the
+  program's door. What is counted is the bytes asked of the system and
+  not yet given back, which is near to, and not the same as, what a
+  language keeping an arena of its own would count for itself. PHP's
+  `memory_get_usage`, `memory_get_peak_usage` and
+  `memory_reset_peak_usage` are written on the first three.
+  The fourth sets a mark, in bytes, that the run may not pass; nought
+  takes the mark away. The tally is looked at where the clock of
+  `ext.builtin.time_limit` is looked at, so a run stands a little past
+  the mark before it is stopped, and a single value swollen past it in
+  one step is not caught until that step is done — a mark cannot be
+  kept from inside an allocator, which is where the reference
+  implementation keeps its own. Passing it ends the run as passing the
+  clock does, and what the run was keeping back rather than writing out
+  is dropped, there being no room to keep it in. PHP's `memory_limit`
+  setting is written on it.
 - `ext.builtin.class.beneath`: a builtin answering with the name of the
   class the one it is given stands on, a thing being asked of the class
   it is of, and nothing where it stands on none. PHP's
@@ -1544,6 +1568,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.output.held` | - | - | - | - | `__output_held` | - | - | - | - | - |
 | `ext.builtin.output.hold` | - | - | - | - | `__output_hold` | - | - | - | - | - |
 | `ext.builtin.print_r` | - | - | - | - | `print_r` | - | - | - | - | - |
+| `ext.builtin.room.limit` | - | - | - | - | `__room_limit` | - | - | - | - | - |
+| `ext.builtin.room.most` | - | - | - | - | `__room_most` | - | - | - | - | - |
+| `ext.builtin.room.most.forget` | - | - | - | - | `__room_most_forget` | - | - | - | - | - |
+| `ext.builtin.room.used` | - | - | - | - | `__room_used` | - | - | - | - | - |
 | `ext.builtin.routines` | - | - | - | - | `__routines_bound` | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.time_limit` | - | - | - | - | `set_time_limit` | - | - | - | - | - |

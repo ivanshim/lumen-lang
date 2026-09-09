@@ -20,6 +20,14 @@ use std::process;
 
 mod web;
 
+/// All the room the host takes is handed out through this, so that a
+/// program can be told how much of it the program itself has taken. An
+/// allocator is one thing for the whole process, and the kernels are
+/// separate crates that know nothing of one another, so the count lives
+/// in a crate of its own that each of them may read.
+#[global_allocator]
+static ROOM: lumen_room::Tally = lumen_room::Tally;
+
 const KERNELS: [&str; 6] = ["stream35", "microcode11", "microcode4", "microcode7", "stack5", "stack8"];
 const DEFAULT_KERNEL: &str = "stack8";
 const DEFAULT_LANGUAGE: &str = "lumen";
@@ -270,6 +278,14 @@ fn main() {
         }
         return;
     }
+
+    // The count of room begins here, with the program read, the language
+    // read, and what a request carries gathered — everything the host
+    // needed before a kernel was called at all. A kernel that goes on to
+    // read the program and build a machine for it narrows the count
+    // again, to the moment the program itself begins to run; this is the
+    // widest mark, and the only one for a kernel that sets none.
+    lumen_room::mark();
 
     let result = match (inv.kernel.as_str(), &inv.language) {
         ("stream35", Language::Named(name)) => lumen_stream35::run(name, &source, &inv.program_args),

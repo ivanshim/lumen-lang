@@ -143,6 +143,10 @@ pub struct Machine<'a> {
     /// nought is no limit at all.
     allowed: usize,
     started: Option<std::time::Instant>,
+    /// How many bytes of room the run may take; nought is no mark at
+    /// all. What it has taken is not written down here — that tally is
+    /// the allocator's, kept for the whole process, and only read.
+    ceiling: usize,
     /// How many pieces now being found asked to be quiet. Counted, not
     /// flagged, because a quiet piece may hold another.
     quieted: usize,
@@ -247,6 +251,7 @@ impl<'a> Machine<'a> {
             raised_on: 0,
             allowed: 0,
             started: None,
+            ceiling: 0,
             written_in: Rc::from(""),
             pages_at: None,
             calls: Vec::new(),
@@ -1127,6 +1132,32 @@ impl<'a> Machine<'a> {
         Some(Escape::Stopped(format!("Maximum execution time of {} {} exceeded", self.allowed, ending)))
     }
 
+    /// Whether the run has taken more of the host's room than the
+    /// language allowed it. The allocator's tally is right to the byte
+    /// at every moment, but it is looked at where the clock is looked
+    /// at, since looking costs more than the work between two looks.
+    /// A run may therefore stand a little past the mark before it is
+    /// stopped, and one value swollen past the mark in a single step
+    /// is not caught until that step has finished.
+    fn past_its_room(&mut self) -> Option<Escape> {
+        if self.ceiling == 0 {
+            return None;
+        }
+        let held = lumen_room::used();
+        if held <= self.ceiling {
+            return None;
+        }
+        let mark = self.ceiling;
+        // Nothing may go on being kept back: there is no room to keep
+        // it in, nor to write it out with, and the words ending the run
+        // would fall into the keeping and come out behind all of it.
+        self.holding.borrow_mut().clear();
+        // The mark goes now that it has been passed, so that the ending
+        // can be told and whatever was named for the end can run.
+        self.ceiling = 0;
+        Some(Escape::Stopped(format!("Allowed memory size of {} bytes exhausted ({} bytes were taken)", mark, held)))
+    }
+
     /// How a run ended, told the way a language with a word for the end
     /// of one tells it: what stopped it, where, and how the run stood.
     /// Nothing is written where a language has no word for it.
@@ -1802,6 +1833,9 @@ impl<'a> Machine<'a> {
                 if let Some(over) = self.past_its_time() {
                     return Err(over);
                 }
+                if let Some(over) = self.past_its_room() {
+                    return Err(over);
+                }
                 self.value_of(inner, frame)
             }
             Form::Missing(slot) => {
@@ -1904,6 +1938,9 @@ impl<'a> Machine<'a> {
                     if let Some(over) = self.past_its_time() {
                         return Err(over);
                     }
+                    if let Some(over) = self.past_its_room() {
+                        return Err(over);
+                    }
                     // The test is worked out where it is looked at and
                     // nowhere else: a test that changes something as it
                     // is read must change it once a pass, not twice.
@@ -1954,6 +1991,12 @@ impl<'a> Machine<'a> {
                 Prim::Seq => {
                     let mut last = Value::Nil;
                     for a in args {
+                        // What the statement before came to is let go
+                        // before the next is worked out and not after
+                        // it: a program asking how much room it holds
+                        // must not be told of a value it has already
+                        // finished with.
+                        drop(std::mem::replace(&mut last, Value::Nil));
                         last = self.value_of(a, frame)?;
                     }
                     Ok(last)
@@ -3279,6 +3322,29 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 self.allowed = as_index(&v[0])?;
                 self.started = Some(std::time::Instant::now());
+                Value::Flag(true)
+            }
+            // What the run has taken of the host's room, as the tally
+            // beside the allocator has it: what stands taken now, the
+            // highest it ever stood at, and that highest reading thrown
+            // away so it is gathered again from this moment on.
+            Prim::RoomHeld => {
+                n(0)?;
+                Value::Small(lumen_room::used() as i64)
+            }
+            Prim::RoomHighest => {
+                n(0)?;
+                Value::Small(lumen_room::most() as i64)
+            }
+            Prim::RoomAnew => {
+                n(0)?;
+                lumen_room::forget_most();
+                Value::Nil
+            }
+            // How much room the run may take from here on.
+            Prim::RoomMark => {
+                n(1)?;
+                self.ceiling = as_index(&v[0])?;
                 Value::Flag(true)
             }
             // Words said as a complaint of a kind the language names,

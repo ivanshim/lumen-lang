@@ -19,12 +19,12 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 102, differs 0, error 2, skipped 10 | pass 102, differs 0, error 2, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 207, differs 1, error 0, skipped 5 | pass 207, differs 1, error 0, skipped 5 |
+| `php/lang` | 213 | pass 208, differs 0, error 0, skipped 5 | pass 208, differs 0, error 0, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 58, differs 0, error 0, skipped 6 | pass 58, differs 0, error 0, skipped 6 |
 | `php/lang/string` | 9 | pass 9, differs 0, error 0, skipped 0 | pass 9, differs 0, error 0, skipped 0 |
-| all | 422 | pass 394, differs 1, error 2, skipped 25 | pass 394, differs 1, error 2, skipped 25 |
+| all | 422 | pass 395, differs 0, error 2, skipped 25 | pass 395, differs 0, error 2, skipped 25 |
 
 | Reason | Tests |
 |---|---|
@@ -40,7 +40,6 @@ is listed, since the full kernels are meant to behave alike.
 | skip Can't find german locale | 1 |
 | skip setlocale() failed | 1 |
 | skip only for Windows | 1 |
-| ran, printed something else | 1 |
 | skip this test is for 32-bit platforms only | 1 |
 
 ### Reserved words: 59 of 68 spelled
@@ -404,7 +403,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug43958.phpt` | pass | pass |  |
 | `php/lang/bug44654.phpt` | pass | pass |  |
 | `php/lang/bug44827.phpt` | pass | pass |  |
-| `php/lang/bug45392.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug45392.phpt` | pass | pass |  |
 | `php/lang/bug55754.phpt` | pass | pass |  |
 | `php/lang/bug71897.phpt` | pass | pass |  |
 | `php/lang/bug73172.phpt` | pass | pass |  |
