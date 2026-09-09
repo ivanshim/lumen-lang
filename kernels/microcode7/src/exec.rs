@@ -2983,6 +2983,29 @@ impl<'a> Machine<'a> {
                 };
                 return self.prim(plain, name, v);
             }
+            Prim::Partition(wanted, star) => {
+                let mut values: Vec<Value> = match &v[0] {
+                    Value::Text(s) => s.chars().map(|letter| Value::text(&letter.to_string())).collect(),
+                    Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
+                    Value::Vector(v) => v.to_vec(),
+                    _ => return Err(self.table.single("ext.stmt.unpack.unwalkable").unwrap_or("Value cannot be taken apart").to_string()),
+                };
+                let minimum = if star.is_some() { wanted - 1 } else { wanted };
+                let fault = if values.len() < minimum { Some("ext.stmt.unpack.short") }
+                    else if star.is_none() && values.len() != wanted { Some("ext.stmt.unpack.long") }
+                    else { None };
+                if let Some(label) = fault {
+                    return Err(self.table.single(label).unwrap_or("Wrong number of values").to_string());
+                }
+                if let Some(middle) = star {
+                    let tail = wanted - middle - 1;
+                    let after = values.split_off(values.len() - tail);
+                    let gathered = values.split_off(middle);
+                    values.push(Value::Vector(Rc::new(gathered)));
+                    values.extend(after);
+                }
+                Value::Vector(Rc::new(values))
+            }
             Prim::MakeArray => assembled(v.to_vec(), false, self.plain_keys),
             Prim::MakeMap => assembled(v.to_vec(), true, self.plain_keys),
             Prim::Couple => {

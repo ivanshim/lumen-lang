@@ -313,7 +313,33 @@
   "system.kind.boolean": [],
   "system.kind.array": [],
   "system.kind.null": [],
-  "ext.stmt.decorator": ["@"],
-  "ext.stmt.decorator.amiss": ["A decorator must stand on its own line before a function definition"],
-  "ext.stmt.for.collection": true
+  "ext.stmt.decorator": [
+    "@"
+  ],
+  "ext.stmt.decorator.amiss": [
+    "A decorator must stand on its own line before a function definition"
+  ],
+  "ext.stmt.for.collection": true,
+  "ext.op.tuple": [
+    ","
+  ],
+  "ext.stmt.assign.chain": true,
+  "ext.stmt.unpack": [
+    "["
+  ],
+  "ext.stmt.unpack.rest": [
+    "*"
+  ],
+  "ext.stmt.unpack.short": [
+    "not enough values to unpack"
+  ],
+  "ext.stmt.unpack.long": [
+    "too many values to unpack"
+  ],
+  "ext.stmt.unpack.unwalkable": [
+    "cannot unpack non-iterable object"
+  ],
+  "ext.stmt.unpack.amiss": [
+    "invalid unpacking assignment"
+  ]
 }

@@ -1173,7 +1173,7 @@ impl<'a> Builder<'a> {
                 } else if by_cell {
                     vec![self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.given").to_vec(), true, None)?]
                 } else {
-                    vec![self.expr(0)?]
+                    vec![self.comma_value()?]
                 };
                 return Ok(prim_call(Prim::Yield, value));
             }
@@ -2057,14 +2057,21 @@ impl<'a> Builder<'a> {
                 // own cell.
                 if let Some(began) = place {
                     let after = r.pos;
-                    r.pos = began;
-                    let target = r.expr_at(0, false)?;
-                    let was = r.waiting.replace(item.clone());
-                    let stood = r.look().clone();
-                    let done = r.write_into(target, false, None, stood);
-                    r.waiting = was;
+                    let write = if r.table.single("ext.op.tuple").is_some() && r.table.single("ext.stmt.unpack").is_some() {
+                        let ends = r.divided_at(began, r.tokens.len(), "stmt.for.in");
+                        let end = *ends.first().ok_or_else(|| "Expected loop target".to_string())?;
+                        r.distribute(began..end, &item)?
+                    } else {
+                        r.pos = began;
+                        let target = r.expr_at(0, false)?;
+                        let was = r.waiting.replace(item.clone());
+                        let stood = r.look().clone();
+                        let done = r.write_into(target, false, None, stood);
+                        r.waiting = was;
+                        done?
+                    };
                     r.pos = after;
-                    items.push(done?);
+                    items.push(write);
                 }
                 items.push(r.body()?);
                 let pass = sequence(items);
@@ -2354,7 +2361,17 @@ impl<'a> Builder<'a> {
     fn for_stmt(&mut self) -> Res<Form> {
         let table = self.table;
         self.advance();
-        let var = self.need_word("as the loop variable")?;
+        let place = if table.single("ext.op.tuple").is_some() && table.single("ext.stmt.unpack").is_some() {
+            self.divided_at(self.pos, self.tokens.len(), "stmt.for.in").first().copied().and_then(|end| {
+                let start = self.pos;
+                if start + 1 == end && self.tokens[start].shape == Shape::Bare { None }
+                else { self.pos = end; Some(start) }
+            })
+        } else { None };
+        let var = match place {
+            Some(_) => self.gensym("each").ident.to_string(),
+            None => self.need_word("as the loop variable")?,
+        };
         if !self.key("stmt.for.in") {
             return Err(format!("Expected '{}' after for loop variable, got: {}", table.single("stmt.for.in").unwrap_or("in"), self.look().lexeme));
         }
@@ -2362,7 +2379,7 @@ impl<'a> Builder<'a> {
         let ranged = self.look().shape == Shape::Bare
             && table.prims.get(&self.look().lexeme) == Some(&Prim::Span)
             && table.single("syntax.call.open").map_or(false, |o| self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == o);
-        let (start, end) = if ranged {
+        let (start, end) = if ranged && place.is_none() {
             self.advance();
             self.advance();
             let start = self.expr(0)?;
@@ -2374,14 +2391,14 @@ impl<'a> Builder<'a> {
             (start, end)
         } else {
             let tier = table.strings("op.range").iter().filter_map(|r| table.precedence.get(r.as_str())).min().copied().unwrap_or(0);
-            let start = self.expr(tier + 1)?;
+            let start = if place.is_some() { self.comma_value()? } else { self.expr(tier + 1)? };
             if !(self.look().shape == Shape::Sign && table.spells("op.range", &self.look().lexeme)) {
                 // No range mark: what was read is something to walk through.
                 if !table.flag("ext.stmt.for.collection") {
                     return Err("A for loop needs a range: start..end".to_string());
                 }
                 self.address_to_write(&var);
-                return self.walk(start, None, var, None, None);
+                return self.walk(start, None, var, None, place);
             }
             self.advance();
             let end = self.expr(tier + 1)?;
@@ -2801,9 +2818,155 @@ impl<'a> Builder<'a> {
         Ok(names)
     }
 
+    /// Find separators belonging to this depth alone. A line end at
+    /// this depth finishes the search, even if more source was given.
+    fn divided_at(&self, start: usize, limit: usize, label: &str) -> Vec<usize> {
+        let mut depth: Vec<String> = Vec::new();
+        let mut cuts = Vec::new();
+        let t = self.table;
+        for i in start..limit {
+            let word = &self.tokens[i];
+            if depth.is_empty() {
+                if matches!(word.shape, Shape::Finish | Shape::Close | Shape::LineEnd) { break; }
+                if word.shape == Shape::Sign && t.spells("stmt.terminator", &word.lexeme) { break; }
+                if matches!(word.shape, Shape::Bare | Shape::Sign) && t.spells(label, &word.lexeme) { cuts.push(i); }
+            }
+            if word.shape == Shape::Sign {
+                if depth.last().map(String::as_str) == Some(word.lexeme.as_str()) {
+                    depth.pop();
+                    continue;
+                }
+                for family in ["syntax.group", "syntax.array", "syntax.map"] {
+                    if t.single(&format!("{}.open", family)) == Some(word.lexeme.as_str()) {
+                        if let Some(close) = t.single(&format!("{}.close", family)) { depth.push(close.to_string()); }
+                        break;
+                    }
+                }
+            }
+        }
+        cuts
+    }
+
+    fn comma_value(&mut self) -> Res<Form> {
+        let first = self.expr(0)?;
+        if !self.on_any("ext.op.tuple") { return Ok(first); }
+        let mut values = vec![first];
+        loop {
+            self.advance();
+            let ended = self.on_stmt_end() || self.exhausted() || self.look().shape == Shape::Close
+                || self.on_any("block.intro") || self.on_any("syntax.group.close")
+                || self.on_any("syntax.array.close") || self.on_any("syntax.map.close");
+            if ended { break; }
+            values.push(self.expr(0)?);
+            if !self.on_any("ext.op.tuple") { break; }
+        }
+        Ok(prim_call(Prim::MakeArray, values))
+    }
+
+    /// A target is read afresh at its turn, after the whole right hand
+    /// side has been kept. Nested targets each check their own extent.
+    fn distribute(&mut self, span: std::ops::Range<usize>, source: &str) -> Res<Form> {
+        let bad = self.table.single("ext.stmt.unpack.amiss").unwrap_or("Invalid assignment target").to_string();
+        let (mut lo, mut hi) = (span.start, span.end);
+        if lo >= hi { return Err(bad); }
+        let mut array = false;
+        while lo < hi {
+            let token = &self.tokens[lo];
+            let family = if token.shape != Shape::Sign { break; }
+                else if self.table.spells("syntax.array.open", &token.lexeme) { "syntax.array" }
+                else if self.table.spells("syntax.group.open", &token.lexeme) { "syntax.group" }
+                else { break; };
+            let ending = self.table.single(&format!("{}.close", family)).unwrap();
+            let mut level = 1;
+            let mut ends = lo + 1;
+            while ends < hi {
+                let next = &self.tokens[ends];
+                if next.shape == Shape::Sign {
+                    if next.lexeme == token.lexeme { level += 1; }
+                    if next.lexeme == ending { level -= 1; }
+                }
+                if level == 0 { break; }
+                ends += 1;
+            }
+            if ends + 1 != hi { break; }
+            array |= family == "syntax.array";
+            lo += 1;
+            hi -= 1;
+            if lo == hi { array = true; }
+            if !self.divided_at(lo, hi, "ext.op.tuple").is_empty() { break; }
+        }
+        let cuts = self.divided_at(lo, hi, "ext.op.tuple");
+        if cuts.is_empty() && !array {
+            self.pos = lo;
+            let place = self.expr_at(0, false)?;
+            if self.pos != hi { return Err(bad); }
+            let sign = self.look().clone();
+            let old = self.waiting.replace(source.to_string());
+            let written = self.write_into(place, false, None, sign);
+            self.waiting = old;
+            return written;
+        }
+        let mut pieces = Vec::new();
+        let mut previous = lo;
+        for boundary in cuts.into_iter().chain(Some(hi)) {
+            if previous < boundary { pieces.push(previous..boundary); }
+            else if boundary < hi { return Err(bad); }
+            previous = boundary + 1;
+        }
+        let mut starred = None;
+        for (number, piece) in pieces.iter_mut().enumerate() {
+            let lead = &self.tokens[piece.start];
+            if lead.shape == Shape::Sign && self.table.spells("ext.stmt.unpack.rest", &lead.lexeme) {
+                if starred.is_some() { return Err(bad); }
+                starred = Some(number);
+                piece.start += 1;
+            }
+        }
+        let held = self.gensym("partition").ident.to_string();
+        let input = self.read(source);
+        let checked = prim_call(Prim::Partition(pieces.len(), starred), vec![input]);
+        let mut writes = vec![self.write(&held, checked)];
+        for (index, part) in pieces.into_iter().enumerate() {
+            let bag = self.read(&held);
+            let value = prim_call(Prim::Apart, vec![bag, constant(Value::Small(index as i64))]);
+            let item = self.gensym("part").ident.to_string();
+            writes.push(self.write(&item, value));
+            writes.push(self.distribute(part, &item)?);
+        }
+        Ok(sequence(writes))
+    }
+
+    fn chained_places(&mut self) -> Res<Option<Form>> {
+        if self.table.single("ext.op.tuple").is_none() || self.table.single("ext.stmt.unpack").is_none() { return Ok(None); }
+        let mut left = self.pos;
+        let signs = self.divided_at(left, self.tokens.len(), "stmt.assign");
+        if signs.is_empty() || (signs.len() > 1 && !self.table.flag("ext.stmt.assign.chain")) { return Ok(None); }
+        self.pos = signs[signs.len() - 1] + 1;
+        let answer = self.comma_value()?;
+        let resume = self.pos;
+        let name = self.gensym("given").ident.to_string();
+        let mut forms = vec![self.write(&name, answer)];
+        for sign in signs {
+            forms.push(self.distribute(left..sign, &name)?);
+            left = sign + 1;
+        }
+        self.pos = resume;
+        Ok(Some(sequence(forms)))
+    }
+
     fn write_or_expr(&mut self) -> Res<Form> {
+        if let Some(write) = self.chained_places()? { return Ok(write); }
         let expr = self.expr_at(0, false)?;
         if !self.on_writing() {
+            if self.on_any("ext.op.tuple") {
+                let mut items = vec![expr];
+                while self.on_any("ext.op.tuple") {
+                    self.advance();
+                    if self.on_stmt_end() || self.exhausted() { break; }
+                    items.push(self.expr(0)?);
+                }
+                return Ok(prim_call(Prim::MakeArray, items));
+            }
             return Ok(expr);
         }
         self.written(expr, false)
@@ -3468,7 +3631,7 @@ impl<'a> Builder<'a> {
         let t = self.look().clone();
         // `list($a, $b) = v`: the places named on the left each take
         // the matching place of the value on the right.
-        if table.spells("ext.stmt.unpack", &t.lexeme) && matches!(t.shape, Shape::Sign | Shape::Bare) {
+        if table.single("ext.op.tuple").is_none() && table.spells("ext.stmt.unpack", &t.lexeme) && matches!(t.shape, Shape::Sign | Shape::Bare) {
             self.advance();
             let places = self.pos;
             self.step_past_call()?;
@@ -3675,7 +3838,9 @@ impl<'a> Builder<'a> {
             Shape::Sign => {
                 if table.single("syntax.group.open") == Some(t.lexeme.as_str()) {
                     self.advance();
-                    let inner = self.expr(0)?;
+                    let inner = if table.single("ext.op.tuple").is_some() && self.on_any("syntax.group.close") {
+                        prim_call(Prim::MakeArray, Vec::new())
+                    } else { self.comma_value()? };
                     self.need_sign(table.single("syntax.group.close").unwrap(), "to close a group")?;
                     self.called_on_value(inner)?
                 } else if table.single("syntax.array.open") == Some(t.lexeme.as_str()) {

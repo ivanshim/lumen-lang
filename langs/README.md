@@ -1103,6 +1103,29 @@ only. The extension labels so far, all from PHP:
   past the point, text is read for the number it opens with, a flag is
   one or nought, and anything that is not an array becomes an array
   holding only itself.
+- `ext.op.tuple`: the signs joining values into a tuple without an
+  array's brackets. Grouping marks may hold one, and an empty group is
+  an empty tuple; one value followed by the sign is a tuple of one.
+  A return or a write may give a tuple without grouping marks. At this
+  stage tuples are held as arrays: they have no separate kind, and are
+  printed with array brackets. Their places may be read and their extent
+  counted as an array's may; tuple immutability is not yet kept.
+- `ext.stmt.assign.chain`: a switch; several places may be joined by
+  the assignment sign before one value. The value is worked out once,
+  then written into each place from left to right.
+- `ext.stmt.unpack.rest`: the signs before a place taking all values
+  left between the places before and after it, as an array. Only one
+  such place may stand in each taking-apart. Where `ext.op.tuple` is
+  spelt, `ext.stmt.unpack` may name the array's opening bracket; bare
+  tuples and grouped tuples may then stand as targets too, within one
+  another and as a loop's target. The value is taken apart before its
+  places are written, and a wrong number of values stops the run.
+- `ext.stmt.unpack.short`, `ext.stmt.unpack.long`, and
+  `ext.stmt.unpack.unwalkable`: the words said when a taking-apart has
+  too few values, too many, or no walk to take values from. Arrays and
+  text may be taken apart, and maps give their keys; other walks are
+  not yet taken apart. `ext.stmt.unpack.amiss` is what is said of a
+  taking-apart whose places are ill written.
 - `ext.stmt.unpack`: the words that open a taking-apart — a list of
   places written on the left of a write, each taking the matching place
   of the value on the right (`list($a, $b) = $v`). A place left out is
@@ -1698,6 +1721,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.scope` | - | - | - | - | `::` | - | - | - | - | - |
 | `ext.op.spelled` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.ternary` | - | - | - | - | `?` `:` | - | - | - | - | - |
+| `ext.op.tuple` | - | - | `,` | - | - | - | - | - | - | - |
 | `ext.op.walk.class` | - | - | - | - | `Iterator` | - | - | - | - | - |
 | `ext.op.walk.giver` | - | - | - | - | `getIterator` | - | - | - | - | - |
 | `ext.op.walk.giver.class` | - | - | - | - | `IteratorAggregate` | - | - | - | - | - |
@@ -1710,6 +1734,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.walk.onward` | - | - | - | - | `next` | - | - | - | - | - |
 | `ext.op.walk.rewind` | - | - | - | - | `rewind` | - | - | - | - | - |
 | `ext.op.walk.this` | - | - | - | - | `current` | - | - | - | - | - |
+| `ext.stmt.assign.chain` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.block.instead` | - | - | - | - | `:` | - | - | - | - | - |
 | `ext.stmt.block.instead.close` | - | - | - | - | `endif` `endwhile` `endfor` `endforeach` `endswitch` | - | - | - | - | - |
 | `ext.stmt.break.levels` | - | - | - | - | `true` | - | - | - | - | - |
@@ -1759,7 +1784,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.terminator.only` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.throw` | - | - | - | - | `throw` | - | - | - | - | - |
 | `ext.stmt.try` | - | - | - | - | `try` | - | - | - | - | - |
-| `ext.stmt.unpack` | - | - | - | - | `list` | - | - | - | - | - |
+| `ext.stmt.unpack` | - | - | `[` | - | `list` | - | - | - | - | - |
+| `ext.stmt.unpack.amiss` | - | - | `invalid unpacking assignment` | - | - | - | - | - | - | - |
+| `ext.stmt.unpack.long` | - | - | `too many values to unpack` | - | - | - | - | - | - | - |
+| `ext.stmt.unpack.rest` | - | - | `*` | - | - | - | - | - | - | - |
+| `ext.stmt.unpack.short` | - | - | `not enough values to unpack` | - | - | - | - | - | - | - |
+| `ext.stmt.unpack.unwalkable` | - | - | `cannot unpack non-iterable object` | - | - | - | - | - | - | - |
 | `ext.syntax.call.bare` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.system.args.count` | - | - | - | - | `$argc` | - | - | - | - | - |
 | `ext.system.args.list` | - | - | - | - | `$argv` | - | - | - | - | - |

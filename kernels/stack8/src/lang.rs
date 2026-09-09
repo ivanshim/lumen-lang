@@ -475,6 +475,13 @@ pub struct Lang {
     /// The words that open a taking-apart: a list of places written on
     /// the left of a write, each taking the matching place of the value.
     pub unpack_words: Vec<String>,
+    pub tuple_marks: Vec<String>,
+    pub unpack_rest: Vec<String>,
+    pub assign_chain: bool,
+    pub unpack_short: Option<String>,
+    pub unpack_long: Option<String>,
+    pub unpack_unwalkable: Option<String>,
+    pub unpack_amiss: Option<String>,
     /// Whether writing into a place makes what is needed to hold it:
     /// an array where a name holds nothing, and one at each place along
     /// the way that is not there yet.
@@ -680,6 +687,8 @@ w ext.system.fault.operands | w ext.op.increment.text | w ext.op.decrement.text
 w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind | w ext.system.fault.class.value | w ext.system.fault.class.walk | w ext.op.walk.giver.unwalkable
 w ext.system.fault.modulo | w ext.system.fault.shift | b ext.op.bit.shift.numbers
 w ext.op.name_by_value | b ext.op.cast | w ext.stmt.unpack
+w ext.op.tuple | w ext.stmt.unpack.rest | b ext.stmt.assign.chain
+w ext.stmt.unpack.short | w ext.stmt.unpack.long | w ext.stmt.unpack.unwalkable | w ext.stmt.unpack.amiss
 w ext.system.source.routine | w ext.system.source.class | w ext.system.source.method
 b ext.op.member.by_value | b ext.op.index.text | w ext.op.index.text.first | w ext.system.globals
 w ext.op.reference.unshared.written | w ext.op.reference.unshared.given | w ext.op.reference.unshared.handed
@@ -1446,6 +1455,13 @@ impl Lang {
             args_below: r.head("ext.builtin.args.at.below")?,
             args_beyond: r.head("ext.builtin.args.at.beyond")?,
             unpack_words: r.strings("ext.stmt.unpack")?,
+            tuple_marks: r.strings("ext.op.tuple")?,
+            unpack_rest: r.strings("ext.stmt.unpack.rest")?,
+            assign_chain: r.flag("ext.stmt.assign.chain")?,
+            unpack_short: r.head("ext.stmt.unpack.short")?,
+            unpack_long: r.head("ext.stmt.unpack.long")?,
+            unpack_unwalkable: r.head("ext.stmt.unpack.unwalkable")?,
+            unpack_amiss: r.head("ext.stmt.unpack.amiss")?,
             makes_places: r.flag("ext.op.index.makes")?,
             untrue_text: r.strings("ext.system.untrue.text")?,
             untrue_empty: r.flag("ext.system.untrue.empty_array")?,
@@ -1609,6 +1625,7 @@ impl Lang {
         let mut lists: Vec<&Vec<String>> = vec![
             &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.return_marks,
             &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open,
+            &self.tuple_marks, &self.unpack_rest, &self.unpack_words,
             &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words,
         ];
         if self.blocks != Blocks::Indented {
