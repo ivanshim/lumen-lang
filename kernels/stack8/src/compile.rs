@@ -2185,6 +2185,7 @@ impl<'a> Compiler<'a> {
             return Err(format!("Expected '{}' after for loop variable, got: {}", lang.in_words[0], self.look().lexeme));
         }
         self.take();
+        // A range value uses the builtin's arity and step, then is walked.
         let range_call = !lang.range_value && self.look().shape == Shape::Instr
             && lang.builtins.get(&self.look().lexeme) == Some(&Builtin::Span)
             && lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).is_lexeme(Shape::Sign, &c.open));
@@ -3444,10 +3445,18 @@ impl<'a> Compiler<'a> {
         if starts_here && self.on_any(&self.lang.annotation_marks) {
             return self.annotated_statement(from, target_at);
         }
-        let tail = &self.tokens[target_at..self.pos];
-        if self.on_writing() && !self.lang.scope_unready.is_empty() && self.lang.member_mark.is_none()
-            && matches!(tail, [.., mark, field] if field.shape == Shape::Instr
-                && mark.shape == Shape::Sign && Lang::spells(&self.lang.pipe_words, &mark.lexeme)) {
+        // Stores through attributes or call results can be read before
+        // scopes can keep them. Their fault belongs to the run.
+        let dotted = matches!(&self.tokens[target_at..self.pos],
+            [.., mark, name] if mark.shape == Shape::Sign && name.shape == Shape::Instr
+                && Lang::spells(&self.lang.pipe_words, &mark.lexeme));
+        let instructions = &self.pieces.last().expect("open piece").instrs;
+        let (_, keys) = keys_apart(&instructions[from..], from, &self.keyed);
+        let temporary_index = keys.first().map_or(false, |at| {
+            matches!(instructions.get(at - 1), Some(Instr::Act(Action::Invoke(_), _)))
+        });
+        if (dotted && self.lang.member_mark.is_none() || temporary_index)
+            && !self.lang.scope_unready.is_empty() && self.on_writing() {
             self.take();
             self.scope_value()?;
             self.piece().instrs.truncate(from);
@@ -4029,10 +4038,6 @@ impl<'a> Compiler<'a> {
                 }
                 self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
                 self.rewritten(&name);
-                Ok(())
-            }
-            _ if self.waiting.is_some() && !self.lang.scope_unready.is_empty() => {
-                self.scope_fault(&self.lang.scope_unready.clone());
                 Ok(())
             }
             _ => Err(format!("Invalid assignment target before '{}'", assign)),

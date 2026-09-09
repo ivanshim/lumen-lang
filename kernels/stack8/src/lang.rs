@@ -1719,7 +1719,8 @@ impl Lang {
         if !lang.try_words.is_empty() && lang.catch_words.is_empty() {
             return Err("ext.stmt.try needs ext.stmt.catch".to_string());
         }
-        if !lang.class_words.is_empty() && lang.class_unready.is_empty()
+        // Classes read as scoped suites do not use member access or a new word.
+        if !lang.class_words.is_empty() && lang.class_bases_open.is_empty()
             && (lang.member_mark.is_none() || lang.new_words.is_empty()) {
             return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
         }

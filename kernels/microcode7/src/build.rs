@@ -2627,6 +2627,7 @@ impl<'a> Builder<'a> {
             return Err(format!("Expected '{}' after for loop variable, got: {}", table.single("stmt.for.in").unwrap_or("in"), self.look().lexeme));
         }
         self.advance();
+        // Let value-producing ranges validate their arguments before walking.
         let ranged = !table.flag("ext.builtin.range.value") && self.look().shape == Shape::Bare
             && table.prims.get(&self.look().lexeme) == Some(&Prim::Span)
             && table.single("syntax.call.open").map_or(false, |o| self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == o);
@@ -3359,10 +3360,17 @@ impl<'a> Builder<'a> {
         if !self.on_writing() {
             return Ok(expr);
         }
-        let written = &self.tokens[began..self.pos];
-        let attribute = matches!(written, [.., join, name] if name.shape == Shape::Bare
-            && join.shape == Shape::Sign && self.table.spells("op.pipe", &join.lexeme));
-        if attribute && self.table.has_any("ext.system.scope.unready") && !self.table.has_any("ext.op.member") {
+        let tail = &self.tokens[began..self.pos];
+        let attribute = tail.len() >= 2
+            && tail[tail.len() - 1].shape == Shape::Bare
+            && tail[tail.len() - 2].shape == Shape::Sign
+            && self.table.spells("op.pipe", &tail[tail.len() - 2].lexeme);
+        let temporary_index = matches!(&expr,
+            Form::Apply(Callee::Prim(Prim::At, _), args)
+                if matches!(args.first(), Some(Form::Apply(Callee::Code(_), _))));
+        // Attributes and call results cannot yet retain writes in these scopes.
+        if (attribute && !self.table.has_any("ext.op.member") || temporary_index)
+            && self.table.has_any("ext.system.scope.unready") {
             self.advance();
             let _right = self.comma_value()?;
             return Ok(self.scope_unrun("ext.system.scope.unready"));
@@ -3869,9 +3877,6 @@ impl<'a> Builder<'a> {
                     }
                     _ => return Err("Invalid assignment target".to_string()),
                 }
-            }
-            _ if self.waiting.is_some() && self.table.has_any("ext.system.scope.unready") => {
-                self.scope_unrun("ext.system.scope.unready")
             }
             _ => return Err(format!("Invalid assignment target before '{}'", assign.lexeme)),
         };
