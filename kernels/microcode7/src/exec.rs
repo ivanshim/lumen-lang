@@ -4097,6 +4097,46 @@ impl<'a> Machine<'a> {
             Prim::Invert => Value::Flag(!self.stands_true(&v[0])),
             // Turning text over works letter by letter; anything else is
             // read as a whole number of sixty-four bits first.
+            Prim::MatrixProduct => return Err(self.table.single("ext.op.matrix.unavailable").unwrap_or("").to_owned()),
+            Prim::BitsOver | Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::BitsUp | Prim::BitsDown
+                if self.table.flag("ext.op.bit.whole") =>
+            {
+                let mut numbers = Vec::new();
+                for item in v {
+                    if !matches!(item, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                        return Err(self.table.single("ext.op.bit.whole.amiss").unwrap_or("").into());
+                    }
+                    numbers.push(item.as_big()?);
+                }
+                let first = &numbers[0];
+                let answer = if op == Prim::BitsOver { !first } else {
+                    let second = &numbers[1];
+                    match op {
+                        Prim::BitsBoth => first & second,
+                        Prim::BitsOne => first ^ second,
+                        Prim::BitsEither => first | second,
+                        _ => {
+                            if second < &BigInt::from(0) {
+                                return Err(self.table.single("ext.system.fault.shift").unwrap_or("").into());
+                            }
+                            if op == Prim::BitsDown && second >= &BigInt::from(first.bits()) {
+                                BigInt::from(if first < &BigInt::from(0) { -1 } else { 0 })
+                            } else if first == &BigInt::from(0) { BigInt::from(0) } else {
+                                let distance = second.to_usize().ok_or_else(||
+                                    self.table.single("ext.op.bit.whole.large").unwrap_or("").to_string())?;
+                                match op {
+                                    Prim::BitsUp => first << distance,
+                                    _ => first >> distance,
+                                }
+                            }
+                        }
+                    }
+                };
+                if matches!(op, Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne)
+                    && v.iter().all(|item| matches!(item, Value::Flag(_))) {
+                    Value::Flag(answer != BigInt::from(0))
+                } else { Value::from_big(answer) }
+            }
             Prim::BitsOver => match &v[0] {
                 Value::Text(s) => {
                     let over: Vec<u8> = self.table.raw_of(s).iter().map(|b| !b).collect();

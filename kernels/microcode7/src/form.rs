@@ -330,6 +330,7 @@ pub enum Prim {
     Plus,
     Minus,
     Times,
+    MatrixProduct,
     Over,
     OverReal,
     IntDiv,

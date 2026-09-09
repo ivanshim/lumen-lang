@@ -133,6 +133,11 @@ pub struct Lang {
     pub pair_mark: Option<String>,
     pub index_brackets: Option<Brackets>,
     pub text_indexable: bool,
+    pub whole_bits: bool,
+    pub whole_bits_amiss: Option<String>,
+    pub whole_bits_large: Option<String>,
+    pub matrix_words: Vec<String>,
+    pub matrix_unavailable: Option<String>,
     pub slice_marks: Vec<String>,
     pub slice_ellipsis: Vec<String>,
     pub slice_zero: Option<String>,
@@ -774,6 +779,7 @@ w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.assert | w ext.stmt
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
 w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | w ext.system.request.settings | b ext.op.index.absent | w ext.op.index.scalar | w ext.op.index.nothing | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
+b ext.op.bit.whole | w ext.op.bit.whole.amiss | w ext.op.bit.whole.large | w ext.op.matrix | w ext.op.matrix.unavailable
 w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right | b ext.op.bit.shift.numbers
 w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at
@@ -1134,7 +1140,7 @@ impl Lang {
             ("op.ne", Action::Ne), ("op.lt", Action::Lt), ("op.le", Action::Le), ("op.gt", Action::Gt), ("op.ge", Action::Ge),
             ("op.and", Action::And), ("op.or", Action::Or), ("op.concat", Action::Join), ("ext.op.compare", Action::Rank),
             ("ext.op.bit.and", Action::BitBoth), ("ext.op.bit.or", Action::BitEither), ("ext.op.bit.xor", Action::BitOne),
-            ("ext.op.bit.left", Action::BitUp), ("ext.op.bit.right", Action::BitDown),
+            ("ext.op.matrix", Action::Matrix), ("ext.op.bit.left", Action::BitUp), ("ext.op.bit.right", Action::BitDown),
             ("ext.op.in", Action::Contains), ("ext.op.identical", Action::Same), ("ext.op.not_identical", Action::Unsame),
         ] {
             for lex in r.strings(tag)? {
@@ -1382,6 +1388,11 @@ impl Lang {
             slice_marks: r.strings("ext.op.index.slice")?,
             slice_zero: r.head("ext.op.index.slice.zero")?,
             slice_bounds: r.head("ext.op.index.slice.bounds")?,
+            whole_bits: r.flag("ext.op.bit.whole")?,
+            whole_bits_amiss: r.head("ext.op.bit.whole.amiss")?,
+            whole_bits_large: r.head("ext.op.bit.whole.large")?,
+            matrix_words: r.strings("ext.op.matrix")?,
+            matrix_unavailable: r.head("ext.op.matrix.unavailable")?,
             slice_unsupported: r.head("ext.op.index.slice.unsupported")?,
             slice_assign: r.head("ext.op.index.slice.assign")?,
             slice_length: r.strings("ext.op.index.slice.length")?,
@@ -1833,7 +1844,7 @@ impl Lang {
             }
         }
         let mut lists: Vec<&Vec<String>> = vec![
-            &self.comprehension_async, &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread, &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks, &self.if_else_words, &self.lambda_words, &self.identity_not, &self.membership_words, &self.membership_not, &self.expression_assign, &self.ellipsis_words,
+            &self.matrix_words, &self.comprehension_async, &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread, &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks, &self.if_else_words, &self.lambda_words, &self.identity_not, &self.membership_words, &self.membership_not, &self.expression_assign, &self.ellipsis_words,
             &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open,
             &self.long_quotes, &self.tuple_marks, &self.class_bases_open, &self.class_bases_close, &self.del_words, &self.nonlocal_words, &self.with_words, &self.with_as_words, &self.yield_words, &self.yield_from_words,
             &self.slice_ellipsis, &self.slice_marks, &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words,

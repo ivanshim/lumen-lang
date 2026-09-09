@@ -76,6 +76,7 @@ pub enum Action {
     Step(bool),
     Sub,
     Mul,
+    Matrix,
     Div,
     DivReal,
     IntDiv,

@@ -2234,6 +2234,7 @@ impl<'a> Engine<'a> {
             Action::BitTurn => {
                 let v = self.drop_top()?;
                 match &v {
+                    _ if self.lang.whole_bits => Value::of_big(!self.whole_bits_value(&v)?),
                     Value::Text(s) => {
                         let out: Vec<u8> = self.lang.bytes_of(s).iter().map(|c| !c).collect();
                         Value::text(&self.lang.text_of(&out))
@@ -3138,6 +3139,13 @@ impl<'a> Engine<'a> {
         Ok(out)
     }
 
+    fn whole_bits_value(&self, value: &Value) -> Res<BigInt> {
+        match value {
+            Value::Small(_) | Value::Huge(_) | Value::Flag(_) => value.as_big(),
+            _ => Err(self.lang.whole_bits_amiss.clone().unwrap_or_default()),
+        }
+    }
+
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
@@ -3152,6 +3160,37 @@ impl<'a> Engine<'a> {
         let sp = self.wording();
         let joined = || Value::text(&format!("{}{}", a.display(&sp), b.display(&sp)));
         Ok(match op {
+            Action::Matrix => return Err(self.lang.matrix_unavailable.clone().unwrap_or_default()),
+            Action::BitBoth | Action::BitEither | Action::BitOne | Action::BitUp | Action::BitDown
+                if self.lang.whole_bits =>
+            {
+                let x = self.whole_bits_value(a)?;
+                let y = self.whole_bits_value(b)?;
+                if matches!((a, b), (Value::Flag(_), Value::Flag(_)))
+                    && matches!(op, Action::BitBoth | Action::BitEither | Action::BitOne) {
+                    return Ok(Value::Flag(match op {
+                        Action::BitBoth => a.is_true() && b.is_true(),
+                        Action::BitEither => a.is_true() || b.is_true(),
+                        _ => a.is_true() != b.is_true(),
+                    }));
+                }
+                Value::of_big(match op {
+                    Action::BitBoth => x & y,
+                    Action::BitEither => x | y,
+                    Action::BitOne => x ^ y,
+                    _ => {
+                        if y < BigInt::from(0) {
+                            return Err(self.lang.fault_shift.clone().unwrap_or_default());
+                        }
+                        if matches!(op, Action::BitDown) && y >= BigInt::from(x.bits()) {
+                            return Ok(Value::Small(if x < BigInt::from(0) { -1 } else { 0 }));
+                        }
+                        if x == BigInt::from(0) { return Ok(Value::Small(0)); }
+                        let count = y.to_usize().ok_or_else(|| self.lang.whole_bits_large.clone().unwrap_or_default())?;
+                        if matches!(op, Action::BitUp) { x << count } else { x >> count }
+                    }
+                })
+            }
             Action::And => Value::Flag(self.truth(a) && self.truth(b)),
             Action::Or => Value::Flag(self.truth(a) || self.truth(b)),
             // The one no number answers to comes before nothing and

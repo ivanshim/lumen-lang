@@ -1518,6 +1518,20 @@ only. The extension labels so far, all from PHP:
   and read both sides as numbers however they were written. Like any
   operator these take their tiers from `op.precedence`, and a kernel
   that does not read the labels reads past those tiers too.
+- `ext.op.bit.whole`: a switch; bit operations take whole numbers and
+  truth values, keeping all their bits, without reading numbers out of
+  text or dropping a fractional part. Two truth values keep that kind
+  under and, or and exclusive or. `ext.op.bit.whole.amiss` refuses any
+  other kind; methods supplying an index are not yet called here.
+  `ext.system.fault.shift` refuses a count below nought, and
+  `ext.op.bit.whole.large` a left shift whose count cannot fit the host.
+  The ordinary bit labels spell the signs; `ext.op.assign.compound`
+  gives each its form which writes the answer back into its place.
+- `ext.op.matrix` is matrix multiplication, taking the tier given by
+  `op.precedence` and the compound form where compound writes are on.
+  Both operands and the whole target are read. Reaching the operation
+  raises `ext.op.matrix.unavailable`; matrix values and their methods
+  are not yet provided.
 - `ext.op.bit.shift.numbers`: a switch; the two shifts read each side
   for the number it is worth, the way arithmetic reads one, rather than
   reading it straight as bits. Text that spells a number stands for it,
@@ -1840,7 +1854,7 @@ Operator precedence, lowest tier first. Unary operators sit in their own tier.
 
 - **lumen**: `|>` < `or` < `and` < `==` `!=` `<` `>` `<=` `>=` < `..` < `+` `-` < `*` `/` `%` `//` `.` < `**` < `-` `not` `!`
 - **rplumen**: 
-- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` `is` `in` < `|` < `+` `-` < `*` `/` `//` `%` < `-` < `**` < `.`
+- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` `is` `in` < `|` < `^` < `&` < `<<` `>>` < `+` `-` < `*` `@` `/` `//` `%` < `-` `~` < `**` < `.`
 - **rust**: `..` < `||` < `&&` < `==` `!=` `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `-` `!` < `.`
 - **php (extra)**: `or` < `and` < `||` < `&&` < `|` < `^` < `&` < `==` `!=` `<>` `===` `!==` < `<` `>` `<=` `>=` `<=>` < `.` < `<<` `>>` < `+` `-` < `*` `/` `%` < `!` `~` `@` < `-` < `**`
 - **c (extra)**: `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `!` `-`
@@ -1961,13 +1975,16 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.expression` | - | - | `:=` | - | - | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.op.bit.and` | - | - | - | - | `&` | - | - | - | - | - |
-| `ext.op.bit.left` | - | - | - | - | `<<` | - | - | - | - | - |
-| `ext.op.bit.not` | - | - | - | - | `~` | - | - | - | - | - |
+| `ext.op.bit.and` | - | - | `&` | - | `&` | - | - | - | - | - |
+| `ext.op.bit.left` | - | - | `<<` | - | `<<` | - | - | - | - | - |
+| `ext.op.bit.not` | - | - | `~` | - | `~` | - | - | - | - | - |
 | `ext.op.bit.or` | - | - | `\|` | - | `\|` | - | - | - | - | - |
-| `ext.op.bit.right` | - | - | - | - | `>>` | - | - | - | - | - |
+| `ext.op.bit.right` | - | - | `>>` | - | `>>` | - | - | - | - | - |
 | `ext.op.bit.shift.numbers` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.op.bit.xor` | - | - | - | - | `^` | - | - | - | - | - |
+| `ext.op.bit.whole` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.op.bit.whole.amiss` | - | - | `TypeError: bit operations require integers` | - | - | - | - | - | - | - |
+| `ext.op.bit.whole.large` | - | - | `OverflowError: shift count is too large` | - | - | - | - | - | - | - |
+| `ext.op.bit.xor` | - | - | `^` | - | `^` | - | - | - | - | - |
 | `ext.op.cast` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.compare` | - | - | - | - | `<=>` | - | - | - | - | - |
 | `ext.op.compare.chained` | - | - | `true` | - | - | - | - | - | - | - |
@@ -2010,6 +2027,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.lambda` | - | - | `lambda` | - | - | - | - | - | - | - |
 | `ext.op.lambda.enclosing` | - | - | `Lambda cannot read an enclosing function variable` | - | - | - | - | - | - | - |
 | `ext.op.lambda.unsupported` | - | - | `Lambda keyword parameters are not supported` | - | - | - | - | - | - | - |
+| `ext.op.matrix` | - | - | `@` | - | - | - | - | - | - | - |
+| `ext.op.matrix.unavailable` | - | - | `NotImplementedError: matrix multiplication is not supported` | - | - | - | - | - | - | - |
 | `ext.op.member` | - | - | - | - | `->` | - | - | - | - | - |
 | `ext.op.member.by_value` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.name_by_value` | - | - | - | - | `$` | - | - | - | - | - |
@@ -2164,7 +2183,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class.walk` | - | - | - | - | `Exception` | - | - | - | - | - |
 | `ext.system.fault.modulo` | - | - | - | - | `Modulo by zero` | - | - | - | - | - |
 | `ext.system.fault.operands` | - | - | - | - | `Unsupported operand types` | - | - | - | - | - |
-| `ext.system.fault.shift` | - | - | - | - | `Bit shift by negative number` | - | - | - | - | - |
+| `ext.system.fault.shift` | - | - | `ValueError: negative shift count` | - | `Bit shift by negative number` | - | - | - | - | - |
 | `ext.system.globals` | - | - | - | - | `$GLOBALS` | - | - | - | - | - |
 | `ext.system.integer.bits` | - | - | - | - | `64` | - | - | - | - | - |
 | `ext.system.kind.brief` | - | - | - | - | `int` `-` `float` `string` `bool` `array` `null` | - | - | - | - | - |
