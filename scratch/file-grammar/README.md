@@ -92,6 +92,14 @@ reading. An indexed ellipsis keeps the slice piece's own meaning.
 
 ## Spellings in this piece
 
+`34.py` checks chains of plain binding names, at file scope and within a
+routine, and reads the grammar suite's `x = y = z = 1, 2, 3`. The final
+value is worked out once before the names are bound from left to right.
+`35.py` reaches the tuple value and gives its existing complaint; `36.py`
+refuses a literal where a binding name is needed. The switch
+`ext.stmt.assign.names.chained` is true. Tuple and indexed targets in a
+chain still need their own reading; no such stores are claimed here.
+
 `33.py` checks repeated calls in a decorator and calls mixed with indices
 and grouping. Each call answers `42`; a further uncalled routine checks
 the grammar suite's decorator with repeated attribute access. The switch
@@ -178,6 +186,7 @@ tiers are shown whole, lowest first.
 | `ext.op.tuple` | list | `[","]` |
 | `ext.op.tuple.unready` | list | `["NotImplementedError: tuple values are not supported"]` |
 | `ext.stmt.class` | list | `["class"]` |
+| `ext.stmt.assign.names.chained` | switch | `true` |
 | `ext.stmt.class.unready` | list | `["NotImplementedError: this class form cannot run yet"]` |
 | `ext.stmt.with` | list | `["with"]` |
 | `ext.stmt.with.as` | list | `["as"]` |

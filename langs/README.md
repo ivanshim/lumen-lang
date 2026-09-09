@@ -1428,6 +1428,10 @@ only. The extension labels so far, all from PHP:
 - `ext.syntax.call.chained`: allows another call after the value a call
   or an index gives back, with further calls and indices read in order.
   Each callee is kept before its arguments are worked out.
+- `ext.stmt.assign.names.chained`: permits several plain binding names
+  joined by assignment signs. The final value is worked out once and
+  then written to the names from left to right. Tuple and indexed
+  targets are not covered by this small reading.
 - `ext.op.matrix`: the matrix product sign, taking its place among the
   binary operators by `op.precedence`. The compound assignment switch
   gives it a writing form as well. Both operands are read whole; where
@@ -1965,6 +1969,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.annotation.target.unready` | - | - | `NotImplementedError: annotated attribute targets are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.assert` | - | - | `assert` | - | - | - | - | - | - | - |
 | `ext.stmt.assert.kind` | - | - | `AssertionError` | - | - | - | - | - | - | - |
+| `ext.stmt.assign.names.chained` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.block.instead` | - | - | - | - | `:` | - | - | - | - | - |
 | `ext.stmt.block.instead.close` | - | - | - | - | `endif` `endwhile` `endfor` `endforeach` `endswitch` | - | - | - | - | - |
 | `ext.stmt.break.levels` | - | - | - | - | `true` | - | - | - | - | - |

@@ -3352,6 +3352,36 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// A chain of binding names shares one value, worked out once.
+    fn name_chain(&mut self, first: &str, keep: Option<&str>) -> Res<()> {
+        let mut names = vec![first.to_string()];
+        while self.look().shape == Shape::Instr
+            && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme) {
+            let began = self.mark();
+            self.expr_at(0, false)?;
+            let named = match &self.piece().instrs[began..] {
+                [Instr::Read(cell)] => cell.ident.to_string(),
+                _ => return Err("Invalid assignment target before '='".into()),
+            };
+            self.piece().instrs.truncate(began);
+            self.cell_to_write(&named);
+            names.push(named);
+            self.take();
+        }
+        let saved = self.gensym("chain_value");
+        self.grammar_values()?;
+        self.write(&saved);
+        for named in names {
+            self.read(&saved);
+            self.write(&named);
+        }
+        if let Some(place) = keep {
+            self.read(&saved);
+            self.write(place);
+        }
+        Ok(())
+    }
+
     /// What a compound write takes with the value the place already
     /// holds: the source after the sign, or the one step a `++` means,
     /// which has no source of its own.
@@ -3472,10 +3502,15 @@ impl<'a> Compiler<'a> {
                     self.addend()?;
                     self.act(op, 2);
                     self.kept(keep);
+                    self.write(&name);
+                } else if self.lang.chained_names && self.waiting.is_none()
+                    && self.look().shape == Shape::Instr
+                    && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme) {
+                    self.name_chain(&name, keep)?;
                 } else {
                     self.value_written(keep)?;
+                    self.write(&name);
                 }
-                self.write(&name);
                 Ok(())
             }
             // `a[i][j] = v` and `a[i][] = v`: each key is worked out once

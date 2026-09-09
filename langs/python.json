@@ -387,6 +387,7 @@
   "ext.op.tuple": [","],
   "ext.op.tuple.unready": ["NotImplementedError: tuple values are not supported"],
   "ext.stmt.annotation": [":"],
+  "ext.stmt.assign.names.chained": true,
   "ext.stmt.annotation.amiss": ["invalid syntax"],
   "ext.stmt.annotation.target.unready": ["NotImplementedError: annotated attribute targets are not supported"],
   "ext.stmt.assert": ["assert"],
