@@ -920,6 +920,37 @@ impl<'a> Compiler<'a> {
                 self.put(Instr::Line(row));
             }
         }
+        if self.on_any(&lang.with_words) { return self.with_reading(); }
+        if self.on_any(&lang.async_words) {
+            self.take();
+            if !self.on_any(&lang.function_words) && !self.on_any(&lang.for_words) && !self.on_any(&lang.with_words) {
+                return Err(lang.parameters_amiss.first().cloned().unwrap_or_default());
+            }
+            let from = self.mark();
+            self.stmt()?;
+            self.piece().instrs.truncate(from);
+            self.refuse_reading(&lang.async_unready);
+            return Ok(());
+        }
+        if self.on_any(&lang.nonlocal_words) {
+            self.take();
+            loop {
+                self.want_name("after the enclosing binding word")?;
+                if !self.on_any(&lang.tuple_marks) { break; }
+                self.take();
+            }
+            self.refuse_reading(&lang.nonlocal_unrun);
+            return Ok(());
+        }
+        if self.on_any(&lang.del_words) {
+            self.take();
+            let from = self.mark();
+            self.expr_at(0, false)?;
+            self.tuple_tail(from)?;
+            self.piece().instrs.truncate(from);
+            self.refuse_reading(&lang.del_unrun);
+            return Ok(());
+        }
         if self.look().shape == Shape::Instr || self.on_any(&lang.decorator_words) {
             let w = self.look().lexeme.clone();
             if !lang.let_words.is_empty() && Lang::spells(&lang.let_words, &w) {
@@ -1053,6 +1084,52 @@ impl<'a> Compiler<'a> {
     /// The class piece supplies objects and namespaces. Until then its
     /// head and every statement of its body are read, and reaching the
     /// declaration says plainly why it cannot yet be run.
+    fn with_reading(&mut self) -> Res<()> {
+        self.take();
+        let from = self.mark();
+        let group = self.lang.grouping.clone().unwrap();
+        let enclosed = self.at_symbol(&group.open);
+        if enclosed { self.take(); }
+        loop {
+            self.expr(0)?;
+            if self.on_any(&self.lang.with_as) {
+                self.take();
+                self.expr_at(0, false)?;
+            }
+            if !self.on_any(&self.lang.tuple_marks) { break; }
+            self.take();
+            if enclosed && self.at_symbol(&group.close) { break; }
+        }
+        if enclosed { self.want_sign(&group.close, "after the context managers")?; }
+        self.body()?;
+        self.piece().instrs.truncate(from);
+        self.refuse_reading(&self.lang.with_unready.clone());
+        Ok(())
+    }
+
+    fn lambda_reading(&mut self) -> Res<()> {
+        self.take();
+        let lang = self.lang;
+        let from = self.mark();
+        while !self.on_any(&lang.block_intros) {
+            if self.on_any(&lang.carries_pairs) || self.on_any(&lang.carries_words) || self.on_any(&lang.positional_only) {
+                let slash = self.on_any(&lang.positional_only);
+                self.take();
+                if !slash && self.look().shape == Shape::Instr { self.take(); }
+            } else {
+                self.want_name("as a lambda parameter")?;
+                if self.on_assign() { self.take(); self.expr(0)?; }
+            }
+            if !self.on_any(&lang.tuple_marks) { break; }
+            self.take();
+        }
+        self.want_sign(&lang.block_intros[0], "before the lambda body")?;
+        self.expr(0)?;
+        self.piece().instrs.truncate(from);
+        self.refuse_reading(&lang.lambda_unready);
+        Ok(())
+    }
+
     fn class_reading(&mut self) -> Res<()> {
         self.take();
         self.want_name("after the class word")?;
@@ -3241,7 +3318,7 @@ impl<'a> Compiler<'a> {
             ends.extend(call.between.iter().cloned());
         }
         self.annotation_expression(&ends)?;
-        if piped && lang.member_mark.is_none() {
+        if piped && (lang.member_mark.is_none() || lang.member_pipes) {
             self.piece().instrs.truncate(from);
             if self.on_assign() {
                 self.take();
@@ -3371,7 +3448,8 @@ impl<'a> Compiler<'a> {
     /// Turn the load of a target, already assembled from `from`, into a
     /// store of what follows the assignment sign.
     fn assignment(&mut self, from: usize, keep: Option<&str>) -> Res<()> {
-        let tuple = self.piece().instrs[from..].iter().any(|word| matches!(word, Instr::Const(Value::Text(s)) if self.lang.tuple_unready.first().map_or(false, |said| s.as_ref() == said)));
+        let refused = self.lang.tuple_unready.first().cloned();
+        let tuple = self.piece().instrs[from..].iter().any(|word| matches!(word, Instr::Const(Value::Text(s)) if refused.as_ref().map_or(false, |said| s.as_ref() == said)));
         let compound = self.lang.compound.get(&self.look().lexeme).filter(|_| self.look().shape == Shape::Sign).cloned();
         let assign = self.take().lexeme;
         if tuple {
@@ -4126,6 +4204,25 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let from = self.mark();
         let tok = self.look().clone();
+        if self.on_any(&lang.lambda_words) { return self.lambda_reading(); }
+        if self.on_any(&lang.await_words) {
+            self.take();
+            self.prefix()?;
+            self.piece().instrs.truncate(from);
+            self.refuse_reading(&lang.async_unready);
+            return Ok(());
+        }
+        if self.on_any(&lang.yield_words) {
+            self.take();
+            if self.on_any(&lang.yield_from) { self.take(); }
+            if !self.on_sep() && !self.exhausted() && !lang.grouping.as_ref().map_or(false, |p| self.at_symbol(&p.close)) {
+                self.expr(0)?;
+                self.tuple_tail(from)?;
+            }
+            self.piece().instrs.truncate(from);
+            self.refuse_reading(&lang.yield_unrun);
+            return Ok(());
+        }
         // `list($a, $b) = v`: the places named on the left each take
         // the matching place of the value on the right.
         if Lang::spells(&lang.unpack_words, &tok.lexeme) && matches!(tok.shape, Shape::Instr | Shape::Sign) {
@@ -5093,7 +5190,7 @@ impl<'a> Compiler<'a> {
             }
             if member && lang.member_pipes && lang.builtins.contains_key(&self.look_ahead(1).lexeme)
                 && matches!(&self.piece().instrs[from..], [Instr::Read(_)]) {
-                break;
+                return Ok(());
             }
             self.take();
             // A value may stand where a member's name stands: the

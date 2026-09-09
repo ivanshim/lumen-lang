@@ -43,6 +43,21 @@ pub struct Lang {
     pub ident: String,
     pub extensions: Vec<String>,
     pub banner: String,
+    pub del_unrun: Vec<String>,
+    pub del_words: Vec<String>,
+    pub nonlocal_unrun: Vec<String>,
+    pub nonlocal_words: Vec<String>,
+    pub yield_unrun: Vec<String>,
+    pub yield_from: Vec<String>,
+    pub yield_words: Vec<String>,
+    pub async_unready: Vec<String>,
+    pub await_words: Vec<String>,
+    pub async_words: Vec<String>,
+    pub with_unready: Vec<String>,
+    pub with_as: Vec<String>,
+    pub with_words: Vec<String>,
+    pub lambda_unready: Vec<String>,
+    pub lambda_words: Vec<String>,
     pub member_pipes: bool,
     pub tuple_unready: Vec<String>,
     pub tuple_marks: Vec<String>,
@@ -724,6 +739,21 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+w ext.stmt.del.unrun
+w ext.stmt.del
+w ext.stmt.nonlocal.unrun
+w ext.stmt.nonlocal
+w ext.stmt.yield.unrun
+w ext.stmt.yield.from
+w ext.stmt.yield
+w ext.stmt.async.unready
+w ext.op.await
+w ext.stmt.async
+w ext.stmt.with.unready
+w ext.stmt.with.as
+w ext.stmt.with
+w ext.op.lambda.unready
+w ext.op.lambda
 b ext.op.member.pipes
 w ext.op.tuple.unready
 w ext.op.tuple
@@ -1330,6 +1360,21 @@ impl Lang {
             names_folded: r.flag("identifier.case_insensitive")?,
             quote_for_names: r.letter("lexical.name_quote")?,
             symbols: Vec::new(),
+            del_unrun: r.strings("ext.stmt.del.unrun")?,
+            del_words: r.strings("ext.stmt.del")?,
+            nonlocal_unrun: r.strings("ext.stmt.nonlocal.unrun")?,
+            nonlocal_words: r.strings("ext.stmt.nonlocal")?,
+            yield_unrun: r.strings("ext.stmt.yield.unrun")?,
+            yield_from: r.strings("ext.stmt.yield.from")?,
+            yield_words: r.strings("ext.stmt.yield")?,
+            async_unready: r.strings("ext.stmt.async.unready")?,
+            await_words: r.strings("ext.op.await")?,
+            async_words: r.strings("ext.stmt.async")?,
+            with_unready: r.strings("ext.stmt.with.unready")?,
+            with_as: r.strings("ext.stmt.with.as")?,
+            with_words: r.strings("ext.stmt.with")?,
+            lambda_unready: r.strings("ext.op.lambda.unready")?,
+            lambda_words: r.strings("ext.op.lambda")?,
             member_pipes: r.flag("ext.op.member.pipes")?,
             tuple_unready: r.strings("ext.op.tuple.unready")?,
             tuple_marks: r.strings("ext.op.tuple")?,
@@ -1786,6 +1831,15 @@ impl Lang {
             }
         }
         let mut lists: Vec<&Vec<String>> = vec![
+            &self.del_words,
+            &self.nonlocal_words,
+            &self.yield_from,
+            &self.yield_words,
+            &self.await_words,
+            &self.async_words,
+            &self.with_as,
+            &self.with_words,
+            &self.lambda_words,
             &self.tuple_marks,
             &self.class_bases_close,
             &self.class_bases_open,

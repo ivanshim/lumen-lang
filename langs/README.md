@@ -259,6 +259,25 @@ only. The extension labels so far, all from PHP:
   declaration at the run with those words. The class piece supplies the
   fuller meaning. `ext.op.member.pipes` keeps the old builtin pipe for
   a plain named receiver, while other member forms use `ext.op.member`.
+- `ext.op.lambda` reads a parameter list without outer brackets, then
+  a colon and one expression. `ext.op.lambda.unready` refuses this value
+  at the run; the expression piece supplies the function and its cells.
+- `ext.stmt.with` takes context expressions, each optionally followed by
+  `ext.stmt.with.as` and a target, then a body. Outer brackets and a final
+  comma are allowed. Every expression and statement is read, and the
+  run raises `ext.stmt.with.unready` before entering any context.
+- `ext.stmt.async` stands before a function, a loop or a context body;
+  `ext.op.await` takes the expression whose answer would be awaited.
+  Their readings finish before `ext.stmt.async.unready` speaks at the run.
+- `ext.stmt.yield` takes an optional value list, or `ext.stmt.yield.from`
+  and the value which would be walked. `ext.stmt.yield.unrun` refuses it
+  at the run until a routine can be suspended and entered again.
+- `ext.stmt.nonlocal` names enclosing bindings, separated by commas.
+  `ext.stmt.nonlocal.unrun` says that the enclosing cells are not yet
+  provided. Outermost bindings use the existing `ext.stmt.global`.
+- `ext.stmt.del` reads one or more places to remove; `ext.stmt.del.unrun`
+  refuses their removal at the run. The separate block piece supplies
+  deletion, enclosing bindings and the fuller suspended forms above.
 - `ext.op.tuple` names the comma within a grouped value or a bare value
   list. Its parts are read in order; `ext.op.tuple.unready` refuses the
   value at the run until the tuple piece supplies its representation.
@@ -1867,6 +1886,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | `true` | - | `true` | - | - | - | - | - |
+| `ext.op.await` | - | - | `await` | - | - | - | - | - | - | - |
 | `ext.op.bit.and` | - | - | `&` | - | `&` | - | - | - | - | - |
 | `ext.op.bit.left` | - | - | `<<` | - | `<<` | - | - | - | - | - |
 | `ext.op.bit.not` | - | - | - | - | `~` | - | - | - | - | - |
@@ -1906,6 +1926,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.index.text` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.text.first` | - | - | - | - | `Only the first byte will be assigned to the string offset` | - | - | - | - | - |
 | `ext.op.instanceof` | - | - | - | - | `instanceof` | - | - | - | - | - |
+| `ext.op.lambda` | - | - | `lambda` | - | - | - | - | - | - | - |
+| `ext.op.lambda.unready` | - | - | `NotImplementedError: lambda values are not supported` | - | - | - | - | - | - | - |
 | `ext.op.member` | - | - | `.` | - | `->` | - | - | - | - | - |
 | `ext.op.member.by_value` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.member.pipes` | - | - | `true` | - | - | - | - | - | - | - |
@@ -1939,6 +1961,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.annotation.target.unready` | - | - | `NotImplementedError: annotated attribute targets are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.assert` | - | - | `assert` | - | - | - | - | - | - | - |
 | `ext.stmt.assert.kind` | - | - | `AssertionError` | - | - | - | - | - | - | - |
+| `ext.stmt.async` | - | - | `async` | - | - | - | - | - | - | - |
+| `ext.stmt.async.unready` | - | - | `NotImplementedError: asynchronous execution is not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.block.instead` | - | - | - | - | `:` | - | - | - | - | - |
 | `ext.stmt.block.instead.close` | - | - | - | - | `endif` `endwhile` `endfor` `endforeach` `endswitch` | - | - | - | - | - |
 | `ext.stmt.break.levels` | - | - | - | - | `true` | - | - | - | - | - |
@@ -1980,6 +2004,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.decorator` | - | - | `@` | - | - | - | - | - | - | - |
 | `ext.stmt.decorator.amiss` | - | - | `A decorator must stand on its own line before a function definition` | - | - | - | - | - | - | - |
 | `ext.stmt.default` | - | - | - | - | `default` | - | - | - | - | - |
+| `ext.stmt.del` | - | - | `del` | - | - | - | - | - | - | - |
+| `ext.stmt.del.unrun` | - | - | `NotImplementedError: deletion is not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.do` | - | - | - | - | `do` | - | - | - | - | - |
 | `ext.stmt.finally` | - | - | `finally` | - | `finally` | - | - | - | - | - |
 | `ext.stmt.for.c` | - | - | - | - | `for` | - | - | - | - | - |
@@ -1995,10 +2021,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.function.positional_only` | - | - | `/` | - | - | - | - | - | - | - |
 | `ext.stmt.function.returns` | - | - | `->` | - | `:` | - | - | - | - | - |
 | `ext.stmt.function.short` | - | - | - | - | `fn` `=>` | - | - | - | - | - |
-| `ext.stmt.global` | - | - | - | - | `global` | - | - | - | - | - |
+| `ext.stmt.global` | - | - | `global` | - | `global` | - | - | - | - | - |
 | `ext.stmt.import` | - | - | `import` | - | - | - | - | - | - | - |
 | `ext.stmt.import.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.import.from` | - | - | `from` | - | - | - | - | - | - | - |
+| `ext.stmt.nonlocal` | - | - | `nonlocal` | - | - | - | - | - | - | - |
+| `ext.stmt.nonlocal.unrun` | - | - | `NotImplementedError: nonlocal bindings are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.static` | - | - | - | - | `static` | - | - | - | - | - |
 | `ext.stmt.static.read_in` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.switch` | - | - | - | - | `switch` | - | - | - | - | - |
@@ -2010,6 +2038,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.try` | - | - | `try` | - | `try` | - | - | - | - | - |
 | `ext.stmt.try.else` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack` | - | - | - | - | `list` | - | - | - | - | - |
+| `ext.stmt.with` | - | - | `with` | - | - | - | - | - | - | - |
+| `ext.stmt.with.as` | - | - | `as` | - | - | - | - | - | - | - |
+| `ext.stmt.with.unready` | - | - | `NotImplementedError: context managers are not supported` | - | - | - | - | - | - | - |
+| `ext.stmt.yield` | - | - | `yield` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.from` | - | - | `from` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.unrun` | - | - | `NotImplementedError: generators are not supported` | - | - | - | - | - | - | - |
 | `ext.syntax.array.spread` | - | - | `*` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss` | - | - | `TypeError: invalid arguments` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.builtin` | - | - | `TypeError: keyword arguments for this builtin are not supported` | - | - | - | - | - | - | - |

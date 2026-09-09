@@ -1113,6 +1113,28 @@ impl<'a> Builder<'a> {
     }
 
     fn plain_or_kind(&mut self) -> Res<Form> {
+        let table = self.table;
+        if self.on_any("ext.stmt.with") { return self.with_reading(); }
+        if self.on_any("ext.stmt.async") {
+            self.advance();
+            if !["stmt.function", "stmt.for", "ext.stmt.with"].iter().any(|k| self.on_any(k)) {
+                return Err(table.single("ext.stmt.function.parameters.amiss").unwrap_or_default().into());
+            }
+            self.stmt()?;
+            return Ok(self.reading_refusal("ext.stmt.async.unready"));
+        }
+        if self.on_any("ext.stmt.nonlocal") {
+            self.advance();
+            self.need_word("as an enclosing binding")?;
+            while self.on_any("ext.op.tuple") { self.advance(); self.need_word("as an enclosing binding")?; }
+            return Ok(self.reading_refusal("ext.stmt.nonlocal.unrun"));
+        }
+        if self.on_any("ext.stmt.del") {
+            self.advance();
+            let place = self.expr_at(0, false)?;
+            self.tuple_tail(place)?;
+            return Ok(self.reading_refusal("ext.stmt.del.unrun"));
+        }
         if self.look().shape == Shape::Bare || self.on_any("ext.stmt.decorator") {
             if self.key("stmt.let") {
                 return self.bind();
@@ -1186,7 +1208,8 @@ impl<'a> Builder<'a> {
                 } else if by_cell {
                     vec![self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.given").to_vec(), true, None)?]
                 } else {
-                    vec![self.expr(0)?]
+                    let first = self.expr(0)?;
+                    vec![self.tuple_tail(first)?]
                 };
                 return Ok(prim_call(Prim::Yield, value));
             }
@@ -2414,6 +2437,44 @@ impl<'a> Builder<'a> {
 
     /// A statement without a keyword: a step, a bare call, an
     /// assignment or an expression.
+    fn with_reading(&mut self) -> Res<Form> {
+        let table = self.table;
+        self.advance();
+        let bracketed = self.on_any("syntax.group.open");
+        if bracketed { self.advance(); }
+        loop {
+            self.expr(0)?;
+            if self.on_any("ext.stmt.with.as") { self.advance(); self.expr_at(0, false)?; }
+            if !self.on_any("syntax.call.separator") { break; }
+            self.advance();
+            if bracketed && self.on_any("syntax.group.close") { break; }
+        }
+        if bracketed { self.need_sign(table.single("syntax.group.close").unwrap(), "after the context managers")?; }
+        self.body()?;
+        Ok(self.reading_refusal("ext.stmt.with.unready"))
+    }
+
+    fn lambda_reading(&mut self) -> Res<Form> {
+        let table = self.table;
+        self.advance();
+        while !self.on_any("block.intro") {
+            let slash = self.on_any("ext.stmt.function.positional_only");
+            let star = self.on_any("ext.stmt.function.carries") || self.on_any("ext.stmt.function.carries.pairs");
+            if slash || star {
+                self.advance();
+                if star && self.look().shape == Shape::Bare { self.advance(); }
+            } else {
+                self.need_word("as a lambda parameter")?;
+                if self.on_assign() { self.advance(); self.expr(0)?; }
+            }
+            if !self.on_any("syntax.call.separator") { break; }
+            self.advance();
+        }
+        self.need_sign(table.single("block.intro").unwrap(), "before the lambda body")?;
+        self.expr(0)?;
+        Ok(self.reading_refusal("ext.op.lambda.unready"))
+    }
+
     fn class_reading(&mut self) -> Res<Form> {
         self.advance();
         self.need_word("after the class word")?;
@@ -3168,7 +3229,7 @@ impl<'a> Builder<'a> {
         }
         self.advance();
         self.put_by_annotation(&["stmt.assign", "ext.stmt.annotation", "syntax.call.separator"])?;
-        if through_pipe && !table.has_any("ext.op.member") {
+        if through_pipe && (!table.has_any("ext.op.member") || table.flag("ext.op.member.pipes")) {
             let mut steps = Vec::new();
             if self.on_assign() {
                 self.advance();
@@ -3985,6 +4046,21 @@ impl<'a> Builder<'a> {
                 self.advance();
                 constant(numeral(&t.lexeme, table)?)
             }
+            Shape::Bare if table.spells("ext.op.lambda", &t.lexeme) => return self.lambda_reading(),
+            Shape::Bare if table.spells("ext.op.await", &t.lexeme) => {
+                self.advance();
+                self.monadic_expr()?;
+                self.reading_refusal("ext.stmt.async.unready")
+            }
+            Shape::Bare if table.spells("ext.stmt.yield", &t.lexeme) => {
+                self.advance();
+                if self.on_any("ext.stmt.yield.from") { self.advance(); }
+                if !self.on_stmt_end() && !self.exhausted() && !self.on_any("syntax.group.close") {
+                    let yielded = self.expr(0)?;
+                    self.tuple_tail(yielded)?;
+                }
+                self.reading_refusal("ext.stmt.yield.unrun")
+            }
             Shape::Unready => {
                 self.advance();
                 prim_call(Prim::Raise, vec![constant(Value::text(&t.lexeme))])
@@ -4659,7 +4735,7 @@ impl<'a> Builder<'a> {
                 return Ok(node);
             }
             if !owning && table.flag("ext.op.member.pipes") && table.prims.contains_key(&self.glance(1).lexeme)
-                && matches!(&node, Form::Read(_)) { break; }
+                && matches!(&node, Form::Read(_)) { return Ok(node); }
             self.advance();
             // A value may stand where a member's name stands: the member
             // is the one that value spells, worked out as the run goes.
