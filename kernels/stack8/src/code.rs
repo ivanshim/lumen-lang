@@ -546,6 +546,7 @@ pub enum Instr {
     /// run goes on at the index.
     Guard(usize),
     Attempt(Box<Attempt>),
+    Depart { to: usize, cycle: Option<usize> },
     Unguard,
     /// A binary operation whose operands come from bindings, constants or
     /// the stack, the result pushed: an operator that never touches the

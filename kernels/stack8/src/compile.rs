@@ -78,6 +78,7 @@ impl Registry {
 
 /// An open loop: where continue goes once known, and the jumps waiting.
 struct Cycle {
+    began: usize,
     restart: Option<usize>,
     resumes: Vec<usize>,
     leaves: Vec<usize>,
@@ -293,7 +294,7 @@ pub fn compile_within(
         if !lifted.is_empty() {
             let end = a.mark();
             for at in a.piece().escapes.clone() {
-                a.piece().instrs[at] = Instr::Skip(end);
+                a.patch_jump(at, end);
             }
             a.piece().escapes.clear();
             let rest = std::mem::take(&mut a.piece().instrs);
@@ -304,7 +305,7 @@ pub fn compile_within(
     }
     let end = a.mark();
     for at in a.piece().escapes.clone() {
-        a.piece().instrs[at] = Instr::Skip(end);
+        a.patch_jump(at, end);
     }
     if alone {
         a.registry.shared_args = a.shared_args.clone();
@@ -498,12 +499,24 @@ impl<'a> Compiler<'a> {
 
     fn land(&mut self, at: usize) {
         let here = self.mark();
-        self.piece().instrs[at] = Instr::Skip(here);
+        self.patch_jump(at, here);
+    }
+
+    fn patch_jump(&mut self, at: usize, to: usize) {
+        match &mut self.piece().instrs[at] {
+            Instr::Depart { to: target, .. } => *target = to,
+            word => *word = Instr::Skip(to),
+        }
+    }
+
+    fn departure(&mut self, cycle: Option<usize>) -> usize {
+        if self.lang.catch_as.is_empty() { return self.leap(); }
+        self.put(Instr::Depart { to: 0, cycle })
     }
 
     /// A jump to the end of the unit, patched when it closes.
     fn escape(&mut self) {
-        let at = self.leap();
+        let at = self.departure(None);
         self.piece().escapes.push(at);
     }
 
@@ -687,13 +700,14 @@ impl<'a> Compiler<'a> {
     }
 
     fn enter_cycle(&mut self, again: Option<usize>) {
-        self.piece().cycles.push(Cycle { restart: again, resumes: Vec::new(), leaves: Vec::new() });
+        let began = self.mark();
+        self.piece().cycles.push(Cycle { began, restart: again, resumes: Vec::new(), leaves: Vec::new() });
     }
 
     fn leave_cycle(&mut self, again: usize) {
         let lp = self.piece().cycles.pop().expect("an open loop");
         for at in lp.resumes {
-            self.piece().instrs[at] = Instr::Skip(again);
+            self.patch_jump(at, again);
         }
         for at in lp.leaves {
             self.land(at);
@@ -723,8 +737,10 @@ impl<'a> Compiler<'a> {
     }
 
     fn leave(&mut self, levels: usize) -> Res<()> {
-        let at = self.leap();
-        match self.cycle_out(levels, "break")? {
+        let owner = self.cycle_out(levels, "break")?;
+        let cycle = owner.map(|i| self.piece().cycles[i].began);
+        let at = self.departure(cycle);
+        match owner {
             Some(i) => self.piece().cycles[i].leaves.push(at),
             None => self.piece().escapes.push(at),
         }
@@ -732,12 +748,14 @@ impl<'a> Compiler<'a> {
     }
 
     fn resume(&mut self, levels: usize) -> Res<()> {
-        let at = self.leap();
-        match self.cycle_out(levels, "continue")? {
+        let owner = self.cycle_out(levels, "continue")?;
+        let cycle = owner.map(|i| self.piece().cycles[i].began);
+        let at = self.departure(cycle);
+        match owner {
             Some(i) => {
                 let unit = self.piece();
                 match unit.cycles[i].restart {
-                    Some(target) => unit.instrs[at] = Instr::Skip(target),
+                    Some(target) => self.patch_jump(at, target),
                     None => unit.cycles[i].resumes.push(at),
                 }
             }
@@ -790,7 +808,7 @@ impl<'a> Compiler<'a> {
         }
         let end = self.mark();
         for at in self.piece().escapes.clone() {
-            self.piece().instrs[at] = Instr::Skip(end);
+            self.patch_jump(at, end);
         }
         let unit = self.pieces.pop().expect("the unit");
         let instrs = if returns_value && !used { relocated(unit.instrs.into_iter().skip(2).collect(), -2) } else { unit.instrs };
@@ -5384,6 +5402,10 @@ fn peephole(instrs: Vec<Instr>) -> Vec<Instr> {
         match w {
             Instr::Skip(t) | Instr::SkipCmp { to: t, .. } | Instr::Guard(t) => *t = map[*t],
             Instr::Attempt(plan) => plan.move_marks(|i| map[i]),
+            Instr::Depart { to, cycle } => {
+                *to = map[*to];
+                if let Some(start) = cycle { *start = map[*start]; }
+            }
             _ => {}
         }
     }
@@ -5522,6 +5544,10 @@ fn relocated(instrs: Vec<Instr>, delta: i64) -> Vec<Instr> {
         .map(|w| match w {
             Instr::Skip(t) => Instr::Skip((t as i64 + delta) as usize),
             Instr::Guard(t) => Instr::Guard((t as i64 + delta) as usize),
+            Instr::Depart { to, cycle } => Instr::Depart {
+                to: (to as i64 + delta) as usize,
+                cycle: cycle.map(|i| (i as i64 + delta) as usize),
+            },
             Instr::Attempt(mut plan) => {
                 plan.move_marks(|i| (i as i64 + delta) as usize);
                 Instr::Attempt(plan)

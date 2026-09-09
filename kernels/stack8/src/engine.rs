@@ -15,6 +15,14 @@ use crate::arith::{self, Operation};
 use crate::value::{Class, Instance, Reach, Sort, Value, Wording};
 use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr};
 
+/// An arm may end where it stands, or leave for a routine's end or a
+/// loop written around it. Only the latter must pass through last parts.
+#[derive(Clone, Copy)]
+enum Passage {
+    Along(usize),
+    Leaves { to: usize, cycle: Option<usize> },
+}
+
 pub struct Engine<'a> {
     lang: &'a Lang,
     world: Vec<Value>,
@@ -1554,7 +1562,7 @@ impl<'a> Engine<'a> {
 
     /// Each arm runs in the same frame. A leap beyond its span is an
     /// outward return or loop step, and the last part runs before it goes.
-    fn run_attempt(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], plan: &crate::code::Attempt) -> Flow<usize> {
+    fn run_attempt(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], plan: &crate::code::Attempt) -> Flow<Passage> {
         if plan.clauses.iter().any(|arm| arm.grouped) {
             return Err(self.lang.catch_group_unsupported.as_deref().unwrap_or("Exception groups are not supported").into());
         }
@@ -1562,9 +1570,12 @@ impl<'a> Engine<'a> {
         let active = self.caught.len();
         let ending = self.run_span(program, frame, instrs, plan.body);
         let mut ending = match ending {
-            Ok(at) if at == plan.body.1 => match plan.otherwise {
-                Some(span) => self.run_span(program, frame, instrs, span).map(|at| if at == span.1 { plan.after } else { at }),
-                None => Ok(plan.after),
+            Ok(Passage::Along(at)) if at == plan.body.1 => match plan.otherwise {
+                Some(span) => self.run_span(program, frame, instrs, span).map(|end| match end {
+                    Passage::Along(at) if at == span.1 => Passage::Along(plan.after),
+                    other => other,
+                }),
+                None => Ok(Passage::Along(plan.after)),
             },
             Err(Fault::Thrown(raised)) => {
                 self.data.truncate(depth);
@@ -1586,7 +1597,10 @@ impl<'a> Engine<'a> {
                         if let Some(slot) = &arm.held { self.store_cell(slot, frame, raised.clone())?; }
                         let outcome = self.run_span(program, frame, instrs, arm.body);
                         if let Some(slot) = &arm.held { self.put_cell(slot, frame, Value::Blank); }
-                        return outcome.map(|at| if at == arm.body.1 { plan.after } else { at });
+                        return outcome.map(|end| match end {
+                            Passage::Along(at) if at == arm.body.1 => Passage::Along(plan.after),
+                            other => other,
+                        });
                     }
                     Err(Fault::Thrown(raised))
                 })();
@@ -1601,14 +1615,23 @@ impl<'a> Engine<'a> {
             let finished = self.run_span(program, frame, instrs, last);
             self.caught.truncate(active);
             match finished {
-                Ok(at) if at == last.1 => self.data.truncate(saved),
-                other => ending = other,
+                Ok(Passage::Along(at)) if at == last.1 => self.data.truncate(saved),
+                Ok(end @ Passage::Leaves { cycle: None, .. }) => {
+                    let returned = self.drop_top()?;
+                    self.data.truncate(depth);
+                    self.data.push(returned);
+                    ending = Ok(end);
+                }
+                other => {
+                    self.data.truncate(depth);
+                    ending = other;
+                }
             }
         }
         ending
     }
 
-    fn run_span(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], span: (usize, usize)) -> Flow<usize> {
+    fn run_span(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], span: (usize, usize)) -> Flow<Passage> {
         let mut pc = span.0;
         let mut counted = 0u32;
         // Where a raised value is caught, how deep the stack was when
@@ -1712,7 +1735,20 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Instr::Attempt(plan) => {
-                    pc = self.run_attempt(program, frame, instrs, plan)?;
+                    match self.run_attempt(program, frame, instrs, plan)? {
+                        Passage::Along(at) => pc = at,
+                        end @ Passage::Leaves { to, cycle } => {
+                            if !cycle.map_or(false, |i| i >= span.0 && i < span.1) { return Ok(end); }
+                            pc = to;
+                        }
+                    }
+                    continue;
+                }
+                Instr::Depart { to, cycle } => {
+                    if !cycle.map_or(false, |i| i >= span.0 && i < span.1) {
+                        return Ok(Passage::Leaves { to: *to, cycle: *cycle });
+                    }
+                    pc = *to;
                     continue;
                 }
                 Instr::Guard(catch) => guards.push((*catch, self.data.len(), self.hushed.get())),
@@ -1901,7 +1937,7 @@ impl<'a> Engine<'a> {
             }
             pc += 1;
         }
-        Ok(pc)
+        Ok(Passage::Along(pc))
     }
 
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
@@ -2609,8 +2645,11 @@ impl<'a> Engine<'a> {
                     methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
                 });
                 self.made += 1;
+                let fields = if matches!(&message, Value::Text(words) if words.is_empty()) {
+                    Vec::new()
+                } else { vec![("message".to_string(), message)] };
                 let raised = Value::Object(Rc::new(Instance {
-                    class, fields: RefCell::new(vec![("message".to_string(), message)]), mark: self.made,
+                    class, fields: RefCell::new(fields), mark: self.made,
                 }));
                 self.hurled_at.set(self.line);
                 return Err(Fault::Thrown(raised));
