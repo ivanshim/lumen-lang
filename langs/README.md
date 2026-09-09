@@ -493,6 +493,23 @@ only. The extension labels so far, all from PHP:
   first clause whose class takes it holding it, and a last part that runs
   however the body ended, a return through it included. What no clause
   takes is raised again.
+- `ext.stmt.match` opens a subject and its cases; `ext.stmt.match.case`
+  begins each pattern and body. These words remain names away from such
+  heads. The subject is worked out once, and only the first fitting case
+  whose guard holds runs. `ext.stmt.match.wildcard` takes any value without
+  keeping it. A bare name keeps the value; literals test it. Sequences
+  take their members apart, with the multiplication sign before a name
+  keeping the members left over as an array.
+- `ext.stmt.match.or` parts alternative patterns, each binding the same
+  names. `ext.stmt.match.as` binds the whole value after a pattern fits.
+  `ext.stmt.match.guard` begins the condition asked after those bindings
+  are made. A failed pattern writes no bindings.
+- `ext.stmt.match.unready` gives the words said on reaching a mapping,
+  class or named-value pattern whose running is not yet furnished.
+  Such patterns are read whole. `ext.stmt.match.invalid` gives the words
+  for a pattern written amiss, including repeated bindings and alternatives
+  which do not bind the same names. Both labels take lists of words,
+  whose first entry is the whole complaint.
 - `ext.stmt.catch.as`: the word before the name holding a caught value.
   Where spelled, a clause needs no outer group and may take every raised
   value by naming no class. An unbound class name takes nothing and says
@@ -1895,6 +1912,14 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.import` | - | - | `import` | - | - | - | - | - | - | - |
 | `ext.stmt.import.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.import.from` | - | - | `from` | - | - | - | - | - | - | - |
+| `ext.stmt.match` | - | - | `match` | - | - | - | - | - | - | - |
+| `ext.stmt.match.as` | - | - | `as` | - | - | - | - | - | - | - |
+| `ext.stmt.match.case` | - | - | `case` | - | - | - | - | - | - | - |
+| `ext.stmt.match.guard` | - | - | `if` | - | - | - | - | - | - | - |
+| `ext.stmt.match.invalid` | - | - | `SyntaxError: invalid pattern` | - | - | - | - | - | - | - |
+| `ext.stmt.match.or` | - | - | `\|` | - | - | - | - | - | - | - |
+| `ext.stmt.match.unready` | - | - | `NotImplementedError: this pattern is not supported` | - | - | - | - | - | - | - |
+| `ext.stmt.match.wildcard` | - | - | `_` | - | - | - | - | - | - | - |
 | `ext.stmt.static` | - | - | - | - | `static` | - | - | - | - | - |
 | `ext.stmt.static.read_in` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.switch` | - | - | - | - | `switch` | - | - | - | - | - |

@@ -355,8 +355,52 @@ pub enum Prim {
     Resume,
 }
 
+/// The shape a case asks for; names are kept apart from their addresses.
+#[derive(Debug)]
+pub enum CaseTest {
+    Ignore,
+    Keep(String),
+    Equal(Value),
+    AnyOf(Vec<CaseTest>),
+    Series { members: Vec<CaseTest>, spread: Option<usize> },
+    Also { test: Box<CaseTest>, name: String },
+    Pending(Vec<CaseTest>),
+}
+
+impl CaseTest {
+    pub fn names(&self) -> Result<std::collections::BTreeSet<String>, ()> {
+        use std::collections::BTreeSet;
+        let mut found = BTreeSet::new();
+        let children = match self {
+            Self::Ignore | Self::Equal(_) => return Ok(found),
+            Self::Keep(n) => { found.insert(n.clone()); return Ok(found); }
+            Self::Also { test, name } => {
+                found = test.names()?;
+                if !found.insert(name.clone()) { return Err(()); }
+                return Ok(found);
+            }
+            Self::AnyOf(arms) => {
+                for (i, arm) in arms.iter().enumerate() {
+                    let names = arm.names()?;
+                    if i != 0 && found != names { return Err(()); }
+                    found = names;
+                }
+                return Ok(found);
+            }
+            Self::Series { members, .. } | Self::Pending(members) => members,
+        };
+        for child in children {
+            for name in child.names()? {
+                if !found.insert(name) { return Err(()); }
+            }
+        }
+        Ok(found)
+    }
+}
+
 #[derive(Debug)]
 pub enum Form {
+    Fits { value: Box<Form>, test: Rc<CaseTest>, slots: Vec<(String, Address)> },
     Const(Value),
     Read(Address),
     /// The same, read as it stands and with nothing said about it: a

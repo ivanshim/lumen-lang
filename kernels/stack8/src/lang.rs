@@ -347,6 +347,14 @@ pub struct Lang {
     pub decorator_words: Vec<String>,
     pub decorator_amiss: Option<String>,
     pub const_words: Vec<String>,
+    pub match_words: Vec<String>,
+    pub match_cases: Vec<String>,
+    pub match_wildcards: Vec<String>,
+    pub match_ors: Vec<String>,
+    pub match_guards: Vec<String>,
+    pub match_as: Vec<String>,
+    pub match_unready: Vec<String>,
+    pub match_invalid: Vec<String>,
     pub switch_words: Vec<String>,
     pub case_words: Vec<String>,
     pub default_words: Vec<String>,
@@ -691,6 +699,7 @@ w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ex
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
 w ext.stmt.import | w ext.stmt.import.from | w ext.stmt.import.as | w ext.system.module.name
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
+w ext.stmt.match | w ext.stmt.match.case | w ext.stmt.match.wildcard | w ext.stmt.match.or | w ext.stmt.match.guard | w ext.stmt.match.as | w ext.stmt.match.unready | w ext.stmt.match.invalid
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
 w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
 w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.request.amiss.boundary.wrong | w ext.system.request.amiss.part | w ext.system.request.amiss.body.large | w ext.system.request.body
@@ -1436,6 +1445,14 @@ impl Lang {
             decorator_words: r.strings("ext.stmt.decorator")?,
             decorator_amiss: r.head("ext.stmt.decorator.amiss")?,
             const_words: r.strings("ext.stmt.const")?,
+            match_words: r.strings("ext.stmt.match")?,
+            match_cases: r.strings("ext.stmt.match.case")?,
+            match_wildcards: r.strings("ext.stmt.match.wildcard")?,
+            match_ors: r.strings("ext.stmt.match.or")?,
+            match_guards: r.strings("ext.stmt.match.guard")?,
+            match_as: r.strings("ext.stmt.match.as")?,
+            match_unready: r.strings("ext.stmt.match.unready")?,
+            match_invalid: r.strings("ext.stmt.match.invalid")?,
             switch_words: r.strings("ext.stmt.switch")?,
             case_words: r.strings("ext.stmt.case")?,
             default_words: r.strings("ext.stmt.default")?,
@@ -1710,6 +1727,7 @@ impl Lang {
             &self.let_words, &self.mutable_words, &self.if_words, &self.elif_words, &self.else_words, &self.while_words, &self.until_words, &self.for_words,
             &self.in_words, &self.return_words, &self.break_words, &self.continue_words, &self.function_words, &self.pass_words, &self.true_words,
             &self.false_words, &self.null_words, &self.c_for_words, &self.static_words, &self.global_words, &self.const_words,
+            &self.match_ors,
             &self.switch_words, &self.case_words, &self.default_words, &self.foreach_words, &self.foreach_as_words,
             &self.class_words, &self.extends_words, &self.new_words, &self.modifier_words, &self.shared_words,
             &self.instanceof_words, &self.interface_words, &self.implements_words, &self.parent_words, &self.self_words, &self.try_words, &self.catch_words,
