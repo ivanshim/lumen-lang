@@ -2619,9 +2619,47 @@ impl<'a> Builder<'a> {
         Ok(self.choose(test, then, otherwise))
     }
 
+    /// A target may itself hold more targets, each still naming a place.
+    fn divided_loop_target(&mut self) -> Res<()> {
+        let closer = ["syntax.group", "syntax.array"].iter().find_map(|stem| {
+            self.on_any(&format!("{stem}.open")).then(|| self.table.single(&format!("{stem}.close")).unwrap().to_string())
+        });
+        match closer {
+            Some(end) => {
+                self.advance();
+                if !self.sign(&end) { self.loop_target_list()?; }
+                self.need_sign(&end, "after the loop target")?;
+            }
+            None => {
+                let word = self.need_word("in a loop target")?;
+                self.address_to_write(&word);
+            }
+        }
+        Ok(())
+    }
+
+    fn loop_target_list(&mut self) -> Res<()> {
+        self.divided_loop_target()?;
+        while self.on_any("ext.op.tuple") {
+            self.advance();
+            if ["stmt.for.in", "syntax.group.close", "syntax.array.close"].iter().any(|key| self.on_any(key)) { break; }
+            self.divided_loop_target()?;
+        }
+        Ok(())
+    }
+
     fn for_stmt(&mut self) -> Res<Form> {
         let table = self.table;
         self.advance();
+        let simple = self.look().shape == Shape::Bare && table.spells("stmt.for.in", &self.glance(1).lexeme);
+        if table.has_any("ext.op.tuple") && !simple {
+            self.loop_target_list()?;
+            if !self.key("stmt.for.in") { return Err("Expected a source for the divided loop target".to_owned()); }
+            self.advance();
+            let _source = self.comma_value()?;
+            let _body = self.body()?;
+            return Ok(self.scope_unrun("ext.system.scope.unready"));
+        }
         let var = self.need_word("as the loop variable")?;
         if !self.key("stmt.for.in") {
             return Err(format!("Expected '{}' after for loop variable, got: {}", table.single("stmt.for.in").unwrap_or("in"), self.look().lexeme));
@@ -3338,6 +3376,18 @@ impl<'a> Builder<'a> {
     }
 
     fn write_or_expr(&mut self) -> Res<Form> {
+        let bare_store = |offset: usize| self.glance(offset).shape == Shape::Bare
+            && self.table.spells("stmt.assign", &self.glance(offset + 1).lexeme);
+        if self.table.has_any("ext.system.scope.unready") && bare_store(0) && bare_store(2) {
+            loop {
+                let named = self.advance().lexeme;
+                self.address_to_write(&named);
+                self.advance();
+                if self.look().shape != Shape::Bare || !self.table.spells("stmt.assign", &self.glance(1).lexeme) { break; }
+            }
+            let _value = self.comma_value()?;
+            return Ok(self.scope_unrun("ext.system.scope.unready"));
+        }
         let began = self.pos;
         let boundary = began.checked_sub(1).map_or(true, |at| {
             let prior = &self.tokens[at];

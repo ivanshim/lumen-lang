@@ -121,6 +121,9 @@
       "|"
     ],
     [
+      "<<"
+    ],
+    [
       "+",
       "-"
     ],
@@ -418,6 +421,12 @@
   "ext.op.assign.compound": true,
   "ext.op.assign.expression": [
     ":="
+  ],
+  "ext.op.bit.left": [
+    "<<"
+  ],
+  "ext.op.bit.left.unready": [
+    "NotImplementedError: left shifts are not supported"
   ],
   "ext.op.bit.or": [
     "|"

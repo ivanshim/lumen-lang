@@ -3139,6 +3139,9 @@ impl<'a> Engine<'a> {
     }
 
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if matches!(op, Action::BitUp) {
+            if let Some(said) = &self.lang.left_shift_unready { return Err(said.clone()); }
+        }
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
         if let Value::Bond(shared) = a {

@@ -2176,10 +2176,45 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// Read the names of a divided loop target; taking it apart is owed.
+    fn loop_names(&mut self) -> Res<()> {
+        loop {
+            let group = [&self.lang.grouping, &self.lang.array_brackets].into_iter().flatten()
+                .find(|pair| self.at_symbol(&pair.open)).cloned();
+            if let Some(pair) = group {
+                self.take();
+                if !self.at_symbol(&pair.close) { self.loop_names()?; }
+                self.want_sign(&pair.close, "after loop targets")?;
+            } else {
+                let name = self.want_name("as a loop target")?;
+                self.cell_to_write(&name);
+            }
+            if !self.on_any(&self.lang.tuple_marks) { break; }
+            self.take();
+            if self.on_keyword(&self.lang.in_words) || [&self.lang.grouping, &self.lang.array_brackets]
+                .into_iter().flatten().any(|pair| self.at_symbol(&pair.close)) { break; }
+        }
+        Ok(())
+    }
+
     /// `for v in a..b block`: a counted loop with the bound in a hidden slot.
     fn for_stmt(&mut self) -> Res<()> {
         let lang = self.lang;
         self.take();
+        if !lang.tuple_marks.is_empty() && !(self.look().shape == Shape::Instr
+            && Lang::spells(&lang.in_words, &self.look_ahead(1).lexeme)) {
+            self.loop_names()?;
+            if !self.on_keyword(&lang.in_words) { return Err("Expected a loop source after its targets".into()); }
+            self.take();
+            let from = self.mark();
+            self.scope_value()?;
+            self.enter_cycle(None);
+            self.body()?;
+            self.leave_cycle(self.mark());
+            self.piece().instrs.truncate(from);
+            self.scope_fault(&lang.scope_unready.clone());
+            return Ok(());
+        }
         let var = self.want_name("as the loop variable")?;
         if !self.on_keyword(&lang.in_words) {
             return Err(format!("Expected '{}' after for loop variable, got: {}", lang.in_words[0], self.look().lexeme));
@@ -3417,6 +3452,24 @@ impl<'a> Compiler<'a> {
 
     /// An assignment, an indexed assignment, or an expression statement.
     fn assign_or_expr(&mut self) -> Res<()> {
+        // Several bare names may await the same value. Their shared
+        // holding belongs to the fuller account of taking apart.
+        if !self.lang.scope_unready.is_empty() && self.look().shape == Shape::Instr
+            && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme)
+            && self.look_ahead(2).shape == Shape::Instr
+            && Lang::spells(&self.lang.assign_words, &self.look_ahead(3).lexeme) {
+            while self.look().shape == Shape::Instr
+                && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme) {
+                let named = self.take().lexeme;
+                self.cell_to_write(&named);
+                self.take();
+            }
+            let from = self.mark();
+            self.scope_value()?;
+            self.piece().instrs.truncate(from);
+            self.scope_fault(&self.lang.scope_unready.clone());
+            return Ok(());
+        }
         // The running result is emptied before the statement is worked
         // out rather than written over after it. A slot still holding
         // what the statement before came to keeps that value alive for

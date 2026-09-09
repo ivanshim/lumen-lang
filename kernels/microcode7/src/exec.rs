@@ -4366,6 +4366,9 @@ impl<'a> Machine<'a> {
             // number of sixty-four bits, sign and all, save where the
             // reading above has already made numbers of them.
             Prim::BitsUp | Prim::BitsDown => {
+                if let (Prim::BitsUp, Some(words)) = (op, self.table.single("ext.op.bit.left.unready")) {
+                    return Err(words.to_owned());
+                }
                 let (bits, by) = (self.bits_told(&v[0])?, self.bits_told(&v[1])?);
                 match math::carried_bits(bits, by, op == Prim::BitsUp) {
                     Some(carried) => Value::Small(carried),
