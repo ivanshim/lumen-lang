@@ -2867,6 +2867,7 @@ impl<'a> Machine<'a> {
                                 place += 1;
                             }
                         }
+                        Value::Set(store) => positions.extend(store.borrow().values()),
                         Value::Vector(values) => positions.extend(values.iter().cloned()),
                         Value::Dict(entries) => positions.extend(entries.iter().map(|entry| entry.0.clone())),
                         Value::Text(text) => {
@@ -5212,7 +5213,11 @@ impl<'a> Machine<'a> {
             let mut fault = false;
             row.sort_by(|a, b| {
                 if let (Value::Text(x), Value::Text(y)) = (a, b) { return x.cmp(y); }
-                match (math::ratio_of(a), math::ratio_of(b)) {
+                let quantity = |v: &Value| match v {
+                    Value::Flag(yes) => math::ratio_of(&Value::Small(if *yes { 1 } else { 0 })),
+                    _ => math::ratio_of(v),
+                };
+                match (quantity(a), quantity(b)) {
                     (Some(x), Some(y)) if !x.past_numbers() && !y.past_numbers() => (x.above * y.beneath).cmp(&(y.above * x.beneath)),
                     _ => { fault = true; std::cmp::Ordering::Equal }
                 }
@@ -5225,6 +5230,16 @@ impl<'a> Machine<'a> {
             4..=6 if values.len() != 1 => return Err(wrong()),
             1..=3 | 11..=14 | 17 if values.len() != 2 => return Err(wrong()),
             _ => (),
+        }
+        if which == 7 {
+            for input in values.iter().skip(1) {
+                let additions = self.gathered_members(input)?;
+                for value in additions {
+                    let address = self.hash_for_set(&value)?;
+                    target.borrow_mut().put(address, value);
+                }
+            }
+            return Ok(Value::Nil);
         }
         match which {
             1..=3 => {

@@ -1390,6 +1390,7 @@ impl<'a> Engine<'a> {
                             let mut i = BigInt::from(0);
                             while let Some(v) = r.at(i.clone()) { items.push((None, v)); i += 1; }
                         }
+                        Value::Set(s) => items.extend(s.borrow().items().into_iter().map(|v| (None, v))),
                         Value::Array(a) => items.extend(a.iter().cloned().map(|v| (None, v))),
                         Value::Text(t) => items.extend(t.chars().map(|c| (None, Value::text(&c.to_string())))),
                         Value::Map(m) => items.extend(m.iter().map(|(k, _)| (None, k.clone()))),
@@ -4025,7 +4026,10 @@ impl<'a> Engine<'a> {
                 while at > 0 {
                     let order = match (&items[at], &items[at - 1]) {
                         (Value::Text(a), Value::Text(b)) => a.cmp(b),
-                        (a, b) => arith::order_values(a, b).ok_or_else(|| self.set_said(".unsortable", ""))?,
+                        (a, b) => {
+                            let number = |v: &Value| match v { Value::Flag(b) => Value::Small(i64::from(*b)), _ => v.clone() };
+                            arith::order_values(&number(a), &number(b)).ok_or_else(|| self.set_said(".unsortable", ""))?
+                        }
                     };
                     if order != std::cmp::Ordering::Less { break; }
                     items.swap(at, at - 1);
@@ -4056,6 +4060,12 @@ impl<'a> Engine<'a> {
             let mut set = cell.borrow_mut();
             set.row.clear();
             set.held.clear();
+            return Ok(Value::Null);
+        }
+        if op == SetUpdate {
+            for source in &args[1..] {
+                for item in self.comprehension_items(source)? { cell.borrow_mut().insert(self.set_key(&item)?, item); }
+            }
             return Ok(Value::Null);
         }
         let mut result = cell.borrow().clone();

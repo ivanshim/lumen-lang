@@ -397,7 +397,13 @@ impl Value {
         match self {
             // A cell that names share is written as what it holds.
             Value::Shared(cell) => cell.borrow().render(w),
-            Value::Set(items) => items.borrow().written(|item| item.in_field(w, "", "r")),
+            Value::Set(items) => items.borrow().written(|item| {
+                let shown = item.in_field(w, "", "r");
+                match item {
+                    Value::Frac(r) if r.places.is_some() && !r.past_numbers() && !shown.chars().any(|c| matches!(c, '.' | 'E' | 'e')) => shown + ".0",
+                    _ => shown,
+                }
+            }),
             Value::Flag(true) if w.flag_counted => "1".to_string(),
             Value::Flag(false) if w.flag_counted => String::new(),
             Value::Flag(true) => w.truth.to_string(),

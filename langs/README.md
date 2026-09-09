@@ -711,7 +711,7 @@ only. The extension labels so far, all from PHP:
   Equality disregards order. `ext.builtin.set.sorted` gathers an iterable
   into an array ordered by its members, stopping if they cannot be ordered.
 - `ext.builtin.set.unhashable` surrounds the name of an unhashable kind;
-  `ext.builtin.set.missing` surrounds the representation of an absent
+  `ext.builtin.set.missing` stands before the representation of an absent
   member. `ext.builtin.set.empty`, `ext.builtin.set.operands`,
   `ext.builtin.set.arguments`, `ext.builtin.set.unsupported` and
   `ext.builtin.set.unsortable` give the plain complaints for an empty pop,
@@ -2035,7 +2035,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.set.isdisjoint` | - | - | `isdisjoint` | - | - | - | - | - | - | - |
 | `ext.builtin.set.issubset` | - | - | `issubset` | - | - | - | - | - | - | - |
 | `ext.builtin.set.issuperset` | - | - | `issuperset` | - | - | - | - | - | - | - |
-| `ext.builtin.set.missing` | - | - | `KeyError: ` `` | - | - | - | - | - | - | - |
+| `ext.builtin.set.missing` | - | - | `KeyError: ` | - | - | - | - | - | - | - |
 | `ext.builtin.set.operands` | - | - | `TypeError: set operands must be sets` | - | - | - | - | - | - | - |
 | `ext.builtin.set.pop` | - | - | `pop` | - | - | - | - | - | - | - |
 | `ext.builtin.set.remove` | - | - | `remove` | - | - | - | - | - | - | - |

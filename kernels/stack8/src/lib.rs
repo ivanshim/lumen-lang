@@ -121,7 +121,7 @@ fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, St
         let set_fault = ["unhashable", "missing", "empty", "operands", "arguments", "unsupported", "unsortable"].iter().any(|name| {
             let words = &lang.set_words[&format!("ext.builtin.set.{name}")];
             match words.as_slice() {
-                [said] => e == *said,
+                [said] => if *name == "missing" { e.starts_with(said) } else { e == *said },
                 [head, tail] => e.starts_with(head) && e.ends_with(tail),
                 _ => false,
             }

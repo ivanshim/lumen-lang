@@ -417,7 +417,11 @@ impl Value {
             // A cell two names share is written as what it holds: the
             // sharing is between the names and not in the value.
             Value::Bond(shared) => shared.borrow().display(sp),
-            Value::Set(s) => s.borrow().show(|v| v.string_field(sp, "", "r")),
+            Value::Set(s) => s.borrow().show(|v| {
+                let mut text = v.string_field(sp, "", "r");
+                if matches!(v, Value::Real(r) if !r.outside()) && !text.contains(['.', 'e', 'E']) { text.push_str(".0"); }
+                text
+            }),
             Value::Flag(true) => match sp.flag_counts {
                 true => "1".to_string(),
                 false => sp.true_word.to_string(),

@@ -57,7 +57,7 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
     go(&table, source, program_args, request).map_err(|e| {
         for suffix in ["missing", "unhashable", "arguments", "operands", "empty", "unsortable", "unsupported"] {
             let said = table.strings(&format!("ext.builtin.set.{suffix}"));
-            if said.len() == 1 && said[0] == e { return e; }
+            if said.len() == 1 && (said[0] == e || suffix == "missing" && e.starts_with(&said[0])) { return e; }
             if said.len() == 2 && e.starts_with(&said[0]) && e.ends_with(&said[1]) { return e; }
         }
         match table.strings("ext.syntax.call.amiss.builtin") {

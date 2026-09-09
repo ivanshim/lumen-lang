@@ -420,8 +420,7 @@
     "issuperset"
   ],
   "ext.builtin.set.missing": [
-    "KeyError: ",
-    ""
+    "KeyError: "
   ],
   "ext.builtin.set.operands": [
     "TypeError: set operands must be sets"
