@@ -1208,22 +1208,40 @@ impl<'a> Compiler<'a> {
             }
         }
         if bracketed { self.take(); }
+        let mut contexts = Vec::new();
         loop {
             self.expr(0)?;
+            if lang.with_enter.is_some() {
+                let source = self.gensym("manager");
+                self.write(&source);
+                self.read(&source);
+                self.act(Action::ContextEnter, 1);
+                let cell = self.cell_to_read(&source, false);
+                let mark = self.put(Instr::Attempt(Box::new(Attempt {
+                    context: Some(cell), body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0,
+                })));
+                contexts.push((mark, self.mark()));
+            }
             if self.on_keyword(&lang.with_as_words) {
                 self.take();
                 let held = self.gensym("with");
                 self.write(&held);
                 self.bind_block_target(&held)?;
-            } else {
-                self.discard();
-            }
+            } else { self.discard(); }
             if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
             self.take();
             if bracketed && self.at_symbol(&group.close) { break; }
         }
         if bracketed { self.want_sign(&group.close, "after the with items")?; }
-        self.body()
+        self.body()?;
+        let after = self.mark();
+        for (mark, first) in contexts {
+            if let Instr::Attempt(plan) = &mut self.piece().instrs[mark] {
+                plan.body = (first, after);
+                plan.after = after;
+            }
+        }
+        Ok(())
     }
 
     fn target_count(&self, enclosed: bool) -> (usize, bool, bool) {
@@ -2636,7 +2654,7 @@ impl<'a> Compiler<'a> {
     fn indented_attempt(&mut self) -> Res<()> {
         self.take();
         let mark = self.put(Instr::Attempt(Box::new(Attempt {
-            body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0,
+            context: None, body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0,
         })));
         let body = self.attempt_body()?;
         let mut clauses = Vec::new();
@@ -2693,7 +2711,7 @@ impl<'a> Compiler<'a> {
             return Err("A try needs a catch or a last part".to_string());
         }
         let after = self.mark();
-        self.piece().instrs[mark] = Instr::Attempt(Box::new(Attempt { body, clauses, otherwise, last, after }));
+        self.piece().instrs[mark] = Instr::Attempt(Box::new(Attempt { context: None, body, clauses, otherwise, last, after }));
         Ok(())
     }
 

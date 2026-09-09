@@ -398,6 +398,8 @@ pub struct Lang {
     pub del_words: Vec<String>,
     pub nonlocal_words: Vec<String>,
     pub nonlocal_unrun: Vec<String>,
+    pub with_enter: Option<String>,
+    pub with_leave: Option<String>,
     pub with_words: Vec<String>,
     pub with_as_words: Vec<String>,
     pub yield_words: Vec<String>,
@@ -817,6 +819,9 @@ w ext.builtin.program.namespace
 w ext.builtin.member.get
 w ext.builtin.member.set
 w ext.builtin.instance
+w ext.builtin.module.load
+w ext.builtin.copy
+w ext.stmt.with.enter | w ext.stmt.with.leave
 w ext.stmt.import | w ext.stmt.import.from | w ext.stmt.import.as | w ext.system.module.name
 
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
@@ -1329,6 +1334,8 @@ impl Lang {
             ("ext.builtin.member.get", Builtin::MemberGet),
             ("ext.builtin.member.set", Builtin::MemberSet),
             ("ext.builtin.instance", Builtin::InstanceOf),
+            ("ext.builtin.module.load", Builtin::ModuleLoad),
+            ("ext.builtin.copy", Builtin::CopyValue),
             ("ext.builtin.clock", Builtin::Clock),
             ("ext.builtin.room.used", Builtin::RoomUsed), ("ext.builtin.room.most", Builtin::RoomMost),
             ("ext.builtin.room.most.forget", Builtin::RoomForget), ("ext.builtin.room.limit", Builtin::RoomLimit),
@@ -1613,6 +1620,8 @@ impl Lang {
             del_words: r.strings("ext.stmt.del")?,
             nonlocal_words: r.strings("ext.stmt.nonlocal")?,
             nonlocal_unrun: r.strings("ext.stmt.nonlocal.unrun")?,
+            with_enter: r.head("ext.stmt.with.enter")?,
+            with_leave: r.head("ext.stmt.with.leave")?,
             with_words: r.strings("ext.stmt.with")?,
             with_as_words: r.strings("ext.stmt.with.as")?,
             yield_words: r.strings("ext.stmt.yield")?,

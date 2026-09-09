@@ -1584,6 +1584,12 @@ only. The extension labels so far, all from PHP:
   trailing comma. The multiplication sign asks for all names and binds
   the public names of the module when values are carried. An import
   named by the lexical prologue is read too where these words are spelled.
+- `ext.stmt.with.enter` and `ext.stmt.with.leave`: the methods which
+  enter and leave a context. Where a manager has them, entry supplies
+  the bound value and leaving is guaranteed on an outward step or a
+  fault. The leaving method receives the fault's class, value and an
+  empty traceback; a true answer takes the fault. Managers without the
+  named methods retain the earlier binding-only form at this stage.
 - `ext.stmt.import.value`: a switch; imports fetch source the host has
   kept under its module name, read it once in its own namespace, and
   bind that namespace or the requested members. Without the switch the
@@ -1593,6 +1599,11 @@ only. The extension labels so far, all from PHP:
   pieces of a complaint, surrounding the absent module or member name.
   `ext.stmt.import.relative.unready` gives the words for a relative path
   where the run has no package context to resolve it against.
+- `ext.builtin.module.load`: a builtin fetching the module named by its
+  text argument, through the same source store and cache as an import.
+- `ext.builtin.copy`: a builtin copying a value; its second argument says
+  whether to copy the things held within it too. Deep copies remember
+  objects already copied, so cycles and shared members keep their shape.
 - `ext.builtin.program.namespace`: a builtin handing out a map of the
   outer program's names and their present values. A module's private
   cells are not part of that map; it lets a library find the classes the
@@ -2088,6 +2099,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.clock` | - | - | - | - | `__clock` | - | - | - | - | - |
 | `ext.builtin.complaint.handler` | - | - | - | - | `__complaint_handler` | - | - | - | - | - |
 | `ext.builtin.complaint.say` | - | - | - | - | `__complaint_say` | - | - | - | - | - |
+| `ext.builtin.copy` | - | - | `__copy_value` | - | - | - | - | - | - | - |
 | `ext.builtin.define` | - | - | - | - | `define` | - | - | - | - | - |
 | `ext.builtin.define.class_constant` | - | - | - | - | `define(): Argument #1 ($constant_name) cannot be a class constant` | - | - | - | - | - |
 | `ext.builtin.echo` | - | - | - | - | `echo` | - | - | - | - | - |
@@ -2109,6 +2121,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.math` | - | - | `__math` | - | `__math` | - | - | - | - | - |
 | `ext.builtin.member.get` | - | - | `getattr` | - | - | - | - | - | - | - |
 | `ext.builtin.member.set` | - | - | `setattr` | - | - | - | - | - | - | - |
+| `ext.builtin.module.load` | - | - | `__load_module` | - | - | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
 | `ext.builtin.output.depth` | - | - | - | - | `__output_depth` | - | - | - | - | - |
@@ -2382,6 +2395,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.unpack.unwalkable` | - | - | `cannot unpack non-iterable object` | - | - | - | - | - | - | - |
 | `ext.stmt.with` | - | - | `with` | - | - | - | - | - | - | - |
 | `ext.stmt.with.as` | - | - | `as` | - | - | - | - | - | - | - |
+| `ext.stmt.with.enter` | - | - | `__enter__` | - | - | - | - | - | - | - |
+| `ext.stmt.with.leave` | - | - | `__exit__` | - | - | - | - | - | - | - |
 | `ext.stmt.with.unready` | - | - | `NotImplementedError: context managers are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.yield` | - | - | `yield` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.from` | - | - | `from` | - | - | - | - | - | - | - |

@@ -331,6 +331,9 @@
   "ext.builtin.class.methods": [
     "__class_methods"
   ],
+  "ext.builtin.copy": [
+    "__copy_value"
+  ],
   "ext.builtin.instance": [
     "isinstance"
   ],
@@ -345,6 +348,9 @@
   ],
   "ext.builtin.member.set": [
     "setattr"
+  ],
+  "ext.builtin.module.load": [
+    "__load_module"
   ],
   "ext.builtin.print.end": [
     "end"
@@ -802,6 +808,12 @@
   ],
   "ext.stmt.with.as": [
     "as"
+  ],
+  "ext.stmt.with.enter": [
+    "__enter__"
+  ],
+  "ext.stmt.with.leave": [
+    "__exit__"
   ],
   "ext.stmt.with.unready": [
     "NotImplementedError: context managers are not supported"

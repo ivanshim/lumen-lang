@@ -36,6 +36,8 @@ pub enum Callee {
 /// forms for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prim {
+    CopyWorth,
+    LoadModule,
     IsInstance,
     WriteMember,
     ReadMember,
@@ -405,6 +407,7 @@ pub enum Form {
     /// part that runs however the body ends.
     Again,
     Assert { condition: Box<Form>, message: Box<Form> },
+    Context { manager: Box<Form>, entered: Address, body: Box<Form> },
     Attempt { body: Box<Form>, clauses: Vec<Clause>, last: Option<Box<Form>>, otherwise: Option<Box<Form>> },
     /// Whether the call left this binding without a value.
     Missing(Address),

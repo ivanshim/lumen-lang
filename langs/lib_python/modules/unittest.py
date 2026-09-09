@@ -243,7 +243,7 @@ def main(module=None, exit=True, verbosity=1):
     names = __program_namespace()
     result = TestResult()
     loader = TestLoader()
-    for name in names:
+    for name in list(names):
         cls = names[name]
         if not getattr(cls, '_test_case', False) or cls is TestCase:
             continue

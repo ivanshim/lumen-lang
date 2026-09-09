@@ -1992,6 +1992,35 @@ impl<'a> Machine<'a> {
                     holds: RefCell::new(vec![("message".to_string(), held)]),
                 }))))
             }
+            Form::Context { manager, entered, body } => {
+                let held = self.value_of(manager, frame)?;
+                let mut entry = held.clone();
+                let mut leave = None;
+                if let Value::Thing(object) = &held {
+                    if let Some(method) = self.table.single("ext.stmt.with.enter").and_then(|word| object.of.program(word)).cloned() {
+                        entry = self.invoke(method, self.outermost.clone(), vec![held.clone()])?;
+                        leave = self.table.single("ext.stmt.with.leave").and_then(|word| object.of.program(word)).cloned();
+                    }
+                }
+                self.store(entered, frame, entry)?;
+                let outcome = self.value_of(body, frame);
+                if let Some(method) = leave {
+                    let fault = match &outcome {
+                        Err(Escape::Thrown(value)) => Some(value.clone()),
+                        Err(Escape::Error(words)) => Some(Value::text(words)),
+                        _ => None,
+                    };
+                    let kind = match &fault {
+                        Some(Value::Thing(thing)) => Value::Blueprint(thing.of.clone()),
+                        Some(_) => Value::text("exception"),
+                        None => Value::Nil,
+                    };
+                    let failed = fault.is_some();
+                    let answer = self.invoke(method, self.outermost.clone(), vec![held, kind, fault.unwrap_or(Value::Nil), Value::Nil])?;
+                    if failed && answer.is_true() { return Ok(Value::Nil); }
+                }
+                outcome
+            }
             Form::Attempt { body, clauses, last, otherwise } => {
                 if clauses.iter().any(|part| part.grouped) {
                     return Err(self.table.single("ext.stmt.catch.group.unsupported").unwrap_or_default().to_string().into());
@@ -3695,6 +3724,13 @@ impl<'a> Machine<'a> {
                 }
                 Value::Nil
             }
+            Prim::LoadModule => { n(1)?; self.load_namespace(&v[0].bare())? }
+            Prim::CopyWorth => {
+                n(2)?;
+                let deep = matches!(v[1], Value::Flag(true));
+                let mut known = Vec::new();
+                self.copy_worth(&v[0], deep, &mut known)
+            }
             Prim::ProgramNames => {
                 n(0)?;
                 let cells = self.outermost.cells.borrow();
@@ -3804,7 +3840,10 @@ impl<'a> Machine<'a> {
                     Value::Thing(thing) => {
                         let mut holds = thing.holds.borrow_mut();
                         match self.member_place(&holds, &called) {
-                            Some(at) => holds[at].1 = v[2].clone(),
+                            Some(at) => match &holds[at].1 {
+                                Value::Shared(cell) => *cell.borrow_mut() = v[2].clone(),
+                                _ => holds[at].1 = v[2].clone(),
+                            },
                             None => holds.push((called, v[2].clone())),
                         }
                         Value::Nil
@@ -6072,5 +6111,40 @@ fn belongs_to(worth: &Value, kind: &Value) -> bool {
         Value::Blueprint(class) => match worth { Value::Thing(object) => object.of.goes_by(&class.name, false), _ => false },
         Value::KindOf(tag) => worth.kind() == Some(*tag),
         _ => false,
+    }
+}
+
+impl Machine<'_> {
+    fn copy_worth(&mut self, value: &Value, descend: bool, known: &mut Vec<(usize, Value)>) -> Value {
+        if let Value::Thing(original) = value {
+            let key = Rc::as_ptr(original) as usize;
+            if descend {
+                if let Some((_, held)) = known.iter().find(|(at, _)| *at == key) { return held.clone(); }
+            }
+            self.made += 1;
+            let target = Rc::new(Thing { of: original.of.clone(), turn: self.made, holds: RefCell::new(Vec::new()) });
+            let answer = Value::Thing(target.clone());
+            known.push((key, answer.clone()));
+            for (name, field) in original.holds.borrow().iter() {
+                let item = if descend { self.copy_worth(field, true, known) } else { field.clone() };
+                target.holds.borrow_mut().push((name.clone(), item));
+            }
+            return answer;
+        }
+        match value {
+            Value::Shared(cell) => self.copy_worth(&cell.borrow(), descend, known),
+            Value::Vector(items) if descend => {
+                let items = items.iter().map(|item| self.copy_worth(item, true, known)).collect();
+                Value::Vector(Rc::new(items))
+            }
+            Value::Dict(pairs) if descend => {
+                let mut copied = Vec::with_capacity(pairs.len());
+                for (key, item) in pairs.iter() {
+                    copied.push((self.copy_worth(key, true, known), self.copy_worth(item, true, known)));
+                }
+                Value::Dict(Rc::new(copied))
+            }
+            _ => value.clone(),
+        }
     }
 }

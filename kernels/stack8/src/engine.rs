@@ -1313,9 +1313,11 @@ impl<'a> Engine<'a> {
                 return Ok(());
             }
         }
-        if let Value::Bond(shared) = &self.world[slot.far] {
-            *shared.borrow_mut() = v;
-            return Ok(());
+        if slot.near.is_empty() || !self.registry.idents[slot.far].starts_with("\0module:") {
+            if let Value::Bond(shared) = &self.world[slot.far] {
+                *shared.borrow_mut() = v;
+                return Ok(());
+            }
         }
         if matches!(self.world[slot.far], Value::Gap) {
             self.world[slot.far] = v;
@@ -1725,6 +1727,23 @@ impl<'a> Engine<'a> {
                 other => {
                     self.data.truncate(depth);
                     ending = other;
+                }
+            }
+        }
+        if let Some(cell) = &plan.context {
+            let manager = self.load_cell(cell, frame)?;
+            if let Value::Object(object) = &manager {
+                if let Some(method) = self.lang.with_leave.as_ref().and_then(|name| object.class.method(name)).cloned() {
+                    let (kind, fault) = match &ending {
+                        Err(Fault::Thrown(Value::Object(raised))) => (Value::Class(raised.class.clone()), Value::Object(raised.clone())),
+                        Err(Fault::Thrown(value)) => (Value::text("exception"), value.clone()),
+                        Err(Fault::Note(words)) => (Value::text("error"), Value::text(words)),
+                        _ => (Value::Null, Value::Null),
+                    };
+                    let failed = !matches!(kind, Value::Null);
+                    self.invoke(&method, vec![manager, kind, fault, Value::Null])?;
+                    let suppress = self.drop_top()?.is_true();
+                    if failed && suppress { ending = Ok(Passage::Along(plan.after)); }
                 }
             }
         }
@@ -2569,6 +2588,15 @@ impl<'a> Engine<'a> {
                 }
                 Value::Object(object)
             }
+            Action::ContextEnter => {
+                let value = self.drop_top()?;
+                if let Value::Object(object) = &value {
+                    if let Some(method) = self.lang.with_enter.as_ref().and_then(|name| object.class.method(name)).cloned() {
+                        return self.invoke(&method, vec![value]);
+                    }
+                }
+                value
+            }
             Action::Import(path, member, root) => {
                 let module = self.import_module(path)?;
                 if let Some(name) = member {
@@ -2737,7 +2765,10 @@ impl<'a> Engine<'a> {
                         }
                         let mut fields = o.fields.borrow_mut();
                         match taken {
-                            Some(at) => fields[at].1 = value,
+                            Some(at) => {
+                                if let Value::Bond(cell) = &fields[at].1 { *cell.borrow_mut() = value; }
+                                else { fields[at].1 = value; }
+                            },
                             None => fields.push((name.to_string(), value)),
                         }
                         Value::Null
@@ -4511,6 +4542,18 @@ impl<'a> Engine<'a> {
             // The routine every complaint is to be handed to, or none.
             // What the run has bound under a name, by name: the
             // classes, and the routines.
+            Builtin::ModuleLoad => {
+                arity(1)?;
+                match self.import_module(&args[0].display(&sp)) {
+                    Ok(module) => module,
+                    Err(Fault::Note(words)) => return Err(words),
+                    Err(fault) => { self.carried = Some(fault); return Err("module did not finish".into()); }
+                }
+            }
+            Builtin::CopyValue => {
+                arity(2)?;
+                duplicate_value(&args[0], matches!(args[1], Value::Flag(true)), &mut HashMap::new(), &mut self.made)
+            }
             Builtin::ProgramNamespace => {
                 arity(0)?;
                 Value::Map(Rc::new(self.registry.idents.iter().zip(&self.world).filter_map(|(name, value)| {
@@ -5827,5 +5870,29 @@ fn instance_matches(value: &Value, kind: &Value) -> bool {
         (Value::Object(object), Value::Class(class)) => object.class.named(&class.name, false),
         (_, Value::SortOf(sort)) => value.sort() == Some(*sort),
         _ => false,
+    }
+}
+
+fn duplicate_value(value: &Value, deep: bool, seen: &mut HashMap<usize, Value>, made: &mut usize) -> Value {
+    match value {
+        Value::Object(object) => {
+            let address = Rc::as_ptr(object) as usize;
+            if deep {
+                if let Some(copy) = seen.get(&address) { return copy.clone(); }
+            }
+            *made += 1;
+            let copy = Rc::new(Instance { class: object.class.clone(), fields: RefCell::new(Vec::new()), mark: *made });
+            let result = Value::Object(copy.clone());
+            seen.insert(address, result.clone());
+            let fields = object.fields.borrow().iter().map(|(name, worth)| {
+                (name.clone(), if deep { duplicate_value(worth, true, seen, made) } else { worth.clone() })
+            }).collect();
+            *copy.fields.borrow_mut() = fields;
+            result
+        }
+        Value::Array(items) if deep => Value::array(items.iter().map(|v| duplicate_value(v, true, seen, made)).collect()),
+        Value::Map(items) if deep => Value::Map(Rc::new(items.iter().map(|(key, value)| (duplicate_value(key, true, seen, made), duplicate_value(value, true, seen, made))).collect())),
+        Value::Bond(cell) => duplicate_value(&cell.borrow(), deep, seen, made),
+        _ => value.clone(),
     }
 }

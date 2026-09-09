@@ -18,6 +18,7 @@ use crate::value::Value;
 /// them in that routine leaves their bindings and outward leaps whole.
 #[derive(Debug, Clone)]
 pub struct Attempt {
+    pub context: Option<Cell>,
     pub body: (usize, usize),
     pub clauses: Vec<Taking>,
     pub otherwise: Option<(usize, usize)>,
@@ -70,6 +71,7 @@ pub struct Cell {
 /// Kernel operations a language can spell. `Apply` names one of these.
 #[derive(Debug, Clone)]
 pub enum Action {
+    ContextEnter,
     Import(String, Option<String>, bool),
     ImportAll,
     Add,
@@ -323,6 +325,8 @@ pub enum Action {
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    CopyValue,
+    ModuleLoad,
     InstanceOf,
     MemberSet,
     MemberGet,

@@ -1584,23 +1584,33 @@ impl<'a> Builder<'a> {
             }
         }
         if enclosed { self.advance(); }
-        let mut steps = Vec::new();
+        let mut items = Vec::new();
         loop {
-            let value = self.expr(0)?;
+            let source = self.expr(0)?;
+            let place = self.gensym("with");
+            let name = place.ident.to_string();
+            let mut bindings = Vec::new();
             if self.key("ext.stmt.with.as") {
                 self.advance();
-                let place = self.gensym("with");
-                let name = place.ident.to_string();
-                steps.push(Form::Write(place, Box::new(value)));
-                steps.extend(self.with_target(&name)?);
-            } else { steps.push(value); }
+                bindings = self.with_target(&name)?;
+            }
+            items.push((source, place, bindings));
             if !self.on_any("syntax.call.separator") { break; }
             self.advance();
             if enclosed && self.sign(close) { break; }
         }
         if enclosed { self.need_sign(close, "after the with items")?; }
-        steps.push(self.body()?);
-        Ok(sequence(steps))
+        let mut rest = self.body()?;
+        while let Some((source, place, mut bindings)) = items.pop() {
+            bindings.push(rest);
+            rest = if self.table.single("ext.stmt.with.enter").is_some() {
+                Form::Context { manager: Box::new(source), entered: place, body: Box::new(sequence(bindings)) }
+            } else {
+                bindings.insert(0, Form::Write(place, Box::new(source)));
+                sequence(bindings)
+            };
+        }
+        Ok(rest)
     }
 
     fn targets_ahead(&self, bracketed: bool) -> (usize, bool, bool) {

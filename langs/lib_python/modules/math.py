@@ -1,8 +1,8 @@
 # Reals use the kernel's width; integer work stays exact.
 pi = 3.141592653589793
 e = 2.718281828459045
-inf = float('inf')
-nan = float('nan')
+inf = __math('fdiv', 1.0, 0.0)
+nan = __math('fdiv', 0.0, 0.0)
 
 def sqrt(x):
     if x < 0:
