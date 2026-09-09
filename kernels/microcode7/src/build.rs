@@ -3242,7 +3242,7 @@ impl<'a> Builder<'a> {
             return self.with_annotation(expr, began);
         }
         if !self.on_writing() {
-            return Ok(expr);
+            return self.grammar_tail(expr);
         }
         self.written(expr, false)
     }
@@ -3360,6 +3360,7 @@ impl<'a> Builder<'a> {
             // source of its own after the sign.
             (Some(by), _, None) => constant(Value::Small(by)),
             (None, Some(cell), None) => self.read(&cell),
+            (None, None, None) if plain => self.grammar_values()?,
             (None, None, None) => self.expr(0)?,
         };
         // The value comes before the bounds of a slice assignment.
@@ -3766,6 +3767,10 @@ impl<'a> Builder<'a> {
 
     fn grammar_values(&mut self) -> Res<Form> {
         let first = self.expr(0)?;
+        self.grammar_tail(first)
+    }
+
+    fn grammar_tail(&mut self, first: Form) -> Res<Form> {
         if !self.on_any("ext.op.tuple") { return Ok(first); }
         loop {
             self.advance();

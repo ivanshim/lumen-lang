@@ -92,6 +92,11 @@ reading. An indexed ellipsis keeps the slice piece's own meaning.
 
 ## Spellings in this piece
 
+`30.py` reads the grammar suite's bare tuple statements and assignment
+values, including a trailing comma. `31.py` and `32.py` reach those forms
+and give the tuple-value complaint. Both use the existing `ext.op.tuple`
+spelling; this does not yet supply tuple stores or chained assignments.
+
 `26.py` reads lambda parameters, nested defaults and bodies, and a lambda
 decorator. `27.py` reaches a lambda and gives the explicit value complaint;
 `29.py` refuses duplicate parameter names. `28.py` checks that assignment

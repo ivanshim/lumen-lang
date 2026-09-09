@@ -3306,6 +3306,9 @@ impl<'a> Compiler<'a> {
         if starts_here && self.on_any(&self.lang.annotation_marks) {
             return self.annotated_statement(from, target_at);
         }
+        if self.on_any(&self.lang.tuple_marks) {
+            self.grammar_tail(from)?;
+        }
         let done = if self.on_writing() {
             self.assignment(from, None)
         } else {
@@ -3343,7 +3346,7 @@ impl<'a> Compiler<'a> {
         // before each of its places.
         match self.waiting.clone() {
             Some(cell) => self.read(&cell),
-            None => self.expr(0)?,
+            None => self.grammar_values()?,
         }
         self.kept(keep);
         Ok(())
@@ -4055,6 +4058,10 @@ impl<'a> Compiler<'a> {
     fn grammar_values(&mut self) -> Res<()> {
         let began = self.mark();
         self.expr(0)?;
+        self.grammar_tail(began)
+    }
+
+    fn grammar_tail(&mut self, began: usize) -> Res<()> {
         if !self.on_any(&self.lang.tuple_marks) { return Ok(()); }
         while self.on_any(&self.lang.tuple_marks) {
             self.take();
