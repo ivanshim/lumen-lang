@@ -646,9 +646,9 @@ only. The extension labels so far, all from PHP:
   otherwise. A method takes its object before the written arguments; a
   pipe keeps the ordinary rules for changing the array named on its left.
 - `ext.stmt.class.unready`: words said when a class form has been read but
-  cannot yet run: header keywords or unpacking, annotations, classes inside
-  functions, or statements in a class
-  body beyond methods, assignments, nested classes, plain strings and pass.
+  cannot yet run: header keywords or unpacking, classes inside functions,
+  or statements in a class body beyond methods, assignments, annotations,
+  nested classes, plain strings and pass.
   A parent call outside a method, or one given explicit arguments, also
   stops with these words. A pipe that changes an unnamed array also stops
   here. Nothing in such a form is silently carried out.
@@ -1726,13 +1726,14 @@ only. The extension labels so far, all from PHP:
   of a statement, or after a parameter name. What follows is an
   expression naming its kind, read whole and put by without being
   worked out. A value after the assignment sign is written as usual;
-  a bare name with only an annotation binds nothing. Brackets within
-  the annotation keep their own separators. Where this label is
+  a bare name with only an annotation binds nothing, in a class body
+  as elsewhere. A member or subscript with no value works out its
+  footing and any key or bounds, without reading or writing the place.
+  Member chains and slices take values by the ordinary writing rules.
+  Brackets within the annotation keep their own separators. Where this label is
   spelled, a return annotation is likewise an expression put by.
   `ext.stmt.annotation.amiss` gives the words for an annotation with
-  no expression or no proper target. `ext.stmt.annotation.target.unready`
-  gives the words said when the run reaches an annotated attribute
-  that the language cannot yet write; its statement is read in full.
+  no expression or no proper target.
 - `ext.stmt.function.returns`: the mark before a return type, read beside
   the core `stmt.function.returns`. PHP says it here because the porter
   writes a type for every function it ports and PHP has no word for a
@@ -2233,7 +2234,6 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.walk.this` | - | - | - | - | `current` | - | - | - | - | - |
 | `ext.stmt.annotation` | - | - | `:` | - | - | - | - | - | - | - |
 | `ext.stmt.annotation.amiss` | - | - | `invalid syntax` | - | - | - | - | - | - | - |
-| `ext.stmt.annotation.target.unready` | - | - | `NotImplementedError: annotated attribute targets are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.assert` | - | - | `assert` | - | - | - | - | - | - | - |
 | `ext.stmt.assert.kind` | - | - | `AssertionError` | - | - | - | - | - | - | - |
 | `ext.stmt.assign.chain` | - | - | `true` | - | - | - | - | - | - | - |

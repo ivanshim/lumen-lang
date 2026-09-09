@@ -175,7 +175,6 @@ pub struct Lang {
     /// An expression written as a kind is read and put by.
     pub annotation_marks: Vec<String>,
     pub annotation_amiss: Option<String>,
-    pub annotation_target_unready: Option<String>,
     pub types_first: bool,
     pub if_words: Vec<String>,
     pub elif_words: Vec<String>,
@@ -810,7 +809,7 @@ w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.
 w ext.op.if_else | w ext.op.lambda.unsupported | w ext.op.lambda.enclosing | w ext.op.identical.negated | w ext.op.identical.unsupported | w ext.op.in | w ext.op.in.negated | w ext.op.in.unsupported | b ext.op.compare.chained | w ext.op.assign.expression | w ext.literal.ellipsis | b ext.op.rem.formats_text | w ext.op.rem.format.unsupported | w ext.op.rem.format.arguments
 w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
-w ext.stmt.terminator | w ext.stmt.annotation | w ext.stmt.annotation.amiss | w ext.stmt.annotation.target.unready | w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
+w ext.stmt.terminator | w ext.stmt.annotation | w ext.stmt.annotation.amiss | w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
 w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.destructor | w ext.stmt.class.reader | w ext.stmt.class.writer | w ext.stmt.class.caller
 w ext.op.walk.class | w ext.op.walk.rewind | w ext.op.walk.more | w ext.op.walk.this | w ext.op.walk.key
 w ext.op.walk.onward | w ext.op.walk.giver.class | w ext.op.walk.giver | w ext.op.walk.no_cell | w ext.op.walk.key.no_cell | b ext.op.walk.live | w ext.builtin.array.front | w ext.stmt.class.modifier | w ext.stmt.class.hidden | w ext.stmt.class.guarded | w ext.stmt.class.shared
@@ -1471,7 +1470,6 @@ impl Lang {
             type_marks: annotation,
             annotation_marks: r.strings("ext.stmt.annotation")?,
             annotation_amiss: r.head("ext.stmt.annotation.amiss")?,
-            annotation_target_unready: r.head("ext.stmt.annotation.target.unready")?,
             types_first: type_first,
             if_words: ifs,
             elif_words: elifs,

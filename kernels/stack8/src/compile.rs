@@ -2923,18 +2923,26 @@ impl<'a> Compiler<'a> {
                 self.class_names.last_mut().expect("a class body").1.insert(named.clone(), held.clone());
                 shared.retain(|(old, _)| old != &named);
                 shared.push((named, held));
-            } else if self.look().shape == Shape::Instr && Lang::spells(&lang.block_intros, &self.look_ahead(1).lexeme) {
+            } else if self.look().shape == Shape::Instr && Lang::spells(&lang.annotation_marks, &self.look_ahead(1).lexeme) {
+                let named = self.take().lexeme;
                 self.take();
-                self.take();
-                self.expr(0)?;
-                self.discard();
-                if self.on_assign() { self.take(); self.expr(0)?; self.discard(); }
-                unready = true;
+                self.annotation_expression(&lang.assign_words)?;
+                if self.on_assign() {
+                    self.take();
+                    self.scope_value()?;
+                    let held = self.gensym("attribute");
+                    self.write(&held);
+                    self.class_names.last_mut().expect("a class body").1.insert(named.clone(), held.clone());
+                    shared.retain(|(old, _)| old != &named);
+                    shared.push((named, held));
+                }
             } else {
                 self.stmt()?;
                 unready = true;
             }
-            if !inline { self.skip_seps(); }
+            if inline {
+                while self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme) { self.take(); }
+            } else { self.skip_seps(); }
         }
         if !inline {
             if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
@@ -3740,34 +3748,13 @@ impl<'a> Compiler<'a> {
     /// The target has been read as a value, as for an ordinary store.
     /// With no store, a name does nothing and an index works out only
     /// its footing and key, without asking what stands at that key.
-    fn annotated_statement(&mut self, from: usize, target_at: usize) -> Res<()> {
+    fn annotated_statement(&mut self, from: usize) -> Res<()> {
         let lang = self.lang;
-        let target_end = self.pos;
         let words = &self.piece().instrs[from..];
         let name = matches!(words, [Instr::Read(_)]);
         let index = matches!(words.last(), Some(Instr::Act(Action::At, 2)));
         let member = matches!(words.last(), Some(Instr::Act(Action::Grab(_), 1)));
-        let mut brackets = 0usize;
-        let mut piped = false;
-        for t in &self.tokens[target_at..target_end] {
-            if t.shape != Shape::Sign {
-                continue;
-            }
-            let pairs = [&lang.calling, &lang.array_brackets, &lang.map_brackets];
-            if pairs.iter().filter_map(|pair| pair.as_ref()).any(|pair| pair.open == t.lexeme) {
-                brackets += 1;
-            } else if pairs.iter().filter_map(|pair| pair.as_ref()).any(|pair| pair.close == t.lexeme) {
-                brackets = brackets.saturating_sub(1);
-            } else if brackets == 0 && Lang::spells(&lang.pipe_words, &t.lexeme) {
-                piped = true;
-            }
-        }
-        let tail: Vec<&Token> = self.tokens[target_at..target_end].iter().rev()
-            .skip_while(|t| lang.grouping.as_ref().map_or(false, |pair| t.is_lexeme(Shape::Sign, &pair.close)))
-            .take(2).collect();
-        piped |= matches!(tail.as_slice(), [last, before] if last.shape == Shape::Instr
-            && before.shape == Shape::Sign && Lang::spells(&lang.pipe_words, &before.lexeme));
-        if !name && !index && !member && !piped {
+        if !name && !index && !member {
             return Err(lang.annotation_amiss.clone().unwrap_or_else(|| "Expected an assignment target".into()));
         }
         self.take();
@@ -3777,17 +3764,7 @@ impl<'a> Compiler<'a> {
             ends.extend(call.between.iter().cloned());
         }
         self.annotation_expression(&ends)?;
-        if piped && (lang.member_mark.is_none() || lang.member_pipes) {
-            self.piece().instrs.truncate(from);
-            if self.on_assign() {
-                self.take();
-                self.expr(0)?;
-                self.put_away();
-            }
-            let said = lang.annotation_target_unready.as_deref().unwrap_or("This annotation target cannot be written");
-            self.constant(Value::text(said));
-            self.act(Action::Builtin(Builtin::Raise, Rc::from("annotation")), 1);
-        } else if self.on_assign() {
+        if self.on_assign() {
             self.assignment(from, None)?;
         } else if name {
             self.piece().instrs.truncate(from);
@@ -3850,7 +3827,7 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         if starts_here && self.on_any(&self.lang.annotation_marks) {
-            return self.annotated_statement(from, target_at);
+            return self.annotated_statement(from);
         }
         // Stores through attributes or call results can be read before
         // scopes can keep them. Their fault belongs to the run.
@@ -4724,17 +4701,6 @@ impl<'a> Compiler<'a> {
     /// a call with no other argument.
     fn pipe_target(&mut self, left: usize) -> Res<()> {
         let name = self.want_name("after the pipe")?;
-        let mut ahead = 0;
-        while self.lang.grouping.as_ref().map_or(false, |pair| self.look_ahead(ahead).is_lexeme(Shape::Sign, &pair.close)) {
-            ahead += 1;
-        }
-        if self.look_ahead(ahead).shape == Shape::Sign
-            && Lang::spells(&self.lang.annotation_marks, &self.look_ahead(ahead).lexeme) {
-            // The statement reader will speak of the unsupported place;
-            // its member name must not be mistaken for a builtin call.
-            self.read(&name);
-            return Ok(());
-        }
         let native = self.lang.builtins.get(&name).copied();
         if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace)) {
             // arr.push(x): the piped value must be the array's name.
@@ -5988,7 +5954,13 @@ impl<'a> Compiler<'a> {
             }
             let named = self.want_name("after the member mark")?;
             let call = lang.calling.clone().filter(|c| self.at_symbol(&c.open));
-            if member && lang.member_pipes && (call.is_some() || !self.on_writing()) {
+            let mut beyond = self.pos;
+            while lang.grouping.as_ref().map_or(false, |pair| self.tokens[beyond].is_lexeme(Shape::Sign, &pair.close)) {
+                beyond += 1;
+            }
+            let annotated = self.tokens[beyond].shape == Shape::Sign
+                && Lang::spells(&lang.annotation_marks, &self.tokens[beyond].lexeme);
+            if member && lang.member_pipes && (call.is_some() || !self.on_writing() && !annotated) {
                 let resume = self.pos;
                 let target = match &self.piece().instrs[from..] {
                     [Instr::Read(slot)] => Some(slot.ident.to_string()),
