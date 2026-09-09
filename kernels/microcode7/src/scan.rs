@@ -834,7 +834,9 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                 k += 1;
             }
             let line_end = src[k..].iter().position(|c| *c == '\n').map_or(src.len(), |p| k + p);
-            if src[k..line_end].iter().all(|c| c.is_whitespace()) {
+            let remark = !table.strings("ext.lexical.string.long").is_empty() && table.strings("lexical.comment_line")
+                .iter().any(|word| written_at(&src, k, word));
+            if remark || src[k..line_end].iter().all(|c| c.is_whitespace()) {
                 if line_end < src.len() {
                     row += 1;
                 }
@@ -930,7 +932,8 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             pos = k;
             continue;
         }
-        if c.is_ascii_digit() {
+        if c.is_ascii_digit() || (table.flag("ext.lexical.number.point.bare")
+            && point == Some(c) && src.get(pos + 1).is_some_and(char::is_ascii_digit)) {
             let mut k = pos;
             while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                 k += 1;
@@ -956,7 +959,8 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                     }
                 }
             } else {
-                if point.is_some() && at(k) == point && at(k + 1).map_or(false, |x| x.is_ascii_digit()) {
+                if point.is_some() && at(k) == point
+                    && (table.flag("ext.lexical.number.point.bare") || at(k + 1).map_or(false, |x| x.is_ascii_digit())) {
                     k += 1;
                     while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                         k += 1;
@@ -971,6 +975,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                     }
                 }
             }
+            if at(k).is_some_and(|last| table.letters("ext.lexical.number.imaginary").contains(&last)) { k += 1; }
             tokens.push(tok(Shape::Numeral, src[pos..k].iter().collect(), row));
             pos = k;
             continue;

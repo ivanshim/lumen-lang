@@ -275,7 +275,9 @@ impl<'a> Cursor<'a> {
             j += 1;
         }
         let end = self.text[j..].iter().position(|c| *c == '\n').map_or(self.text.len(), |p| j + p);
-        if self.text[j..end].iter().all(|c| c.is_whitespace()) {
+        let only_comment = !self.lang.long_quotes.is_empty()
+            && self.lang.line_comments.iter().any(|mark| at_word(&self.text, j, mark));
+        if only_comment || self.text[j..end].iter().all(|c| c.is_whitespace()) {
             while self.at < end {
                 self.step();
             }
@@ -930,7 +932,8 @@ impl<'a> Cursor<'a> {
                 self.step();
             }
         } else {
-            if lang.point.is_some() && self.look(0) == lang.point && self.look(1).map_or(false, |c| c.is_ascii_digit()) {
+            if lang.point.is_some() && self.look(0) == lang.point
+                && (lang.bare_point || self.look(1).map_or(false, |c| c.is_ascii_digit())) {
                 s.push(self.step());
                 while let Some(c) = self.look(0).filter(|c| c.is_ascii_digit() || broken(c)) {
                     s.push(c);
@@ -950,6 +953,9 @@ impl<'a> Cursor<'a> {
                     self.step();
                 }
             }
+        }
+        if self.look(0).map_or(false, |letter| lang.imaginary_letters.contains(&letter)) {
+            s.push(self.step());
         }
         self.push(Shape::Numeral, s, 0, line, col);
     }
@@ -1065,7 +1071,8 @@ impl<'a> Cursor<'a> {
                 self.heredoc()?;
             } else if lang.quotes.contains(&c) {
                 self.string(c)?;
-            } else if c.is_ascii_digit() {
+            } else if c.is_ascii_digit() || (lang.bare_point && Some(c) == lang.point
+                && self.look(1).map_or(false, |next| next.is_ascii_digit())) {
                 self.number();
             } else if lang.quote_for_names == Some(c) {
                 self.quoted_name(c)?;

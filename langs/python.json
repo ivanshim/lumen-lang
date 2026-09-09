@@ -372,6 +372,22 @@
   "ext.lexical.escape.unavailable": [
     "Unicode escape cannot be represented"
   ],
+  "ext.lexical.number.exponent": [
+    "e",
+    "E"
+  ],
+  "ext.lexical.number.imaginary": [
+    "j",
+    "J"
+  ],
+  "ext.lexical.number.imaginary.unready": [
+    "NotImplementedError: complex arithmetic is not supported"
+  ],
+  "ext.lexical.number.octal_prefix": [
+    "0o",
+    "0O"
+  ],
+  "ext.lexical.number.point.bare": true,
   "ext.lexical.string.adjacent": true,
   "ext.lexical.string.amiss": [
     "invalid string literal"

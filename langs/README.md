@@ -255,6 +255,9 @@ only. The extension labels so far, all from PHP:
   Text conversions quote strings and make escapes visible; simple field
   alignment and fixed decimal places are honoured. Other specifications
   are evaluated and the value is rendered plainly at present.
+  A line holding only a `lexical.comment_line` remark is blank for
+  indentation, however far its mark stands in; a mark within a string
+  remains text.
 - `ext.lexical.string.adjacent`: whether string literals standing beside
   one another make one string, including within brackets over lines.
 - `ext.lexical.string.amiss`: what is said of a string or a formatted
@@ -510,6 +513,14 @@ only. The extension labels so far, all from PHP:
   routine is bound to no name and stands for itself; it reaches the
   outermost bindings, as a routine written out does, and none of the
   names around where it was written.
+- `ext.lexical.number.point.bare`: whether a decimal may have no figures
+  before or after its point, though one side must have them. Thus `.5`,
+  `3.` and `1.e49` are numbers; the exponent keeps its own spelling.
+- `ext.lexical.number.imaginary`: letters following a decimal coefficient
+  to name an imaginary number. The coefficient is read in full, including
+  its point and exponent. Such a literal can stand within an uncalled
+  routine. Upon reaching it, `ext.lexical.number.imaginary.unready` gives
+  the plain complaint, for the kernels do not yet hold complex numbers.
 - `ext.lexical.number.exponent`: the letters that open a decimal exponent
   in a number (`1e9`, `2.5E-3`), always a real.
 - `ext.op.plus`: a sign that leaves its operand as it is (`+5`), bound as
@@ -1941,9 +1952,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.name_lead` | - | - | - | - | `\` | - | - | - | - | - |
 | `ext.lexical.number.amiss` | - | - | - | - | `Invalid numeric literal` | - | - | - | - | - |
 | `ext.lexical.number.binary_prefix` | - | - | - | - | `0b` `0B` | - | - | - | - | - |
-| `ext.lexical.number.exponent` | - | - | - | - | `e` `E` | - | - | - | - | - |
+| `ext.lexical.number.exponent` | - | - | `e` `E` | - | `e` `E` | - | - | - | - | - |
+| `ext.lexical.number.imaginary` | - | - | `j` `J` | - | - | - | - | - | - | - |
+| `ext.lexical.number.imaginary.unready` | - | - | `NotImplementedError: complex arithmetic is not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.number.octal_lead` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.lexical.number.octal_prefix` | - | - | - | - | `0o` `0O` | - | - | - | - | - |
+| `ext.lexical.number.octal_prefix` | - | - | `0o` `0O` | - | `0o` `0O` | - | - | - | - | - |
+| `ext.lexical.number.point.bare` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.lexical.number.separator` | - | - | - | - | `_` | - | - | - | - | - |
 | `ext.lexical.prologue.brief` | - | - | - | - | `<?` | - | - | - | - | - |
 | `ext.lexical.prologue.brief.setting` | - | - | - | - | `short_open_tag` | - | - | - | - | - |

@@ -4249,7 +4249,13 @@ impl<'a> Builder<'a> {
         let node = match t.shape {
             Shape::Numeral => {
                 self.advance();
-                constant(numeral(&t.lexeme, table)?)
+                match t.lexeme.chars().next_back() {
+                    Some(suffix) if table.letters("ext.lexical.number.imaginary").contains(&suffix) => {
+                        numeral(&t.lexeme[..t.lexeme.len() - suffix.len_utf8()], table)?;
+                        self.scope_unrun("ext.lexical.number.imaginary.unready")
+                    }
+                    _ => constant(numeral(&t.lexeme, table)?),
+                }
             }
             Shape::Quote | Shape::Woven | Shape::Unheld => {
                 let mut text = self.quotation()?;
@@ -6010,7 +6016,8 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
             let (w, f) = (&text[..dot], &text[dot + p.len_utf8()..]);
             let scale = BigInt::from(10).pow(f.len() as u32);
             let w: BigInt = if w.is_empty() { BigInt::from(0) } else { w.parse().map_err(|_| unreadable_numeral(text, table))? };
-            let f: BigInt = f.parse().map_err(|_| unreadable_numeral(text, table))?;
+            let f: BigInt = if f.is_empty() && table.flag("ext.lexical.number.point.bare") { BigInt::from(0) }
+                else { f.parse().map_err(|_| unreadable_numeral(text, table))? };
             return Ok(math::make_number(w * &scale + f, scale, Some(digit_run(text))));
         }
     }
