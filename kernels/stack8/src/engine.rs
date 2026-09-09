@@ -4048,7 +4048,7 @@ impl<'a> Engine<'a> {
             let key = self.set_key(&args[1])?;
             if op == SetAdd { cell.borrow_mut().insert(key, args[1].clone()); }
             else if cell.borrow_mut().remove(&key).is_none() && op == SetRemove {
-                return Err(self.set_said(".missing", &args[1].string_field(&self.wording(), "", "r")));
+                return Err(self.set_said(".missing", &args[1].member_text(&self.wording())));
             }
             return Ok(Value::Null);
         }

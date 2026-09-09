@@ -5248,7 +5248,7 @@ impl<'a> Machine<'a> {
                 else {
                     let taken = target.borrow_mut().take(&address);
                     if taken.is_none() && which == 2 {
-                        let member = values[1].in_field(self.wording(), "", "r");
+                        let member = values[1].set_member_spelling(self.wording());
                         return Err(self.set_complaint("missing", &member));
                     }
                 }

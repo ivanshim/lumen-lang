@@ -235,6 +235,12 @@ impl Value {
         Value::Text(Rc::from(s))
     }
 
+    pub fn member_text(&self, words: &Wording) -> String {
+        let mut text = self.string_field(words, "", "r");
+        if matches!(self, Value::Real(r) if !r.outside()) && !text.contains(['.', 'e', 'E']) { text.push_str(".0"); }
+        text
+    }
+
     pub fn member_key(&self) -> Result<String, &'static str> {
         if let Some((p, q)) = crate::arith::parts(self) {
             if q.is_zero() { return Err(""); }
@@ -417,11 +423,8 @@ impl Value {
             // A cell two names share is written as what it holds: the
             // sharing is between the names and not in the value.
             Value::Bond(shared) => shared.borrow().display(sp),
-            Value::Set(s) => s.borrow().show(|v| {
-                let mut text = v.string_field(sp, "", "r");
-                if matches!(v, Value::Real(r) if !r.outside()) && !text.contains(['.', 'e', 'E']) { text.push_str(".0"); }
-                text
-            }),
+            Value::Set(s) => s.borrow().show(|v| v.member_text(sp)),
+
             Value::Flag(true) => match sp.flag_counts {
                 true => "1".to_string(),
                 false => sp.true_word.to_string(),

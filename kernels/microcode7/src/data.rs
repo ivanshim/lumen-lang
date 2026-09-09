@@ -231,6 +231,14 @@ pub struct Names<'a> {
 }
 
 impl Value {
+    pub fn set_member_spelling(&self, names: Names) -> String {
+        let shown = self.in_field(names, "", "r");
+        match self {
+            Value::Frac(r) if r.places.is_some() && !r.past_numbers() && !shown.chars().any(|c| matches!(c, '.' | 'E' | 'e')) => shown + ".0",
+            _ => shown,
+        }
+    }
+
     pub fn hash_address(&self) -> Result<String, &'static str> {
         match self {
             Value::Shared(slot) => slot.borrow().hash_address(),
@@ -397,13 +405,8 @@ impl Value {
         match self {
             // A cell that names share is written as what it holds.
             Value::Shared(cell) => cell.borrow().render(w),
-            Value::Set(items) => items.borrow().written(|item| {
-                let shown = item.in_field(w, "", "r");
-                match item {
-                    Value::Frac(r) if r.places.is_some() && !r.past_numbers() && !shown.chars().any(|c| matches!(c, '.' | 'E' | 'e')) => shown + ".0",
-                    _ => shown,
-                }
-            }),
+            Value::Set(items) => items.borrow().written(|item| item.set_member_spelling(w)),
+
             Value::Flag(true) if w.flag_counted => "1".to_string(),
             Value::Flag(false) if w.flag_counted => String::new(),
             Value::Flag(true) => w.truth.to_string(),
