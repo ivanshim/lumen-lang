@@ -493,6 +493,15 @@ only. The extension labels so far, all from PHP:
   first clause whose class takes it holding it, and a last part that runs
   however the body ended, a return through it included. What no clause
   takes is raised again.
+- `ext.op.bit.left` and `ext.op.bit.right` are also spelled by the
+  indented definition, with the existing whole-number shift operations.
+  Its `ext.lexical.number.separator` admits underscores between digits.
+- `ext.op.tuple` and `ext.op.tuple.unready`: the sign joining values into
+  a tuple and the words said until tuples have their own representation.
+  Empty and trailing-comma groups, bare value lists, assignment targets,
+  returns and loop targets are read. They never stand for mutable arrays.
+  A loop over `ext.builtin.range.value` walks that value, including a
+  range given a single bound or a step.
 - `ext.op.member.pipes`: a switch; builtin names after the member mark
   retain their pipe spelling. Other names name members. Class creation
   must remain guarded until the receiver can choose between the two.
@@ -535,6 +544,14 @@ only. The extension labels so far, all from PHP:
   parts of an exception group. The clause is read whole, but reaching the
   attempt stops with `ext.stmt.catch.group.unsupported`, since the kernels
   cannot yet part such groups.
+- `ext.lexical.string.prefix.raw` and `.plain`: letters before quotes
+  keeping backslashes as written or leaving the text ordinary. `.bytes`
+  and `.format` distinguish byte and formatted literals. Their respective
+  `.unready` labels give the words said until those values can be made.
+  Every replacement expression in formatted text is read; conversions
+  and format specifications await the fuller string account.
+  `ext.lexical.string.amiss` gives the words for an ill-formed field.
+  This narrow reading shares the prefix labels of the string work.
 - `ext.lexical.string.long`: quote marks enclosing text over many lines.
   Quotes shorter than the opening mark and comment signs within it are
   ordinary text. The closing mark must match the whole opening mark.
@@ -1744,7 +1761,7 @@ Operator precedence, lowest tier first. Unary operators sit in their own tier.
 
 - **lumen**: `|>` < `or` < `and` < `==` `!=` `<` `>` `<=` `>=` < `..` < `+` `-` < `*` `/` `%` `//` `.` < `**` < `-` `not` `!`
 - **rplumen**: 
-- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` < `|` < `+` `-` < `*` `/` `//` `%` < `-` < `**` < `.`
+- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` < `|` < `<<` `>>` < `+` `-` < `*` `/` `//` `%` < `-` < `**` < `.`
 - **rust**: `..` < `||` < `&&` < `==` `!=` `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `-` `!` < `.`
 - **php (extra)**: `or` < `and` < `||` < `&&` < `|` < `^` < `&` < `==` `!=` `<>` `===` `!==` < `<` `>` `<=` `>=` `<=>` < `.` < `<<` `>>` < `+` `-` < `*` `/` `%` < `!` `~` `@` < `-` < `**`
 - **c (extra)**: `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `!` `-`
@@ -1841,21 +1858,28 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.number.exponent` | - | - | - | - | `e` `E` | - | - | - | - | - |
 | `ext.lexical.number.octal_lead` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.lexical.number.octal_prefix` | - | - | - | - | `0o` `0O` | - | - | - | - | - |
-| `ext.lexical.number.separator` | - | - | - | - | `_` | - | - | - | - | - |
+| `ext.lexical.number.separator` | - | - | `_` | - | `_` | - | - | - | - | - |
 | `ext.lexical.prologue.brief` | - | - | - | - | `<?` | - | - | - | - | - |
 | `ext.lexical.prologue.brief.setting` | - | - | - | - | `short_open_tag` | - | - | - | - | - |
 | `ext.lexical.prologue.echo` | - | - | - | - | `<?=` | - | - | - | - | - |
 | `ext.lexical.prologue.folded` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.lexical.string.adjacent` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.lexical.string.amiss` | - | - | `invalid string literal` | - | - | - | - | - | - | - |
 | `ext.lexical.string.long` | - | - | `"""` `'''` | - | - | - | - | - | - | - |
+| `ext.lexical.string.prefix.bytes` | - | - | `b` `B` | - | - | - | - | - | - | - |
+| `ext.lexical.string.prefix.bytes.unready` | - | - | `NotImplementedError: bytes literals are not supported` | - | - | - | - | - | - | - |
+| `ext.lexical.string.prefix.format` | - | - | `f` `F` | - | - | - | - | - | - | - |
+| `ext.lexical.string.prefix.format.unready` | - | - | `NotImplementedError: formatted strings are not supported` | - | - | - | - | - | - | - |
+| `ext.lexical.string.prefix.plain` | - | - | `u` `U` | - | - | - | - | - | - | - |
+| `ext.lexical.string.prefix.raw` | - | - | `r` `R` | - | - | - | - | - | - | - |
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.bit.and` | - | - | - | - | `&` | - | - | - | - | - |
-| `ext.op.bit.left` | - | - | - | - | `<<` | - | - | - | - | - |
+| `ext.op.bit.left` | - | - | `<<` | - | `<<` | - | - | - | - | - |
 | `ext.op.bit.not` | - | - | - | - | `~` | - | - | - | - | - |
 | `ext.op.bit.or` | - | - | `\|` | - | `\|` | - | - | - | - | - |
-| `ext.op.bit.right` | - | - | - | - | `>>` | - | - | - | - | - |
+| `ext.op.bit.right` | - | - | `>>` | - | `>>` | - | - | - | - | - |
 | `ext.op.bit.shift.numbers` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.bit.xor` | - | - | - | - | `^` | - | - | - | - | - |
 | `ext.op.cast` | - | - | - | - | `true` | - | - | - | - | - |
@@ -1904,6 +1928,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.scope` | - | - | - | - | `::` | - | - | - | - | - |
 | `ext.op.spelled` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.ternary` | - | - | - | - | `?` `:` | - | - | - | - | - |
+| `ext.op.tuple` | - | - | `,` | - | - | - | - | - | - | - |
+| `ext.op.tuple.unready` | - | - | `NotImplementedError: tuples are not supported` | - | - | - | - | - | - | - |
 | `ext.op.walk.class` | - | - | - | - | `Iterator` | - | - | - | - | - |
 | `ext.op.walk.giver` | - | - | - | - | `getIterator` | - | - | - | - | - |
 | `ext.op.walk.giver.class` | - | - | - | - | `IteratorAggregate` | - | - | - | - | - |

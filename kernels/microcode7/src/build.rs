@@ -1186,7 +1186,7 @@ impl<'a> Builder<'a> {
                 } else if by_cell {
                     vec![self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.given").to_vec(), true, None)?]
                 } else {
-                    vec![self.expr(0)?]
+                    vec![self.listed_value()?]
                 };
                 return Ok(prim_call(Prim::Yield, value));
             }
@@ -1326,6 +1326,23 @@ impl<'a> Builder<'a> {
     /// Each wanted name receives nothing until modules have values.
     fn reading_refusal(&self, label: &str) -> Form {
         prim_call(Prim::Raise, vec![constant(Value::text(self.table.single(label).unwrap_or_default()))])
+    }
+
+    fn listed_tail(&mut self, first: Form) -> Res<Form> {
+        if !self.on_any("ext.op.tuple") { return Ok(first); }
+        loop {
+            self.advance();
+            if self.on_stmt_end() || self.on_writing() || self.on_any("syntax.group.close")
+                || self.on_any("block.intro") || matches!(self.look().shape, Shape::Close | Shape::Finish) { break; }
+            self.expr_at(0, false)?;
+            if !self.on_any("ext.op.tuple") { break; }
+        }
+        Ok(self.reading_refusal("ext.op.tuple.unready"))
+    }
+
+    fn listed_value(&mut self) -> Res<Form> {
+        let first = self.expr(0)?;
+        self.listed_tail(first)
     }
 
     fn with_reading(&mut self) -> Res<Form> {
@@ -2570,11 +2587,13 @@ impl<'a> Builder<'a> {
         let table = self.table;
         self.advance();
         let var = self.need_word("as the loop variable")?;
+        let many = self.on_any("ext.op.tuple");
+        while self.on_any("ext.op.tuple") { self.advance(); self.need_word("as another loop variable")?; }
         if !self.key("stmt.for.in") {
             return Err(format!("Expected '{}' after for loop variable, got: {}", table.single("stmt.for.in").unwrap_or("in"), self.look().lexeme));
         }
         self.advance();
-        let ranged = self.look().shape == Shape::Bare
+        let ranged = !table.flag("ext.builtin.range.value") && self.look().shape == Shape::Bare
             && table.prims.get(&self.look().lexeme) == Some(&Prim::Span)
             && table.single("syntax.call.open").map_or(false, |o| self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == o);
         let (start, end) = if ranged {
@@ -2590,6 +2609,8 @@ impl<'a> Builder<'a> {
         } else {
             let tier = table.strings("op.range").iter().filter_map(|r| table.precedence.get(r.as_str())).min().copied().unwrap_or(0);
             let start = self.expr(tier + 1)?;
+            let start = self.listed_tail(start)?;
+            let start = if many { sequence(vec![self.reading_refusal("ext.op.tuple.unready"), start]) } else { start };
             if !(self.look().shape == Shape::Sign && table.spells("op.range", &self.look().lexeme)) {
                 // No range mark: what was read is something to walk through.
                 if !table.flag("ext.stmt.for.collection") {
@@ -3183,7 +3204,7 @@ impl<'a> Builder<'a> {
         }
         self.advance();
         self.put_by_annotation(&["stmt.assign", "ext.stmt.annotation", "syntax.call.separator"])?;
-        if through_pipe && !table.has_any("ext.op.member") {
+        if through_pipe && (!table.has_any("ext.op.member") || table.flag("ext.op.member.pipes")) {
             let mut steps = Vec::new();
             if self.on_assign() {
                 self.advance();
@@ -3216,6 +3237,13 @@ impl<'a> Builder<'a> {
             }
         });
         let expr = self.expr_at(0, false)?;
+        let expr = self.listed_tail(expr)?;
+        let tuple = matches!(&expr, Form::Apply(Callee::Prim(Prim::Raise, _), args)
+            if matches!(args.first(), Some(Form::Const(Value::Text(words))) if Some(words.as_ref()) == self.table.single("ext.op.tuple.unready")));
+        if tuple && self.on_writing() {
+            self.advance(); self.listed_value()?;
+            return Ok(expr);
+        }
         if boundary && self.on_any("ext.stmt.annotation") {
             return self.with_annotation(expr, began);
         }
@@ -3338,7 +3366,7 @@ impl<'a> Builder<'a> {
             // source of its own after the sign.
             (Some(by), _, None) => constant(Value::Small(by)),
             (None, Some(cell), None) => self.read(&cell),
-            (None, None, None) => self.expr(0)?,
+            (None, None, None) => self.listed_value()?,
         };
         // The value comes before the bounds of a slice assignment.
         let before_bounds = if plain && slice_target(&expr) {
@@ -4000,13 +4028,23 @@ impl<'a> Builder<'a> {
                 self.advance();
                 constant(numeral(&t.lexeme, table)?)
             }
-            Shape::Quote => {
-                self.advance();
-                let mut joined = t.lexeme.clone();
-                if table.flag("ext.lexical.string.adjacent") {
-                    while self.look().shape == Shape::Quote { joined += &self.advance().lexeme; }
+            Shape::Quote | Shape::PendingQuote => {
+                let mut joined = String::new();
+                let mut unavailable = None;
+                loop {
+                    match self.advance() {
+                        Token { shape: Shape::PendingQuote, lexeme, .. } => {
+                            self.monadic_piece()?;
+                            unavailable = Some(lexeme);
+                        }
+                        token => joined += &token.lexeme,
+                    }
+                    if !table.flag("ext.lexical.string.adjacent") || !matches!(self.look().shape, Shape::Quote | Shape::PendingQuote) { break; }
                 }
-                constant(Value::text(&joined))
+                match unavailable {
+                    Some(words) => prim_call(Prim::Raise, vec![constant(Value::text(&words))]),
+                    None => constant(Value::text(&joined)),
+                }
             }
             Shape::Bare if table.spells("ext.stmt.class.new", &t.lexeme) => {
                 self.advance();
@@ -4132,7 +4170,9 @@ impl<'a> Builder<'a> {
                     let inner = match self.ahead_in_item("ext.op.comprehension.for") {
                         Some(at) => self.gather_comprehension(at, table.single("syntax.group.close").unwrap(), false)?,
                         None => {
-                            let expression = self.expr(0)?;
+                            let expression = if table.has_any("ext.op.tuple") && self.on_any("syntax.group.close") {
+                                self.reading_refusal("ext.op.tuple.unready")
+                            } else { self.listed_value()? };
                             self.need_sign(table.single("syntax.group.close").unwrap(), "to close a group")?;
                             expression
                         }

@@ -1219,6 +1219,32 @@ impl<'a> Compiler<'a> {
         self.act(Action::Builtin(Builtin::Raise, Rc::from("reading")), 1);
     }
 
+    fn tuple_refusal(&mut self) {
+        self.constant(Value::text(self.lang.tuple_unready.first().map_or("", String::as_str)));
+        self.act(Action::Builtin(Builtin::Raise, Rc::from("tuple")), 1);
+    }
+
+    fn tuple_tail(&mut self, from: usize) -> Res<bool> {
+        if !self.on_any(&self.lang.tuple_marks) { return Ok(false); }
+        while self.on_any(&self.lang.tuple_marks) {
+            self.take();
+            if self.on_sep() || self.on_writing() || self.on_any(&self.lang.block_intros)
+                || self.lang.grouping.as_ref().map_or(false, |g| self.at_symbol(&g.close))
+                || matches!(self.look().shape, Shape::Close | Shape::Finish) { break; }
+            self.expr_at(0, false)?;
+        }
+        self.piece().instrs.truncate(from);
+        self.tuple_refusal();
+        Ok(true)
+    }
+
+    fn listed_value(&mut self) -> Res<()> {
+        let from = self.mark();
+        self.expr(0)?;
+        self.tuple_tail(from)?;
+        Ok(())
+    }
+
     fn unready_with(&mut self) -> Res<()> {
         let lang = self.lang;
         self.take();
@@ -2112,11 +2138,16 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         self.take();
         let var = self.want_name("as the loop variable")?;
+        let unpacked = self.on_any(&lang.tuple_marks);
+        while self.on_any(&lang.tuple_marks) {
+            self.take(); self.want_name("as another loop variable")?;
+        }
+        if unpacked { self.tuple_refusal(); }
         if !self.on_keyword(&lang.in_words) {
             return Err(format!("Expected '{}' after for loop variable, got: {}", lang.in_words[0], self.look().lexeme));
         }
         self.take();
-        let range_call = self.look().shape == Shape::Instr
+        let range_call = !lang.range_value && self.look().shape == Shape::Instr
             && lang.builtins.get(&self.look().lexeme) == Some(&Builtin::Span)
             && lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).is_lexeme(Shape::Sign, &c.open));
         if range_call {
@@ -2134,6 +2165,7 @@ impl<'a> Compiler<'a> {
             let tier = lang.range_marks.iter().filter_map(|r| lang.precedence.get(r)).min().copied().unwrap_or(0);
             let from = self.mark();
             self.expr(tier + 1)?;
+            self.tuple_tail(from)?;
             if !(self.look().shape == Shape::Sign && Lang::spells(&lang.range_marks, &self.look().lexeme)) {
                 // Not a range: what was read is a thing to walk through.
                 if !lang.for_collections {
@@ -2193,7 +2225,7 @@ impl<'a> Compiler<'a> {
         } else if by_cell {
             self.a_cell(&self.lang.unshared_given.clone(), true, None)?;
         } else {
-            self.expr(0)?;
+            self.listed_value()?;
         }
         // The value is worked out first, then the last parts of any open
         // try statements run, and only then does the program leave.
@@ -3259,7 +3291,7 @@ impl<'a> Compiler<'a> {
             ends.extend(call.between.iter().cloned());
         }
         self.annotation_expression(&ends)?;
-        if piped && lang.member_mark.is_none() {
+        if piped && (lang.member_mark.is_none() || lang.member_pipes) {
             self.piece().instrs.truncate(from);
             if self.on_assign() {
                 self.take();
@@ -3303,6 +3335,12 @@ impl<'a> Compiler<'a> {
                     || Lang::spells(&self.lang.block_intros, &before.lexeme)))
         };
         self.expr_at(0, false)?;
+        self.tuple_tail(from)?;
+        if self.on_writing() && matches!(self.piece().instrs.last(), Some(Instr::Act(Action::Builtin(Builtin::Raise, name), 1)) if name.as_ref() == "tuple") {
+            self.take();
+            self.listed_value()?;
+            return Ok(());
+        }
         if starts_here && self.on_any(&self.lang.annotation_marks) {
             return self.annotated_statement(from, target_at);
         }
@@ -3343,7 +3381,7 @@ impl<'a> Compiler<'a> {
         // before each of its places.
         match self.waiting.clone() {
             Some(cell) => self.read(&cell),
-            None => self.expr(0)?,
+            None => self.listed_value()?,
         }
         self.kept(keep);
         Ok(())
@@ -4232,13 +4270,20 @@ impl<'a> Compiler<'a> {
                 let v = parse_number(&tok.lexeme, lang)?;
                 self.constant(v);
             }
-            Shape::Quote => {
-                self.take();
-                let mut text = tok.lexeme.clone();
-                while lang.adjacent_strings && self.look().shape == Shape::Quote {
-                    text.push_str(&self.take().lexeme);
+            Shape::Quote | Shape::PendingQuote => {
+                let mut text = String::new();
+                let mut refusal = None;
+                loop {
+                    let piece = self.take();
+                    if piece.shape == Shape::PendingQuote {
+                        refusal = Some(piece.lexeme);
+                        self.prefix_piece()?;
+                    } else { text.push_str(&piece.lexeme); }
+                    if !lang.adjacent_strings || !matches!(self.look().shape, Shape::Quote | Shape::PendingQuote) { break; }
                 }
-                self.constant(Value::text(&text));
+                self.piece().instrs.truncate(from);
+                if let Some(words) = refusal { self.unready(&[words]); }
+                else { self.constant(Value::text(&text)); }
             }
             Shape::Instr if Lang::spells(&lang.new_words, &tok.lexeme) => {
                 self.take();
@@ -4410,7 +4455,11 @@ impl<'a> Compiler<'a> {
                         if let Some(clause) = self.comprehension_ahead() {
                             self.comprehension(&group, clause, false)?;
                         } else {
-                            self.expr(0)?;
+                            if !lang.tuple_marks.is_empty() && self.at_symbol(&group.close) {
+                                self.tuple_refusal();
+                            } else {
+                                self.listed_value()?;
+                            }
                             self.want_sign(&group.close, "to close a group")?;
                         }
                         self.called_on_value()?;

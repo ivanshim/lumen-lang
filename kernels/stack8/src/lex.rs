@@ -12,6 +12,7 @@ pub enum Shape {
     Quoted,
     Numeral,
     Quote,
+    PendingQuote,
     Sign,
     LineEnd,
     /// The indentation of a line that has something on it.
@@ -439,11 +440,15 @@ impl<'a> Cursor<'a> {
     }
 
     fn string(&mut self, quote: char) -> Result<(), String> {
+        self.string_mode(quote, false)
+    }
+
+    fn string_mode(&mut self, quote: char, plain: bool) -> Result<(), String> {
         let (line, col) = (self.row, self.column);
         let mark = self.lang.long_quotes.iter().find(|mark| at_word(&self.text, self.at, mark))
             .cloned().unwrap_or_else(|| quote.to_string());
         for _ in mark.chars() { self.step(); }
-        let raw = self.lang.raw_quotes.contains(&quote);
+        let raw = plain || self.lang.raw_quotes.contains(&quote);
         let woven = self.lang.interpolating.contains(&quote);
         let how = Escapes {
             letters: match raw {
@@ -463,8 +468,12 @@ impl<'a> Cursor<'a> {
                 for _ in mark.chars() { self.step(); }
                 break;
             }
-            if self.lang.continued_strings && c == '\\' && self.look(1) == Some('\n') {
+            if !plain && self.lang.continued_strings && c == '\\' && self.look(1) == Some('\n') {
                 self.step(); self.step();
+                continue;
+            }
+            if plain && c == '\\' && self.look(1).is_some() {
+                s.push(self.step()); s.push(self.step());
                 continue;
             }
             if c == '\\' && self.look(1).is_some() {
@@ -478,6 +487,45 @@ impl<'a> Cursor<'a> {
             return self.woven(s, &shielded, line, col);
         }
         self.push(Shape::Quote, s, 0, line, col);
+        Ok(())
+    }
+
+    fn prefixed_quote(&self) -> Option<(usize, bool, bool, bool)> {
+        let mut count = 0;
+        let (mut raw, mut bytes, mut formatted) = (false, false, false);
+        while count < 2 {
+            let letter = self.look(count)?.to_string();
+            if self.lang.raw_prefixes.contains(&letter) && !raw { raw = true; }
+            else if self.lang.byte_prefixes.contains(&letter) && !bytes && !formatted { bytes = true; }
+            else if self.lang.format_prefixes.contains(&letter) && !formatted && !bytes { formatted = true; }
+            else if self.lang.plain_prefixes.contains(&letter) && count == 0 {
+                return self.look(1).filter(|c| self.lang.quotes.contains(c)).map(|_| (1, false, false, false));
+            } else { return None; }
+            count += 1;
+            if self.look(count).map_or(false, |c| self.lang.quotes.contains(&c)) { return Some((count, raw, bytes, formatted)); }
+        }
+        None
+    }
+
+    fn prefixed_text(&mut self, count: usize, raw: bool, bytes: bool, formatted: bool) -> Result<(), String> {
+        for _ in 0..count { self.step(); }
+        self.string_mode(self.look(0).unwrap(), raw)?;
+        if !bytes && !formatted { return Ok(()); }
+        let quoted = self.out.pop().unwrap();
+        let words = if bytes { &self.lang.bytes_unready } else { &self.lang.format_unready };
+        self.push(Shape::PendingQuote, words.first().cloned().unwrap_or_default(), 0, quoted.row, quoted.column);
+        if bytes { self.out.push(quoted); return Ok(()); }
+        let brackets = self.lang.array_brackets.clone().ok_or("Formatted fields need array brackets")?;
+        self.push(Shape::Sign, brackets.open, 0, quoted.row, quoted.column);
+        for field in format_fields(&quoted.lexeme).map_err(|_| self.lang.string_amiss.clone().unwrap_or_default())? {
+            let group = self.lang.grouping.clone().ok_or("Formatted fields need grouping brackets")?;
+            self.push(Shape::Sign, group.open, 0, quoted.row, quoted.column);
+            let inner = lex(&field, self.lang)?;
+            self.out.extend(inner.into_iter().filter(|t| !matches!(t.shape, Shape::Lead | Shape::LineEnd | Shape::Finish)));
+            self.push(Shape::Sign, group.close, 0, quoted.row, quoted.column);
+            if let Some(comma) = &brackets.between { self.push(Shape::Sign, comma.clone(), 0, quoted.row, quoted.column); }
+        }
+        self.push(Shape::Sign, brackets.close, 0, quoted.row, quoted.column);
         Ok(())
     }
 
@@ -838,6 +886,8 @@ impl<'a> Cursor<'a> {
                 // A sign standing before a name, saying nothing: PHP's `\Error`.
                 self.step();
                 self.word(false);
+            } else if let Some((count, raw, bytes, formatted)) = self.prefixed_quote() {
+                self.prefixed_text(count, raw, bytes, formatted)?;
             } else if lang.begins_name(c) {
                 self.word(false);
             } else if lang.sigil == Some(c) && self.look(1).map_or(false, |n| lang.begins_name(n)) {
@@ -1062,4 +1112,44 @@ fn at_word(chars: &[char], at: usize, mark: &str) -> bool {
 /// stands nowhere after it.
 fn word_at(chars: &[char], from: usize, mark: &str) -> Option<usize> {
     (from..chars.len()).find(|at| at_word(chars, *at, mark))
+}
+
+fn format_fields(text: &str) -> Result<Vec<String>, String> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut at = 0;
+    let mut fields = Vec::new();
+    while at < chars.len() {
+        if matches!(chars[at], '{' | '}') && chars.get(at + 1) == Some(&chars[at]) { at += 2; continue; }
+        if chars[at] != '{' { at += 1; continue; }
+        at += 1;
+        let start = at;
+        let mut closes = Vec::new();
+        let mut quote = None;
+        while at < chars.len() {
+            let c = chars[at];
+            if let Some(q) = quote {
+                if c == '\\' { at += 2; continue; }
+                if c == q { quote = None; }
+            } else if matches!(c, '\'' | '"') { quote = Some(c); }
+            else if closes.is_empty() && (matches!(c, ':' | '}') || c == '!' && chars.get(at + 1) != Some(&'=')) { break; }
+            else {
+                match c {
+                    '(' => closes.push(')'), '[' => closes.push(']'), '{' => closes.push('}'),
+                    ')' | ']' | '}' => { if closes.pop() != Some(c) { return Err("Invalid formatted field".into()); } }
+                    _ => {}
+                }
+            }
+            at += 1;
+        }
+        if at == chars.len() || start == at { return Err("Invalid formatted field".into()); }
+        let expression: String = chars[start..at].iter().collect();
+        fields.push(expression.trim_end().trim_end_matches('=').trim_end().to_string());
+        if chars[at] != '}' {
+            while at < chars.len() && chars[at] != '}' && chars[at] != '{' { at += 1; }
+            if chars.get(at) == Some(&'{') { continue; }
+        }
+        if at == chars.len() { return Err("Unclosed formatted field".into()); }
+        at += 1;
+    }
+    Ok(fields)
 }

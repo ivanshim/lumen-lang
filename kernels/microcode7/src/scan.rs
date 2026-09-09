@@ -10,6 +10,7 @@ pub enum Shape {
     Quoted,
     Numeral,
     Quote,
+    PendingQuote,
     Sign,
     LineEnd,
     Lead,
@@ -586,6 +587,23 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             tokens.push(Token { shape: Shape::Lead, lexeme: String::new(), span: width, row: row });
             pos = k;
         }
+        let mut raw_prefix = false;
+        let mut bytes_prefix = false;
+        let mut format_prefix = false;
+        let mut lead = pos;
+        for _ in 0..2 {
+            let letter = src.get(lead).map(char::to_string).unwrap_or_default();
+            if table.spells("ext.lexical.string.prefix.raw", &letter) && !raw_prefix { raw_prefix = true; }
+            else if table.spells("ext.lexical.string.prefix.bytes", &letter) && !bytes_prefix && !format_prefix { bytes_prefix = true; }
+            else if table.spells("ext.lexical.string.prefix.format", &letter) && !format_prefix && !bytes_prefix { format_prefix = true; }
+            else if table.spells("ext.lexical.string.prefix.plain", &letter) && lead == pos {
+                lead += 1; break;
+            } else { break; }
+            lead += 1;
+            if src.get(lead).map_or(false, |c| quotes.contains(c)) { break; }
+        }
+        if lead > pos && src.get(lead).map_or(false, |c| quotes.contains(c)) { pos = lead; }
+        else { raw_prefix = false; bytes_prefix = false; format_prefix = false; }
         let c = src[pos];
         if c == '\n' {
             tokens.push(tok(Shape::LineEnd, "\n".into(), row));
@@ -602,7 +620,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             let ending: Vec<char> = table.strings("ext.lexical.string.long").iter()
                 .map(|q| q.chars().collect::<Vec<_>>()).find(|q| src[pos..].starts_with(q))
                 .unwrap_or_else(|| vec![c]);
-            let is_raw = raw.contains(&c);
+            let is_raw = raw_prefix || raw.contains(&c);
             let woven = weaving.contains(&c);
             let slash = Backslash {
                 letters: if is_raw { &[] } else { &escapes },
@@ -625,8 +643,11 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                     k += ending.len(); closed = true; break;
                 }
                 let d = src[k];
-                if table.flag("ext.lexical.escape.continued") && d == '\\' && src.get(k + 1) == Some(&'\n') {
+                if !raw_prefix && table.flag("ext.lexical.escape.continued") && d == '\\' && src.get(k + 1) == Some(&'\n') {
                     k += 2; row += 1; continue;
+                }
+                if raw_prefix && d == '\\' && k + 1 < src.len() {
+                    s.push(d); s.push(src[k + 1]); k += 2; continue;
                 }
                 if d == '\\' && k + 1 < src.len() {
                     k = slash.reads(&src, k, &mut s, &mut plain)?;
@@ -641,7 +662,20 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             if !closed {
                 return Err(format!("Unterminated {} string", c));
             }
-            if woven {
+            if format_prefix {
+                tokens.push(tok(Shape::PendingQuote, table.single("ext.lexical.string.prefix.format.unready").unwrap_or_default().into(), row));
+                tokens.push(tok(Shape::Sign, table.single("syntax.array.open").unwrap().into(), row));
+                for expression in quoted_fields(&s).map_err(|_| table.single("ext.lexical.string.amiss").unwrap_or_default().to_string())? {
+                    tokens.push(tok(Shape::Sign, table.single("syntax.group.open").unwrap().into(), row));
+                    tokens.extend(scan(&expression, table)?.into_iter().filter(|t| !matches!(t.shape, Shape::Lead | Shape::LineEnd | Shape::Finish)));
+                    tokens.push(tok(Shape::Sign, table.single("syntax.group.close").unwrap().into(), row));
+                    tokens.push(tok(Shape::Sign, table.single("syntax.array.separator").unwrap().into(), row));
+                }
+                tokens.push(tok(Shape::Sign, table.single("syntax.array.close").unwrap().into(), row));
+            } else if bytes_prefix {
+                tokens.push(tok(Shape::PendingQuote, table.single("ext.lexical.string.prefix.bytes.unready").unwrap_or_default().into(), row));
+                tokens.push(tok(Shape::Quote, s, row));
+            } else if woven {
                 weave(&s, &plain, table, row, &mut tokens)?;
             } else {
                 tokens.push(tok(Shape::Quote, s, row));
@@ -986,4 +1020,43 @@ fn weave(s: &str, plain: &[usize], table: &Table, row: u32, tokens: &mut Vec<Tok
     }
     tokens.push(sign(close));
     Ok(())
+}
+
+fn quoted_fields(source: &str) -> Result<Vec<String>, String> {
+    let letters: Vec<_> = source.chars().collect();
+    let mut answers = Vec::new();
+    let mut cursor = 0;
+    while cursor < letters.len() {
+        let next = letters[cursor];
+        if (next == '{' || next == '}') && letters.get(cursor + 1) == Some(&next) { cursor += 2; continue; }
+        cursor += 1;
+        if next != '{' { continue; }
+        let begin = cursor;
+        let mut nesting = Vec::new();
+        let mut quoted = None;
+        loop {
+            let Some(&letter) = letters.get(cursor) else { return Err("Unclosed formatted field".into()); };
+            if let Some(delimiter) = quoted {
+                if letter == '\\' { cursor += 2; continue; }
+                if letter == delimiter { quoted = None; }
+            } else {
+                if nesting.is_empty() && (letter == '}' || letter == ':' || letter == '!' && letters.get(cursor + 1) != Some(&'=')) { break; }
+                match letter {
+                    '\'' | '"' => quoted = Some(letter),
+                    '(' | '[' | '{' => nesting.push(match letter { '(' => ')', '[' => ']', _ => '}' }),
+                    ')' | ']' | '}' if nesting.pop() != Some(letter) => return Err("Invalid formatted field".into()),
+                    _ => {}
+                }
+            }
+            cursor += 1;
+        }
+        let gathered: String = letters[begin..cursor].iter().collect();
+        let gathered = gathered.trim_end().trim_end_matches('=').trim_end();
+        if gathered.is_empty() { return Err("Invalid formatted field".into()); }
+        answers.push(gathered.to_owned());
+        while letters.get(cursor).map_or(false, |c| !matches!(c, '{' | '}')) { cursor += 1; }
+        if cursor >= letters.len() { return Err("Unclosed formatted field".into()); }
+        if letters[cursor] == '}' { cursor += 1; }
+    }
+    Ok(answers)
 }
