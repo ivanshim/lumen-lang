@@ -538,6 +538,7 @@
   "ext.stmt.assert.kind": [
     "AssertionError"
   ],
+  "ext.stmt.assign.chain": true,
   "ext.stmt.async": [
     "async"
   ],

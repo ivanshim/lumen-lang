@@ -3553,6 +3553,28 @@ impl<'a> Builder<'a> {
     }
 
     fn write_or_expr(&mut self) -> Res<Form> {
+        if self.table.flag("ext.stmt.assign.chain") {
+            let mut ahead = self.pos;
+            while self.tokens[ahead].shape == Shape::Bare
+                && self.tokens[ahead + 1].shape == Shape::Sign
+                && self.table.spells("stmt.assign", &self.tokens[ahead + 1].lexeme) {
+                ahead += 2;
+            }
+            if ahead >= self.pos + 4 {
+                let mut places = Vec::new();
+                while self.pos < ahead {
+                    let name = self.need_word("as an assignment target")?;
+                    places.push(self.address_to_write(&name));
+                    self.advance();
+                }
+                let answer = self.comma_value()?;
+                let held = self.gensym("once");
+                let mut writes = vec![Form::Write(held.clone(), Box::new(answer))];
+                writes.extend(places.into_iter().map(|place|
+                    Form::Write(place, Box::new(Form::Read(held.clone())))));
+                return Ok(sequence(writes));
+            }
+        }
         let began = self.pos;
         let boundary = began.checked_sub(1).map_or(true, |at| {
             let prior = &self.tokens[at];
@@ -4192,6 +4214,7 @@ impl<'a> Builder<'a> {
                     }
                 }
                 left = self.named_call(&name, args)?;
+                if table.has_any("ext.system.scope.unready") { left = self.subscript(left)?; }
                 continue;
             }
             if table.single("ext.op.otherwise").map_or(false, |m| self.sign(m)) {

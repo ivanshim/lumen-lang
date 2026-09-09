@@ -321,6 +321,11 @@ only. The extension labels so far, all from PHP:
   `ext.stmt.binding.unrun` holds the words for a binding target the
   kernels cannot yet fill, including starred targets, or a value with
   the wrong number of items to take apart.
+- `ext.stmt.assign.chain`: a switch; several places may be joined by
+  the assignment sign before one value. The value is worked out once,
+  then written into each place from left to right. This reading provides
+  chains of plain names; taking apart compound targets belongs to the
+  fuller account of tuples and places.
 - `ext.stmt.nonlocal`: reads the names of bindings belonging to the
   nearest enclosing function. The full kernels do not yet carry those
   cells into inner functions; reaching this statement stops the run.
@@ -378,6 +383,11 @@ only. The extension labels so far, all from PHP:
   reading is provided before its running. The complaint is part of the
   read program and is raised only when that form is reached, never while
   reading an uncalled function. It cannot make an unread body acceptable.
+  A pipe's answer may be indexed before reading the next operator;
+  where such an answer is an assignment target, the whole right side
+  is read and this complaint is kept for the run. Thus a decorated
+  routine may write `func.__dict__['author'] = name` without stopping
+  the reader, though retaining that attribute's write is still owed.
 - `ext.stmt.decorator`: marks before a function or class definition, each followed
   by an expression on its own line. The expressions are worked out in
   the order written and kept until the function is bound to its name.
@@ -2098,6 +2108,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.annotation.target.unready` | - | - | `NotImplementedError: annotated attribute targets are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.assert` | - | - | `assert` | - | - | - | - | - | - | - |
 | `ext.stmt.assert.kind` | - | - | `AssertionError` | - | - | - | - | - | - | - |
+| `ext.stmt.assign.chain` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.async` | - | - | `async` | - | - | - | - | - | - | - |
 | `ext.stmt.binding.unrun` | - | - | `This binding target cannot be run` | - | - | - | - | - | - | - |
 | `ext.stmt.block.instead` | - | - | - | - | `:` | - | - | - | - | - |

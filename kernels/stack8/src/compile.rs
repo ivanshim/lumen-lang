@@ -3667,6 +3667,29 @@ impl<'a> Compiler<'a> {
         let emptied = self.put(Instr::Emptied(running));
         let from = self.mark();
         let target_at = self.pos;
+        if self.lang.assign_chain {
+            let mut count = 0;
+            while self.look_ahead(count * 2).shape == Shape::Instr
+                && self.look_ahead(count * 2 + 1).shape == Shape::Sign
+                && Lang::spells(&self.lang.assign_words, &self.look_ahead(count * 2 + 1).lexeme) {
+                count += 1;
+            }
+            if count > 1 {
+                let mut names = Vec::new();
+                for _ in 0..count {
+                    names.push(self.want_name("as an assignment target")?);
+                    self.take();
+                }
+                self.scope_value()?;
+                let value = self.gensym("assigned");
+                self.write(&value);
+                for name in names {
+                    self.read(&value);
+                    self.write(&name);
+                }
+                return Ok(());
+            }
+        }
         // A word left over from a head the reader does not know is not
         // the beginning of a new declaration on that same line.
         let starts_here = target_at == 0 || {
@@ -4381,6 +4404,7 @@ impl<'a> Compiler<'a> {
                 }
                 self.take();
                 self.pipe_target(from)?;
+                if !lang.scope_unready.is_empty() { self.indexing(from)?; }
                 continue;
             }
             if lang.otherwise_mark.as_ref().map_or(false, |m| self.at_symbol(m)) {

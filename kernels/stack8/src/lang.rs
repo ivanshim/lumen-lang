@@ -93,8 +93,9 @@ pub struct Lang {
     /// Marks a program may put between the digits of a number to break
     /// them up, which count for nothing.
     pub digit_separators: Vec<char>,
-    /// A separator may follow a base prefix; checked marks must part digits.
+    /// A separator may follow a base prefix before its first digit.
     pub separator_after_prefix: bool,
+    /// Bit operations keep every bit of a whole number.
     pub whole_bits: bool,
     /// How many bits wide a whole number is, where a language says: a
     /// result that outgrows that width becomes a real instead.
@@ -222,6 +223,7 @@ pub struct Lang {
     /// Whether an assignment counts as an expression, its value what
     /// was written.
     pub assign_gives_value: bool,
+    pub assign_chain: bool,
     /// Whether every key of an array is either a whole number or text,
     /// so that a key spelling a whole number is that number.
     pub plain_keys: bool,
@@ -787,7 +789,7 @@ w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext
 w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at
 w ext.builtin.args.all.outside | w ext.builtin.args.count.outside | w ext.builtin.args.at.outside
-w ext.builtin.args.at.below | w ext.builtin.args.at.beyond | b ext.op.assign.value | b ext.op.index.plain_keys
+w ext.builtin.args.at.below | w ext.builtin.args.at.beyond | b ext.op.assign.value | b ext.stmt.assign.chain | b ext.op.index.plain_keys
 w ext.system.source.file | w ext.system.source.directory | w ext.system.source.line | w ext.system.runner
 w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.complaint.deprecated | w ext.system.complaint.fatal | w ext.system.complaint.reading
 w ext.system.complaint.markup.setting | w ext.system.complaint.markup.kind | w ext.system.complaint.markup.place | w ext.system.complaint.markup.line | w ext.system.complaint.markup.reference
@@ -1452,6 +1454,7 @@ impl Lang {
             kind_spelled: r.flag("ext.system.kind.spelled")?,
             spare_args: reads_arguments,
             assign_gives_value: r.flag("ext.op.assign.value")?,
+            assign_chain: r.flag("ext.stmt.assign.chain")?,
             plain_keys: r.flag("ext.op.index.plain_keys")?,
             loose_equality: tells_same && r.strings("ext.op.identical.negated")?.is_empty(),
             complaint_words: {
