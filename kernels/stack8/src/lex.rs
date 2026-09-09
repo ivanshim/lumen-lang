@@ -50,6 +50,11 @@ fn marker_at(text: &str, marker: &str, folded: bool) -> Option<usize> {
 
 fn drop_prologue<'a>(source: &'a str, lang: &Lang) -> &'a str {
     let Some(prologue) = &lang.prologue else { return source };
+    // An import the reader knows must reach it whole, even where the
+    // old prologue named that same import.
+    if prologue.split_whitespace().next().map_or(false, |word| Lang::spells(&lang.import_words, word)) {
+        return source;
+    }
     let lead = source.len() - source.trim_start().len();
     let opens = match lang.prologue_folded {
         true => source[lead..].to_ascii_lowercase().starts_with(&prologue.to_ascii_lowercase()),
@@ -842,6 +847,16 @@ pub fn lex_at(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)> 
             cur.out
         }
     };
+    if lang.bind_names {
+        if let Some(call) = &lang.calling {
+            let mut depth = 0usize;
+            out.retain(|token| {
+                if token.is_lexeme(Shape::Sign, &call.open) { depth += 1; }
+                else if token.is_lexeme(Shape::Sign, &call.close) { depth = depth.saturating_sub(1); }
+                depth == 0 || !matches!(token.shape, Shape::Lead | Shape::LineEnd)
+            });
+        }
+    }
     out.push(Token { shape: Shape::Finish, lexeme: "EOF".to_string(), width: 0, row: 1, column: 1 });
     Ok(out)
 }

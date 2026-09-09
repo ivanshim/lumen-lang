@@ -101,6 +101,8 @@ pub enum Value {
     Null,
     Ellipsis,
     Array(Rc<Vec<Value>>),
+    /// Bounds of an index span; nothing stands for an omitted bound.
+    Slice(Rc<[Value; 3]>),
     /// Keys and their values, in the order they were put there.
     Map(Rc<Vec<(Value, Value)>>),
     /// A cell two or more names share: a write through any of them is a
@@ -206,7 +208,7 @@ impl Value {
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
             Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::SortOf(_) => true,
             Value::Bond(shared) => shared.borrow().is_true(),
-            Value::Class(_) | Value::Object(_) | Value::Ellipsis => true,
+            Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
         }
     }
 
@@ -229,6 +231,7 @@ impl Value {
             Value::Bond(shared) => shared.borrow().as_big(),
             Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
+            Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
         }
     }
@@ -352,6 +355,7 @@ impl Value {
             Value::Class(c) => format!("<class {}>", c.name),
             Value::Object(o) => format!("<object {}>", o.class.name),
             Value::SortOf(k) => k.tag().to_string(),
+            Value::Slice(parts) => format!("slice({}, {}, {})", parts[0].plain(), parts[1].plain(), parts[2].plain()),
         }
     }
 

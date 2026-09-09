@@ -15,6 +15,14 @@ use crate::arith::{self, Operation};
 use crate::value::{Class, Instance, Reach, Sort, Value, Wording};
 use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr};
 
+/// An arm may end where it stands, or leave for a routine's end or a
+/// loop written around it. Only the latter must pass through last parts.
+#[derive(Clone, Copy)]
+enum Passage {
+    Along(usize),
+    Leaves { to: usize, cycle: Option<usize> },
+}
+
 pub struct Engine<'a> {
     lang: &'a Lang,
     world: Vec<Value>,
@@ -22,6 +30,7 @@ pub struct Engine<'a> {
     /// the program runs can be assembled against the same ones.
     registry: crate::compile::Registry,
     data: Vec<Value>,
+    caught: Vec<Value>,
     memo: HashMap<String, Value>,
     /// The arguments of a builtin call, one buffer reused across calls.
     buffer: Vec<Value>,
@@ -205,6 +214,7 @@ impl<'a> Engine<'a> {
             lang,
             world: vec![Value::Blank; idents.len()],
             data: Vec::new(),
+            caught: Vec::new(),
             memo: HashMap::new(),
             buffer: Vec::new(),
             given: Vec::new(),
@@ -1367,6 +1377,78 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
+    /// Untie call arguments only at the call boundary. A literal's ties
+    /// have already become a map by then and remain ordinary values.
+    fn call_items(&self, args: Vec<Value>) -> Flow<Vec<(Option<String>, Value)>> {
+        let mut items = Vec::new();
+        for value in args {
+            match value {
+                Value::Tie(pair) => match &pair.0 {
+                    Value::Text(name) => items.push((Some(name.to_string()), pair.1.clone())),
+                    Value::Flag(false) => match &pair.1 {
+                        Value::Array(a) => items.extend(a.iter().cloned().map(|v| (None, v))),
+                        Value::Text(t) => items.extend(t.chars().map(|c| (None, Value::text(&c.to_string())))),
+                        Value::Map(m) => items.extend(m.iter().map(|(k, _)| (None, k.clone()))),
+                        _ => return Err(self.lang.spread_amiss[0].clone().into()),
+                    },
+                    Value::Flag(true) => {
+                        let Value::Map(m) = &pair.1 else { return Err(self.lang.spread_pairs_amiss[0].clone().into()); };
+                        for (key, held) in m.iter() {
+                            let Value::Text(name) = key else { return Err(self.lang.spread_pairs_amiss[0].clone().into()); };
+                            items.push((Some(name.to_string()), held.clone()));
+                        }
+                    }
+                    _ => return Err(self.lang.call_amiss[0].clone().into()),
+                },
+                other => items.push((None, other)),
+            }
+        }
+        Ok(items)
+    }
+
+    fn named_fault(words: &[String], name: &str) -> String {
+        format!("{}{}{}", words.first().map_or("", String::as_str), name, words.get(1).map_or("", String::as_str))
+    }
+
+    /// Fill positional places first, then the named ones. Gatherers
+    /// keep what has no ordinary place, and defaults keep the holes.
+    fn bind_call(&self, program: &Routine, args: Vec<Value>, rules: &[u8]) -> Flow<Vec<Value>> {
+        let items = self.call_items(args)?;
+        let mut frame = vec![Value::Blank; rules.len()];
+        let slots: Vec<usize> = rules.iter().enumerate().filter_map(|(i, r)| (*r < 2).then_some(i)).collect();
+        let rest = rules.iter().position(|r| *r == 3);
+        let pairs = rules.iter().position(|r| *r == 4);
+        let mut tail = Vec::new();
+        for (at, (_, value)) in items.iter().filter(|(name, _)| name.is_none()).enumerate() {
+            if let Some(slot) = slots.get(at) { frame[*slot] = value.clone(); }
+            else if rest.is_some() { tail.push(value.clone()); }
+            else { return Err(self.lang.call_amiss[0].clone().into()); }
+        }
+        let mut keywords = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for (name, value) in items {
+            let Some(name) = name else { continue };
+            if !seen.insert(name.clone()) {
+                return Err(Self::named_fault(&self.lang.call_duplicate, &name).into());
+            }
+            let slot = program.formals.iter().enumerate().position(|(i, n)| *n == name && matches!(rules[i], 0 | 2));
+            match slot {
+                Some(i) if matches!(frame[i], Value::Blank) => frame[i] = value,
+                Some(_) => return Err(Self::named_fault(&self.lang.call_duplicate, &name).into()),
+                None if pairs.is_some() => keywords.push((Value::text(&name), value)),
+                None => return Err(Self::named_fault(&self.lang.call_unknown, &name).into()),
+            }
+        }
+        if let Some(i) = rest { frame[i] = Value::array(tail); }
+        if let Some(i) = pairs { frame[i] = Value::Map(Rc::new(keywords)); }
+        for (i, value) in frame.iter().enumerate() {
+            if matches!(value, Value::Blank) && !program.carried.contains(&i) {
+                return Err(Self::named_fault(&self.lang.call_missing, &program.formals[i]).into());
+            }
+        }
+        Ok(frame)
+    }
+
     pub fn invoke(&mut self, program: &Rc<Routine>, args: Vec<Value>) -> Flow<()> {
         let n = args.len();
         self.data.extend(args);
@@ -1376,6 +1458,13 @@ impl<'a> Engine<'a> {
     /// A call whose arguments are the top `n` of the data stack: they move
     /// straight into the frame, one allocation instead of two.
     pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
+        let n = if let Some(rules) = &program.parameter_rules {
+            let given = self.drop_many(n)?;
+            let bound = self.bind_call(program, given, rules)?;
+            let count = bound.len();
+            self.data.extend(bound);
+            count
+        } else { n };
         // Where a language can read what a call was given, a call may
         // give more than the routine names; the rest is kept aside.
         let most = if self.lang.spare_args || program.rest_at.is_some() { usize::MAX } else { program.formals.len() };
@@ -1439,7 +1528,9 @@ impl<'a> Engine<'a> {
         // A routine written where a value stands carried names away
         // from around it: each fills the slot it was given here.
         for (slot, held) in program.carried.iter().zip(program.held.iter()) {
-            frame[*slot] = held.clone();
+            if program.parameter_rules.is_none() || *slot >= program.formals.len() || matches!(frame[*slot], Value::Blank) {
+                frame[*slot] = held.clone();
+            }
         }
         let base = self.data.len();
         // A routine written in a file of its own is run as being in it:
@@ -1552,12 +1643,93 @@ impl<'a> Engine<'a> {
     }
 
     fn run_body(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[crate::code::Instr]) -> Flow<()> {
-        let mut pc = 0;
+        self.run_span(program, frame, instrs, (0, instrs.len())).map(|_| ())
+    }
+
+    /// Each arm runs in the same frame. A leap beyond its span is an
+    /// outward return or loop step, and the last part runs before it goes.
+    fn run_attempt(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], plan: &crate::code::Attempt) -> Flow<Passage> {
+        if plan.clauses.iter().any(|arm| arm.grouped) {
+            return Err(self.lang.catch_group_unsupported.as_deref().unwrap_or("Exception groups are not supported").into());
+        }
+        let depth = self.data.len();
+        let active = self.caught.len();
+        let ending = self.run_span(program, frame, instrs, plan.body);
+        let mut ending = match ending {
+            Ok(Passage::Along(at)) if at == plan.body.1 => match plan.otherwise {
+                Some(span) => self.run_span(program, frame, instrs, span).map(|end| match end {
+                    Passage::Along(at) if at == span.1 => Passage::Along(plan.after),
+                    other => other,
+                }),
+                None => Ok(Passage::Along(plan.after)),
+            },
+            Err(Fault::Thrown(raised)) => {
+                self.data.truncate(depth);
+                self.caught.push(raised.clone());
+                let handled = (|| {
+                    for arm in &plan.clauses {
+                        let mut takes = arm.bare;
+                        for span in &arm.kinds {
+                            self.run_span(program, frame, instrs, *span)?;
+                            let kind = self.drop_top()?;
+                            match kind {
+                                Value::Blank => {},
+                                Value::Class(class) => {
+                                    if let Value::Object(object) = &raised {
+                                        takes |= object.class.named(&class.name, self.lang.classes_folded);
+                                    }
+                                }
+                                _ => return Err(self.lang.catch_invalid.as_deref().unwrap_or("A catch needs a class").into()),
+                            }
+                            if takes { break; }
+                        }
+                        if !takes { continue; }
+                        self.under = None;
+                        self.entering = None;
+                        if let Some(slot) = &arm.held { self.store_cell(slot, frame, raised.clone())?; }
+                        let outcome = self.run_span(program, frame, instrs, arm.body);
+                        if let Some(slot) = &arm.held { self.put_cell(slot, frame, Value::Blank); }
+                        return outcome.map(|end| match end {
+                            Passage::Along(at) if at == arm.body.1 => Passage::Along(plan.after),
+                            other => other,
+                        });
+                    }
+                    Err(Fault::Thrown(raised))
+                })();
+                self.caught.truncate(active);
+                handled
+            }
+            other => other,
+        };
+        if let Some(last) = plan.last {
+            if let Err(Fault::Thrown(raised)) = &ending { self.caught.push(raised.clone()); }
+            let saved = self.data.len();
+            let finished = self.run_span(program, frame, instrs, last);
+            self.caught.truncate(active);
+            match finished {
+                Ok(Passage::Along(at)) if at == last.1 => self.data.truncate(saved),
+                Ok(end @ Passage::Leaves { cycle: None, .. }) => {
+                    let returned = self.drop_top()?;
+                    self.data.truncate(depth);
+                    self.data.push(returned);
+                    ending = Ok(end);
+                }
+                other => {
+                    self.data.truncate(depth);
+                    ending = other;
+                }
+            }
+        }
+        ending
+    }
+
+    fn run_span(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], span: (usize, usize)) -> Flow<Passage> {
+        let mut pc = span.0;
         let mut counted = 0u32;
         // Where a raised value is caught, how deep the stack was when
         // the guard was set, and how much quiet was asked for then.
         let mut guards: Vec<(usize, usize, usize)> = Vec::new();
-        while pc < instrs.len() {
+        while pc >= span.0 && pc < span.1 {
             // A complaint raised where the run could only read waits to
             // be handed over; here, before the next word, is where the
             // run can reach back into the program to hand it on.
@@ -1653,6 +1825,23 @@ impl<'a> Engine<'a> {
                         pc = catch;
                         continue;
                     }
+                }
+                Instr::Attempt(plan) => {
+                    match self.run_attempt(program, frame, instrs, plan)? {
+                        Passage::Along(at) => pc = at,
+                        end @ Passage::Leaves { to, cycle } => {
+                            if !cycle.map_or(false, |i| i >= span.0 && i < span.1) { return Ok(end); }
+                            pc = to;
+                        }
+                    }
+                    continue;
+                }
+                Instr::Depart { to, cycle } => {
+                    if !cycle.map_or(false, |i| i >= span.0 && i < span.1) {
+                        return Ok(Passage::Leaves { to: *to, cycle: *cycle });
+                    }
+                    pc = *to;
+                    continue;
                 }
                 Instr::Guard(catch) => guards.push((*catch, self.data.len(), self.hushed.get())),
                 Instr::Unguard => {
@@ -1840,7 +2029,7 @@ impl<'a> Engine<'a> {
             }
             pc += 1;
         }
-        Ok(())
+        Ok(Passage::Along(pc))
     }
 
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
@@ -2151,6 +2340,37 @@ impl<'a> Engine<'a> {
                     }
                 };
             }
+            Action::ComprehensionItems => {
+                let source = self.drop_top()?;
+                Value::array(self.comprehension_items(&source)?)
+            }
+            Action::UnpackCount(wanted) => {
+                let source = self.drop_top()?;
+                let parts = self.comprehension_items(&source)?;
+                if parts.len() != *wanted {
+                    return Err(self.lang.comprehension_unpack_amiss.first().cloned().unwrap_or_else(|| "Wrong number of parts in a comprehension target".to_string()).into());
+                }
+                Value::array(parts)
+            }
+            Action::GatherItem { map, spread } => {
+                let mut both = self.drop_many(2)?.into_iter();
+                let gathered_so_far = both.next().expect("growing literal");
+                let next = both.next().expect("literal item");
+                if *map {
+                    let mut pairs = match gathered_so_far { Value::Map(p) => p.as_ref().clone(), _ => unreachable!() };
+                    let new_pairs = match (spread, next) {
+                        (true, Value::Map(p)) => p.as_ref().clone(),
+                        (false, Value::Tie(p)) => vec![(p.0.clone(), p.1.clone())],
+                        _ => return Err(self.lang.spread_unmapped.first().cloned().unwrap_or_else(|| "Value has no map pairs".to_string()).into()),
+                    };
+                    for (key, value) in new_pairs { put_key(&mut pairs, key, value); }
+                    Value::Map(Rc::new(pairs))
+                } else {
+                    let mut items = match gathered_so_far { Value::Array(a) => a.as_ref().clone(), _ => unreachable!() };
+                    if *spread { items.extend(self.comprehension_items(&next)?); } else { items.push(next); }
+                    Value::array(items)
+                }
+            }
             Action::MakeArray => gathered(self.drop_many(argc)?, false, self.lang.plain_keys),
             Action::MakeMap => gathered(self.drop_many(argc)?, true, self.lang.plain_keys),
             Action::Tie => {
@@ -2187,6 +2407,13 @@ impl<'a> Engine<'a> {
                     }
                     _ => return Err("Cannot walk a value that is not an array".to_string().into()),
                 }
+            }
+            Action::SliceUnavailable => return Err(self.lang.slice_unsupported.clone().unwrap_or_default().into()),
+            Action::Slice => {
+                let step = self.drop_top()?;
+                let stop = self.drop_top()?;
+                let start = self.drop_top()?;
+                Value::Slice(Rc::new([start, stop, step]))
             }
             Action::AtEnd => return Err("An empty index belongs on the left of an assignment".to_string().into()),
             // A place in text holds one letter and no more, so what is
@@ -2511,6 +2738,10 @@ impl<'a> Engine<'a> {
                     return Err("Only a routine can carry names away with it".to_string().into());
                 };
                 let carried = self.drop_many(argc - 1)?;
+                if program.parameter_rules.is_some() && program.carried.iter().zip(&carried).any(|(slot, value)|
+                    *slot < program.formals.len() && matches!(value, Value::Array(_) | Value::Map(_) | Value::Object(_))) {
+                    return Err(self.lang.defaults_amiss[0].clone().into());
+                }
                 let mut made = (*program).clone();
                 made.held = carried;
                 Value::Routine(Rc::new(made))
@@ -2536,6 +2767,27 @@ impl<'a> Engine<'a> {
                 Value::Object(o) => Value::Flag(names.iter().any(|n| o.class.named(n, self.lang.classes_folded))),
                 _ => Value::Flag(false),
             },
+            Action::Reraise => {
+                let value = self.caught.last().cloned().ok_or_else(|| self.lang.throw_empty.clone().unwrap_or_default())?;
+                return Err(Fault::Thrown(value));
+            }
+            Action::AssertFault => {
+                let message = self.drop_top()?;
+                let class = Rc::new(Class {
+                    name: self.lang.assert_kind.clone().unwrap_or_default(), base: None,
+                    answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(),
+                    methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
+                });
+                self.made += 1;
+                let fields = if matches!(&message, Value::Text(words) if words.is_empty()) {
+                    Vec::new()
+                } else { vec![("message".to_string(), message)] };
+                let raised = Value::Object(Rc::new(Instance {
+                    class, fields: RefCell::new(fields), mark: self.made,
+                }));
+                self.hurled_at.set(self.line);
+                return Err(Fault::Thrown(raised));
+            }
             Action::Hurl => {
                 self.hurled_at.set(self.line);
                 return Err(Fault::Thrown(self.drop_top()?));
@@ -2733,6 +2985,13 @@ impl<'a> Engine<'a> {
                 let mut args = std::mem::take(&mut self.buffer);
                 args.clear();
                 args.extend(self.data.drain(at..));
+                if self.lang.bind_names {
+                    let items = self.call_items(std::mem::take(&mut args))?;
+                    for (key, value) in items {
+                        if key.is_some() { return Err(self.lang.call_builtin_amiss[0].clone().into()); }
+                        args.push(value);
+                    }
+                }
                 let result = self.builtin(*builtin, name, &mut args);
                 self.buffer = args;
                 match self.carried.take() {
@@ -2988,6 +3247,9 @@ impl<'a> Engine<'a> {
             Action::Toward => self.element(a, b, Reading::Toward)?,
             // Reaching inside makes the place on the way where nothing
             // is there yet, which is what a write to it means.
+            Action::Nested if matches!(b, Value::Slice(_)) => {
+                return Err(self.lang.slice_detached.clone().unwrap_or_default());
+            }
             Action::Nested if self.lang.makes_places => {
                 self.hushed.set(self.hushed.get() + 1);
                 let found = self.element(a, b, Reading::Plain).unwrap_or(Value::Null);
@@ -3483,7 +3745,95 @@ impl<'a> Engine<'a> {
         return self.element_held(target, at, how).map(seen);
     }
 
+    /// Bring the bounds within the row before walking it. A missing
+    /// last bound on a backward walk lies before the first place;
+    /// an expressly written minus one lies at the last place instead.
+    fn slice_places(&self, parts: &[Value; 3], size: usize) -> Res<(usize, usize, i128, Vec<usize>)> {
+        let count = |v: &Value| -> Res<Option<i128>> {
+            Ok(match v {
+                Value::Null => None,
+                Value::Small(n) => Some(*n as i128),
+                Value::Flag(b) => Some(i128::from(*b)),
+                Value::Huge(n) => Some(n.to_i128().unwrap_or_else(|| {
+                    if n.sign() == num_bigint::Sign::Minus { i128::MIN } else { i128::MAX }
+                })),
+                _ => return Err(self.lang.slice_bounds.clone().unwrap_or_default()),
+            })
+        };
+        let stride = count(&parts[2])?.unwrap_or(1);
+        if stride == 0 {
+            return Err(self.lang.slice_zero.clone().unwrap_or_default());
+        }
+        let length = size as i128;
+        let backwards = stride < 0;
+        let lower = if backwards { -1 } else { 0 };
+        let upper = if backwards { length - 1 } else { length };
+        let bound = |v: &Value, absent: i128| -> Res<i128> {
+            Ok(match count(v)? {
+                None => absent,
+                Some(n) => {
+                    let n = if n < 0 { n.saturating_add(length) } else { n };
+                    n.clamp(lower, upper)
+                }
+            })
+        };
+        let start = bound(&parts[0], if backwards { length - 1 } else { 0 })?;
+        let stop = bound(&parts[1], if backwards { -1 } else { length })?;
+        let mut places = Vec::new();
+        let mut at = start;
+        while if backwards { at > stop } else { at < stop } {
+            places.push(at as usize);
+            at = at.saturating_add(stride);
+        }
+        Ok((start.max(0) as usize, stop.max(start).max(0) as usize, stride, places))
+    }
+
+    fn read_slice(&self, target: &Value, parts: &[Value; 3]) -> Res<Value> {
+        match target {
+            Value::Array(items) => {
+                let (_, _, _, places) = self.slice_places(parts, items.len())?;
+                Ok(Value::array(places.into_iter().map(|i| items[i].clone()).collect()))
+            }
+            Value::Text(text) if self.lang.text_indexable => {
+                let letters: Vec<char> = text.chars().collect();
+                let (_, _, _, places) = self.slice_places(parts, letters.len())?;
+                Ok(Value::text(&places.into_iter().map(|i| letters[i]).collect::<String>()))
+            }
+            _ => Err(self.lang.slice_unsupported.clone().unwrap_or_default()),
+        }
+    }
+
+    fn write_slice(&self, target: Value, parts: &[Value; 3], given: Value) -> Res<Value> {
+        let Value::Array(mut items) = target else {
+            return Err(self.lang.slice_unsupported.clone().unwrap_or_default());
+        };
+        let (start, stop, step, places) = self.slice_places(parts, items.len())?;
+        let replacement = match given {
+            Value::Array(values) => values.as_ref().clone(),
+            Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
+            Value::Map(pairs) => pairs.iter().map(|(key, _)| key.clone()).collect(),
+            _ => return Err(self.lang.slice_assign.clone().unwrap_or_default()),
+        };
+        if step == 1 {
+            Rc::make_mut(&mut items).splice(start..stop, replacement);
+        } else {
+            if replacement.len() != places.len() {
+                let words = &self.lang.slice_length;
+                return Err(format!("{} {} {} {}", words.first().map_or("", String::as_str), replacement.len(),
+                    words.get(1).map_or("", String::as_str), places.len()));
+            }
+            let row = Rc::make_mut(&mut items);
+            for (at, value) in places.into_iter().zip(replacement) {
+                row[at] = value;
+            }
+        }
+        Ok(Value::Array(items))
+    }
+
     fn element_held(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
+        if let Value::Slice(parts) = at {
+            return self.read_slice(target, parts);
+        }
         // A language may say that a place an array does not hold reads as
         // nothing rather than stopping the program, and one with a word
         // for a warning says so before reading nothing there.
@@ -3565,6 +3915,17 @@ impl<'a> Engine<'a> {
     }
 
     // ---------- builtins ----------
+
+    /// The collections this reader can walk without asking a protocol.
+    fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {
+        match value {
+            Value::Array(items) => Ok(items.as_ref().clone()),
+            Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
+            Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
+            Value::Bond(cell) => self.comprehension_items(&cell.borrow()),
+            _ => Err(self.lang.collection_unwalkable.first().cloned().unwrap_or_else(|| "Value has no members to gather".to_string())),
+        }
+    }
 
     /// print and write: the values joined by spaces, or a template holding
     /// the definition's placeholders filled from the rest.
@@ -4111,6 +4472,40 @@ impl<'a> Engine<'a> {
                 }
                 Value::Null
             }
+            Builtin::List => {
+                if args.is_empty() { return Ok(Value::array(Vec::new())); }
+                arity(1)?;
+                Value::array(self.comprehension_items(&args[0])?)
+            }
+            Builtin::Any => {
+                arity(1)?;
+                Value::Flag(self.comprehension_items(&args[0])?.iter().any(|v| self.truth(v)))
+            }
+            Builtin::Sum => {
+                if args.is_empty() || args.len() > 2 { return Err(format!("{}() expects one or two arguments", name)); }
+                let mut total = args.get(1).cloned().unwrap_or(Value::Small(0));
+                if let Value::Flag(b) = total { total = Value::Small(i64::from(b)); }
+                for item in self.comprehension_items(&args[0])? {
+                    let item = match item { Value::Flag(b) => Value::Small(i64::from(b)), other => other };
+                    total = arith::calculate(Operation::Plus, &total, &item).ok_or_else(|| self.lang.sum_non_number.first().cloned().unwrap_or_else(|| "Invalid collection argument".to_string()))??;
+                }
+                total
+            }
+            Builtin::Span if self.lang.range_value => {
+                if args.is_empty() || args.len() > 3 { return Err(format!("{}() expects one to three arguments", name)); }
+                let bounds = args.iter().map(|v| match v {
+                    Value::Small(n) => Ok(BigInt::from(*n)), Value::Huge(n) => Ok(n.as_ref().clone()),
+                    Value::Flag(b) => Ok(BigInt::from(i64::from(*b))),
+                    _ => Err(self.lang.range_non_integer.first().cloned().unwrap_or_else(|| "Invalid collection argument".to_string())),
+                }).collect::<Res<Vec<_>>>()?;
+                let (mut at, end) = if bounds.len() == 1 { (BigInt::from(0), bounds[0].clone()) } else { (bounds[0].clone(), bounds[1].clone()) };
+                let step = bounds.get(2).cloned().unwrap_or_else(|| BigInt::from(1));
+                if step == BigInt::from(0) { return Err(self.lang.range_zero_step.first().cloned().unwrap_or_else(|| "Invalid collection argument".to_string())); }
+                let forward = step > BigInt::from(0);
+                let mut items = Vec::new();
+                while if forward { at < end } else { at > end } { items.push(Value::of_big(at.clone())); at += &step; }
+                Value::array(items)
+            }
             Builtin::Span => return Err(format!("{}() spells a range, which belongs in a for loop", name)),
             Builtin::MakeReal => {
                 if args.is_empty() || args.len() > 2 {
@@ -4256,6 +4651,9 @@ impl<'a> Engine<'a> {
                 let target = args.pop().expect("the array");
                 let v = args.pop().expect("the value");
                 let at = self.key(&args.pop().expect("the key"));
+                if let Value::Slice(parts) = &at {
+                    return self.write_slice(target, parts, v);
+                }
                 // A language that makes a place on writing into it finds
                 // an array where nothing at all was there.
                 let target = match target {

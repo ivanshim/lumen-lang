@@ -101,6 +101,8 @@ pub enum Value {
     Nil,
     Ellipsis,
     Vector(Rc<Vec<Value>>),
+    /// A span awaiting the length of what it is to read.
+    Span(Rc<Vec<Value>>),
     /// Keys with their values, kept in the order they were written.
     Dict(Rc<Vec<(Value, Value)>>),
     /// A key written together with its value (`k => v`), until a
@@ -170,7 +172,7 @@ impl Value {
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Ellipsis => return None,
+            Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Ellipsis | Value::Span(_) => return None,
         })
     }
 
@@ -205,6 +207,7 @@ impl Value {
             Value::Shared(cell) => return cell.borrow().as_big(),
             Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
+            Value::Span(_) => return Err("Cannot coerce slice to number".to_string()),
             Value::KindOf(_) => return Err("Cannot coerce kind meta-value to number".to_string()),
         })
     }
@@ -325,6 +328,7 @@ impl Value {
             Value::Shared(cell) => cell.borrow().bare(),
             Value::Blueprint(b) => format!("<class {}>", b.name),
             Value::Thing(t) => format!("<object {}>", t.of.name),
+            Value::Span(bounds) => format!("slice({})", bounds.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
             Value::KindOf(s) => s.tag().to_string(),
         }
     }
