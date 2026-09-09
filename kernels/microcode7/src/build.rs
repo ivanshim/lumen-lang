@@ -3941,7 +3941,10 @@ impl<'a> Builder<'a> {
                 // A plus sign leaves its operand as it is, bound like a negation.
                 self.advance();
                 let tier = table.monadic.values().map(|m| m.level).max().unwrap_or(0);
-                return self.expr(tier);
+                let number = self.expr(tier)?;
+                return Ok(if table.has_any("ext.op.plus.non_number") {
+                    prim_call(Prim::NumberAlone, vec![number])
+                } else { number });
             }
         }
         let node = match t.shape {

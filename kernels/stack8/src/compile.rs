@@ -4152,7 +4152,9 @@ impl<'a> Compiler<'a> {
                 // A plus sign leaves its operand alone, bound as tightly as a negation.
                 self.take();
                 let tier = lang.monadic.values().map(|m| m.level).max().unwrap_or(0);
-                return self.expr(tier);
+                self.expr(tier)?;
+                if lang.plus_non_number.is_some() { self.act(Action::Positive, 1); }
+                return Ok(());
             }
         }
         match tok.shape {

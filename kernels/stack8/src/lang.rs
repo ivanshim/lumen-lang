@@ -272,6 +272,10 @@ pub struct Lang {
     /// worth, the way arithmetic reads one, rather than reading it
     /// straight as bits.
     pub shift_by_number: bool,
+    pub unbounded_bits: bool,
+    pub bit_operand: Option<String>,
+    pub bit_room: Option<String>,
+    pub plus_non_number: Option<String>,
     /// Whether dividing two whole numbers evenly gives a whole one.
     pub div_stays_whole: bool,
     /// The remainder is taken between whole numbers, whatever it is
@@ -727,6 +731,7 @@ w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.assert | w ext.stmt
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
 w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | w ext.system.request.settings | b ext.op.index.absent | w ext.op.index.scalar | w ext.op.index.nothing | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
+b ext.op.bit.unbounded | w ext.op.bit.unbounded.operand | w ext.op.bit.unbounded.room | w ext.op.plus.non_number
 w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right | b ext.op.bit.shift.numbers
 w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at
@@ -1416,6 +1421,10 @@ impl Lang {
             fault_modulo: r.head("ext.system.fault.modulo")?,
             fault_shift: r.head("ext.system.fault.shift")?,
             shift_by_number: r.flag("ext.op.bit.shift.numbers")?,
+            unbounded_bits: r.flag("ext.op.bit.unbounded")?,
+            bit_operand: r.head("ext.op.bit.unbounded.operand")?,
+            bit_room: r.head("ext.op.bit.unbounded.room")?,
+            plus_non_number: r.head("ext.op.plus.non_number")?,
             div_stays_whole,
             mod_whole: r.flag("op.mod.whole")?,
             step_up_text: r.head("ext.op.increment.text")?,

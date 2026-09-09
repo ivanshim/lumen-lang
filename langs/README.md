@@ -438,7 +438,11 @@ only. The extension labels so far, all from PHP:
 - `ext.lexical.number.exponent`: the letters that open a decimal exponent
   in a number (`1e9`, `2.5E-3`), always a real.
 - `ext.op.plus`: a sign that leaves its operand as it is (`+5`), bound as
-  tightly as negation.
+  tightly as negation. Python spells it too, including repeated signs
+  and a sign standing before a power.
+- `ext.op.plus.non_number`: what is said when unary plus is handed
+  something other than a number. Where spelled, a flag becomes its
+  whole-number worth and other numbers keep their kind.
 - `ext.stmt.break.levels`: a switch; `break n` and `continue n` leave n
   loops (a switch counting as one).
 - `ext.builtin.array`: a builtin that gathers what it is given into an
@@ -1394,6 +1398,17 @@ only. The extension labels so far, all from PHP:
   and read both sides as numbers however they were written. Like any
   operator these take their tiers from `op.precedence`, and a kernel
   that does not read the labels reads past those tiers too.
+- `ext.op.bit.unbounded`: a switch; the bit signs take whole numbers of
+  any length, keeping the sign as though it went on without end.
+  Fractions, text and objects are refused; flags stand for nought or one,
+  and two flags joined by and, or or xor give a flag back. Python spells
+  all six bit signs with this switch, in its own precedence tiers;
+  compound writes use those same operations.
+- `ext.op.bit.unbounded.operand` and `ext.op.bit.unbounded.room`: the
+  words for a bit operand that is no whole number, and for a left shift
+  whose length cannot fit in the host's address space. A right shift
+  beyond every bit gives nought or minus one according to the sign;
+  either shift by a negative count uses `ext.system.fault.shift`.
 - `ext.op.bit.shift.numbers`: a switch; the two shifts read each side
   for the number it is worth, the way arithmetic reads one, rather than
   reading it straight as bits. Text that spells a number stands for it,
@@ -1716,7 +1731,7 @@ Operator precedence, lowest tier first. Unary operators sit in their own tier.
 
 - **lumen**: `|>` < `or` < `and` < `==` `!=` `<` `>` `<=` `>=` < `..` < `+` `-` < `*` `/` `%` `//` `.` < `**` < `-` `not` `!`
 - **rplumen**: 
-- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` < `|` < `+` `-` < `*` `/` `//` `%` < `-` < `**` < `.`
+- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` < `|` < `^` < `&` < `<<` `>>` < `+` `-` < `*` `/` `//` `%` < `-` `+` `~` < `**` < `.`
 - **rust**: `..` < `||` < `&&` < `==` `!=` `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `-` `!` < `.`
 - **php (extra)**: `or` < `and` < `||` < `&&` < `|` < `^` < `&` < `==` `!=` `<>` `===` `!==` < `<` `>` `<=` `>=` `<=>` < `.` < `<<` `>>` < `+` `-` < `*` `/` `%` < `!` `~` `@` < `-` < `**`
 - **c (extra)**: `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `!` `-`
@@ -1820,13 +1835,16 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.op.bit.and` | - | - | - | - | `&` | - | - | - | - | - |
-| `ext.op.bit.left` | - | - | - | - | `<<` | - | - | - | - | - |
-| `ext.op.bit.not` | - | - | - | - | `~` | - | - | - | - | - |
+| `ext.op.bit.and` | - | - | `&` | - | `&` | - | - | - | - | - |
+| `ext.op.bit.left` | - | - | `<<` | - | `<<` | - | - | - | - | - |
+| `ext.op.bit.not` | - | - | `~` | - | `~` | - | - | - | - | - |
 | `ext.op.bit.or` | - | - | `\|` | - | `\|` | - | - | - | - | - |
-| `ext.op.bit.right` | - | - | - | - | `>>` | - | - | - | - | - |
+| `ext.op.bit.right` | - | - | `>>` | - | `>>` | - | - | - | - | - |
 | `ext.op.bit.shift.numbers` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.op.bit.xor` | - | - | - | - | `^` | - | - | - | - | - |
+| `ext.op.bit.unbounded` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.op.bit.unbounded.operand` | - | - | `TypeError: bitwise operations require integers` | - | - | - | - | - | - | - |
+| `ext.op.bit.unbounded.room` | - | - | `OverflowError: too many digits in integer` | - | - | - | - | - | - | - |
+| `ext.op.bit.xor` | - | - | `^` | - | `^` | - | - | - | - | - |
 | `ext.op.cast` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.compare` | - | - | - | - | `<=>` | - | - | - | - | - |
 | `ext.op.comprehension.async` | - | - | `async` | - | - | - | - | - | - | - |
@@ -1864,7 +1882,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.name_by_value` | - | - | - | - | `$` | - | - | - | - | - |
 | `ext.op.not_identical` | - | - | - | - | `!==` | - | - | - | - | - |
 | `ext.op.otherwise` | - | - | - | - | `??` | - | - | - | - | - |
-| `ext.op.plus` | - | - | - | - | `+` | - | - | - | - | - |
+| `ext.op.plus` | - | - | `+` | - | `+` | - | - | - | - | - |
+| `ext.op.plus.non_number` | - | - | `TypeError: unary plus requires a number` | - | - | - | - | - | - | - |
 | `ext.op.reference` | - | - | - | - | `&` | - | - | - | - | - |
 | `ext.op.reference.unshared.given` | - | - | - | - | `Only variable references should be returned by reference` | - | - | - | - | - |
 | `ext.op.reference.unshared.handed` | - | - | - | - | `Only variables should be passed by reference` | - | - | - | - | - |
@@ -1998,7 +2017,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class.walk` | - | - | - | - | `Exception` | - | - | - | - | - |
 | `ext.system.fault.modulo` | - | - | - | - | `Modulo by zero` | - | - | - | - | - |
 | `ext.system.fault.operands` | - | - | - | - | `Unsupported operand types` | - | - | - | - | - |
-| `ext.system.fault.shift` | - | - | - | - | `Bit shift by negative number` | - | - | - | - | - |
+| `ext.system.fault.shift` | - | - | `ValueError: negative shift count` | - | `Bit shift by negative number` | - | - | - | - | - |
 | `ext.system.globals` | - | - | - | - | `$GLOBALS` | - | - | - | - | - |
 | `ext.system.integer.bits` | - | - | - | - | `64` | - | - | - | - | - |
 | `ext.system.kind.brief` | - | - | - | - | `int` `-` `float` `string` `bool` `array` `null` | - | - | - | - | - |

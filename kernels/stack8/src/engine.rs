@@ -2226,6 +2226,17 @@ impl<'a> Engine<'a> {
                     }
                 }
             }
+            Action::Positive => {
+                match self.drop_top()? {
+                    Value::Flag(flag) => Value::Small(i64::from(flag)),
+                    number @ (Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Real(_)) => number,
+                    _ => return Err(self.lang.plus_non_number.clone().unwrap_or_default()),
+                }
+            }
+            Action::BitTurn if self.lang.unbounded_bits => {
+                let held = self.drop_top()?;
+                Value::of_big(!self.integer_bits(&held)?)
+            }
             Action::BitTurn => {
                 let v = self.drop_top()?;
                 match &v {
@@ -3030,6 +3041,16 @@ impl<'a> Engine<'a> {
         number_spelled(s).map(|n| self.at_real_width(n))
     }
 
+    // Whole numbers keep every bit; no text or fraction stands in for one.
+    fn integer_bits(&self, value: &Value) -> Res<BigInt> {
+        match value {
+            Value::Small(n) => Ok(BigInt::from(*n)),
+            Value::Huge(n) => Ok((**n).clone()),
+            Value::Flag(b) => Ok(BigInt::from(u8::from(*b))),
+            _ => Err(self.lang.bit_operand.clone().unwrap_or_default()),
+        }
+    }
+
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
@@ -3044,6 +3065,34 @@ impl<'a> Engine<'a> {
         let sp = self.wording();
         let joined = || Value::text(&format!("{}{}", a.display(&sp), b.display(&sp)));
         Ok(match op {
+            Action::BitBoth | Action::BitEither | Action::BitOne | Action::BitUp | Action::BitDown
+                if self.lang.unbounded_bits => {
+                let left = self.integer_bits(a)?;
+                let right = self.integer_bits(b)?;
+                let answer = match op {
+                    Action::BitBoth => left & right,
+                    Action::BitEither => left | right,
+                    Action::BitOne => left ^ right,
+                    _ => {
+                        if right < BigInt::from(0) {
+                            return Err(self.lang.fault_shift.clone().unwrap_or_default());
+                        }
+                        let down = matches!(op, Action::BitDown);
+                        if down && right >= BigInt::from(left.bits()) {
+                            return Ok(Value::Small(if left < BigInt::from(0) { -1 } else { 0 }));
+                        }
+                        if left == BigInt::from(0) { return Ok(Value::Small(0)); }
+                        let count = right.to_usize().filter(|n| {
+                            (*n as u128) + u128::from(left.bits()) < isize::MAX as u128
+                        }).ok_or_else(|| self.lang.bit_room.clone().unwrap_or_default())?;
+                        if down { left >> count } else { left << count }
+                    }
+                };
+                if matches!((a, b), (Value::Flag(_), Value::Flag(_)))
+                    && matches!(op, Action::BitBoth | Action::BitEither | Action::BitOne) {
+                    Value::Flag(answer != BigInt::from(0))
+                } else { Value::of_big(answer) }
+            }
             Action::And => Value::Flag(self.truth(a) && self.truth(b)),
             Action::Or => Value::Flag(self.truth(a) || self.truth(b)),
             // The one no number answers to comes before nothing and

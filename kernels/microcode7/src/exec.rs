@@ -3129,6 +3129,48 @@ impl<'a> Machine<'a> {
         Ok(result)
     }
 
+    // The signs work on whole numbers of whatever length they have.
+    fn whole_bits(&self, sign: Prim, inputs: &[Value]) -> Result<Value, String> {
+        let read = |at: usize| match &inputs[at] {
+            Value::Huge(held) => Ok(held.as_ref().clone()),
+            Value::Flag(yes) => Ok(BigInt::from(if *yes { 1 } else { 0 })),
+            Value::Small(held) => Ok(BigInt::from(*held)),
+            _ => Err(self.table.single("ext.op.bit.unbounded.operand").unwrap_or("").to_owned()),
+        };
+        let first = read(0)?;
+        if sign == Prim::BitsOver { return Ok(Value::from_big(!first)); }
+        let second = read(1)?;
+        let result = match sign {
+            Prim::BitsUp | Prim::BitsDown => {
+                use num_traits::{Signed, Zero};
+                if second.is_negative() {
+                    return Err(self.table.single("ext.system.fault.shift").unwrap_or("").to_owned());
+                }
+                if first.is_zero() { return Ok(Value::Small(0)); }
+                if sign == Prim::BitsDown && second >= BigInt::from(first.bits()) {
+                    return Ok(Value::Small(-i64::from(first.is_negative())));
+                }
+                let shift = second.to_usize().and_then(|by| {
+                    let total = u128::from(first.bits()) + by as u128;
+                    (total < isize::MAX as u128).then_some(by)
+                }).ok_or_else(|| self.table.single("ext.op.bit.unbounded.room").unwrap_or("").to_owned())?;
+                match sign {
+                    Prim::BitsUp => first << shift,
+                    _ => first >> shift,
+                }
+            }
+            Prim::BitsBoth => first & second,
+            Prim::BitsEither => first | second,
+            _ => first ^ second,
+        };
+        let flags = inputs.iter().all(|one| matches!(one, Value::Flag(_)));
+        if flags && !matches!(sign, Prim::BitsUp | Prim::BitsDown) {
+            Ok(Value::Flag(result != BigInt::from(0)))
+        } else {
+            Ok(Value::from_big(result))
+        }
+    }
+
     // ---------- operations
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
@@ -3137,6 +3179,13 @@ impl<'a> Machine<'a> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
         };
         Ok(match op {
+            Prim::NumberAlone => match &v[0] {
+                Value::Small(_) | Value::Huge(_) | Value::Frac(_) => v[0].clone(),
+                Value::Flag(b) => Value::Small(if *b { 1 } else { 0 }),
+                _ => return Err(self.table.single("ext.op.plus.non_number").unwrap_or("").to_owned()),
+            },
+            Prim::BitsOver | Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::BitsUp | Prim::BitsDown
+                if self.table.flag("ext.op.bit.unbounded") => return self.whole_bits(op, v),
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
             // A step onward or back adds or takes away one, save on text
