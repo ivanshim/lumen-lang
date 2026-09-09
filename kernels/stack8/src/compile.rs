@@ -4066,6 +4066,33 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    fn string_piece(&mut self) -> Res<()> {
+        let token = self.take();
+        match token.shape {
+            Shape::Quote => self.constant(Value::text(&token.lexeme)),
+            Shape::StringFault => {
+                self.constant(Value::text(&token.lexeme));
+                self.act(Action::StringFault, 1);
+            }
+            Shape::StringBegin => {
+                self.constant(Value::text(""));
+                while self.look().shape != Shape::StringEnd {
+                    if self.look().shape == Shape::StringField {
+                        let field = self.take();
+                        self.expr(0)?;
+                        self.string_piece()?;
+                        self.constant(Value::text(&field.lexeme));
+                        self.act(Action::StringRender, 3);
+                    } else { self.string_piece()?; }
+                    self.act(Action::Join, 2);
+                }
+                self.take();
+            }
+            _ => return Err(self.lang.string_amiss.clone().unwrap_or_else(|| "Invalid string literal".into())),
+        }
+        Ok(())
+    }
+
     fn prefix_piece(&mut self) -> Res<()> {
         let lang = self.lang;
         let from = self.mark();
@@ -4156,9 +4183,12 @@ impl<'a> Compiler<'a> {
                 let v = parse_number(&tok.lexeme, lang)?;
                 self.constant(v);
             }
-            Shape::Quote => {
-                self.take();
-                self.constant(Value::text(&tok.lexeme));
+            Shape::Quote | Shape::StringBegin | Shape::StringFault => {
+                self.string_piece()?;
+                while lang.adjacent_strings && matches!(self.look().shape, Shape::Quote | Shape::StringBegin | Shape::StringFault) {
+                    self.string_piece()?;
+                    self.act(Action::Join, 2);
+                }
             }
             Shape::Instr if Lang::spells(&lang.new_words, &tok.lexeme) => {
                 self.take();
