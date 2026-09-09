@@ -143,6 +143,16 @@ pub struct Compiler<'a> {
     /// The file this text came out of, where it was read while the run
     /// was going, so that every program built from it carries it.
     written_in: Option<Rc<str>>,
+    /// Whether this text was read in while the run was already going,
+    /// as text handed to the word that reads text is, and a file asked
+    /// for part way through. The whole of a program read that way is a
+    /// piece of a run in progress, which a `static` written at the top
+    /// of it is told by.
+    read_in: bool,
+    /// The names a `static` at the top of text read in has already
+    /// spoken for. Such a statement binds nothing that would show a
+    /// name said twice, so the names are kept here to be counted.
+    read_statics: Vec<String>,
     /// Where the value a store is to write is already waiting, which a
     /// taking-apart sets before each of its places.
     waiting: Option<String>,
@@ -198,13 +208,14 @@ const SPARE_CELLS: [&str; 3] = ["#a", "#b", "#c"];
 /// `before` is how many lines were put before the program's own text,
 /// which the host knows and a line named in a complaint must not count.
 pub fn compile(tokens: &[Token], lang: &Lang, table: &mut Registry, before: u32) -> Res<Rc<Routine>> {
-    compile_from(tokens, lang, table, before, None)
+    compile_within(tokens, lang, table, before, None, None, None, false)
 }
 
-/// The same, told besides which file the text came out of, where it was
-/// read while the run was going.
+/// The same, told besides which file the text came out of. Only text
+/// read in while the run was already going is assembled this way, so a
+/// statement whose meaning turns on that may see it.
 pub fn compile_from(tokens: &[Token], lang: &Lang, table: &mut Registry, before: u32, written_in: Option<Rc<str>>) -> Res<Rc<Routine>> {
-    compile_within(tokens, lang, table, before, written_in, None, None)
+    compile_within(tokens, lang, table, before, written_in, None, None, true)
 }
 
 /// The same, save that the text may be read as standing inside a
@@ -219,6 +230,7 @@ pub fn compile_within(
     written_in: Option<Rc<str>>,
     inside: Option<Vec<String>>,
     within: Option<(String, Option<String>)>,
+    read_in: bool,
 ) -> Res<Rc<Routine>> {
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
@@ -248,7 +260,7 @@ pub fn compile_within(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new() };
+    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new() };
     if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;
@@ -584,13 +596,39 @@ impl<'a> Compiler<'a> {
                 return;
             }
         }
+        self.own_place(name);
         let slot = self.cell_to_read(name, false);
         self.put(Instr::Read(slot));
     }
 
     fn read_taking(&mut self, name: &str) {
+        self.own_place(name);
         let slot = self.cell_to_read(name, true);
         self.put(Instr::Read(slot));
+    }
+
+    /// A variable a routine only ever reads is given a place of the
+    /// routine's own all the same (ext.stmt.function.own_names). The
+    /// place holds nothing, and reading a place holding nothing falls
+    /// through to the outermost binding as it always did, so nothing
+    /// the program can see is changed by the place being there. What it
+    /// is for is text read in while the run goes: such text is a piece
+    /// of the routine that read it, and a write it makes to one of that
+    /// routine's names needs a place in that routine's frame to land
+    /// in. Only names the language marks as variables are given one:
+    /// what wears no mark names a constant or a class, and the places
+    /// the assembler makes for itself are none of the program's.
+    fn own_place(&mut self, name: &str) {
+        if !self.lang.own_names {
+            return;
+        }
+        let marked = self.lang.sigil.map_or(true, |mark| name.starts_with(mark));
+        let unit = self.pieces.last_mut().expect("a unit");
+        if unit.outermost || !marked || unit.idents.iter().any(|n| n == name) {
+            return;
+        }
+        unit.idents.push(name.to_string());
+        unit.declared.push(false);
     }
 
     /// The name of an array about to be written into, addressed as the
@@ -1030,6 +1068,13 @@ impl<'a> Compiler<'a> {
     /// runs. Outside every function there is no unit around this one, so
     /// the setting stands here and is guarded: it happens the first time
     /// this statement is reached and no other time.
+    ///
+    /// Text read in while the run is already going is read afresh every
+    /// time it is reached, so there is no from-call-to-call for such a
+    /// statement written at the top of it to keep a value across. There
+    /// it is a plain write of the name in the scope that read the text
+    /// (ext.stmt.static.read_in), and the scope keeps what was written
+    /// as it keeps anything else written to a name of its own.
     fn static_stmt(&mut self) -> Res<()> {
         self.take();
         let sep = self.lang.calling.as_ref().and_then(|c| c.between.clone());
@@ -1040,6 +1085,31 @@ impl<'a> Compiler<'a> {
             if self.piece().globals.iter().any(|(n, _)| *n == name) {
                 self.registry.stopped_fatally = true;
                 return Err(format!("Duplicate declaration of static variable {}", name));
+            }
+            if self.read_in && self.lang.static_read_in && self.pieces.len() == 1 {
+                // One name is still one binding, though this one binds
+                // nothing that would show it: the names spoken for are
+                // counted apart so that saying one twice is refused
+                // here as it is anywhere else.
+                if self.read_statics.iter().any(|n| *n == name) {
+                    self.registry.stopped_fatally = true;
+                    return Err(format!("Duplicate declaration of static variable {}", name));
+                }
+                self.read_statics.push(name.clone());
+                if self.on_assign() {
+                    self.take();
+                    self.expr(0)?;
+                } else {
+                    self.constant(Value::Null);
+                }
+                self.write(&name);
+                match &sep {
+                    Some(s) if self.at_symbol(s) => {
+                        self.take();
+                        continue;
+                    }
+                    _ => return Ok(()),
+                }
             }
             let hidden = self.gensym("static");
             let inner = self.pieces.pop().expect("the unit");

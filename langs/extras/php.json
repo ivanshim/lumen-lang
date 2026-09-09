@@ -741,6 +741,8 @@
     "do"
   ],
   "ext.stmt.function.outermost": true,
+  "ext.stmt.function.own_names": true,
+  "ext.stmt.static.read_in": true,
   "ext.system.request.amiss": [
     "$__request_amiss"
   ],

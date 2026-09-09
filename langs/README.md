@@ -271,6 +271,28 @@ only. The extension labels so far, all from PHP:
   makes x a name for a hidden global set when the function is defined,
   so the value lasts from call to call; `global a, b;` makes the names
   mean the globals.
+- `ext.stmt.static.read_in`: a switch; a `static` written at the top of
+  text read in while the run was already going — text handed to the word
+  that reads text, or a file asked for part way through — is a plain
+  write of the name in the scope that read it, and keeps nothing from
+  one reading to the next. Such text is read afresh every time it is
+  reached, so there is no run of calls for a value to last across; what
+  the write leaves behind stays as anything else written to that name
+  stays. A `static` inside a function defined in such text is untouched
+  by this and lasts from call to call as any other does. Without the
+  switch a `static` read in this way makes a hidden global of its own,
+  which nothing outside the reading can name.
+- `ext.stmt.function.own_names`: a switch; a variable a function does no
+  more than read is kept among that function's own names all the same,
+  rather than meaning the outermost binding of that name outright. The
+  room made for it holds nothing until something writes there, and a
+  name holding nothing is still read from the outermost binding, so no
+  program can tell the difference by reading. What the room is for is
+  text read in while the run goes: such text is a piece of the function
+  that read it, and a write it makes to one of that function's names
+  needs somewhere in that function's frame to land. Only what the
+  language marks as a variable is given room; a bare word names a
+  constant or a class and is left alone.
 - `ext.stmt.const`, `ext.builtin.define`: `const NAME = e;` and
   `define("NAME", e)` bind the global NAME, which a bare word then reads;
   the definition must give the name as a quoted literal.
@@ -1608,10 +1630,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.function.carries` | - | - | - | - | - | - | - | `use` | - | - |
 | `ext.stmt.function.hoisted` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.stmt.function.outermost` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.stmt.function.own_names` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.stmt.function.returns` | - | - | - | - | - | - | - | `:` | - | - |
 | `ext.stmt.function.short` | - | - | - | - | - | - | - | `fn` `=>` | - | - |
 | `ext.stmt.global` | - | - | - | - | - | - | - | `global` | - | - |
 | `ext.stmt.static` | - | - | - | - | - | - | - | `static` | - | - |
+| `ext.stmt.static.read_in` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.stmt.switch` | - | - | - | - | - | - | - | `switch` | - | - |
 | `ext.stmt.terminator.only` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.stmt.throw` | - | - | - | - | - | - | - | `throw` | - | - |

@@ -82,6 +82,19 @@ pub struct Builder<'a> {
     tokens: &'a [Token],
     pos: usize,
     layers: Vec<Layer>,
+    /// Whether this text was handed over while the run was already
+    /// going, as text given to the word that reads text is and as a
+    /// file asked for part way through is. A whole program built this
+    /// way is a piece of a run in progress, not a run of its own.
+    read_in: bool,
+    /// How many layers stood open before a word of this text was read.
+    /// A statement is at the top of what was handed over when no more
+    /// than these are open, whatever stands around them elsewhere.
+    outer_layers: usize,
+    /// Which names a `static` at the top of text handed over has spoken
+    /// for. Nothing is bound there that would show a name said twice,
+    /// so they are gathered here and counted.
+    spoken_for: Vec<String>,
     gensyms: usize,
     pub presumed: HashMap<String, Signature>,
     pub seen: HashMap<String, Signature>,
@@ -149,7 +162,7 @@ enum Mode {
 /// `before` is how many lines stand ahead of the program's own text,
 /// which the host knows and a line named in a complaint must not count.
 pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Res<Built> {
-    build_from(tokens, table, seeded, assumed, strict, before, None)
+    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, None, false)
 }
 
 /// The same, saying besides which row the reading had reached when it
@@ -157,14 +170,16 @@ pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMa
 pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32, bool)> {
     let at = std::cell::Cell::new(0u32);
     let hard = std::cell::Cell::new(false);
-    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard)), None, None)
+    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard)), None, None, false)
         .map_err(|said| (said, at.get(), hard.get()))
 }
 
-/// The same, said besides which file the text came out of, where it was
-/// read as the run went.
+/// The same, said besides which file the text came out of. Nothing but
+/// text read in while the run was already going is built this way, so a
+/// statement that means one thing in a program of its own and another
+/// in a piece of a run in progress can tell the two apart.
 pub fn build_from(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>) -> Res<Built> {
-    build_marking(tokens, table, seeded, assumed, strict, before, written_in, None, None, None)
+    build_marking(tokens, table, seeded, assumed, strict, before, written_in, None, None, None, true)
 }
 
 /// The same, save that the text stands inside a routine already running:
@@ -182,7 +197,7 @@ pub fn build_within(
     before: u32,
     within: Option<(String, Option<String>)>,
 ) -> Res<Built> {
-    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, None, Some((inside, knows)), within)
+    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, None, Some((inside, knows)), within, true)
 }
 
 /// `build_within` and `build_from`, each saying besides which row the
@@ -198,18 +213,18 @@ pub fn build_within_at(
     within: Option<(String, Option<String>)>,
 ) -> Result<Built, (String, u32)> {
     let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
-    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, Some((&at, &hard)), Some((inside, knows)), within).map_err(|said| (said, at.get()))
+    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, Some((&at, &hard)), Some((inside, knows)), within, true).map_err(|said| (said, at.get()))
 }
 
 pub fn build_from_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32)> {
     let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
-    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard)), None, None).map_err(|said| (said, at.get()))
+    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard)), None, None, true).map_err(|said| (said, at.get()))
 }
 
 type Knows<'w> = (&'w HashMap<String, Vec<bool>>, &'w HashMap<String, Vec<String>>, &'w HashSet<String>);
 type Within<'w> = (&'w [String], Knows<'w>);
 
-fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>) -> Res<Built> {
+fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool) -> Res<Built> {
     let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, table);
     let mut layers = vec![top];
@@ -223,7 +238,8 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         gives_back.extend(backs.iter().cloned());
         layers.push(Layer { holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
-    let mut r = Builder { within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(),
+    let outer_layers = layers.len();
+    let mut r = Builder { within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(),
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
@@ -746,12 +762,16 @@ impl<'a> Builder<'a> {
         let frameless = |holds: Holds| holds == Holds::Nothing;
         let mut depth = 0;
         let mut found: Option<(usize, usize, usize)> = None;
+        // Where the walk stops at a function, that function is where a
+        // name of its own would be kept, and how far up it stands.
+        let mut routine: Option<(usize, usize)> = None;
         for (i, scope) in self.layers.iter().enumerate().rev() {
             if let Some(index) = scope.idents.iter().rposition(|n| n == name).filter(|_| scope.holds != Holds::Nothing) {
                 found = Some((i, depth, index));
                 break;
             }
             if scope.holds == Holds::Every && i != 0 {
+                routine = Some((i, depth));
                 break;
             }
             if !frameless(scope.holds) {
@@ -759,6 +779,25 @@ impl<'a> Builder<'a> {
             }
         }
         let global = self.global_at(name);
+        // A variable a function does no more than read is kept among
+        // that function's own names all the same
+        // (ext.stmt.function.own_names). Nothing is ever written there
+        // by the function itself, and a name holding nothing is read
+        // from the outermost binding as before, so no program can tell
+        // the difference; what the room is for is text handed over
+        // while the run goes, which is a piece of the function that
+        // read it and needs somewhere in its frame to write. Only what
+        // the language marks as a variable is kept: a bare word names a
+        // constant or a class, and what the builder makes for itself is
+        // none of the program's business.
+        if let (None, Some((i, up))) = (found, routine) {
+            let wears_mark = self.table.letter("identifier.variable_prefix").map_or(true, |mark| name.starts_with(mark));
+            if wears_mark && self.table.flag("ext.stmt.function.own_names") {
+                let own = &mut self.layers[i].idents;
+                own.push(name.to_string());
+                return Address { ident: Rc::from(name), up, at: own.len() - 1, fallback: Some(global) };
+            }
+        }
         match found {
             Some((i, depth, index)) if i != 0 => Address { ident: Rc::from(name), up: depth, at: index, fallback: Some(global) },
             Some((_, depth, index)) => Address { ident: Rc::from(name), up: depth, at: index, fallback: None },
@@ -1258,13 +1297,45 @@ impl<'a> Builder<'a> {
     /// every function there is no layer around this one, so the setting
     /// stands where it is written and is guarded: it happens the first
     /// time the statement is reached and no other time.
+    ///
+    /// Text handed over while the run goes is read afresh each time it
+    /// is reached, so a statement at the top of such text has no run of
+    /// calls to keep anything across. There the statement is nothing
+    /// but a write of the name where the text was read
+    /// (ext.stmt.static.read_in), and what it wrote stays as anything
+    /// else written to that name stays.
     fn static_names(&mut self) -> Res<Form> {
         self.advance();
         let alone = self.layers.len() < 2;
+        let handed_over = self.read_in && self.layers.len() == self.outer_layers && self.table.flag("ext.stmt.static.read_in");
         let sep = self.table.single("syntax.call.separator").map(str::to_string);
         let mut here = Vec::new();
         loop {
             let name = self.need_word("after the static keyword")?;
+            if handed_over {
+                // A name is bound once here as anywhere: nothing is
+                // left behind to show one said twice, so the names
+                // spoken for are gathered and counted on their own.
+                if self.spoken_for.iter().any(|n| *n == name) {
+                    self.stopped_fatally = true;
+                    return Err(format!("Duplicate declaration of static variable {}", name));
+                }
+                self.spoken_for.push(name.clone());
+                let value = if self.on_assign() {
+                    self.advance();
+                    self.expr(0)?
+                } else {
+                    constant(Value::Nil)
+                };
+                here.push(Form::Write(self.address_to_write(&name), Box::new(value)));
+                match &sep {
+                    Some(s) if self.sign(s) => {
+                        self.advance();
+                        continue;
+                    }
+                    _ => return Ok(sequence(here)),
+                }
+            }
             // One name kept between calls is one binding: saying so
             // twice in one program is a thing the language refuses.
             let owner = self.layers.iter().rev().find(|s| s.holds == Holds::Every).expect("the top layer");

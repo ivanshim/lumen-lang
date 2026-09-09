@@ -109,6 +109,7 @@ ext.system.reading.unclosed:L ext.system.reading.unclosed.line:L ext.system.read
 ext.lexical.number.binary_prefix:L ext.lexical.number.octal_prefix:L ext.lexical.number.octal_lead:B \
 ext.lexical.number.separator:L ext.system.integer.bits:N ext.system.real.bits:N ext.system.real.digits:N \
 ext.system.real.figures:L ext.system.real.figures.shown:L \
+ext.stmt.function.own_names:B ext.stmt.static.read_in:B \
 ";
 
 fn tag_shapes(table: &'static str) -> Vec<(&'static str, char)> {

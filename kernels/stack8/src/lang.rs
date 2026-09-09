@@ -323,6 +323,17 @@ pub struct Lang {
     /// bindings, so one written inside another is there for the whole
     /// run once the routine holding it has run.
     pub routines_outermost: bool,
+    /// Whether a name merely read inside a routine is given a place of
+    /// that routine's own, rather than meaning the outermost binding of
+    /// that name. The place holds nothing until something writes there,
+    /// and reading it while it does falls through to the outermost
+    /// binding as before, so this tells only where a write from text
+    /// read in while the run goes may land.
+    pub own_names: bool,
+    /// Whether a `static` written at the top of text read in while the
+    /// run goes stands for a plain write of the name in the scope that
+    /// read it, keeping nothing from one reading to the next.
+    pub static_read_in: bool,
     /// The binding holding what the host found amiss in the request
     /// before the program ran, as a list of pieces of text, and the
     /// words for each thing that may be amiss. The host says only which
@@ -646,6 +657,7 @@ w ext.system.reading.unclosed | w ext.system.reading.unclosed.line | w ext.syste
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 w ext.system.real.figures | w ext.system.real.figures.shown
+b ext.stmt.function.own_names | b ext.stmt.static.read_in
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -1313,6 +1325,8 @@ impl Lang {
             lone_stmt: r.flag("ext.block.lone_statement")?,
             hoisted: r.flag("ext.stmt.function.hoisted")?,
             routines_outermost: r.flag("ext.stmt.function.outermost")?,
+            own_names: r.flag("ext.stmt.function.own_names")?,
+            static_read_in: r.flag("ext.stmt.static.read_in")?,
             body_binding: r.head("ext.system.request.body")?,
             amiss_binding: r.head("ext.system.request.amiss")?,
             amiss_words: {

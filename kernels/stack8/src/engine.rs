@@ -258,7 +258,7 @@ impl<'a> Engine<'a> {
             };
             (named, base)
         });
-        let read = match crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, None, Some(names), within) {
+        let read = match crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, None, Some(names), within, true) {
             Ok(read) => read,
             Err(said) => {
                 let row = self.registry.stopped_at;
