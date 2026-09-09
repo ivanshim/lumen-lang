@@ -970,7 +970,7 @@ impl<'a> Machine<'a> {
     /// A number as a real of the language's own width.
     fn as_wide_real(&self, v: &Value) -> Value {
         match math::ratio_of(v) {
-            Some(r) => math::make_number(r.above, r.beneath, Some(self.real_figures())),
+            Some(r) => math::made_number(r.above, r.beneath, Some(self.real_figures()), r.under),
             None => v.clone(),
         }
     }
