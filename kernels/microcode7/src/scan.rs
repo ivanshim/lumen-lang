@@ -113,6 +113,7 @@ struct Backslash<'a> {
     ends: Option<char>,
     numbered: Option<char>,
     unbracketed: Option<char>,
+    eights: bool,
     open: Option<char>,
     shut: Option<char>,
     amiss: &'a str,
@@ -175,6 +176,21 @@ impl Backslash<'_> {
                     out.extend(src[at + 2..j].iter());
                 }
             }
+            return Ok(j);
+        }
+        // A character named by figures in eights, three of them at
+        // most, counting from the figure the backslash is followed by.
+        // What is asked for beyond the widest character of one byte is
+        // taken by its low eight bits, the way the reference takes it.
+        if self.eights && e.is_digit(8) {
+            let (mut number, mut j) = (e.to_digit(8).expect("a figure in eights"), at + 2);
+            while j < src.len() && j < at + 4 {
+                let Some(d) = src[j].to_digit(8) else { break };
+                number = number * 8 + d;
+                j += 1;
+            }
+            plain.push(out.chars().count());
+            out.push(char::from_u32(number & 0xFF).expect("a character of one byte"));
             return Ok(j);
         }
         // The same by number written bare, no brackets about it: one
@@ -285,6 +301,73 @@ pub fn scan(source: &str, table: &Table) -> Result<Vec<Token>, String> {
     scan_at(source, table).map_err(|(said, _)| said)
 }
 
+/// The place the closing marker holds when nothing is spelling it
+/// out. Quoted text, a string laid over lines under a label, and a
+/// comment written between an opening and a closing word all spell out
+/// whatever stands in them, marker and all, so the search steps over
+/// each of those whole rather than reading within it.
+///
+/// A comment running to the end of its line is the one that does not
+/// shield: the reference lets a marker written in such a comment close
+/// the run, and only the end of the line rescues what comes after. So
+/// such a comment is searched as far as its line reaches and no
+/// further.
+fn code_gives_out(after: &str, closing: &str, table: &Table) -> Option<usize> {
+    let lines = table.strings("lexical.comment_line");
+    let opens = table.strings("lexical.comment_block.open");
+    let shuts = table.strings("lexical.comment_block.close");
+    let quotes = table.letters("lexical.string_quotes");
+    let mut here = 0;
+    while here < after.len() {
+        let ahead = &after[here..];
+        if ahead.starts_with(closing) {
+            return Some(here);
+        }
+        if let Some((_, _, wide)) = folded(ahead, table) {
+            here += wide;
+            continue;
+        }
+        if let Some(n) = opens.iter().position(|o| ahead.starts_with(o.as_str())) {
+            let body = &ahead[opens[n].len()..];
+            let shut = shuts.get(n).map_or("", String::as_str);
+            here += opens[n].len() + body.find(shut).map_or(body.len(), |p| p + shut.len());
+            continue;
+        }
+        if lines.iter().any(|m| ahead.starts_with(m.as_str())) {
+            let reach = ahead.find('\n').map_or(ahead.len(), |p| p + 1);
+            if let Some(p) = ahead[..reach].find(closing) {
+                return Some(here + p);
+            }
+            here += reach;
+            continue;
+        }
+        let c = ahead.chars().next().expect("a character");
+        here += c.len_utf8();
+        if !quotes.contains(&c) {
+            continue;
+        }
+        // Within quotes, on to the mark that shuts them, counting a
+        // backslash as taking the character behind it out of the
+        // reckoning. Quotes never shut reach to the end of the text.
+        let mut shielded = false;
+        for (n, d) in after[here..].char_indices() {
+            if shielded {
+                shielded = false;
+                continue;
+            }
+            if d == '\\' {
+                shielded = true;
+                continue;
+            }
+            if d == c {
+                here += n + d.len_utf8();
+                break;
+            }
+        }
+    }
+    None
+}
+
 /// The same, saying besides which row the reading stopped on.
 pub fn scan_at(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)> {
     if !table.flag("ext.lexical.template") {
@@ -327,7 +410,7 @@ pub fn scan_at(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)>
         says(&rest[..at], row, &mut out);
         row += rest[..at].matches('\n').count() as u32;
         let after = &rest[at + mark.len()..];
-        let (code, tail) = match closing.and_then(|e| after.find(e)) {
+        let (code, tail) = match closing.and_then(|e| code_gives_out(after, e, table)) {
             Some(end) => (&after[..end], &after[end + closing.map_or(0, str::len)..]),
             None => (after, ""),
         };
@@ -382,6 +465,8 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
     let too_far = table.single("ext.lexical.escape.codepoint.beyond").unwrap_or("Character number too large");
     // The letter beginning a character named by a bare number instead.
     let unbracketed = table.letter("ext.lexical.escape.byte");
+    // Whether figures in eights after a backslash name a character too.
+    let eights = table.flag("ext.lexical.escape.octal");
     let point = table.letter("lexical.number.decimal_point");
     let base = table.letter("lexical.number.base_marker");
     let expo = table.letter("lexical.number.exponent_marker");
@@ -459,6 +544,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                 ends: Some(c),
                 numbered: if is_raw { None } else { numbered },
                 unbracketed: if is_raw { None } else { unbracketed },
+                eights: !is_raw && eights,
                 open: number_open,
                 shut: number_close,
                 amiss: badly,
@@ -582,6 +668,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                 ends: None,
                 numbered,
                 unbracketed,
+                eights,
                 open: number_open,
                 shut: number_close,
                 amiss: badly,

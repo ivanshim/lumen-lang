@@ -360,6 +360,23 @@ impl<'a> Cursor<'a> {
             }
             return Ok(());
         }
+        // A character named by a run of figures in eights, up to
+        // three of them, the backslash itself beginning the run. A
+        // number past the widest a character of one byte holds is
+        // taken by its low eight bits, as the reference takes it.
+        if how.numbered && self.lang.octal_escapes && next.is_digit(8) {
+            let mut number = next.to_digit(8).expect("a figure in eights");
+            let mut figures = 1;
+            while figures < 3 {
+                let Some(c) = self.look(0).and_then(|c| c.to_digit(8)) else { break };
+                number = number * 8 + c;
+                figures += 1;
+                self.step();
+            }
+            shielded.push(s.chars().count());
+            s.push(char::from_u32(number & 0xFF).expect("a character of one byte"));
+            return Ok(());
+        }
         // The same by number, but written bare: one figure in sixteens
         // or two, with no brackets about them. A letter with no figure
         // after it names no character and stands for itself.
@@ -822,6 +839,70 @@ pub fn lex_at(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)> 
 /// stands between the prologue and the epilogue is read as code, and
 /// everything else is written out as it stands, as though the program
 /// had said so itself.
+/// Where a run of code ends: the first closing marker that is not
+/// standing inside something spelling it out. One written between
+/// quotes, or in a string laid over lines, is part of what that string
+/// says and ends nothing, so the run cannot simply be looked through
+/// for the marker. A block comment shields it in the same way.
+///
+/// A comment running to the end of its line does not shield it: the
+/// reference ends the run at a marker written in one, and only the
+/// line end saves what follows. That is why such a comment is read up
+/// to whichever comes first.
+fn code_ends_at(after: &str, closing: &str, lang: &Lang) -> Option<usize> {
+    let mut at = 0;
+    while at < after.len() {
+        let rest = &after[at..];
+        if rest.starts_with(closing) {
+            return Some(at);
+        }
+        if lang.heredoc.as_deref().map_or(false, |mark| rest.starts_with(mark)) {
+            if let Some(held) = heredoc_at(rest, lang) {
+                at += held.done;
+                continue;
+            }
+        }
+        if let Some((open, close)) = lang.block_comments.iter().find(|(o, _)| rest.starts_with(o.as_str())) {
+            let body = &rest[open.len()..];
+            at += open.len() + body.find(close.as_str()).map_or(body.len(), |p| p + close.len());
+            continue;
+        }
+        if lang.line_comments.iter().any(|m| rest.starts_with(m.as_str())) {
+            let line = &rest[..rest.find('\n').map_or(rest.len(), |p| p + 1)];
+            match line.find(closing) {
+                Some(p) => return Some(at + p),
+                None => at += line.len(),
+            }
+            continue;
+        }
+        let c = rest.chars().next().expect("a character");
+        if lang.quotes.contains(&c) {
+            at += quoted_width(rest, c);
+            continue;
+        }
+        at += c.len_utf8();
+    }
+    None
+}
+
+/// How far a string written between marks reaches, counted from the
+/// mark that opened it: a mark shielded by a backslash is a mark no
+/// longer, and one never closed reaches to the end of what there is.
+fn quoted_width(text: &str, quote: char) -> usize {
+    let mut at = quote.len_utf8();
+    while at < text.len() {
+        let c = text[at..].chars().next().expect("a character");
+        at += c.len_utf8();
+        if c == quote {
+            return at;
+        }
+        if c == '\\' {
+            at += text[at..].chars().next().map_or(0, char::len_utf8);
+        }
+    }
+    text.len()
+}
+
 fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)> {
     let opening = lang.prologue.clone().ok_or_else(|| ("A template needs lexical.prologue".to_string(), 0))?;
     let closing = lang.epilogue.first().cloned();
@@ -858,7 +939,7 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
         told(&rest[..at], &mut out);
         row += rest[..at].matches('\n').count();
         let after = &rest[at + mark.len()..];
-        let (code, tail) = match closing.as_ref().and_then(|e| after.find(e.as_str())) {
+        let (code, tail) = match closing.as_ref().and_then(|e| code_ends_at(after, e, lang)) {
             Some(end) => (&after[..end], &after[end + closing.as_ref().map_or(0, String::len)..]),
             None => (after, ""),
         };

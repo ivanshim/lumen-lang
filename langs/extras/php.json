@@ -407,6 +407,7 @@
   "ext.lexical.heredoc": [
     "<<<"
   ],
+  "ext.lexical.escape.octal": true,
   "ext.lexical.interpolating.index.amiss": [
     "string content, expecting \"-\" or identifier or variable or number"
   ],

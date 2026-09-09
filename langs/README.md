@@ -710,6 +710,13 @@ only. The extension labels so far, all from PHP:
   `ext.lexical.escape.codepoint`, which brackets a number of any length.
   The letter with no digit after it names no character and is kept as it
   was written.
+- `ext.lexical.escape.octal`: whether a run of figures in eights right
+  after the escape mark names a character by its number, three figures
+  at most: `"\101"` is an A. Unlike its two sisters above, no letter
+  begins it — the figures follow the mark themselves — so a language
+  that sets this must not read a leading nought as anything else. A
+  number asked for beyond the widest character of one byte is taken by
+  its low eight bits.
 - `ext.lexical.number.amiss`: what a language says of a run of digits it
   cannot read, `08` where noughts do not lead an eight-fold number among
   them. Sister to `ext.lexical.escape.codepoint.amiss`.
@@ -1372,6 +1379,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.escape.codepoint.beyond` | - | - | - | - | - | - | - | `Invalid UTF-8 codepoint escape sequence: Codepoint too large` | - | - |
 | `ext.lexical.escape.codepoint.close` | - | - | - | - | - | - | - | `}` | - | - |
 | `ext.lexical.escape.codepoint.open` | - | - | - | - | - | - | - | `{` | - | - |
+| `ext.lexical.escape.octal` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.lexical.heredoc` | - | - | - | - | - | - | - | `<<<` | - | - |
 | `ext.lexical.interpolating.index.amiss` | - | - | - | - | - | - | - | `string content, expecting "-" or identifier or variable or number` | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | - | - | - | `"` | - | - |
