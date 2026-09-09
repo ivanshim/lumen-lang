@@ -1,1 +1,2 @@
-print(1 in [1, 2])
+for x in range(3):
+    print(x)
