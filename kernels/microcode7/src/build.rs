@@ -2531,6 +2531,7 @@ impl<'a> Builder<'a> {
         }
         self.advance();
         let ranged = self.look().shape == Shape::Bare
+            && !table.flag("ext.builtin.range.value")
             && table.prims.get(&self.look().lexeme) == Some(&Prim::Span)
             && table.single("syntax.call.open").map_or(false, |o| self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == o);
         let (start, end) = if ranged {

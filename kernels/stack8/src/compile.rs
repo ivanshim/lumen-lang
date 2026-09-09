@@ -2071,7 +2071,7 @@ impl<'a> Compiler<'a> {
             return Err(format!("Expected '{}' after for loop variable, got: {}", lang.in_words[0], self.look().lexeme));
         }
         self.take();
-        let range_call = self.look().shape == Shape::Instr
+        let range_call = !lang.range_value && self.look().shape == Shape::Instr
             && lang.builtins.get(&self.look().lexeme) == Some(&Builtin::Span)
             && lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).is_lexeme(Shape::Sign, &c.open));
         if range_call {

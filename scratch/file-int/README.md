@@ -39,3 +39,8 @@ lexical piece, so an integer expression may carry on after a backslash.
 The same spelling carries a quoted string across a line end. This is
 the small reading needed after the bit signs expose the continued line
 in the long-number tests; the merge should keep the lexical account.
+
+`14.py` asks a loop to walk the value that `ext.builtin.range.value`
+already gives, with one, two and three bounds. Such a call must take the
+collection path, not the older counted-loop reading that demands two
+bounds. No new builtin or label is needed for this reading.
