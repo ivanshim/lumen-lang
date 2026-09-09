@@ -946,6 +946,13 @@ impl<'a> Builder<'a> {
             self.generator_seen = enclosing_yield;
         }
         let scope = self.layers.pop().unwrap();
+        if generator {
+            let enclosing = self.layers.iter().skip(1).filter(|layer| layer.holds == Holds::Every)
+                .flat_map(|layer| layer.idents.iter())
+                .filter(|name| !scope.idents.contains(name) && !scope.aliases.iter().any(|(local, _)| local == *name))
+                .map(String::as_str).collect::<Vec<_>>();
+            if borrows_enclosing(&body, &enclosing) { body = self.scope_unrun("ext.stmt.yield.unsupported"); }
+        }
         self.naming.pop();
         let carried = std::mem::replace(&mut self.carrying, around);
         Ok(constant(Value::Routine(Rc::new(Routine { generator, gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, traps: catches, carried, body }))))
@@ -4394,7 +4401,8 @@ impl<'a> Builder<'a> {
         let t = self.look().clone();
         if self.reading_yield && table.spells("op.mul", &t.lexeme) {
             self.advance();
-            return self.monadic_expr();
+            let value = self.monadic_expr()?;
+            return Ok(if table.flag("ext.stmt.yield.suspends") { self.scope_unrun("ext.stmt.yield.unsupported") } else { value });
         }
         if self.key("ext.op.await") {
             self.advance();
@@ -5492,7 +5500,10 @@ impl<'a> Builder<'a> {
             self.pos = expression_at;
             let spread = self.on_any(if dictionary { "ext.syntax.map.spread" } else { "ext.syntax.array.spread" });
             if spread { self.advance(); }
+            let previous = self.reading_yield;
+            self.reading_yield |= answer.is_empty();
             let mut term = self.expr(0)?;
+            self.reading_yield = previous;
             if dictionary && !spread {
                 self.need_sign(self.table.single("syntax.map.pair").unwrap(), "in a map comprehension")?;
                 let worth = self.expr(0)?;
@@ -6412,6 +6423,27 @@ fn slice_target(place: &Form) -> bool {
         Form::Apply(Callee::Prim(Prim::At, _), given) if given.len() == 2 => {
             matches!(&given[1], Form::Apply(Callee::Prim(Prim::SliceBounds, _), _)) || slice_target(&given[0])
         }
+        _ => false,
+    }
+}
+
+fn borrows_enclosing(form: &Form, names: &[&str]) -> bool {
+    let uses = |address: &Address| names.contains(&address.ident.as_ref());
+    match form {
+        Form::Read(place) | Form::Glance(place) | Form::Share(place) => uses(place),
+        Form::Write(_, value) | Form::OnLine(_, value) | Form::Muted(value) | Form::Silenced(value) => borrows_enclosing(value, names),
+        Form::Apply(Callee::Code(target), args) => borrows_enclosing(target, names) || args.iter().any(|arg| borrows_enclosing(arg, names)),
+        Form::Apply(_, args) => args.iter().any(|arg| borrows_enclosing(arg, names)),
+        Form::Const(Value::Routine(arm)) if arm.frameless => borrows_enclosing(&arm.body, names),
+        Form::Cycle { test, body, step, otherwise, .. } => borrows_enclosing(test, names) || borrows_enclosing(body, names)
+            || step.as_deref().map_or(false, |part| borrows_enclosing(part, names)) || otherwise.as_deref().map_or(false, |part| borrows_enclosing(part, names)),
+        Form::Dyad { a, b, .. } => [a, b].iter().any(|part| match part {
+            Input::Address(place) => uses(place), Input::Form(form) => borrows_enclosing(form, names), _ => false,
+        }),
+        Form::Assert { condition, message } => borrows_enclosing(condition, names) || borrows_enclosing(message, names),
+        Form::Attempt { body, clauses, last, otherwise } => borrows_enclosing(body, names)
+            || clauses.iter().any(|clause| borrows_enclosing(&clause.body, names))
+            || last.as_deref().map_or(false, |part| borrows_enclosing(part, names)) || otherwise.as_deref().map_or(false, |part| borrows_enclosing(part, names)),
         _ => false,
     }
 }

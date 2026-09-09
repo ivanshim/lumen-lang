@@ -1754,6 +1754,7 @@ impl<'a> Engine<'a> {
         if let Some(item) = kept.current.take() { return Ok(Some(item)); }
         kept.started = true;
         let Some(program) = kept.program.clone() else {
+            if !matches!(sent, Value::Null) { return Err(self.lang.yield_unsupported[0].clone().into()); }
             let item = kept.items.get(kept.pc).cloned();
             kept.pc += usize::from(item.is_some());
             kept.closed = item.is_none();

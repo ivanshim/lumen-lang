@@ -1675,6 +1675,7 @@ impl<'a> Machine<'a> {
         state.begun = true;
         if state.ready.is_some() { return Ok(state.ready.take()); }
         if let Some(members) = &mut state.members {
+            if !matches!(sent, Value::Nil) { return Err(self.generator_words("unsupported").into()); }
             let next = members.next();
             state.ended = next.is_none();
             return Ok(next);

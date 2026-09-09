@@ -854,6 +854,19 @@ impl<'a> Compiler<'a> {
         }
         let unit = self.pieces.pop().expect("the unit");
         let mut instrs = if returns_value && !used { relocated(unit.instrs.into_iter().skip(2).collect(), -2) } else { unit.instrs };
+        if unit.generator && self.lang.yield_suspends {
+            let enclosing = self.pieces.iter().filter(|piece| !piece.outermost).flat_map(|piece| piece.idents.iter()).collect::<Vec<_>>();
+            let uncaptured = instrs.iter().any(|word| match word {
+                Instr::Read(cell) => cell.near.is_empty() && enclosing.iter().any(|name| name.as_str() == cell.ident.as_ref())
+                    && !unit.idents.iter().any(|name| name.as_str() == cell.ident.as_ref())
+                    && !unit.globals.iter().any(|(name, _)| name.as_str() == cell.ident.as_ref()),
+                _ => false,
+            });
+            if uncaptured {
+                instrs = vec![Instr::Const(Value::text(self.lang.yield_unsupported.first().map_or("", String::as_str))),
+                    Instr::Act(Action::Builtin(Builtin::Raise, Rc::from("")), 1)];
+            }
+        }
         if unit.generator && !self.lang.yield_suspends {
             instrs = vec![Instr::Const(Value::text(self.lang.yield_unrun.first().map_or("", String::as_str))),
                 Instr::Act(Action::Builtin(Builtin::Raise, Rc::from("")), 1)];
@@ -4687,7 +4700,13 @@ impl<'a> Compiler<'a> {
         let tok = self.look().clone();
         if self.yield_operand && lang.dyadic.get(&tok.lexeme).map_or(false, |op| matches!(op.action, Action::Mul)) {
             self.take();
-            return self.prefix();
+            let start = self.mark();
+            self.prefix()?;
+            if lang.yield_suspends {
+                self.piece().instrs.truncate(start);
+                self.scope_fault(&lang.yield_unsupported);
+            }
+            return Ok(());
         }
         if self.on_keyword(&lang.await_words) {
             self.take();
@@ -5953,7 +5972,10 @@ impl<'a> Compiler<'a> {
         while !self.at_symbol(&pair.close) {
             let spread = if map { self.on_any(&self.lang.map_spread) } else { self.on_any(&self.lang.array_spread) };
             if spread { self.take(); }
+            let before_yield = self.yield_operand;
+            if result.is_empty() { self.yield_operand = true; }
             self.expr(0)?;
+            self.yield_operand = before_yield;
             if map && !spread {
                 let mark = self.lang.pair_mark.clone().expect("map pair mark");
                 self.want_sign(&mark, "between a map key and value")?;
