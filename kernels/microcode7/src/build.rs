@@ -574,6 +574,13 @@ fn sequence(mut items: Vec<Form>) -> Form {
     }
 }
 
+/// Whether an operation can take this side as it stands, wanting no
+/// holding place of its own for it: a name or a plain value is fetched
+/// by the operation itself, so nothing at all happens before it.
+fn as_it_stands(node: &Form) -> bool {
+    matches!(node, Form::Read(_)) || matches!(node, Form::Const(v) if !matches!(v, Value::Routine(_)))
+}
+
 fn inert(node: &Form) -> bool {
     match node {
         Form::Const(_) | Form::Read(_) => true,
@@ -3206,7 +3213,30 @@ impl<'a> Builder<'a> {
                 }
                 other => {
                     let right = self.expr(floor_right)?;
-                    prim_call(other, vec![left, right])
+                    // A bare name is fetched when the operator falls,
+                    // not when it stands, so a write on the far side is
+                    // seen by it. Nothing else is fetched that late: a
+                    // property, a class's own value, a place in an
+                    // array or what a call gave back is set down where
+                    // it stands, out of a later write's reach. So the
+                    // far side is set down first and the name looked at
+                    // after it, both operands then being addresses the
+                    // operation reads for itself.
+                    let late = match &left {
+                        Form::Read(slot) if !as_it_stands(&right) => Some(slot.ident.clone()),
+                        _ => None,
+                    };
+                    match late {
+                        Some(named) => {
+                            let by = self.gensym("side");
+                            let set = Form::Write(by.clone(), Box::new(right));
+                            // Where the name is looked for again, since
+                            // the far side may be what first bound it.
+                            let now = self.read(&named);
+                            sequence(vec![set, prim_call(other, vec![now, Form::Read(by)])])
+                        }
+                        None => prim_call(other, vec![left, right]),
+                    }
                 }
             };
         }

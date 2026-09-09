@@ -3219,6 +3219,14 @@ impl<'a> Compiler<'a> {
         self.expr_at(floor, true)
     }
 
+    /// Whether all that has been laid down from here is one word an
+    /// operation can read for itself: a name or a number wants no
+    /// holding place, so nothing stands between it and the operation.
+    fn lone_operand(&mut self, from: usize) -> bool {
+        let instrs = &self.piece().instrs;
+        instrs.len() == from + 1 && operand_of(&instrs[from]).is_some()
+    }
+
     /// An expression. Where a language counts an assignment as one, a
     /// target followed by a sign that writes is read as an assignment
     /// whose value is what was written — but not where the assignment
@@ -3313,7 +3321,39 @@ impl<'a> Compiler<'a> {
                     self.act(Action::AsBool, 1);
                 }
                 op => {
+                    // A lone name is read where the operator falls and
+                    // not where it stands, so a write on the other side
+                    // is seen by it. Only a name is fetched that late: a
+                    // property, a class's own value, a place in an array
+                    // or what a call gave back is put in a holding place
+                    // as it stands, and a write cannot reach it there.
+                    let named = match self.piece().instrs[from..] {
+                        [Instr::Read(ref cell)] if !cell.moving => Some(cell.clone()),
+                        _ => None,
+                    };
+                    if named.is_some() {
+                        self.piece().instrs.truncate(from);
+                    }
                     self.expr(right_floor)?;
+                    match named {
+                        // Where the other side is itself a name or a
+                        // number the reading was late already: the
+                        // peephole takes both straight from the word.
+                        Some(cell) if self.lone_operand(from) => {
+                            self.piece().instrs.insert(from, Instr::Read(cell));
+                        }
+                        // Otherwise what the other side came to is
+                        // stowed and the name read after it, the two
+                        // reads folding back into the operation. The
+                        // name is looked for again there, since the
+                        // other side may be what first bound it.
+                        Some(cell) => {
+                            self.write(TEMP_CELL);
+                            self.read(&cell.ident);
+                            self.read(TEMP_CELL);
+                        }
+                        None => {}
+                    }
                     self.act(op, 2);
                 }
             }
