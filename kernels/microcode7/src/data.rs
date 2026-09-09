@@ -119,6 +119,10 @@ impl Progression {
 
 #[derive(Clone)]
 pub enum Value {
+    Intrinsic(Rc<str>),
+    Tuple(Rc<Vec<Value>>),
+    Set(Rc<Vec<Value>>),
+    Iterator(Rc<RefCell<std::collections::VecDeque<Value>>>),
     Channel(u8),
     Progression(Rc<Progression>),
     Small(i64),
@@ -196,16 +200,17 @@ impl Value {
             Value::Frac(e) => if e.places.is_some() { Kind::Decimal } else { Kind::Fraction },
             Value::Text(_) => Kind::Chars,
             Value::Flag(_) => Kind::Truth,
-            Value::Vector(_) | Value::Dict(_) => Kind::Vector,
+            Value::Tuple(_) | Value::Set(_) | Value::Vector(_) | Value::Dict(_) => Kind::Vector,
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::Ellipsis | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
+            Value::Intrinsic(_) | Value::Iterator(_) | Value::Ellipsis | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
         })
     }
 
     pub fn is_true(&self) -> bool {
         match self {
+            Value::Tuple(items) | Value::Set(items) => !items.is_empty(),
             Value::Progression(walk) => walk.count() != BigInt::zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -231,11 +236,11 @@ impl Value {
             Value::Flag(b) => BigInt::from(*b as i64),
             Value::Nil | Value::Unset => BigInt::zero(),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
-            Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
+            Value::Tuple(_) | Value::Set(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
             Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
-            Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
+            Value::Intrinsic(_) | Value::Iterator(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
             Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
             Value::Span(_) => return Err("Cannot coerce slice to number".to_string()),
             Value::KindOf(_) => return Err("Cannot coerce kind meta-value to number".to_string()),
@@ -270,7 +275,7 @@ impl Value {
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
-            (Value::Vector(a), Value::Vector(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
+            (Value::Tuple(a), Value::Tuple(b)) | (Value::Set(a), Value::Set(b)) | (Value::Vector(a), Value::Vector(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Dict(a), Value::Dict(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
             }
@@ -395,6 +400,9 @@ impl Value {
 
     pub fn bare(&self) -> String {
         match self {
+            Value::Tuple(_) | Value::Set(_) => self.quoted(),
+            Value::Intrinsic(name) => format!("<built-in function {}>", name),
+            Value::Iterator(_) => String::from("<iterator>"),
             Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),
             Value::Progression(p) => {
                 let tail = if p.stride == BigInt::one() { String::new() } else { format!(", {}", p.stride) };

@@ -188,6 +188,7 @@ pub struct Lang {
     pub quote_close: Vec<String>,
 
     pub builtins: HashMap<String, Builtin>,
+    pub core_words: HashMap<String, Vec<String>>,
     pub print_sep: Vec<String>,
     pub print_end: Vec<String>,
     pub print_file: Vec<String>,
@@ -780,7 +781,7 @@ w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
 w ext.op.comprehension.async | w ext.op.comprehension.async.unavailable | w ext.op.comprehension.target.unavailable | w ext.builtin.sum.non_number | w ext.builtin.range.non_integer | w ext.builtin.range.zero_step
 
-w ext.op.comprehension.for | w ext.op.comprehension.in | w ext.op.comprehension.if | b ext.syntax.set | w ext.syntax.array.spread | w ext.syntax.map.spread | w ext.syntax.collection.unwalkable | w ext.syntax.map.spread.unmapped | w ext.op.comprehension.unpack.amiss | b ext.builtin.range.value | w ext.builtin.sum | w ext.builtin.list | w ext.builtin.any
+w ext.op.comprehension.for | w ext.op.comprehension.in | w ext.op.comprehension.if | b ext.syntax.set | w ext.syntax.array.spread | w ext.syntax.map.spread | w ext.syntax.collection.unwalkable | w ext.syntax.map.spread.unmapped | w ext.op.comprehension.unpack.amiss | b ext.builtin.range.value | w ext.builtin.isinstance | w ext.builtin.tuple | w ext.builtin.set | w ext.builtin.dict | w ext.builtin.sorted | w ext.builtin.reversed | w ext.builtin.enumerate | w ext.builtin.zip | w ext.builtin.map | w ext.builtin.filter | w ext.builtin.all | w ext.builtin.min | w ext.builtin.max | w ext.builtin.abs | w ext.builtin.round | w ext.builtin.divmod | w ext.builtin.pow | w ext.builtin.hex | w ext.builtin.oct | w ext.builtin.bin | w ext.builtin.repr | w ext.builtin.bool | w ext.builtin.callable | w ext.builtin.id | w ext.builtin.hash | w ext.builtin.iter | w ext.builtin.next | w ext.builtin.hasattr | w ext.builtin.getattr | w ext.builtin.setattr | w ext.builtin.delattr | w ext.builtin.vars | w ext.builtin.key | w ext.builtin.reverse | w ext.builtin.start | w ext.builtin.default | w ext.builtin.round.ndigits | w ext.builtin.round.number | w ext.builtin.pow.base | w ext.builtin.pow.exp | w ext.builtin.pow.mod | w ext.builtin.core.uniterable | w ext.builtin.core.uncallable | w ext.builtin.core.unhashable | w ext.builtin.core.unready | w ext.builtin.core.exhausted | w ext.builtin.core.isinstance.amiss | w ext.builtin.core.empty | w ext.builtin.core.arity | w ext.builtin.core.attribute | w ext.builtin.core.attribute.name | w ext.builtin.core.vars | w ext.builtin.core.zero | w ext.builtin.core.mod.zero | w ext.builtin.core.inverse | w ext.builtin.core.default.many | w ext.builtin.core.dict.pair | w ext.builtin.sum | w ext.builtin.list | w ext.builtin.any
 
 w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
@@ -1257,6 +1258,38 @@ impl Lang {
 
         let mut natives = HashMap::new();
         for (tag, native) in [
+            ("ext.builtin.isinstance", Builtin::InstanceOf),
+            ("ext.builtin.tuple", Builtin::Tuple),
+            ("ext.builtin.set", Builtin::Set),
+            ("ext.builtin.dict", Builtin::Dict),
+            ("ext.builtin.sorted", Builtin::Sorted),
+            ("ext.builtin.reversed", Builtin::Reversed),
+            ("ext.builtin.enumerate", Builtin::Enumerate),
+            ("ext.builtin.zip", Builtin::Zip),
+            ("ext.builtin.map", Builtin::Map),
+            ("ext.builtin.filter", Builtin::Filter),
+            ("ext.builtin.all", Builtin::All),
+            ("ext.builtin.min", Builtin::Minimum),
+            ("ext.builtin.max", Builtin::Maximum),
+            ("ext.builtin.abs", Builtin::Absolute),
+            ("ext.builtin.round", Builtin::Round),
+            ("ext.builtin.divmod", Builtin::Divmod),
+            ("ext.builtin.pow", Builtin::Power),
+            ("ext.builtin.hex", Builtin::Hex),
+            ("ext.builtin.oct", Builtin::Oct),
+            ("ext.builtin.bin", Builtin::Bin),
+            ("ext.builtin.repr", Builtin::Repr),
+            ("ext.builtin.bool", Builtin::Bool),
+            ("ext.builtin.callable", Builtin::Callable),
+            ("ext.builtin.id", Builtin::Identity),
+            ("ext.builtin.hash", Builtin::Hash),
+            ("ext.builtin.iter", Builtin::Iter),
+            ("ext.builtin.next", Builtin::Next),
+            ("ext.builtin.hasattr", Builtin::HasAttr),
+            ("ext.builtin.getattr", Builtin::GetAttr),
+            ("ext.builtin.setattr", Builtin::SetAttr),
+            ("ext.builtin.delattr", Builtin::DelAttr),
+            ("ext.builtin.vars", Builtin::Vars),
             ("ext.builtin.sum", Builtin::Sum), ("ext.builtin.list", Builtin::List), ("ext.builtin.any", Builtin::Any),
             ("builtin.emit", Builtin::Echo), ("builtin.print", Builtin::Say), ("builtin.write", Builtin::Out),
             ("builtin.len", Builtin::Length), ("builtin.char_at", Builtin::CharAtIndex), ("builtin.ord", Builtin::CodeOf),
@@ -1341,7 +1374,9 @@ impl Lang {
         prefix.push_str(name.get(1..).unwrap_or(""));
         prefix.push_str("Error");
 
+        let core_words = ["key", "reverse", "start", "default", "round.ndigits", "round.number", "pow.base", "pow.exp", "pow.mod", "core.uniterable", "core.uncallable", "core.unhashable", "core.unready", "core.exhausted", "core.isinstance.amiss", "core.empty", "core.arity", "core.attribute", "core.attribute.name", "core.vars", "core.zero", "core.mod.zero", "core.inverse", "core.default.many", "core.dict.pair"].into_iter().map(|n| Ok((n.to_string(), r.strings(&format!("ext.builtin.{}", n))?))).collect::<Result<HashMap<_, _>, String>>()?;
         let mut lang = Lang {
+            core_words,
             ident: name,
             extensions: r.strings("extensions")?,
             banner: prefix,

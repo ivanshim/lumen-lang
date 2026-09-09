@@ -315,6 +315,7 @@ pub enum Action {
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    InstanceOf, Tuple, Set, Dict, Sorted, Reversed, Enumerate, Zip, Map, Filter, All, Minimum, Maximum, Absolute, Round, Divmod, Power, Hex, Oct, Bin, Repr, Bool, Callable, Identity, Hash, Iter, Next, HasAttr, GetAttr, SetAttr, DelAttr, Vars,
     Sum,
     List,
     Any,

@@ -115,6 +115,10 @@ impl Counted {
 
 #[derive(Debug, Clone)]
 pub enum Value {
+    Native(crate::code::Builtin, Rc<str>),
+    Tuple(Rc<Vec<Value>>),
+    Set(Rc<Vec<Value>>),
+    Cursor(Rc<RefCell<(Vec<Value>, usize)>>),
     Stream(bool),
     Counted(Rc<Counted>),
     Small(i64),
@@ -194,7 +198,7 @@ impl Value {
             Value::Real(_) => Sort::Real,
             Value::Text(_) => Sort::Text,
             Value::Flag(_) => Sort::Boolean,
-            Value::Array(_) | Value::Map(_) => Sort::Array,
+            Value::Tuple(_) | Value::Set(_) | Value::Array(_) | Value::Map(_) => Sort::Array,
             Value::Bond(shared) => return shared.borrow().sort(),
             Value::Class(_) | Value::Object(_) => return None,
             Value::Null | Value::SortOf(_) => Sort::Null,
@@ -223,6 +227,8 @@ impl Value {
 
     pub fn is_true(&self) -> bool {
         match self {
+            Value::Native(..) | Value::Cursor(_) => true,
+            Value::Tuple(v) | Value::Set(v) => !v.is_empty(),
             Value::Stream(_) => true,
             Value::Counted(r) => !r.length().is_zero(),
             Value::Flag(b) => *b,
@@ -253,11 +259,11 @@ impl Value {
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
-            Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
+            Value::Tuple(_) | Value::Set(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
             Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
-            Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
+            Value::Native(..) | Value::Cursor(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
@@ -281,7 +287,7 @@ impl Value {
             (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
             (Value::SortOf(a), Value::SortOf(b)) => a == b,
             (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a, b),
-            (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
+            (Value::Tuple(a), Value::Tuple(b)) | (Value::Set(a), Value::Set(b)) | (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Map(a), Value::Map(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
             }
@@ -309,7 +315,7 @@ impl Value {
             return self.identical(&held);
         }
         match (self, other) {
-            (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.identical(y)),
+            (Value::Tuple(a), Value::Tuple(b)) | (Value::Set(a), Value::Set(b)) | (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.identical(y)),
             (Value::Map(a), Value::Map(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.identical(k) && x.identical(y))
             }
@@ -410,6 +416,9 @@ impl Value {
     /// The machine's own text for a value.
     pub fn plain(&self) -> String {
         match self {
+            Value::Native(_, word) => format!("<built-in function {}>", word),
+            Value::Cursor(_) => "<iterator>".to_string(),
+            Value::Tuple(_) | Value::Set(_) => self.core_repr(),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
                 else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },

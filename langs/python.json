@@ -321,11 +321,151 @@
   "system.kind.array": [],
   "system.kind.null": [],
   "ext.block.lone_statement": true,
+  "ext.builtin.abs": [
+    "abs"
+  ],
+  "ext.builtin.all": [
+    "all"
+  ],
   "ext.builtin.any": [
     "any"
   ],
+  "ext.builtin.bin": [
+    "bin"
+  ],
+  "ext.builtin.bool": [
+    "bool"
+  ],
+  "ext.builtin.callable": [
+    "callable"
+  ],
+  "ext.builtin.core.arity": [
+    "TypeError: ",
+    "() received invalid arguments"
+  ],
+  "ext.builtin.core.attribute": [
+    "AttributeError: '",
+    "' object has no attribute '",
+    "'"
+  ],
+  "ext.builtin.core.attribute.name": [
+    "TypeError: attribute name must be string"
+  ],
+  "ext.builtin.core.default.many": [
+    "TypeError: Cannot specify a default for min() or max() with multiple positional arguments"
+  ],
+  "ext.builtin.core.dict.pair": [
+    "ValueError: dictionary update sequence element has length other than 2"
+  ],
+  "ext.builtin.core.empty": [
+    "ValueError: ",
+    "() iterable argument is empty"
+  ],
+  "ext.builtin.core.exhausted": [
+    "StopIteration"
+  ],
+  "ext.builtin.core.inverse": [
+    "ValueError: base is not invertible for the given modulus"
+  ],
+  "ext.builtin.core.isinstance.amiss": [
+    "TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union"
+  ],
+  "ext.builtin.core.mod.zero": [
+    "ValueError: pow() 3rd argument cannot be 0"
+  ],
+  "ext.builtin.core.uncallable": [
+    "TypeError: '",
+    "' object is not callable"
+  ],
+  "ext.builtin.core.unhashable": [
+    "TypeError: unhashable type: '",
+    "'"
+  ],
+  "ext.builtin.core.uniterable": [
+    "TypeError: '",
+    "' object is not iterable"
+  ],
+  "ext.builtin.core.unready": [
+    "NotImplementedError: ",
+    "() is not supported for these values"
+  ],
+  "ext.builtin.core.vars": [
+    "TypeError: vars() argument must have __dict__ attribute"
+  ],
+  "ext.builtin.core.zero": [
+    "ZeroDivisionError: integer division or modulo by zero"
+  ],
+  "ext.builtin.default": [
+    "default"
+  ],
+  "ext.builtin.delattr": [
+    "delattr"
+  ],
+  "ext.builtin.dict": [
+    "dict"
+  ],
+  "ext.builtin.divmod": [
+    "divmod"
+  ],
+  "ext.builtin.enumerate": [
+    "enumerate"
+  ],
+  "ext.builtin.filter": [
+    "filter"
+  ],
+  "ext.builtin.getattr": [
+    "getattr"
+  ],
+  "ext.builtin.hasattr": [
+    "hasattr"
+  ],
+  "ext.builtin.hash": [
+    "hash"
+  ],
+  "ext.builtin.hex": [
+    "hex"
+  ],
+  "ext.builtin.id": [
+    "id"
+  ],
+  "ext.builtin.isinstance": [
+    "isinstance"
+  ],
+  "ext.builtin.iter": [
+    "iter"
+  ],
+  "ext.builtin.key": [
+    "key"
+  ],
   "ext.builtin.list": [
     "list"
+  ],
+  "ext.builtin.map": [
+    "map"
+  ],
+  "ext.builtin.max": [
+    "max"
+  ],
+  "ext.builtin.min": [
+    "min"
+  ],
+  "ext.builtin.next": [
+    "next"
+  ],
+  "ext.builtin.oct": [
+    "oct"
+  ],
+  "ext.builtin.pow": [
+    "pow"
+  ],
+  "ext.builtin.pow.base": [
+    "base"
+  ],
+  "ext.builtin.pow.exp": [
+    "exp"
+  ],
+  "ext.builtin.pow.mod": [
+    "mod"
   ],
   "ext.builtin.print.end": [
     "end"
@@ -370,6 +510,36 @@
   "ext.builtin.range.zero_step": [
     "ValueError: range step must not be zero"
   ],
+  "ext.builtin.repr": [
+    "repr"
+  ],
+  "ext.builtin.reverse": [
+    "reverse"
+  ],
+  "ext.builtin.reversed": [
+    "reversed"
+  ],
+  "ext.builtin.round": [
+    "round"
+  ],
+  "ext.builtin.round.ndigits": [
+    "ndigits"
+  ],
+  "ext.builtin.round.number": [
+    "number"
+  ],
+  "ext.builtin.set": [
+    "set"
+  ],
+  "ext.builtin.setattr": [
+    "setattr"
+  ],
+  "ext.builtin.sorted": [
+    "sorted"
+  ],
+  "ext.builtin.start": [
+    "start"
+  ],
   "ext.builtin.sum": [
     "sum"
   ],
@@ -403,6 +573,15 @@
   ],
   "ext.builtin.to_string.unready": [
     "NotImplementedError: str encoding and errors are not supported"
+  ],
+  "ext.builtin.tuple": [
+    "tuple"
+  ],
+  "ext.builtin.vars": [
+    "vars"
+  ],
+  "ext.builtin.zip": [
+    "zip"
   ],
   "ext.lexical.escape.byte": [
     "x"

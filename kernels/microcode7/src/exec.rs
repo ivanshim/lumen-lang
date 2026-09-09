@@ -317,7 +317,7 @@ impl<'a> Machine<'a> {
     /// for its key where the places carry none.
     fn places_with_keys(v: &Value) -> Vec<(Value, Value)> {
         match v {
-            Value::Vector(items) => items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect(),
+            Value::Vector(items) | Value::Tuple(items) | Value::Set(items) => items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect(),
             Value::Dict(pairs) => pairs.as_ref().clone(),
             _ => Vec::new(),
         }
@@ -483,7 +483,7 @@ impl<'a> Machine<'a> {
                     }
                     None => {
                         let far = match &v[0] {
-                            Value::Vector(items) => items.len(),
+                            Value::Vector(items) | Value::Tuple(items) | Value::Set(items) => items.len(),
                             Value::Dict(pairs) => pairs.len(),
                             Value::Thing(thing) => thing.holds.borrow().len(),
                             _ => 0,
@@ -997,7 +997,7 @@ impl<'a> Machine<'a> {
 
     fn quoted_remainder(&self, item: &Value) -> Result<String, String> {
         match item {
-            Value::Vector(elements) => {
+            Value::Vector(elements) | Value::Tuple(elements) | Value::Set(elements) => {
                 let mut shown = Vec::new();
                 for element in elements.iter() { shown.push(self.quoted_remainder(element)?); }
                 return Ok(format!("[{}]", shown.join(", ")));
@@ -1037,7 +1037,7 @@ impl<'a> Machine<'a> {
     fn text_remainder(&self, pattern: &str, rhs: &Value) -> Result<String, String> {
         let unsupported = self.table.single("ext.op.rem.format.unsupported").unwrap_or_default();
         let mismatch = self.table.single("ext.op.rem.format.arguments").unwrap_or_default();
-        let supplied = match rhs { Value::Vector(list) => list.as_slice(), _ => std::slice::from_ref(rhs) };
+        let supplied = match rhs { Value::Vector(list) | Value::Tuple(list) | Value::Set(list) => list.as_slice(), _ => std::slice::from_ref(rhs) };
         let mut arguments = supplied.iter();
         let letters: Vec<char> = pattern.chars().collect();
         let mut at = 0;
@@ -1893,7 +1893,7 @@ impl<'a> Machine<'a> {
                         let retained = items.iter().enumerate().filter(|(j, _)| *j != position as usize).map(|(_, v)| v.clone()).collect();
                         Value::Vector(Rc::new(retained))
                     }
-                    Value::Vector(items) => {
+                    Value::Vector(items) | Value::Tuple(items) | Value::Set(items) => {
                         let i = as_index(&at)?;
                         Value::Dict(Rc::new(
                             items
@@ -2567,7 +2567,7 @@ impl<'a> Machine<'a> {
     /// this way: the ones that hold on to the pieces they are written
     /// with have nothing to work on when there are none.
     fn word_it_spells(&mut self, stands: &Value, args: &[Form], frame: &Rc<Env>) -> Option<Res<Value>> {
-        let Value::Text(word) = stands else { return None };
+        let word = match stands { Value::Text(word) | Value::Intrinsic(word) => word, _ => return None };
         let op = self.table.prims.get(word.as_ref()).copied()?;
         let name = word.to_string();
         Some((|| {
@@ -2717,7 +2717,7 @@ impl<'a> Machine<'a> {
 
     /// Fit only the names the builtin owns. The print writer answers
     /// here; the other calls go on with their places filled.
-    fn builtin_names(&self, op: Prim, name: &str, positional: &mut Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Option<Value>> {
+    fn builtin_names(&mut self, op: Prim, name: &str, positional: &mut Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Option<Value>> {
         let table = self.table;
         let mut seen = std::collections::HashSet::new();
         for (key, _) in &keywords {
@@ -2760,8 +2760,12 @@ impl<'a> Machine<'a> {
             }
             return Ok(Some(Value::Nil));
         }
+        if Self::is_core_primitive(op) {
+            return self.core_primitive(op, name, positional.clone(), keywords).map(Some).map_err(Escape::Error);
+        }
         for (key, value) in keywords {
             let index = match op {
+                Prim::Total if table.spells("ext.builtin.start", &key) => 1,
                 Prim::AsInt if table.spells("ext.builtin.to_int.base", &key) => 1,
                 Prim::AsText if table.spells("ext.builtin.to_string.object", &key) => 0,
                 Prim::AsText if table.spells("ext.builtin.to_string.encoding", &key) || table.spells("ext.builtin.to_string.errors", &key) => {
@@ -2866,7 +2870,7 @@ impl<'a> Machine<'a> {
                                 place += 1;
                             }
                         }
-                        Value::Vector(values) => positions.extend(values.iter().cloned()),
+                        Value::Vector(values) | Value::Tuple(values) | Value::Set(values) => positions.extend(values.iter().cloned()),
                         Value::Dict(entries) => positions.extend(entries.iter().map(|entry| entry.0.clone())),
                         Value::Text(text) => {
                             for letter in text.chars() { positions.push(Value::text(&letter.to_string())); }
@@ -3391,6 +3395,7 @@ impl<'a> Machine<'a> {
     // ---------- operations
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if Self::is_core_primitive(op) { return self.core_primitive(op, name, v.to_vec(), Vec::new()); }
         let w = self.wording();
         let n = |k: usize| -> Result<(), String> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
@@ -3465,7 +3470,7 @@ impl<'a> Machine<'a> {
                         if wants_key { Value::Small(at as i64) }
                         else { walk.item(&BigInt::from(at)).ok_or_else(|| self.argument_fault("ext.builtin.range.index", None))? }
                     }
-                    Value::Vector(items) => match items.get(at) {
+                    Value::Vector(items) | Value::Tuple(items) | Value::Set(items) => match items.get(at) {
                         Some(_) if wants_key => Value::Small(at as i64),
                         Some(x) => x.clone(),
                         None => return Err(format!("Array index {} out of bounds (length: {})", at, items.len())),
@@ -3493,7 +3498,7 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 match &v[0] {
                     Value::Progression(walk) => Value::from_big(walk.count()),
-                    Value::Vector(items) => Value::Small(items.len() as i64),
+                    Value::Vector(items) | Value::Tuple(items) | Value::Set(items) => Value::Small(items.len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
                     Value::Thing(thing) => Value::Small(thing.holds.borrow().len() as i64),
                     // A language with a word for a warning hears that a
@@ -3696,7 +3701,7 @@ impl<'a> Machine<'a> {
             Prim::Added => {
                 n(2)?;
                 match &v[0] {
-                    Value::Vector(items) => {
+                    Value::Vector(items) | Value::Tuple(items) | Value::Set(items) => {
                         let mut all = items.as_ref().clone();
                         all.push(v[1].clone());
                         Value::Vector(Rc::new(all))
@@ -3727,7 +3732,7 @@ impl<'a> Machine<'a> {
                         all[as_index(&v[1])?] = v[2].clone();
                         Value::Vector(Rc::new(all))
                     }
-                    Value::Vector(items) => {
+                    Value::Vector(items) | Value::Tuple(items) | Value::Set(items) => {
                         let mut all: Vec<(Value, Value)> =
                             items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect();
                         set_key(&mut all, v[1].clone(), v[2].clone());
@@ -4232,7 +4237,7 @@ impl<'a> Machine<'a> {
                         let retained = items.iter().enumerate().filter(|(j, _)| *j != position as usize).map(|(_, v)| v.clone()).collect();
                         Value::Vector(Rc::new(retained))
                     }
-                    Value::Vector(items) => {
+                    Value::Vector(items) | Value::Tuple(items) | Value::Set(items) => {
                         let i = as_index(&v[1])?;
                         let kept: Vec<(Value, Value)> = items
                             .iter()
@@ -4655,6 +4660,7 @@ impl<'a> Machine<'a> {
                 }
                 Value::Nil
             }
+            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Dictionary | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasMember | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf => unreachable!(),
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(Rc::new(Vec::new())),
@@ -4741,7 +4747,7 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 match &v[0] {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
-                    Value::Vector(l) => Value::Small(l.len() as i64),
+                    Value::Vector(l) | Value::Tuple(l) | Value::Set(l) => Value::Small(l.len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
                     Value::Progression(p) => Value::from_big(p.count()),
                     _ => return Err(format!("{}() requires a string or array argument", name)),
@@ -4793,6 +4799,18 @@ impl<'a> Machine<'a> {
             }
             Prim::SortOf => {
                 n(1)?;
+                if self.table.has_any("ext.builtin.isinstance") {
+                    if let Value::Thing(t) = &v[0] { return Ok(Value::Blueprint(t.of.clone())); }
+                    let wanted = match &v[0] {
+                        Value::Text(_) => Some(Prim::AsText), Value::Flag(_) => Some(Prim::Truthful),
+                        Value::Vector(_) => Some(Prim::Listed), Value::Dict(_) => Some(Prim::Dictionary),
+                        Value::Set(_) => Some(Prim::Uniques), Value::Tuple(_) => Some(Prim::Tupling),
+                        Value::Small(_) | Value::Huge(_) => Some(Prim::AsInt), Value::Frac(_) => Some(Prim::AsReal), _ => None,
+                    };
+                    if let Some(operation) = wanted {
+                        if let Some((word,_)) = self.table.prims.iter().find(|(_,p)| **p == operation) { return Ok(Value::Intrinsic(Rc::from(word.as_str()))); }
+                    }
+                }
                 // A thing is of no kind the core knows, so a language
                 // with a word of its own for one answers with that.
                 if let (Value::Thing(_), Some(word)) = (&v[0], self.table.single("ext.system.kind.object")) {
@@ -5020,7 +5038,7 @@ impl<'a> Machine<'a> {
         let coming: Vec<Value> = match handed {
             Value::Text(letters) => letters.chars().map(|c| Value::text(&c.to_string())).collect(),
             Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
-            Value::Vector(values) => values.iter().cloned().collect(),
+            Value::Vector(values) | Value::Tuple(values) | Value::Set(values) => values.iter().cloned().collect(),
             _ => return Err(self.span_complaint("assign")),
         };
         if !unit && picked.len() != coming.len() {
@@ -5046,7 +5064,7 @@ impl<'a> Machine<'a> {
     fn element_within(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {
         if let Value::Span(bounds) = at {
             let row = match target {
-                Value::Vector(values) => values.as_ref().clone(),
+                Value::Vector(values) | Value::Tuple(values) | Value::Set(values) => values.as_ref().clone(),
                 Value::Text(text) if self.table.flag("op.index.strings") => {
                     text.chars().map(|letter| Value::text(&letter.to_string())).collect()
                 }
@@ -5109,7 +5127,7 @@ impl<'a> Machine<'a> {
             Err(told) => return missing(told, at),
         };
         match target {
-            Value::Vector(l) => match l.get(i) {
+            Value::Vector(l) | Value::Tuple(l) | Value::Set(l) => match l.get(i) {
                 Some(v) => Ok(v.clone()),
                 None => missing(format!("Array index {} out of bounds (length: {})", i, l.len()), at),
             },
@@ -5137,8 +5155,9 @@ impl<'a> Machine<'a> {
 
     fn gathered_members(&self, source: &Value) -> Result<Vec<Value>, String> {
         Ok(match source {
+            Value::Iterator(queue) => queue.borrow_mut().drain(..).collect(),
             Value::Text(word) => word.chars().map(|letter| Value::text(&String::from(letter))).collect(),
-            Value::Vector(values) => values.to_vec(),
+            Value::Vector(values) | Value::Tuple(values) | Value::Set(values) => values.to_vec(),
             Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
             Value::Progression(walk) => {
                 let mut values = Vec::new();
@@ -5265,7 +5284,7 @@ fn with_kind(v: &Value, level: usize, binary_reals: bool, w: Names) -> String {
             format!("string({}) \"{}\"", wide, s)
         }
         Value::Flag(b) => format!("bool({})", b),
-        Value::Vector(items) => {
+        Value::Vector(items) | Value::Tuple(items) | Value::Set(items) => {
             let entries: Vec<String> = items.iter().enumerate().map(|(i, x)| format!("{lead}  [{i}]=>\n{lead}  {}{}\n", tied(x), with_kind(x, level + 1, binary_reals, w))).collect();
             format!("array({}) {{\n{}{lead}}}", items.len(), entries.concat())
         }
@@ -5355,7 +5374,7 @@ fn set_key(entries: &mut Vec<(Value, Value)>, key: Value, value: Value) {
 fn over_lines(v: &Value, along: usize, w: Names) -> String {
     let held;
     let (called, places): (String, Vec<(String, &Value)>) = match v {
-        Value::Vector(items) => ("Array".to_string(), items.iter().enumerate().map(|(at, x)| (at.to_string(), x)).collect()),
+        Value::Vector(items) | Value::Tuple(items) | Value::Set(items) => ("Array".to_string(), items.iter().enumerate().map(|(at, x)| (at.to_string(), x)).collect()),
         Value::Dict(entries) => ("Array".to_string(), entries.iter().map(|(k, x)| (k.render(w), x)).collect()),
         Value::Thing(thing) => {
             held = thing.holds.borrow();
@@ -5423,7 +5442,7 @@ fn letter_put(had: &str, at: &Value, put: &str) -> Result<(Value, bool), String>
 fn found_at(walked: &Value, cell: &Rc<RefCell<Value>>, stood: usize) -> Option<usize> {
     let itself = |x: &Value| matches!(x, Value::Shared(other) if Rc::ptr_eq(other, cell));
     match walked {
-        Value::Vector(items) => match items.get(stood).map_or(false, &itself) {
+        Value::Vector(items) | Value::Tuple(items) | Value::Set(items) => match items.get(stood).map_or(false, &itself) {
             true => Some(stood),
             false => items.iter().position(itself),
         },
@@ -5451,7 +5470,7 @@ fn put_before(held: &mut Value, coming: Vec<Value>, name: &str) -> Result<usize,
     };
     let mut all: Vec<(Value, Value)> = coming.into_iter().map(|x| (afresh(None), x)).collect();
     match &*held {
-        Value::Vector(items) => all.extend(items.iter().map(|x| (afresh(None), x.clone()))),
+        Value::Vector(items) | Value::Tuple(items) | Value::Set(items) => all.extend(items.iter().map(|x| (afresh(None), x.clone()))),
         Value::Dict(entries) => all.extend(entries.iter().map(|(k, x)| (afresh(Some(k)), x.clone()))),
         other => return Err(format!("{}() cannot put a value in front of {}", name, other.bare())),
     }
@@ -5534,7 +5553,7 @@ fn shared_item(held: &mut Value, at: &Value) -> Result<Rc<RefCell<Value>>, Strin
         return Ok(cell);
     }
     let place: &mut Value = match held {
-        Value::Vector(items) => {
+        Value::Vector(items) | Value::Tuple(items) | Value::Set(items) => {
             let items = Rc::make_mut(items);
             let reach = items.len();
             items.get_mut(i).ok_or_else(|| format!("Array index {} out of bounds (length: {})", i, reach))?
@@ -5592,7 +5611,7 @@ fn place_within<'a>(held: &'a mut Value, at: &Value, makes: bool) -> Result<&'a 
         *held = Value::Dict(Rc::new(spread));
     }
     let place: &mut Value = match held {
-        Value::Vector(items) => {
+        Value::Vector(items) | Value::Tuple(items) | Value::Set(items) => {
             let i = as_index(at)?;
             let items = Rc::make_mut(items);
             let reach = items.len();
@@ -5805,5 +5824,336 @@ fn number_opening_in(v: &Value) -> (Option<Value>, bool) {
     match number_spelled_in(&Value::text(&text[..end])) {
         Some(opening) => (Some(opening), false),
         None => (None, false),
+    }
+}
+
+// Each primitive is given the values already worked out by the caller.
+// Only the few names belonging to that primitive may fill its places.
+impl Machine<'_> {
+    fn is_core_primitive(op: Prim) -> bool {
+        use Prim::*;
+        matches!(op, Belongs | Tupling | Uniques | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasMember | GetMember | SetMember | DropMember | MembersOf)
+    }
+
+    fn core_complaint(&self, key: &str, middle: &str) -> String {
+        let label = format!("ext.builtin.{}", key);
+        let words = self.table.strings(&label);
+        match words { [] => String::new(), [one] => one.clone(), [head, tail, ..] => format!("{head}{middle}{tail}") }
+    }
+
+    fn core_collect(&self, value: &Value) -> Result<Vec<Value>, String> {
+        match value {
+            Value::Iterator(queue) => Ok(queue.borrow_mut().drain(..).collect()),
+            _ => self.gathered_members(value).map_err(|_| self.core_complaint("core.uniterable", &value.kind_word())),
+        }
+    }
+
+    fn core_run(&mut self, callable: &Value, values: Vec<Value>) -> Result<Value, String> {
+        match callable {
+            Value::Intrinsic(word) => {
+                let op = *self.table.prims.get(word.as_ref()).ok_or_else(|| self.core_complaint("core.uncallable", &callable.kind_word()))?;
+                self.prim(op, word, &values)
+            }
+            Value::Bound(program, frame) => match self.invoke(program.clone(), frame.clone(), values) {
+                Ok(answer) => Ok(answer),
+                Err(escape) => { self.got_away = Some(escape); Err(self.core_complaint("core.unready", &program.ident)) }
+            },
+            other => Err(self.core_complaint("core.uncallable", &other.kind_word())),
+        }
+    }
+
+    fn core_belongs(&self, item: &Value, expected: &Value) -> Result<bool, String> {
+        match expected {
+            Value::Tuple(kinds) | Value::Vector(kinds) => {
+                for kind in kinds.iter() { if self.core_belongs(item, kind)? { return Ok(true); } }
+                Ok(false)
+            }
+            Value::Blueprint(class) => Ok(matches!(item, Value::Thing(t) if t.of.goes_by(&class.name, false))),
+            Value::KindOf(Kind::Nothing) => Ok(matches!(item, Value::Nil)),
+            Value::Intrinsic(word) => {
+                let op = self.table.prims.get(word.as_ref());
+                let answer = match op {
+                    Some(Prim::AsInt) => matches!(item, Value::Small(_) | Value::Huge(_) | Value::Flag(_)),
+                    Some(Prim::AsReal) => matches!(item, Value::Frac(r) if r.places.is_some()),
+                    Some(Prim::AsText) => matches!(item, Value::Text(_)),
+                    Some(Prim::Truthful) => matches!(item, Value::Flag(_)),
+                    Some(Prim::Listed) => matches!(item, Value::Vector(_)),
+                    Some(Prim::Tupling) => matches!(item, Value::Tuple(_)),
+                    Some(Prim::Uniques) => matches!(item, Value::Set(_)),
+                    Some(Prim::Dictionary) => matches!(item, Value::Dict(_)),
+                    _ => return Err(self.core_complaint("core.isinstance.amiss", "")),
+                };
+                Ok(answer)
+            }
+            _ => Err(self.core_complaint("core.isinstance.amiss", "")),
+        }
+    }
+
+    fn core_primitive(&mut self, op: Prim, name: &str, mut input: Vec<Value>, keywords: Vec<(String, Value)>) -> Result<Value, String> {
+        use num_traits::{Signed, Zero};
+        use num_integer::Integer;
+        use Prim::*;
+        let mut ordering = None;
+        let mut descending = false;
+        let mut fallback = None;
+        let mut additions = Vec::new();
+        for (label, value) in keywords {
+            let is = |tail: &str| self.table.spells(&format!("ext.builtin.{}", tail), &label);
+            match op {
+                Dictionary => { additions.push((Value::text(&label), value)); continue; }
+                Ordered | Least | Greatest if is("key") => { ordering = Some(value); continue; }
+                Ordered if is("reverse") => { descending = self.stands_true(&value); continue; }
+                Least | Greatest if is("default") => { fallback = Some(value); continue; }
+                _ => (),
+            }
+            let slot = match (op, ()) {
+                (Numbered, _) if is("start") => 1,
+                (Rounded, _) if is("round.ndigits") => 1,
+                (Rounded, _) if is("round.number") => 0,
+                (Powered, _) if is("pow.base") => 0,
+                (Powered, _) if is("pow.exp") => 1,
+                (Powered, _) if is("pow.mod") => 2,
+                _ => return Err(self.argument_fault("ext.syntax.call.amiss.unknown", Some(&label))),
+            };
+            if input.get(slot).map_or(false, |v| !matches!(v, Value::Unset)) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&label))); }
+            if input.len() <= slot { input.resize(slot + 1, Value::Unset); }
+            input[slot] = value;
+        }
+        let require = |lower, upper| -> Result<(), String> {
+            if input.len() < lower || input.len() > upper || input.iter().any(|v| matches!(v, Value::Unset)) { Err(self.core_complaint("core.arity", name)) } else { Ok(()) }
+        };
+        let as_number = |v: &Value| if let Value::Flag(b) = v { Value::Small(*b as i64) } else { v.clone() };
+        let whole = |v: &Value| -> Result<BigInt, String> {
+            if matches!(v, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { v.as_big() } else { Err(self.core_complaint("core.unready", name)) }
+        };
+        let cursor = |values: Vec<Value>| Value::Iterator(Rc::new(RefCell::new(values.into_iter().collect())));
+        match op {
+            Belongs => { require(2, 2)?; Ok(Value::Flag(self.core_belongs(&input[0], &input[1])?)) }
+            Quoted => { require(1, 1)?; Ok(Value::text(&input[0].quoted())) }
+            Truthful => { require(0, 1)?; Ok(Value::Flag(input.first().map_or(false, |v| self.stands_true(v)))) }
+            CallableValue => { require(1, 1)?; Ok(Value::Flag(matches!(input[0], Value::Intrinsic(_) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_)))) }
+            Hashed => {
+                require(1, 1)?;
+                input[0].hash_number().map(Value::Small).ok_or_else(|| self.core_complaint("core.unhashable", &input[0].kind_word()))
+            }
+            IdentityOf => {
+                require(1, 1)?;
+                let address: u64 = match &input[0] {
+                    Value::Nil => 0, Value::Flag(false) => 1, Value::Flag(true) => 2,
+                    Value::Small(n) => (*n as u64).wrapping_mul(16).wrapping_add(3),
+                    Value::Vector(p) | Value::Set(p) | Value::Tuple(p) => Rc::as_ptr(p) as usize as u64,
+                    Value::Intrinsic(word) => {
+                        let mut words: Vec<_> = self.table.prims.keys().collect(); words.sort();
+                        words.iter().position(|w| w.as_str() == word.as_ref()).unwrap_or(0) as u64 + 16
+                    }
+                    Value::Text(chars) => chars.as_ptr() as usize as u64,
+                    Value::Dict(p) => Rc::as_ptr(p) as usize as u64,
+                    Value::Thing(p) => Rc::as_ptr(p) as usize as u64,
+                    Value::Blueprint(p) => Rc::as_ptr(p) as usize as u64,
+                    Value::Iterator(p) => Rc::as_ptr(p) as usize as u64,
+                    Value::Bound(p, _) | Value::Routine(p) => Rc::as_ptr(p) as usize as u64,
+                    Value::Huge(p) => Rc::as_ptr(p) as usize as u64,
+                    Value::Frac(p) => Rc::as_ptr(p) as usize as u64,
+                    _ => return Err(self.core_complaint("core.unready", name)),
+                };
+                Ok(Value::from_big(BigInt::from(address)))
+            }
+            Tupling | Uniques => {
+                require(0, 1)?;
+                let entries = match input.first() { Some(v) => self.core_collect(v)?, None => Vec::new() };
+                if op == Tupling { return Ok(Value::Tuple(Rc::new(entries))); }
+                let mut distinct: Vec<Value> = Vec::new();
+                for entry in entries {
+                    if entry.hash_number().is_none() { return Err(self.core_complaint("core.unhashable", &entry.kind_word())); }
+                    if distinct.iter().all(|old| !old.equals(&entry)) { distinct.push(entry); }
+                }
+                Ok(Value::Set(Rc::new(distinct)))
+            }
+            Dictionary => {
+                require(0, 1)?;
+                let mut incoming = Vec::new();
+                if let Some(source) = input.first() {
+                    if let Value::Dict(pairs) = source { incoming.extend(pairs.iter().cloned()); }
+                    else {
+                        for row in self.core_collect(source)? {
+                            let fields = self.core_collect(&row)?;
+                            if fields.len() != 2 { return Err(self.core_complaint("core.dict.pair", "")); }
+                            incoming.push((fields[0].clone(), fields[1].clone()));
+                        }
+                    }
+                }
+                incoming.extend(additions);
+                let mut entries: Vec<(Value, Value)> = Vec::new();
+                for pair in incoming {
+                    if pair.0.hash_number().is_none() && !matches!(pair.0, Value::Nil | Value::Frac(_)) { return Err(self.core_complaint("core.unhashable", &pair.0.kind_word())); }
+                    if let Some(index) = entries.iter().position(|(key,_)| key.equals(&pair.0)) { entries[index].1 = pair.1; } else { entries.push(pair); }
+                }
+                Ok(Value::Dict(Rc::new(entries)))
+            }
+            Iterator => {
+                require(1, 2)?;
+                if input.len() == 2 { return Err(self.core_complaint("core.unready", name)); }
+                match &input[0] { Value::Iterator(_) => Ok(input[0].clone()), source => self.core_collect(source).map(cursor) }
+            }
+            NextItem => {
+                require(1, 2)?;
+                match &input[0] {
+                    Value::Iterator(items) => items.borrow_mut().pop_front().or_else(|| input.get(1).cloned()).ok_or_else(|| self.core_complaint("core.exhausted", "")),
+                    _ => Err(self.core_complaint("core.unready", name)),
+                }
+            }
+            Backwards => {
+                require(1, 1)?;
+                if !matches!(input[0], Value::Vector(_) | Value::Tuple(_) | Value::Text(_) | Value::Progression(_)) { return Err(self.core_complaint("core.unready", name)); }
+                let walked = self.core_collect(&input[0])?;
+                Ok(cursor(walked.into_iter().rev().collect()))
+            }
+            Numbered => {
+                require(1, 2)?;
+                let first = input.get(1).map(whole).transpose()?.unwrap_or_default();
+                let entries = self.core_collect(&input[0])?;
+                let pairs = entries.into_iter().enumerate().map(|(at, item)| Value::Tuple(Rc::new(vec![Value::from_big(&first + BigInt::from(at)), item]))).collect();
+                Ok(cursor(pairs))
+            }
+            Zipped | Mapped => {
+                require(if op == Mapped { 2 } else { 0 }, usize::MAX)?;
+                let offset = usize::from(op == Mapped);
+                let mut columns = Vec::new();
+                for source in &input[offset..] { columns.push(self.core_collect(source)?.into_iter()); }
+                let mut answer = Vec::new();
+                if !columns.is_empty() {
+                    loop {
+                        let mut row = Vec::new();
+                        for column in &mut columns { if let Some(item) = column.next() { row.push(item); } else { return Ok(cursor(answer)); } }
+                        answer.push(if op == Mapped { self.core_run(&input[0], row)? } else { Value::Tuple(Rc::new(row)) });
+                    }
+                }
+                Ok(cursor(answer))
+            }
+            Filtered => {
+                require(2, 2)?;
+                let entries = self.core_collect(&input[1])?;
+                let mut selected = Vec::new();
+                for item in entries {
+                    let verdict = match input[0] { Value::Nil => item.clone(), _ => self.core_run(&input[0], vec![item.clone()])? };
+                    if self.stands_true(&verdict) { selected.push(item); }
+                }
+                Ok(cursor(selected))
+            }
+            EveryTrue => { require(1, 1)?; Ok(Value::Flag(self.core_collect(&input[0])?.iter().all(|x| self.stands_true(x)))) }
+            Ordered | Least | Greatest => {
+                require(1, if op == Ordered { 1 } else { usize::MAX })?;
+                if input.len() > 1 && fallback.is_some() { return Err(self.core_complaint("core.default.many", "")); }
+                let entries = if input.len() > 1 { input.clone() } else { self.core_collect(&input[0])? };
+                if entries.is_empty() && op != Ordered { return fallback.ok_or_else(|| self.core_complaint("core.empty", name)); }
+                let mut decorated = Vec::new();
+                for value in entries {
+                    let criterion = match &ordering { None | Some(Value::Nil) => value.clone(), Some(work) => self.core_run(work, vec![value.clone()])? };
+                    decorated.push((criterion, value));
+                }
+                let mut failure = None;
+                decorated.sort_by(|a, b| {
+                    let answer = match (&a.0, &b.0) {
+                        (Value::Text(x), Value::Text(y)) => x.cmp(y),
+                        (x, y) => match (math::below(&as_number(x), &as_number(y)), math::below(&as_number(y), &as_number(x))) {
+                            (Some(true), _) => std::cmp::Ordering::Less, (_, Some(true)) => std::cmp::Ordering::Greater,
+                            (Some(false), Some(false)) => std::cmp::Ordering::Equal,
+                            _ => { failure = Some(self.core_complaint("core.unready", name)); std::cmp::Ordering::Equal }
+                        },
+                    };
+                    if descending || op == Greatest { answer.reverse() } else { answer }
+                });
+                if let Some(complaint) = failure { return Err(complaint); }
+                if op == Ordered { Ok(Value::Vector(Rc::new(decorated.into_iter().map(|pair| pair.1).collect()))) }
+                else { Ok(decorated.remove(0).1) }
+            }
+            Magnitude => {
+                require(1, 1)?;
+                let parts = math::ratio_of(&as_number(&input[0])).ok_or_else(|| self.core_complaint("core.unready", name))?;
+                Ok(math::make_number(parts.above.abs(), parts.beneath, parts.places))
+            }
+            Hexadecimal | Octal | Binary => {
+                require(1, 1)?;
+                let integer = whole(&input[0])?;
+                let base = if op == Binary { 2 } else if op == Octal { 8 } else { 16 };
+                let prefix = if op == Binary { "0b" } else if op == Octal { "0o" } else { "0x" };
+                let digits = integer.abs().to_str_radix(base);
+                Ok(Value::text(&format!("{}{}{}", if integer.is_negative() { "-" } else { "" }, prefix, digits)))
+            }
+            QuotRem => {
+                require(2, 2)?;
+                let one = as_number(&input[0]); let two = as_number(&input[1]);
+                if !matches!(two, Value::Frac(_)) && two.as_big().map_or(false, |n| n.is_zero()) { return Err(self.core_complaint("core.zero", "")); }
+                let mut both = Vec::new();
+                for operation in [Calc::IntDiv, Calc::Remainder] { both.push(math::compute(operation, &one, &two).ok_or_else(|| self.core_complaint("core.unready", name))??); }
+                Ok(Value::Tuple(Rc::new(both)))
+            }
+            Powered => {
+                require(2, 3)?;
+                if input.len() < 3 || matches!(input[2], Value::Nil) { return math::compute(Calc::Power, &as_number(&input[0]), &as_number(&input[1])).ok_or_else(|| self.core_complaint("core.unready", name))?; }
+                let modulus = whole(&input[2])?;
+                if modulus.is_zero() { return Err(self.core_complaint("core.mod.zero", "")); }
+                let m = modulus.abs();
+                let exponent = whole(&input[1])?;
+                let original = whole(&input[0])?;
+                let base = if exponent.is_negative() {
+                    let inverse = original.extended_gcd(&m);
+                    if inverse.gcd != BigInt::from(1) { return Err(self.core_complaint("core.inverse", "")); }
+                    inverse.x.mod_floor(&m)
+                } else { original };
+                let residue = base.modpow(&exponent.abs(), &m);
+                let signed = if modulus.is_negative() && !residue.is_zero() { residue - m } else { residue };
+                Ok(Value::from_big(signed))
+            }
+            Rounded => {
+                require(1, 2)?;
+                let places = match input.get(1) { None | Some(Value::Nil) => 0, Some(v) => whole(v)?.to_i64().ok_or_else(|| self.core_complaint("core.unready", name))? };
+                let value = as_number(&input[0]);
+                if matches!(value, Value::Small(_) | Value::Huge(_)) {
+                    if places >= 0 { return Ok(value); }
+                    let magnitude = places.checked_neg().and_then(|n| u32::try_from(n).ok()).filter(|n| *n <= 100000).ok_or_else(|| self.core_complaint("core.unready", name))?;
+                    let power = BigInt::from(10).pow(magnitude);
+                    let integer = value.as_big()?;
+                    let quotient = integer.div_floor(&power);
+                    let remainder = integer.mod_floor(&power);
+                    let twice = remainder * 2;
+                    let up = twice > power || twice == power && quotient.is_odd();
+                    return Ok(Value::from_big((quotient + BigInt::from(u8::from(up))) * power));
+                }
+                let fraction = math::ratio_of(&value).ok_or_else(|| self.core_complaint("core.unready", name))?;
+                let binary = crate::data::nearest_binary(&fraction.above, &fraction.beneath);
+                if !binary.is_finite() || !(-308..=308).contains(&places) { return Err(self.core_complaint("core.unready", name)); }
+                let rounded: f64 = if places < 0 {
+                    let factor = 10f64.powi((-places) as i32);
+                    (binary / factor).round_ties_even() * factor
+                } else { format!("{:.*}", places as usize, binary).parse().map_err(|_| self.core_complaint("core.unready", name))? };
+                if input.len() == 1 || matches!(input.get(1), Some(Value::Nil)) { Ok(Value::from_big(BigInt::from(rounded as i128))) }
+                else { Ok(crate::data::worth_of_binary(rounded, math::DEFAULT_PLACES)) }
+            }
+            HasMember | GetMember | SetMember | DropMember | MembersOf => {
+                let count = if op == MembersOf { 1 } else { 2 };
+                require(count, if matches!(op, GetMember | SetMember) { 3 } else { count })?;
+                let Value::Thing(thing) = &input[0] else {
+                    if op == HasMember { return Ok(Value::Flag(false)); }
+                    if op == GetMember && input.len() == 3 { return Ok(input[2].clone()); }
+                    return Err(self.core_complaint(if op == MembersOf { "core.vars" } else { "core.unready" }, if op == MembersOf { "" } else { name }));
+                };
+                let mut members = thing.holds.borrow_mut();
+                if op == MembersOf { return Ok(Value::Dict(Rc::new(members.iter().map(|(n,v)| (Value::text(n),v.clone())).collect()))); }
+                let Value::Text(word) = &input[1] else { return Err(self.core_complaint("core.attribute.name", "")); };
+                let position = members.iter().position(|(n,_)| n == word.as_ref());
+                if op == HasMember { return Ok(Value::Flag(position.is_some() || thing.of.program(word).is_some())); }
+                if op == SetMember {
+                    if input.len() != 3 { return Err(self.core_complaint("core.arity", name)); }
+                    match position { Some(p) => members[p].1 = input[2].clone(), None => members.push((word.to_string(), input[2].clone())) }
+                    return Ok(Value::Nil);
+                }
+                if let Some(position) = position { return Ok(if op == DropMember { members.remove(position); Value::Nil } else { members[position].1.clone() }); }
+                if op == GetMember && input.len() == 3 { return Ok(input[2].clone()); }
+                let words = self.table.strings("ext.builtin.core.attribute");
+                Err(format!("{}{}{}{}{}", words[0], thing.of.name, words[1], word, words[2]))
+            }
+            _ => unreachable!(),
+        }
     }
 }

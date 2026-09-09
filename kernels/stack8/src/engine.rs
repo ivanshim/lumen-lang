@@ -212,7 +212,9 @@ impl<'a> Engine<'a> {
         let find = |wanted: &Option<String>| wanted.as_ref().and_then(|w| idents.iter().position(|n| n == w));
         Engine {
             lang,
-            world: vec![Value::Blank; idents.len()],
+            world: idents.iter().map(|word| if lang.builtins.values().any(|b| *b == Builtin::InstanceOf) {
+                lang.builtins.get(word).map_or(Value::Blank, |b| Value::Native(*b, Rc::from(word.as_str())))
+            } else { Value::Blank }).collect(),
             data: Vec::new(),
             caught: Vec::new(),
             memo: HashMap::new(),
@@ -1390,7 +1392,7 @@ impl<'a> Engine<'a> {
                             let mut i = BigInt::from(0);
                             while let Some(v) = r.at(i.clone()) { items.push((None, v)); i += 1; }
                         }
-                        Value::Array(a) => items.extend(a.iter().cloned().map(|v| (None, v))),
+                        Value::Array(a) | Value::Tuple(a) | Value::Set(a) => items.extend(a.iter().cloned().map(|v| (None, v))),
                         Value::Text(t) => items.extend(t.chars().map(|c| (None, Value::text(&c.to_string())))),
                         Value::Map(m) => items.extend(m.iter().map(|(k, _)| (None, k.clone()))),
                         _ => return Err(self.lang.spread_amiss[0].clone().into()),
@@ -2184,7 +2186,7 @@ impl<'a> Engine<'a> {
                         left.remove(i as usize);
                         Value::array(left)
                     }
-                    Value::Array(items) => {
+                    Value::Array(items) | Value::Tuple(items) | Value::Set(items) => {
                         let i = as_index(&at)?;
                         Value::Map(Rc::new(
                             items
@@ -2289,6 +2291,13 @@ impl<'a> Engine<'a> {
                 let top = self.drop_top()?;
                 let callee = self.what_it_spells(top);
                 return match callee {
+                    Value::Native(b, word) => {
+                        let args = self.drop_many(argc - 1)?;
+                        let items = self.call_items(args)?;
+                        let answer = self.builtin_call(b, &word, items)?;
+                        self.data.push(answer);
+                        Ok(())
+                    }
                     Value::Routine(p) => self.invoke_top(&p, argc - 1),
                     // A pair of a thing and a method's name stands for
                     // that method of that thing, which is how a language
@@ -2383,7 +2392,7 @@ impl<'a> Engine<'a> {
                     for (key, value) in new_pairs { put_key(&mut pairs, key, value); }
                     Value::Map(Rc::new(pairs))
                 } else {
-                    let mut items = match gathered_so_far { Value::Array(a) => a.as_ref().clone(), _ => unreachable!() };
+                    let mut items = match gathered_so_far { Value::Array(a) | Value::Tuple(a) | Value::Set(a) => a.as_ref().clone(), _ => unreachable!() };
                     if *spread { items.extend(self.comprehension_items(&next)?); } else { items.push(next); }
                     Value::array(items)
                 }
@@ -2404,7 +2413,7 @@ impl<'a> Engine<'a> {
                     Value::Counted(r) => if key { Value::Small(at as i64) } else {
                         r.at(BigInt::from(at)).ok_or_else(|| self.lang.range_index[0].clone())?
                     },
-                    Value::Array(items) => match items.get(at) {
+                    Value::Array(items) | Value::Tuple(items) | Value::Set(items) => match items.get(at) {
                         Some(v) if !key => v.clone(),
                         Some(_) => Value::Small(at as i64),
                         None => return Err(format!("Array index {} out of bounds (length: {})", at, items.len()).into()),
@@ -2948,7 +2957,7 @@ impl<'a> Engine<'a> {
                     }
                     None => {
                         let reach = match &pair[0] {
-                            Value::Array(items) => items.len(),
+                            Value::Array(items) | Value::Tuple(items) | Value::Set(items) => items.len(),
                             Value::Map(pairs) => pairs.len(),
                             Value::Object(o) => o.fields.borrow().len(),
                             _ => 0,
@@ -2980,7 +2989,7 @@ impl<'a> Engine<'a> {
             }
             Action::Extent => match self.drop_top()? {
                 Value::Counted(r) => Value::of_big(r.length()),
-                Value::Array(items) => Value::Small(items.len() as i64),
+                Value::Array(items) | Value::Tuple(items) | Value::Set(items) => Value::Small(items.len() as i64),
                 Value::Map(pairs) => Value::Small(pairs.len() as i64),
                 Value::Object(o) => Value::Small(o.fields.borrow().len() as i64),
                 // A language with a word for a warning is told a value
@@ -3090,7 +3099,7 @@ impl<'a> Engine<'a> {
                 out.push(quote);
                 out
             }
-            Value::Array(items) => {
+            Value::Array(items) | Value::Tuple(items) | Value::Set(items) => {
                 let parts = items.iter().map(|v| self.rem_repr(v)).collect::<Res<Vec<_>>>()?;
                 format!("[{}]", parts.join(", "))
             }
@@ -3115,7 +3124,7 @@ impl<'a> Engine<'a> {
         let bad = || self.lang.format_unsupported.clone().unwrap_or_default();
         let wrong = || self.lang.format_arguments.clone().unwrap_or_default();
         let values: Vec<&Value> = match arguments {
-            Value::Array(items) => items.iter().collect(),
+            Value::Array(items) | Value::Tuple(items) | Value::Set(items) => items.iter().collect(),
             one => vec![one],
         };
         let mut used = 0;
@@ -3220,7 +3229,7 @@ impl<'a> Engine<'a> {
                     (one, Value::Text(s)) | (Value::Text(s), one) if nothing(one) => s.is_empty(),
                     (one, other) | (other, one) if nothing(one) && matches!(other, Value::Array(_) | Value::Map(_)) => !self.truth(other) || {
                         match other {
-                            Value::Array(items) => items.is_empty(),
+                            Value::Array(items) | Value::Tuple(items) | Value::Set(items) => items.is_empty(),
                             Value::Map(pairs) => pairs.is_empty(),
                             _ => false,
                         }
@@ -3248,7 +3257,7 @@ impl<'a> Engine<'a> {
             Action::Ne => Value::Flag(!a.equals(b)),
             Action::Contains | Action::Lacks => {
                 let found = match b {
-                    Value::Array(items) => items.iter().any(|v| a.equals(v)),
+                    Value::Array(items) | Value::Tuple(items) | Value::Set(items) => items.iter().any(|v| a.equals(v)),
                     Value::Map(items) => items.iter().any(|(key, _)| a.equals(key)),
                     Value::Text(haystack) => match a {
                         Value::Text(needle) => haystack.contains(needle.as_ref()),
@@ -3573,7 +3582,7 @@ impl<'a> Engine<'a> {
     /// its key where the places are unnamed.
     fn keyed_places(v: &Value) -> Vec<(Value, Value)> {
         match v {
-            Value::Array(items) => items.iter().enumerate().map(|(i, x)| (Value::Small(i as i64), x.clone())).collect(),
+            Value::Array(items) | Value::Tuple(items) | Value::Set(items) => items.iter().enumerate().map(|(i, x)| (Value::Small(i as i64), x.clone())).collect(),
             Value::Map(pairs) => pairs.as_ref().clone(),
             _ => Vec::new(),
         }
@@ -3835,7 +3844,7 @@ impl<'a> Engine<'a> {
 
     fn read_slice(&self, target: &Value, parts: &[Value; 3]) -> Res<Value> {
         match target {
-            Value::Array(items) => {
+            Value::Array(items) | Value::Tuple(items) | Value::Set(items) => {
                 let (_, _, _, places) = self.slice_places(parts, items.len())?;
                 Ok(Value::array(places.into_iter().map(|i| items[i].clone()).collect()))
             }
@@ -3854,7 +3863,7 @@ impl<'a> Engine<'a> {
         };
         let (start, stop, step, places) = self.slice_places(parts, items.len())?;
         let replacement = match given {
-            Value::Array(values) => values.as_ref().clone(),
+            Value::Array(values) | Value::Tuple(values) | Value::Set(values) => values.as_ref().clone(),
             Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
             Value::Map(pairs) => pairs.iter().map(|(key, _)| key.clone()).collect(),
             _ => return Err(self.lang.slice_assign.clone().unwrap_or_default()),
@@ -3924,7 +3933,7 @@ impl<'a> Engine<'a> {
             Err(told) => return absent(told, at),
         };
         match target {
-            Value::Array(items) => match items.get(i) {
+            Value::Array(items) | Value::Tuple(items) | Value::Set(items) => match items.get(i) {
                 Some(v) => Ok(v.clone()),
                 None => absent(format!("Array index {} out of bounds (length: {})", i, items.len()), at),
             },
@@ -3964,7 +3973,8 @@ impl<'a> Engine<'a> {
     /// The collections this reader can walk without asking a protocol.
     fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {
         match value {
-            Value::Array(items) => Ok(items.as_ref().clone()),
+            Value::Cursor(c) => { let mut held = c.borrow_mut(); let rest = held.0[held.1..].to_vec(); held.1 = held.0.len(); Ok(rest) }
+            Value::Array(items) | Value::Tuple(items) | Value::Set(items) => Ok(items.as_ref().clone()),
             Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
             Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
             Value::Counted(range) => {
@@ -4048,8 +4058,11 @@ impl<'a> Engine<'a> {
             if error { eprint!("{}", text); } else { self.utter(&text); }
             return Ok(Value::Null);
         }
+        if Self::core_builtin(builtin) { return self.core_call(builtin, name, args, named); }
         for (key, value) in named {
-            let place = if builtin == Builtin::ToInt && Lang::spells(&self.lang.to_int_base, &key) {
+            let place = if builtin == Builtin::Sum && self.lang.core_words.get("start").map_or(false, |words| Lang::spells(words, &key)) {
+                1
+            } else if builtin == Builtin::ToInt && Lang::spells(&self.lang.to_int_base, &key) {
                 1
             } else if builtin == Builtin::ToText && Lang::spells(&self.lang.to_string_object, &key) {
                 0
@@ -4102,6 +4115,7 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if Self::core_builtin(builtin) { return self.core_call(builtin, name, args.clone(), Vec::new()); }
         let sp = self.wording();
         let arity = |n: usize| -> Res<()> {
             if args.len() == n {
@@ -4620,6 +4634,7 @@ impl<'a> Engine<'a> {
                 }
                 Value::Null
             }
+            Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars => unreachable!(),
             Builtin::List => {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
@@ -4706,7 +4721,7 @@ impl<'a> Engine<'a> {
                 arity(1)?;
                 match &args[0] {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
-                    Value::Array(items) => Value::Small(items.len() as i64),
+                    Value::Array(items) | Value::Tuple(items) | Value::Set(items) => Value::Small(items.len() as i64),
                     Value::Map(pairs) => Value::Small(pairs.len() as i64),
                     Value::Counted(r) => Value::of_big(r.length()),
                     _ => return Err(format!("{}() requires a string or array argument", name)),
@@ -4755,6 +4770,16 @@ impl<'a> Engine<'a> {
             }
             Builtin::SortOf => {
                 arity(1)?;
+                if self.lang.builtins.values().any(|b| *b == Builtin::InstanceOf) {
+                    if let Value::Object(o) = &args[0] { return Ok(Value::Class(o.class.clone())); }
+                    let which = match &args[0] {
+                        Value::Small(_) | Value::Huge(_) => Some(Builtin::ToInt), Value::Real(_) => Some(Builtin::AsReal),
+                        Value::Text(_) => Some(Builtin::ToText), Value::Flag(_) => Some(Builtin::Bool),
+                        Value::Array(_) => Some(Builtin::List), Value::Tuple(_) => Some(Builtin::Tuple),
+                        Value::Set(_) => Some(Builtin::Set), Value::Map(_) => Some(Builtin::Dict), _ => None,
+                    };
+                    if let Some(b) = which { if let Some((word, _)) = self.lang.builtins.iter().find(|(_,v)| **v == b) { return Ok(Value::Native(b, Rc::from(word.as_str()))); } }
+                }
                 // A thing is of no kind the core knows, so a language
                 // with a word of its own for one answers with that.
                 if let (Value::Object(_), Some(word)) = (&args[0], &self.lang.object_kind) {
@@ -4876,7 +4901,7 @@ impl<'a> Engine<'a> {
                         Value::Array(items)
                     }
                     // Any other key makes it a map, its places the keys.
-                    Value::Array(items) => {
+                    Value::Array(items) | Value::Tuple(items) | Value::Set(items) => {
                         let mut pairs: Vec<(Value, Value)> =
                             items.iter().enumerate().map(|(i, x)| (Value::Small(i as i64), x.clone())).collect();
                         put_key(&mut pairs, at, v);
@@ -4908,7 +4933,7 @@ impl<'a> Engine<'a> {
                 };
                 let mut kept: Vec<(Value, Value)> = args.drain(..).map(|v| (number(), v)).collect();
                 match target {
-                    Value::Array(items) => kept.extend(items.iter().map(|v| (number(), v.clone()))),
+                    Value::Array(items) | Value::Tuple(items) | Value::Set(items) => kept.extend(items.iter().map(|v| (number(), v.clone()))),
                     Value::Map(pairs) => kept.extend(pairs.iter().map(|(k, v)| match k {
                         Value::Text(_) => (k.clone(), v.clone()),
                         _ => (number(), v.clone()),
@@ -4937,7 +4962,7 @@ impl<'a> Engine<'a> {
                         left.remove(i as usize);
                         Value::array(left)
                     }
-                    Value::Array(items) => {
+                    Value::Array(items) | Value::Tuple(items) | Value::Set(items) => {
                         let i = as_index(&at)?;
                         let kept: Vec<(Value, Value)> = items
                             .iter()
@@ -5065,7 +5090,7 @@ fn text_width(s: &str, as_bytes: bool) -> usize {
 fn one_after_another(v: &Value) -> Vec<Value> {
     match v {
         Value::Bond(shared) => one_after_another(&shared.borrow()),
-        Value::Array(items) => items.as_ref().clone(),
+        Value::Array(items) | Value::Tuple(items) | Value::Set(items) => items.as_ref().clone(),
         Value::Map(pairs) => pairs.iter().map(|(_, worth)| worth.clone()).collect(),
         _ => Vec::new(),
     }
@@ -5077,7 +5102,7 @@ fn named_pairs(v: &Value) -> Vec<(Value, Value)> {
     match v {
         Value::Bond(shared) => named_pairs(&shared.borrow()),
         Value::Map(pairs) => pairs.as_ref().clone(),
-        Value::Array(items) => items
+        Value::Array(items) | Value::Tuple(items) | Value::Set(items) => items
             .iter()
             .enumerate()
             .map(|(at, worth)| (Value::Small(at as i64), worth.clone()))
@@ -5108,7 +5133,7 @@ fn dumped(v: &Value, depth: usize, binary_reals: bool, sp: &Wording) -> String {
         Value::Real(_) | Value::Frac(_) => format!("float({})", v.plain()),
         Value::Text(s) => format!("string({}) \"{}\"", text_width(s, sp.text_is_bytes), s),
         Value::Flag(b) => format!("bool({})", b),
-        Value::Array(items) => {
+        Value::Array(items) | Value::Tuple(items) | Value::Set(items) => {
             let mut out = format!("array({}) {{\n", items.len());
             for (i, item) in items.iter().enumerate() {
                 out.push_str(&format!("{pad}  [{i}]=>\n{pad}  {}{}\n", shared(item), dumped(item, depth + 1, binary_reals, sp)));
@@ -5233,7 +5258,7 @@ fn standing(v: &Value) -> bool {
 fn laid_out(v: &Value, indent: usize, sp: &Wording) -> String {
     let held;
     let (what, pairs): (String, Vec<(String, &Value)>) = match v {
-        Value::Array(items) => ("Array".to_string(), items.iter().enumerate().map(|(i, x)| (i.to_string(), x)).collect()),
+        Value::Array(items) | Value::Tuple(items) | Value::Set(items) => ("Array".to_string(), items.iter().enumerate().map(|(i, x)| (i.to_string(), x)).collect()),
         Value::Map(entries) => ("Array".to_string(), entries.iter().map(|(k, x)| (k.display(sp), x)).collect()),
         Value::Object(thing) => {
             held = thing.fields.borrow();
@@ -5261,7 +5286,7 @@ fn laid_out(v: &Value, indent: usize, sp: &Wording) -> String {
 fn lies_at(walked: &Value, cell: &Rc<RefCell<Value>>, was: usize) -> Option<usize> {
     let same = |v: &Value| matches!(v, Value::Bond(other) if Rc::ptr_eq(other, cell));
     let held: &[Value] = match walked {
-        Value::Array(items) => items,
+        Value::Array(items) | Value::Tuple(items) | Value::Set(items) => items,
         Value::Map(pairs) => {
             if pairs.get(was).map_or(false, |(_, v)| same(v)) {
                 return Some(was);
@@ -5296,7 +5321,7 @@ fn shared_item(held: &mut Value, at: &Value) -> Res<Rc<RefCell<Value>>> {
         return Ok(shared);
     }
     let place: &mut Value = match held {
-        Value::Array(items) => {
+        Value::Array(items) | Value::Tuple(items) | Value::Set(items) => {
             let i = as_index(at)?;
             let items = Rc::make_mut(items);
             match items.get_mut(i) {
@@ -5362,7 +5387,7 @@ fn place_within<'a>(held: &'a mut Value, at: &Value, makes: bool) -> Res<&'a mut
         *held = Value::Map(Rc::new(spread));
     }
     let place: &mut Value = match held {
-        Value::Array(items) => {
+        Value::Array(items) | Value::Tuple(items) | Value::Set(items) => {
             let i = as_index(at)?;
             let items = Rc::make_mut(items);
             let reach = items.len();
@@ -5583,5 +5608,310 @@ fn number_opening(s: &str) -> (Option<Value>, bool) {
     match number_spelled(&text[..end]) {
         Some(opening) => (Some(opening), false),
         None => (None, false),
+    }
+}
+
+// Collection calls share the opening of arguments, but keep their own
+// few names and their own complaints after those arguments are opened.
+impl Engine<'_> {
+    fn core_builtin(b: Builtin) -> bool {
+        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars)
+    }
+
+    fn core_fault(&self, label: &str, piece: &str) -> String {
+        self.lang.core_words.get(label).map_or_else(String::new, |words| Self::named_fault(words, piece))
+    }
+
+    fn core_members(&self, v: &Value) -> Res<Vec<Value>> {
+        if let Value::Cursor(cursor) = v {
+            let mut c = cursor.borrow_mut();
+            let rest = c.0[c.1..].to_vec();
+            c.1 = c.0.len();
+            return Ok(rest);
+        }
+        self.comprehension_items(v).map_err(|_| self.core_fault("core.uniterable", &v.core_kind()))
+    }
+
+    fn core_apply(&mut self, work: &Value, mut args: Vec<Value>) -> Res<Value> {
+        match work {
+            Value::Native(b, word) => self.builtin(*b, word, &mut args),
+            Value::Routine(p) => {
+                if let Err(f) = self.invoke(p, args) {
+                    self.carried = Some(f);
+                    return Err(self.core_fault("core.unready", &p.ident));
+                }
+                self.drop_top().map_err(|f| { self.carried = Some(f); self.core_fault("core.unready", &p.ident) })
+            }
+            _ => Err(self.core_fault("core.uncallable", &work.core_kind())),
+        }
+    }
+
+    fn core_isinstance(&self, value: &Value, kind: &Value) -> Res<bool> {
+        if let Value::Array(types) | Value::Tuple(types) = kind {
+            for t in types.iter() { if self.core_isinstance(value, t)? { return Ok(true); } }
+            return Ok(false);
+        }
+        if let Value::Class(class) = kind {
+            return Ok(matches!(value, Value::Object(o) if o.class.named(&class.name, false)));
+        }
+        let b = match kind {
+            Value::Native(b, _) => *b,
+            Value::SortOf(Sort::Null) => return Ok(matches!(value, Value::Null)),
+            _ => return Err(self.core_fault("core.isinstance.amiss", "")),
+        };
+        Ok(match b {
+            Builtin::ToInt => matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)),
+            Builtin::AsReal => matches!(value, Value::Real(_)),
+            Builtin::ToText => matches!(value, Value::Text(_)),
+            Builtin::Bool => matches!(value, Value::Flag(_)),
+            Builtin::List => matches!(value, Value::Array(_)),
+            Builtin::Tuple => matches!(value, Value::Tuple(_)),
+            Builtin::Set => matches!(value, Value::Set(_)),
+            Builtin::Dict => matches!(value, Value::Map(_)),
+            _ => return Err(self.core_fault("core.isinstance.amiss", "")),
+        })
+    }
+
+    fn core_call(&mut self, b: Builtin, name: &str, mut args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        use num_integer::Integer;
+        use num_traits::{Signed, Zero};
+        let mut key = Value::Null;
+        let mut reverse = false;
+        let mut default = None;
+        let mut dict_kw = Vec::new();
+        for (word, value) in named {
+            let spells = |label: &str| self.lang.core_words.get(label).map_or(false, |words| Lang::spells(words, &word));
+            if b == Builtin::Dict { dict_kw.push((Value::text(&word), value)); continue; }
+            if matches!(b, Builtin::Sorted | Builtin::Minimum | Builtin::Maximum) && spells("key") { key = value; continue; }
+            if b == Builtin::Sorted && spells("reverse") { reverse = self.truth(&value); continue; }
+            if matches!(b, Builtin::Minimum | Builtin::Maximum) && spells("default") { default = Some(value); continue; }
+            let place = match b {
+                Builtin::Enumerate if spells("start") => 1,
+                Builtin::Round if spells("round.number") => 0,
+                Builtin::Round if spells("round.ndigits") => 1,
+                Builtin::Power if spells("pow.base") => 0,
+                Builtin::Power if spells("pow.exp") => 1,
+                Builtin::Power if spells("pow.mod") => 2,
+                _ => return Err(Self::named_fault(&self.lang.call_unknown, &word)),
+            };
+            if args.len() > place && !matches!(args[place], Value::Gap) { return Err(Self::named_fault(&self.lang.call_duplicate, &word)); }
+            args.resize_with(place.max(args.len()), || Value::Gap);
+            if args.len() == place { args.push(value); } else { args[place] = value; }
+        }
+        let arity = |lo, hi| if (lo..=hi).contains(&args.len()) && !args.iter().any(|v| matches!(v, Value::Gap)) { Ok(()) }
+            else { Err(self.core_fault("core.arity", name)) };
+        let number = |v: &Value| match v { Value::Flag(b) => Value::Small(i64::from(*b)), other => other.clone() };
+        let integer = |v: &Value| match v { Value::Small(_) | Value::Huge(_) | Value::Flag(_) => v.as_big(), _ => Err(self.core_fault("core.unready", name)) };
+        let result = match b {
+            Builtin::InstanceOf => { arity(2, 2)?; Value::Flag(self.core_isinstance(&args[0], &args[1])?) }
+            Builtin::Bool => { arity(0, 1)?; Value::Flag(args.first().map_or(false, |v| self.truth(v))) }
+            Builtin::Callable => { arity(1, 1)?; Value::Flag(matches!(args[0], Value::Native(..) | Value::Routine(_) | Value::Class(_))) }
+            Builtin::Repr => { arity(1, 1)?; Value::text(&args[0].core_repr()) }
+            Builtin::Hash => { arity(1, 1)?; Value::Small(args[0].core_hash().ok_or_else(|| self.core_fault("core.unhashable", &args[0].core_kind()))?) }
+            Builtin::Identity => {
+                arity(1, 1)?;
+                let id = match &args[0] {
+                    Value::Array(a) | Value::Tuple(a) | Value::Set(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Map(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Text(a) => a.as_ptr() as usize as u64,
+                    Value::Object(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Class(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Cursor(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Routine(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Native(b, _) => *b as u64 + 16,
+                    Value::Huge(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Real(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Small(n) => (*n as u64).wrapping_mul(16).wrapping_add(3),
+                    Value::Flag(v) => if *v { 2 } else { 1 },
+                    Value::Null => 0,
+                    _ => return Err(self.core_fault("core.unready", name)),
+                };
+                Value::of_big(BigInt::from(id))
+            }
+            Builtin::Tuple | Builtin::Set => {
+                arity(0, 1)?;
+                let mut items = args.first().map(|v| self.core_members(v)).transpose()?.unwrap_or_default();
+                if b == Builtin::Set {
+                    let mut unique = Vec::new();
+                    for v in items { if v.core_hash().is_none() { return Err(self.core_fault("core.unhashable", &v.core_kind())); } if !unique.iter().any(|x: &Value| x.equals(&v)) { unique.push(v); } }
+                    items = unique;
+                }
+                if b == Builtin::Tuple { Value::Tuple(Rc::new(items)) } else { Value::Set(Rc::new(items)) }
+            }
+            Builtin::Dict => {
+                arity(0, 1)?;
+                let mut pairs = match args.first() {
+                    Some(Value::Map(p)) => p.as_ref().clone(),
+                    Some(v) => {
+                        let mut pairs = Vec::new();
+                        for item in self.core_members(v)? {
+                            let row = self.core_members(&item)?;
+                            if row.len() != 2 { return Err(self.core_fault("core.dict.pair", "")); }
+                            pairs.push((row[0].clone(), row[1].clone()));
+                        }
+                        pairs
+                    }
+                    None => Vec::new(),
+                };
+                pairs.extend(dict_kw);
+                let mut made: Vec<(Value, Value)> = Vec::new();
+                for (k,v) in pairs {
+                    if k.core_hash().is_none() && !matches!(k, Value::Null | Value::Real(_)) { return Err(self.core_fault("core.unhashable", &k.core_kind())); }
+                    if let Some(p) = made.iter_mut().find(|(old,_)| old.equals(&k)) { p.1 = v; } else { made.push((k,v)); }
+                }
+                Value::Map(Rc::new(made))
+            }
+            Builtin::Iter => {
+                arity(1, 2)?;
+                if args.len() == 2 { return Err(self.core_fault("core.unready", name)); }
+                if matches!(args[0], Value::Cursor(_)) { return Ok(args[0].clone()); }
+                Value::Cursor(Rc::new(RefCell::new((self.core_members(&args[0])?, 0))))
+            }
+            Builtin::Next => {
+                arity(1, 2)?;
+                let Value::Cursor(c) = &args[0] else { return Err(self.core_fault("core.unready", name)); };
+                let mut held = c.borrow_mut();
+                if let Some(v) = held.0.get(held.1).cloned() { held.1 += 1; v }
+                else { args.get(1).cloned().ok_or_else(|| self.core_fault("core.exhausted", ""))? }
+            }
+            Builtin::Reversed => {
+                arity(1, 1)?;
+                if !matches!(args[0], Value::Array(_) | Value::Tuple(_) | Value::Text(_) | Value::Counted(_)) { return Err(self.core_fault("core.unready", name)); }
+                let mut items = self.core_members(&args[0])?; items.reverse();
+                Value::Cursor(Rc::new(RefCell::new((items, 0))))
+            }
+            Builtin::Enumerate => {
+                arity(1, 2)?;
+                let mut n = args.get(1).map(integer).transpose()?.unwrap_or_else(|| BigInt::from(0));
+                let mut pairs = Vec::new();
+                for v in self.core_members(&args[0])? { pairs.push(Value::Tuple(Rc::new(vec![Value::of_big(n.clone()), v]))); n += 1; }
+                Value::Cursor(Rc::new(RefCell::new((pairs, 0))))
+            }
+            Builtin::Zip | Builtin::Map => {
+                arity(if b == Builtin::Map { 2 } else { 0 }, usize::MAX)?;
+                let sources = if b == Builtin::Map { &args[1..] } else { &args[..] };
+                let columns: Vec<_> = sources.iter().map(|v| self.core_members(v)).collect::<Res<_>>()?;
+                let count = columns.iter().map(Vec::len).min().unwrap_or(0);
+                let mut rows = Vec::new();
+                for at in 0..count {
+                    let row: Vec<_> = columns.iter().map(|column| column[at].clone()).collect();
+                    rows.push(if b == Builtin::Map { self.core_apply(&args[0], row)? } else { Value::Tuple(Rc::new(row)) });
+                }
+                Value::Cursor(Rc::new(RefCell::new((rows, 0))))
+            }
+            Builtin::Filter => {
+                arity(2, 2)?;
+                let mut kept = Vec::new();
+                for v in self.core_members(&args[1])? {
+                    let test = if matches!(args[0], Value::Null) { v.clone() } else { self.core_apply(&args[0], vec![v.clone()])? };
+                    if self.truth(&test) { kept.push(v); }
+                }
+                Value::Cursor(Rc::new(RefCell::new((kept, 0))))
+            }
+            Builtin::All => { arity(1, 1)?; Value::Flag(self.core_members(&args[0])?.iter().all(|v| self.truth(v))) }
+            Builtin::Minimum | Builtin::Maximum | Builtin::Sorted => {
+                arity(1, if b == Builtin::Sorted { 1 } else { usize::MAX })?;
+                if args.len() > 1 && default.is_some() { return Err(self.core_fault("core.default.many", "")); }
+                let values = if args.len() == 1 { self.core_members(&args[0])? } else { args.clone() };
+                if values.is_empty() && b != Builtin::Sorted { return default.ok_or_else(|| self.core_fault("core.empty", name)); }
+                let mut ranked: Vec<(Value,Value)> = Vec::new();
+                for value in values {
+                    let k = if matches!(key, Value::Null) { value.clone() } else { self.core_apply(&key, vec![value.clone()])? };
+                    let mut at = ranked.len();
+                    while at > 0 {
+                        let less = match (&k, &ranked[at-1].0) {
+                            (Value::Text(a), Value::Text(z)) => a < z,
+                            (a,z) => arith::order_values(&number(a), &number(z)).ok_or_else(|| self.core_fault("core.unready", name))? == std::cmp::Ordering::Less,
+                        };
+                        let greater = match (&k, &ranked[at-1].0) {
+                            (Value::Text(a), Value::Text(z)) => a > z,
+                            (a,z) => arith::order_values(&number(a), &number(z)).ok_or_else(|| self.core_fault("core.unready", name))? == std::cmp::Ordering::Greater,
+                        };
+                        if if reverse || b == Builtin::Maximum { greater } else { less } { at -= 1; } else { break; }
+                    }
+                    ranked.insert(at, (k,value));
+                }
+                if b == Builtin::Sorted { Value::array(ranked.into_iter().map(|(_,v)| v).collect()) } else { ranked.remove(0).1 }
+            }
+            Builtin::Absolute => {
+                arity(1, 1)?;
+                let x = number(&args[0]);
+                let (p,q) = arith::parts(&x).ok_or_else(|| self.core_fault("core.unready", name))?;
+                arith::shape_number(p.abs(), q, if matches!(x, Value::Real(_)) { Some(arith::DEFAULT_PLACES) } else { None })
+            }
+            Builtin::Hex | Builtin::Oct | Builtin::Bin => {
+                arity(1, 1)?;
+                let n = integer(&args[0])?;
+                let (radix, prefix) = match b { Builtin::Hex => (16,"0x"), Builtin::Oct => (8,"0o"), _ => (2,"0b") };
+                Value::text(&format!("{}{}{}", if n.is_negative() { "-" } else { "" }, prefix, n.abs().to_str_radix(radix)))
+            }
+            Builtin::Divmod => {
+                arity(2, 2)?;
+                let a = number(&args[0]); let z = number(&args[1]);
+                if z.as_big().map_or(false, |n| n.is_zero()) && !matches!(z, Value::Real(_)) { return Err(self.core_fault("core.zero", "")); }
+                let quotient = arith::calculate(Operation::Floor, &a, &z).ok_or_else(|| self.core_fault("core.unready", name))??;
+                let rest = arith::calculate(Operation::Remainder, &a, &z).ok_or_else(|| self.core_fault("core.unready", name))??;
+                Value::Tuple(Rc::new(vec![quotient, rest]))
+            }
+            Builtin::Power => {
+                arity(2, 3)?;
+                if args.len() == 3 && !matches!(args[2], Value::Null) {
+                    let (mut a, mut exp, modulus) = (integer(&args[0])?, integer(&args[1])?, integer(&args[2])?);
+                    if modulus.is_zero() { return Err(self.core_fault("core.mod.zero", "")); }
+                    let positive = modulus.abs();
+                    if exp.is_negative() {
+                        let gcd = a.extended_gcd(&positive);
+                        if gcd.gcd != BigInt::from(1) { return Err(self.core_fault("core.inverse", "")); }
+                        a = gcd.x.mod_floor(&positive); exp = -exp;
+                    }
+                    let mut n = a.modpow(&exp, &positive);
+                    if modulus.is_negative() && !n.is_zero() { n -= positive; }
+                    Value::of_big(n)
+                } else { arith::calculate(Operation::Raise, &number(&args[0]), &number(&args[1])).ok_or_else(|| self.core_fault("core.unready", name))?? }
+            }
+            Builtin::Round => {
+                arity(1, 2)?;
+                let digits = match args.get(1) { None | Some(Value::Null) => 0, Some(n) => integer(n)?.to_i64().ok_or_else(|| self.core_fault("core.unready", name))? };
+                let x = number(&args[0]);
+                if let Value::Small(_) | Value::Huge(_) = x {
+                    if digits >= 0 { return Ok(x); }
+                    let exp = u32::try_from(-digits).map_err(|_| self.core_fault("core.unready", name))?;
+                    if exp > 100000 { return Err(self.core_fault("core.unready", name)); }
+                    let scale = BigInt::from(10).pow(exp); let n = x.as_big()?;
+                    let (mut q,r) = n.div_mod_floor(&scale);
+                    if &r * 2 > scale || &r * 2 == scale && q.is_odd() { q += 1; }
+                    Value::of_big(q * scale)
+                } else {
+                    let (p,q) = arith::parts(&x).ok_or_else(|| self.core_fault("core.unready", name))?;
+                    let f = crate::value::as_binary(&p,&q);
+                    if !f.is_finite() || !(-308..=308).contains(&digits) { return Err(self.core_fault("core.unready", name)); }
+                    let rounded = if digits >= 0 { format!("{:.*}", digits as usize, f).parse::<f64>().map_err(|_| self.core_fault("core.unready", name))? }
+                        else { let scale = 10f64.powi(-digits as i32); (f / scale).round_ties_even() * scale };
+                    if args.len() == 1 || matches!(args.get(1), Some(Value::Null)) { Value::of_big(BigInt::from(rounded as i128)) }
+                    else { crate::value::real_of(rounded, arith::DEFAULT_PLACES) }
+                }
+            }
+            Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars => {
+                arity(if b == Builtin::Vars { 1 } else { 2 }, if matches!(b, Builtin::SetAttr | Builtin::GetAttr) { 3 } else if b == Builtin::Vars { 1 } else { 2 })?;
+                let Value::Object(o) = &args[0] else {
+                    if b == Builtin::HasAttr { return Ok(Value::Flag(false)); }
+                    if b == Builtin::GetAttr && args.len() == 3 { return Ok(args[2].clone()); }
+                    return Err(self.core_fault(if b == Builtin::Vars { "core.vars" } else { "core.unready" }, if b == Builtin::Vars { "" } else { name }));
+                };
+                if b == Builtin::Vars { return Ok(Value::Map(Rc::new(o.fields.borrow().iter().map(|(k,v)| (Value::text(k),v.clone())).collect()))); }
+                let Value::Text(attr) = &args[1] else { return Err(self.core_fault("core.attribute.name", "")); };
+                let mut fields = o.fields.borrow_mut();
+                let at = fields.iter().position(|(k,_)| k == attr.as_ref());
+                match b {
+                    Builtin::SetAttr => { if args.len() != 3 { return Err(self.core_fault("core.arity", name)); } if let Some(at) = at { fields[at].1 = args[2].clone(); } else { fields.push((attr.to_string(),args[2].clone())); } Value::Null }
+                    Builtin::HasAttr => Value::Flag(at.is_some() || o.class.method(attr).is_some()),
+                    _ => if let Some(at) = at { if b == Builtin::DelAttr { fields.remove(at); Value::Null } else { fields[at].1.clone() } }
+                        else if b == Builtin::GetAttr && args.len() == 3 { args[2].clone() }
+                        else { let words = &self.lang.core_words["core.attribute"]; return Err(format!("{}{}{}{}{}", words[0], o.class.name, words[1], attr, words[2])); },
+                }
+            }
+            _ => unreachable!(),
+        };
+        Ok(result)
     }
 }

@@ -36,6 +36,7 @@ pub enum Callee {
 /// forms for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prim {
+    Belongs, Tupling, Uniques, Dictionary, Ordered, Backwards, Numbered, Zipped, Mapped, Filtered, EveryTrue, Least, Greatest, Magnitude, Rounded, QuotRem, Powered, Hexadecimal, Octal, Binary, Quoted, Truthful, CallableValue, IdentityOf, Hashed, Iterator, NextItem, HasMember, GetMember, SetMember, DropMember, MembersOf,
     /// Gather the parts naming a span within brackets.
     SliceBounds,
     /// A slice form kept readable while its running remains wanting.

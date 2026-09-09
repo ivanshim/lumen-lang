@@ -1188,14 +1188,16 @@ impl<'a> Builder<'a> {
     /// A trailing comma still makes a tuple; a call's commas never enter here.
     fn comma_tail(&mut self, first: Form) -> Res<Form> {
         if !self.on_any("ext.op.tuple") { return Ok(first); }
+        let mut parts = vec![first];
         loop {
             self.advance();
             if self.on_stmt_end() || self.on_assign() || self.on_any("syntax.group.close")
                 || matches!(self.look().shape, Shape::Finish | Shape::Close) { break; }
-            let _item = self.expr_at(0, false)?;
+            parts.push(self.expr_at(0, false)?);
             if !self.on_any("ext.op.tuple") { break; }
         }
-        Ok(self.scope_unrun("ext.system.scope.unready"))
+        Ok(if self.table.has_any("ext.builtin.tuple") { prim_call(Prim::Tupling, vec![prim_call(Prim::MakeArray, parts)]) }
+            else { self.scope_unrun("ext.system.scope.unready") })
     }
 
     fn plain_or_kind(&mut self) -> Res<Form> {
@@ -4640,7 +4642,9 @@ impl<'a> Builder<'a> {
                         Some(at) => self.gather_comprehension(at, table.single("syntax.group.close").unwrap(), false)?,
                         None => {
                             let expression = if !table.has_any("ext.op.tuple") { self.expr(0)? }
-                                else if self.on_any("syntax.group.close") { self.scope_unrun("ext.system.scope.unready") }
+                                else if self.on_any("syntax.group.close") {
+                                if table.has_any("ext.builtin.tuple") { constant(Value::Tuple(Rc::new(Vec::new()))) } else { self.scope_unrun("ext.system.scope.unready") }
+                            }
                                 else { self.comma_value()? };
                             self.need_sign(table.single("syntax.group.close").unwrap(), "to close a group")?;
                             expression

@@ -993,15 +993,22 @@ impl<'a> Compiler<'a> {
 
     fn scope_tail(&mut self, from: usize) -> Res<()> {
         if !self.on_any(&self.lang.tuple_marks) { return Ok(()); }
+        let mut count = 1;
         while self.on_any(&self.lang.tuple_marks) {
             self.take();
             if self.on_sep() || matches!(self.look().shape, Shape::Close | Shape::Finish)
                 || self.on_assign()
                 || self.lang.grouping.as_ref().map_or(false, |g| self.at_symbol(&g.close)) { break; }
             self.expr_at(0, false)?;
+            count += 1;
         }
-        self.piece().instrs.truncate(from);
-        self.scope_fault(&self.lang.scope_unready.clone());
+        if self.lang.builtins.values().any(|b| *b == Builtin::Tuple) {
+            self.act(Action::MakeArray, count);
+            self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1);
+        } else {
+            self.piece().instrs.truncate(from);
+            self.scope_fault(&self.lang.scope_unready.clone());
+        }
         Ok(())
     }
 
@@ -4986,7 +4993,8 @@ impl<'a> Compiler<'a> {
                             self.comprehension(&group, clause, false)?;
                         } else {
                             if self.at_symbol(&group.close) && !lang.tuple_marks.is_empty() {
-                                self.scope_fault(&lang.scope_unready.clone());
+                                if lang.builtins.values().any(|b| *b == Builtin::Tuple) { self.constant(Value::Tuple(Rc::new(Vec::new()))); }
+                                else { self.scope_fault(&lang.scope_unready.clone()); }
                             } else if lang.tuple_marks.is_empty() { self.expr(0)?; }
                             else { self.scope_value()?; }
                             self.want_sign(&group.close, "to close a group")?;
