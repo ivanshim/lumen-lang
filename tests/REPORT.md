@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 95, differs 3, error 6, skipped 10 | pass 95, differs 3, error 6, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 193, differs 13, error 2, skipped 5 | pass 193, differs 13, error 2, skipped 5 |
+| `php/lang` | 213 | pass 197, differs 11, error 0, skipped 5 | pass 197, differs 11, error 0, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 49, differs 8, error 1, skipped 6 | pass 49, differs 8, error 1, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 363, differs 25, error 9, skipped 25 | pass 363, differs 25, error 9, skipped 25 |
+| all | 422 | pass 367, differs 23, error 7, skipped 25 | pass 367, differs 23, error 7, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 25 |
+| ran, printed something else | 23 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | skip php-cgi not available | 2 |
@@ -42,13 +42,11 @@ is listed, since the full kernels are meant to behave alike.
 | Fatal error: Uncaught Error: Undefined variable: umask in <file> | 1 |
 | skip for Windows only | 1 |
 | skip Run only on Windows | 1 |
-| Fatal error: Uncaught Error: Unexpected token: ; in <file> | 1 |
 | skip Can't find german locale | 1 |
 | skip setlocale() failed | 1 |
 | skip only for Windows | 1 |
 | skip this test is for 32-bit platforms only | 1 |
 | Fatal error: Uncaught Error: Undefined variable: NAN in <file> | 1 |
-| Fatal error: Uncaught Error: Expected ')' to close a group, got ';' in <file> | 1 |
 
 ### Reserved words: 59 of 68 spelled
 
@@ -322,7 +320,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/016.phpt` | pass | pass |  |
 | `php/lang/017.phpt` | pass | pass |  |
 | `php/lang/018.phpt` | pass | pass |  |
-| `php/lang/019.phpt` | error | error | Fatal error: Uncaught Error: Unexpected token: ; in <file> |
+| `php/lang/019.phpt` | pass | pass |  |
 | `php/lang/020.phpt` | pass | pass |  |
 | `php/lang/021.phpt` | pass | pass |  |
 | `php/lang/022.phpt` | pass | pass |  |
@@ -359,7 +357,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug21094.phpt` | pass | pass |  |
 | `php/lang/bug21600.phpt` | pass | pass |  |
 | `php/lang/bug21669.phpt` | pass | pass |  |
-| `php/lang/bug21820.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug21820.phpt` | pass | pass |  |
 | `php/lang/bug21849.phpt` | pass | pass |  |
 | `php/lang/bug21961.phpt` | pass | pass |  |
 | `php/lang/bug22231.phpt` | pass | pass |  |
@@ -413,7 +411,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug44827.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug45392.phpt` | differs | differs | ran, printed something else |
 | `php/lang/bug55754.phpt` | pass | pass |  |
-| `php/lang/bug71897.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug71897.phpt` | pass | pass |  |
 | `php/lang/bug73172.phpt` | pass | pass |  |
 | `php/lang/bug73329.phpt` | pass | pass |  |
 | `php/lang/bug7515.phpt` | pass | pass |  |
@@ -591,7 +589,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/string/unicode_escape_surrogates.phpt` | differs | differs | ran, printed something else |
 | `php/lang/string/unicode_escape_whitespace.phpt` | pass | pass |  |
 | `php/lang/string_decimals_001.phpt` | pass | pass |  |
-| `php/lang/syntax_errors.phpt` | error | error | Fatal error: Uncaught Error: Expected ')' to close a group, got ';' in <file> |
+| `php/lang/syntax_errors.phpt` | pass | pass |  |
 | `php/lang/this_assignment.phpt` | pass | pass |  |
 | `php/lang/throw_variation_001.phpt` | pass | pass |  |
 | `php/lang/type_hints_001.phpt` | pass | pass |  |

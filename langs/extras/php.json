@@ -48,6 +48,9 @@
   "ext.lexical.escape.codepoint.beyond": [
     "Invalid UTF-8 codepoint escape sequence: Codepoint too large"
   ],
+  "ext.lexical.escape.byte": [
+    "x"
+  ],
   "lexical.prologue": [
     "<?php"
   ],
@@ -403,6 +406,9 @@
   ],
   "ext.lexical.heredoc": [
     "<<<"
+  ],
+  "ext.lexical.interpolating.index.amiss": [
+    "string content, expecting \"-\" or identifier or variable or number"
   ],
   "ext.stmt.for.c": [
     "for"
@@ -835,6 +841,27 @@
   "ext.system.complaint.reading": [
     "Parse error"
   ],
+  "ext.system.reading.unexpected": [
+    "syntax error, unexpected"
+  ],
+  "ext.system.reading.unexpected.character": [
+    "character 0x"
+  ],
+  "ext.system.reading.unclosed": [
+    "Unclosed '",
+    "'"
+  ],
+  "ext.system.reading.unclosed.line": [
+    "on line"
+  ],
+  "ext.system.reading.unclosed.mismatch": [
+    "does not match '",
+    "'"
+  ],
+  "ext.system.reading.unmatched": [
+    "Unmatched '",
+    "'"
+  ],
   "ext.system.complaint.fatal": [
     "Fatal error"
   ],
@@ -864,6 +891,9 @@
   ],
   "ext.system.fault.class.kind": [
     "TypeError"
+  ],
+  "ext.system.fault.class.reading": [
+    "ParseError"
   ],
   "ext.builtin.time_limit": [
     "set_time_limit"
@@ -904,6 +934,10 @@
   ],
   "ext.builtin.eval": [
     "eval"
+  ],
+  "ext.builtin.eval.place": [
+    "(",
+    ") : eval()'d code"
   ],
   "ext.builtin.include": [
     "include",

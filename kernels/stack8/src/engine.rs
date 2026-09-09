@@ -102,6 +102,12 @@ pub struct Engine<'a> {
     any_waiting: std::cell::Cell<bool>,
     args_cell: Option<usize>,
     memo_cell: Option<usize>,
+    /// Text read in that could not be read at all: what was said of it,
+    /// where that text is reckoned to stand, and which of its own lines
+    /// the reading stopped on. The reading answers with a note like any
+    /// other, so where the text stands is kept here for the telling at
+    /// the end of the run, and is believed only for that same note.
+    reading_amiss: Option<(String, Rc<str>, u32)>,
 }
 
 /// A call under way: what it called, where the call itself was
@@ -216,6 +222,7 @@ impl<'a> Engine<'a> {
             any_waiting: std::cell::Cell::new(false),
             args_cell: find(&lang.args_binding),
             memo_cell: find(&lang.memo_binding),
+            reading_amiss: None,
             registry,
         }
     }
@@ -239,7 +246,7 @@ impl<'a> Engine<'a> {
 {}", open, given.display(&sp)),
             None => given.display(&sp),
         };
-        let tokens = crate::layout::layout(crate::lex::lex(&source, self.lang)?, self.lang)?;
+        let tokens = self.tokens_of_text(&source)?;
         let names = program.idents.clone();
         // Text read inside a method is read as standing in that method's
         // class: what the class keeps to itself is reached from there,
@@ -251,7 +258,13 @@ impl<'a> Engine<'a> {
             };
             (named, base)
         });
-        let read = crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, None, Some(names), within)?;
+        let read = match crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, None, Some(names), within) {
+            Ok(read) => read,
+            Err(said) => {
+                let row = self.registry.stopped_at;
+                return Err(self.text_amiss(said, row).into());
+            }
+        };
         self.world.resize(self.registry.idents.len(), Value::Blank);
         let mut mine: Vec<Value> = frame.to_vec();
         mine.resize(read.idents.len().max(frame.len()), Value::Blank);
@@ -276,9 +289,59 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
+    /// How many lines of a text stand ahead of the program in it. Only
+    /// the mark that opens code puts any there, and it puts one.
+    fn lines_ahead(&self) -> usize {
+        usize::from(self.lang.prologue.is_some())
+    }
+
+    /// Where text read in is reckoned to stand: the file the reading
+    /// was asked for in, and the line the asking is written on, set
+    /// about by the words the language has for saying it was text read
+    /// in and not a file of its own.
+    fn place_of_text(&self) -> Rc<str> {
+        match &self.lang.eval_place {
+            Some((before, after)) => Rc::from(format!("{}{}{}{}", self.source, before, self.line, after).as_str()),
+            None => self.source.clone(),
+        }
+    }
+
+    /// Text read in that cannot be read at all, with where it stands
+    /// written down so the end of the run may name it.
+    fn text_amiss(&mut self, said: String, row: usize) -> String {
+        let place = self.place_of_text();
+        let on = row.saturating_sub(self.lines_ahead()).max(1) as u32;
+        self.reading_amiss = Some((said.clone(), place, on));
+        said
+    }
+
+    /// The tokens of text read in, or the words for why it could not be
+    /// read, with the line it stopped on counted from the program's own
+    /// first line rather than the text's.
+    fn tokens_of_text(&mut self, source: &str) -> Res<Vec<crate::lex::Token>> {
+        let ahead = self.lines_ahead();
+        let read = crate::lex::lex_at(source, self.lang).and_then(|tokens| crate::layout::layout(tokens, self.lang, ahead));
+        match read {
+            Ok(tokens) => Ok(tokens),
+            Err((said, row)) => Err(self.text_amiss(said, row)),
+        }
+    }
+
     fn run_source(&mut self, source: &str, came_from: Option<String>) -> Res<Value> {
-        let tokens = crate::layout::layout(crate::lex::lex(source, self.lang)?, self.lang)?;
-        let program = crate::compile::compile_from(&tokens, self.lang, &mut self.registry, 0, came_from.as_deref().map(Rc::from))?;
+        // Text given outright stands where the call to read it stands;
+        // a file stands as itself, and is read from its own first line.
+        let tokens = match &came_from {
+            None => self.tokens_of_text(source)?,
+            Some(_) => crate::layout::layout(crate::lex::lex(source, self.lang)?, self.lang, 0).map_err(|(said, _)| said)?,
+        };
+        let program = match crate::compile::compile_from(&tokens, self.lang, &mut self.registry, 0, came_from.as_deref().map(Rc::from)) {
+            Ok(program) => program,
+            Err(said) if came_from.is_none() => {
+                let row = self.registry.stopped_at;
+                return Err(self.text_amiss(said, row));
+            }
+            Err(said) => return Err(said),
+        };
         // Names the new source brought with it want room in the world.
         self.world.resize(self.registry.idents.len(), Value::Blank);
         let (was_written_in, was_on) = (self.source.clone(), self.line);
@@ -642,6 +705,17 @@ impl<'a> Engine<'a> {
             // language names for one, where it names any.
             Fault::Note(told) => {
                 let Some(named) = self.class_for(told) else { return };
+                // A program that could not be read is told as a reading
+                // that stopped and not as a fault nobody took, since
+                // nothing was ever running for it to stop.
+                if let (true, Some(word)) = (self.unreadable(told), &self.lang.reading_word) {
+                    let (place, at) = match &self.reading_amiss {
+                        Some((said, place, on)) if said == told => (place.clone(), *on),
+                        _ => (self.source.clone(), self.line),
+                    };
+                    self.utter(&format!("\n{}: {} in {} on line {}\n", word, told, place, at));
+                    return;
+                }
                 // A fault raised on the way into a routine belongs where
                 // that routine is written, and says so.
                 let (told, place, at) = match &self.entering {
@@ -707,9 +781,24 @@ impl<'a> Engine<'a> {
             // Words the definition gave for what was handed over to be
             // walked, known the same way.
             _ if self.lang.giver_unwalkable.as_ref().map_or(false, |(w, _)| told.starts_with(w.as_str())) => &self.lang.fault_walk,
+            // A program that could not be read is known the same way:
+            // by the words the definition gave for the reading opening
+            // with them.
+            _ if self.unreadable(told) => &self.lang.fault_reading,
             _ => &None,
         };
         named.clone().or_else(|| self.lang.fault_class.clone())
+    }
+
+    /// Whether these are the words of a reading that stopped: any of
+    /// the three the definition gives for one, said at the opening.
+    fn unreadable(&self, told: &str) -> bool {
+        let openings = [
+            self.lang.reading_unexpected.clone(),
+            self.lang.unclosed_words.as_ref().map(|(before, _)| before.clone()),
+            self.lang.unmatched_words.as_ref().map(|(before, _)| before.clone()),
+        ];
+        openings.into_iter().flatten().any(|word| told.starts_with(&word))
     }
 
     fn as_fault(&mut self, told: &str) -> Option<Value> {

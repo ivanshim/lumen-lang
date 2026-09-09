@@ -92,7 +92,8 @@ fn lines_before(request: &[(String, String, String, bool)]) -> u32 {
 fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     let before = lines_before(request);
     let read = lex::lex_at(source, lang).map_err(|(said, row)| cannot_read(lang, &said, row, request, before, false));
-    let tokens = layout::layout(read?, lang)?;
+    let shaped = layout::layout(read?, lang, before as usize).map_err(|(said, row)| cannot_read(lang, &said, row, request, before, false));
+    let tokens = shaped?;
     let mut registry = compile::Registry::default();
     // The system names are globals whether or not the program mentions them.
     let system = [&lang.args_binding, &lang.args_list, &lang.args_count, &lang.memo_binding, &lang.precision_binding, &lang.entry_binding];

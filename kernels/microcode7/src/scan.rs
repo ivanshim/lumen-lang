@@ -112,6 +112,7 @@ struct Backslash<'a> {
     letters: &'a [char],
     ends: Option<char>,
     numbered: Option<char>,
+    unbracketed: Option<char>,
     open: Option<char>,
     shut: Option<char>,
     amiss: &'a str,
@@ -172,6 +173,27 @@ impl Backslash<'_> {
                     out.push('\\');
                     out.push(e);
                     out.extend(src[at + 2..j].iter());
+                }
+            }
+            return Ok(j);
+        }
+        // The same by number written bare, no brackets about it: one
+        // figure in sixteens or two. Where no figure follows, the
+        // letter names nothing and is kept the way it was written.
+        if self.unbracketed == Some(e) {
+            let (mut number, mut j) = (0u32, at + 2);
+            while j < src.len() && j < at + 4 && src[j].is_ascii_hexdigit() {
+                number = number * 16 + src[j].to_digit(16).expect("a figure in sixteens");
+                j += 1;
+            }
+            match char::from_u32(number).filter(|_| j > at + 2) {
+                Some(made) => {
+                    plain.push(out.chars().count());
+                    out.push(made);
+                }
+                None => {
+                    out.push('\\');
+                    out.push(e);
                 }
             }
             return Ok(j);
@@ -358,6 +380,8 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
     let number_close = table.letter("ext.lexical.escape.codepoint.close");
     let badly = table.single("ext.lexical.escape.codepoint.amiss").unwrap_or("Bad character number");
     let too_far = table.single("ext.lexical.escape.codepoint.beyond").unwrap_or("Character number too large");
+    // The letter beginning a character named by a bare number instead.
+    let unbracketed = table.letter("ext.lexical.escape.byte");
     let point = table.letter("lexical.number.decimal_point");
     let base = table.letter("lexical.number.base_marker");
     let expo = table.letter("lexical.number.exponent_marker");
@@ -434,6 +458,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                 letters: if is_raw { &[] } else { &escapes },
                 ends: Some(c),
                 numbered: if is_raw { None } else { numbered },
+                unbracketed: if is_raw { None } else { unbracketed },
                 open: number_open,
                 shut: number_close,
                 amiss: badly,
@@ -556,6 +581,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                 letters: &unquoted,
                 ends: None,
                 numbered,
+                unbracketed,
                 open: number_open,
                 shut: number_close,
                 amiss: badly,
@@ -607,7 +633,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
         }
         let ahead: String = src[pos..src.len().min(pos + 8)].iter().collect();
         let Some(sym) = table.signs.iter().find(|s| ahead.starts_with(s.as_str())).cloned() else {
-            return Err(format!("Unexpected character '{}' at row {}", c, row));
+            return Err(told_of_character(table, c, row));
         };
         pos += sym.chars().count();
         tokens.push(tok(Shape::Sign, sym, row));
@@ -636,7 +662,7 @@ fn next_written(cs: &[char], from: usize, mark: &str) -> Option<usize> {
     (from..cs.len()).find(|at| written_at(cs, *at, mark))
 }
 
-fn pieces(s: &str, plain: &[usize], table: &Table) -> Vec<Piece> {
+fn pieces(s: &str, plain: &[usize], table: &Table) -> Result<Vec<Piece>, String> {
     let sigil = table.letter("identifier.variable_prefix");
     let cs: Vec<char> = s.chars().collect();
     let variable_at = |at: usize| {
@@ -676,10 +702,18 @@ fn pieces(s: &str, plain: &[usize], table: &Table) -> Vec<Piece> {
                     let after = end + opener.chars().count();
                     if let Some(stop) = next_written(&cs, after, shut) {
                         let inside: String = cs[after..stop].iter().collect();
-                        let all_digits = !inside.is_empty() && inside.chars().all(|c| c.is_ascii_digit());
+                        let numeric = |w: &str| !w.is_empty() && w.chars().all(|c| c.is_ascii_digit());
+                        let all_digits = numeric(&inside) || inside.strip_prefix('-').map_or(false, numeric);
                         let a_name = inside.chars().next().map_or(false, |c| Some(c) == sigil);
                         let a_word = inside.chars().next().map_or(false, |c| table.begins_name(c))
                             && inside.chars().all(|c| table.extends_name(c));
+                        // Anything else asked for between the brackets
+                        // is beyond what the shorter writing reaches,
+                        // and a language having words for that stops
+                        // rather than let the brackets stand as letters.
+                        if let (false, Some(words)) = (all_digits || a_name || a_word, told_of_key(table)) {
+                            return Err(words);
+                        }
                         let beyond = stop + shut.chars().count();
                         if all_digits || a_name {
                             end = beyond;
@@ -723,13 +757,33 @@ fn pieces(s: &str, plain: &[usize], table: &Table) -> Vec<Piece> {
         at += 1;
     }
     out.push(Piece::Text(text));
-    out
+    Ok(out)
+}
+
+/// What a language says of a key asked for between the brackets of a
+/// name woven into text where the shorter writing will not have it.
+/// Nothing where the language says nothing, the brackets then standing
+/// as the letters they are written with.
+fn told_of_key(table: &Table) -> Option<String> {
+    let opening = table.single("ext.system.reading.unexpected")?;
+    let words = table.single("ext.lexical.interpolating.index.amiss")?;
+    Some(format!("{opening} {words}"))
+}
+
+/// What a language says of a character it has no reading for at all.
+/// A language naming such characters by their number names it that
+/// way, a character no one can show being no use in a complaint.
+fn told_of_character(table: &Table, c: char, row: u32) -> String {
+    match (table.single("ext.system.reading.unexpected"), table.single("ext.system.reading.unexpected.character")) {
+        (Some(opening), Some(named)) => format!("{opening} {named}{:02X}", c as u32),
+        _ => format!("Unexpected character '{c}' at row {row}"),
+    }
 }
 
 /// The tokens of a woven string: a bracketed concatenation starting
 /// from the empty string, so the result is text whatever is woven in.
 fn weave(s: &str, plain: &[usize], table: &Table, row: u32, tokens: &mut Vec<Token>) -> Result<(), String> {
-    let cut = pieces(s, plain, table);
+    let cut = pieces(s, plain, table)?;
     let sign = |text: &str| Token { shape: Shape::Sign, lexeme: text.to_string(), span: 0, row };
     let quote = |text: String| Token { shape: Shape::Quote, lexeme: text, span: 0, row };
     if !cut.iter().any(|p| matches!(p, Piece::Code(_))) {

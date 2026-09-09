@@ -661,6 +661,55 @@ only. The extension labels so far, all from PHP:
   way. What is said after the word is whatever the kernel found: the
   words a definition gave for it where it gave any, and the kernel's own
   naming otherwise.
+- `ext.system.reading.unexpected`: the words a language puts before
+  whatever stopped the reading — the token it did not want there, or one
+  of the namings below. Without them the kernel says it in its own
+  plainer way, and nothing else here can be said at all, since every one
+  of these openings begins with these words.
+- `ext.system.reading.unexpected.character`: the words before a
+  character named by its number in sixteens, `character 0x` giving
+  `syntax error, unexpected character 0x7F`. A character no one can show
+  is no use shown in a complaint, so a language naming characters this
+  way has them named this way wherever the reading meets one it has no
+  reading for.
+- `ext.system.reading.unclosed`, `.line` and `.mismatch`, and
+  `ext.system.reading.unmatched`: what a language says of a bracket
+  amiss. The first and last are two words each, one before the bracket
+  and one after, so `Unclosed '` and `'` make `Unclosed '('` of a
+  bracket opened and never answered, and `Unmatched '` and `'` make
+  `Unmatched ')'` of one answering a bracket never opened. `.line` is
+  the word before the line the bracket was opened on, said only where
+  the reading stopped on some later line, there being no sense in naming
+  the same line twice: `Unclosed '{' on line 1`. `.mismatch` is two
+  words again, about the bracket found where another was wanted:
+  `Unclosed '(' does not match ']'`. Of several brackets left open the
+  innermost is told of, that being the one the reading was inside when
+  the text ran out. Give none of these and nothing is weighed: a bracket
+  amiss shows up later as whatever the reading makes of it, which is how
+  the other languages here still read.
+- `ext.system.fault.class.reading`: the class a program that cannot be
+  read is raised under, so that a program reading text of its own may
+  catch it. Sister to `ext.system.fault.class.kind` and the rest. Where
+  nobody catches it, such a fault is told as a reading that stopped and
+  not as a fault nobody took: nothing was ever running there for a fault
+  to leave. The class itself is declared in the language's own library.
+- `ext.builtin.eval.place`: two words set about the line that text read
+  in was asked for on, together naming where that text stands. PHP's `(`
+  and `) : eval()'d code` make `prog.php(12) : eval()'d code` of a
+  reading asked for on line 12, and the line named after it is the
+  text's own first, not the file's.
+- `ext.lexical.interpolating.index.amiss`: what a language says of a key
+  written between the brackets of a name woven into text where the
+  shorter writing will not have it — `"$a['foo']"`, where a bare word, a
+  number, or another name is all that may stand there. Said after
+  `ext.system.reading.unexpected`. Where a language says nothing, such
+  brackets are left standing as the letters they are written with.
+- `ext.lexical.escape.byte`: the letter that, after the escape mark,
+  begins a character named by a bare number in sixteens, one digit or
+  two, with no brackets about it: `"\x41"` is an A. Sister to
+  `ext.lexical.escape.codepoint`, which brackets a number of any length.
+  The letter with no digit after it names no character and is kept as it
+  was written.
 - `ext.lexical.number.amiss`: what a language says of a run of digits it
   cannot read, `08` where noughts do not lead an eight-fold number among
   them. Sister to `ext.lexical.escape.codepoint.amiss`.
@@ -1294,6 +1343,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.echo` | - | - | - | - | - | - | - | `echo` | - | - |
 | `ext.builtin.empty` | - | - | - | - | - | - | - | `empty` | - | - |
 | `ext.builtin.eval` | - | - | - | - | - | - | - | `eval` | - | - |
+| `ext.builtin.eval.place` | - | - | - | - | - | - | - | `(` `) : eval()'d code` | - | - |
 | `ext.builtin.exit` | - | - | - | - | - | - | - | `exit` `die` | - | - |
 | `ext.builtin.file.exists` | - | - | - | - | - | - | - | `file_exists` | - | - |
 | `ext.builtin.file.read` | - | - | - | - | - | - | - | `__file_read` | - | - |
@@ -1316,12 +1366,14 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.var_dump` | - | - | - | - | - | - | - | `var_dump` | - | - |
 | `ext.builtin.write.operator` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.lexical.epilogue` | - | - | - | - | - | - | - | `?>` | - | - |
+| `ext.lexical.escape.byte` | - | - | - | - | - | - | - | `x` | - | - |
 | `ext.lexical.escape.codepoint` | - | - | - | - | - | - | - | `u` | - | - |
 | `ext.lexical.escape.codepoint.amiss` | - | - | - | - | - | - | - | `Invalid UTF-8 codepoint escape sequence` | - | - |
 | `ext.lexical.escape.codepoint.beyond` | - | - | - | - | - | - | - | `Invalid UTF-8 codepoint escape sequence: Codepoint too large` | - | - |
 | `ext.lexical.escape.codepoint.close` | - | - | - | - | - | - | - | `}` | - | - |
 | `ext.lexical.escape.codepoint.open` | - | - | - | - | - | - | - | `{` | - | - |
 | `ext.lexical.heredoc` | - | - | - | - | - | - | - | `<<<` | - | - |
+| `ext.lexical.interpolating.index.amiss` | - | - | - | - | - | - | - | `string content, expecting "-" or identifier or variable or number` | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | - | - | - | `"` | - | - |
 | `ext.lexical.name_lead` | - | - | - | - | - | - | - | `\` | - | - |
 | `ext.lexical.number.amiss` | - | - | - | - | - | - | - | `Invalid numeric literal` | - | - |
@@ -1440,6 +1492,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class.arithmetic` | - | - | - | - | - | - | - | `ArithmeticError` | - | - |
 | `ext.system.fault.class.division` | - | - | - | - | - | - | - | `DivisionByZeroError` | - | - |
 | `ext.system.fault.class.kind` | - | - | - | - | - | - | - | `TypeError` | - | - |
+| `ext.system.fault.class.reading` | - | - | - | - | - | - | - | `ParseError` | - | - |
 | `ext.system.fault.class.value` | - | - | - | - | - | - | - | `ValueError` | - | - |
 | `ext.system.fault.class.walk` | - | - | - | - | - | - | - | `Exception` | - | - |
 | `ext.system.fault.operands` | - | - | - | - | - | - | - | `Unsupported operand types` | - | - |
@@ -1449,6 +1502,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.kind.loose` | - | - | - | - | - | - | - | `mixed` `callable` `iterable` `object` `self` `static` `parent` `void` `never` `false` `true` | - | - |
 | `ext.system.kind.object` | - | - | - | - | - | - | - | `object` | - | - |
 | `ext.system.kind.spelled` | - | - | - | - | - | - | - | `true` | - | - |
+| `ext.system.reading.unclosed` | - | - | - | - | - | - | - | `Unclosed '` `'` | - | - |
+| `ext.system.reading.unclosed.line` | - | - | - | - | - | - | - | `on line` | - | - |
+| `ext.system.reading.unclosed.mismatch` | - | - | - | - | - | - | - | `does not match '` `'` | - | - |
+| `ext.system.reading.unexpected` | - | - | - | - | - | - | - | `syntax error, unexpected` | - | - |
+| `ext.system.reading.unexpected.character` | - | - | - | - | - | - | - | `character 0x` | - | - |
+| `ext.system.reading.unmatched` | - | - | - | - | - | - | - | `Unmatched '` `'` | - | - |
 | `ext.system.real.bits` | - | - | - | - | - | - | - | `64` | - | - |
 | `ext.system.real.digits` | - | - | - | - | - | - | - | `14` | - | - |
 | `ext.system.request.all` | - | - | - | - | - | - | - | `$_REQUEST` | - | - |

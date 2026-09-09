@@ -58,6 +58,10 @@ pub struct Lang {
     /// beyond the last character there is.
     pub codepoint_amiss: Option<String>,
     pub codepoint_beyond: Option<String>,
+    /// The letter that, after the escape mark, begins a character named
+    /// by its number in sixteens with no brackets about it: one digit
+    /// or two, and the character of that number stands there.
+    pub byte_letter: Option<char>,
     /// What a language says of a number it cannot read.
     pub number_amiss: Option<String>,
     pub prologue: Option<String>,
@@ -352,6 +356,29 @@ pub struct Lang {
     pub terminator_only: bool,
     /// The word a language puts before a program it cannot read.
     pub reading_word: Option<String>,
+    /// The words a language puts before whatever stopped the reading.
+    pub reading_unexpected: Option<String>,
+    /// The words before a character named by its number, which is how a
+    /// character that cannot be shown is best named.
+    pub reading_character: Option<String>,
+    /// The words on either side of a bracket left open, the line it was
+    /// opened on where that is not the line the reading stopped on, the
+    /// bracket that answered it wrongly, and a bracket answering none.
+    /// A language that gives none of these is not weighed for balance
+    /// at all: a bracket amiss shows up later as whatever the reading
+    /// makes of it.
+    pub unclosed_words: Option<(String, String)>,
+    pub unclosed_line: Option<String>,
+    pub mismatch_words: Option<(String, String)>,
+    pub unmatched_words: Option<(String, String)>,
+    /// The class a program that cannot be read is raised under.
+    pub fault_reading: Option<String>,
+    /// The words on either side of the line the reading of text was
+    /// asked for on, which together name where that text stands.
+    pub eval_place: Option<(String, String)>,
+    /// What a language says of a key between the brackets of a name
+    /// woven into text where the shorter writing does not take it.
+    pub woven_index_words: Option<String>,
     /// Whether a flag becomes text as the number it stands for.
     pub flags_count: bool,
     /// What a language says when a builtin that reads what the running
@@ -568,6 +595,9 @@ b ext.stmt.terminator.only
 w ext.stmt.block.instead | w ext.stmt.block.instead.close | b ext.op.spelled | b ext.system.class.folded
 w ext.lexical.escape.codepoint | w ext.lexical.escape.codepoint.open | w ext.lexical.escape.codepoint.close
 w ext.lexical.escape.codepoint.amiss | w ext.lexical.escape.codepoint.beyond | w ext.lexical.number.amiss
+w ext.lexical.escape.byte | w ext.lexical.interpolating.index.amiss | w ext.builtin.eval.place
+w ext.system.reading.unexpected | w ext.system.reading.unexpected.character | w ext.system.fault.class.reading
+w ext.system.reading.unclosed | w ext.system.reading.unclosed.line | w ext.system.reading.unclosed.mismatch | w ext.system.reading.unmatched
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 ";
@@ -620,6 +650,19 @@ impl<'a> Reader<'a> {
 
     fn head(&self, key: &str) -> Result<Option<String>, String> {
         Ok(self.strings(key)?.into_iter().next())
+    }
+
+    /// A label whose words stand on either side of what the kernel puts
+    /// between them: the first word before it, the second after. One
+    /// word alone leaves the kernel nothing to close with, so it is
+    /// refused rather than half read.
+    fn around(&self, key: &str) -> Result<Option<(String, String)>, String> {
+        let mut said = self.strings(key)?.into_iter();
+        match (said.next(), said.next()) {
+            (Some(before), Some(after)) => Ok(Some((before, after))),
+            (Some(_), None) => Err(format!("label '{key}' wants a word on either side of what it names")),
+            _ => Ok(None),
+        }
     }
 
     fn letters(&self, key: &str) -> Result<Vec<char>, String> {
@@ -1054,6 +1097,7 @@ impl Lang {
             codepoint_close: r.letter("ext.lexical.escape.codepoint.close")?,
             codepoint_amiss: r.head("ext.lexical.escape.codepoint.amiss")?,
             codepoint_beyond: r.head("ext.lexical.escape.codepoint.beyond")?,
+            byte_letter: r.letter("ext.lexical.escape.byte")?,
             number_amiss: r.head("ext.lexical.number.amiss")?,
             prologue: r.head("lexical.prologue")?,
             point: r.letter("lexical.number.decimal_point")?,
@@ -1248,6 +1292,15 @@ impl Lang {
             classes_folded: r.flag("ext.system.class.folded")?,
             terminator_only: r.flag("ext.stmt.terminator.only")?,
             reading_word: r.head("ext.system.complaint.reading")?,
+            reading_unexpected: r.head("ext.system.reading.unexpected")?,
+            reading_character: r.head("ext.system.reading.unexpected.character")?,
+            unclosed_words: r.around("ext.system.reading.unclosed")?,
+            unclosed_line: r.head("ext.system.reading.unclosed.line")?,
+            mismatch_words: r.around("ext.system.reading.unclosed.mismatch")?,
+            unmatched_words: r.around("ext.system.reading.unmatched")?,
+            fault_reading: r.head("ext.system.fault.class.reading")?,
+            eval_place: r.around("ext.builtin.eval.place")?,
+            woven_index_words: r.head("ext.lexical.interpolating.index.amiss")?,
             flags_count: r.flag("system.flag.counts")?,
             args_outside_all: r.head("ext.builtin.args.all.outside")?,
             args_outside_count: r.head("ext.builtin.args.count.outside")?,
@@ -1491,6 +1544,26 @@ impl Lang {
         }
         let at = self.brief_kinds.iter().position(|n| n != "-" && n == word)?;
         IN_ORDER.get(at).copied()
+    }
+
+    /// What a language says of a character it has no reading for. Where
+    /// it names such characters by their number, it is named that way:
+    /// a character there is no showing cannot be shown in a complaint
+    /// either. Otherwise the kernel says it in its own plainer words.
+    pub fn stopped_at_character(&self, c: char, line: usize, column: usize) -> String {
+        match (&self.reading_unexpected, &self.reading_character) {
+            (Some(opening), Some(named)) => format!("{opening} {named}{:02X}", c as u32),
+            _ => format!("Unexpected character '{c}' at {line}:{column}"),
+        }
+    }
+
+    /// What a language says of a key between the brackets of a name
+    /// woven into text where the shorter writing does not take it.
+    /// Nothing where the language says nothing, such a key then being
+    /// left to stand as the letters it is written with.
+    pub fn woven_index_amiss(&self) -> Option<String> {
+        let (opening, said) = (self.reading_unexpected.as_ref()?, self.woven_index_words.as_ref()?);
+        Some(format!("{opening} {said}"))
     }
 
     pub fn begins_name(&self, c: char) -> bool {

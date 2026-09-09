@@ -3653,7 +3653,13 @@ impl<'a> Compiler<'a> {
                         return self.indexing(from);
                     }
                 }
-                return Err(format!("Unexpected token: {}", tok.lexeme));
+                // The words a language puts before whatever stopped the
+                // reading are its own; the kernel's plainer ones stand
+                // where a definition gives none.
+                return Err(match &self.lang.reading_unexpected {
+                    Some(opening) => format!("{} {}", opening, tok.lexeme),
+                    None => format!("Unexpected token: {}", tok.lexeme),
+                });
             }
             _ => return Err("Expected an expression".to_string()),
         }

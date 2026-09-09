@@ -185,6 +185,27 @@ pub fn build_within(
     build_marking(tokens, table, seeded, HashMap::new(), true, before, None, None, Some((inside, knows)), within)
 }
 
+/// `build_within` and `build_from`, each saying besides which row the
+/// reading had got to when it stopped: text read as the run goes is
+/// told of by the line of its own that would not be read.
+pub fn build_within_at(
+    tokens: &[Token],
+    table: &Table,
+    seeded: &[String],
+    inside: &[String],
+    knows: Knows,
+    before: u32,
+    within: Option<(String, Option<String>)>,
+) -> Result<Built, (String, u32)> {
+    let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
+    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, Some((&at, &hard)), Some((inside, knows)), within).map_err(|said| (said, at.get()))
+}
+
+pub fn build_from_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32)> {
+    let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
+    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard)), None, None).map_err(|said| (said, at.get()))
+}
+
 type Knows<'w> = (&'w HashMap<String, Vec<bool>>, &'w HashMap<String, Vec<String>>, &'w HashSet<String>);
 type Within<'w> = (&'w [String], Knows<'w>);
 
@@ -3442,7 +3463,13 @@ impl<'a> Builder<'a> {
                     let items = self.elements("syntax.map.close", "syntax.map.separator")?;
                     prim_call(Prim::MakeMap, items)
                 } else {
-                    return Err(format!("Unexpected token: {}", t.lexeme));
+                    // A language with words of its own for what stopped
+                    // the reading puts them first; the kernel's plainer
+                    // ones serve where the definition gives none.
+                    return Err(match table.single("ext.system.reading.unexpected") {
+                        Some(opening) => format!("{} {}", opening, t.lexeme),
+                        None => format!("Unexpected token: {}", t.lexeme),
+                    });
                 }
             }
             _ => return Err("Expected an expression".to_string()),

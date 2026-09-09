@@ -165,6 +165,12 @@ pub struct Machine<'a> {
     /// value or a note, so a throw or an ending is kept here and let
     /// go again where the reading stood.
     got_away: Option<Escape>,
+    /// Text read in that would not be read: the words said of it, the
+    /// place it counts as standing in, and the line of its own that the
+    /// reading stopped on. The reading answers with a plain note, so
+    /// this is set aside for the end of the run to name, and is trusted
+    /// only for the very words it was set aside with.
+    would_not_read: Option<(String, Rc<str>, u32)>,
     /// What the program already read declared about cells: which
     /// parameters take one and which routines hand one back. Text read
     /// while the run goes is a piece of the same program and is built
@@ -249,6 +255,7 @@ impl<'a> Machine<'a> {
             things: RefCell::new(Vec::new()),
             read_before: RefCell::new(std::collections::HashSet::new()),
             got_away: None,
+            would_not_read: None,
             knows_cells: (HashMap::new(), HashMap::new(), std::collections::HashSet::new()),
             frames_named: Vec::new(),
             hearer: RefCell::new(None),
@@ -940,12 +947,25 @@ impl<'a> Machine<'a> {
             _ if self.table.strings("ext.op.walk.giver.unwalkable").first().map_or(false, |w| told.starts_with(w.as_str())) => {
                 Some("ext.system.fault.class.walk")
             }
+            // A program that would not be read is known the same way:
+            // by the reading opening with words the definition gave.
+            _ if self.would_not_read_words(told) => Some("ext.system.fault.class.reading"),
             _ => None,
         };
         by_kind
             .and_then(|label| self.table.single(label))
             .or_else(|| self.table.single("ext.system.fault.class"))
             .map(str::to_string)
+    }
+
+    /// Whether these words are a reading that stopped: they open with
+    /// one of the three openings the definition gives for one.
+    fn would_not_read_words(&self, told: &str) -> bool {
+        let opening = |key: &str| self.table.around(key).map(|(head, _)| head);
+        [self.table.single("ext.system.reading.unexpected"), opening("ext.system.reading.unclosed"), opening("ext.system.reading.unmatched")]
+            .into_iter()
+            .flatten()
+            .any(|head| told.starts_with(head))
     }
 
     fn as_raised(&mut self, told: &str) -> Option<Value> {
@@ -1059,8 +1079,7 @@ impl<'a> Machine<'a> {
     /// and what it writes to one of them the routine sees afterwards.
     /// Names it makes itself go on the end of that routine's frame.
     fn run_text_within(&mut self, source: &str, frame: &Rc<Env>) -> Result<Value, Escape> {
-        let tokens = crate::scan::scan(source, self.table).map_err(Escape::Error)?;
-        let tokens = crate::indent::indent(tokens, self.table).map_err(Escape::Error)?;
+        let tokens = self.text_scanned(source).map_err(Escape::Error)?;
         let held: Vec<String> = self.frames_named.last().map_or_else(Vec::new, |p| p.idents.clone());
         let knows = (&self.knows_cells.0, &self.knows_cells.1, &self.knows_cells.2);
         // Text read inside a method is read as standing in that
@@ -1074,7 +1093,10 @@ impl<'a> Machine<'a> {
             };
             (named, under)
         });
-        let built = crate::build::build_within(&tokens, self.table, &self.idents, &held, knows, 0, within).map_err(Escape::Error)?;
+        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &held, knows, 0, within) {
+            Ok(built) => built,
+            Err((said, row)) => return Err(Escape::Error(self.text_would_not_read(said, row))),
+        };
         self.idents = built.globals;
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         frame.cells.borrow_mut().resize(built.program.idents.len().max(held.len()), Value::Unset);
@@ -1085,10 +1107,57 @@ impl<'a> Machine<'a> {
         })
     }
 
+    /// How many lines a text carries ahead of the program written in
+    /// it. Only the mark that opens code puts any there, and it one.
+    fn lines_ahead(&self) -> u32 {
+        u32::from(self.table.single("lexical.prologue").is_some())
+    }
+
+    /// Where text read while the run goes counts as standing: the file
+    /// the reading was asked for in and the line that asking is written
+    /// on, set about by the words the language has for marking it text
+    /// read in rather than a file of its own.
+    fn place_of_text(&self) -> Rc<str> {
+        match self.table.around("ext.builtin.eval.place") {
+            Some((head, tail)) => Rc::from(format!("{}{head}{}{tail}", self.written_in, self.row).as_str()),
+            None => self.written_in.clone(),
+        }
+    }
+
+    /// Text that would not be read, its place set aside so that the end
+    /// of the run may name where it stood.
+    fn text_would_not_read(&mut self, said: String, row: u32) -> String {
+        let place = self.place_of_text();
+        self.would_not_read = Some((said.clone(), place, row.saturating_sub(self.lines_ahead()).max(1)));
+        said
+    }
+
+    /// The tokens of text read while the run goes, or the words for why
+    /// there are none, counting its lines from the program's own first.
+    fn text_scanned(&mut self, source: &str) -> Result<Vec<crate::scan::Token>, String> {
+        let ahead = self.lines_ahead();
+        match crate::scan::scan_at(source, self.table).and_then(|read| crate::indent::indent(read, self.table, ahead)) {
+            Ok(tokens) => Ok(tokens),
+            Err((said, row)) => Err(self.text_would_not_read(said, row)),
+        }
+    }
+
     fn run_source(&mut self, source: &str, came_out_of: Option<String>) -> Result<Value, String> {
-        let tokens = crate::scan::scan(source, self.table)?;
-        let tokens = crate::indent::indent(tokens, self.table)?;
-        let built = crate::build::build_from(&tokens, self.table, &self.idents, HashMap::new(), true, 0, came_out_of.as_deref().map(Rc::from))?;
+        // Text handed over outright counts as standing where the call
+        // to read it stands; a file stands as itself and is read from
+        // its own first line.
+        let reading_text = came_out_of.is_none();
+        let tokens = match reading_text {
+            true => self.text_scanned(source)?,
+            false => crate::indent::indent(crate::scan::scan(source, self.table)?, self.table, 0).map_err(|(said, _)| said)?,
+        };
+        let built = match reading_text {
+            true => match crate::build::build_from_at(&tokens, self.table, &self.idents, HashMap::new(), true, 0) {
+                Ok(built) => built,
+                Err((said, row)) => return Err(self.text_would_not_read(said, row)),
+            },
+            false => crate::build::build_from(&tokens, self.table, &self.idents, HashMap::new(), true, 0, came_out_of.as_deref().map(Rc::from))?,
+        };
         self.idents = built.globals;
         // Names the new source brought with it want room to stand in.
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
@@ -1176,6 +1245,18 @@ impl<'a> Machine<'a> {
             }
             // A fault of the kernel's own is told under the class the
             // language names for one, where it names any.
+            // A program that would not be read is told as a reading
+            // that stopped rather than as a fault nobody took: nothing
+            // was ever running there for a fault to leave.
+            Err(Escape::Error(e)) if self.would_not_read_words(&e) && self.table.single("ext.system.complaint.reading").is_some() => {
+                let word = self.table.single("ext.system.complaint.reading").expect("a word for a reading that stopped");
+                let (place, at) = match &self.would_not_read {
+                    Some((said, place, on)) if *said == e => (place.clone(), *on),
+                    _ => (self.written_in.clone(), self.row),
+                };
+                self.utter(&format!("\n{}: {} in {} on line {}\n", word, e, place, at));
+                Err(e)
+            }
             Err(Escape::Error(e)) => {
                 if let Some(named) = self.class_of_fault(&e) {
                     if self.complaint_words.iter().any(|(k, _)| *k == "fatal") {

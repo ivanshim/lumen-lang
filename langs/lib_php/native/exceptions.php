@@ -58,6 +58,8 @@ class Throwable {
 class Exception extends Throwable {}
 class Error extends Throwable {}
 class TypeError extends Error {}
+class CompileError extends Error {}
+class ParseError extends CompileError {}
 class ValueError extends Error {}
 class ArithmeticError extends Error {}
 class DivisionByZeroError extends ArithmeticError {}

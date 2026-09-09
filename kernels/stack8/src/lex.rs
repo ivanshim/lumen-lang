@@ -265,6 +265,25 @@ impl<'a> Cursor<'a> {
         false
     }
 
+    /// The character named by the bare number after the escape letter,
+    /// read in sixteens, two digits at most. Nothing at all where no
+    /// digit follows, since then the letter names no character and is
+    /// kept as written.
+    fn numbered_bare(&mut self) -> Option<char> {
+        let mut number = 0u32;
+        let mut digits = 0;
+        while digits < 2 {
+            let Some(c) = self.look(0).filter(char::is_ascii_hexdigit) else { break };
+            number = number * 16 + c.to_digit(16).expect("a digit in sixteens");
+            digits += 1;
+            self.step();
+        }
+        match digits {
+            0 => None,
+            _ => char::from_u32(number),
+        }
+    }
+
     /// The character an escape names by its number: the opening
     /// bracket is where this begins, the number is written in sixteens,
     /// and the closing bracket ends it. Nothing where the number names
@@ -337,6 +356,22 @@ impl<'a> Cursor<'a> {
                     s.push('\\');
                     s.push(next);
                     s.push_str(&written);
+                }
+            }
+            return Ok(());
+        }
+        // The same by number, but written bare: one figure in sixteens
+        // or two, with no brackets about them. A letter with no figure
+        // after it names no character and stands for itself.
+        if how.numbered && Some(next) == self.lang.byte_letter {
+            match self.numbered_bare() {
+                Some(made) => {
+                    shielded.push(s.chars().count());
+                    s.push(made);
+                }
+                None => {
+                    s.push('\\');
+                    s.push(next);
                 }
             }
             return Ok(());
@@ -504,9 +539,17 @@ impl<'a> Cursor<'a> {
                         if let Some(end) = word_at(&chars, from, &index.close) {
                             let inside: String = chars[from..end].iter().collect();
                             let opens = |f: fn(&Lang, char) -> bool| inside.chars().next().map_or(false, |c| f(lang, c));
-                            let digits = !inside.is_empty() && inside.chars().all(|c| c.is_ascii_digit());
+                            let counted = |w: &str| !w.is_empty() && w.chars().all(|c| c.is_ascii_digit());
+                            let digits = counted(&inside) || inside.strip_prefix('-').map_or(false, counted);
                             let binding = inside.chars().next().map_or(false, |c| Some(c) == lang.sigil);
                             let bare = opens(Lang::begins_name) && inside.chars().all(|c| lang.extends_name(c));
+                            // A key of any other making is more than the
+                            // shorter writing takes, and a language that
+                            // says so stops rather than leave the
+                            // brackets standing as letters.
+                            if let (false, Some(said)) = (digits || binding || bare, lang.woven_index_amiss()) {
+                                return Err(said);
+                            }
                             let past = end + index.close.chars().count();
                             if digits || binding {
                                 j = past;
@@ -700,7 +743,7 @@ impl<'a> Cursor<'a> {
         let (line, col) = (self.row, self.column);
         let window: String = self.text[self.at..].iter().take(8).collect();
         let Some(sym) = self.lang.symbols.iter().find(|s| window.starts_with(s.as_str())).cloned() else {
-            return Err(format!("Unexpected character '{}' at {}:{}", self.text[self.at], line, col));
+            return Err(self.lang.stopped_at_character(self.text[self.at], line, col));
         };
         for _ in sym.chars() {
             self.step();

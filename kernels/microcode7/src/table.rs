@@ -103,6 +103,9 @@ ext.system.runner:L ext.system.source.file:L ext.system.source.directory:L ext.s
 ext.system.complaint.warning:L ext.system.complaint.notice:L ext.system.complaint.deprecated:L ext.system.complaint.fatal:L ext.system.complaint.reading:L ext.system.fault.class:L ext.system.fault.operands:L ext.op.increment.text:L ext.op.decrement.text:L ext.system.fault.class.arithmetic:L ext.system.fault.class.division:L ext.system.fault.class.kind:L ext.system.fault.class.value:L ext.system.fault.class.walk:L ext.op.walk.giver.unwalkable:L ext.builtin.time_limit:L ext.system.kind.brief:L ext.builtin.file.read:L ext.builtin.file.write:L \
 ext.builtin.file.exists:L ext.builtin.file.remove:L ext.builtin.eval:L ext.builtin.include:L ext.builtin.include.once:L ext.builtin.output.hold:L ext.builtin.output.held:L ext.builtin.output.drop:L ext.builtin.output.depth:L ext.builtin.output.begun:L ext.builtin.at_end:L ext.builtin.complaint.handler:L ext.builtin.complaint.say:L ext.builtin.calls:L ext.system.kind.object:L ext.system.kind.loose:L ext.builtin.uncaught:L ext.builtin.classes:L ext.builtin.routines:L ext.builtin.spelled:L ext.builtin.class.beneath:L ext.builtin.class.methods:L ext.builtin.class.properties:L ext.builtin.clock:L ext.builtin.write.operator:B ext.op.hush:L ext.op.name_by_value:L ext.op.cast:B ext.op.member.by_value:B ext.op.index.text:B ext.system.globals:L ext.op.reference.unshared.written:L ext.op.reference.unshared.given:L ext.op.reference.unshared.handed:L ext.stmt.terminator.only:B ext.stmt.block.instead:L ext.stmt.block.instead.close:L ext.op.spelled:B ext.system.class.folded:B ext.stmt.unpack:L ext.builtin.isset:L ext.builtin.empty:L ext.stmt.do:L ext.op.index.makes:B ext.system.untrue.text:L ext.system.untrue.empty_array:B ext.builtin.exit:L \
 ext.lexical.escape.codepoint:L ext.lexical.escape.codepoint.open:L ext.lexical.escape.codepoint.close:L ext.lexical.escape.codepoint.amiss:L ext.lexical.escape.codepoint.beyond:L ext.lexical.number.amiss:L \
+ext.lexical.escape.byte:L ext.lexical.interpolating.index.amiss:L ext.builtin.eval.place:L \
+ext.system.reading.unexpected:L ext.system.reading.unexpected.character:L ext.system.fault.class.reading:L \
+ext.system.reading.unclosed:L ext.system.reading.unclosed.line:L ext.system.reading.unclosed.mismatch:L ext.system.reading.unmatched:L \
 ext.lexical.number.binary_prefix:L ext.lexical.number.octal_prefix:L ext.lexical.number.octal_lead:B \
 ext.lexical.number.separator:L ext.system.integer.bits:N ext.system.real.bits:N ext.system.real.digits:N \
 ";
@@ -247,6 +250,15 @@ impl Table {
 
     pub fn single(&self, key: &str) -> Option<&str> {
         self.strings(key).first().map(String::as_str)
+    }
+
+    /// A label whose words stand on either side of what the kernel
+    /// writes between them: the first word before, the second after.
+    pub fn around(&self, key: &str) -> Option<(&str, &str)> {
+        match self.strings(key) {
+            [before, after, ..] => Some((before.as_str(), after.as_str())),
+            _ => None,
+        }
     }
 
     /// Whether the definition gave this label at all, even empty: an
