@@ -54,6 +54,7 @@ struct Fork {
 }
 
 pub struct Builder<'a> {
+    kind_mark: Option<usize>,
     /// The class being read and what it is built on: what `self` and
     /// `parent` mean inside a method.
     within: Option<(String, Option<String>)>,
@@ -248,7 +249,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         layers.push(Layer { holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
     let outer_layers = layers.len();
-    let mut r = Builder { class_bindings: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { kind_mark: None, class_bindings: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         reading_yield: false,
         unsupported_place: false,
@@ -3665,6 +3666,41 @@ impl<'a> Builder<'a> {
         })
     }
 
+    /// Seek the kind's sign before reading a statement's place. Marks
+    /// sheltered by brackets are part of the place, not its declaration.
+    fn declaration_mark(&self) -> Option<usize> {
+        if !self.table.has_any("ext.stmt.annotation") { return None; }
+        let mut closings = Vec::new();
+        let mut at = self.pos;
+        while let Some(token) = self.tokens.get(at) {
+            if closings.is_empty() {
+                match token.shape {
+                    Shape::Sign if self.table.spells("ext.stmt.annotation", &token.lexeme) => return Some(at),
+                    Shape::LineEnd | Shape::Open | Shape::Close | Shape::Finish => return None,
+                    _ => {}
+                }
+                if ["stmt.assign", "stmt.terminator"].iter().any(|label| self.table.spells(label, &token.lexeme)) {
+                    return None;
+                }
+            }
+            if token.shape == Shape::Sign {
+                if closings.last().copied() == Some(token.lexeme.as_str()) { closings.pop(); }
+                else {
+                    for (open, close) in [("syntax.group.open", "syntax.group.close"),
+                        ("syntax.array.open", "syntax.array.close"), ("syntax.map.open", "syntax.map.close"),
+                        ("syntax.call.open", "syntax.call.close"), ("op.index.open", "op.index.close")] {
+                        if self.table.spells(open, &token.lexeme) {
+                            if let Some(end) = self.table.single(close) { closings.push(end); }
+                            break;
+                        }
+                    }
+                }
+            }
+            at += 1;
+        }
+        None
+    }
+
     fn write_or_expr(&mut self) -> Res<Form> {
         let began = self.pos;
         let boundary = began.checked_sub(1).map_or(true, |at| {
@@ -3676,7 +3712,11 @@ impl<'a> Builder<'a> {
                 _ => false,
             }
         });
-        let expr = self.expr_at(0, false)?;
+        let enclosing_mark = self.kind_mark.take();
+        if boundary { self.kind_mark = self.declaration_mark(); }
+        let parsed = self.expr_at(0, false);
+        self.kind_mark = enclosing_mark;
+        let expr = parsed?;
         let follows = |reader: &Self| reader.on_assign() && reader.glance(1).shape == Shape::Bare
             && reader.glance(2).shape == Shape::Sign && reader.table.spells("stmt.assign", &reader.glance(2).lexeme);
         if self.table.flag("ext.stmt.assign.chain") && follows(self) {
@@ -5389,11 +5429,9 @@ impl<'a> Builder<'a> {
             }
             let named = self.need_word("after the member mark")?;
             let calling = table.single("syntax.call.open").map_or(false, |o| self.sign(o));
-            let following = self.tokens[self.pos..].iter().find(|token| {
-                token.shape != Shape::Sign || !table.spells("syntax.group.close", &token.lexeme)
-            });
-            let kind_follows = following.map_or(false, |token| token.shape == Shape::Sign
-                && table.spells("ext.stmt.annotation", &token.lexeme));
+            let kind_follows = self.kind_mark.map_or(false, |mark| mark >= self.pos
+                && self.tokens[self.pos..mark].iter().all(|token| token.shape == Shape::Sign
+                    && table.spells("syntax.group.close", &token.lexeme)));
             if reaching && table.flag("ext.op.member.pipes") && (calling || !self.on_writing() && !kind_follows) {
                 let target = match &node { Form::Read(slot) => Some(slot.clone()), _ => None };
                 let held = self.gensym("subject");

@@ -112,6 +112,7 @@ struct Piece {
 }
 
 pub struct Compiler<'a> {
+    annotation_target: Option<usize>,
     lang: &'a Lang,
     tokens: &'a [Token],
     pos: usize,
@@ -271,7 +272,7 @@ pub fn compile_within(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { class_names: Vec::new(), method_self: None, yield_operand: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { annotation_target: None, class_names: Vec::new(), method_self: None, yield_operand: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;
@@ -3778,6 +3779,30 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// Only the mark outside the target's brackets belongs to its kind.
+    /// A colon in a header or within a value is no such mark.
+    fn statement_annotation(&self) -> Option<usize> {
+        let lang = self.lang;
+        if lang.annotation_marks.is_empty() { return None; }
+        let pairs: Vec<&Brackets> = [&lang.grouping, &lang.calling, &lang.array_brackets,
+            &lang.map_brackets, &lang.index_brackets].into_iter().flatten().collect();
+        let mut depth = 0usize;
+        for (at, word) in self.tokens.iter().enumerate().skip(self.pos) {
+            if depth == 0 {
+                if matches!(word.shape, Shape::LineEnd | Shape::Open | Shape::Close | Shape::Finish) { break; }
+                if word.shape == Shape::Sign {
+                    if Lang::spells(&lang.annotation_marks, &word.lexeme) { return Some(at); }
+                    if lang.ends_stmt(&word.lexeme) || Lang::spells(&lang.assign_words, &word.lexeme) { break; }
+                }
+            }
+            if word.shape == Shape::Sign {
+                if pairs.iter().any(|pair| pair.open == word.lexeme) { depth += 1; }
+                else if pairs.iter().any(|pair| pair.close == word.lexeme) { depth = depth.saturating_sub(1); }
+            }
+        }
+        None
+    }
+
     /// An assignment, an indexed assignment, or an expression statement.
     fn assign_or_expr(&mut self) -> Res<()> {
         // The running result is emptied before the statement is worked
@@ -3797,7 +3822,11 @@ impl<'a> Compiler<'a> {
                 || (before.shape == Shape::Sign && (self.lang.ends_stmt(&before.lexeme)
                     || Lang::spells(&self.lang.block_intros, &before.lexeme)))
         };
-        self.expr_at(0, false)?;
+        let outer_annotation = self.annotation_target;
+        self.annotation_target = if starts_here { self.statement_annotation() } else { None };
+        let target_read = self.expr_at(0, false);
+        self.annotation_target = outer_annotation;
+        target_read?;
         if self.lang.assign_chain && self.on_assign()
             && self.look_ahead(1).shape == Shape::Instr
             && self.look_ahead(2).shape == Shape::Sign
@@ -5958,8 +5987,7 @@ impl<'a> Compiler<'a> {
             while lang.grouping.as_ref().map_or(false, |pair| self.tokens[beyond].is_lexeme(Shape::Sign, &pair.close)) {
                 beyond += 1;
             }
-            let annotated = self.tokens[beyond].shape == Shape::Sign
-                && Lang::spells(&lang.annotation_marks, &self.tokens[beyond].lexeme);
+            let annotated = self.annotation_target == Some(beyond);
             if member && lang.member_pipes && (call.is_some() || !self.on_writing() && !annotated) {
                 let resume = self.pos;
                 let target = match &self.piece().instrs[from..] {
