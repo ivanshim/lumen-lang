@@ -3584,6 +3584,15 @@ impl<'a> Compiler<'a> {
             // the keys are worked out once and in order, the arrays
             // along the way rewritten from the innermost outwards, and
             // the whole written back into what it stood on.
+            _ if !self.lang.scope_unready.is_empty()
+                && matches!(footing.as_ref().and_then(|base| base.last()),
+                    Some(Instr::Act(Action::Invoke(_) | Action::Builtin(..) | Action::Send(_) | Action::Summon(_), _))) =>
+            {
+                self.value_written(keep)?;
+                self.piece().instrs.truncate(from);
+                self.scope_fault(&self.lang.scope_unready.clone());
+                Ok(())
+            }
             _ if footing.is_some() => {
                 let base = footing.clone().expect("what the chain stands on");
                 let held: Vec<String> = (0..keys.len()).map(|_| self.gensym("key")).collect();
