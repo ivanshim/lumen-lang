@@ -19,19 +19,18 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 102, differs 0, error 2, skipped 10 | pass 102, differs 0, error 2, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 208, differs 0, error 0, skipped 5 | pass 208, differs 0, error 0, skipped 5 |
+| `php/lang` | 213 | pass 210, differs 0, error 0, skipped 3 | pass 210, differs 0, error 0, skipped 3 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 58, differs 0, error 0, skipped 6 | pass 58, differs 0, error 0, skipped 6 |
 | `php/lang/string` | 9 | pass 9, differs 0, error 0, skipped 0 | pass 9, differs 0, error 0, skipped 0 |
-| all | 422 | pass 395, differs 0, error 2, skipped 25 | pass 395, differs 0, error 2, skipped 25 |
+| all | 422 | pass 397, differs 0, error 2, skipped 23 | pass 397, differs 0, error 2, skipped 23 |
 
 | Reason | Tests |
 |---|---|
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | skip php-cgi not available | 2 |
-| no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Failed opening required '<root>/tests/php/basic/../../sapi/cli/tests/php_cli_server.inc' (include_path='.') in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> | 1 |
 | skip locale needed for this test is not supported on this platform | 1 |
@@ -398,7 +397,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug32828.phpt` | pass | pass |  |
 | `php/lang/bug32924.phpt` | pass | pass |  |
 | `php/lang/bug35176.phpt` | pass | pass |  |
-| `php/lang/bug35382.phpt` | skipped | skipped | no --FILE-- section |
+| `php/lang/bug35382.phpt` | pass | pass |  |
 | `php/lang/bug38579.phpt` | skipped | skipped | skip only for Windows |
 | `php/lang/bug43958.phpt` | pass | pass |  |
 | `php/lang/bug44654.phpt` | pass | pass |  |
@@ -412,7 +411,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/catchable_error_001.phpt` | pass | pass |  |
 | `php/lang/catchable_error_002.phpt` | pass | pass |  |
 | `php/lang/comments.phpt` | pass | pass |  |
-| `php/lang/comments2.phpt` | skipped | skipped | no --FILE-- section |
+| `php/lang/comments2.phpt` | pass | pass |  |
 | `php/lang/compare_objects_basic1.phpt` | pass | pass |  |
 | `php/lang/compare_objects_basic2.phpt` | pass | pass |  |
 | `php/lang/constants/PHP_INT_32bit.phpt` | skipped | skipped | skip this test is for 32-bit platforms only |

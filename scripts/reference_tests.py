@@ -168,7 +168,14 @@ def phpt_sections(text):
             sections[name] = []
         elif name:
             sections[name].append(line)
-    return {k: "\n".join(v).rstrip("\n") for k, v in sections.items()}
+    said = {k: "\n".join(v).rstrip("\n") for k, v in sections.items()}
+    # A test may give its program under a name saying that the line end
+    # at the very end of it is no part of the program. Every section is
+    # already taken without the line ends that close it, so the two come
+    # to the same thing here, and one stands for the other.
+    if "FILEEOF" in said:
+        said.setdefault("FILE", said["FILEEOF"])
+    return said
 
 
 def expectf_pattern(expected):
