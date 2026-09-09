@@ -498,8 +498,20 @@
   "ext.builtin.method.sort": [
     "sort"
   ],
+  "ext.builtin.method.sort.key": [
+    "key"
+  ],
+  "ext.builtin.method.sort.reverse": [
+    "reverse"
+  ],
   "ext.builtin.method.split": [
     "split"
+  ],
+  "ext.builtin.method.split.maxsplit": [
+    "maxsplit"
+  ],
+  "ext.builtin.method.split.sep": [
+    "sep"
   ],
   "ext.builtin.method.startswith": [
     "startswith"

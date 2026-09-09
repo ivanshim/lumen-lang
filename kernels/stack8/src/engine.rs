@@ -4105,6 +4105,12 @@ impl<'a> Engine<'a> {
         let mut used = std::collections::HashSet::new();
         if named.iter().any(|(key,_)| !used.insert(key)) { return Err(self.lang.method_errors["arguments"].clone()); }
 
+        let named = if matches!(operation, "split" | "rsplit") {
+            named.into_iter().map(|(key,value)| {
+                let key = self.lang.method_keywords.get(&key).cloned().unwrap_or_default();
+                (key, value)
+            }).collect()
+        } else { named };
         if operation == "sort" {
             if !args.is_empty() || !matches!(receiver.contents(), Value::Array(_)) { return Err(self.lang.method_errors["arguments"].clone()); }
             let row = self.order_values(receiver, &named)?;
@@ -4121,7 +4127,7 @@ impl<'a> Engine<'a> {
         let mut seen = std::collections::HashSet::new();
         for (name, value) in named {
             if !seen.insert(name) { return Err(self.lang.method_errors["arguments"].clone()); }
-            match name.as_str() { "reverse" => backwards = self.truth(value), "key" => key = value.clone(), _ => return Err(self.lang.method_errors["arguments"].clone()) }
+            match self.lang.method_keywords.get(name).map(String::as_str).unwrap_or("") { "reverse" => { if !matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.lang.method_errors["arguments"].clone()); } backwards = self.truth(value); }, "key" => key = value.clone(), _ => return Err(self.lang.method_errors["arguments"].clone()) }
         }
         let mut decorated = Vec::new();
         for item in crate::methods::members(source, &|key| self.lang.method_errors[key].clone())? {

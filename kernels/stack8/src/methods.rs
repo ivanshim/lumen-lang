@@ -3,10 +3,22 @@
 
 use std::rc::Rc;
 use num_bigint::BigInt;
+use num_integer::Integer;
 use num_traits::{Signed, ToPrimitive, Zero};
 use crate::value::{Value, Wording};
 
 type Answer = Result<Value, String>;
+
+fn reaches(value: &Value, cell: &Rc<std::cell::RefCell<Value>>, depth: usize) -> bool {
+    if depth > 100 { return true; }
+    match value {
+        Value::Native(held, _) => Rc::ptr_eq(held,cell) || reaches(&held.borrow(),cell,depth+1),
+        Value::Array(row) | Value::Tuple(row) => row.iter().any(|v|reaches(v,cell,depth+1)),
+        Value::Map(entries) => entries.iter().any(|(k,v)|reaches(k,cell,depth+1)||reaches(v,cell,depth+1)),
+        _ => false,
+    }
+}
+
 
 pub fn members(v: &Value, fault: &dyn Fn(&str) -> String) -> Result<Vec<Value>, String> {
     match v.contents() {
@@ -51,7 +63,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
     let arity = |lo, hi| if a.len() >= lo && a.len() <= hi { Ok(()) } else { Err(fault("arguments")) };
     let held = receiver.contents();
     let store = |v: Value| -> Answer {
-        if let Value::Native(cell, _) = receiver { *cell.borrow_mut() = v; Ok(Value::Null) } else { Err(fault("unready")) }
+        if let Value::Native(cell, _) = receiver { if reaches(&v,cell,0) {return Err(fault("unready"));} *cell.borrow_mut() = v; Ok(Value::Null) } else { Err(fault("unready")) }
     };
     match &held {
         Value::Text(s) => {
@@ -181,6 +193,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
             match op {
                 "get" | "setdefault" | "pop" => {
                     arity(1,2)?;
+                    if matches!(a[0].contents(), Value::Array(_) | Value::Map(_)) {return Err(fault("arguments"));}
                     let at=pairs.iter().position(|(k,_)| k.equals(&a[0]));
                     if let Some(at)=at {let value=pairs[at].1.clone();if op=="pop" {pairs.remove(at);store(Value::Map(Rc::new(pairs)))?;} return Ok(value);}
                     let value=a.get(1).cloned().unwrap_or(Value::Null);
@@ -205,7 +218,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
             match op {
                 "bit_length" if !matches!(held,Value::Real(_)) => Ok(Value::Small(held.as_big()?.bits() as i64)),
                 "is_integer" => Ok(Value::Flag(match &held {Value::Real(r)=>!r.outside() && (&r.p % &r.q).is_zero(),_=>true})),
-                "as_integer_ratio" => {let (p,q)=match &held {Value::Real(r) if !r.outside()=>crate::value::from_binary(crate::value::as_binary(&r.p,&r.q)).ok_or_else(||fault("unready"))?,Value::Real(_)=>return Err(fault("unready")),_=>(held.as_big()?,BigInt::from(1))};Ok(Value::Tuple(Rc::new(vec![Value::of_big(p),Value::of_big(q)])))},
+                "as_integer_ratio" => {let (p,q)=match &held {Value::Real(r) if !r.outside()=>crate::value::from_binary(crate::value::as_binary(&r.p,&r.q)).ok_or_else(||fault("unready"))?,Value::Real(_)=>return Err(fault("unready")),_=>(held.as_big()?,BigInt::from(1))};let divisor=p.gcd(&q);Ok(Value::Tuple(Rc::new(vec![Value::of_big(p/&divisor),Value::of_big(q/divisor)])))},
                 "hex" if matches!(held,Value::Real(_)) => {
                     let Value::Real(r) = &held else { unreachable!() };
                     let n=crate::value::as_binary(&r.p,&r.q);

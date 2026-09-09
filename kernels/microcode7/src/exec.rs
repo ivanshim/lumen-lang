@@ -2752,6 +2752,13 @@ impl<'a> Machine<'a> {
             return Err(self.builtin_keyword_fault(spelling).into());
         }
 
+        let keywords = if name == "split" || name == "rsplit" {
+            keywords.into_iter().map(|(written, value)| {
+                let purpose = if self.table.spells("ext.builtin.method.split.sep", &written) { "sep" }
+                    else if self.table.spells("ext.builtin.method.split.maxsplit", &written) { "maxsplit" } else { "" };
+                (purpose.to_string(), value)
+            }).collect()
+        } else { keywords };
         if name != "sort" {
             let says = |kind: &str| self.method_fault(kind);
             return crate::members::Request { target: receiver, operation: name, given: arguments, named: &keywords, names: self.wording(), complaint: &says }.answer().map_err(Escape::from);
@@ -2769,8 +2776,11 @@ impl<'a> Machine<'a> {
         for (word, value) in keywords {
             if seen.contains(word) { return Err(self.method_fault("arguments").into()); }
             seen.push(word.clone());
-            if word == "key" { using = value.clone(); }
-            else if word == "reverse" { reverse = self.stands_true(value); }
+            if self.table.spells("ext.builtin.method.sort.key", word) { using = value.clone(); }
+            else if self.table.spells("ext.builtin.method.sort.reverse", word) {
+                if !matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.method_fault("arguments").into()); }
+                reverse = self.stands_true(value);
+            }
             else { return Err(self.method_fault("arguments").into()); }
         }
         let items = crate::members::gather(receiver, &|kind| self.method_fault(kind))?;
@@ -3501,7 +3511,7 @@ impl<'a> Machine<'a> {
                 return self.prim(op, name, &arguments);
             }
         }
-        if v.iter().any(|value| matches!(value, Value::Mutable(..))) && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed) {
+        if v.iter().any(|value| matches!(value, Value::Mutable(..) | Value::Window(..))) && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed) {
             let settled: Vec<Value> = v.iter().map(Value::settled).collect();
             return self.prim(op, name, &settled);
         }

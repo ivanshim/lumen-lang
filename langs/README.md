@@ -701,20 +701,58 @@ only. The extension labels so far, all from PHP:
   `ext.builtin.sum.non_number`, `ext.builtin.range.non_integer` and
   `ext.builtin.range.zero_step` give their words for a member that
   cannot be added, a bound that is not whole, and a step of nought.
-- `ext.builtin.method.*`: each list names a method of a value after the
-  pipe mark. Text may change case, trim, split, join, replace, search,
-  count, test its letters, pad, or fill fields. Arrays may grow, lose
-  members, sort, reverse, copy, or clear; maps may look up, gather keys,
-  values or pairs, pop, set a default, update, copy, or clear. Numbers
-  may give their bit length, whole status, hexadecimal form, or ratio.
-  A method kept aside keeps its receiver. Mutable receivers keep one
-  holding place through aliases. No spelling leaves the pipe as before.
-  `ext.builtin.sorted` gathers and orders a collection. The lists under
-  `ext.builtin.method.error.*` give the words for bad arguments, missing
-  members, empty separators, bad fields, and work the run cannot yet do;
-  `.key` precedes the missing key. Encoding asks for bytes, which these
-  values cannot hold, and says so. Wider formats and character properties
-  requiring a table likewise stop rather than return a guess.
+- `ext.builtin.method.upper`, `.lower`, `.title` and `.capitalize`:
+  lists naming changes of case on text. Each method label names a
+  value's member after the pipe mark; no spelling leaves the pipe as
+  before. A method kept aside keeps its receiver, even after the old
+  binding is given another value. Mutable collections keep one holding
+  place through aliases. Method-made collections print quoted members;
+  older literals keep their accustomed printed form.
+- `ext.builtin.method.strip`, `.lstrip` and `.rstrip`: trim both ends,
+  the head, or the tail, by whitespace or the letters handed over.
+  `.split` and `.rsplit` split at a separator or at whitespace, with an
+  optional limit; `.join` puts the receiver between strings gathered
+  from one collection; `.replace` replaces occurrences, with a limit.
+- `ext.builtin.method.find`, `.rfind`, `.index` and `.count`: seek from
+  the head or tail, require a match, or count matches. Text bounds and
+  answers count characters. Arrays answer index and count too.
+  `.startswith` and `.endswith` test the ends within optional bounds.
+  `.isdigit`, `.isalpha`, `.isalnum`, `.isspace`, `.islower` and
+  `.isupper` test text; character properties needing a table stop.
+- `ext.builtin.method.center`, `.ljust`, `.rjust` and `.zfill`: pad to
+  a width, with an optional single fill character; zfill puts noughts
+  after a sign. `.format` fills unnamed, numbered, or named fields,
+  honours escaped braces and the common alignment, fixed decimal,
+  hexadecimal and comma-grouped whole-number formats. Further field
+  paths and specifications stop. `.encode` reads but cannot make bytes.
+- `ext.builtin.method.append`, `.extend`, `.insert`, `.pop` and
+  `.remove`: add one member, gather more, insert, take and return a
+  member, or remove the first equal member. `.sort` orders an array
+  stably, optionally by a key routine or in reverse; `.reverse` turns
+  its order about. `.copy` makes a shallow copy and `.clear` empties
+  an array or map. Cyclic collections cannot yet be made by methods.
+  `ext.builtin.sorted` gathers and orders a fresh array in the same way.
+  `ext.builtin.method.sort.key` and `.sort.reverse` name the two sorting
+  arguments; `.split.sep` and `.split.maxsplit` name the separator and
+  limit for either direction of splitting.
+- `ext.builtin.method.get`, `.setdefault` and `.update`: look up a map
+  key with an optional default, keep the default where a key is absent,
+  or merge pairs and named arguments. `.pop` takes a map key too.
+  `.keys`, `.values` and `.items` yield views which follow later changes
+  to the map; items are pairs. The views may be gathered and walked.
+- `ext.builtin.method.bit_length`, `.is_integer`, `.hex` and
+  `.as_integer_ratio`: the width of a whole number's magnitude, whether
+  a number is whole, a real's hexadecimal spelling, and a number's
+  exact ratio. Real ratios and hexadecimal forms use binary doubles.
+- `ext.builtin.method.error.arguments`, `.attribute`, `.separator`,
+  `.substring`, `.pop`, `.index`, `.remove`, `.list_index` and `.fill`:
+  lists holding the complaints for bad arguments, an absent method, an
+  empty separator, an absent substring, an empty pop, an out-of-bounds
+  pop, an absent member to remove or seek, and a bad fill character.
+  `.key` precedes the missing key. `.format`, `.missing` and `.mixed`
+  give the complaints for malformed fields, missing positional fields,
+  and mixing automatic with explicit numbering. `.unready`, `.bytes`,
+  `.spec` and `.unicode` say which work the values cannot yet carry out.
 - `ext.op.walk.class` and its family: a thing may be its own walk.
   `ext.op.walk.class` is the class of method names saying so (PHP's
   `Iterator`), and `ext.op.walk.rewind`, `.more`, `.this`, `.key` and
@@ -2031,7 +2069,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.rstrip` | - | - | `rstrip` | - | - | - | - | - | - | - |
 | `ext.builtin.method.setdefault` | - | - | `setdefault` | - | - | - | - | - | - | - |
 | `ext.builtin.method.sort` | - | - | `sort` | - | - | - | - | - | - | - |
+| `ext.builtin.method.sort.key` | - | - | `key` | - | - | - | - | - | - | - |
+| `ext.builtin.method.sort.reverse` | - | - | `reverse` | - | - | - | - | - | - | - |
 | `ext.builtin.method.split` | - | - | `split` | - | - | - | - | - | - | - |
+| `ext.builtin.method.split.maxsplit` | - | - | `maxsplit` | - | - | - | - | - | - | - |
+| `ext.builtin.method.split.sep` | - | - | `sep` | - | - | - | - | - | - | - |
 | `ext.builtin.method.startswith` | - | - | `startswith` | - | - | - | - | - | - | - |
 | `ext.builtin.method.strip` | - | - | `strip` | - | - | - | - | - | - | - |
 | `ext.builtin.method.title` | - | - | `title` | - | - | - | - | - | - | - |

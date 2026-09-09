@@ -55,6 +55,7 @@ impl Request<'_> {
     }
     fn replace(&self,new_value:Value)->ResultValue {
         let Value::Mutable(cell,_) = self.target else{return Err(self.fail("unready"));};
+        if circular(&new_value,cell,0) {return Err(self.fail("unready"));}
         cell.replace(new_value);
         Ok(Value::Nil)
     }
@@ -82,7 +83,9 @@ impl Request<'_> {
         if self.operation=="is_integer"{return Ok(Value::Flag(match &value{Value::Frac(r)=>!r.past_numbers()&&(&r.above%&r.beneath).is_zero(),_=>true}));}
         if self.operation=="as_integer_ratio"{
             let pair=match value{Value::Frac(r) if !r.past_numbers()=>crate::data::binary_worth(crate::data::nearest_binary(&r.above,&r.beneath)).ok_or_else(||self.fail("unready"))?,Value::Frac(_)=>return Err(self.fail("unready")),other=>(other.as_big()?,BigInt::from(1))};
-            return Ok(Value::Row(Rc::new(vec![Value::from_big(pair.0),Value::from_big(pair.1)])));
+            let mut divisor=pair.0.abs();let mut remainder=pair.1.clone();
+            while !remainder.is_zero(){let next=&divisor%&remainder;divisor=remainder;remainder=next;}
+            return Ok(Value::Row(Rc::new(vec![Value::from_big(pair.0/&divisor),Value::from_big(pair.1/divisor)])));
         }
         if self.operation=="hex" && real {
             let Value::Frac(ratio)=value else {unreachable!()};
@@ -233,6 +236,7 @@ impl Request<'_> {
             "clear"=>{self.takes(0,0)?;entries.clear();}
             "get"|"setdefault"|"pop"=>{
                 self.takes(1,2)?;let key=&self.given[0];
+                if matches!(key.settled(),Value::Vector(_)|Value::Dict(_)){return Err(self.fail("arguments"));}
                 if let Some(index)=entries.iter().position(|e|e.0.equals(key)){
                     let answer=entries[index].1.clone();if self.operation=="pop"{entries.remove(index);self.replace(Value::Dict(Rc::new(entries)))?;}return Ok(answer);
                 }
@@ -291,4 +295,18 @@ impl Request<'_> {
         if !valid{return Err(self.fail("spec"));}
         Ok(value.in_field(self.names,pattern,conversion))
     }
+}
+
+fn circular(value:&Value, receiver:&Rc<std::cell::RefCell<Value>>, level:usize)->bool {
+    if level>=101{return true;}
+    if let Value::Mutable(place,_) = value {
+        return Rc::ptr_eq(place,receiver)||circular(&place.borrow(),receiver,level+1);
+    }
+    let parts=match value {
+        Value::Vector(items)|Value::Row(items)=>items.to_vec(),
+        Value::Dict(entries)=>entries.iter().flat_map(|(key,value)|[key.clone(),value.clone()]).collect(),
+        _=>return false,
+    };
+    for part in parts {if circular(&part,receiver,level+1){return true;}}
+    false
 }
