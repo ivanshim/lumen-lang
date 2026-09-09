@@ -1467,7 +1467,7 @@ impl<'a> Engine<'a> {
         } else { n };
         // Where a language can read what a call was given, a call may
         // give more than the routine names; the rest is kept aside.
-        let most = if self.lang.spare_args { usize::MAX } else { program.formals.len() };
+        let most = if self.lang.spare_args || program.rest_at.is_some() { usize::MAX } else { program.formals.len() };
         if n > most || n < program.least {
             let wanted = program.formals.len();
             return Err(format!("Function {} expects {} arguments, got {}", program.ident, wanted, n).into());
@@ -1512,6 +1512,11 @@ impl<'a> Engine<'a> {
             });
         }
         frame.extend(self.data.drain(at..));
+        if let Some(start) = program.rest_at {
+            let tail = if frame.len() > start { frame.split_off(start) } else { Vec::new() };
+            frame.resize(start, Value::Blank);
+            frame.push(Value::array(tail));
+        }
         // What the routine does not name stays aside rather than
         // spilling into the slots its own names sit in.
         frame.truncate(program.formals.len());
@@ -2268,6 +2273,18 @@ impl<'a> Engine<'a> {
                 let callee = self.what_it_spells(top);
                 return match callee {
                     Value::Routine(p) => self.invoke_top(&p, argc - 1),
+                    Value::Method(object, method) => {
+                        let args = self.drop_many(argc - 1)?;
+                        let mut given = vec![Value::Object(object)];
+                        given.extend(args);
+                        self.invoke(&method, given)
+                    }
+                    Value::Class(c) if self.lang.explicit_this => {
+                        let args = self.drop_many(argc - 1)?;
+                        self.data.push(Value::Class(c));
+                        self.data.extend(args);
+                        self.perform(&Action::Make, argc)
+                    }
                     // A pair of a thing and a method's name stands for
                     // that method of that thing, which is how a language
                     // hands one routine over where any other would do.
@@ -2365,6 +2382,36 @@ impl<'a> Engine<'a> {
                     if *spread { items.extend(self.comprehension_items(&next)?); } else { items.push(next); }
                     Value::array(items)
                 }
+            }
+            Action::TupleJoin => {
+                let portions = self.drop_many(2)?;
+                let mut together = Vec::new();
+                for portion in portions {
+                    let Value::Array(items) = portion else { return Err("Tuple portion is not an array".to_string().into()); };
+                    together.extend(items.iter().cloned());
+                }
+                Value::array(together)
+            }
+            Action::Unpack(count, rest) => {
+                let source = self.drop_top()?;
+                let mut items = match source {
+                    Value::Array(items) => items.as_ref().clone(),
+                    Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
+                    Value::Map(pairs) => pairs.iter().map(|(key, _)| key.clone()).collect(),
+                    _ => return Err(self.lang.unpack_unwalkable.clone().unwrap_or_else(|| "Value cannot be taken apart".to_string()).into()),
+                };
+                let least = count - usize::from(rest.is_some());
+                if items.len() < least {
+                    return Err(self.lang.unpack_short.clone().unwrap_or_else(|| "Too few values".to_string()).into());
+                }
+                if let Some(at) = rest {
+                    let until = items.len() - (count - at - 1);
+                    let middle = items.drain(*at..until).collect();
+                    items.insert(*at, Value::array(middle));
+                } else if items.len() > *count {
+                    return Err(self.lang.unpack_long.clone().unwrap_or_else(|| "Too many values".to_string()).into());
+                }
+                Value::array(items)
             }
             Action::MakeArray => gathered(self.drop_many(argc)?, false, self.lang.plain_keys),
             Action::MakeMap => gathered(self.drop_many(argc)?, true, self.lang.plain_keys),
@@ -2497,7 +2544,28 @@ impl<'a> Engine<'a> {
                 }
                 Value::Object(object)
             }
+            Action::HasMember(name) => {
+                let held = self.drop_top()?;
+                let class = match &held {
+                    Value::Object(o) => Some(&o.class),
+                    Value::Class(c) => Some(c),
+                    _ => None,
+                };
+                let field = match &held {
+                    Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
+                    _ => false,
+                };
+                Value::Flag(field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+            }
             Action::Grab(name) => match self.drop_top()? {
+                Value::Class(c) if self.lang.member_pipes => {
+                    if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
+                        Value::Routine(method.clone())
+                    } else {
+                        self.data.push(Value::Class(c));
+                        return self.perform(&Action::Reach(name.clone()), 1);
+                    }
+                }
                 Value::Object(o) => {
                     let found = {
                         let held = o.fields.borrow();
@@ -2513,6 +2581,18 @@ impl<'a> Engine<'a> {
                         // does not hold: where the language has a word
                         // for such a method, it is called with the name
                         // that was asked for.
+                        None if self.lang.member_pipes && o.class.holder(name).is_some() => {
+                            self.data.push(Value::Class(o.class.clone()));
+                            self.perform(&Action::Reach(name.clone()), 1)?;
+                            match self.drop_top()? {
+                                Value::Routine(method) => Value::Method(o, method),
+                                held => held,
+                            }
+                        }
+                        None if self.lang.member_pipes && o.class.method(name).is_some() => {
+                            let method = o.class.method(name).expect("the member exists").clone();
+                            Value::Method(o, method)
+                        }
                         None if self.reads_for(&o).is_some() => {
                             let method = self.reads_for(&o).expect("the method");
                             let asked = Value::Text(Rc::from(name.as_ref()));
@@ -2579,6 +2659,15 @@ impl<'a> Engine<'a> {
                 let mut pair = self.drop_many(2)?;
                 let value = pair.pop().expect("the value");
                 match pair.pop().expect("the object") {
+                    Value::Class(c) if self.lang.member_pipes => {
+                        let mut fields = c.shared.borrow_mut();
+                        if let Some((_, old)) = fields.iter_mut().find(|(n, _)| n == name.as_ref()) {
+                            *old = value;
+                        } else {
+                            fields.push((name.to_string(), value));
+                        }
+                        Value::Null
+                    }
                     Value::Object(o) => {
                         let taken = {
                             let fields = o.fields.borrow();
@@ -2648,7 +2737,29 @@ impl<'a> Engine<'a> {
             }
             Action::Send(name) => {
                 let mut args = self.drop_many(argc)?;
-                let Value::Object(o) = args.remove(0) else {
+                let subject = args.remove(0);
+                if self.lang.member_pipes {
+                    if let Value::Class(c) = &subject {
+                        if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
+                            return self.invoke(&method.clone(), args);
+                        }
+                    }
+                    let field = match &subject {
+                        Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some() || o.class.holder(name).is_some(),
+                        Value::Class(c) => c.holder(name).is_some() || c.constant(name).is_some(),
+                        _ => false,
+                    };
+                    if field {
+                        self.data.push(subject);
+                        self.perform(&Action::Grab(name.clone()), 1)?;
+                        let callee = self.drop_top()?;
+                        let count = args.len();
+                        self.data.extend(args);
+                        self.data.push(callee);
+                        return self.perform(&Action::Invoke(name.clone()), count + 1);
+                    }
+                }
+                let Value::Object(o) = subject else {
                     return Err(format!("Cannot call method '{}' on a value that is not an object", name).into());
                 };
                 let method = o.class.method(&name).cloned();
@@ -3030,6 +3141,99 @@ impl<'a> Engine<'a> {
         number_spelled(s).map(|n| self.at_real_width(n))
     }
 
+    fn rem_repr(&self, value: &Value) -> Res<String> {
+        Ok(match value {
+            Value::Text(s) => {
+                let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
+                let mut out = String::from(quote);
+                for c in s.chars() {
+                    match c {
+                        '\n' => out.push_str("\\n"),
+                        '\r' => out.push_str("\\r"),
+                        '\t' => out.push_str("\\t"),
+                        '\\' => out.push_str("\\\\"),
+                        c if c == quote => { out.push('\\'); out.push(c); }
+                        c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
+                        c => out.push(c),
+                    }
+                }
+                out.push(quote);
+                out
+            }
+            Value::Array(items) => {
+                let parts = items.iter().map(|v| self.rem_repr(v)).collect::<Res<Vec<_>>>()?;
+                format!("[{}]", parts.join(", "))
+            }
+            Value::Map(entries) => {
+                let mut parts = Vec::new();
+                for (key, worth) in entries.iter() { parts.push(format!("{}: {}", self.rem_repr(key)?, self.rem_repr(worth)?)); }
+                format!("{{{}}}", parts.join(", "))
+            }
+            Value::Real(real) => {
+                let mut text = value.display(&self.wording());
+                if !real.outside() && !text.contains(['.', 'e', 'E']) { text.push_str(".0"); }
+                text
+            }
+            Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Null | Value::Ellipsis => value.display(&self.wording()),
+            _ => return Err(self.lang.format_unsupported.clone().unwrap_or_default()),
+        })
+    }
+
+    /// Remainder over text fills one mark at a time. A list supplies
+    /// the marks in order; every other value supplies just one.
+    fn rem_text(&self, template: &str, arguments: &Value) -> Res<String> {
+        let bad = || self.lang.format_unsupported.clone().unwrap_or_default();
+        let wrong = || self.lang.format_arguments.clone().unwrap_or_default();
+        let values: Vec<&Value> = match arguments {
+            Value::Array(items) => items.iter().collect(),
+            one => vec![one],
+        };
+        let mut used = 0;
+        let mut out = String::new();
+        let mut chars = template.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c != '%' { out.push(c); continue; }
+            if chars.peek() == Some(&'%') { chars.next(); out.push('%'); continue; }
+            let mut precision = None;
+            if chars.peek() == Some(&'.') {
+                chars.next();
+                let mut digits = String::new();
+                while chars.peek().map_or(false, char::is_ascii_digit) { digits.push(chars.next().unwrap()); }
+                precision = Some(digits.parse::<usize>().map_err(|_| bad())?);
+            }
+            let kind = chars.next().ok_or_else(bad)?;
+            if precision.is_some() && kind != 'f' { return Err(bad()); }
+            let value = values.get(used).copied().ok_or_else(wrong)?;
+            used += 1;
+            let filled = match kind {
+                's' => match value { Value::Text(text) => text.to_string(), _ => self.rem_repr(value)? },
+                'r' => self.rem_repr(value)?,
+                'd' | 'x' => {
+                    if !matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Real(_)) { return Err(wrong()); }
+                    if kind == 'x' && matches!(value, Value::Real(_)) { return Err(wrong()); }
+                    let whole = value.as_big().map_err(|_| wrong())?;
+                    if kind == 'x' { whole.to_str_radix(16) } else { whole.to_string() }
+                }
+                'f' => {
+                    let number = match value {
+                        Value::Small(n) => *n as f64,
+                        Value::Huge(n) => n.to_f64().ok_or_else(wrong)?,
+                        Value::Flag(b) => u8::from(*b) as f64,
+                        Value::Real(r) => crate::value::as_binary(&r.p, &r.q),
+                        _ => return Err(wrong()),
+                    };
+                    let places = precision.unwrap_or(6);
+                    if places > 10000 { return Err(bad()); }
+                    format!("{:.*}", places, number)
+                }
+                _ => return Err(bad()),
+            };
+            out.push_str(&filled);
+        }
+        if used != values.len() { return Err(wrong()); }
+        Ok(out)
+    }
+
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
@@ -3112,6 +3316,35 @@ impl<'a> Engine<'a> {
             }
             Action::Eq => Value::Flag(a.equals(b)),
             Action::Ne => Value::Flag(!a.equals(b)),
+            Action::Contains | Action::Lacks => {
+                let found = match b {
+                    Value::Array(items) => items.iter().any(|v| a.equals(v)),
+                    Value::Map(items) => items.iter().any(|(key, _)| a.equals(key)),
+                    Value::Text(haystack) => match a {
+                        Value::Text(needle) => haystack.contains(needle.as_ref()),
+                        _ => return Err(self.lang.membership_unsupported.clone().unwrap_or_default()),
+                    },
+                    _ => return Err(self.lang.membership_unsupported.clone().unwrap_or_default()),
+                };
+                Value::Flag(found != matches!(op, Action::Lacks))
+            }
+            Action::Mod if self.lang.rem_formats_text && matches!(a, Value::Text(_)) => {
+                let Value::Text(template) = a else { unreachable!() };
+                Value::text(&self.rem_text(template, b)?)
+            }
+            Action::Same | Action::Unsame if !self.lang.identity_not.is_empty() => {
+                let same = match (a, b) {
+                    (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y),
+                    (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
+                    (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
+                    (Value::Flag(x), Value::Flag(y)) => x == y,
+                    (Value::Small(x), Value::Small(y)) if (-5..=256).contains(x) => x == y,
+                    (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+                    _ if !a.identical(b) => false,
+                    _ => return Err(self.lang.identity_unsupported.clone().unwrap_or_default()),
+                };
+                Value::Flag(same != matches!(op, Action::Unsame))
+            }
             Action::Same => Value::Flag(a.identical(b)),
             Action::Unsame => Value::Flag(!a.identical(b)),
             Action::Join => joined(),

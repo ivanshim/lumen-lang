@@ -99,6 +99,7 @@ pub enum Value {
     Text(Rc<str>),
     Flag(bool),
     Nil,
+    Ellipsis,
     Vector(Rc<Vec<Value>>),
     /// A span awaiting the length of what it is to read.
     Span(Rc<Vec<Value>>),
@@ -114,6 +115,7 @@ pub enum Value {
     Thing(Rc<Thing>),
     /// A program not yet bound to a frame: only inside the tree.
     Routine(Rc<Routine>),
+    Method(Rc<Routine>, Rc<Thing>),
     /// A program bound to the frame it was made in.
     Bound(Rc<Routine>, Rc<Env>),
     KindOf(Kind),
@@ -171,7 +173,7 @@ impl Value {
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) => return None,
+            Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Ellipsis | Value::Span(_) => return None,
         })
     }
 
@@ -204,7 +206,8 @@ impl Value {
             Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
-            Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
+            Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
+            Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
             Value::Span(_) => return Err("Cannot coerce slice to number".to_string()),
             Value::KindOf(_) => return Err("Cannot coerce kind meta-value to number".to_string()),
         })
@@ -228,7 +231,7 @@ impl Value {
         match (self, other) {
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
-            (Value::Nil, Value::Nil) => true,
+            (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
             (Value::Vector(a), Value::Vector(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Dict(a), Value::Dict(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
@@ -236,6 +239,7 @@ impl Value {
             (Value::Couple(a), Value::Couple(b)) => a.0.equals(&b.0) && a.1.equals(&b.1),
             // One object is itself and nothing else; two classes are one
             // when they carry the same name.
+            (Value::Method(p, a), Value::Method(q, b)) => Rc::ptr_eq(p, q) && Rc::ptr_eq(a, b),
             (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
             (Value::Blueprint(a), Value::Blueprint(b)) => a.name == b.name,
             (Value::Bound(a, _), Value::Bound(b, _)) => Rc::ptr_eq(a, b),
@@ -306,6 +310,7 @@ impl Value {
 
     pub fn bare(&self) -> String {
         match self {
+            Value::Ellipsis => String::from("Ellipsis"),
             Value::Small(n) => n.to_string(),
             Value::Huge(n) => n.to_string(),
             Value::Frac(e) if e.past_numbers() => e.written().to_string(),
@@ -321,7 +326,7 @@ impl Value {
                 format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.bare(), v.bare())).collect::<Vec<_>>().join(", "))
             }
             Value::Couple(e) => format!("{} => {}", e.0.bare(), e.1.bare()),
-            Value::Routine(p) | Value::Bound(p, _) => format!("<function({})>", p.formals.join(", ")),
+            Value::Method(p, _) | Value::Routine(p) | Value::Bound(p, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Shared(cell) => cell.borrow().bare(),
             Value::Blueprint(b) => format!("<class {}>", b.name),
             Value::Thing(t) => format!("<object {}>", t.of.name),
@@ -352,6 +357,7 @@ impl Value {
                 e.1.memo_key(out);
                 out.push(')');
             }
+            Value::Method(p, t) => out.push_str(&format!("m{:p}/{:p}", Rc::as_ptr(p), Rc::as_ptr(t))),
             Value::Bound(p, _) => out.push_str(&format!("f{:p}", Rc::as_ptr(p))),
             Value::Thing(t) => out.push_str(&format!("t{:p}", Rc::as_ptr(t))),
             Value::Shared(cell) => cell.borrow().memo_key(out),

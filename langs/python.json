@@ -111,11 +111,15 @@
       "<",
       ">",
       "<=",
-      ">="
+      ">=",
+      "is",
+      "in"
     ],
     [
       "|"
     ],
+    ["&"],
+    ["<<"],
     [
       "+",
       "-"
@@ -127,7 +131,8 @@
       "%"
     ],
     [
-      "-"
+      "-",
+      "~"
     ],
     [
       "**"
@@ -328,7 +333,11 @@
   "ext.lexical.string.long": ["\"\"\"", "'''"],
   "ext.lexical.string.prefix.raw": ["r", "R"],
   "ext.op.assign.compound": true,
+  "ext.op.bit.and": ["&"],
+  "ext.op.bit.left": ["<<"],
+  "ext.op.bit.not": ["~"],
   "ext.op.bit.or": ["|"],
+  "ext.op.compare.chained": true,
   "ext.op.comprehension.async": ["async"],
   "ext.op.comprehension.async.unavailable": ["NotImplementedError: asynchronous comprehensions are not supported"],
   "ext.op.comprehension.for": ["for"],
@@ -336,6 +345,12 @@
   "ext.op.comprehension.in": ["in"],
   "ext.op.comprehension.target.unavailable": ["NotImplementedError: indexed comprehension targets are not supported"],
   "ext.op.comprehension.unpack.amiss": ["ValueError: comprehension target has the wrong number of values"],
+  "ext.op.identical": ["is"],
+  "ext.op.identical.negated": ["not"],
+  "ext.op.identical.unsupported": ["Identity of these values is not supported"],
+  "ext.op.in": ["in"],
+  "ext.op.in.negated": ["not"],
+  "ext.op.in.unsupported": ["Membership requires an array, string or map"],
   "ext.op.index.slice": [":"],
   "ext.op.index.slice.assign": ["can only assign an iterable"],
   "ext.op.index.slice.bounds": ["slice indices must be integers or None or have an __index__ method"],
@@ -344,11 +359,18 @@
   "ext.op.index.slice.length": ["attempt to assign sequence of size", "to extended slice of size"],
   "ext.op.index.slice.unsupported": ["this slice operation is not supported"],
   "ext.op.index.slice.zero": ["slice step cannot be zero"],
+  "ext.op.lambda": ["lambda"],
+  "ext.op.lambda.enclosing": ["Lambda cannot read an enclosing function variable"],
+  "ext.op.lambda.unsupported": ["Lambda keyword parameters are not supported"],
+  "ext.op.member": ["."],
+  "ext.op.member.pipes": true,
+  "ext.op.tuple": [","],
   "ext.stmt.annotation": [":"],
   "ext.stmt.annotation.amiss": ["invalid syntax"],
   "ext.stmt.annotation.target.unready": ["NotImplementedError: annotated attribute targets are not supported"],
   "ext.stmt.assert": ["assert"],
   "ext.stmt.assert.kind": ["AssertionError"],
+  "ext.stmt.assign.chain": true,
   "ext.stmt.catch": ["except"],
   "ext.stmt.catch.as": ["as"],
   "ext.stmt.catch.group": ["*"],
@@ -357,6 +379,13 @@
   "ext.stmt.catch.separator": [","],
   "ext.stmt.catch.tuple.close": [")"],
   "ext.stmt.catch.tuple.open": ["("],
+  "ext.stmt.class": ["class"],
+  "ext.stmt.class.bases.close": [")"],
+  "ext.stmt.class.bases.open": ["("],
+  "ext.stmt.class.constructor": ["__init__"],
+  "ext.stmt.class.parent": ["super"],
+  "ext.stmt.class.this.explicit": true,
+  "ext.stmt.class.unready": ["NotImplementedError: this class form cannot run yet"],
   "ext.stmt.decorator": ["@"],
   "ext.stmt.decorator.amiss": ["A decorator must stand on its own line before a function definition"],
   "ext.stmt.finally": ["finally"],
@@ -377,6 +406,12 @@
   "ext.stmt.throw.from": ["from"],
   "ext.stmt.try": ["try"],
   "ext.stmt.try.else": true,
+  "ext.stmt.unpack": ["["],
+  "ext.stmt.unpack.amiss": ["invalid unpacking assignment"],
+  "ext.stmt.unpack.long": ["too many values to unpack"],
+  "ext.stmt.unpack.rest": ["*"],
+  "ext.stmt.unpack.short": ["not enough values to unpack"],
+  "ext.stmt.unpack.unwalkable": ["cannot unpack non-iterable object"],
   "ext.stmt.yield": ["yield"],
   "ext.stmt.yield.from": ["from"],
   "ext.stmt.yield.unrun": ["Generators cannot be run"],

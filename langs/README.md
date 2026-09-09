@@ -535,6 +535,104 @@ only. The extension labels so far, all from PHP:
   comments and line ends within them; a raw prefix keeps backslashes too.
   Adjoining strings form one value. This piece takes only these parts of
   that reader, so doctests stay text while the surrounding source is read.
+- `ext.stmt.class.bases.open` and `ext.stmt.class.bases.close`: lists of
+  marks enclosing the classes a declaration stands on. The first base is
+  its parent; further bases are read and set aside, without running them.
+  A header may name a base by an expression, and may end with a separator.
+- `ext.stmt.class.this.explicit`: a switch; a method writes the parameter
+  for its object first, rather than having an unwritten parameter put there.
+  Calling a class makes its object without a word for making; assignments
+  in its body belong to the class, and the parent word is called before
+  reaching a parent's method. Classes bind as ordinary names.
+- `ext.op.member.pipes`: a switch; a mark shared by the pipe and member
+  signs reads a member when the object or class holds that name, and pipes
+  otherwise. A method takes its object before the written arguments; a
+  pipe keeps the ordinary rules for changing the array named on its left.
+- `ext.stmt.class.unready`: words said when a class form has been read but
+  cannot yet run: header keywords or unpacking, annotations, classes inside
+  functions, or statements in a class
+  body beyond methods, assignments, nested classes, plain strings and pass.
+  A parent call outside a method, or one given explicit arguments, also
+  stops with these words. A pipe that changes an unnamed array also stops
+  here. Nothing in such a form is silently carried out.
+- `ext.stmt.separator`: optional signs parting statements on one line.
+  Unlike `stmt.terminator`, which gives a statement its written ending,
+  these need not stand at the end of a line. An indented language may
+  use them within a body written on the same line as its introduction.
+- `ext.op.tuple`: the signs joining values into a tuple without an
+  array's brackets. Grouping marks may hold one, and an empty group is
+  an empty tuple; one value followed by the sign is a tuple of one.
+  A return or a write may give a tuple without grouping marks. At this
+  stage tuples are held as arrays: they have no separate kind, and are
+  printed with array brackets. Their places may be read and their extent
+  counted as an array's may; tuple immutability is not yet kept.
+- `ext.stmt.assign.chain`: a switch; several places may be joined by
+  the assignment sign before one value. The value is worked out once,
+  then written into each place from left to right.
+- `ext.stmt.unpack.rest`: the signs before a place taking all values
+  left between the places before and after it, as an array. Only one
+  such place may stand in each taking-apart. In a tuple expression the
+  same sign before a value puts all its items into the tuple, and may
+  stand more than once (`return 1, *rest`). Where `ext.op.tuple` is
+  spelt, `ext.stmt.unpack` may name the array's opening bracket; bare
+  tuples and grouped tuples may then stand as targets too, within one
+  another and as a loop's target. The value is taken apart before its
+  places are written, and a wrong number of values stops the run.
+- `ext.stmt.unpack.short`, `ext.stmt.unpack.long`, and
+  `ext.stmt.unpack.unwalkable`: the words said when a taking-apart has
+  too few values, too many, or no walk to take values from. Arrays and
+  text may be taken apart, and maps give their keys; other walks are
+  not yet taken apart. `ext.stmt.unpack.amiss` is what is said of a
+  taking-apart whose places are ill written.
+- `ext.op.identical.negated`: the word directly after the identity
+  operator that turns it about (`is not`). With this spelling, equality
+  keeps its ordinary meaning; it does not take the looser rules above.
+  Arrays, maps and objects ask whether both names hold the same thing.
+  Nothing, ellipsis, flags and the small whole numbers from -5 through
+  256 have fixed identities. Unlike values cannot be identical. For
+  other alike values the kernels keep no identity that answers this
+  question; `ext.op.identical.unsupported` gives the plain complaint,
+  rather than answering equality in its stead.
+- `ext.op.if_else`: two words, the first before the condition and the
+  second before the other arm (`a if c else b`). It binds below every
+  binary operator and above a lambda. The condition runs first, and
+  only the arm it chooses runs; a further conditional belongs to the
+  other arm unless brackets say otherwise.
+- `ext.op.lambda`: the word before an unbracketed parameter list and
+  one expression, parted by `block.intro`. The value is a routine;
+  its defaults are worked out where it is made and kept for later
+  calls. A multiplication sign before a parameter gathers the remaining
+  arguments into an array. A division sign parts positional parameters;
+  a power sign before a parameter and parameters after a bare
+  multiplication sign are read as keyword parameters. Such parameters
+  cannot yet be called: `ext.op.lambda.unsupported` gives the words said
+  on reaching that body. A name of the enclosing routine is not carried
+  away; `ext.op.lambda.enclosing` gives the complaint when such a body
+  is called. These are lists of plain words, one message apiece.
+- `ext.op.in`: membership of the left value among an array's items, a
+  map's keys, or the substrings of text on the right. `ext.op.in.negated`
+  is a word before the operator that turns the answer about (`not in`).
+  `ext.op.in.unsupported` holds the plain complaint where the right
+  value cannot be searched, or the left of a text search is not text.
+- `ext.op.compare.chained`: a switch; comparisons beside one another
+  ask each adjacent pair in turn. A middle value is worked out once
+  and kept; after a false comparison no further operand runs. Equality,
+  ordering, identity and membership may be mixed in one chain.
+- `ext.op.assign.expression`: a sign that writes a named variable and
+  gives back what it wrote (`:=`). Its right side is a whole expression,
+  and brackets let the write stand inside any larger expression.
+- `ext.literal.ellipsis`: a literal value (`...`), distinct from text
+  and nothing, written out as `Ellipsis`. Alone after the block mark it
+  may stand for an empty body on the same line.
+- `ext.op.rem.formats_text`: a switch; remainder with text on the left
+  fills its format marks from the right. An array supplies arguments in
+  order; any other value supplies one. The marks are `%d`, `%s`, `%r`,
+  `%f`, `%x` and `%%`, with a decimal precision permitted before `f`.
+  `ext.op.rem.format.unsupported` gives the plain complaint for any
+  other mark or a value whose representation is not provided;
+  `ext.op.rem.format.arguments` gives it for the wrong
+  number or kind of arguments. Numeric remainder keeps its meaning.
+- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` `is` `in` < `|` < `+` `-` < `*` `/` `//` `%` < `-` < `**` < `.`
 - `ext.op.comprehension.for`, `ext.op.comprehension.in` and
   `ext.op.comprehension.if`: the words after a literal's first expression
   that bind names over a collection and keep only the passes whose
@@ -1728,7 +1826,7 @@ Operator precedence, lowest tier first. Unary operators sit in their own tier.
 
 - **lumen**: `|>` < `or` < `and` < `==` `!=` `<` `>` `<=` `>=` < `..` < `+` `-` < `*` `/` `%` `//` `.` < `**` < `-` `not` `!`
 - **rplumen**: 
-- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` < `|` < `+` `-` < `*` `/` `//` `%` < `-` < `**` < `.`
+- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` `is` `in` < `|` < `&` < `<<` < `+` `-` < `*` `/` `//` `%` < `-` `~` < `**` < `.`
 - **rust**: `..` < `||` < `&&` < `==` `!=` `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `-` `!` < `.`
 - **php (extra)**: `or` < `and` < `||` < `&&` < `|` < `^` < `&` < `==` `!=` `<>` `===` `!==` < `<` `>` `<=` `>=` `<=>` < `.` < `<<` `>>` < `+` `-` < `*` `/` `%` < `!` `~` `@` < `-` < `**`
 - **c (extra)**: `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `!` `-`
@@ -1835,15 +1933,16 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.op.bit.and` | - | - | - | - | `&` | - | - | - | - | - |
-| `ext.op.bit.left` | - | - | - | - | `<<` | - | - | - | - | - |
-| `ext.op.bit.not` | - | - | - | - | `~` | - | - | - | - | - |
+| `ext.op.bit.and` | - | - | `&` | - | `&` | - | - | - | - | - |
+| `ext.op.bit.left` | - | - | `<<` | - | `<<` | - | - | - | - | - |
+| `ext.op.bit.not` | - | - | `~` | - | `~` | - | - | - | - | - |
 | `ext.op.bit.or` | - | - | `\|` | - | `\|` | - | - | - | - | - |
 | `ext.op.bit.right` | - | - | - | - | `>>` | - | - | - | - | - |
 | `ext.op.bit.shift.numbers` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.bit.xor` | - | - | - | - | `^` | - | - | - | - | - |
 | `ext.op.cast` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.compare` | - | - | - | - | `<=>` | - | - | - | - | - |
+| `ext.op.compare.chained` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.comprehension.async` | - | - | `async` | - | - | - | - | - | - | - |
 | `ext.op.comprehension.async.unavailable` | - | - | `NotImplementedError: asynchronous comprehensions are not supported` | - | - | - | - | - | - | - |
 | `ext.op.comprehension.for` | - | - | `for` | - | - | - | - | - | - | - |
@@ -1854,7 +1953,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.decrement` | - | - | - | - | `--` | - | - | - | - | - |
 | `ext.op.decrement.text` | - | - | - | - | `Decrement on non-numeric string has no effect and is deprecated` | - | - | - | - | - |
 | `ext.op.hush` | - | - | - | - | `@` | - | - | - | - | - |
-| `ext.op.identical` | - | - | - | - | `===` | - | - | - | - | - |
+| `ext.op.identical` | - | - | `is` | - | `===` | - | - | - | - | - |
+| `ext.op.identical.negated` | - | - | `not` | - | - | - | - | - | - | - |
+| `ext.op.identical.unsupported` | - | - | `Identity of these values is not supported` | - | - | - | - | - | - | - |
+| `ext.op.in` | - | - | `in` | - | - | - | - | - | - | - |
+| `ext.op.in.negated` | - | - | `not` | - | - | - | - | - | - | - |
+| `ext.op.in.unsupported` | - | - | `Membership requires an array, string or map` | - | - | - | - | - | - | - |
 | `ext.op.increment` | - | - | - | - | `++` | - | - | - | - | - |
 | `ext.op.increment.text` | - | - | - | - | `Increment on non-numeric string is deprecated, use str_increment() instead` | - | - | - | - | - |
 | `ext.op.index.absent` | - | - | - | - | `true` | - | - | - | - | - |
@@ -1874,8 +1978,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.index.text` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.text.first` | - | - | - | - | `Only the first byte will be assigned to the string offset` | - | - | - | - | - |
 | `ext.op.instanceof` | - | - | - | - | `instanceof` | - | - | - | - | - |
-| `ext.op.member` | - | - | - | - | `->` | - | - | - | - | - |
+| `ext.op.lambda` | - | - | `lambda` | - | - | - | - | - | - | - |
+| `ext.op.lambda.enclosing` | - | - | `Lambda cannot read an enclosing function variable` | - | - | - | - | - | - | - |
+| `ext.op.lambda.unsupported` | - | - | `Lambda keyword parameters are not supported` | - | - | - | - | - | - | - |
+| `ext.op.member` | - | - | `.` | - | `->` | - | - | - | - | - |
 | `ext.op.member.by_value` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.op.member.pipes` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.name_by_value` | - | - | - | - | `$` | - | - | - | - | - |
 | `ext.op.not_identical` | - | - | - | - | `!==` | - | - | - | - | - |
 | `ext.op.otherwise` | - | - | - | - | `??` | - | - | - | - | - |
@@ -1887,6 +1995,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.scope` | - | - | - | - | `::` | - | - | - | - | - |
 | `ext.op.spelled` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.ternary` | - | - | - | - | `?` `:` | - | - | - | - | - |
+| `ext.op.tuple` | - | - | `,` | - | - | - | - | - | - | - |
 | `ext.op.walk.class` | - | - | - | - | `Iterator` | - | - | - | - | - |
 | `ext.op.walk.giver` | - | - | - | - | `getIterator` | - | - | - | - | - |
 | `ext.op.walk.giver.class` | - | - | - | - | `IteratorAggregate` | - | - | - | - | - |
@@ -1904,6 +2013,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.annotation.target.unready` | - | - | `NotImplementedError: annotated attribute targets are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.assert` | - | - | `assert` | - | - | - | - | - | - | - |
 | `ext.stmt.assert.kind` | - | - | `AssertionError` | - | - | - | - | - | - | - |
+| `ext.stmt.assign.chain` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.block.instead` | - | - | - | - | `:` | - | - | - | - | - |
 | `ext.stmt.block.instead.close` | - | - | - | - | `endif` `endwhile` `endfor` `endforeach` `endswitch` | - | - | - | - | - |
 | `ext.stmt.break.levels` | - | - | - | - | `true` | - | - | - | - | - |
@@ -1918,9 +2028,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.catch.separator` | - | - | `,` | - | `\|` | - | - | - | - | - |
 | `ext.stmt.catch.tuple.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.tuple.open` | - | - | `(` | - | - | - | - | - | - | - |
-| `ext.stmt.class` | - | - | - | - | `class` | - | - | - | - | - |
+| `ext.stmt.class` | - | - | `class` | - | `class` | - | - | - | - | - |
+| `ext.stmt.class.bases.close` | - | - | `)` | - | - | - | - | - | - | - |
+| `ext.stmt.class.bases.open` | - | - | `(` | - | - | - | - | - | - | - |
 | `ext.stmt.class.caller` | - | - | - | - | `__call` | - | - | - | - | - |
-| `ext.stmt.class.constructor` | - | - | - | - | `__construct` | - | - | - | - | - |
+| `ext.stmt.class.constructor` | - | - | `__init__` | - | `__construct` | - | - | - | - | - |
 | `ext.stmt.class.destructor` | - | - | - | - | `__destruct` | - | - | - | - | - |
 | `ext.stmt.class.extends` | - | - | - | - | `extends` | - | - | - | - | - |
 | `ext.stmt.class.guarded` | - | - | - | - | `protected` | - | - | - | - | - |
@@ -1929,12 +2041,14 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.interface` | - | - | - | - | `interface` | - | - | - | - | - |
 | `ext.stmt.class.modifier` | - | - | - | - | `public` `private` `protected` `final` `abstract` `readonly` `var` | - | - | - | - | - |
 | `ext.stmt.class.new` | - | - | - | - | `new` | - | - | - | - | - |
-| `ext.stmt.class.parent` | - | - | - | - | `parent` | - | - | - | - | - |
+| `ext.stmt.class.parent` | - | - | `super` | - | `parent` | - | - | - | - | - |
 | `ext.stmt.class.reader` | - | - | - | - | `__get` | - | - | - | - | - |
 | `ext.stmt.class.self` | - | - | - | - | `self` | - | - | - | - | - |
 | `ext.stmt.class.shared` | - | - | - | - | `static` | - | - | - | - | - |
 | `ext.stmt.class.this` | - | - | - | - | `$this` | - | - | - | - | - |
+| `ext.stmt.class.this.explicit` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.class.trait` | - | - | - | - | `trait` | - | - | - | - | - |
+| `ext.stmt.class.unready` | - | - | `NotImplementedError: this class form cannot run yet` | - | - | - | - | - | - | - |
 | `ext.stmt.class.uses` | - | - | - | - | `use` | - | - | - | - | - |
 | `ext.stmt.class.uses.alias` | - | - | - | - | `as` | - | - | - | - | - |
 | `ext.stmt.class.writer` | - | - | - | - | `__set` | - | - | - | - | - |
@@ -1971,7 +2085,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.throw.from` | - | - | `from` | - | - | - | - | - | - | - |
 | `ext.stmt.try` | - | - | `try` | - | `try` | - | - | - | - | - |
 | `ext.stmt.try.else` | - | - | `true` | - | - | - | - | - | - | - |
-| `ext.stmt.unpack` | - | - | - | - | `list` | - | - | - | - | - |
+| `ext.stmt.unpack` | - | - | `[` | - | `list` | - | - | - | - | - |
+| `ext.stmt.unpack.amiss` | - | - | `invalid unpacking assignment` | - | - | - | - | - | - | - |
+| `ext.stmt.unpack.long` | - | - | `too many values to unpack` | - | - | - | - | - | - | - |
+| `ext.stmt.unpack.rest` | - | - | `*` | - | - | - | - | - | - | - |
+| `ext.stmt.unpack.short` | - | - | `not enough values to unpack` | - | - | - | - | - | - | - |
+| `ext.stmt.unpack.unwalkable` | - | - | `cannot unpack non-iterable object` | - | - | - | - | - | - | - |
 | `ext.stmt.yield` | - | - | `yield` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.from` | - | - | `from` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.unrun` | - | - | `Generators cannot be run` | - | - | - | - | - | - | - |

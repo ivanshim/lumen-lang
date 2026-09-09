@@ -99,6 +99,7 @@ pub enum Value {
     Text(Rc<str>),
     Flag(bool),
     Null,
+    Ellipsis,
     Array(Rc<Vec<Value>>),
     /// Bounds of an index span; nothing stands for an omitted bound.
     Slice(Rc<[Value; 3]>),
@@ -113,6 +114,7 @@ pub enum Value {
     /// gathered into a map.
     Tie(Rc<(Value, Value)>),
     Routine(Rc<Routine>),
+    Method(Rc<Instance>, Rc<Routine>),
     SortOf(Sort),
     /// A slot nothing was stored in.
     Blank,
@@ -205,9 +207,9 @@ impl Value {
             Value::Real(r) => r.outside() || !r.p.is_zero(),
             Value::Text(s) => !s.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
-            Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::SortOf(_) => true,
+            Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
             Value::Bond(shared) => shared.borrow().is_true(),
-            Value::Class(_) | Value::Object(_) | Value::Slice(_) => true,
+            Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
         }
     }
 
@@ -228,7 +230,8 @@ impl Value {
             Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
-            Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
+            Value::Routine(_) | Value::Method(..) => Err("Cannot coerce function to number".to_string()),
+            Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
         }
@@ -243,9 +246,10 @@ impl Value {
         match (self, other) {
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
-            (Value::Null, Value::Null) => true,
+            (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
             (Value::SortOf(a), Value::SortOf(b)) => a == b,
             (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a, b),
+            (Value::Method(a, p), Value::Method(b, q)) => Rc::ptr_eq(a, b) && Rc::ptr_eq(p, q),
             (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Map(a), Value::Map(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
@@ -330,6 +334,7 @@ impl Value {
     /// The machine's own text for a value.
     pub fn plain(&self) -> String {
         match self {
+            Value::Ellipsis => "Ellipsis".to_string(),
             Value::Small(n) => n.to_string(),
             Value::Huge(n) => n.to_string(),
             Value::Frac(r) => format!("{}/{}", r.p, r.q),
@@ -347,7 +352,7 @@ impl Value {
                 format!("[{}]", shown.join(", "))
             }
             Value::Tie(pair) => format!("{} => {}", pair.0.plain(), pair.1.plain()),
-            Value::Routine(p) => format!("<function({})>", p.formals.join(", ")),
+            Value::Routine(p) | Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
             Value::Bond(shared) => shared.borrow().plain(),
             Value::Class(c) => format!("<class {}>", c.name),
             Value::Object(o) => format!("<object {}>", o.class.name),
@@ -384,6 +389,9 @@ impl Value {
                 pair.0.memo_key(into);
                 pair.1.memo_key(into);
                 into.push(')');
+            }
+            Value::Method(o, p) => {
+                let _ = write!(into, "m{:p}:{:p}", Rc::as_ptr(o), Rc::as_ptr(p));
             }
             Value::Routine(p) => {
                 let _ = write!(into, "p{:p}", Rc::as_ptr(p));

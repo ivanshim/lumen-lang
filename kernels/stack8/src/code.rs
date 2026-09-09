@@ -126,6 +126,10 @@ pub enum Action {
     /// taken apart. The same as the above, save that a value with no
     /// places at all is spoken of in the words a taking-apart uses.
     Apart,
+    /// Check the extent, gathering the starred place before writes begin.
+    Unpack(usize, Option<usize>),
+    /// Join the gathered portions of a tuple.
+    TupleJoin,
     /// What a value holds at that place, read so that what comes of it
     /// may be written back there. A value with no places at all is no
     /// place to write, so it is refused as a write to one is.
@@ -176,6 +180,8 @@ pub enum Action {
     /// within it. 1 and 1.0 are equal but not the same.
     Same,
     Unsame,
+    Contains,
+    Lacks,
     /// The bits of two whole numbers taken together, and the bits of one
     /// turned over. A number is read as sixty-four bits, sign and all.
     BitBoth,
@@ -248,6 +254,8 @@ pub enum Action {
     Make,
     /// The property of that name, of the object above.
     Grab(Rc<str>),
+    /// Whether the value has this member, before choosing the pipe.
+    HasMember(Rc<str>),
     /// Write that property: the object, then the value.
     Plant(Rc<str>),
     /// Take that property off the object above, as though it had never
@@ -586,6 +594,7 @@ pub struct Routine {
     /// How many arguments must be given; the rest have a value of their
     /// own, written by the program's own first instrs.
     pub least: usize,
+    pub rest_at: Option<usize>,
     /// Every local slot's name, the parameters first.
     pub idents: Vec<String>,
     /// A function leaves one value, its result; a postfix program leaves
