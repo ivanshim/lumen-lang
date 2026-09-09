@@ -108,6 +108,7 @@ ext.system.reading.unexpected:L ext.system.reading.unexpected.character:L ext.sy
 ext.system.reading.unclosed:L ext.system.reading.unclosed.line:L ext.system.reading.unclosed.mismatch:L ext.system.reading.unmatched:L \
 ext.lexical.number.binary_prefix:L ext.lexical.number.octal_prefix:L ext.lexical.number.octal_lead:B \
 ext.lexical.number.separator:L ext.system.integer.bits:N ext.system.real.bits:N ext.system.real.digits:N \
+ext.system.real.figures:L ext.system.real.figures.shown:L \
 ";
 
 fn tag_shapes(table: &'static str) -> Vec<(&'static str, char)> {

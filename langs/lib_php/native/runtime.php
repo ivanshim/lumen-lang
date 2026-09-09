@@ -123,6 +123,13 @@ function __hook_as_needed() {
 // is kept beside them and answered from there afterwards.
 $__settings = array();
 __room_at_start();
+// How many figures a real is written with is a setting like any other,
+// and the kernel keeps the two counts in cells of the run's own. What
+// the kernel starts them at is what the settings stand at where the run
+// was started with nothing said about them.
+$__figures_at_start = $__real_figures;
+$__figures_shown_at_start = $__real_figures_shown;
+__figures_follow();
 // What a setting stands at where the run was started with nothing said
 // about it. A name not among these has no value at all until one is set.
 function __ini_default($name) {
@@ -136,7 +143,50 @@ function __ini_default($name) {
     if ($name === "session.save_path") { return ""; }
     if ($name === "session.save_handler") { return "files"; }
     if ($name === "session.auto_start") { return "0"; }
+    if ($name === "precision") { global $__figures_at_start; return (string)$__figures_at_start; }
+    if ($name === "serialize_precision") { global $__figures_shown_at_start; return (string)$__figures_shown_at_start; }
     return false;
+}
+// A setting's worth as a count of significant figures. Nought asks for
+// one figure, since writing a number to no figures at all would say
+// nothing of it; below nought asks for the fewest figures that read
+// back as the same number.
+function __figures_wanted($said) {
+    $count = whole_of($said);
+    if ($count == 0) { return 1; }
+    return $count;
+}
+// The counts the kernel writes reals by, brought into step with the
+// settings. Done once at the start and again whenever either setting
+// is written, so a real written out afterwards follows the new count.
+function __figures_follow() {
+    global $__real_figures, $__real_figures_shown;
+    $__real_figures = __figures_wanted(ini_get("precision"));
+    $__real_figures_shown = __figures_wanted(ini_get("serialize_precision"));
+    return null;
+}
+// A real written as it is shown with its kind rather than as it is
+// written out plainly. The two differ in nothing but the count of
+// figures, which is a setting of its own.
+function __real_shown($value) {
+    global $__real_figures, $__real_figures_shown;
+    $was = $__real_figures;
+    $__real_figures = $__real_figures_shown;
+    $shown = strval($value);
+    $__real_figures = $was;
+    return $shown;
+}
+// A real as it is written out for keeping. It follows the same setting
+// as one shown with its kind, but takes the setting as it stands: a
+// count of nought there asks for one figure with the power of ten
+// spelled out from the very first, which showing one does not.
+function __real_kept($value) {
+    global $__real_figures;
+    $was = $__real_figures;
+    $__real_figures = whole_of(ini_get("serialize_precision"));
+    $kept = strval($value);
+    $__real_figures = $was;
+    return $kept;
 }
 function ini_get($name) {
     global $__settings;
@@ -166,6 +216,7 @@ function ini_set($name, $value) {
         return $was;
     }
     $__settings[$name] = (string)$value;
+    if ($name === 'precision' || $name === 'serialize_precision') { __figures_follow(); }
     return $was;
 }
 // ini_alter is ini_set under its older name; ini_restore drops what was
@@ -175,6 +226,7 @@ function ini_alter($name, $value) { return ini_set($name, $value); }
 function ini_restore($name) {
     global $__settings;
     unset($__settings[$name]);
+    if ($name === 'precision' || $name === 'serialize_precision') { __figures_follow(); }
     return null;
 }
 
@@ -1386,8 +1438,13 @@ function var_export_string($value, $indent) {
         return $out . $pad . ")";
     }
     if ($kind === "double") {
-        $shown = strval($value);
-        if (!str_contains($shown, ".") && !str_contains($shown, "E") && !str_contains($shown, "e")) {
+        // A real is exported as it is shown with its kind, and with a
+        // nought after the point where it has none of its own, so that
+        // reading the export back gives a real again. A number that is
+        // past them all, or none of them, has no point to give.
+        $shown = __real_shown($value);
+        $bounded = $shown !== "INF" && $shown !== "-INF" && $shown !== "NAN";
+        if ($bounded && !str_contains($shown, ".") && !str_contains($shown, "E")) {
             return $shown . ".0";
         }
         return $shown;
@@ -1425,6 +1482,51 @@ function rounded_string($number, $places) {
     return $shown;
 }
 
+// A real written to a count of significant figures, whatever the run's
+// own settings say. The count is a setting the kernel keeps, so it is
+// lent the wanted one for the writing and given back its own after.
+function __real_figured($value, $count) {
+    global $__real_figures;
+    $was = $__real_figures;
+    $__real_figures = $count;
+    $shown = strval(real_of($value));
+    $__real_figures = $was;
+    return $shown;
+}
+// The significant figures of a real, and the power of ten the first of
+// them stands at, read back out of the run's own writing of it: the
+// sign first, then the figures, then the power.
+function __figures_of_real($value, $count) {
+    $shown = __real_figured($value, $count);
+    $sign = "";
+    if (starts_with($shown, "-")) { $sign = "-"; $shown = substr($shown, 1); }
+    $power = 0;
+    $spelled = index_of($shown, "E");
+    if ($spelled >= 0) {
+        $power = whole_of(substr($shown, $spelled + 1));
+        $shown = substr($shown, 0, $spelled);
+    }
+    $point = index_of($shown, ".");
+    if ($point < 0) { $point = strlen($shown); }
+    else { $shown = substr($shown, 0, $point) . substr($shown, $point + 1); }
+    // The point belongs after the first figure, so what it stood at
+    // goes into the power; the leading noughts are none of the figures
+    // and come off, each one lowering the power again.
+    $power = $power + $point - 1;
+    while (strlen($shown) > 1 && $shown[0] === "0") {
+        $shown = substr($shown, 1);
+        $power = $power - 1;
+    }
+    if ($shown === "0") { $power = 0; }
+    return array($sign, $shown, $power);
+}
+// A number that is past every real, or none of them, has no figures to
+// write and is said in words instead.
+function __beyond_reals($shown) {
+    if ($shown === "NAN") { return "NaN"; }
+    if ($shown === "INF" || $shown === "-INF") { return $shown; }
+    return null;
+}
 function one_conversion($letter, $value, $places) {
     if ($letter === "d" || $letter === "i") { return strval(whole_of($value)); }
     if ($letter === "u") { $n = whole_of($value); if ($n < 0) { $n = $n + 18446744073709551616; } return strval($n); }
@@ -1435,63 +1537,46 @@ function one_conversion($letter, $value, $places) {
     if ($letter === "o") { return decoct(whole_of($value)); }
     if ($letter === "b") { return decbin(whole_of($value)); }
     if ($letter === "c") { return chr(whole_of($value)); }
-    if ($letter === "e" || $letter === "E") { return __in_powers(real_of($value), $places, $letter === "E"); }
-    if ($letter === "g" || $letter === "G") { return __shortest_of($value, $places, $letter === "G"); }
+    if ($letter === "e" || $letter === "E" || $letter === "g" || $letter === "G") {
+        $beyond = __beyond_reals(strval(real_of($value)));
+        if ($beyond !== null) { return $beyond; }
+        if ($letter === "e" || $letter === "E") { return __in_powers(real_of($value), $places, $letter === "E"); }
+        return __shortest_of($value, $places, $letter === "G");
+    }
     return strval($value);
 }
 
 // A real written as one figure, a point, so many more, and the power of
-// ten it stands at. Rounding the figures may carry them up to ten, and
-// then the power goes up by one.
+// ten it stands at. The figures are the run's own writing of the
+// number, read back: dividing a power of ten out of it would come to
+// nothing at all for the smallest reals of the width, whose power no
+// real of the width holds.
 function __in_powers($x, $places, $capital) {
     if ($places === null) { $places = 6; }
-    $under = $x < 0;
-    if ($under) { $x = -$x; }
-    $power = $x == 0.0 ? 0 : __log10_floor($x);
-    $body = $x == 0.0 ? 0.0 : $x / (10 ** $power);
-    $body = round($body, $places);
-    if ($body >= 10.0) { $body = $body / 10.0; $power = $power + 1; }
-    $written = rounded_string($body, $places);
+    $got = __figures_of_real($x, $places + 1);
+    // The writing drops the figures it does not need, so any that are
+    // wanted beyond them are noughts.
+    $run = pad_to($got[1], $places + 1, "0", true);
+    $body = substr($run, 0, 1);
+    if ($places > 0) { $body = $body . "." . substr($run, 1, $places); }
     $mark = $capital ? "E" : "e";
-    $sign = $power < 0 ? "-" : "+";
-    $away = $power < 0 ? -$power : $power;
-    return ($under ? "-" : "") . $written . $mark . $sign . strval($away);
+    $sign = $got[2] < 0 ? "-" : "+";
+    return $got[0] . $body . $mark . $sign . strval(abs($got[2]));
 }
 
 // The shorter of the two ways of writing a real: plainly where the power
 // of ten it stands at is small, and with the power spelled out
 // otherwise. Figures of nought at the end count for nothing either way.
+// Which of the two ways it is, and where the figures stop, the run's own
+// writing settles; only the case of the letter is this conversion's own.
+// A count of nought asks for one figure, since none at all would say
+// nothing of the number.
 function __shortest_of($value, $places, $capital) {
-    $x = real_of($value);
     if ($places === null) { $places = 6; }
-    if ($places === 0) { $places = 1; }
-    $power = $x == 0.0 ? 0 : __log10_floor($x);
-    if ($power < -4 || $power >= $places) {
-        // Written with its power, PHP keeps a figure after the point
-        // even where it is a nought, so that what is written reads as a
-        // real and not as a whole number.
-        $held = __pared_of_noughts(__in_powers($x, $places - 1, $capital), true);
-        if (strpos($held, ".") === false) {
-            $at = strpos($held, $capital ? "E" : "e");
-            if ($at !== false) { $held = substr($held, 0, $at) . ".0" . substr($held, $at); }
-        }
-        return $held;
-    }
-    return __pared_of_noughts(rounded_string($x, $places - 1 - $power), false);
-}
-function __pared_of_noughts($written, $in_powers) {
-    $body = $written;
-    $tail = "";
-    if ($in_powers) {
-        $at = strpos($body, "e");
-        if ($at === false) { $at = strpos($body, "E"); }
-        if ($at !== false) { $tail = substr($body, $at); $body = substr($body, 0, $at); }
-    }
-    if (strpos($body, ".") !== false) {
-        while (strlen($body) > 0 && $body[strlen($body) - 1] === "0") { $body = substr($body, 0, strlen($body) - 1); }
-        if (strlen($body) > 0 && $body[strlen($body) - 1] === ".") { $body = substr($body, 0, strlen($body) - 1); }
-    }
-    return $body . $tail;
+    if ($places < 1) { $places = 1; }
+    $held = __real_figured($value, $places);
+    if ($capital) { return strtoupper($held); }
+    return strtolower($held);
 }
 
 function sprintf_over($pattern, $values) {

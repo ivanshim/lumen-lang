@@ -96,7 +96,8 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     let tokens = shaped?;
     let mut registry = compile::Registry::default();
     // The system names are globals whether or not the program mentions them.
-    let system = [&lang.args_binding, &lang.args_list, &lang.args_count, &lang.memo_binding, &lang.precision_binding, &lang.entry_binding];
+    let system = [&lang.args_binding, &lang.args_list, &lang.args_count, &lang.memo_binding, &lang.precision_binding, &lang.entry_binding,
+        &lang.figures_binding, &lang.figures_shown_binding];
     for name in system.into_iter().flatten() {
         registry.slot(name);
     }
@@ -201,6 +202,25 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     if let Some(name) = &lang.precision_binding {
         machine.define(name, engine::places_default());
     }
+    // How many figures a real is written with is the run's own to
+    // settle while it goes, so each count lives in a cell the run
+    // reaches by name and the kernel reads again every time it writes
+    // a real out. A count of nought or below asks for the fewest
+    // figures that read back as the same number, which is where a run
+    // showing a real with its kind starts.
+    let shared = |v: Value| std::rc::Rc::new(std::cell::RefCell::new(v));
+    let mut counts = (None, None);
+    if let Some(name) = &lang.figures_binding {
+        let cell = shared(Value::Small(lang.real_digits.map_or(-1, |n| n as i64)));
+        machine.define(name, Value::Bond(cell.clone()));
+        counts.0 = Some(cell);
+    }
+    if let Some(name) = &lang.figures_shown_binding {
+        let cell = shared(Value::Small(-1));
+        machine.define(name, Value::Bond(cell.clone()));
+        counts.1 = Some(cell);
+    }
+    value::figures_kept_in(counts.0, counts.1);
     // A value raised and never caught is a fault like any other, told
     // in the language's own words.
     if let Err(fault) = machine.invoke(&program, Vec::new()) {

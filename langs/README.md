@@ -553,6 +553,18 @@ only. The extension labels so far, all from PHP:
   comes first is answered no where the first of them is on either side,
   and both count as true. Where a language says nothing, its numbers are
   exact and unbounded, as Lumen's own are.
+- `ext.system.real.digits`, `ext.system.real.figures` and
+  `ext.system.real.figures.shown`: how many significant figures a real
+  of a width is written with. The first is a count and is where a run
+  starts. The other two name bindings the kernel makes for the run and
+  looks into afresh every time it writes a real out, one for a real
+  written plainly and one for a real shown with its kind, so a language
+  whose settings say how many figures to write (PHP's `precision` and
+  `serialize_precision`) has only to write the new count there for
+  every real written afterwards to follow it. A count below nought asks
+  for the fewest figures that read back as the same number, which is
+  where the count for showing one starts; where the point falls outside
+  the figures asked for, the power of ten is spelled out after them.
 - `ext.system.complaint.warning`, `.notice`, `.deprecated` and
   `.fatal`: the word a language uses for each kind of complaint. Where
   a language has a word for a warning, a binding never written, a place
@@ -1612,6 +1624,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.reading.unmatched` | - | - | - | - | - | - | - | `Unmatched '` `'` | - | - |
 | `ext.system.real.bits` | - | - | - | - | - | - | - | `64` | - | - |
 | `ext.system.real.digits` | - | - | - | - | - | - | - | `14` | - | - |
+| `ext.system.real.figures` | - | - | - | - | - | - | - | `$__real_figures` | - | - |
+| `ext.system.real.figures.shown` | - | - | - | - | - | - | - | `$__real_figures_shown` | - | - |
 | `ext.system.request.all` | - | - | - | - | - | - | - | `$_REQUEST` | - | - |
 | `ext.system.request.amiss` | - | - | - | - | - | - | - | `$__request_amiss` | - | - |
 | `ext.system.request.amiss.body.large` | - | - | - | - | - | - | - | `PHP Request Startup: POST Content-Length of %s bytes exceeds the limit of %s bytes` | - | - |

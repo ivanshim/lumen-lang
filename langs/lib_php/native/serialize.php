@@ -25,11 +25,12 @@ function serialize($value) {
     }
     return "N;";
 }
+// A real written down follows the setting for how many figures a real
+// shown with its kind carries, and takes that setting as it stands: a
+// count of nought there asks for one figure with the power of ten
+// spelled out from the very first, which showing one does not.
 function __serialized_real($x) {
-    if ($x == (float) (int) $x && $x < 9223372036854775808.0 && $x > -9223372036854775808.0) {
-        return strval((int) $x);
-    }
-    return strval($x);
+    return __real_kept($x);
 }
 
 // A value read back from how it was written down. Text that is not a

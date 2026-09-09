@@ -86,6 +86,13 @@ pub struct Lang {
     /// significant digits one shows when simply written out.
     pub real_bits: Option<usize>,
     pub real_digits: Option<usize>,
+    /// The names the run keeps its counts of figures under: how many a
+    /// real written plainly carries, and how many one shown with its
+    /// kind carries. The kernel makes each a cell of the run's own and
+    /// asks it afresh every time it writes a real out, so a count the
+    /// run writes there while it goes is the count that is followed.
+    pub figures_binding: Option<String>,
+    pub figures_shown_binding: Option<String>,
     pub unicode_names: bool,
     pub sigil: Option<char>,
     pub keywords_folded: bool,
@@ -627,6 +634,7 @@ w ext.system.reading.unexpected | w ext.system.reading.unexpected.character | w 
 w ext.system.reading.unclosed | w ext.system.reading.unclosed.line | w ext.system.reading.unclosed.mismatch | w ext.system.reading.unmatched
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
+w ext.system.real.figures | w ext.system.real.figures.shown
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -1138,6 +1146,8 @@ impl Lang {
             integer_bits: r.count("ext.system.integer.bits")?,
             real_bits: r.count("ext.system.real.bits")?,
             real_digits: r.count("ext.system.real.digits")?,
+            figures_binding: r.head("ext.system.real.figures")?,
+            figures_shown_binding: r.head("ext.system.real.figures.shown")?,
             unicode_names: unicode,
             sigil: var_prefix,
             keywords_folded: r.flag("lexical.keywords_case_insensitive")?,

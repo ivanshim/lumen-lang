@@ -17,18 +17,18 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 98, differs 4, error 2, skipped 10 | pass 98, differs 4, error 2, skipped 10 |
+| `php/basic` | 114 | pass 99, differs 3, error 2, skipped 10 | pass 99, differs 3, error 2, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 202, differs 6, error 0, skipped 5 | pass 202, differs 6, error 0, skipped 5 |
+| `php/lang` | 213 | pass 203, differs 5, error 0, skipped 5 | pass 203, differs 5, error 0, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 57, differs 1, error 0, skipped 6 | pass 57, differs 1, error 0, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 383, differs 12, error 2, skipped 25 | pass 383, differs 12, error 2, skipped 25 |
+| all | 422 | pass 385, differs 10, error 2, skipped 25 | pass 385, differs 10, error 2, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 12 |
+| ran, printed something else | 10 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | skip php-cgi not available | 2 |
@@ -255,7 +255,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/ini_directive_deprecated_report_memleaks.phpt` | pass | pass |  |
 | `php/basic/ini_parse_quantity_basic.phpt` | pass | pass |  |
 | `php/basic/ini_parse_quantity_warnings.phpt` | pass | pass |  |
-| `php/basic/precision.phpt` | differs | differs | ran, printed something else |
+| `php/basic/precision.phpt` | pass | pass |  |
 | `php/basic/req44164.phpt` | pass | pass |  |
 | `php/basic/req60524-win.phpt` | skipped | skipped | skip Run only on Windows |
 | `php/basic/req60524.phpt` | pass | pass |  |
@@ -369,7 +369,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/bug24436.phpt` | pass | pass |  |
 | `php/lang/bug24499.phpt` | pass | pass |  |
 | `php/lang/bug24573.phpt` | pass | pass |  |
-| `php/lang/bug24640.phpt` | differs | differs | ran, printed something else |
+| `php/lang/bug24640.phpt` | pass | pass |  |
 | `php/lang/bug24652.phpt` | pass | pass |  |
 | `php/lang/bug24658.phpt` | pass | pass |  |
 | `php/lang/bug24783.phpt` | pass | pass |  |

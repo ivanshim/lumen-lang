@@ -292,7 +292,7 @@ impl Value {
             Value::Frac(e) if e.under && num_traits::Zero::is_zero(&e.above) => "-0".to_string(),
             // A language whose reals are numbers of bits writes one to
             // its own count of figures.
-            Value::Frac(e) if w.real_figures.is_some() => figured(nearest_binary(&e.above, &e.beneath), w.real_figures),
+            Value::Frac(e) if w.real_figures.is_some() => spelled_out(nearest_binary(&e.above, &e.beneath), figures_asked(false).unwrap_or(w.real_figures)),
             other => other.bare(),
         }
     }
@@ -634,11 +634,51 @@ pub fn at_binary_width(v: Value, bits: Option<usize>, figures: usize) -> Value {
     }
 }
 
+thread_local! {
+    /// Where a language names them, the cells a run keeps its counts of
+    /// figures in: how many a real written plainly carries, and how many
+    /// one shown with its kind carries. A language that names neither
+    /// leaves both standing empty.
+    static COUNTS: RefCell<(Option<Rc<RefCell<Value>>>, Option<Rc<RefCell<Value>>>)> = const { RefCell::new((None, None)) };
+}
+
+/// Give the kernel the cells the run keeps its counts of figures in.
+/// The run reaches them by the names the definition gives, so whatever
+/// it writes there governs every real written out after.
+pub fn counts_kept_in(plainly: Option<Rc<RefCell<Value>>>, by_kind: Option<Rc<RefCell<Value>>>) {
+    COUNTS.with(|both| *both.borrow_mut() = (plainly, by_kind));
+}
+
+/// Where the run's count of figures stands at this moment. Empty where
+/// the run keeps none; inside that, a count, or empty once more where
+/// the count is under nought, by which the run asks for the fewest
+/// figures that read back as the number itself.
+fn figures_asked(by_kind: bool) -> Option<Option<usize>> {
+    COUNTS.with(|both| {
+        let both = both.borrow();
+        let cell = if by_kind { both.1.as_ref()? } else { both.0.as_ref()? };
+        let worth = cell.borrow();
+        let asked = match &*worth {
+            Value::Small(n) => *n,
+            Value::Huge(n) => n.to_i64().unwrap_or(0),
+            Value::Text(s) => s.trim().parse().unwrap_or(0),
+            _ => 0,
+        };
+        // The widest real of the width spells out fewer figures than
+        // this, so any count beyond it asks for noughts alone, and
+        // those come off again further down.
+        if asked < 0 {
+            return Some(None);
+        }
+        Some(Some(asked.min(1100) as usize))
+    })
+}
+
 /// A binary real written out: the fewest figures that read back as the
 /// same number, with a power of ten after them where it stands very
 /// high or very low. `figures` caps them, as a language's own setting
 /// does where a number is written out rather than shown with its kind.
-pub fn figured(x: f64, figures: Option<usize>) -> String {
+pub fn spelled_out(x: f64, figures: Option<usize>) -> String {
     if x.is_nan() {
         return "NAN".to_string();
     }
@@ -677,4 +717,11 @@ pub fn figured(x: f64, figures: Option<usize>) -> String {
     let tail = &run[1..];
     let after = if tail.is_empty() { "0" } else { tail };
     format!("{}{}.{}E{}{}", sign, &run[..1], after, if power < 0 { "-" } else { "+" }, power.abs())
+}
+
+/// A real of the width written as the run shows one with its kind: to
+/// the count asked for, else to the count the run keeps for showing
+/// one, else to the fewest figures that read back as the number itself.
+pub fn figured(x: f64, figures: Option<usize>) -> String {
+    spelled_out(x, figures.or_else(|| figures_asked(true).flatten()))
 }

@@ -18,7 +18,9 @@ pub mod table;
 pub mod form;
 pub mod data;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use table::Table;
 use data::Value;
@@ -111,7 +113,8 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     let shaped = indent::indent(read?, table, ahead).map_err(|(said, row)| cannot_read(table, &said, row, request, ahead, false));
     let tokens = shaped?;
     let system = ["system.args", "ext.system.args.list", "ext.system.args.count", "system.memoization", "system.real_default_precision", "system.entry", "system.kind.integer",
-        "system.kind.rational", "system.kind.real", "system.kind.string", "system.kind.boolean", "system.kind.array", "system.kind.null"];
+        "system.kind.rational", "system.kind.real", "system.kind.string", "system.kind.boolean", "system.kind.array", "system.kind.null",
+        "ext.system.real.figures", "ext.system.real.figures.shown"];
     let mut seeded: Vec<String> = system.iter().filter_map(|k| table.single(k).map(str::to_string)).collect();
     seeded.extend(REQUEST_PARTS.iter().filter_map(|(_, key)| table.single(key).map(str::to_string)));
     seeded.extend(table.single("ext.system.request.amiss").map(str::to_string));
@@ -222,6 +225,25 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     if let Some(n) = table.single("system.real_default_precision") {
         machine.define(n, Value::Small(math::DEFAULT_PLACES as i64));
     }
+    // A count of figures belongs to the run and not to the definition:
+    // the run may write another at any moment, so each count is held in
+    // a cell the run reaches by name and the kernel looks into afresh
+    // whenever it writes a real out. Nought or under asks for the
+    // fewest figures that read back the same, where a run showing a
+    // real with its kind begins.
+    let mut plainly = None;
+    let mut by_kind = None;
+    if let Some(n) = table.single("ext.system.real.figures") {
+        let cell = Rc::new(RefCell::new(Value::Small(table.count("ext.system.real.digits").map_or(-1, |d| d as i64))));
+        machine.define(n, Value::Shared(Rc::clone(&cell)));
+        plainly = Some(cell);
+    }
+    if let Some(n) = table.single("ext.system.real.figures.shown") {
+        let cell = Rc::new(RefCell::new(Value::Small(-1)));
+        machine.define(n, Value::Shared(Rc::clone(&cell)));
+        by_kind = Some(cell);
+    }
+    data::counts_kept_in(plainly, by_kind);
     if let Err(told) = machine.run_main(&reduced.program.body) {
         let _ = machine.run_afterward();
         machine.let_things_go();

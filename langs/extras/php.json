@@ -850,6 +850,12 @@
   "ext.system.integer.bits": 64,
   "ext.system.real.bits": 64,
   "ext.system.real.digits": 14,
+  "ext.system.real.figures": [
+    "$__real_figures"
+  ],
+  "ext.system.real.figures.shown": [
+    "$__real_figures_shown"
+  ],
   "ext.system.complaint.reading": [
     "Parse error"
   ],

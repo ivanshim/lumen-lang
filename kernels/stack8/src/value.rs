@@ -315,7 +315,7 @@ impl Value {
             // A language whose reals are binary numbers writes one out
             // to its own count of significant figures.
             Value::Real(r) if r.below && r.p.is_zero() => "-0".to_string(),
-            Value::Real(r) if sp.real_digits.is_some() => binary_string(as_binary(&r.p, &r.q), sp.real_digits),
+            Value::Real(r) if sp.real_digits.is_some() => written_out(as_binary(&r.p, &r.q), figures_now(false).unwrap_or(sp.real_digits)),
             other => other.plain(),
         }
     }
@@ -683,12 +683,57 @@ pub fn to_binary_width(v: Value, bits: Option<usize>, places: usize) -> Value {
     }
 }
 
+thread_local! {
+    /// The cells a run keeps its counts of figures in, where the
+    /// language gives those counts a name of their own: how many
+    /// figures a real written plainly carries, and how many one shown
+    /// with its kind carries. Both stand empty for a language that
+    /// keeps no such count.
+    static FIGURES: RefCell<(Option<Rc<RefCell<Value>>>, Option<Rc<RefCell<Value>>>)> = const { RefCell::new((None, None)) };
+}
+
+/// Hand the kernel the cells the run keeps its counts of figures in.
+/// The run writes into them by the names the definition gives, so a
+/// count set while the run goes is the count the next real written out
+/// follows.
+pub fn figures_kept_in(plainly: Option<Rc<RefCell<Value>>>, with_kind: Option<Rc<RefCell<Value>>>) {
+    FIGURES.with(|held| *held.borrow_mut() = (plainly, with_kind));
+}
+
+/// What the run's count of figures stands at now. Nothing at all where
+/// the run keeps no count of its own; within that, a count of figures,
+/// or nothing again where the count is below nought, by which the run
+/// asks for the fewest figures that read back as the same number.
+fn figures_now(with_kind: bool) -> Option<Option<usize>> {
+    FIGURES.with(|held| {
+        let held = held.borrow();
+        let cell = match with_kind {
+            true => held.1.as_ref()?,
+            false => held.0.as_ref()?,
+        };
+        let said = cell.borrow();
+        let count = match &*said {
+            Value::Small(n) => *n,
+            Value::Huge(n) => n.to_i64().unwrap_or(0),
+            Value::Text(s) => s.trim().parse().unwrap_or(0),
+            _ => 0,
+        };
+        // No real of the width spells out more figures than the widest
+        // of them needs, so a greater count asks only for noughts, and
+        // those are dropped again below.
+        Some(match count >= 0 {
+            true => Some(count.min(1100) as usize),
+            false => None,
+        })
+    })
+}
+
 /// A binary real written out the way such a language writes one: the
 /// fewest digits that read back as the same number, with a power of ten
 /// after them where the number is very large or very small. `digits`
 /// caps the significant figures, as a language's own setting does when
 /// a number is simply written out rather than shown with its kind.
-pub fn binary_string(x: f64, digits: Option<usize>) -> String {
+pub fn written_out(x: f64, digits: Option<usize>) -> String {
     if x.is_nan() {
         return "NAN".to_string();
     }
@@ -723,6 +768,13 @@ pub fn binary_string(x: f64, digits: Option<usize>) -> String {
     let after = if rest.is_empty() { "0".to_string() } else { rest.to_string() };
     let mark = if power < 0 { "-" } else { "+" };
     format!("{}{}.{}E{}{}", sign, &figures[..1], after, mark, power.abs())
+}
+
+/// A binary real written out as the run shows one with its kind: to the
+/// count of figures asked for, else to the count the run keeps for
+/// showing one, else in the fewest that read back as the same number.
+pub fn binary_string(x: f64, digits: Option<usize>) -> String {
+    written_out(x, digits.or_else(|| figures_now(true).flatten()))
 }
 
 /// A run of significant figures written out plainly at the power of ten
