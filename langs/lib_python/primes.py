@@ -3,7 +3,7 @@
 def next_prime(n):
     k = n + 1
     while True:
-        if is_prime(n= k):
+        if is_prime(k):
             k
         k = k + 1
 
@@ -32,7 +32,7 @@ def primes_up_to(limit):
     return primes
 
 def unique_prime_factors(n):
-    f = prime_factors(n= n)
+    f = prime_factors(n)
     u = []
     i = 0
     while i < len(f):

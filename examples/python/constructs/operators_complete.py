@@ -29,7 +29,7 @@ def power(base, exp):
     return base ** exp
 
 print("power(3, 4):")
-print(power(base= 3, exp= 4))
+print(power(3, 4))
 print("Precedence test: 2 + 3 ** 2")
 print(2 + 3 ** 2)
 print("Precedence test: 10 / 2 ** 2")

@@ -16,15 +16,15 @@ def add(a, b):
     return a + b
 
 print("add(5, 3):")
-print(add(a= 5, b= 3))
+print(add(5, 3))
 def greet(name):
     return "Hello, " + name
 
 print("greet(\"Alice\"):")
-print(greet(name= "Alice"))
+print(greet("Alice"))
 def process(x, y):
     result = x * 2 + y
     return result
 
 print("process(10, 5):")
-print(process(x= 10, y= 5))
+print(process(10, 5))

@@ -2631,7 +2631,7 @@ impl<'a> Compiler<'a> {
             if let Some(sep) = &call.between {
                 if self.at_symbol(sep) {
                     self.take();
-                }
+                } else if lang.bind_names && !self.at_symbol(&call.close) { return Err(bad()); }
             }
             if self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme) {
                 self.take();
@@ -2732,7 +2732,11 @@ impl<'a> Compiler<'a> {
                     }
                 }
             }
-            a.body()
+            if lang.bind_names && Lang::spells(&lang.block_intros, &a.look().lexeme)
+                && a.look_ahead(1).shape != Shape::LineEnd {
+                a.take();
+                a.stmt()
+            } else { a.body() }
         })?;
         // What is carried is read where the routine is written, and the
         // routine takes it away with it.
@@ -4826,14 +4830,18 @@ impl<'a> Compiler<'a> {
     /// argument is dropped. Returns how many.
     fn arguments(&mut self, pair: &Brackets) -> Res<usize> {
         let mut count = 0;
+        let mut pieces: Vec<(bool, Vec<Instr>)> = Vec::new();
         while !self.at_symbol(&pair.close) {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", pair.close));
             }
+            let start = self.mark();
             let labelled = self.look().shape == Shape::Instr
                 && self.look_ahead(1).shape == Shape::Sign
-                && Lang::spells(&self.lang.argument_labels, &self.look_ahead(1).lexeme);
+                && (Lang::spells(&self.lang.argument_labels, &self.look_ahead(1).lexeme)
+                    || (self.lang.bind_names && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme)));
             let tagged = self.lang.bind_names && labelled;
+            let named_spread = Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme);
             let spread = self.lang.bind_names && !labelled
                 && (Lang::spells(&self.lang.call_spread, &self.look().lexeme)
                     || Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme));
@@ -4846,6 +4854,10 @@ impl<'a> Compiler<'a> {
             if labelled { self.pos += 2; }
             self.expr(0)?;
             if tagged || spread { self.act(Action::Tie, 2); }
+            if self.lang.bind_names {
+                let code = self.piece().instrs.drain(start..).collect();
+                pieces.push((tagged || named_spread, relocated(code, -(start as i64))));
+            }
             count += 1;
             if let Some(sep) = &pair.between {
                 if self.at_symbol(sep) {
@@ -4854,6 +4866,13 @@ impl<'a> Compiler<'a> {
             }
         }
         self.take();
+        // Positional spreads run before named values even when a named
+        // argument was written before a spread.
+        pieces.sort_by_key(|(named, _)| *named);
+        for (_, code) in pieces {
+            let start = self.mark();
+            self.piece().instrs.extend(relocated(code, start as i64));
+        }
         Ok(count)
     }
 
@@ -4882,7 +4901,7 @@ impl<'a> Compiler<'a> {
     fn mutation(&mut self, name: &str, target: &str, argc: usize) -> Res<()> {
         let native = self.lang.builtins[name];
         let wanted = if native == Builtin::Append { 2 } else { 3 };
-        if argc != wanted {
+        if argc != wanted && !self.lang.bind_names {
             return Err(format!("{}() expects {} arguments, got {}", name, wanted, argc));
         }
         self.read_taking(target);

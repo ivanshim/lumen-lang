@@ -9,9 +9,9 @@ def greet(name):
     return "Hello, " + name
 
 print("Test: Basic Functions")
-print(square(x= 5))
-print(add(a= 10, b= 20))
-print(greet(name= "Lumen"))
+print(square(5))
+print(add(10, 20))
+print(greet("Lumen"))
 def get_constant():
     return 42
 
@@ -21,4 +21,4 @@ def compute(x, y):
     product = x * y
     return sum + product
 
-print(compute(x= 3, y= 4))
+print(compute(3, 4))

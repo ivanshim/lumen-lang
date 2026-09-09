@@ -2186,7 +2186,12 @@ impl<'a> Machine<'a> {
                     let Some(Form::Read(slot)) = args.first() else {
                         return Err(format!("First argument to {}() must be an array variable name", name).into());
                     };
-                    let values = self.value_list(&args[1..], frame)?;
+                    let mut values = self.value_list(&args[1..], frame)?;
+                    if self.table.flag("ext.syntax.call.bind_names") {
+                        let (plain, named) = self.open_arguments(values)?;
+                        if !named.is_empty() { return Err(self.argument_fault("ext.syntax.call.amiss.builtin", None).into()); }
+                        values = plain;
+                    }
                     let want = if *op == Prim::Append { 1 } else { 2 };
                     if values.len() != want {
                         return Err(format!("{}() expects {} arguments, got {}", name, want + 1, values.len() + 1).into());

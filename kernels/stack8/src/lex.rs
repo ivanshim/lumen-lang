@@ -842,6 +842,16 @@ pub fn lex_at(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)> 
             cur.out
         }
     };
+    if lang.bind_names {
+        if let Some(call) = &lang.calling {
+            let mut depth = 0usize;
+            out.retain(|token| {
+                if token.is_lexeme(Shape::Sign, &call.open) { depth += 1; }
+                else if token.is_lexeme(Shape::Sign, &call.close) { depth = depth.saturating_sub(1); }
+                depth == 0 || !matches!(token.shape, Shape::Lead | Shape::LineEnd)
+            });
+        }
+    }
     out.push(Token { shape: Shape::Finish, lexeme: "EOF".to_string(), width: 0, row: 1, column: 1 });
     Ok(out)
 }

@@ -62,7 +62,7 @@
   "syntax.call.close": [
     ")"
   ],
-  "syntax.call.label": ["="],
+  "syntax.call.label": [],
   "syntax.array.open": [
     "["
   ],

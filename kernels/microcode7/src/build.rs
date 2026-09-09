@@ -2599,7 +2599,7 @@ impl<'a> Builder<'a> {
             if let Some(sep) = table.single("syntax.call.separator") {
                 if self.sign(sep) {
                     self.advance();
-                }
+                } else if bind && !self.sign(&close) { return Err(wrong()); }
             }
             if self.look().shape == Shape::Sign && table.spells("stmt.terminator", &self.look().lexeme) {
                 self.advance();
@@ -2706,7 +2706,12 @@ impl<'a> Builder<'a> {
                     }
                 }
             }
-            items.push(r.body()?);
+            let same_line = keep_defaults && table.spells("block.intro", &r.look().lexeme)
+                && r.glance(1).shape != Shape::LineEnd;
+            if same_line {
+                r.advance();
+                items.push(r.stmt()?);
+            } else { items.push(r.body()?); }
             Ok(sequence(items))
         })?;
         let mut items: Vec<Form> = said;
@@ -4458,12 +4463,14 @@ impl<'a> Builder<'a> {
         let close = self.table.single(close_key).unwrap().to_string();
         let sep = self.table.single(sep_key).map(str::to_string);
         let mut items = Vec::new();
+        let mut named_values = Vec::new();
         while !self.sign(&close) {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", close));
             }
             let label = self.look().shape == Shape::Bare && self.glance(1).shape == Shape::Sign
-                && self.table.spells("syntax.call.label", &self.glance(1).lexeme);
+                && (self.table.spells("syntax.call.label", &self.glance(1).lexeme)
+                    || (self.table.flag("ext.syntax.call.bind_names") && self.table.spells("stmt.assign", &self.glance(1).lexeme)));
             let mut tag = None;
             let bind = self.table.flag("ext.syntax.call.bind_names") && close_key == "syntax.call.close";
             if label {
@@ -4476,10 +4483,12 @@ impl<'a> Builder<'a> {
                 if tag.is_some() { self.advance(); }
             }
             let value = self.expr(0)?;
-            items.push(match tag {
+            let named = matches!(tag, Some(Value::Text(_) | Value::Flag(true)));
+            let argument = match tag {
                 Some(key) => prim_call(Prim::Couple, vec![constant(key), value]),
                 None => value,
-            });
+            };
+            if named { named_values.push(argument); } else { items.push(argument); }
             if let Some(s) = &sep {
                 if self.sign(s) {
                     self.advance();
@@ -4487,6 +4496,7 @@ impl<'a> Builder<'a> {
             }
         }
         self.advance();
+        items.extend(named_values);
         Ok(items)
     }
 

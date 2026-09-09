@@ -11,30 +11,30 @@ def extended_gcd(a, b):
     if b == 0:
         return [a, 1, 0]
     else:
-        r = extended_gcd(a= b, b= a % b)
+        r = extended_gcd(b, a % b)
         g = r[0]
         x = r[2]
         y = r[1] - (a // b) * r[2]
         return [g, x, y]
 
 def lcm(a, b):
-    return (a * b) // gcd(a= a, b= b)
+    return (a * b) // gcd(a, b)
 
 def is_coprime(a, b):
-    return gcd(a= a, b= b) == 1
+    return gcd(a, b) == 1
 
 def mod_inverse(a, m):
-    r = extended_gcd(a= a, b= m)
+    r = extended_gcd(a, m)
     if r[0] != 1:
         return sys.exit("mod_inverse: inverse does not exist (gcd(a, m) != 1)")
     else:
         return (r[1] % m + m) % m
 
 def mod_div(a, b, m):
-    if gcd(a= b, b= m) != 1:
+    if gcd(b, m) != 1:
         return None
     else:
-        inv = mod_inverse(a= b, m= m)
+        inv = mod_inverse(b, m)
         return (a * inv) % m
 
 def prime_factors(n):
@@ -68,7 +68,7 @@ def is_prime(n):
 def factorize_phi(m):
     if m == 1:
         return []
-    factors = prime_factors(n= m)
+    factors = prime_factors(m)
     prime_counts = []
     i = 0
     while i < len(factors):
@@ -82,12 +82,12 @@ def factorize_phi(m):
             while j < count - 1:
                 prime_counts.append(p)
                 j = j + 1
-        p_minus_1_factors = prime_factors(n= p - 1)
+        p_minus_1_factors = prime_factors(p - 1)
         j = 0
         while j < len(p_minus_1_factors):
             prime_counts.append(p_minus_1_factors[j])
             j = j + 1
-    prime_counts = sort_integers(arr= prime_counts)
+    prime_counts = sort_integers(prime_counts)
     result = []
     i = 0
     while i < len(prime_counts):
@@ -134,7 +134,7 @@ def euler_phi(m):
     if m == 1:
         return 1
     result = m
-    factors = prime_factors(n= m)
+    factors = prime_factors(m)
     unique_primes = []
     i = 0
     while i < len(factors):
@@ -150,27 +150,27 @@ def euler_phi(m):
     return result
 
 def is_unit(a, m):
-    return gcd(a= a % m, b= m) == 1
+    return gcd(a % m, m) == 1
 
 def units_mod_m(m):
     units = []
     i = 0
     while i < m:
-        if is_unit(a= i, m= m):
+        if is_unit(i, m):
             units.append(i)
         i = i + 1
     return units
 
 def group_order(m):
-    return euler_phi(m= m)
+    return euler_phi(m)
 
 def element_order(a, m):
-    if not is_unit(a= a, m= m):
+    if not is_unit(a, m):
         sys.exit("element_order: element is not a unit mod m")
-    phi = euler_phi(m= m)
+    phi = euler_phi(m)
     order = 1
     while order <= phi:
-        if mod_pow(base= a, exp= order, m= m) == 1:
+        if mod_pow(a, order, m) == 1:
             if phi % order == 0:
                 return order
         order = order + 1
@@ -180,7 +180,7 @@ def is_cyclic(m):
     if m == 1 or m == 2 or m == 4:
         return True
     if m % 2 == 1:
-        factors = prime_factors(n= m)
+        factors = prime_factors(m)
         if len(factors) == 0:
             return False
         first = factors[0]
@@ -193,7 +193,7 @@ def is_cyclic(m):
     if m % 2 == 0:
         m_half = m // 2
         if m_half % 2 == 1:
-            factors = prime_factors(n= m_half)
+            factors = prime_factors(m_half)
             if len(factors) == 0:
                 return False
             first = factors[0]
@@ -206,10 +206,10 @@ def is_cyclic(m):
     return False
 
 def primitive_root(m):
-    if not is_cyclic(m= m):
+    if not is_cyclic(m):
         sys.exit("primitive_root: group is not cyclic")
-    phi = euler_phi(m= m)
-    phi_factors = prime_factors(n= phi)
+    phi = euler_phi(m)
+    phi_factors = prime_factors(phi)
     unique_phi_primes = []
     i = 0
     while i < len(phi_factors):
@@ -219,12 +219,12 @@ def primitive_root(m):
         i = i + 1
     a = 2
     while a < m:
-        if is_unit(a= a, m= m):
+        if is_unit(a, m):
             is_generator = True
             i = 0
             while i < len(unique_phi_primes):
                 p = unique_phi_primes[i]
-                if mod_pow(base= a, exp= phi // p, m= m) == 1:
+                if mod_pow(a, phi // p, m) == 1:
                     is_generator = False
                 i = i + 1
             if is_generator:
@@ -233,34 +233,34 @@ def primitive_root(m):
     return sys.exit("primitive_root: failed to find generator (internal error)")
 
 def all_primitive_roots(m):
-    if not is_cyclic(m= m):
+    if not is_cyclic(m):
         sys.exit("all_primitive_roots: group is not cyclic")
-    phi = euler_phi(m= m)
-    g = primitive_root(m= m)
+    phi = euler_phi(m)
+    g = primitive_root(m)
     generators = []
     k = 1
     while k < phi:
-        if gcd(a= k, b= phi) == 1:
-            generators.append(mod_pow(base= g, exp= k, m= m))
+        if gcd(k, phi) == 1:
+            generators.append(mod_pow(g, k, m))
         k = k + 1
     return generators
 
 def discrete_log(base, value, m):
-    if not is_unit(a= base, m= m):
+    if not is_unit(base, m):
         sys.exit("discrete_log: base is not a unit mod m")
-    if not is_unit(a= value, m= m):
+    if not is_unit(value, m):
         sys.exit("discrete_log: value is not a unit mod m")
-    phi = euler_phi(m= m)
-    n = isqrt(n= phi) + 1
+    phi = euler_phi(m)
+    n = isqrt(phi) + 1
     baby_steps = []
     current = 1
     j = 0
     while j < n:
         baby_steps.append([current, j])
-        current = mod_mult(a= current, b= base, m= m)
+        current = mod_mult(current, base, m)
         j = j + 1
-    base_inv = mod_inverse(a= base, m= m)
-    giant_step = mod_pow(base= base_inv, exp= n, m= m)
+    base_inv = mod_inverse(base, m)
+    giant_step = mod_pow(base_inv, n, m)
     gamma = value
     i = 0
     while i < n:
@@ -271,17 +271,17 @@ def discrete_log(base, value, m):
                 if result < phi:
                     return result
             j = j + 1
-        gamma = mod_mult(a= gamma, b= giant_step, m= m)
+        gamma = mod_mult(gamma, giant_step, m)
         i = i + 1
     return sys.exit("discrete_log: no solution found")
 
 def legendre_symbol(a, p):
-    if not is_prime(n= p) or p == 2:
+    if not is_prime(p) or p == 2:
         sys.exit("legendre_symbol: p must be an odd prime")
     a = a % p
     if a == 0:
         return 0
-    result = mod_pow(base= a, exp= (p - 1) // 2, m= p)
+    result = mod_pow(a, (p - 1) // 2, p)
     if result == 1:
         return 1
     else:
@@ -319,9 +319,9 @@ def kronecker_symbol(a, n):
             return 0
     if n < 0:
         if a < 0:
-            return -kronecker_symbol(a= a, n= -n)
+            return -kronecker_symbol(a, -n)
         else:
-            return kronecker_symbol(a= a, n= -n)
+            return kronecker_symbol(a, -n)
     if n == 1:
         return 1
     e = 0
@@ -351,18 +351,18 @@ def kronecker_symbol(a, n):
     if n_odd == 1:
         symbol_odd = 1
     else:
-        symbol_odd = jacobi_symbol(a= a, n= n_odd)
+        symbol_odd = jacobi_symbol(a, n_odd)
     return symbol_2 * symbol_odd
 
 def dirichlet_characters(m):
     if m == 1:
         return [[]]
-    phi = euler_phi(m= m)
-    units = units_mod_m(m= m)
+    phi = euler_phi(m)
+    units = units_mod_m(m)
     principal = []
     a = 1
     while a < m:
-        if is_unit(a= a, m= m):
+        if is_unit(a, m):
             principal.append(1)
         else:
             principal.append(0)

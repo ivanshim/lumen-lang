@@ -18,7 +18,7 @@ print("Running mod_pow...")
 result = 0
 i = 0
 while i < iterations:
-    result = mod_pow(base= base, exp= exp, m= mod)
+    result = mod_pow(base, exp, mod)
     i = i + 1
 sys.stdout.write("Result: ")
 print(result)
