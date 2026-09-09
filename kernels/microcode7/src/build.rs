@@ -4190,7 +4190,10 @@ impl<'a> Builder<'a> {
                         args.extend(self.args("syntax.call.close", "syntax.call.separator")?);
                     }
                 }
-                left = self.named_call(&name, args)?;
+                if table.flag("ext.stmt.yield.suspends") && ["ext.stmt.yield.send", "ext.stmt.yield.close", "ext.stmt.yield.throw"].iter().any(|label| table.spells(label, &name)) {
+                    args.insert(1, constant(Value::text(&name)));
+                    left = prim_call(Prim::Ask, args);
+                } else { left = self.named_call(&name, args)?; }
                 continue;
             }
             if table.single("ext.op.otherwise").map_or(false, |m| self.sign(m)) {
