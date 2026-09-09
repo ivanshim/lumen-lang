@@ -1394,7 +1394,8 @@ only. The extension labels so far, all from PHP:
 - `ext.op.bit.and`, `ext.op.bit.or`, `ext.op.bit.xor`, `ext.op.bit.not`,
   `ext.op.bit.left` and `ext.op.bit.right`: the bits of a value taken
   together, turned over, or moved along (`&`, `|`, `^`, `~`, `<<`, `>>`).
-  A value is read as a whole number of sixty-four bits, sign and all:
+  Python spells the taking-together sign too, for the byte masks in
+  its literal tests. A value is read as a whole number of sixty-four bits, sign and all:
   what lies past a decimal point is dropped towards nothing, so -1.5
   stands for -1, and text that spells no number stands for zero. Moving
   by a negative count is an error, whose words are
@@ -1578,7 +1579,8 @@ the next whole number, as PHP does: `[5, "k" => 6, 7]` has the keys 0,
 and `"1"` are different keys, where PHP would fold them together.
 
 `syntax.map.open`/`.close`/`.separator` spell a literal of a map's own
-(Python's `{...}`); a language whose array literal doubles as its map
+(Python's `{...}`); line ends within these brackets are space, as they
+are within an array or a call. A language whose array literal doubles as its map
 literal, as PHP's does, leaves them empty and fills only the pair sign.
 
 ## Comparison
@@ -1727,7 +1729,7 @@ Operator precedence, lowest tier first. Unary operators sit in their own tier.
 
 - **lumen**: `|>` < `or` < `and` < `==` `!=` `<` `>` `<=` `>=` < `..` < `+` `-` < `*` `/` `%` `//` `.` < `**` < `-` `not` `!`
 - **rplumen**: 
-- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` < `|` < `+` `-` < `*` `/` `//` `%` < `-` < `**` < `.`
+- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` < `|` < `&` < `+` `-` < `*` `/` `//` `%` < `-` < `**` < `.`
 - **rust**: `..` < `||` < `&&` < `==` `!=` `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `-` `!` < `.`
 - **php (extra)**: `or` < `and` < `||` < `&&` < `|` < `^` < `&` < `==` `!=` `<>` `===` `!==` < `<` `>` `<=` `>=` `<=>` < `.` < `<<` `>>` < `+` `-` < `*` `/` `%` < `!` `~` `@` < `-` < `**`
 - **c (extra)**: `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `!` `-`
@@ -1842,7 +1844,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.op.bit.and` | - | - | - | - | `&` | - | - | - | - | - |
+| `ext.op.bit.and` | - | - | `&` | - | `&` | - | - | - | - | - |
 | `ext.op.bit.left` | - | - | - | - | `<<` | - | - | - | - | - |
 | `ext.op.bit.not` | - | - | - | - | `~` | - | - | - | - | - |
 | `ext.op.bit.or` | - | - | `\|` | - | `\|` | - | - | - | - | - |
