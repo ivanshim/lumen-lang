@@ -1220,7 +1220,7 @@ impl<'a> Builder<'a> {
             if self.key("ext.stmt.throw") {
                 self.advance();
                 if self.table.single("ext.stmt.throw.from").is_some()
-                    && matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish)
+                    && (matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish) || self.on_any("stmt.terminator"))
                 {
                     return Ok(Form::Again);
                 }
@@ -1465,7 +1465,7 @@ impl<'a> Builder<'a> {
         self.advance();
         if self.look().shape == Shape::LineEnd { return self.body(); }
         let mut words = vec![self.stmt()?];
-        while self.sign(";") {
+        while self.on_any("stmt.terminator") {
             self.advance();
             if matches!(self.look().shape, Shape::LineEnd | Shape::Finish) { break; }
             words.push(self.stmt()?);
@@ -1493,11 +1493,13 @@ impl<'a> Builder<'a> {
             let grouped = bare_clauses && self.on_any("ext.stmt.catch.group");
             if grouped { self.advance(); }
             let held;
+            let mut takes_all = false;
             if bare_clauses {
                 let mut selectors = Vec::new();
                 let bracketed = self.on_any("ext.stmt.catch.tuple.open");
                 if bracketed { self.advance(); }
-                if !self.on_any("block.intro") {
+                takes_all = !bracketed && self.on_any("block.intro");
+                if !takes_all && !(bracketed && self.on_any("ext.stmt.catch.tuple.close")) {
                     loop {
                         let selector = match self.expr(0)? {
                             Form::Read(place) => Form::Glance(place),
@@ -1532,7 +1534,7 @@ impl<'a> Builder<'a> {
                 self.need_sign(&close, "after the class caught")?;
             }
             let body = if bare_clauses { self.watched_body()? } else { self.body()? };
-            clauses.push(Clause { classes, choices, grouped, held, body });
+            clauses.push(Clause { classes, choices, grouped, takes_all, held, body });
             self.skip_line_ends();
         }
         let otherwise = if table.flag("ext.stmt.try.else") && self.key("stmt.else") {

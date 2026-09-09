@@ -31,6 +31,7 @@ pub struct Taking {
     pub held: Option<Cell>,
     pub body: (usize, usize),
     pub grouped: bool,
+    pub bare: bool,
 }
 
 impl Attempt {

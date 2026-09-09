@@ -331,6 +331,9 @@
   "ext.stmt.catch.group.unsupported": [
     "Exception groups are not supported"
   ],
+  "ext.stmt.catch.invalid": [
+    "catching classes that do not inherit from BaseException is not allowed"
+  ],
   "ext.stmt.catch.separator": [
     ","
   ],

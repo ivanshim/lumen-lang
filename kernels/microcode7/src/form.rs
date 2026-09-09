@@ -464,6 +464,7 @@ pub struct Clause {
     pub classes: Vec<String>,
     pub choices: Option<Vec<Form>>,
     pub grouped: bool,
+    pub takes_all: bool,
     pub held: Option<Address>,
     pub body: Form,
 }

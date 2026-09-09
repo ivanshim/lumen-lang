@@ -495,6 +495,8 @@ only. The extension labels so far, all from PHP:
   value by naming no class. An unbound class name takes nothing and says
   nothing. `ext.stmt.catch.tuple.open` and `.close` enclose a list of
   classes; `ext.stmt.catch.separator` parts them, within or without it.
+  An empty list takes nothing. `ext.stmt.catch.invalid` gives the words
+  said when a class selector holds something that is no class.
 - `ext.stmt.try.else`: a switch; the ordinary else word may follow the
   clauses, and its body runs only when the watched body ended of its own
   accord. A value raised there is not offered to those clauses.
@@ -1741,6 +1743,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.catch.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.group` | - | - | `*` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.group.unsupported` | - | - | `Exception groups are not supported` | - | - | - | - | - | - | - |
+| `ext.stmt.catch.invalid` | - | - | `catching classes that do not inherit from BaseException is not allowed` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.separator` | - | - | `,` | - | `\|` | - | - | - | - | - |
 | `ext.stmt.catch.tuple.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.tuple.open` | - | - | `(` | - | - | - | - | - | - | - |

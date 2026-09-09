@@ -970,7 +970,7 @@ impl<'a> Compiler<'a> {
             }
             if Lang::spells(&lang.throw_words, &w) {
                 self.take();
-                if !lang.throw_from.is_empty() && matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish) {
+                if !lang.throw_from.is_empty() && (self.on_sep() || matches!(self.look().shape, Shape::Close | Shape::Finish)) {
                     self.act(Action::Reraise, 0);
                 } else {
                     self.expr(0)?;
@@ -2149,7 +2149,7 @@ impl<'a> Compiler<'a> {
             if self.look().shape != Shape::LineEnd {
                 loop {
                     self.stmt()?;
-                    if !self.at_symbol(";") { break; }
+                    if self.look().shape != Shape::Sign || !self.lang.ends_stmt(&self.look().lexeme) { break; }
                     self.take();
                     if matches!(self.look().shape, Shape::LineEnd | Shape::Finish) { break; }
                 }
@@ -2176,7 +2176,9 @@ impl<'a> Compiler<'a> {
             let tuple = lang.catch_tuple_open.as_ref().map_or(false, |m| self.at_symbol(m));
             if tuple { self.take(); }
             let mut kinds = Vec::new();
-            if !self.on_any(&lang.block_intros) {
+            let bare = !tuple && self.on_any(&lang.block_intros);
+            let empty = tuple && lang.catch_tuple_close.as_ref().map_or(false, |m| self.at_symbol(m));
+            if !bare && !empty {
                 loop {
                     let from = self.mark();
                     self.expr(0)?;
@@ -2202,7 +2204,7 @@ impl<'a> Compiler<'a> {
                 Some(self.cell_to_write(&name))
             } else { None };
             let arm = self.attempt_body()?;
-            clauses.push(Taking { kinds, held, body: arm, grouped });
+            clauses.push(Taking { kinds, held, body: arm, grouped, bare });
             self.skip_seps();
         }
         let otherwise = if lang.try_else && self.on_keyword(&lang.else_words) {

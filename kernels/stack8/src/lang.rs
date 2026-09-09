@@ -580,6 +580,7 @@ pub struct Lang {
     pub assert_words: Vec<String>,
     pub assert_kind: Option<String>,
     pub catch_as: Vec<String>,
+    pub catch_invalid: Option<String>,
     pub catch_tuple_open: Option<String>,
     pub catch_tuple_close: Option<String>,
     pub catch_group: Option<String>,
@@ -666,7 +667,7 @@ w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.destruct
 w ext.op.walk.class | w ext.op.walk.rewind | w ext.op.walk.more | w ext.op.walk.this | w ext.op.walk.key
 w ext.op.walk.onward | w ext.op.walk.giver.class | w ext.op.walk.giver | w ext.op.walk.no_cell | w ext.op.walk.key.no_cell | b ext.op.walk.live | w ext.builtin.array.front | w ext.stmt.class.modifier | w ext.stmt.class.hidden | w ext.stmt.class.guarded | w ext.stmt.class.shared
 w ext.op.member | w ext.op.scope | w ext.op.instanceof | w ext.stmt.class.parent
-w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.assert | w ext.stmt.assert.kind | w ext.stmt.catch.as | w ext.stmt.catch.tuple.open | w ext.stmt.catch.tuple.close | w ext.stmt.catch.group | w ext.stmt.catch.group.unsupported | b ext.stmt.try.else | w ext.stmt.throw.from | w ext.stmt.throw.empty | w ext.stmt.try | w ext.stmt.catch
+w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.assert | w ext.stmt.assert.kind | w ext.stmt.catch.invalid | w ext.stmt.catch.as | w ext.stmt.catch.tuple.open | w ext.stmt.catch.tuple.close | w ext.stmt.catch.group | w ext.stmt.catch.group.unsupported | b ext.stmt.try.else | w ext.stmt.throw.from | w ext.stmt.throw.empty | w ext.stmt.try | w ext.stmt.catch
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
 w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | w ext.system.request.settings | b ext.op.index.absent | w ext.op.index.scalar | w ext.op.index.nothing | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
@@ -1513,6 +1514,7 @@ impl Lang {
             assert_words: r.strings("ext.stmt.assert")?,
             assert_kind: r.head("ext.stmt.assert.kind")?,
             catch_as: r.strings("ext.stmt.catch.as")?,
+            catch_invalid: r.head("ext.stmt.catch.invalid")?,
             catch_tuple_open: r.head("ext.stmt.catch.tuple.open")?,
             catch_tuple_close: r.head("ext.stmt.catch.tuple.close")?,
             catch_group: r.head("ext.stmt.catch.group")?,

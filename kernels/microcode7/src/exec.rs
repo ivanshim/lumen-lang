@@ -1902,11 +1902,16 @@ impl<'a> Machine<'a> {
                                         _ => false,
                                     },
                                     Some(choices) => {
-                                        let mut fits = choices.is_empty();
+                                        let mut fits = clause.takes_all;
                                         for choice in choices {
                                             let class = self.value_of(choice, frame)?;
-                                            if let (Value::Blueprint(kind), Value::Thing(value)) = (class, &raised) {
-                                                fits |= value.of.goes_by(&kind.name, self.classes_either_way);
+                                            if !matches!(class, Value::Unset | Value::Blueprint(_)) {
+                                                return Err(self.table.single("ext.stmt.catch.invalid").unwrap_or("A catch needs a class").to_string().into());
+                                            }
+                                            if let Value::Blueprint(kind) = class {
+                                                if let Value::Thing(value) = &raised {
+                                                    fits |= value.of.goes_by(&kind.name, self.classes_either_way);
+                                                }
                                             }
                                             if fits { break; }
                                         }

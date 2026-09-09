@@ -1582,12 +1582,18 @@ impl<'a> Engine<'a> {
                 self.caught.push(raised.clone());
                 let handled = (|| {
                     for arm in &plan.clauses {
-                        let mut takes = arm.kinds.is_empty();
+                        let mut takes = arm.bare;
                         for span in &arm.kinds {
                             self.run_span(program, frame, instrs, *span)?;
                             let kind = self.drop_top()?;
-                            if let (Value::Object(object), Value::Class(class)) = (&raised, kind) {
-                                takes |= object.class.named(&class.name, self.lang.classes_folded);
+                            match kind {
+                                Value::Blank => {},
+                                Value::Class(class) => {
+                                    if let Value::Object(object) = &raised {
+                                        takes |= object.class.named(&class.name, self.lang.classes_folded);
+                                    }
+                                }
+                                _ => return Err(self.lang.catch_invalid.as_deref().unwrap_or("A catch needs a class").into()),
                             }
                             if takes { break; }
                         }
