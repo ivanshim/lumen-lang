@@ -2889,14 +2889,19 @@ impl<'a> Compiler<'a> {
                 continue;
             }
             let pairs = [&lang.calling, &lang.array_brackets, &lang.map_brackets];
-            if pairs.iter().flatten().any(|pair| pair.open == t.lexeme) {
+            if pairs.iter().filter_map(|pair| pair.as_ref()).any(|pair| pair.open == t.lexeme) {
                 brackets += 1;
-            } else if pairs.iter().flatten().any(|pair| pair.close == t.lexeme) {
+            } else if pairs.iter().filter_map(|pair| pair.as_ref()).any(|pair| pair.close == t.lexeme) {
                 brackets = brackets.saturating_sub(1);
             } else if brackets == 0 && Lang::spells(&lang.pipe_words, &t.lexeme) {
                 piped = true;
             }
         }
+        let tail: Vec<&Token> = self.tokens[target_at..target_end].iter().rev()
+            .skip_while(|t| lang.grouping.as_ref().map_or(false, |pair| t.is_lexeme(Shape::Sign, &pair.close)))
+            .take(2).collect();
+        piped |= matches!(tail.as_slice(), [last, before] if last.shape == Shape::Instr
+            && before.shape == Shape::Sign && Lang::spells(&lang.pipe_words, &before.lexeme));
         if !name && !index && !member && !piped {
             return Err(lang.annotation_amiss.clone().unwrap_or_else(|| "Expected an assignment target".into()));
         }
@@ -2942,8 +2947,16 @@ impl<'a> Compiler<'a> {
         let emptied = self.put(Instr::Emptied(running));
         let from = self.mark();
         let target_at = self.pos;
+        // A word left over from a head the reader does not know is not
+        // the beginning of a new declaration on that same line.
+        let starts_here = target_at == 0 || {
+            let before = &self.tokens[target_at - 1];
+            matches!(before.shape, Shape::LineEnd | Shape::Open | Shape::Close)
+                || (before.shape == Shape::Sign && (self.lang.ends_stmt(&before.lexeme)
+                    || Lang::spells(&self.lang.block_intros, &before.lexeme)))
+        };
         self.expr_at(0, false)?;
-        if self.on_any(&self.lang.annotation_marks) {
+        if starts_here && self.on_any(&self.lang.annotation_marks) {
             return self.annotated_statement(from, target_at);
         }
         let done = if self.on_writing() {
@@ -3673,7 +3686,12 @@ impl<'a> Compiler<'a> {
     /// a call with no other argument.
     fn pipe_target(&mut self, left: usize) -> Res<()> {
         let name = self.want_name("after the pipe")?;
-        if self.on_any(&self.lang.annotation_marks) {
+        let mut ahead = 0;
+        while self.lang.grouping.as_ref().map_or(false, |pair| self.look_ahead(ahead).is_lexeme(Shape::Sign, &pair.close)) {
+            ahead += 1;
+        }
+        if self.look_ahead(ahead).shape == Shape::Sign
+            && Lang::spells(&self.lang.annotation_marks, &self.look_ahead(ahead).lexeme) {
             // The statement reader will speak of the unsupported place;
             // its member name must not be mistaken for a builtin call.
             self.read(&name);

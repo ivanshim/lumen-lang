@@ -2873,7 +2873,7 @@ impl<'a> Builder<'a> {
     fn with_annotation(&mut self, place: Form, began: usize) -> Res<Form> {
         let table = self.table;
         let mut depth = 0usize;
-        let through_pipe = self.tokens[began..self.pos].iter().any(|word| {
+        let mut through_pipe = self.tokens[began..self.pos].iter().any(|word| {
             if word.shape != Shape::Sign {
                 return false;
             }
@@ -2888,6 +2888,15 @@ impl<'a> Builder<'a> {
             }
             false
         });
+        let mut end = self.pos;
+        while end > began && self.tokens[end - 1].shape == Shape::Sign
+            && table.spells("syntax.group.close", &self.tokens[end - 1].lexeme) {
+            end -= 1;
+        }
+        if end >= began + 2 && self.tokens[end - 1].shape == Shape::Bare {
+            let before_name = &self.tokens[end - 2];
+            through_pipe |= before_name.shape == Shape::Sign && table.spells("op.pipe", &before_name.lexeme);
+        }
         let ordinary = matches!(&place, Form::Read(_)
             | Form::Apply(Callee::Prim(Prim::At | Prim::Of, _), _));
         if !ordinary && !through_pipe {
@@ -2918,8 +2927,17 @@ impl<'a> Builder<'a> {
 
     fn write_or_expr(&mut self) -> Res<Form> {
         let began = self.pos;
+        let boundary = began.checked_sub(1).map_or(true, |at| {
+            let prior = &self.tokens[at];
+            match prior.shape {
+                Shape::LineEnd | Shape::Open | Shape::Close => true,
+                Shape::Sign => ["stmt.terminator", "block.intro"].iter()
+                    .any(|label| self.table.spells(label, &prior.lexeme)),
+                _ => false,
+            }
+        });
         let expr = self.expr_at(0, false)?;
-        if self.on_any("ext.stmt.annotation") {
+        if boundary && self.on_any("ext.stmt.annotation") {
             return self.with_annotation(expr, began);
         }
         if !self.on_writing() {
@@ -3453,7 +3471,12 @@ impl<'a> Builder<'a> {
                 }
                 self.advance();
                 let name = self.need_word("after the pipe")?;
-                if self.on_any("ext.stmt.annotation") {
+                let mut past = 0;
+                while self.glance(past).shape == Shape::Sign && table.spells("syntax.group.close", &self.glance(past).lexeme) {
+                    past += 1;
+                }
+                let next = self.glance(past);
+                if next.shape == Shape::Sign && table.spells("ext.stmt.annotation", &next.lexeme) {
                     left = invoke(self.read(&name), vec![left]);
                     break;
                 }
