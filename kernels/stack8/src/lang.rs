@@ -340,7 +340,6 @@ pub struct Lang {
     pub compound: HashMap<String, Action>,
     pub static_words: Vec<String>,
     pub long_quotes: Vec<String>,
-    pub lambda_words: Vec<String>,
     pub tuple_marks: Vec<String>,
     pub class_bases_open: Vec<String>,
     pub class_bases_close: Vec<String>,
@@ -404,6 +403,22 @@ pub struct Lang {
     pub exponent_letters: Vec<char>,
     /// A sign that leaves its operand as it is.
     pub plus_words: Vec<String>,
+    pub if_else_words: Vec<String>,
+    pub lambda_words: Vec<String>,
+    pub lambda_unsupported: Option<String>,
+    pub lambda_enclosing: Option<String>,
+    pub identity_not: Vec<String>,
+    pub identity_unsupported: Option<String>,
+    pub membership_words: Vec<String>,
+    pub membership_not: Vec<String>,
+    pub membership_unsupported: Option<String>,
+    pub chained_comparisons: bool,
+    pub expression_assign: Vec<String>,
+    pub ellipsis_words: Vec<String>,
+    pub rem_formats_text: bool,
+    pub format_unsupported: Option<String>,
+    pub format_arguments: Option<String>,
+
     pub hush_words: Vec<String>,
     /// The mark written before a value to say that the value spells a
     /// name, and the name is what is meant.
@@ -733,6 +748,7 @@ w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decora
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
 w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
 w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.request.amiss.boundary.wrong | w ext.system.request.amiss.part | w ext.system.request.amiss.body.large | w ext.system.request.body
+w ext.op.if_else | w ext.op.lambda.unsupported | w ext.op.lambda.enclosing | w ext.op.identical.negated | w ext.op.identical.unsupported | w ext.op.in | w ext.op.in.negated | w ext.op.in.unsupported | b ext.op.compare.chained | w ext.op.assign.expression | w ext.literal.ellipsis | b ext.op.rem.formats_text | w ext.op.rem.format.unsupported | w ext.op.rem.format.arguments
 w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
 w ext.stmt.terminator | w ext.stmt.annotation | w ext.stmt.annotation.amiss | w ext.stmt.annotation.target.unready | w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
@@ -1103,7 +1119,7 @@ impl Lang {
             ("op.and", Action::And), ("op.or", Action::Or), ("op.concat", Action::Join), ("ext.op.compare", Action::Rank),
             ("ext.op.bit.and", Action::BitBoth), ("ext.op.bit.or", Action::BitEither), ("ext.op.bit.xor", Action::BitOne),
             ("ext.op.bit.left", Action::BitUp), ("ext.op.bit.right", Action::BitDown),
-            ("ext.op.identical", Action::Same), ("ext.op.not_identical", Action::Unsame),
+            ("ext.op.in", Action::Contains), ("ext.op.identical", Action::Same), ("ext.op.not_identical", Action::Unsame),
         ] {
             for lex in r.strings(tag)? {
                 let tier = tier_of(&lex, false).ok_or_else(|| format!("'{lex}' ({tag}) does not appear in op.precedence"))?;
@@ -1395,7 +1411,7 @@ impl Lang {
             spare_args: reads_arguments,
             assign_gives_value: r.flag("ext.op.assign.value")?,
             plain_keys: r.flag("ext.op.index.plain_keys")?,
-            loose_equality: tells_same,
+            loose_equality: tells_same && r.strings("ext.op.identical.negated")?.is_empty(),
             complaint_words: {
                 let named = [
                     (Complaint::Warning, "ext.system.complaint.warning"),
@@ -1469,7 +1485,6 @@ impl Lang {
             compound: HashMap::new(),
             static_words: r.strings("ext.stmt.static")?,
             long_quotes: r.strings("ext.lexical.string.long")?,
-            lambda_words: r.strings("ext.op.lambda")?,
             tuple_marks: r.strings("ext.op.tuple")?,
             class_bases_open: r.strings("ext.stmt.class.bases.open")?,
             class_bases_close: r.strings("ext.stmt.class.bases.close")?,
@@ -1525,6 +1540,22 @@ impl Lang {
             },
             exponent_letters: r.letters("ext.lexical.number.exponent")?,
             plus_words: r.strings("ext.op.plus")?,
+            if_else_words: r.strings("ext.op.if_else")?,
+            lambda_words: r.strings("ext.op.lambda")?,
+            lambda_unsupported: r.head("ext.op.lambda.unsupported")?,
+            lambda_enclosing: r.head("ext.op.lambda.enclosing")?,
+            identity_not: r.strings("ext.op.identical.negated")?,
+            identity_unsupported: r.head("ext.op.identical.unsupported")?,
+            membership_words: r.strings("ext.op.in")?,
+            membership_not: r.strings("ext.op.in.negated")?,
+            membership_unsupported: r.head("ext.op.in.unsupported")?,
+            chained_comparisons: r.flag("ext.op.compare.chained")?,
+            expression_assign: r.strings("ext.op.assign.expression")?,
+            ellipsis_words: r.strings("ext.literal.ellipsis")?,
+            rem_formats_text: r.flag("ext.op.rem.formats_text")?,
+            format_unsupported: r.head("ext.op.rem.format.unsupported")?,
+            format_arguments: r.head("ext.op.rem.format.arguments")?,
+
             hush_words: hushes,
             naming_words: r.strings("ext.op.name_by_value")?,
             casts_kinds: r.flag("ext.op.cast")?,
@@ -1769,10 +1800,9 @@ impl Lang {
             }
         }
         let mut lists: Vec<&Vec<String>> = vec![
-            &self.comprehension_async, &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread,
-            &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks,
+            &self.comprehension_async, &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread, &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks, &self.if_else_words, &self.lambda_words, &self.identity_not, &self.membership_words, &self.membership_not, &self.expression_assign, &self.ellipsis_words,
             &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open,
-            &self.long_quotes, &self.lambda_words, &self.tuple_marks, &self.class_bases_open, &self.class_bases_close, &self.del_words, &self.nonlocal_words, &self.with_words, &self.with_as_words, &self.yield_words, &self.yield_from_words,
+            &self.long_quotes, &self.tuple_marks, &self.class_bases_open, &self.class_bases_close, &self.del_words, &self.nonlocal_words, &self.with_words, &self.with_as_words, &self.yield_words, &self.yield_from_words,
             &self.slice_ellipsis, &self.slice_marks, &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words,
             &self.carries_words, &self.carries_pairs, &self.keyword_only, &self.positional_only, &self.call_spread, &self.call_spread_pairs,
         ];

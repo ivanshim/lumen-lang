@@ -176,6 +176,8 @@ pub enum Action {
     /// within it. 1 and 1.0 are equal but not the same.
     Same,
     Unsame,
+    Contains,
+    Lacks,
     /// The bits of two whole numbers taken together, and the bits of one
     /// turned over. A number is read as sixty-four bits, sign and all.
     BitBoth,
@@ -586,6 +588,7 @@ pub struct Routine {
     /// How many arguments must be given; the rest have a value of their
     /// own, written by the program's own first instrs.
     pub least: usize,
+    pub rest_at: Option<usize>,
     /// Every local slot's name, the parameters first.
     pub idents: Vec<String>,
     /// A function leaves one value, its result; a postfix program leaves
