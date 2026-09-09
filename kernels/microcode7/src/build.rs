@@ -1182,7 +1182,8 @@ impl<'a> Builder<'a> {
                 } else if by_cell {
                     vec![self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.given").to_vec(), true, None)?]
                 } else {
-                    vec![self.expr(0)?]
+                    let answer = self.grammar_values()?;
+                    vec![answer]
                 };
                 return Ok(prim_call(Prim::Yield, value));
             }

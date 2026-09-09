@@ -2144,7 +2144,7 @@ impl<'a> Compiler<'a> {
         } else if by_cell {
             self.a_cell(&self.lang.unshared_given.clone(), true, None)?;
         } else {
-            self.expr(0)?;
+            self.grammar_values()?;
         }
         // The value is worked out first, then the last parts of any open
         // try statements run, and only then does the program leave.

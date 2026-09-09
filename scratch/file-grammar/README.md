@@ -92,6 +92,13 @@ reading. An indexed ellipsis keeps the slice piece's own meaning.
 
 ## Spellings in this piece
 
+`24.py` reads the grammar suite's comma-separated return values, including
+a trailing comma, and checks that single and empty returns still answer
+`7` and `None`. `25.py` reaches such a tuple return and gives the same
+explicit tuple-value complaint as a grouped tuple. The return reader now
+uses the existing `ext.op.tuple` spelling; tuple execution remains for its
+piece.
+
 The table gives every new or changed spelling against the required base.
 Lists, switches and counts retain the definition's types. The operator
 tiers are shown whole, lowest first.

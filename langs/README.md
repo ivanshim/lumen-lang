@@ -1410,8 +1410,8 @@ only. The extension labels so far, all from PHP:
   gives it its full meaning. This small reading says the words in
   `ext.literal.ellipsis.unready` when the value is reached; an ellipsis
   in an uncalled routine is read without raising a complaint.
-- `ext.op.tuple`: the comma joining values within grouping brackets or
-  in the collection a loop walks. Empty brackets and a trailing comma
+- `ext.op.tuple`: the comma joining values within grouping brackets,
+  in a return, or in the collection a loop walks. Empty brackets and a trailing comma
   likewise name tuples. The small reading uses `ext.op.tuple.unready`
   for the words said when a tuple value is reached; its members are
   read whole but not worked out. The tuple piece supplies the fuller
