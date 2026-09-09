@@ -297,7 +297,7 @@ impl<'a> Machine<'a> {
             plain_keys: table.flag("ext.op.index.plain_keys"),
             // A language with a word for being the very same means
             // something looser by being equal.
-            loose_equals: table.single("ext.op.identical").is_some(),
+            loose_equals: table.has_any("ext.op.identical") && !table.has_any("ext.op.identical.negated"),
         }
     }
 
@@ -4108,6 +4108,25 @@ impl<'a> Machine<'a> {
             }
             Prim::Eq => Value::Flag(v[0].equals(&v[1])),
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
+            Prim::Selfsame if self.table.has_any("ext.op.identical.negated") => {
+                let answer = match (&v[0], &v[1]) {
+                    (Value::Nil, Value::Nil) => true,
+                    (Value::Flag(left), Value::Flag(right)) => left == right,
+                    (Value::Nil, _) | (_, Value::Nil) | (Value::Flag(_), _) | (_, Value::Flag(_)) => false,
+                    _ => return Err(self.table.single("ext.op.identical.unsupported").unwrap_or_default().to_string()),
+                };
+                Value::Flag(answer)
+            }
+            Prim::Contains => {
+                let fail = || self.table.single("ext.op.in.unsupported").unwrap_or_default().to_string();
+                let found = match (&v[0], &v[1]) {
+                    (Value::Text(part), Value::Text(whole)) => whole.contains(part.as_ref()),
+                    (item, Value::Vector(all)) => all.iter().any(|other| item.equals(other)),
+                    (key, Value::Dict(entries)) => entries.iter().any(|entry| key.equals(&entry.0)),
+                    _ => return Err(fail()),
+                };
+                Value::Flag(found)
+            }
             Prim::Selfsame => Value::Flag(v[0].selfsame(&v[1])),
             Prim::Unlike => Value::Flag(!v[0].selfsame(&v[1])),
             Prim::Join => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),

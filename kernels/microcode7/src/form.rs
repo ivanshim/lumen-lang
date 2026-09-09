@@ -212,6 +212,7 @@ pub enum Prim {
     /// Whether two values are one and the same, which asks more than
     /// being equal: they must also be of one kind, so 1 and 1.0 are
     /// equal without being the same.
+    Contains,
     Selfsame,
     Unlike,
     /// The bits of a value, sixty-four of them, sign and all: both set,

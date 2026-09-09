@@ -3112,6 +3112,21 @@ impl<'a> Engine<'a> {
             }
             Action::Eq => Value::Flag(a.equals(b)),
             Action::Ne => Value::Flag(!a.equals(b)),
+            Action::Same if !self.lang.identity_not.is_empty() => Value::Flag(match (a, b) {
+                (Value::Null, Value::Null) => true,
+                (Value::Flag(x), Value::Flag(y)) => x == y,
+                (Value::Null | Value::Flag(_), _) | (_, Value::Null | Value::Flag(_)) => false,
+                _ => return Err(self.lang.identity_unready.first().cloned().unwrap_or_default()),
+            }),
+            Action::Contains => Value::Flag(match b {
+                Value::Text(haystack) => match a {
+                    Value::Text(needle) => haystack.contains(needle.as_ref()),
+                    _ => return Err(self.lang.in_unready.first().cloned().unwrap_or_default()),
+                },
+                Value::Array(items) => items.iter().any(|item| item.equals(a)),
+                Value::Map(items) => items.iter().any(|(key, _)| key.equals(a)),
+                _ => return Err(self.lang.in_unready.first().cloned().unwrap_or_default()),
+            }),
             Action::Same => Value::Flag(a.identical(b)),
             Action::Unsame => Value::Flag(!a.identical(b)),
             Action::Join => joined(),

@@ -656,6 +656,12 @@ pub struct Lang {
     pub bytes_unready: Vec<String>,
     pub format_unready: Vec<String>,
     pub string_amiss: Option<String>,
+    pub identity_not: Vec<String>,
+    pub identity_unready: Vec<String>,
+    pub in_values: Vec<String>,
+    pub in_not: Vec<String>,
+    pub in_unready: Vec<String>,
+    pub if_else: Vec<String>,
     pub class_unready: Option<String>,
     pub catch_group: Option<String>,
     pub catch_group_unsupported: Option<String>,
@@ -747,7 +753,7 @@ w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.destruct
 w ext.op.walk.class | w ext.op.walk.rewind | w ext.op.walk.more | w ext.op.walk.this | w ext.op.walk.key
 w ext.op.walk.onward | w ext.op.walk.giver.class | w ext.op.walk.giver | w ext.op.walk.no_cell | w ext.op.walk.key.no_cell | b ext.op.walk.live | w ext.builtin.array.front | w ext.stmt.class.modifier | w ext.stmt.class.hidden | w ext.stmt.class.guarded | w ext.stmt.class.shared
 w ext.op.member | w ext.op.scope | w ext.op.instanceof | w ext.stmt.class.parent
-w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.assert | w ext.stmt.assert.kind | w ext.stmt.catch.invalid | w ext.stmt.catch.as | w ext.stmt.catch.tuple.open | w ext.stmt.catch.tuple.close | w ext.lexical.string.long | b ext.lexical.string.adjacent | b ext.lexical.escape.continued | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.with.unready | w ext.stmt.del | w ext.stmt.del.unrun | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | b ext.op.member.pipes | w ext.op.tuple | w ext.op.tuple.unready | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.format | w ext.lexical.string.prefix.bytes.unready | w ext.lexical.string.prefix.format.unready | w ext.lexical.string.amiss | w ext.stmt.class.unready | w ext.stmt.catch.group | w ext.stmt.catch.group.unsupported | b ext.stmt.try.else | w ext.stmt.throw.from | w ext.stmt.throw.empty | w ext.stmt.try | w ext.stmt.catch
+w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.assert | w ext.stmt.assert.kind | w ext.stmt.catch.invalid | w ext.stmt.catch.as | w ext.stmt.catch.tuple.open | w ext.stmt.catch.tuple.close | w ext.lexical.string.long | b ext.lexical.string.adjacent | b ext.lexical.escape.continued | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.with.unready | w ext.stmt.del | w ext.stmt.del.unrun | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | b ext.op.member.pipes | w ext.op.tuple | w ext.op.tuple.unready | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.format | w ext.lexical.string.prefix.bytes.unready | w ext.lexical.string.prefix.format.unready | w ext.lexical.string.amiss | w ext.op.identical.negated | w ext.op.identical.unsupported | w ext.op.in | w ext.op.in.negated | w ext.op.in.unsupported | w ext.op.if_else | w ext.stmt.class.unready | w ext.stmt.catch.group | w ext.stmt.catch.group.unsupported | b ext.stmt.try.else | w ext.stmt.throw.from | w ext.stmt.throw.empty | w ext.stmt.try | w ext.stmt.catch
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
 w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | w ext.system.request.settings | b ext.op.index.absent | w ext.op.index.scalar | w ext.op.index.nothing | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
@@ -1110,7 +1116,7 @@ impl Lang {
             ("op.and", Action::And), ("op.or", Action::Or), ("op.concat", Action::Join), ("ext.op.compare", Action::Rank),
             ("ext.op.bit.and", Action::BitBoth), ("ext.op.bit.or", Action::BitEither), ("ext.op.bit.xor", Action::BitOne),
             ("ext.op.bit.left", Action::BitUp), ("ext.op.bit.right", Action::BitDown),
-            ("ext.op.identical", Action::Same), ("ext.op.not_identical", Action::Unsame),
+            ("ext.op.in", Action::Contains), ("ext.op.identical", Action::Same), ("ext.op.not_identical", Action::Unsame),
         ] {
             for lex in r.strings(tag)? {
                 let tier = tier_of(&lex, false).ok_or_else(|| format!("'{lex}' ({tag}) does not appear in op.precedence"))?;
@@ -1278,7 +1284,7 @@ impl Lang {
 
         // A language with an operator for being the very same means
         // something looser by being equal.
-        let tells_same = binary.values().any(|op| matches!(op.action, Action::Same));
+        let tells_same = binary.values().any(|op| matches!(op.action, Action::Same)) && r.strings("ext.op.identical.negated")?.is_empty();
 
         // A language that can read what a call was given is one whose
         // calls may give more than a routine names.
@@ -1670,6 +1676,12 @@ impl Lang {
             bytes_unready: r.strings("ext.lexical.string.prefix.bytes.unready")?,
             format_unready: r.strings("ext.lexical.string.prefix.format.unready")?,
             string_amiss: r.head("ext.lexical.string.amiss")?,
+            identity_not: r.strings("ext.op.identical.negated")?,
+            identity_unready: r.strings("ext.op.identical.unsupported")?,
+            in_values: r.strings("ext.op.in")?,
+            in_not: r.strings("ext.op.in.negated")?,
+            in_unready: r.strings("ext.op.in.unsupported")?,
+            if_else: r.strings("ext.op.if_else")?,
             class_unready: r.head("ext.stmt.class.unready")?,
             catch_group: r.head("ext.stmt.catch.group")?,
             catch_group_unsupported: r.head("ext.stmt.catch.group.unsupported")?,

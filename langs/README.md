@@ -496,6 +496,19 @@ only. The extension labels so far, all from PHP:
 - `ext.op.bit.left` and `ext.op.bit.right` are also spelled by the
   indented definition, with the existing whole-number shift operations.
   Its `ext.lexical.number.separator` admits underscores between digits.
+- `ext.op.if_else`: two words, the first before a condition and the
+  second before its other value. The condition is worked out first and
+  only the chosen value runs, though it may be written before the test.
+- `ext.op.identical.negated`: a word after the sameness word reversing
+  the answer. Where present, sameness asks identity and ordinary equality
+  keeps its former rules. Nothing and flags have known identities;
+  `ext.op.identical.unsupported` refuses values whose identity is not
+  preserved by their representation. This is a narrow part of the
+  fuller expression account.
+- `ext.op.in` and `ext.op.in.negated`: membership, with an optional word
+  before it reversing the answer. Text asks for a substring, arrays ask
+  among their elements and maps among their keys. Other sources stop
+  with `ext.op.in.unsupported`.
 - `ext.op.tuple` and `ext.op.tuple.unready`: the sign joining values into
   a tuple and the words said until tuples have their own representation.
   Empty and trailing-comma groups, bare value lists, assignment targets,
@@ -517,7 +530,8 @@ only. The extension labels so far, all from PHP:
 - `ext.stmt.yield`, `ext.stmt.yield.from` and `ext.stmt.yield.unrun`: a
   yielded value, an optional word asking to yield from another source,
   and the complaint until a suspended function can be resumed. Bare
-  yields and yields in brackets are read as well.
+  yields and yields in brackets are read as well. Calling such a
+  function complains before any statement of its body can run.
 - `ext.stmt.class.unready`: words said when a class body cannot yet be
   made into a namespace. With `ext.stmt.class` spelled, the name, base
   arguments and every statement of the body are read in full. Reaching
@@ -1761,7 +1775,7 @@ Operator precedence, lowest tier first. Unary operators sit in their own tier.
 
 - **lumen**: `|>` < `or` < `and` < `==` `!=` `<` `>` `<=` `>=` < `..` < `+` `-` < `*` `/` `%` `//` `.` < `**` < `-` `not` `!`
 - **rplumen**: 
-- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` < `|` < `<<` `>>` < `+` `-` < `*` `/` `//` `%` < `-` < `**` < `.`
+- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` `is` `in` < `|` < `<<` `>>` < `+` `-` < `*` `/` `//` `%` < `-` < `**` < `.`
 - **rust**: `..` < `||` < `&&` < `==` `!=` `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `-` `!` < `.`
 - **php (extra)**: `or` < `and` < `||` < `&&` < `|` < `^` < `&` < `==` `!=` `<>` `===` `!==` < `<` `>` `<=` `>=` `<=>` < `.` < `<<` `>>` < `+` `-` < `*` `/` `%` < `!` `~` `@` < `-` < `**`
 - **c (extra)**: `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `!` `-`
@@ -1894,7 +1908,13 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.decrement` | - | - | - | - | `--` | - | - | - | - | - |
 | `ext.op.decrement.text` | - | - | - | - | `Decrement on non-numeric string has no effect and is deprecated` | - | - | - | - | - |
 | `ext.op.hush` | - | - | - | - | `@` | - | - | - | - | - |
-| `ext.op.identical` | - | - | - | - | `===` | - | - | - | - | - |
+| `ext.op.identical` | - | - | `is` | - | `===` | - | - | - | - | - |
+| `ext.op.identical.negated` | - | - | `not` | - | - | - | - | - | - | - |
+| `ext.op.identical.unsupported` | - | - | `NotImplementedError: identity of these values is not supported` | - | - | - | - | - | - | - |
+| `ext.op.if_else` | - | - | `if` `else` | - | - | - | - | - | - | - |
+| `ext.op.in` | - | - | `in` | - | - | - | - | - | - | - |
+| `ext.op.in.negated` | - | - | `not` | - | - | - | - | - | - | - |
+| `ext.op.in.unsupported` | - | - | `TypeError: membership requires a string, array or map` | - | - | - | - | - | - | - |
 | `ext.op.increment` | - | - | - | - | `++` | - | - | - | - | - |
 | `ext.op.increment.text` | - | - | - | - | `Increment on non-numeric string is deprecated, use str_increment() instead` | - | - | - | - | - |
 | `ext.op.index.absent` | - | - | - | - | `true` | - | - | - | - | - |

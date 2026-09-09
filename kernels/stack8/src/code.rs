@@ -174,6 +174,7 @@ pub enum Action {
     Rank,
     /// Whether two values are the very same: of one kind, and alike
     /// within it. 1 and 1.0 are equal but not the same.
+    Contains,
     Same,
     Unsame,
     /// The bits of two whole numbers taken together, and the bits of one

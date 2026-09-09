@@ -86,6 +86,7 @@ struct Cycle {
 
 /// The program being assembled.
 struct Piece {
+    suspends: bool,
     outermost: bool,
     ident: String,
     idents: Vec<String>,
@@ -238,6 +239,7 @@ pub fn compile_within(
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
     let top = Piece {
+        suspends: false,
         outermost: alone,
         ident: "<program>".to_string(),
         declared: vec![false; already.len()],
@@ -788,6 +790,7 @@ impl<'a> Compiler<'a> {
         }
         formal_kinds.truncate(formals.len());
         self.pieces.push(Piece {
+            suspends: false,
             outermost: false,
             ident: name.to_string(),
             idents: formals.clone(),
@@ -806,6 +809,13 @@ impl<'a> Compiler<'a> {
             self.write(RESULT_CELL);
         }
         body(self)?;
+        if self.piece().suspends {
+            self.piece().instrs.clear();
+            self.piece().escapes.clear();
+            self.constant(Value::Null);
+            self.write(RESULT_CELL);
+            self.unready(&self.lang.yield_unrun.clone());
+        }
         // A function whose value only ever comes from a return
         // drops the result slot: its prologue goes, and a fall off the
         // end leaves nothing, which the machine reads as null.
@@ -3964,7 +3974,23 @@ impl<'a> Compiler<'a> {
             if !matches!(t.shape, Shape::Sign | Shape::Instr) {
                 break;
             }
-            let text = t.lexeme.clone();
+            let mut text = t.lexeme.clone();
+            if floor == 0 && lang.if_else.first().map_or(false, |word| word == &text) {
+                let yes = self.piece().instrs.drain(from..).collect::<Vec<_>>();
+                self.take();
+                self.expr(0)?;
+                self.want_lexeme(&lang.if_else[1])?;
+                let otherwise = self.skip();
+                let here = self.mark();
+                self.piece().instrs.extend(relocated(yes, here as i64 - from as i64));
+                let finished = self.leap();
+                self.land(otherwise);
+                self.expr(0)?;
+                self.land(finished);
+                continue;
+            }
+            let not_in = Lang::spells(&lang.in_not, &text) && Lang::spells(&lang.in_values, &self.look_ahead(1).lexeme);
+            if not_in { text = self.look_ahead(1).lexeme.clone(); }
             if Lang::spells(&lang.pipe_words, &text) {
                 if lang.precedence.get(&text).copied().unwrap_or(0) < floor {
                     break;
@@ -4022,6 +4048,9 @@ impl<'a> Compiler<'a> {
                 break;
             }
             self.take();
+            if not_in { self.take(); }
+            let not_same = matches!(infix.action, Action::Same) && self.on_keyword(&lang.identity_not);
+            if not_same { self.take(); }
             let right_floor = if infix.right_assoc { infix.level } else { infix.level + 1 };
             match infix.action {
                 Action::And | Action::Or => {
@@ -4073,6 +4102,7 @@ impl<'a> Compiler<'a> {
                         None => {}
                     }
                     self.act(op, 2);
+                    if not_in || not_same { self.act(Action::Not, 1); }
                 }
             }
         }
@@ -4174,6 +4204,7 @@ impl<'a> Compiler<'a> {
         let from = self.mark();
         let tok = self.look().clone();
         if self.on_keyword(&lang.yield_words) {
+            self.piece().suspends = true;
             self.take();
             if self.on_keyword(&lang.yield_from) { self.take(); }
             let closed = lang.grouping.as_ref().map_or(false, |g| self.at_symbol(&g.close));

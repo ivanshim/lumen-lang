@@ -28,6 +28,7 @@ enum Holds {
 }
 
 struct Layer {
+    suspends: bool,
     holds: Holds,
     idents: Vec<String>,
     formals: Vec<String>,
@@ -227,7 +228,7 @@ type Knows<'w> = (&'w HashMap<String, Vec<bool>>, &'w HashMap<String, Vec<String
 type Within<'w> = (&'w [String], Knows<'w>);
 
 fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool) -> Res<Built> {
-    let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
+    let top = Layer { suspends: false, holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, table);
     let mut layers = vec![top];
     if let Some((inside, (args, spellings, backs))) = within {
@@ -238,7 +239,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
             arg_names.entry(named.clone()).or_insert_with(|| spelt.clone());
         }
         gives_back.extend(backs.iter().cloned());
-        layers.push(Layer { holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
+        layers.push(Layer { suspends: false, holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
     let outer_layers = layers.len();
     let mut r = Builder { within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
@@ -914,9 +915,10 @@ impl<'a> Builder<'a> {
         }
         formal_kinds.truncate(params.len());
         let param_slots = (0..params.len()).collect();
-        self.layers.push(Layer { holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new() });
+        self.layers.push(Layer { suspends: false, holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new() });
         let body = body(self)?;
         let scope = self.layers.pop().unwrap();
+        let body = if scope.suspends { self.reading_refusal("ext.stmt.yield.unrun") } else { body };
         self.naming.pop();
         let carried = std::mem::replace(&mut self.carrying, around);
         Ok(constant(Value::Routine(Rc::new(Routine { ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, traps: catches, carried, body }))))
@@ -3789,7 +3791,19 @@ impl<'a> Builder<'a> {
             if t.shape != Shape::Sign && t.shape != Shape::Bare {
                 break;
             }
-            let text = t.lexeme.clone();
+            let mut text = self.look().lexeme.clone();
+            let condition_words = table.strings("ext.op.if_else");
+            if floor == 0 && condition_words.first() == Some(&text) {
+                self.advance();
+                let condition = self.expr(0)?;
+                self.need_lexeme(&condition_words[1])?;
+                let yes = self.limb(Traps::Naught, |_| Ok(left))?;
+                let no = self.limb(Traps::Naught, |r| r.expr(0))?;
+                left = self.choose(condition, yes, no);
+                continue;
+            }
+            let reversed = table.spells("ext.op.in.negated", &text) && table.spells("ext.op.in", &self.glance(1).lexeme);
+            if reversed { text = self.glance(1).lexeme.clone(); }
             if table.spells("op.pipe", &text) {
                 if table.precedence.get(&text).copied().unwrap_or(0) < floor {
                     break;
@@ -3857,6 +3871,9 @@ impl<'a> Builder<'a> {
                 break;
             }
             self.advance();
+            if reversed { self.advance(); }
+            let inverse = op.prim == Prim::Selfsame && self.key("ext.op.identical.negated");
+            if inverse { self.advance(); }
             let floor_right = if op.right_assoc { op.level } else { op.level + 1 };
             left = match op.prim {
                 // The right side is a program, run only when the left leaves it open.
@@ -3892,6 +3909,7 @@ impl<'a> Builder<'a> {
                     }
                 }
             };
+            if reversed || inverse { left = prim_call(Prim::Not, vec![left]); }
         }
         Ok(left)
     }
@@ -3938,6 +3956,7 @@ impl<'a> Builder<'a> {
         let table = self.table;
         let t = self.look().clone();
         if self.key("ext.stmt.yield") {
+            if let Some(scope) = self.layers.iter_mut().rev().find(|scope| scope.holds == Holds::Every) { scope.suspends = true; }
             self.advance();
             if self.key("ext.stmt.yield.from") { self.advance(); }
             if !self.on_stmt_end() && !self.on_any("syntax.group.close")
@@ -5562,7 +5581,7 @@ impl<'a> Builder<'a> {
             let close = table.strings("stack.program.close")[k].clone();
             self.gensyms += 1;
             let name = format!("<program{}>", self.gensyms);
-            self.layers.push(Layer { holds: Holds::Every, idents: Vec::new(), formals: Vec::new(), formal_slots: Vec::new(), rpn: true, aliases: Vec::new() });
+            self.layers.push(Layer { suspends: false, holds: Holds::Every, idents: Vec::new(), formals: Vec::new(), formal_slots: Vec::new(), rpn: true, aliases: Vec::new() });
             let (mut s, left) = self.rpn_block(std::slice::from_ref(&close), Mode::Quoted)?;
             self.need_lexeme(&close)?;
             if let Some(v) = left {
