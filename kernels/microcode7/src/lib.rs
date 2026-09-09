@@ -54,7 +54,12 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
     brief_settled(&mut table, request);
     markup_settled(&mut table, request);
     let prefix = table.banner();
-    go(&table, source, program_args, request).map_err(|e| format!("{}: {}", prefix, e))
+    go(&table, source, program_args, request).map_err(|e| {
+        match table.strings("ext.syntax.call.amiss.builtin") {
+            [head, tail] if e.starts_with(head) && e.ends_with(tail) => e,
+            _ => format!("{}: {}", prefix, e),
+        }
+    })
 }
 
 /// Which group of the request each label names, and the one that holds
@@ -165,8 +170,33 @@ fn lines_before(request: &[(String, String, String, bool)]) -> u32 {
         .unwrap_or(0)
 }
 
+/// A prologue which names an import belongs beside the words that
+/// followed it in the file. The host has set the library between them;
+/// its count of added lines tells where those words now begin.
+fn import_rejoined(text: &str, table: &Table, added: u32) -> Option<String> {
+    let marker = table.single("lexical.prologue")?;
+    let head = marker.split_whitespace().next()?;
+    if !table.spells("ext.stmt.import", head) || added == 0 {
+        return None;
+    }
+    let rows: Vec<&str> = text.split_inclusive('\n').collect();
+    let opening = rows.first()?.strip_suffix('\n')?;
+    if opening.trim_start() != marker || rows.len() <= added as usize {
+        return None;
+    }
+    let mut joined = String::from("\n");
+    rows[1..added as usize].iter().for_each(|row| joined.push_str(row));
+    joined.push_str(opening);
+    for row in &rows[added as usize..] {
+        joined.push_str(row);
+    }
+    Some(joined)
+}
+
 fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     let ahead = lines_before(request);
+    let joined = import_rejoined(source, table, ahead);
+    let source = joined.as_deref().unwrap_or(source);
     let read = scan::scan_at(source, table).map_err(|(said, row)| cannot_read(table, &said, row, request, ahead, false));
     let shaped = indent::indent(read?, table, ahead).map_err(|(said, row)| cannot_read(table, &said, row, request, ahead, false));
     let tokens = shaped?;
@@ -179,6 +209,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     seeded.extend(table.single("ext.system.request.body").map(str::to_string));
     seeded.extend(OWN_PLACE.iter().filter_map(|(_, key)| table.single(key).map(str::to_string)));
     seeded.extend(table.single("ext.system.source.line").map(str::to_string));
+    seeded.extend(table.strings("ext.system.module.name").iter().cloned());
     let before: u32 = request
         .iter()
         .find(|(from, key, ..)| from == "SELF" && key == "lines_before")
@@ -206,6 +237,9 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     // Text read while the run goes is a piece of this same program, and
     // is built knowing what the whole of it declared about cells.
     machine.knows_cells = (reduced.shared_args.clone(), reduced.arg_names.clone(), reduced.gives_back.clone());
+    table.strings("ext.system.module.name").iter().for_each(|binding| {
+        machine.define(binding, Value::text("__main__"));
+    });
     if let Some(n) = table.single("system.args") {
         machine.define(n, Value::text(&program_args.join(" ")));
     }

@@ -14,6 +14,44 @@ pub const OF_A_CLASS: &str = "\0class";
 
 use crate::value::Value;
 
+/// A watched body and its arms, as spans in the same routine. Keeping
+/// them in that routine leaves their bindings and outward leaps whole.
+#[derive(Debug, Clone)]
+pub struct Attempt {
+    pub body: (usize, usize),
+    pub clauses: Vec<Taking>,
+    pub otherwise: Option<(usize, usize)>,
+    pub last: Option<(usize, usize)>,
+    pub after: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct Taking {
+    pub kinds: Vec<(usize, usize)>,
+    pub held: Option<Cell>,
+    pub body: (usize, usize),
+    pub grouped: bool,
+    pub bare: bool,
+}
+
+impl Attempt {
+    pub fn move_marks(&mut self, mut at: impl FnMut(usize) -> usize) {
+        let span = |pair: &mut (usize, usize), at: &mut dyn FnMut(usize) -> usize| {
+            pair.0 = at(pair.0);
+            pair.1 = at(pair.1);
+        };
+        span(&mut self.body, &mut at);
+        for clause in &mut self.clauses {
+            for kind in &mut clause.kinds { span(kind, &mut at); }
+            span(&mut clause.body, &mut at);
+        }
+        for pair in [&mut self.otherwise, &mut self.last].into_iter().flatten() {
+            span(pair, &mut at);
+        }
+        self.after = at(self.after);
+    }
+}
+
 /// A binding's address: candidate local slots (innermost first) and the
 /// global slot of the same name. A load reads the first local that holds
 /// a value and falls through to the global; a store writes the first
@@ -54,7 +92,15 @@ pub enum Action {
     And,
     Or,
     Join,
+    /// A field rendered with its specification and conversion.
+    StringRender,
+    /// Text whose reading succeeded but whose value cannot be held.
+    StringFault,
     At,
+    /// The three bounds of a span, kept until its array is known.
+    Slice,
+    /// A span whose meaning the run cannot yet honour.
+    SliceUnavailable,
     Not,
     Negate,
     /// Whether a value is true, as a boolean.
@@ -68,6 +114,11 @@ pub enum Action {
     Execute,
     /// The arguments as an array.
     MakeArray,
+    /// A literal grows by one item, or by all the items of a spread.
+    GatherItem { map: bool, spread: bool },
+    /// The values walked by a comprehension, with maps handing out keys.
+    ComprehensionItems,
+    UnpackCount(usize),
     /// A map from the values above: every tie a pair, everything else
     /// keyed by its position among the untied.
     MakeMap,
@@ -81,6 +132,10 @@ pub enum Action {
     /// taken apart. The same as the above, save that a value with no
     /// places at all is spoken of in the words a taking-apart uses.
     Apart,
+    /// Check the extent, gathering the starred place before writes begin.
+    Unpack(usize, Option<usize>),
+    /// Join the gathered portions of a tuple.
+    TupleJoin,
     /// What a value holds at that place, read so that what comes of it
     /// may be written back there. A value with no places at all is no
     /// place to write, so it is refused as a write to one is.
@@ -131,6 +186,8 @@ pub enum Action {
     /// within it. 1 and 1.0 are equal but not the same.
     Same,
     Unsame,
+    Contains,
+    Lacks,
     /// The bits of two whole numbers taken together, and the bits of one
     /// turned over. A number is read as sixty-four bits, sign and all.
     BitBoth,
@@ -203,6 +260,8 @@ pub enum Action {
     Make,
     /// The property of that name, of the object above.
     Grab(Rc<str>),
+    /// Whether the value has this member, before choosing the pipe.
+    HasMember(Rc<str>),
     /// Write that property: the object, then the value.
     Plant(Rc<str>),
     /// Take that property off the object above, as though it had never
@@ -250,6 +309,8 @@ pub enum Action {
     Titled,
     /// Raise the value above as a fault to be caught.
     Hurl,
+    Reraise,
+    AssertFault,
     /// Whether the value above is of any of those classes; it is consumed.
     Matches(Rc<Vec<String>>),
     /// Push the value above a second time.
@@ -262,6 +323,9 @@ pub enum Action {
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    Sum,
+    List,
+    Any,
     Echo,
     Say,
     Out,
@@ -508,6 +572,8 @@ pub enum Instr {
     /// stack goes back to its depth here, the value is pushed, and the
     /// run goes on at the index.
     Guard(usize),
+    Attempt(Box<Attempt>),
+    Depart { to: usize, cycle: Option<usize> },
     Unguard,
     /// A binary operation whose operands come from bindings, constants or
     /// the stack, the result pushed: an operator that never touches the
@@ -525,6 +591,8 @@ pub enum Instr {
 pub struct Routine {
     pub ident: String,
     pub formals: Vec<String>,
+    /// Ordinary, positional, named, gathered items, or gathered pairs.
+    pub parameter_rules: Option<Vec<u8>>,
     /// The class each parameter is declared to take, where one was
     /// written and it names a class. Nothing for a parameter written
     /// without one, or with a kind that is not a class.
@@ -532,6 +600,7 @@ pub struct Routine {
     /// How many arguments must be given; the rest have a value of their
     /// own, written by the program's own first instrs.
     pub least: usize,
+    pub rest_at: Option<usize>,
     /// Every local slot's name, the parameters first.
     pub idents: Vec<String>,
     /// A function leaves one value, its result; a postfix program leaves
