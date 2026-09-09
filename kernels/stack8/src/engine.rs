@@ -1848,6 +1848,7 @@ impl<'a> Engine<'a> {
 
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
         let result = match op {
+            Action::KeepPoint => self.drop_top()?.with_point(true),
             Action::Not => {
                 let held = self.drop_top()?;
                 Value::Flag(!self.truth(&held))
@@ -2075,7 +2076,7 @@ impl<'a> Engine<'a> {
                 // A nought turned about is the other nought.
                 match (&v, &turned) {
                     (Value::Real(was), Value::Real(now)) if num_traits::Zero::is_zero(&now.p) => {
-                        arith::shape_signed(now.p.clone(), now.q.clone(), Some(now.places), !was.below)
+                        arith::shape_signed(now.p.clone(), now.q.clone(), Some(now.places), !was.below).with_point(was.point)
                     }
                     // Turning the lowest whole number about takes it past
                     // the width the language holds, as adding to the
@@ -3483,7 +3484,7 @@ impl<'a> Engine<'a> {
         let sp = self.wording();
         let printed = |v: &Value| {
             let mut said = v.display(&sp);
-            if self.lang.print_real_point && v.sort() == Some(Sort::Real)
+            if self.lang.print_real_point && v.keeps_point()
                 && said.chars().all(|c| c.is_ascii_digit() || c == '-')
             {
                 said.push_str(".0");

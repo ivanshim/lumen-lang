@@ -64,6 +64,9 @@ pub struct Real {
     /// the minus, since a real of a width has two noughts and a language
     /// holding reals to a width writes them apart.
     pub below: bool,
+    /// A real read by the newer number forms keeps its point when
+    /// printed whole. Older forms keep the spelling they had before.
+    pub point: bool,
 }
 
 impl Real {
@@ -144,6 +147,23 @@ pub struct Wording<'a> {
 }
 
 impl Value {
+    pub fn keeps_point(&self) -> bool {
+        match self {
+            Value::Real(r) => r.point,
+            Value::Bond(cell) => cell.borrow().keeps_point(),
+            _ => false,
+        }
+    }
+
+    pub fn with_point(mut self, keep: bool) -> Self {
+        if keep {
+            if let Value::Real(r) = &mut self {
+                Rc::make_mut(r).point = true;
+            }
+        }
+        self
+    }
+
     pub fn text(s: &str) -> Value {
         Value::Text(Rc::from(s))
     }
@@ -665,7 +685,7 @@ pub fn outside_number(x: f64, places: usize) -> Value {
         (_, true) => -BigInt::one(),
         _ => BigInt::one(),
     };
-    Value::Real(Rc::new(Real { p, q: BigInt::zero(), places, below: false }))
+    Value::Real(Rc::new(Real { p, q: BigInt::zero(), places, below: false, point: false }))
 }
 
 /// A real brought to the nearest one of a width of bits, held exactly.
@@ -682,7 +702,7 @@ pub fn to_binary_width(v: Value, bits: Option<usize>, places: usize) -> Value {
     };
     match from_binary(as_binary(&p, &q)) {
         // A nought below nought keeps its minus at any width.
-        Some((p, q)) => crate::arith::shape_signed(p, q, Some(places), below),
+        Some((p, q)) => crate::arith::shape_signed(p, q, Some(places), below).with_point(v.keeps_point()),
         None => v,
     }
 }

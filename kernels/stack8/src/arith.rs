@@ -69,11 +69,11 @@ pub fn shape_signed(p: BigInt, q: BigInt, places: Option<usize>, below: bool) ->
     // one value.
     if q.is_zero() {
         let places = places.unwrap_or(DEFAULT_PLACES);
-        return Value::Real(Rc::new(Real { p: p.signum(), q, places, below: false }));
+        return Value::Real(Rc::new(Real { p: p.signum(), q, places, below: false, point: false }));
     }
     if p.is_zero() {
         return match places {
-            Some(places) => Value::Real(Rc::new(Real { p, q: BigInt::one(), places, below })),
+            Some(places) => Value::Real(Rc::new(Real { p, q: BigInt::one(), places, below, point: false })),
             None => Value::Small(0),
         };
     }
@@ -81,7 +81,7 @@ pub fn shape_signed(p: BigInt, q: BigInt, places: Option<usize>, below: bool) ->
     let g = p.gcd(&q);
     let (p, q) = if g.is_one() { (p, q) } else { (&p / &g, &q / &g) };
     match places {
-        Some(places) => Value::Real(Rc::new(Real { p, q, places, below: false })),
+        Some(places) => Value::Real(Rc::new(Real { p, q, places, below: false, point: false })),
         None if q.is_one() => Value::of_big(p),
         None => Value::Frac(Rc::new(Frac { p, q })),
     }
@@ -89,7 +89,7 @@ pub fn shape_signed(p: BigInt, q: BigInt, places: Option<usize>, below: bool) ->
 
 pub fn to_real(v: &Value, places: usize) -> Option<Value> {
     let f = Exact::from_value(v)?;
-    Some(shape_number(f.p, f.q, Some(places)))
+    Some(shape_number(f.p, f.q, Some(places)).with_point(v.keeps_point()))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,8 +120,9 @@ pub fn calculate(calc: Operation, a: &Value, b: &Value) -> Option<Result<Value, 
             return Some(Ok(Value::Small(r)));
         }
     }
+    let point = a.keeps_point() || b.keeps_point();
     let (a, b) = (Exact::from_value(a)?, Exact::from_value(b)?);
-    Some(precise(calc, &a, &b))
+    Some(precise(calc, &a, &b).map(|v| v.with_point(point)))
 }
 
 fn precise(calc: Operation, a: &Exact, b: &Exact) -> Result<Value, String> {

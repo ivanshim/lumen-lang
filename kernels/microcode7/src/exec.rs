@@ -963,7 +963,7 @@ impl<'a> Machine<'a> {
     /// A number as a real of the language's own width.
     fn as_wide_real(&self, v: &Value) -> Value {
         match math::ratio_of(v) {
-            Some(r) => math::make_number(r.above, r.beneath, Some(self.real_figures())),
+            Some(r) => math::make_number(r.above, r.beneath, Some(self.real_figures())).keeping_point(r.pointed),
             None => v.clone(),
         }
     }
@@ -2996,6 +2996,7 @@ impl<'a> Machine<'a> {
             });
         }
         Ok(match op {
+            Prim::Pointed => v[0].clone().keeping_point(true),
             // A step onward or back adds or takes away one, save on text
             // spelling no number: a language may walk such text along
             // its letters instead, or leave it standing, and says so.
@@ -3871,7 +3872,7 @@ impl<'a> Machine<'a> {
                 // A nought turned about is the other nought.
                 match (&v[0], &turned) {
                     (Value::Frac(was), Value::Frac(now)) if num_traits::Zero::is_zero(&now.above) => {
-                        math::made_number(now.above.clone(), now.beneath.clone(), now.places, !was.under)
+                        math::made_number(now.above.clone(), now.beneath.clone(), now.places, !was.under).keeping_point(was.pointed)
                     }
                     // The lowest whole number turned about lies one past
                     // the width, so it comes back a real, as a sum that
@@ -4512,8 +4513,8 @@ impl<'a> Machine<'a> {
         let w = self.wording();
         let argument = |x: &Value| {
             let text = x.render(w);
-            match (self.table.flag("ext.builtin.print.real_point"), x.kind()) {
-                (true, Some(Kind::Decimal)) if text.trim_start_matches('-').bytes().all(|c| c.is_ascii_digit()) => format!("{}.0", text),
+            match (self.table.flag("ext.builtin.print.real_point"), x.point_kept()) {
+                (true, true) if text.trim_start_matches('-').bytes().all(|c| c.is_ascii_digit()) => format!("{}.0", text),
                 _ => text,
             }
         };

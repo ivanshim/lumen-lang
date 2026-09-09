@@ -2840,6 +2840,13 @@ impl<'a> Builder<'a> {
 
     /// The same for the value the place holds once the step is done.
     fn kept_after(&mut self, made: Form) -> Form {
+        // Only a compound form asks for the newer spelling. A plain
+        // working has no call here and retains its former words.
+        let made = if self.stepping.is_none() && self.table.flag("ext.builtin.print.real_point") {
+            prim_call(Prim::Pointed, vec![made])
+        } else {
+            made
+        };
         match self.stands.clone() {
             Some(cell) => {
                 let stored = self.write(&cell, made);
@@ -5016,7 +5023,12 @@ fn unreadable_numeral(text: &str, table: &Table) -> String {
 }
 
 pub fn numeral(text: &str, table: &Table) -> Res<Value> {
-    Ok(at_language_width(read_numeral(text, table)?, table))
+    let marks = table.letters("ext.lexical.number.separator");
+    let powers = table.letters("ext.lexical.number.exponent");
+    let bare = table.letter("lexical.number.decimal_point").map_or(false, |p| text.starts_with(p) || text.ends_with(p));
+    let keep = table.flag("ext.builtin.print.real_point")
+        && (bare || text.chars().any(|c| marks.contains(&c) || powers.contains(&c)));
+    Ok(at_language_width(read_numeral(text, table)?, table).keeping_point(keep))
 }
 
 fn read_numeral(text: &str, table: &Table) -> Res<Value> {
