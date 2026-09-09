@@ -5422,7 +5422,11 @@ fn fit_case(test: &crate::form::CaseTest, value: &Value) -> Result<Option<HashMa
         CaseTest::Ignore => {}
         CaseTest::Keep(name) => { gathered.insert(name.clone(), value.clone()); }
         CaseTest::Equal(wanted) => {
-            let equal = if matches!(wanted, Value::Nil | Value::Flag(_)) { wanted.selfsame(value) } else { wanted.equals(value) };
+            let equal = match (wanted, value) {
+                (Value::Nil | Value::Flag(_), _) => wanted.selfsame(value),
+                (_, Value::Flag(flag)) => wanted.equals(&Value::Small(if *flag { 1 } else { 0 })),
+                _ => wanted.equals(value),
+            };
             if !equal { return Ok(None); }
         }
         CaseTest::Pending(_) => return Err(()),

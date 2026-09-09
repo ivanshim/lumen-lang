@@ -115,7 +115,10 @@ impl Pattern {
             Self::Any => Ok(true),
             Self::Literal(value) => Ok(match value {
                 Value::Null | Value::Flag(_) => value.identical(subject),
-                _ => value.equals(subject),
+                _ => match subject {
+                    Value::Flag(flag) => value.equals(&Value::Small(i64::from(*flag))),
+                    _ => value.equals(subject),
+                },
             }),
             Self::Capture(name) => { bound.push((name.clone(), subject.clone())); Ok(true) }
             Self::Bound(inner, name) => {

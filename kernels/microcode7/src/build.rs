@@ -2309,11 +2309,6 @@ impl<'a> Builder<'a> {
         Ok(sequence(vec![init, looped]))
     }
 
-    /// `switch (v) { case a: ... default: ... }`. The first case equal to
-    /// the value gives a starting section (the default's, wherever it
-    /// stands, when none is); every section from there on runs, since a
-    /// section falls into the next unless it breaks. The whole is a
-    /// one-pass cycle so that `break` and `continue` leave it.
     fn begins_match(&self) -> bool {
         let table = self.table;
         if !self.key("ext.stmt.match") { return false; }
@@ -2356,8 +2351,10 @@ impl<'a> Builder<'a> {
             if self.look().shape == Shape::Close { self.advance(); break; }
             if !self.key("ext.stmt.match.case") { return Err(self.bad_case()); }
             self.advance();
-            let mut members = vec![self.pattern_choice()?];
-            let mut spread = None;
+            let starts_wide = self.on_any("op.mul");
+            let first = if starts_wide { self.advance(); self.pattern_name()? } else { self.pattern_choice()? };
+            let mut members = vec![first];
+            let mut spread = if starts_wide { Some(0) } else { None };
             let mut separated = false;
             while self.on_any("syntax.call.separator") {
                 separated = true;
@@ -2370,6 +2367,7 @@ impl<'a> Builder<'a> {
                     members.push(self.pattern_name()?);
                 } else { members.push(self.pattern_choice()?); }
             }
+            if starts_wide && !separated { return Err(self.bad_case()); }
             let pattern = if separated { crate::form::CaseTest::Series { members, spread } } else { members.pop().unwrap() };
             let names = pattern.names().map_err(|_| self.bad_case())?;
             let slots = names.into_iter().map(|name| {
@@ -2383,8 +2381,16 @@ impl<'a> Builder<'a> {
                 fits = self.choose(fits, guard, constant(Value::Flag(false)));
             }
             if !self.on_any("block.intro") { return Err(self.bad_case()); }
-            let body = self.body()?;
-            arms.push((fits, body));
+            let same_line = self.glance(1).row == self.look().row;
+            let mut statements = vec![self.body()?];
+            if same_line {
+                while self.look().shape == Shape::Sign && self.on_stmt_end() {
+                    self.advance();
+                    if matches!(self.look().shape, Shape::Finish | Shape::Close | Shape::LineEnd) { break; }
+                    statements.push(self.stmt()?);
+                }
+            }
+            arms.push((fits, sequence(statements)));
         }
         if arms.is_empty() { return Err(self.bad_case()); }
         let mut tail = constant(Value::Nil);
@@ -2469,8 +2475,11 @@ impl<'a> Builder<'a> {
             if negative { self.advance(); }
             if self.look().shape != Shape::Numeral { return Err(self.bad_case()); }
             let text = self.advance().lexeme;
-            let written = if negative { format!("-{}", text) } else { text };
-            return Ok(CaseTest::Equal(read_numeral(&written, table)?));
+            let mut number = numeral(&text, table)?;
+            if negative {
+                number = math::compute(math::Calc::Minus, &Value::Small(0), &number).ok_or_else(|| self.bad_case())??;
+            }
+            return Ok(CaseTest::Equal(number));
         }
         if self.look().shape == Shape::Quote {
             let mut chars = String::new();
@@ -2558,6 +2567,11 @@ impl<'a> Builder<'a> {
         Ok(CaseTest::Pending(fields))
     }
 
+    /// `switch (v) { case a: ... default: ... }`. The first case equal to
+    /// the value gives a starting section (the default's, wherever it
+    /// stands, when none is); every section from there on runs, since a
+    /// section falls into the next unless it breaks. The whole is a
+    /// one-pass cycle so that `break` and `continue` leave it.
     fn switch_stmt(&mut self) -> Res<Form> {
         let table = self.table;
         self.advance();

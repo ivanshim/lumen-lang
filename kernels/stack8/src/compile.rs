@@ -1726,11 +1726,6 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    /// `switch (v) { case a: ... default: ... }`: the value kept in a
-    /// hidden slot, each case a test that skips to the next test when it
-    /// fails; a body runs on into the next (over its test) unless it
-    /// breaks. When every test fails the default's body runs, wherever
-    /// it stands. A switch is a loop to `break` and `continue`.
     fn match_head(&self) -> bool {
         if !self.on_keyword(&self.lang.match_words) { return false; }
         let mut depth = 0usize;
@@ -1790,7 +1785,13 @@ impl<'a> Compiler<'a> {
                 Some(self.skip())
             } else { None };
             if !self.on_any(&self.lang.block_intros) { return Err(self.pattern_fault()); }
+            let inline = !matches!(self.look_ahead(1).shape, Shape::LineEnd | Shape::Open | Shape::Close | Shape::Finish);
             self.body()?;
+            while inline && self.look().shape == Shape::Sign && self.lang.ends_stmt(&self.look().lexeme) {
+                self.take();
+                if matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish) { break; }
+                self.stmt()?;
+            }
             ends.push(self.leap());
             self.land(failed);
             if let Some(at) = guarded { self.land(at); }
@@ -1823,26 +1824,32 @@ impl<'a> Compiler<'a> {
         if tuple { self.take(); }
         let sep = self.lang.calling.as_ref().and_then(|b| b.between.clone()).unwrap_or_default();
         let mut count = 0;
+        let mut comma = false;
         if !(tuple && self.at_symbol(&group.as_ref().unwrap().close)) {
             loop {
                 self.expr(0)?;
                 count += 1;
                 if !self.at_symbol(&sep) { break; }
+                comma = true;
                 self.take();
                 if self.on_any(&self.lang.block_intros) || (tuple && self.at_symbol(&group.as_ref().unwrap().close)) { break; }
             }
         }
         if tuple { self.want_sign(&group.unwrap().close, "after the subject")?; }
-        if tuple || count > 1 { self.act(Action::MakeArray, count); }
+        if tuple || comma { self.act(Action::MakeArray, count); }
         Ok(())
     }
 
     fn case_pattern(&mut self) -> Res<crate::code::Pattern> {
-        let first = self.pattern_part()?;
-        let sep = self.lang.calling.as_ref().and_then(|b| b.between.clone()).unwrap_or_default();
-        if !self.at_symbol(&sep) { return Ok(first); }
-        let mut parts = vec![first];
         let mut star = None;
+        let first = if self.lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Mul)) {
+            self.take();
+            star = Some(0);
+            self.pattern_capture()?
+        } else { self.pattern_part()? };
+        let sep = self.lang.calling.as_ref().and_then(|b| b.between.clone()).unwrap_or_default();
+        if !self.at_symbol(&sep) { return if star.is_some() { Err(self.pattern_fault()) } else { Ok(first) }; }
+        let mut parts = vec![first];
         while self.at_symbol(&sep) {
             self.take();
             if self.on_any(&self.lang.block_intros) || self.on_keyword(&self.lang.match_guards) { break; }
@@ -1885,11 +1892,12 @@ impl<'a> Compiler<'a> {
         let token = self.look().clone();
         if token.shape == Shape::Numeral || lang.dyadic.get(&token.lexeme).map_or(false, |op| matches!(op.action, Action::Sub)) {
             self.take();
-            let number = if token.shape == Shape::Numeral { token.lexeme } else {
+            let value = if token.shape == Shape::Numeral { parse_number(&token.lexeme, lang)? } else {
                 if self.look().shape != Shape::Numeral { return Err(self.pattern_fault()); }
-                format!("-{}", self.take().lexeme)
+                let positive = parse_number(&self.take().lexeme, lang)?;
+                arith::calculate(arith::Operation::Minus, &Value::Small(0), &positive).ok_or_else(|| self.pattern_fault())??
             };
-            return Ok(Pattern::Literal(read_number(&number, lang)?));
+            return Ok(Pattern::Literal(value));
         }
         if token.shape == Shape::Quote {
             let mut text = self.take().lexeme;
@@ -1983,6 +1991,11 @@ impl<'a> Compiler<'a> {
         Err(self.pattern_fault())
     }
 
+    /// `switch (v) { case a: ... default: ... }`: the value kept in a
+    /// hidden slot, each case a test that skips to the next test when it
+    /// fails; a body runs on into the next (over its test) unless it
+    /// breaks. When every test fails the default's body runs, wherever
+    /// it stands. A switch is a loop to `break` and `continue`.
     fn switch(&mut self) -> Res<()> {
         let lang = self.lang;
         self.take();
