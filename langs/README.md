@@ -729,7 +729,10 @@ only. The extension labels so far, all from PHP:
   false when given none. `ext.builtin.callable` asks whether the value is
   a builtin, routine or class the run may call.
 - `ext.builtin.abs`, `.round`, `.divmod` and `.pow`: absolute worth,
-  rounding with even ties, quotient with remainder, and exponentiation.
+  rounding, quotient with remainder, and exponentiation. Rounding keeps
+  the shared library behavior: halfway values go away from zero, unlike
+  CPython, whose ties go to even. Negative decimal counts act as zero
+  places, as in the library; CPython instead rounds to tens or higher.
   `ext.builtin.round.number` and `.ndigits` name the number and its places;
   `ext.builtin.pow.base`, `.exp` and `.mod` name the power's arguments.
   A modulus keeps whole powers bounded, and a negative exponent asks for

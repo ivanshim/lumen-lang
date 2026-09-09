@@ -5978,28 +5978,20 @@ impl Engine<'_> {
             Builtin::Round => {
                 arity(1, 2)?;
                 let digits = match args.get(1) { None | Some(Value::Null) => 0, Some(n) => integer(n)?.to_i64().ok_or_else(|| self.core_fault("core.unready", name))? };
+                let places = u32::try_from(digits.max(0)).ok().filter(|n| *n <= 100000).ok_or_else(|| self.core_fault("core.unready", name))?;
                 let x = number(&args[0]);
-                if let Value::Small(_) | Value::Huge(_) = x {
-                    if digits >= 0 { return Ok(x); }
-                    let exp = digits.checked_neg().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| self.core_fault("core.unready", name))?;
-                    if exp > 100000 { return Err(self.core_fault("core.unready", name)); }
-                    let scale = BigInt::from(10).pow(exp); let n = x.as_big()?;
-                    let (mut q,r) = n.div_mod_floor(&scale);
-                    if &r * 2 > scale || &r * 2 == scale && q.is_odd() { q += 1; }
-                    Value::of_big(q * scale)
-                } else {
-                    let (p,q) = arith::parts(&x).ok_or_else(|| self.core_fault("core.unready", name))?;
-                    let f = crate::value::as_binary(&p,&q);
-                    if !f.is_finite() || !(-308..=308).contains(&digits) { return Err(self.core_fault("core.unready", name)); }
-                    let rounded = if digits >= 0 { format!("{:.*}", digits as usize, f).parse::<f64>().map_err(|_| self.core_fault("core.unready", name))? }
-                        else { let scale = 10f64.powi(-digits as i32); (f / scale).round_ties_even() * scale };
-                    if args.len() == 1 || matches!(args.get(1), Some(Value::Null)) { { let (top,bottom) = crate::value::from_binary(rounded).ok_or_else(|| self.core_fault("core.unready", name))?; Value::of_big(top / bottom) } }
-                    else {
-                        let text = format!("{:.*}", digits.max(0) as usize, rounded);
-                        let numerator = text.replace('.', "").parse::<BigInt>().map_err(|_| self.core_fault("core.unready", name))?;
-                        arith::shape_signed(numerator, BigInt::from(10).pow(digits.max(0) as u32), Some(arith::DEFAULT_PLACES), rounded.is_sign_negative())
-                    }
-                }
+                let (p, q) = arith::parts(&x).ok_or_else(|| self.core_fault("core.unready", name))?;
+                if q.is_zero() { return Err(self.core_fault("core.unready", name)); }
+                // Keep the library's scale, signed half, and truncating quotient.
+                let scale = Value::of_big(BigInt::from(10).pow(places));
+                let y = self.dyadic_numbers(&Action::Mul, &x, &scale)?;
+                let twice = self.dyadic_numbers(&Action::Mul, &y, &Value::Small(2))?;
+                let shifted = self.dyadic_numbers(&Action::Add, &twice, &Value::Small(if p.is_negative() { -1 } else { 1 }))?;
+                let rounded = self.dyadic_numbers(&Action::IntDiv, &shifted, &Value::Small(2))?;
+                if args.len() == 1 || matches!(args.get(1), Some(Value::Null)) {
+                    let (top, bottom) = arith::parts(&rounded).ok_or_else(|| self.core_fault("core.unready", name))?;
+                    Value::of_big(top / bottom)
+                } else { self.dyadic_numbers(&Action::DivReal, &rounded, &scale)? }
             }
             Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars => {
                 arity(if b == Builtin::Vars { 1 } else { 2 }, if matches!(b, Builtin::SetAttr | Builtin::GetAttr) { 3 } else if b == Builtin::Vars { 1 } else { 2 })?;

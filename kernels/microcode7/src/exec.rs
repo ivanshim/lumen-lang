@@ -6235,31 +6235,22 @@ impl Machine<'_> {
             Rounded => {
                 require(1, 2)?;
                 let places = match input.get(1) { None | Some(Value::Nil) => 0, Some(v) => whole(v)?.to_i64().ok_or_else(|| self.core_complaint("core.unready", name))? };
+                let exponent = u32::try_from(places.max(0)).ok().filter(|n| *n <= 100000).ok_or_else(|| self.core_complaint("core.unready", name))?;
                 let value = as_number(&input[0]);
-                if matches!(value, Value::Small(_) | Value::Huge(_)) {
-                    if places >= 0 { return Ok(value); }
-                    let magnitude = places.checked_neg().and_then(|n| u32::try_from(n).ok()).filter(|n| *n <= 100000).ok_or_else(|| self.core_complaint("core.unready", name))?;
-                    let power = BigInt::from(10).pow(magnitude);
-                    let integer = value.as_big()?;
-                    let quotient = integer.div_floor(&power);
-                    let remainder = integer.mod_floor(&power);
-                    let twice = remainder * 2;
-                    let up = twice > power || twice == power && quotient.is_odd();
-                    return Ok(Value::from_big((quotient + BigInt::from(u8::from(up))) * power));
-                }
-                let fraction = math::ratio_of(&value).ok_or_else(|| self.core_complaint("core.unready", name))?;
-                let binary = crate::data::nearest_binary(&fraction.above, &fraction.beneath);
-                if !binary.is_finite() || !(-308..=308).contains(&places) { return Err(self.core_complaint("core.unready", name)); }
-                let rounded: f64 = if places < 0 {
-                    let factor = 10f64.powi((-places) as i32);
-                    (binary / factor).round_ties_even() * factor
-                } else { format!("{:.*}", places as usize, binary).parse().map_err(|_| self.core_complaint("core.unready", name))? };
-                if input.len() == 1 || matches!(input.get(1), Some(Value::Nil)) { { let (numerator,denominator) = crate::data::binary_worth(rounded).ok_or_else(|| self.core_complaint("core.unready", name))?; Ok(Value::from_big(numerator / denominator)) } }
-                else {
-                    let decimal = format!("{:.*}", places.max(0) as usize, rounded);
-                    let above: BigInt = decimal.chars().filter(|c| *c != '.').collect::<String>().parse().map_err(|_| self.core_complaint("core.unready", name))?;
-                    let beneath = BigInt::from(10).pow(places.max(0) as u32);
-                    Ok(math::made_number(above, beneath, Some(math::DEFAULT_PLACES), rounded.is_sign_negative()))
+                let fraction = math::ratio_of(&value).filter(|r| !r.beneath.is_zero()).ok_or_else(|| self.core_complaint("core.unready", name))?;
+                // Follow the arithmetic of the shared library at each step.
+                let factor = Value::from_big(BigInt::from(10).pow(exponent));
+                let scaled = self.prim(Times, name, &[value, factor.clone()])?;
+                let doubled = self.prim(Times, name, &[scaled, Value::Small(2)])?;
+                let adjustment = if fraction.above.is_negative() { Minus } else { Plus };
+                let adjusted = self.prim(adjustment, name, &[doubled, Value::Small(1)])?;
+                let integral = self.prim(IntDiv, name, &[adjusted, Value::Small(2)])?;
+                match input.get(1) {
+                    None | Some(Value::Nil) => {
+                        let r = math::ratio_of(&integral).ok_or_else(|| self.core_complaint("core.unready", name))?;
+                        Ok(Value::from_big(r.above / r.beneath))
+                    }
+                    _ => self.prim(OverReal, name, &[integral, factor]),
                 }
             }
             HasMember | GetMember | SetMember | DropMember | MembersOf => {
