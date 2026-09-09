@@ -1153,6 +1153,7 @@ impl<'a> Compiler<'a> {
             if Lang::spells(&lang.c_for_words, &w) {
                 return self.c_for();
             }
+            if self.match_head() { return self.matching(); }
             if Lang::spells(&lang.switch_words, &w) {
                 return self.switch();
             }
@@ -2075,6 +2076,271 @@ impl<'a> Compiler<'a> {
         self.pos = after;
         self.leave_cycle(again);
         Ok(())
+    }
+
+    fn match_head(&self) -> bool {
+        if !self.on_keyword(&self.lang.match_words) { return false; }
+        let mut depth = 0usize;
+        for t in self.tokens.iter().skip(self.pos + 1) {
+            if matches!(t.shape, Shape::LineEnd | Shape::Finish) { break; }
+            if t.shape != Shape::Sign { continue; }
+            if depth == 0 && self.lang.block_intros.contains(&t.lexeme) { return true; }
+            if depth == 0 && self.lang.assign_words.contains(&t.lexeme) { return false; }
+            for brackets in [&self.lang.grouping, &self.lang.array_brackets, &self.lang.map_brackets].into_iter().flatten() {
+                if t.lexeme == brackets.open { depth += 1; break; }
+                if t.lexeme == brackets.close { depth = depth.saturating_sub(1); break; }
+            }
+        }
+        false
+    }
+
+    fn pattern_fault(&self) -> String {
+        self.lang.match_invalid.first().cloned().unwrap_or_else(|| "Invalid pattern".to_string())
+    }
+
+    /// Cases keep their subject once and leave after the first body taken.
+    fn matching(&mut self) -> Res<()> {
+        self.take();
+        let tuple = self.match_subject()?;
+        let subject = self.gensym("subject");
+        self.write(&subject);
+        if !self.on_any(&self.lang.block_intros) { return Err(self.pattern_fault()); }
+        self.take();
+        self.skip_seps();
+        if self.look().shape != Shape::Open { return Err(self.pattern_fault()); }
+        self.take();
+        self.skip_seps();
+        let mut ends = Vec::new();
+        let mut count = 0;
+        while self.look().shape != Shape::Close && !self.exhausted() {
+            if !self.on_keyword(&self.lang.match_cases) { return Err(self.pattern_fault()); }
+            self.take();
+            let pattern = self.case_pattern()?;
+            let names = pattern.bindings().map_err(|_| self.pattern_fault())?;
+            self.read(&subject);
+            self.act(Action::Match(Rc::new(pattern), names.clone(), tuple), 1);
+            let found = self.gensym("fitted");
+            self.write(&found);
+            self.read(&found);
+            self.constant(Value::Null);
+            self.act(Action::Ne, 2);
+            let failed = self.skip();
+            for (i, name) in names.iter().enumerate() {
+                self.read(&found);
+                self.constant(Value::Small(i as i64));
+                self.act(Action::At, 2);
+                self.write(name);
+            }
+            let guarded = if self.on_keyword(&self.lang.match_guards) {
+                self.take();
+                self.expr(0)?;
+                Some(self.skip())
+            } else { None };
+            if !self.on_any(&self.lang.block_intros) { return Err(self.pattern_fault()); }
+            let inline = !matches!(self.look_ahead(1).shape, Shape::LineEnd | Shape::Open | Shape::Close | Shape::Finish);
+            self.body()?;
+            while inline && self.look().shape == Shape::Sign && self.lang.ends_stmt(&self.look().lexeme) {
+                self.take();
+                if matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish) { break; }
+                self.stmt()?;
+            }
+            ends.push(self.leap());
+            self.land(failed);
+            if let Some(at) = guarded { self.land(at); }
+            self.skip_seps();
+            count += 1;
+        }
+        if count == 0 || self.look().shape != Shape::Close { return Err(self.pattern_fault()); }
+        self.take();
+        for end in ends { self.land(end); }
+        Ok(())
+    }
+
+    /// A tuple subject needs only the grouping marks already spelled.
+    fn match_subject(&mut self) -> Res<bool> {
+        let group = self.lang.grouping.clone();
+        let mut tuple = false;
+        if let Some(g) = &group {
+            if self.at_symbol(&g.open) {
+                let mut depth = 0usize;
+                for t in self.tokens.iter().skip(self.pos + 1) {
+                    if t.shape != Shape::Sign { continue; }
+                    if depth == 0 && t.lexeme == g.close { break; }
+                    if depth == 0 && self.lang.calling.as_ref().and_then(|b| b.between.as_ref()) == Some(&t.lexeme) { tuple = true; }
+                    if [&self.lang.grouping, &self.lang.array_brackets, &self.lang.map_brackets].into_iter().flatten().any(|b| b.open == t.lexeme) { depth += 1; }
+                    if [&self.lang.grouping, &self.lang.array_brackets, &self.lang.map_brackets].into_iter().flatten().any(|b| b.close == t.lexeme) { depth = depth.saturating_sub(1); }
+                }
+                if self.look_ahead(1).lexeme == g.close { tuple = true; }
+            }
+        }
+        if tuple { self.take(); }
+        let sep = self.lang.calling.as_ref().and_then(|b| b.between.clone()).unwrap_or_default();
+        let mut count = 0;
+        let mut comma = false;
+        if !(tuple && self.at_symbol(&group.as_ref().unwrap().close)) {
+            loop {
+                self.expr(0)?;
+                count += 1;
+                if !self.at_symbol(&sep) { break; }
+                comma = true;
+                self.take();
+                if self.on_any(&self.lang.block_intros) || (tuple && self.at_symbol(&group.as_ref().unwrap().close)) { break; }
+            }
+        }
+        if tuple { self.want_sign(&group.unwrap().close, "after the subject")?; }
+        if tuple || comma { self.act(Action::MakeArray, count); }
+        Ok(tuple || comma)
+    }
+
+    fn case_pattern(&mut self) -> Res<crate::code::Pattern> {
+        let mut star = None;
+        let first = if self.lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Mul)) {
+            self.take();
+            star = Some(0);
+            self.pattern_capture()?
+        } else { self.pattern_part()? };
+        let sep = self.lang.calling.as_ref().and_then(|b| b.between.clone()).unwrap_or_default();
+        if !self.at_symbol(&sep) { return if star.is_some() { Err(self.pattern_fault()) } else { Ok(first) }; }
+        let mut parts = vec![first];
+        while self.at_symbol(&sep) {
+            self.take();
+            if self.on_any(&self.lang.block_intros) || self.on_keyword(&self.lang.match_guards) { break; }
+            if self.lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Mul)) {
+                if star.is_some() { return Err(self.pattern_fault()); }
+                star = Some(parts.len());
+                self.take();
+                parts.push(self.pattern_capture()?);
+            } else { parts.push(self.pattern_part()?); }
+        }
+        Ok(crate::code::Pattern::Sequence(parts, star))
+    }
+
+    fn pattern_capture(&mut self) -> Res<crate::code::Pattern> {
+        let name = self.want_name("in a pattern")?;
+        if self.lang.match_wildcards.contains(&name) { Ok(crate::code::Pattern::Any) }
+        else if self.lang.true_words.contains(&name) || self.lang.false_words.contains(&name) || self.lang.null_words.contains(&name) { Err(self.pattern_fault()) }
+        else { Ok(crate::code::Pattern::Capture(name)) }
+    }
+
+    fn pattern_part(&mut self) -> Res<crate::code::Pattern> {
+        use crate::code::Pattern;
+        let mut choices = vec![self.pattern_atom()?];
+        while self.on_any(&self.lang.match_ors) {
+            self.take();
+            choices.push(self.pattern_atom()?);
+        }
+        let mut pattern = if choices.len() == 1 { choices.pop().unwrap() } else { Pattern::Alternatives(choices) };
+        if self.on_keyword(&self.lang.match_as) {
+            self.take();
+            let Pattern::Capture(name) = self.pattern_capture()? else { return Err(self.pattern_fault()); };
+            pattern = Pattern::Bound(Box::new(pattern), name);
+        }
+        Ok(pattern)
+    }
+
+    fn pattern_atom(&mut self) -> Res<crate::code::Pattern> {
+        use crate::code::Pattern;
+        let lang = self.lang;
+        let token = self.look().clone();
+        if token.shape == Shape::Numeral || lang.dyadic.get(&token.lexeme).map_or(false, |op| matches!(op.action, Action::Sub)) {
+            self.take();
+            let value = if token.shape == Shape::Numeral { parse_number(&token.lexeme, lang)? } else {
+                if self.look().shape != Shape::Numeral { return Err(self.pattern_fault()); }
+                let positive = parse_number(&self.take().lexeme, lang)?;
+                arith::calculate(arith::Operation::Minus, &Value::Small(0), &positive).ok_or_else(|| self.pattern_fault())??
+            };
+            return Ok(Pattern::Literal(value));
+        }
+        if token.shape == Shape::Quote {
+            let mut text = self.take().lexeme;
+            while self.look().shape == Shape::Quote { text.push_str(&self.take().lexeme); }
+            return Ok(Pattern::Literal(Value::text(&text)));
+        }
+        for (brackets, grouped) in [(lang.array_brackets.clone(), false), (lang.grouping.clone(), true)] {
+            let Some(b) = brackets else { continue; };
+            if !self.at_symbol(&b.open) { continue; }
+            self.take();
+            let separator = lang.calling.as_ref().and_then(|c| c.between.clone()).unwrap_or_default();
+            let mut parts = Vec::new();
+            let mut star = None;
+            let mut comma = false;
+            while !self.at_symbol(&b.close) {
+                if lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Mul)) {
+                    if star.is_some() { return Err(self.pattern_fault()); }
+                    star = Some(parts.len());
+                    self.take();
+                    parts.push(self.pattern_capture()?);
+                } else { parts.push(self.pattern_part()?); }
+                if !self.at_symbol(&separator) { break; }
+                comma = true;
+                self.take();
+            }
+            self.want_sign(&b.close, "after the pattern")?;
+            return if grouped && parts.len() == 1 && !comma {
+                if star.is_some() { Err(self.pattern_fault()) } else { Ok(parts.pop().unwrap()) }
+            } else { Ok(Pattern::Sequence(parts, star)) };
+        }
+        if let Some(map) = &lang.map_brackets {
+            if self.at_symbol(&map.open) {
+                self.take();
+                let mut items = Vec::new();
+                let mut rest = false;
+                while !self.at_symbol(&map.close) {
+                    if rest { return Err(self.pattern_fault()); }
+                    if lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Power)) {
+                        self.take();
+                        let capture = self.pattern_capture()?;
+                        if !matches!(capture, Pattern::Capture(_)) { return Err(self.pattern_fault()); }
+                        items.push(capture);
+                        rest = true;
+                    } else {
+                        let key = self.pattern_atom()?;
+                        if !matches!(key, Pattern::Literal(_) | Pattern::Unready(_)) { return Err(self.pattern_fault()); }
+                        self.want_sign(lang.pair_mark.as_deref().unwrap_or_default(), "between a key and its pattern")?;
+                        items.push(self.pattern_part()?);
+                    }
+                    if !map.between.as_ref().map_or(false, |s| self.at_symbol(s)) { break; }
+                    self.take();
+                }
+                self.want_sign(&map.close, "after the mapping pattern")?;
+                return Ok(Pattern::Unready(items));
+            }
+        }
+        if token.shape == Shape::Instr {
+            if lang.true_words.contains(&token.lexeme) { self.take(); return Ok(Pattern::Literal(Value::Flag(true))); }
+            if lang.false_words.contains(&token.lexeme) { self.take(); return Ok(Pattern::Literal(Value::Flag(false))); }
+            if lang.null_words.contains(&token.lexeme) { self.take(); return Ok(Pattern::Literal(Value::Null)); }
+            let capture = self.pattern_capture()?;
+            let mut dotted = false;
+            while lang.pipe_words.contains(&self.look().lexeme) {
+                dotted = true;
+                self.take();
+                self.want_name("after the member mark")?;
+            }
+            if let Some(call) = &lang.calling {
+                if self.at_symbol(&call.open) {
+                    self.take();
+                    let mut items = Vec::new();
+                    let mut keywords = Vec::new();
+                    while !self.at_symbol(&call.close) {
+                        let keyword = self.look().shape == Shape::Instr && lang.assign_words.contains(&self.look_ahead(1).lexeme);
+                        if keyword {
+                            let name = self.take().lexeme;
+                            if keywords.contains(&name) { return Err(self.pattern_fault()); }
+                            keywords.push(name);
+                            self.take();
+                        } else if !keywords.is_empty() { return Err(self.pattern_fault()); }
+                        items.push(self.pattern_part()?);
+                        if !call.between.as_ref().map_or(false, |s| self.at_symbol(s)) { break; }
+                        self.take();
+                    }
+                    self.want_sign(&call.close, "after the class pattern")?;
+                    return Ok(Pattern::Unready(items));
+                }
+            }
+            return Ok(if dotted { Pattern::Unready(Vec::new()) } else { capture });
+        }
+        Err(self.pattern_fault())
     }
 
     /// `switch (v) { case a: ... default: ... }`: the value kept in a

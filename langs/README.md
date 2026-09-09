@@ -678,6 +678,26 @@ only. The extension labels so far, all from PHP:
   first clause whose class takes it holding it, and a last part that runs
   however the body ended, a return through it included. What no clause
   takes is raised again.
+- `ext.stmt.match` opens a subject and its cases; `ext.stmt.match.case`
+  begins each pattern and body. These words remain names away from such
+  heads. The subject is worked out once, and only the first fitting case
+  whose guard holds runs. `ext.stmt.match.wildcard` takes any value without
+  keeping it. A bare name keeps the value; literals test it. Sequences
+  take their members apart, with the multiplication sign before a name
+  keeping the members left over as an array.
+- `ext.stmt.match.or` parts alternative patterns, each binding the same
+  names. `ext.stmt.match.as` binds the whole value after a pattern fits.
+  `ext.stmt.match.guard` begins the condition asked after those bindings
+  are made. A failed pattern writes no bindings.
+- `ext.stmt.match.unready` gives the words said on reaching a mapping,
+  class or named-value pattern whose running is not yet furnished.
+  Such patterns are read whole. A tuple subject may be taken apart, but
+  keeping that tuple whole says these words too: the kernels have no
+  tuple value to hand over, and must not hand over a mutable array in
+  its stead. `ext.stmt.match.invalid` gives the words
+  for a pattern written amiss, including repeated bindings and alternatives
+  which do not bind the same names. Both labels take lists of words,
+  whose first entry is the whole complaint.
 - `ext.op.bit.left` and `ext.op.bit.right` are also spelled by the
   indented definition, with the existing whole-number shift operations.
   Its `ext.lexical.number.separator` admits underscores between digits.
@@ -2365,6 +2385,14 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.import.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.import.from` | - | - | `from` | - | - | - | - | - | - | - |
 | `ext.stmt.loop.else` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.stmt.match` | - | - | `match` | - | - | - | - | - | - | - |
+| `ext.stmt.match.as` | - | - | `as` | - | - | - | - | - | - | - |
+| `ext.stmt.match.case` | - | - | `case` | - | - | - | - | - | - | - |
+| `ext.stmt.match.guard` | - | - | `if` | - | - | - | - | - | - | - |
+| `ext.stmt.match.invalid` | - | - | `SyntaxError: invalid pattern` | - | - | - | - | - | - | - |
+| `ext.stmt.match.or` | - | - | `\|` | - | - | - | - | - | - | - |
+| `ext.stmt.match.unready` | - | - | `NotImplementedError: this pattern is not supported` | - | - | - | - | - | - | - |
+| `ext.stmt.match.wildcard` | - | - | `_` | - | - | - | - | - | - | - |
 | `ext.stmt.nonlocal` | - | - | `nonlocal` | - | - | - | - | - | - | - |
 | `ext.stmt.nonlocal.unrun` | - | - | `Nonlocal bindings cannot be run without enclosing function cells` | - | - | - | - | - | - | - |
 | `ext.stmt.separator` | - | - | `;` | - | - | - | - | - | - | - |

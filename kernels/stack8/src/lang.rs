@@ -422,6 +422,14 @@ pub struct Lang {
     pub decorator_words: Vec<String>,
     pub decorator_amiss: Option<String>,
     pub const_words: Vec<String>,
+    pub match_words: Vec<String>,
+    pub match_cases: Vec<String>,
+    pub match_wildcards: Vec<String>,
+    pub match_ors: Vec<String>,
+    pub match_guards: Vec<String>,
+    pub match_as: Vec<String>,
+    pub match_unready: Vec<String>,
+    pub match_invalid: Vec<String>,
     pub switch_words: Vec<String>,
     pub case_words: Vec<String>,
     pub default_words: Vec<String>,
@@ -815,6 +823,8 @@ w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ex
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
  | w ext.stmt.del.unrun | w ext.stmt.binding.unrun | b ext.stmt.loop.else | w ext.stmt.async | w ext.op.await | w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
 w ext.stmt.import | w ext.stmt.import.from | w ext.stmt.import.as | w ext.system.module.name
+w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
+w ext.stmt.match | w ext.stmt.match.case | w ext.stmt.match.wildcard | w ext.stmt.match.or | w ext.stmt.match.guard | w ext.stmt.match.as | w ext.stmt.match.unready | w ext.stmt.match.invalid
 
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
 w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
@@ -1630,6 +1640,14 @@ impl Lang {
             decorator_words: r.strings("ext.stmt.decorator")?,
             decorator_amiss: r.head("ext.stmt.decorator.amiss")?,
             const_words: r.strings("ext.stmt.const")?,
+            match_words: r.strings("ext.stmt.match")?,
+            match_cases: r.strings("ext.stmt.match.case")?,
+            match_wildcards: r.strings("ext.stmt.match.wildcard")?,
+            match_ors: r.strings("ext.stmt.match.or")?,
+            match_guards: r.strings("ext.stmt.match.guard")?,
+            match_as: r.strings("ext.stmt.match.as")?,
+            match_unready: r.strings("ext.stmt.match.unready")?,
+            match_invalid: r.strings("ext.stmt.match.invalid")?,
             switch_words: r.strings("ext.stmt.switch")?,
             case_words: r.strings("ext.stmt.case")?,
             default_words: r.strings("ext.stmt.default")?,
@@ -1955,7 +1973,7 @@ impl Lang {
             }
         }
         let mut lists: Vec<&Vec<String>> = vec![
-            &self.comprehension_async, &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread, &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks, &self.if_else_words, &self.lambda_words, &self.identity_not, &self.membership_words, &self.membership_not, &self.expression_assign, &self.ellipsis_words, &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open, &self.long_quotes, &self.tuple_marks, &self.class_bases_open, &self.class_bases_close, &self.del_words, &self.nonlocal_words, &self.with_words, &self.with_as_words, &self.yield_words, &self.yield_from_words, &self.slice_ellipsis, &self.slice_marks, &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words, &self.carries_words, &self.carries_pairs, &self.keyword_only, &self.positional_only, &self.call_spread, &self.call_spread_pairs, &self.stmt_separators, &self.unpack_rest, &self.unpack_words, &self.line_continuations,
+            &self.comprehension_async, &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread, &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks, &self.if_else_words, &self.lambda_words, &self.identity_not, &self.membership_words, &self.membership_not, &self.expression_assign, &self.ellipsis_words, &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open, &self.long_quotes, &self.tuple_marks, &self.class_bases_open, &self.class_bases_close, &self.del_words, &self.nonlocal_words, &self.with_words, &self.with_as_words, &self.yield_words, &self.yield_from_words, &self.slice_ellipsis, &self.slice_marks, &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words, &self.carries_words, &self.carries_pairs, &self.keyword_only, &self.positional_only, &self.call_spread, &self.call_spread_pairs, &self.stmt_separators, &self.unpack_rest, &self.unpack_words, &self.line_continuations, &self.match_ors,
         ];
         if self.blocks != Blocks::Indented {
             lists.push(&self.block_opens);

@@ -67,9 +67,100 @@ pub struct Cell {
     pub moving: bool,
 }
 
+/// A case's test, with bindings gathered only after the whole fits.
+#[derive(Debug, Clone)]
+pub enum Pattern {
+    Any,
+    Literal(Value),
+    Capture(String),
+    Sequence(Vec<Pattern>, Option<usize>),
+    Alternatives(Vec<Pattern>),
+    Bound(Box<Pattern>, String),
+    Unready(Vec<Pattern>),
+}
+
+impl Pattern {
+    pub fn bindings(&self) -> Result<Vec<String>, ()> {
+        let mut names = Vec::new();
+        match self {
+            Self::Capture(name) => names.push(name.clone()),
+            Self::Bound(inner, name) => {
+                names = inner.bindings()?;
+                names.push(name.clone());
+            }
+            Self::Sequence(parts, _) | Self::Unready(parts) => {
+                for part in parts { names.extend(part.bindings()?); }
+            }
+            Self::Alternatives(choices) => {
+                let mut wanted = None;
+                for choice in choices {
+                    let mut bound = choice.bindings()?;
+                    bound.sort();
+                    if wanted.as_ref().map_or(false, |before| *before != bound) { return Err(()); }
+                    wanted = Some(bound);
+                }
+                names = wanted.unwrap_or_default();
+            }
+            Self::Any | Self::Literal(_) => {}
+        }
+        let mut distinct = names.clone();
+        distinct.sort();
+        distinct.dedup();
+        if distinct.len() != names.len() { return Err(()); }
+        Ok(names)
+    }
+
+    pub fn fit(&self, subject: &Value, bound: &mut Vec<(String, Value)>, tuple: bool) -> Result<bool, ()> {
+        match self {
+            Self::Any => Ok(true),
+            Self::Literal(value) => Ok(match value {
+                Value::Null | Value::Flag(_) => value.identical(subject),
+                _ => match subject {
+                    Value::Flag(flag) => value.equals(&Value::Small(i64::from(*flag))),
+                    _ => value.equals(subject),
+                },
+            }),
+            Self::Capture(_) | Self::Bound(_, _) if tuple => Err(()),
+            Self::Capture(name) => { bound.push((name.clone(), subject.clone())); Ok(true) }
+            Self::Bound(inner, name) => {
+                if !inner.fit(subject, bound, tuple)? { return Ok(false); }
+                bound.push((name.clone(), subject.clone()));
+                Ok(true)
+            }
+            Self::Unready(_) => Err(()),
+            Self::Alternatives(choices) => {
+                for choice in choices {
+                    let mut attempt = Vec::new();
+                    if choice.fit(subject, &mut attempt, tuple)? { bound.extend(attempt); return Ok(true); }
+                }
+                Ok(false)
+            }
+            Self::Sequence(parts, star) => {
+                let Value::Array(items) = subject else { return Ok(false); };
+                let fixed = parts.len() - usize::from(star.is_some());
+                if items.len() < fixed || (star.is_none() && items.len() != fixed) { return Ok(false); }
+                let extra = items.len() - fixed;
+                for (i, part) in parts.iter().enumerate() {
+                    let held = if *star == Some(i) {
+                        Value::Array(Rc::new(items[i..i + extra].to_vec()))
+                    } else {
+                        let at = if star.map_or(false, |s| i > s) { i + extra - 1 } else { i };
+                        items[at].clone()
+                    };
+                    if !part.fit(&held, bound, false)? { return Ok(false); }
+                }
+                Ok(true)
+            }
+        }
+    }
+}
+
 /// Kernel operations a language can spell. `Apply` names one of these.
 #[derive(Debug, Clone)]
 pub enum Action {
+    /// A pattern and its binding order; the flag marks a tuple subject,
+    /// whose members may be taken but whose whole has no value here.
+    Match(Rc<Pattern>, Vec<String>, bool),
     /// Keep a real's point after a compound write.
     KeepPoint,
     Add,

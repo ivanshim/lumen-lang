@@ -1967,6 +1967,16 @@ impl<'a> Machine<'a> {
                 let empty = matches!(f.cells.borrow()[slot.at], Value::Unset);
                 Ok(Value::Flag(empty))
             }
+            Form::Fits { value, test, slots, tuple } => {
+                let subject = self.value_of(value, frame)?;
+                let result = fit_case(test, &subject, *tuple).map_err(|()| self.table.single("ext.stmt.match.unready").unwrap_or_default().to_owned())?;
+                if let Some(captures) = result {
+                    for (name, address) in slots {
+                        self.store(address, frame, captures.get(name).expect("a captured name").clone())?;
+                    }
+                    Ok(Value::Flag(true))
+                } else { Ok(Value::Flag(false)) }
+            }
             Form::Again => {
                 match self.holding_fault.last() {
                     Some(value) => Err(Escape::Thrown(value.clone())),
@@ -5976,4 +5986,63 @@ fn number_opening_in(v: &Value) -> (Option<Value>, bool) {
         Some(opening) => (Some(opening), false),
         None => (None, false),
     }
+}
+
+/// Try a case without touching any cell until all its parts have agreed.
+fn fit_case(test: &crate::form::CaseTest, value: &Value, tuple: bool) -> Result<Option<HashMap<String, Value>>, ()> {
+    use crate::form::CaseTest;
+    let mut gathered = HashMap::new();
+    if tuple && matches!(test, CaseTest::Keep(_) | CaseTest::Also { .. }) { return Err(()); }
+    match test {
+        CaseTest::Ignore => {}
+        CaseTest::Keep(name) => { gathered.insert(name.clone(), value.clone()); }
+        CaseTest::Equal(wanted) => {
+            let equal = match (wanted, value) {
+                (Value::Nil | Value::Flag(_), _) => wanted.selfsame(value),
+                (_, Value::Flag(flag)) => wanted.equals(&Value::Small(if *flag { 1 } else { 0 })),
+                _ => wanted.equals(value),
+            };
+            if !equal { return Ok(None); }
+        }
+        CaseTest::Pending(_) => return Err(()),
+        CaseTest::AnyOf(choices) => {
+            for next in choices {
+                let answer = fit_case(next, value, tuple)?;
+                if answer.is_some() { return Ok(answer); }
+            }
+            return Ok(None);
+        }
+        CaseTest::Also { test: within, name } => {
+            let Some(found) = fit_case(within, value, tuple)? else { return Ok(None); };
+            gathered = found;
+            gathered.insert(name.clone(), value.clone());
+        }
+        CaseTest::Series { members, spread } => {
+            let Value::Vector(values) = value else { return Ok(None); };
+            let minimum = if spread.is_some() { members.len() - 1 } else { members.len() };
+            if values.len() < minimum { return Ok(None); }
+            if spread.is_none() && minimum != values.len() { return Ok(None); }
+            let mut position = 0;
+            for (ordinal, member) in members.iter().enumerate() {
+                let next = match spread {
+                    Some(star) if ordinal == *star => {
+                        let end = values.len() - (members.len() - ordinal - 1);
+                        let portion = Value::Vector(Rc::new(values[position..end].to_vec()));
+                        position = end;
+                        portion
+                    }
+                    _ => {
+                        let portion = values[position].clone();
+                        position += 1;
+                        portion
+                    }
+                };
+                match fit_case(member, &next, false)? {
+                    None => return Ok(None),
+                    Some(found) => gathered.extend(found),
+                }
+            }
+        }
+    }
+    Ok(Some(gathered))
 }

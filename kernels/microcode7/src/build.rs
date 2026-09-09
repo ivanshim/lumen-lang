@@ -1393,6 +1393,7 @@ impl<'a> Builder<'a> {
             if self.key("ext.stmt.for.c") {
                 return self.three_part_for();
             }
+            if self.begins_match() { return self.match_stmt(); }
             if self.key("ext.stmt.switch") {
                 return self.switch_stmt();
             }
@@ -2778,6 +2779,266 @@ impl<'a> Builder<'a> {
         let body = self.body_limb(Traps::Naught)?;
         let looped = Form::Cycle { test: Box::new(test), body: Box::new(body), step: Some(Box::new(step)), after: false, otherwise: None };
         Ok(sequence(vec![init, looped]))
+    }
+
+    fn begins_match(&self) -> bool {
+        let table = self.table;
+        if !self.key("ext.stmt.match") { return false; }
+        let mut closing = Vec::new();
+        for token in &self.tokens[self.pos + 1..] {
+            if matches!(token.shape, Shape::Finish | Shape::LineEnd) { return false; }
+            if token.shape != Shape::Sign { continue; }
+            if closing.is_empty() {
+                if table.spells("block.intro", &token.lexeme) { return true; }
+                if table.spells("stmt.assign", &token.lexeme) { return false; }
+            }
+            if closing.last().map_or(false, |end: &&str| *end == token.lexeme) {
+                closing.pop();
+            } else {
+                for (open, close) in [("syntax.group.open", "syntax.group.close"), ("syntax.array.open", "syntax.array.close"), ("syntax.map.open", "syntax.map.close")] {
+                    if table.spells(open, &token.lexeme) { closing.push(table.single(close).unwrap_or_default()); break; }
+                }
+            }
+        }
+        false
+    }
+
+    fn bad_case(&self) -> String {
+        self.table.single("ext.stmt.match.invalid").unwrap_or("Invalid pattern").to_owned()
+    }
+
+    fn match_stmt(&mut self) -> Res<Form> {
+        self.advance();
+        let (value, tuple) = self.subject_of_match()?;
+        let held = self.gensym("matched");
+        let save = Form::Write(held.clone(), Box::new(value));
+        if !self.on_any("block.intro") { return Err(self.bad_case()); }
+        self.advance();
+        self.skip_line_ends();
+        if self.look().shape != Shape::Open { return Err(self.bad_case()); }
+        self.advance();
+        let mut arms = Vec::new();
+        loop {
+            self.skip_line_ends();
+            if self.look().shape == Shape::Close { self.advance(); break; }
+            if !self.key("ext.stmt.match.case") { return Err(self.bad_case()); }
+            self.advance();
+            let starts_wide = self.on_any("op.mul");
+            let first = if starts_wide { self.advance(); self.pattern_name()? } else { self.pattern_choice()? };
+            let mut members = vec![first];
+            let mut spread = if starts_wide { Some(0) } else { None };
+            let mut separated = false;
+            while self.on_any("syntax.call.separator") {
+                separated = true;
+                self.advance();
+                if self.on_any("block.intro") || self.key("ext.stmt.match.guard") { break; }
+                if self.on_any("op.mul") {
+                    if spread.is_some() { return Err(self.bad_case()); }
+                    spread = Some(members.len());
+                    self.advance();
+                    members.push(self.pattern_name()?);
+                } else { members.push(self.pattern_choice()?); }
+            }
+            if starts_wide && !separated { return Err(self.bad_case()); }
+            let pattern = if separated { crate::form::CaseTest::Series { members, spread } } else { members.pop().unwrap() };
+            let names = pattern.names().map_err(|_| self.bad_case())?;
+            let slots = names.into_iter().map(|name| {
+                let address = self.address_to_write(&name);
+                (name, address)
+            }).collect();
+            let mut fits = Form::Fits { value: Box::new(Form::Read(held.clone())), test: Rc::new(pattern), slots, tuple };
+            if self.key("ext.stmt.match.guard") {
+                self.advance();
+                let guard = self.expr(0)?;
+                fits = self.choose(fits, guard, constant(Value::Flag(false)));
+            }
+            if !self.on_any("block.intro") { return Err(self.bad_case()); }
+            let same_line = self.glance(1).row == self.look().row;
+            let mut statements = vec![self.body()?];
+            if same_line {
+                while self.look().shape == Shape::Sign && self.on_stmt_end() {
+                    self.advance();
+                    if matches!(self.look().shape, Shape::Finish | Shape::Close | Shape::LineEnd) { break; }
+                    statements.push(self.stmt()?);
+                }
+            }
+            arms.push((fits, sequence(statements)));
+        }
+        if arms.is_empty() { return Err(self.bad_case()); }
+        let mut tail = constant(Value::Nil);
+        for (test, body) in arms.into_iter().rev() { tail = self.choose(test, body, tail); }
+        Ok(sequence(vec![save, tail]))
+    }
+
+    fn subject_of_match(&mut self) -> Res<(Form, bool)> {
+        let table = self.table;
+        let mut grouped = false;
+        if self.on_any("syntax.group.open") {
+            let mut nesting = Vec::new();
+            for token in self.tokens.iter().skip(self.pos + 1) {
+                if token.shape != Shape::Sign { continue; }
+                if nesting.is_empty() {
+                    if table.spells("syntax.call.separator", &token.lexeme) { grouped = true; }
+                    if table.spells("syntax.group.close", &token.lexeme) { break; }
+                }
+                if nesting.last().map_or(false, |end: &&str| *end == token.lexeme) { nesting.pop(); }
+                else {
+                    for stem in ["syntax.group", "syntax.array", "syntax.map"] {
+                        if table.spells(&format!("{}.open", stem), &token.lexeme) {
+                            nesting.push(table.single(&format!("{}.close", stem)).unwrap_or_default());
+                            break;
+                        }
+                    }
+                }
+            }
+            grouped |= table.spells("syntax.group.close", &self.glance(1).lexeme);
+        }
+        if grouped { self.advance(); }
+        let mut parts = Vec::new();
+        let mut comma = false;
+        if !(grouped && self.on_any("syntax.group.close")) {
+            parts.push(self.expr(0)?);
+            while self.on_any("syntax.call.separator") {
+                comma = true;
+                self.advance();
+                if self.on_any("block.intro") || (grouped && self.on_any("syntax.group.close")) { break; }
+                parts.push(self.expr(0)?);
+            }
+        }
+        if grouped { self.need_sign(table.single("syntax.group.close").unwrap_or_default(), "after the subject")?; }
+        let tuple = grouped || comma;
+        let value = if tuple { prim_call(Prim::MakeArray, parts) } else { parts.pop().unwrap() };
+        Ok((value, tuple))
+    }
+
+    fn pattern_name(&mut self) -> Res<crate::form::CaseTest> {
+        use crate::form::CaseTest;
+        let word = self.need_word("as a pattern binding")?;
+        if self.table.spells("ext.stmt.match.wildcard", &word) { return Ok(CaseTest::Ignore); }
+        if ["literal.true", "literal.false", "literal.null"].iter().any(|label| self.table.spells(label, &word)) { return Err(self.bad_case()); }
+        Ok(CaseTest::Keep(word))
+    }
+
+    fn pattern_choice(&mut self) -> Res<crate::form::CaseTest> {
+        use crate::form::CaseTest;
+        let first = self.pattern_single()?;
+        let mut test = if self.on_any("ext.stmt.match.or") {
+            let mut alternatives = vec![first];
+            loop {
+                self.advance();
+                alternatives.push(self.pattern_single()?);
+                if !self.on_any("ext.stmt.match.or") { break; }
+            }
+            CaseTest::AnyOf(alternatives)
+        } else { first };
+        if self.key("ext.stmt.match.as") {
+            self.advance();
+            match self.pattern_name()? {
+                CaseTest::Keep(name) => test = CaseTest::Also { test: Box::new(test), name },
+                _ => return Err(self.bad_case()),
+            }
+        }
+        Ok(test)
+    }
+
+    fn pattern_single(&mut self) -> Res<crate::form::CaseTest> {
+        use crate::form::CaseTest;
+        let table = self.table;
+        if self.look().shape == Shape::Numeral || self.on_any("op.sub") {
+            let negative = self.on_any("op.sub");
+            if negative { self.advance(); }
+            if self.look().shape != Shape::Numeral { return Err(self.bad_case()); }
+            let text = self.advance().lexeme;
+            let mut number = numeral(&text, table)?;
+            if negative {
+                number = math::compute(math::Calc::Minus, &Value::Small(0), &number).ok_or_else(|| self.bad_case())??;
+            }
+            return Ok(CaseTest::Equal(number));
+        }
+        if self.look().shape == Shape::Quote {
+            let mut chars = String::new();
+            while self.look().shape == Shape::Quote { chars.push_str(&self.advance().lexeme); }
+            return Ok(CaseTest::Equal(Value::text(&chars)));
+        }
+        if self.on_any("syntax.array.open") || self.on_any("syntax.group.open") {
+            let array = self.on_any("syntax.array.open");
+            let end = if array { "syntax.array.close" } else { "syntax.group.close" };
+            self.advance();
+            let mut members = Vec::new();
+            let mut spread = None;
+            let mut comma = false;
+            while !self.on_any(end) {
+                let item = if self.on_any("op.mul") {
+                    self.advance();
+                    if spread.replace(members.len()).is_some() { return Err(self.bad_case()); }
+                    self.pattern_name()?
+                } else { self.pattern_choice()? };
+                members.push(item);
+                if !self.on_any("syntax.call.separator") { break; }
+                self.advance();
+                comma = true;
+            }
+            self.need_sign(table.single(end).unwrap_or_default(), "after the pattern")?;
+            if !array && !comma && members.len() == 1 {
+                if spread.is_some() { return Err(self.bad_case()); }
+                return Ok(members.pop().unwrap());
+            }
+            return Ok(CaseTest::Series { members, spread });
+        }
+        if self.on_any("syntax.map.open") {
+            self.advance();
+            let mut values = Vec::new();
+            let mut ended = false;
+            while !self.on_any("syntax.map.close") {
+                if ended { return Err(self.bad_case()); }
+                if self.on_any("op.pow") {
+                    self.advance();
+                    let capture = self.pattern_name()?;
+                    if !matches!(capture, CaseTest::Keep(_)) { return Err(self.bad_case()); }
+                    values.push(capture);
+                    ended = true;
+                } else {
+                    match self.pattern_single()? {
+                        CaseTest::Equal(_) | CaseTest::Pending(_) => {}
+                        _ => return Err(self.bad_case()),
+                    }
+                    self.need_sign(table.single("syntax.map.pair").unwrap_or_default(), "between a key and its pattern")?;
+                    values.push(self.pattern_choice()?);
+                }
+                if !self.on_any("syntax.map.separator") { break; }
+                self.advance();
+            }
+            self.need_sign(table.single("syntax.map.close").unwrap_or_default(), "after the mapping pattern")?;
+            return Ok(CaseTest::Pending(values));
+        }
+        if self.look().shape != Shape::Bare { return Err(self.bad_case()); }
+        for (label, value) in [("literal.null", Value::Nil), ("literal.true", Value::Flag(true)), ("literal.false", Value::Flag(false))] {
+            if self.key(label) { self.advance(); return Ok(CaseTest::Equal(value)); }
+        }
+        let binding = self.pattern_name()?;
+        let mut qualified = false;
+        while self.on_any("op.pipe") {
+            self.advance();
+            self.need_word("after the member mark")?;
+            qualified = true;
+        }
+        if !self.on_any("syntax.call.open") {
+            return Ok(if qualified { CaseTest::Pending(Vec::new()) } else { binding });
+        }
+        self.advance();
+        let mut fields = Vec::new();
+        let mut named = HashSet::new();
+        while !self.on_any("syntax.call.close") {
+            if self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).lexeme) {
+                if !named.insert(self.advance().lexeme) { return Err(self.bad_case()); }
+                self.advance();
+            } else if !named.is_empty() { return Err(self.bad_case()); }
+            fields.push(self.pattern_choice()?);
+            if !self.on_any("syntax.call.separator") { break; }
+            self.advance();
+        }
+        self.need_sign(table.single("syntax.call.close").unwrap_or_default(), "after the class pattern")?;
+        Ok(CaseTest::Pending(fields))
     }
 
     /// `switch (v) { case a: ... default: ... }`. The first case equal to
