@@ -274,6 +274,46 @@ only. The extension labels so far, all from PHP:
   makes x a name for a hidden global set when the function is defined,
   so the value lasts from call to call; `global a, b;` makes the names
   mean the globals.
+- `ext.stmt.class.bases.open` and `ext.stmt.class.bases.close` enclose
+  the expressions naming a class's bases. With these marks the body is
+  read as an ordinary suite in a scope of its own, including functions
+  and classes within it. `ext.stmt.class.unready` gives the complaint
+  when the run reaches such a class; making its namespace is still owed.
+- `ext.op.lambda` begins a short routine whose names precede the body
+  mark, and whose body is one expression. The reader enters a fresh
+  scope for that expression, including another short routine within it.
+  Keeping the enclosing cells is still owed, so reaching this form
+  raises `ext.system.scope.unready` before any part of it runs.
+- `ext.op.tuple` joins values within grouping marks, a returned value,
+  an assigned value, or a statement's targets. A final mark still joins
+  a tuple of one, and empty grouping marks hold a tuple of none. This
+  reading does not give arrays the name of tuples: reaching a tuple or
+  a taking-apart raises `ext.system.scope.unready` pending tuple values.
+- `ext.stmt.nonlocal` declares a list of names belonging to an enclosing
+  function. Every name is read; when the declaration is reached,
+  `ext.stmt.nonlocal.unrun` says that the enclosing cells are not yet
+  kept. `ext.stmt.global` instead uses the existing outermost bindings.
+- `ext.stmt.yield` reads a value handed out from a routine, or no value;
+  `ext.stmt.yield.from` precedes a source of further values. The reader
+  keeps the whole expression. `ext.stmt.yield.unrun` stops the run when
+  it reaches the handing-out, since suspended routines are still owed.
+- `ext.stmt.with` reads a context expression and its suite;
+  `ext.stmt.with.as` gives a name to what that context hands in. Further
+  contexts may be separated as arguments are. The suite is read whole,
+  then `ext.system.scope.unready` refuses to run this form until entering
+  and leaving the context can both be honoured.
+- `ext.stmt.del` reads the names or indexed places to be taken away.
+  This reading leaves the places untouched and raises
+  `ext.system.scope.unready` when reached; removal belongs to the fuller
+  account of binding targets.
+- `ext.lexical.string.long` lists repeated quote marks enclosing a string
+  over several lines. Quotes within it do not close it unless the whole
+  mark stands there, and comment marks remain text. The ordinary string
+  escapes are read. Prefixes and other string forms are not added here.
+- `ext.system.scope.unready` holds plain words for a scope form whose
+  reading is provided before its running. The complaint is part of the
+  read program and is raised only when that form is reached, never while
+  reading an uncalled function. It cannot make an unread body acceptable.
 - `ext.stmt.decorator`: marks before a function definition, each followed
   by an expression on its own line. The expressions are worked out in
   the order written and kept until the function is bound to its name.
@@ -445,7 +485,10 @@ only. The extension labels so far, all from PHP:
   array or a map, written like a call (`array(1, 2)`, `array("a" => 1)`).
 - `ext.op.index.append`: a switch; `a[] = v` appends.
 - `ext.stmt.for.collection`: a switch; `for v in a`, where a is not a
-  range, walks what a holds. Python's `for x in [1, 2]`.
+  range, walks what a holds. Python's `for x in [1, 2]`. Where
+  `ext.op.comprehension.for` is spelled too, it gathers the source as
+  a comprehension does: array items, text letters, or map keys. A
+  source with no such members says `ext.syntax.collection.unwalkable`.
 - `ext.builtin.print_r`: a builtin writing a value over lines, as PHP's
   `print_r` does: a scalar on its own, an array as `Array` and its places
   in brackets, each array within eight spaces further along.
@@ -553,7 +596,9 @@ only. The extension labels so far, all from PHP:
   `ext.syntax.map.spread.unmapped` for spreading pairs from no map.
 - `ext.builtin.range.value`: a switch; a call of the range builtin
   yields an eager array from one, two or three whole-number bounds,
-  the last a nonzero step. Without it the range remains loop syntax.
+  the last a nonzero step. A for loop reads this call as a collection
+  too, keeping its single bound or its backward step. Without the
+  switch the range remains loop syntax.
   `ext.builtin.list` gathers one collection into an array;
   `ext.builtin.sum` adds its members to an optional starting value,
   and `ext.builtin.any` asks whether any member holds true.
@@ -1817,6 +1862,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.prologue.brief.setting` | - | - | - | - | `short_open_tag` | - | - | - | - | - |
 | `ext.lexical.prologue.echo` | - | - | - | - | `<?=` | - | - | - | - | - |
 | `ext.lexical.prologue.folded` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.lexical.string.long` | - | - | `"""` `'''` | - | - | - | - | - | - | - |
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | - | - | `true` | - | - | - | - | - |
@@ -1859,6 +1905,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.index.text` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.text.first` | - | - | - | - | `Only the first byte will be assigned to the string offset` | - | - | - | - | - |
 | `ext.op.instanceof` | - | - | - | - | `instanceof` | - | - | - | - | - |
+| `ext.op.lambda` | - | - | `lambda` | - | - | - | - | - | - | - |
 | `ext.op.member` | - | - | - | - | `->` | - | - | - | - | - |
 | `ext.op.member.by_value` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.name_by_value` | - | - | - | - | `$` | - | - | - | - | - |
@@ -1872,6 +1919,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.scope` | - | - | - | - | `::` | - | - | - | - | - |
 | `ext.op.spelled` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.ternary` | - | - | - | - | `?` `:` | - | - | - | - | - |
+| `ext.op.tuple` | - | - | `,` | - | - | - | - | - | - | - |
 | `ext.op.walk.class` | - | - | - | - | `Iterator` | - | - | - | - | - |
 | `ext.op.walk.giver` | - | - | - | - | `getIterator` | - | - | - | - | - |
 | `ext.op.walk.giver.class` | - | - | - | - | `IteratorAggregate` | - | - | - | - | - |
@@ -1903,7 +1951,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.catch.separator` | - | - | `,` | - | `\|` | - | - | - | - | - |
 | `ext.stmt.catch.tuple.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.tuple.open` | - | - | `(` | - | - | - | - | - | - | - |
-| `ext.stmt.class` | - | - | - | - | `class` | - | - | - | - | - |
+| `ext.stmt.class` | - | - | `class` | - | `class` | - | - | - | - | - |
+| `ext.stmt.class.bases.close` | - | - | `)` | - | - | - | - | - | - | - |
+| `ext.stmt.class.bases.open` | - | - | `(` | - | - | - | - | - | - | - |
 | `ext.stmt.class.caller` | - | - | - | - | `__call` | - | - | - | - | - |
 | `ext.stmt.class.constructor` | - | - | - | - | `__construct` | - | - | - | - | - |
 | `ext.stmt.class.destructor` | - | - | - | - | `__destruct` | - | - | - | - | - |
@@ -1920,6 +1970,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.shared` | - | - | - | - | `static` | - | - | - | - | - |
 | `ext.stmt.class.this` | - | - | - | - | `$this` | - | - | - | - | - |
 | `ext.stmt.class.trait` | - | - | - | - | `trait` | - | - | - | - | - |
+| `ext.stmt.class.unready` | - | - | `NotImplementedError: this class form cannot run yet` | - | - | - | - | - | - | - |
 | `ext.stmt.class.uses` | - | - | - | - | `use` | - | - | - | - | - |
 | `ext.stmt.class.uses.alias` | - | - | - | - | `as` | - | - | - | - | - |
 | `ext.stmt.class.writer` | - | - | - | - | `__set` | - | - | - | - | - |
@@ -1927,6 +1978,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.decorator` | - | - | `@` | - | - | - | - | - | - | - |
 | `ext.stmt.decorator.amiss` | - | - | `A decorator must stand on its own line before a function definition` | - | - | - | - | - | - | - |
 | `ext.stmt.default` | - | - | - | - | `default` | - | - | - | - | - |
+| `ext.stmt.del` | - | - | `del` | - | - | - | - | - | - | - |
 | `ext.stmt.do` | - | - | - | - | `do` | - | - | - | - | - |
 | `ext.stmt.finally` | - | - | `finally` | - | `finally` | - | - | - | - | - |
 | `ext.stmt.for.c` | - | - | - | - | `for` | - | - | - | - | - |
@@ -1942,10 +1994,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.function.positional_only` | - | - | `/` | - | - | - | - | - | - | - |
 | `ext.stmt.function.returns` | - | - | `->` | - | `:` | - | - | - | - | - |
 | `ext.stmt.function.short` | - | - | - | - | `fn` `=>` | - | - | - | - | - |
-| `ext.stmt.global` | - | - | - | - | `global` | - | - | - | - | - |
+| `ext.stmt.global` | - | - | `global` | - | `global` | - | - | - | - | - |
 | `ext.stmt.import` | - | - | `import` | - | - | - | - | - | - | - |
 | `ext.stmt.import.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.import.from` | - | - | `from` | - | - | - | - | - | - | - |
+| `ext.stmt.nonlocal` | - | - | `nonlocal` | - | - | - | - | - | - | - |
+| `ext.stmt.nonlocal.unrun` | - | - | `Nonlocal bindings cannot be run without enclosing function cells` | - | - | - | - | - | - | - |
 | `ext.stmt.static` | - | - | - | - | `static` | - | - | - | - | - |
 | `ext.stmt.static.read_in` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.switch` | - | - | - | - | `switch` | - | - | - | - | - |
@@ -1957,6 +2011,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.try` | - | - | `try` | - | `try` | - | - | - | - | - |
 | `ext.stmt.try.else` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack` | - | - | - | - | `list` | - | - | - | - | - |
+| `ext.stmt.with` | - | - | `with` | - | - | - | - | - | - | - |
+| `ext.stmt.with.as` | - | - | `as` | - | - | - | - | - | - | - |
+| `ext.stmt.yield` | - | - | `yield` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.from` | - | - | `from` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.unrun` | - | - | `Generators cannot be run` | - | - | - | - | - | - | - |
 | `ext.syntax.array.spread` | - | - | `*` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss` | - | - | `TypeError: invalid arguments` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.builtin` | - | - | `TypeError: keyword arguments for this builtin are not supported` | - | - | - | - | - | - | - |
@@ -2031,6 +2090,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.request.server` | - | - | - | - | `$_SERVER` | - | - | - | - | - |
 | `ext.system.request.settings` | - | - | - | - | `$__started_with` | - | - | - | - | - |
 | `ext.system.runner` | - | - | - | - | `PHP_BINARY` | - | - | - | - | - |
+| `ext.system.scope.unready` | - | - | `NotImplementedError: this scope form cannot run yet` | - | - | - | - | - | - | - |
 | `ext.system.source.class` | - | - | - | - | `__CLASS__` | - | - | - | - | - |
 | `ext.system.source.directory` | - | - | - | - | `__DIR__` | - | - | - | - | - |
 | `ext.system.source.file` | - | - | - | - | `__FILE__` | - | - | - | - | - |

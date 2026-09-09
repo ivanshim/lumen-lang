@@ -906,6 +906,116 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// A form may be read whole before the run has the means to keep it.
+    fn scope_fault(&mut self, words: &[String]) {
+        self.constant(Value::text(words.first().map_or("", String::as_str)));
+        self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
+    }
+
+    /// A class body has its own reading scope. Its making is still owed.
+    fn scoped_class(&mut self) -> Res<()> {
+        self.take();
+        let named = self.want_name("as the class name")?;
+        if self.on_any(&self.lang.class_bases_open) {
+            self.take();
+            let from = self.mark();
+            let close = self.lang.class_bases_close.first().cloned().ok_or("Class bases need a closing mark")?;
+            while !self.at_symbol(&close) {
+                self.expr(0)?;
+                if !self.on_any(&self.lang.tuple_marks) { break; }
+                self.take();
+            }
+            self.want_sign(&close, "after the class bases")?;
+            self.piece().instrs.truncate(from);
+        }
+        let _body = self.routine(&named, Vec::new(), 0, true, |a| a.body())?;
+        self.scope_fault(&self.lang.class_unready.clone());
+        Ok(())
+    }
+
+    /// Read the short routine's names and its body in a fresh scope.
+    fn scoped_lambda(&mut self) -> Res<()> {
+        self.take();
+        let mark = self.lang.block_intros.first().cloned().ok_or("Lambda needs a body mark")?;
+        let mut names = Vec::new();
+        let from = self.mark();
+        while !self.at_symbol(&mark) {
+            let name = self.want_name("as a lambda parameter")?;
+            if names.contains(&name) { return Err("Duplicate lambda parameter".to_string()); }
+            names.push(name);
+            if self.on_assign() { self.take(); self.expr(0)?; }
+            if !self.on_any(&self.lang.tuple_marks) { break; }
+            self.take();
+        }
+        self.want_sign(&mark, "before the lambda body")?;
+        self.piece().instrs.truncate(from);
+        let count = names.len();
+        let _body = self.routine(ANONYMOUS, names, count, true, |a| {
+            a.expr(0)?;
+            a.write(RESULT_CELL);
+            Ok(())
+        })?;
+        self.scope_fault(&self.lang.scope_unready.clone());
+        Ok(())
+    }
+
+    /// Commas here join one value, unlike commas between call arguments.
+    fn scope_value(&mut self) -> Res<()> {
+        let from = self.mark();
+        self.expr_at(0, false)?;
+        self.scope_tail(from)
+    }
+
+    fn scope_tail(&mut self, from: usize) -> Res<()> {
+        if !self.on_any(&self.lang.tuple_marks) { return Ok(()); }
+        while self.on_any(&self.lang.tuple_marks) {
+            self.take();
+            if self.on_sep() || matches!(self.look().shape, Shape::Close | Shape::Finish)
+                || self.on_assign()
+                || self.lang.grouping.as_ref().map_or(false, |g| self.at_symbol(&g.close)) { break; }
+            self.expr_at(0, false)?;
+        }
+        self.piece().instrs.truncate(from);
+        self.scope_fault(&self.lang.scope_unready.clone());
+        Ok(())
+    }
+
+    fn scoped_statement(&mut self) -> Res<()> {
+        let lang = self.lang;
+        let word = self.take().lexeme;
+        let from = self.mark();
+        let message;
+        if Lang::spells(&lang.nonlocal_words, &word) {
+            loop {
+                self.want_name("after the nonlocal keyword")?;
+                if !self.on_any(&lang.tuple_marks) { break; }
+                self.take();
+            }
+            message = &lang.nonlocal_unrun;
+        } else if Lang::spells(&lang.with_words, &word) {
+            loop {
+                self.expr(0)?;
+                if self.on_any(&lang.with_as_words) {
+                    self.take();
+                    self.want_name("as the name bound by the context")?;
+                }
+                if !self.on_any(&lang.tuple_marks) { break; }
+                self.take();
+            }
+            self.body()?;
+            message = &lang.scope_unready;
+        } else {
+            if Lang::spells(&lang.yield_words, &word) && self.on_any(&lang.yield_from_words) { self.take(); }
+            if !self.on_sep() && !matches!(self.look().shape, Shape::Close | Shape::Finish) {
+                self.scope_value()?;
+            }
+            message = if Lang::spells(&lang.yield_words, &word) { &lang.yield_unrun } else { &lang.scope_unready };
+        }
+        self.piece().instrs.truncate(from);
+        self.scope_fault(message);
+        Ok(())
+    }
+
     fn stmt(&mut self) -> Res<()> {
         let lang = self.lang;
         // A language that tells where a complaint happened needs to
@@ -922,6 +1032,10 @@ impl<'a> Compiler<'a> {
         }
         if self.look().shape == Shape::Instr || self.on_any(&lang.decorator_words) {
             let w = self.look().lexeme.clone();
+            if Lang::spells(&lang.nonlocal_words, &w) || Lang::spells(&lang.yield_words, &w)
+                || Lang::spells(&lang.del_words, &w) || Lang::spells(&lang.with_words, &w) {
+                return self.scoped_statement();
+            }
             if !lang.let_words.is_empty() && Lang::spells(&lang.let_words, &w) {
                 return self.binding();
             }
@@ -970,6 +1084,7 @@ impl<'a> Compiler<'a> {
             }
             let names_class = |word: &str| Lang::spells(&lang.class_words, word) || Lang::spells(&lang.interface_words, word);
             if names_class(&w) {
+                if !lang.class_bases_open.is_empty() { return self.scoped_class(); }
                 return self.class_decl();
             }
             // A class may be marked before it is named: `abstract class C`.
@@ -2071,7 +2186,7 @@ impl<'a> Compiler<'a> {
             return Err(format!("Expected '{}' after for loop variable, got: {}", lang.in_words[0], self.look().lexeme));
         }
         self.take();
-        let range_call = self.look().shape == Shape::Instr
+        let range_call = !lang.range_value && self.look().shape == Shape::Instr
             && lang.builtins.get(&self.look().lexeme) == Some(&Builtin::Span)
             && lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).is_lexeme(Shape::Sign, &c.open));
         if range_call {
@@ -2098,6 +2213,9 @@ impl<'a> Compiler<'a> {
                 let source: Vec<Instr> = self.piece().instrs.drain(from..).collect();
                 for w in relocated(source, -(from as i64) + self.mark() as i64) {
                     self.put(w);
+                }
+                if !lang.comprehension_for.is_empty() {
+                    self.act(Action::ComprehensionItems, 1);
                 }
                 self.write(&bag);
                 return self.walk(&bag, None, &var, false, None);
@@ -2148,7 +2266,7 @@ impl<'a> Compiler<'a> {
         } else if by_cell {
             self.a_cell(&self.lang.unshared_given.clone(), true, None)?;
         } else {
-            self.expr(0)?;
+            if self.lang.tuple_marks.is_empty() { self.expr(0)?; } else { self.scope_value()?; }
         }
         // The value is worked out first, then the last parts of any open
         // try statements run, and only then does the program leave.
@@ -3243,6 +3361,13 @@ impl<'a> Compiler<'a> {
                     || Lang::spells(&self.lang.block_intros, &before.lexeme)))
         };
         self.expr_at(0, false)?;
+        if self.on_any(&self.lang.tuple_marks) {
+            self.scope_tail(from)?;
+            if self.on_assign() { self.take(); self.scope_value()?; }
+            self.piece().instrs.truncate(from);
+            self.scope_fault(&self.lang.scope_unready.clone());
+            return Ok(());
+        }
         if starts_here && self.on_any(&self.lang.annotation_marks) {
             return self.annotated_statement(from, target_at);
         }
@@ -3283,7 +3408,9 @@ impl<'a> Compiler<'a> {
         // before each of its places.
         match self.waiting.clone() {
             Some(cell) => self.read(&cell),
-            None => self.expr(0)?,
+            None => {
+                if self.lang.tuple_marks.is_empty() { self.expr(0)?; } else { self.scope_value()?; }
+            }
         }
         self.kept(keep);
         Ok(())
@@ -4075,6 +4202,7 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let from = self.mark();
         let tok = self.look().clone();
+        if self.on_any(&lang.lambda_words) { return self.scoped_lambda(); }
         // `list($a, $b) = v`: the places named on the left each take
         // the matching place of the value on the right.
         if Lang::spells(&lang.unpack_words, &tok.lexeme) && matches!(tok.shape, Shape::Instr | Shape::Sign) {
@@ -4335,7 +4463,10 @@ impl<'a> Compiler<'a> {
                         if let Some(clause) = self.comprehension_ahead() {
                             self.comprehension(&group, clause, false)?;
                         } else {
-                            self.expr(0)?;
+                            if self.at_symbol(&group.close) && !lang.tuple_marks.is_empty() {
+                                self.scope_fault(&lang.scope_unready.clone());
+                            } else if lang.tuple_marks.is_empty() { self.expr(0)?; }
+                            else { self.scope_value()?; }
                             self.want_sign(&group.close, "to close a group")?;
                         }
                         self.called_on_value()?;
