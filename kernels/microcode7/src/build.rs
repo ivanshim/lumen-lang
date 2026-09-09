@@ -140,6 +140,7 @@ pub struct Builder<'a> {
     tells_place: bool,
     generator_seen: bool,
     reading_yield: bool,
+    place_depth: usize,
     outside_lambda: Vec<String>,
 }
 
@@ -247,7 +248,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
     }
     let outer_layers = layers.len();
     let mut r = Builder { outside_lambda: Vec::new(), class_bindings: Vec::new(), receiver: None, within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
-        generator_seen: false, reading_yield: false,
+        generator_seen: false, reading_yield: false, place_depth: 0,
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
@@ -3606,7 +3607,10 @@ impl<'a> Builder<'a> {
         let cuts = self.divided_at(lo, hi, "ext.op.tuple");
         if cuts.is_empty() && !array {
             self.pos = lo;
-            let place = self.monadic_expr()?;
+            self.place_depth += 1;
+            let read = self.monadic_expr();
+            self.place_depth -= 1;
+            let place = read?;
             if self.pos != hi { return Err(bad); }
             let sign = self.look().clone();
             let old = self.waiting.replace(source.to_string());
@@ -5268,7 +5272,7 @@ impl<'a> Builder<'a> {
             }
             let named = self.need_word("after the member mark")?;
             let calling = table.single("syntax.call.open").map_or(false, |o| self.sign(o));
-            if reaching && table.flag("ext.op.member.pipes") && (calling || !self.on_writing()) {
+            if reaching && table.flag("ext.op.member.pipes") && (calling || (self.place_depth == 0 && !self.on_writing())) {
                 let target = match &node { Form::Read(slot) => Some(slot.clone()), _ => None };
                 let held = self.gensym("subject");
                 let save = Form::Write(held.clone(), Box::new(node));

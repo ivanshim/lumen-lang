@@ -119,6 +119,7 @@ pub struct Compiler<'a> {
     pieces: Vec<Piece>,
     counter: usize,
     yield_operand: bool,
+    writing_place: bool,
     comprehension_names: Vec<(String, String)>,
     /// The class being read, and what it stands on: what `self` and
     /// `parent` mean inside a method.
@@ -269,7 +270,7 @@ pub fn compile_within(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { uncarried: Vec::new(), class_names: Vec::new(), method_self: None, lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, yield_operand: false, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { uncarried: Vec::new(), class_names: Vec::new(), method_self: None, lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, yield_operand: false, writing_place: false, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;
@@ -3681,7 +3682,10 @@ impl<'a> Compiler<'a> {
         if !listed {
             self.pos = begin;
             let from = self.mark();
-            self.prefix()?;
+            let reading = std::mem::replace(&mut self.writing_place, true);
+            let place = self.prefix();
+            self.writing_place = reading;
+            place?;
             if self.pos != end { return Err(amiss.clone()); }
             let previous = self.waiting.replace(held.to_string());
             let done = self.store_into(from, None, None, "=");
@@ -5752,7 +5756,7 @@ impl<'a> Compiler<'a> {
             }
             let named = self.want_name("after the member mark")?;
             let call = lang.calling.clone().filter(|c| self.at_symbol(&c.open));
-            if member && lang.member_pipes && (call.is_some() || !self.on_writing()) {
+            if member && lang.member_pipes && (call.is_some() || (!self.writing_place && !self.on_writing())) {
                 let resume = self.pos;
                 let target = match &self.piece().instrs[from..] {
                     [Instr::Read(slot)] => Some(slot.ident.to_string()),

@@ -440,6 +440,7 @@ only. The extension labels so far, all from PHP:
   in a number (`1e9`, `2.5E-3`), always a real.
 - `ext.lexical.number.imaginary`: single letters following a numeral,
   as `2j` or `2.5J`. The reader keeps the numeral and its suffix whole.
+  A spelled decimal exponent may precede the suffix, as in `1e3j`.
   The kernels have no imaginary values; reaching one stops the run with
   the words in `ext.lexical.number.imaginary.unrun`. A routine holding
   one may still be read and bound without reaching it.
@@ -579,6 +580,8 @@ only. The extension labels so far, all from PHP:
   signs reads a member when the object or class holds that name, and pipes
   otherwise. A method takes its object before the written arguments; a
   pipe keeps the ordinary rules for changing the array named on its left.
+  A member written into, whether nested, indexed or among tuple targets,
+  remains a member place throughout the reading of that target.
 - `ext.stmt.class.unready`: words said when a class form has been read but
   cannot yet run: header keywords or unpacking, annotations, classes inside
   functions, or statements in a class
@@ -1939,7 +1942,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.name_lead` | - | - | - | - | `\` | - | - | - | - | - |
 | `ext.lexical.number.amiss` | - | - | - | - | `Invalid numeric literal` | - | - | - | - | - |
 | `ext.lexical.number.binary_prefix` | - | - | - | - | `0b` `0B` | - | - | - | - | - |
-| `ext.lexical.number.exponent` | - | - | - | - | `e` `E` | - | - | - | - | - |
+| `ext.lexical.number.exponent` | - | - | `e` `E` | - | `e` `E` | - | - | - | - | - |
 | `ext.lexical.number.imaginary` | - | - | `j` `J` | - | - | - | - | - | - | - |
 | `ext.lexical.number.imaginary.unrun` | - | - | `NotImplementedError: imaginary numbers cannot be run` | - | - | - | - | - | - | - |
 | `ext.lexical.number.octal_lead` | - | - | - | - | `true` | - | - | - | - | - |
