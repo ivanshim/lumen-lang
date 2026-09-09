@@ -1,0 +1,6 @@
+print(" ab ".lstrip(), " ab ".rstrip(), "a,b,c".rsplit(",", 1), " a  b c ".split(None, 1))
+print("banana".find("na", 3), "banana".rfind("na"), "banana".index("na"), "banana".count("an"))
+print("abc".startswith("b", 1), "abc".endswith("b", 0, 2), "abc".replace("b", "!"))
+print("123".isdigit(), "abc".isalpha(), "a1".isalnum(), " \t".isspace(), "a1".islower(), "A1".isupper())
+print("aBC dEF".title(), "hELLO".capitalize(), "x".center(4, "-"), "x".ljust(3, "."), "x".rjust(3, "."), "-42".zfill(6))
+print("A,B".lower().split(",")[1], "{0:x}|{1:,}|{{ok}}".format(255, 1234567))

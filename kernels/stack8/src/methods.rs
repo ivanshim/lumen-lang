@@ -187,7 +187,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                     if op=="pop" && a.len()==1 {return Err(fault("key")+&a[0].representation(words));}
                     if op=="setdefault" {pairs.push((a[0].clone(),value.clone()));store(Value::Map(Rc::new(pairs)))?;} return Ok(value);
                 }
-                "keys" | "values" | "items" => {arity(0,0)?;return Ok(Value::array(pairs.iter().map(|(k,v)| match op {"keys"=>k.clone(),"values"=>v.clone(),_=>Value::Tuple(Rc::new(vec![k.clone(),v.clone()]))}).collect()).held(true));}
+                "keys" | "values" | "items" => {arity(0,0)?;return Ok(Value::View(Rc::new((receiver.clone(),op.to_string()))));}
                 "copy" => {arity(0,0)?;return Ok(Value::Map(Rc::new(pairs)).held(true));}
                 "clear" => {arity(0,0)?;pairs.clear();}
                 "update" => {
@@ -205,8 +205,15 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
             match op {
                 "bit_length" if !matches!(held,Value::Real(_)) => Ok(Value::Small(held.as_big()?.bits() as i64)),
                 "is_integer" => Ok(Value::Flag(match &held {Value::Real(r)=>!r.outside() && (&r.p % &r.q).is_zero(),_=>true})),
-                "as_integer_ratio" => {let (p,q)=match &held {Value::Real(r) if !r.outside()=>(r.p.clone(),r.q.clone()),Value::Real(_)=>return Err(fault("unready")),_=>(held.as_big()?,BigInt::from(1))};Ok(Value::Tuple(Rc::new(vec![Value::of_big(p),Value::of_big(q)])))},
-                "hex" if matches!(held,Value::Real(_)) => Err(fault("unready")),
+                "as_integer_ratio" => {let (p,q)=match &held {Value::Real(r) if !r.outside()=>crate::value::from_binary(crate::value::as_binary(&r.p,&r.q)).ok_or_else(||fault("unready"))?,Value::Real(_)=>return Err(fault("unready")),_=>(held.as_big()?,BigInt::from(1))};Ok(Value::Tuple(Rc::new(vec![Value::of_big(p),Value::of_big(q)])))},
+                "hex" if matches!(held,Value::Real(_)) => {
+                    let Value::Real(r) = &held else { unreachable!() };
+                    let n=crate::value::as_binary(&r.p,&r.q);
+                    let bits=n.to_bits();let minus=if n.is_sign_negative() || r.below { "-" } else { "" };
+                    let shown=if n.is_nan() {"nan".to_string()} else if n.is_infinite() {format!("{minus}inf")} else if n==0.0 {format!("{minus}0x0.0p+0")}
+                        else {let power=((bits>>52)&0x7ff) as i32;let (lead,exponent)=if power==0 {(0,-1022)}else{(1,power-1023)};format!("{minus}0x{lead}.{:013x}p{exponent:+}",bits&0xfffffffffffff)};
+                    Ok(Value::text(&shown))
+                },
                 _=>Err(fault("attribute")),
             }
         }

@@ -429,6 +429,10 @@ impl<'a> Machine<'a> {
     /// asked of the thing where it is one, and counted through as an
     /// array is where it is not.
     fn walking(&mut self, op: &Prim, name: &str, v: &[Value]) -> Result<Value, Escape> {
+        if v.iter().any(|item| matches!(item, Value::Mutable(..) | Value::Window(..))) {
+            let settled: Vec<Value> = v.iter().map(Value::settled).collect();
+            return self.walking(op, name, &settled);
+        }
         let n = |want: usize| match v.len() == want {
             true => Ok(()),
             false => Err(Escape::Error(format!("{}() expects {} argument(s), got {}", name, want, v.len()))),
@@ -2738,6 +2742,16 @@ impl<'a> Machine<'a> {
     }
 
     fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        let mut found = Vec::new();
+        for (word, _) in &keywords {
+            if found.contains(word) { return Err(self.method_fault("arguments").into()); }
+            found.push(word.clone());
+        }
+        if !keywords.is_empty() && !["sort", "split", "rsplit", "format", "update", "encode"].contains(&name) {
+            let spelling = self.table.single(&format!("ext.builtin.method.{name}")).unwrap_or(name);
+            return Err(self.builtin_keyword_fault(spelling).into());
+        }
+
         if name != "sort" {
             let says = |kind: &str| self.method_fault(kind);
             return crate::members::Request { target: receiver, operation: name, given: arguments, named: &keywords, names: self.wording(), complaint: &says }.answer().map_err(Escape::from);
@@ -2779,7 +2793,8 @@ impl<'a> Machine<'a> {
             let mut at = sorted.len();
             while at != 0 {
                 let arguments = if reverse { [sorted[at-1].0.clone(), pair.0.clone()] } else { [pair.0.clone(), sorted[at-1].0.clone()] };
-                if !self.prim(Prim::Lt, "", &arguments)?.is_true() { break; }
+                let lower = if let (Value::Text(a), Value::Text(b)) = (&arguments[0], &arguments[1]) { a < b } else { self.prim(Prim::Lt, "", &arguments)?.is_true() };
+                if !lower { break; }
                 at -= 1;
             }
             sorted.insert(at, pair);
@@ -2926,7 +2941,7 @@ impl<'a> Machine<'a> {
                 Value::Text(key) => names.push((key.to_string(), pair.1.clone())),
                 Value::Flag(true) => {
                     let fault = || self.argument_fault("ext.syntax.call.spread.pairs.amiss", None);
-                    if let Value::Dict(entries) = &pair.1 {
+                    if let Value::Dict(entries) = pair.1.settled() {
                         for (k, v) in entries.iter() {
                             match k {
                                 Value::Text(text) => names.push((text.to_string(), v.clone())),
@@ -2936,7 +2951,7 @@ impl<'a> Machine<'a> {
                     } else { return Err(fault().into()); }
                 }
                 Value::Flag(false) => {
-                    match &pair.1 {
+                    match &pair.1.settled() {
                         Value::Progression(walk) => {
                             let mut place = BigInt::from(0);
                             while place < walk.count() {
@@ -3469,7 +3484,24 @@ impl<'a> Machine<'a> {
     // ---------- operations
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
-        if v.iter().any(|value| matches!(value, Value::Mutable(..))) && !matches!(op, Prim::Say | Prim::Out | Prim::Listed) {
+        if matches!(op, Prim::Added | Prim::Placed) {
+            if let Some(Value::Mutable(cell, _)) = v.first() {
+                let mut arguments = v.to_vec();
+                arguments[0] = v[0].settled();
+                let changed = self.prim(op, name, &arguments)?;
+                cell.replace(changed);
+                return Ok(v[0].clone());
+            }
+        }
+        if let Prim::ExtendLiteral(_, expanded) = op {
+            if matches!(v.first(), Some(Value::Mutable(..))) || expanded && matches!(v.get(1), Some(Value::Mutable(..))) {
+                let mut arguments = v.to_vec();
+                arguments[0] = arguments[0].settled();
+                if expanded { arguments[1] = arguments[1].settled(); }
+                return self.prim(op, name, &arguments);
+            }
+        }
+        if v.iter().any(|value| matches!(value, Value::Mutable(..))) && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed) {
             let settled: Vec<Value> = v.iter().map(Value::settled).collect();
             return self.prim(op, name, &settled);
         }
@@ -4741,7 +4773,7 @@ impl<'a> Machine<'a> {
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(Rc::new(Vec::new())),
-                    1 => Value::Vector(Rc::new(self.gathered_members(&v[0])?)),
+                    1 => {let result=Value::Vector(Rc::new(self.gathered_members(&v[0])?)); if matches!(v[0],Value::Window(..)|Value::Mutable(_,true)){result.keep(true)}else{result}},
                     _ => return Err(format!("{}() expects 1 argument, got {}", name, v.len())),
                 }
             }
@@ -5027,6 +5059,7 @@ impl<'a> Machine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {
+        if matches!(target, Value::Mutable(..) | Value::Window(..)) { return self.element(&target.settled(), at, how); }
         if let Value::Progression(walk) = target {
             match at {
                 Value::Small(_) | Value::Huge(_) | Value::Flag(_) => return walk.item(&at.as_big()?).ok_or_else(|| self.argument_fault("ext.builtin.range.index", None)),
@@ -5098,6 +5131,9 @@ impl<'a> Machine<'a> {
     }
 
     fn span_written(&self, held: &mut Value, bounds: &[Value], handed: &Value) -> Result<(), String> {
+        if let Value::Mutable(cell, _) = held { return self.span_written(&mut cell.borrow_mut(), bounds, handed); }
+        let settled = handed.settled();
+        let handed = &settled;
         let Value::Vector(row) = held else { return Err(self.span_complaint("unsupported")) };
         let (span, picked, unit) = self.span_selection(bounds, row.len())?;
         let coming: Vec<Value> = match handed {
@@ -5222,6 +5258,7 @@ impl<'a> Machine<'a> {
         Ok(match source {
             Value::Text(word) => word.chars().map(|letter| Value::text(&String::from(letter))).collect(),
             Value::Mutable(cell, _) => return self.gathered_members(&cell.borrow()),
+            Value::Window(..) => return self.gathered_members(&source.settled()),
             Value::Vector(values) | Value::Row(values) => values.to_vec(),
             Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
             Value::Progression(walk) => {
@@ -5551,6 +5588,7 @@ fn put_before(held: &mut Value, coming: Vec<Value>, name: &str) -> Result<usize,
 }
 
 fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &str, builds: bool, letter: Option<String>) -> Result<bool, String> {
+    if let Value::Mutable(cell, _) = held { return written_into(&mut cell.borrow_mut(), key, value, no_places, builds, letter); }
     // Where a language writes into text, a named place in text takes a
     // letter and the name goes on holding text.
     if let (Value::Text(had), Some(put), Some(at)) = (&*held, &letter, &key) {
@@ -5601,6 +5639,7 @@ fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &
 /// it writes into the array itself. A walk counts places, so a map is
 /// reached by its position as a vector is.
 fn shared_item(held: &mut Value, at: &Value) -> Result<Rc<RefCell<Value>>, String> {
+    if let Value::Mutable(cell, _) = held { return shared_item(&mut cell.borrow_mut(), at); }
     let i = as_index(at)?;
     // A thing's members are counted as an array's places are, but they
     // are kept behind a shared holding, so the cell is made within it.
@@ -5643,6 +5682,7 @@ fn shared_item(held: &mut Value, at: &Value) -> Result<Rc<RefCell<Value>>, Strin
 /// places along the way made where they are not there yet and the
 /// language makes what a write needs.
 fn shared_deep(held: &mut Value, keys: &[Value], makes: bool) -> Result<Rc<RefCell<Value>>, String> {
+    if let Value::Mutable(cell, _) = held { return shared_deep(&mut cell.borrow_mut(), keys, makes); }
     let Some((last, first)) = keys.split_last() else {
         return Err("No place was named".to_string());
     };

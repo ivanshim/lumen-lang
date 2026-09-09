@@ -59,11 +59,12 @@ impl Request<'_> {
         Ok(Value::Nil)
     }
     pub fn answer(mut self)->ResultValue {
+        let positional=self.given.len();
         if !["format","update","encode"].contains(&self.operation){
             for (name,value) in self.named {
                 let at=match (self.operation,name.as_str()){("split"|"rsplit","sep")=>0,("split"|"rsplit","maxsplit")=>1,_=>return Err(self.fail("arguments"))};
-                if at<self.given.len(){return Err(self.fail("arguments"));}
-                self.given.resize(at+1,Value::Nil);self.given[at]=value.clone();
+                if at<positional{return Err(self.fail("arguments"));}
+                if self.given.len()<=at{self.given.resize(at+1,Value::Nil);}self.given[at]=value.clone();
             }
         }
         match self.target.settled(){
@@ -80,10 +81,21 @@ impl Request<'_> {
         if self.operation=="bit_length" && !real{return Ok(Value::Small(value.as_big()?.bits() as i64));}
         if self.operation=="is_integer"{return Ok(Value::Flag(match &value{Value::Frac(r)=>!r.past_numbers()&&(&r.above%&r.beneath).is_zero(),_=>true}));}
         if self.operation=="as_integer_ratio"{
-            let pair=match value{Value::Frac(r) if !r.past_numbers()=>(r.above.clone(),r.beneath.clone()),Value::Frac(_)=>return Err(self.fail("unready")),other=>(other.as_big()?,BigInt::from(1))};
+            let pair=match value{Value::Frac(r) if !r.past_numbers()=>crate::data::binary_worth(crate::data::nearest_binary(&r.above,&r.beneath)).ok_or_else(||self.fail("unready"))?,Value::Frac(_)=>return Err(self.fail("unready")),other=>(other.as_big()?,BigInt::from(1))};
             return Ok(Value::Row(Rc::new(vec![Value::from_big(pair.0),Value::from_big(pair.1)])));
         }
-        Err(self.fail(if self.operation=="hex"&&real{"unready"}else{"attribute"}))
+        if self.operation=="hex" && real {
+            let Value::Frac(ratio)=value else {unreachable!()};
+            let binary=crate::data::nearest_binary(&ratio.above,&ratio.beneath);
+            let negative=binary.is_sign_negative()||ratio.under;
+            let sign=if negative {"-"}else{""};
+            let output=if binary.is_nan(){String::from("nan")}else if binary.is_infinite(){format!("{}inf",sign)}else if binary==0.0{format!("{}0x0.0p+0",sign)}else{
+                let encoding=binary.to_bits();let exponent=((encoding>>52)&2047) as i32;
+                let integer=if exponent==0{0}else{1};let power=if exponent==0{-1022}else{exponent-1023};
+                format!("{}0x{}.{:013x}p{:+}",sign,integer,encoding&((1u64<<52)-1),power)
+            };return Ok(Value::text(&output));
+        }
+        Err(self.fail("attribute"))
     }
     fn on_text(&self,s:&str)->ResultValue{
         let op=self.operation;
@@ -213,9 +225,9 @@ impl Request<'_> {
     fn on_map(&self,mut entries:Vec<(Value,Value)>)->ResultValue{
         match self.operation{
             "keys"|"values"|"items"=>{
-                self.takes(0,0)?;let mut result=Vec::new();
-                for (k,v) in entries{result.push(match self.operation{"keys"=>k,"values"=>v,_=>Value::Row(Rc::new(vec![k,v]))});}
-                return Ok(Value::Vector(Rc::new(result)).keep(true));
+                self.takes(0,0)?;
+                let portion=if self.operation=="keys"{'k'}else if self.operation=="values"{'v'}else{'i'};
+                return Ok(Value::Window(Rc::new(self.target.clone()),portion));
             }
             "copy"=>{self.takes(0,0)?;return Ok(Value::Dict(Rc::new(entries)).keep(true));}
             "clear"=>{self.takes(0,0)?;entries.clear();}

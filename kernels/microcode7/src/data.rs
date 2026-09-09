@@ -121,6 +121,7 @@ impl Progression {
 pub enum Value {
     Mutable(Rc<RefCell<Value>>, bool),
     Member(Rc<Value>, String),
+    Window(Rc<Value>, char),
     Row(Rc<Vec<Value>>),
     Channel(u8),
     Progression(Rc<Progression>),
@@ -183,7 +184,17 @@ pub struct Names<'a> {
 
 impl Value {
     pub fn settled(&self) -> Value {
-        if let Value::Mutable(place, _) = self { place.borrow().settled() } else { self.clone() }
+        if let Value::Mutable(place, _) = self { return place.borrow().settled(); }
+        if let Value::Window(owner, portion) = self {
+            let mut items=Vec::new();
+            if let Value::Dict(entries)=owner.settled() {
+                for (key,value) in entries.iter() {
+                    items.push(if *portion=='k' {key.clone()} else if *portion=='v' {value.clone()} else {Value::Row(Rc::new(vec![key.clone(),value.clone()]))});
+                }
+            }
+            return Value::Vector(Rc::new(items));
+        }
+        self.clone()
     }
 
     pub fn keep(self, quoted: bool) -> Value {
@@ -229,6 +240,7 @@ impl Value {
             Value::Vector(_) | Value::Dict(_) | Value::Row(_) => Kind::Vector,
             Value::Mutable(place, _) => return place.borrow().kind(),
             Value::Member(..) => return None,
+            Value::Window(..) => Kind::Vector,
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
@@ -240,6 +252,7 @@ impl Value {
         match self {
             Value::Mutable(cell, _) => cell.borrow().is_true(),
             Value::Row(items) => !items.is_empty(),
+            Value::Window(..) => match self.settled() {Value::Vector(items)=>!items.is_empty(),_=>false},
             Value::Progression(walk) => walk.count() != BigInt::zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -265,7 +278,7 @@ impl Value {
             Value::Flag(b) => BigInt::from(*b as i64),
             Value::Nil | Value::Unset => BigInt::zero(),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
-            Value::Vector(_) | Value::Dict(_) | Value::Couple(_) | Value::Row(_) => return Err("Cannot coerce array to number".to_string()),
+            Value::Vector(_) | Value::Dict(_) | Value::Couple(_) | Value::Row(_) | Value::Window(..) => return Err("Cannot coerce array to number".to_string()),
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
             Value::Mutable(place, _) => return place.borrow().as_big(),
@@ -362,6 +375,7 @@ impl Value {
             Value::Mutable(cell, true) => cell.borrow().repr(&w),
             Value::Mutable(cell, false) => cell.borrow().render(w),
             Value::Row(_) => self.repr(&w),
+            Value::Window(_, portion) => format!("dict_{}({})", match portion { 'k'=>"keys",'v'=>"values",_=>"items" }, self.settled().repr(&w)),
             // A cell that names share is written as what it holds.
             Value::Shared(cell) => cell.borrow().render(w),
             Value::Flag(true) if w.flag_counted => "1".to_string(),
@@ -438,6 +452,7 @@ impl Value {
         match self {
             Value::Mutable(place, _) => place.borrow().bare(),
             Value::Member(..) => String::from("<built-in method>"),
+            Value::Window(..) => self.settled().bare(),
             Value::Row(v) => format!("({})", v.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
             Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),
             Value::Progression(p) => {

@@ -1387,7 +1387,7 @@ impl<'a> Engine<'a> {
             match value {
                 Value::Tie(pair) => match &pair.0 {
                     Value::Text(name) => items.push((Some(name.to_string()), pair.1.clone())),
-                    Value::Flag(false) => match &pair.1 {
+                    Value::Flag(false) => match &pair.1.contents() {
                         Value::Counted(r) => {
                             let mut i = BigInt::from(0);
                             while let Some(v) = r.at(i.clone()) { items.push((None, v)); i += 1; }
@@ -1398,7 +1398,7 @@ impl<'a> Engine<'a> {
                         _ => return Err(self.lang.spread_amiss[0].clone().into()),
                     },
                     Value::Flag(true) => {
-                        let Value::Map(m) = &pair.1 else { return Err(self.lang.spread_pairs_amiss[0].clone().into()); };
+                        let Value::Map(m) = pair.1.contents() else { return Err(self.lang.spread_pairs_amiss[0].clone().into()); };
                         for (key, held) in m.iter() {
                             let Value::Text(name) = key else { return Err(self.lang.spread_pairs_amiss[0].clone().into()); };
                             items.push((Some(name.to_string()), held.clone()));
@@ -2184,6 +2184,8 @@ impl<'a> Engine<'a> {
                 let Value::Bond(cell) = holder else {
                     return Err("Cannot take a place out of something that is not an array".into());
                 };
+                let nested = match &*cell.borrow() { Value::Native(held, _) => Some(held.clone()), _ => None };
+                let cell = nested.unwrap_or(cell);
                 let mut inside = cell.borrow_mut();
                 let left = match &*inside {
                     Value::Array(items) if !self.lang.del_words.is_empty() => {
@@ -2391,11 +2393,11 @@ impl<'a> Engine<'a> {
             }
             Action::GatherItem { map, spread } => {
                 let mut both = self.drop_many(2)?.into_iter();
-                let gathered_so_far = both.next().expect("growing literal");
+                let gathered_so_far = both.next().expect("growing literal").contents();
                 let next = both.next().expect("literal item");
                 if *map {
                     let mut pairs = match gathered_so_far { Value::Map(p) => p.as_ref().clone(), _ => unreachable!() };
-                    let new_pairs = match (spread, next) {
+                    let new_pairs = match (spread, next.contents()) {
                         (true, Value::Map(p)) => p.as_ref().clone(),
                         (false, Value::Tie(p)) => vec![(p.0.clone(), p.1.clone())],
                         _ => return Err(self.lang.spread_unmapped.first().cloned().unwrap_or_else(|| "Value has no map pairs".to_string()).into()),
@@ -3792,6 +3794,7 @@ impl<'a> Engine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
+        if matches!(target, Value::Native(..) | Value::View(_)) { return self.element(&target.contents(), at, how); }
         if let Value::Counted(r) = target {
             if matches!(at, Value::Slice(_)) { return Err(self.lang.slice_unsupported.clone().unwrap_or_default()); }
             let index = match at {
@@ -3874,7 +3877,7 @@ impl<'a> Engine<'a> {
             return Err(self.lang.slice_unsupported.clone().unwrap_or_default());
         };
         let (start, stop, step, places) = self.slice_places(parts, items.len())?;
-        let replacement = match given {
+        let replacement = match given.contents() {
             Value::Array(values) => values.as_ref().clone(),
             Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
             Value::Map(pairs) => pairs.iter().map(|(key, _)| key.clone()).collect(),
@@ -3986,6 +3989,7 @@ impl<'a> Engine<'a> {
     fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {
         match value {
             Value::Native(cell, _) => self.comprehension_items(&cell.borrow()),
+            Value::View(_) => self.comprehension_items(&value.contents()),
             Value::Array(items) | Value::Tuple(items) => Ok(items.as_ref().clone()),
             Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
             Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
@@ -4094,6 +4098,13 @@ impl<'a> Engine<'a> {
     }
 
     fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if !named.is_empty() && !matches!(operation, "sort" | "split" | "rsplit" | "format" | "update" | "encode") {
+            let name = self.lang.value_methods.iter().find(|(_, op)| op.as_str() == operation).map(|(word, _)| word.as_str()).unwrap_or(operation);
+            return Err(Self::named_fault(&self.lang.call_builtin_amiss, name));
+        }
+        let mut used = std::collections::HashSet::new();
+        if named.iter().any(|(key,_)| !used.insert(key)) { return Err(self.lang.method_errors["arguments"].clone()); }
+
         if operation == "sort" {
             if !args.is_empty() || !matches!(receiver.contents(), Value::Array(_)) { return Err(self.lang.method_errors["arguments"].clone()); }
             let row = self.order_values(receiver, &named)?;
@@ -4133,7 +4144,8 @@ impl<'a> Engine<'a> {
             let mut j = i;
             while j > 0 {
                 let (left, right) = if backwards { (&decorated[j-1].0, &decorated[j].0) } else { (&decorated[j].0, &decorated[j-1].0) };
-                if !self.truth(&self.dyadic(&Action::Lt, left, right)?) { break; }
+                let lower = match (left.contents(), right.contents()) { (Value::Text(a), Value::Text(b)) => a < b, _ => self.truth(&self.dyadic(&Action::Lt, left, right)?) };
+                if !lower { break; }
                 decorated.swap(j, j-1); j -= 1;
             }
         }
@@ -4175,7 +4187,17 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
-        if !matches!(builtin, Builtin::Say | Builtin::List | Builtin::Out) { for value in args.iter_mut() { *value = value.contents(); } }
+        if matches!(builtin, Builtin::Append | Builtin::Replace) {
+            if let Some(original @ Value::Native(..)) = args.last().cloned() {
+                let Value::Native(cell, _) = &original else { unreachable!() };
+                let last = args.len()-1;
+                args[last] = original.contents();
+                let result = self.builtin(builtin, name, args)?;
+                *cell.borrow_mut() = result;
+                return Ok(original);
+            }
+        }
+        if !matches!(builtin, Builtin::Say | Builtin::List | Builtin::Out | Builtin::Append | Builtin::Replace) { for value in args.iter_mut() { *value = value.contents(); } }
         let sp = self.wording();
         let arity = |n: usize| -> Res<()> {
             if args.len() == n {
@@ -4699,7 +4721,8 @@ impl<'a> Engine<'a> {
             Builtin::List => {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
-                Value::array(self.comprehension_items(&args[0])?)
+                let result = Value::array(self.comprehension_items(&args[0])?);
+                if matches!(args[0], Value::View(_) | Value::Native(_, true)) { result.held(true) } else { result }
             }
             Builtin::Any => {
                 arity(1)?;
@@ -5355,6 +5378,7 @@ fn lies_at(walked: &Value, cell: &Rc<RefCell<Value>>, was: usize) -> Option<usiz
 /// The place an array holds, made a shared cell so that a name fastened
 /// to it writes into the array itself.
 fn shared_item(held: &mut Value, at: &Value) -> Res<Rc<RefCell<Value>>> {
+    if let Value::Native(cell, _) = held { return shared_item(&mut cell.borrow_mut(), at); }
     // A thing's members are counted as an array's places are, but they
     // live behind a shared holding, so the cell is made within it.
     if let Value::Object(thing) = held {
@@ -5405,6 +5429,7 @@ fn shared_item(held: &mut Value, at: &Value) -> Res<Rc<RefCell<Value>>> {
 /// along the way made where they are not there yet and the language
 /// makes what a write needs.
 fn shared_deep(held: &mut Value, keys: &[Value], makes: bool) -> Res<Rc<RefCell<Value>>> {
+    if let Value::Native(cell, _) = held { return shared_deep(&mut cell.borrow_mut(), keys, makes); }
     let Some((last, first)) = keys.split_last() else {
         return Err("No place was named".to_string());
     };

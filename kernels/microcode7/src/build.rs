@@ -4183,7 +4183,7 @@ impl<'a> Builder<'a> {
                 if let Some((label, _)) = crate::table::BUILTIN_LABELS.iter().find(|(label, prim)| *prim == Prim::ValueMethod && table.spells(label, &name)) {
                     let operation = label.strip_prefix("ext.builtin.method.").expect("a method label");
                     left = prim_call(Prim::BindValueMethod, vec![left, constant(Value::text(operation))]);
-                    left = self.called_on_value(left)?;
+                    left = self.subscript(left)?;
                     continue;
                 }
                 let mut args = vec![left];

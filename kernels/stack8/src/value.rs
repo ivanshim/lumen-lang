@@ -117,6 +117,7 @@ impl Counted {
 pub enum Value {
     Native(Rc<RefCell<Value>>, bool),
     Method(Rc<(Value, String)>),
+    View(Rc<(Value, String)>),
     Tuple(Rc<Vec<Value>>),
     Stream(bool),
     Counted(Rc<Counted>),
@@ -176,7 +177,16 @@ pub struct Wording<'a> {
 
 impl Value {
     pub fn contents(&self) -> Value {
-        match self { Value::Native(cell, _) => cell.borrow().contents(), _ => self.clone() }
+        match self {
+            Value::Native(cell, _) => cell.borrow().contents(),
+            Value::View(view) => {
+                let Value::Map(pairs) = view.0.contents() else { return Value::array(Vec::new()); };
+                Value::array(pairs.iter().map(|(k,v)| match view.1.as_str() {
+                    "keys" => k.clone(), "values" => v.clone(), _ => Value::Tuple(Rc::new(vec![k.clone(),v.clone()])),
+                }).collect())
+            }
+            _ => self.clone(),
+        }
     }
 
     pub fn held(self, quoted: bool) -> Value {
@@ -218,6 +228,7 @@ impl Value {
             Value::Flag(_) => Sort::Boolean,
             Value::Array(_) | Value::Map(_) | Value::Tuple(_) => Sort::Array,
             Value::Native(cell, _) => return cell.borrow().sort(),
+            Value::View(_) => Sort::Array,
             Value::Bond(shared) => return shared.borrow().sort(),
             Value::Class(_) | Value::Object(_) => return None,
             Value::Null | Value::SortOf(_) => Sort::Null,
@@ -248,6 +259,7 @@ impl Value {
         match self {
             Value::Native(cell, _) => cell.borrow().is_true(),
             Value::Method(_) => true,
+            Value::View(_) => if let Value::Array(row) = self.contents() { !row.is_empty() } else { false },
             Value::Tuple(row) => !row.is_empty(),
             Value::Stream(_) => true,
             Value::Counted(r) => !r.length().is_zero(),
@@ -279,7 +291,7 @@ impl Value {
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
-            Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Tuple(_) => Err("Cannot coerce array to number".to_string()),
+            Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Tuple(_) | Value::View(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
             Value::Native(cell, _) => cell.borrow().as_big(),
@@ -362,6 +374,7 @@ impl Value {
         match self {
             Value::Native(cell, quote) => if *quote { cell.borrow().representation(sp) } else { cell.borrow().display(sp) },
             Value::Tuple(_) => self.representation(sp),
+            Value::View(view) => format!("dict_{}({})", view.1, self.contents().representation(sp)),
             // A cell two names share is written as what it holds: the
             // sharing is between the names and not in the value.
             Value::Bond(shared) => shared.borrow().display(sp),
@@ -444,6 +457,7 @@ impl Value {
         match self {
             Value::Native(cell, _) => cell.borrow().plain(),
             Value::Method(_) => "<built-in method>".to_string(),
+            Value::View(view) => format!("dict_{}({})", view.1, self.contents().plain()),
             Value::Tuple(row) => format!("({})", row.iter().map(Value::plain).collect::<Vec<_>>().join(", ")),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
