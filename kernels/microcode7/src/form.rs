@@ -36,6 +36,7 @@ pub enum Callee {
 /// forms for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prim {
+    SpecialRepr, SpecialHash, SpecialBool, SpecialSorted, SpecialIter, SpecialNext, SpecialIsInstance,
     /// Whether a member, rather than the pipe, takes the name.
     HasMember,
     /// Gather the parts naming a span within brackets.

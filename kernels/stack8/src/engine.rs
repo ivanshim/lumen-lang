@@ -1951,7 +1951,7 @@ impl<'a> Engine<'a> {
                 }
                 Instr::Skip(to) => {
                     let held = self.drop_top()?;
-                    if !self.truth(&held) {
+                    if !self.special_truth(&held)? {
                         pc = *to;
                         continue;
                     }
@@ -1960,6 +1960,8 @@ impl<'a> Engine<'a> {
                     let bt = if matches!(b, Operand::Top) { Some(self.drop_top()?) } else { None };
                     let at = if matches!(a, Operand::Top) { Some(self.drop_top()?) } else { None };
                     let (av, bv) = self.both(a, b, &at, &bt, frame)?;
+                    let (av, bv) = (av.clone(), bv.clone());
+                    let (av, bv) = (&av, &bv);
                     let holds = match (av, bv) {
                         (Value::Small(x), Value::Small(y)) => match op {
                             Action::Lt => x < y,
@@ -1970,7 +1972,7 @@ impl<'a> Engine<'a> {
                             _ => x != y,
                         },
                         _ => {
-                            let told = self.dyadic(op, av, bv)?;
+                            let told = self.special_dyad(op, av, bv)?;
                             self.truth(&told)
                         }
                     };
@@ -1983,6 +1985,8 @@ impl<'a> Engine<'a> {
                     let bt = if matches!(b, Operand::Top) { Some(self.drop_top()?) } else { None };
                     let at = if matches!(a, Operand::Top) { Some(self.drop_top()?) } else { None };
                     let (av, bv) = self.both(a, b, &at, &bt, frame)?;
+                    let (av, bv) = (av.clone(), bv.clone());
+                    let (av, bv) = (&av, &bv);
                     let fast = match (av, bv) {
                         (Value::Small(x), Value::Small(y)) => match op {
                             Action::Add => x.checked_add(*y).map(Value::Small),
@@ -2002,7 +2006,7 @@ impl<'a> Engine<'a> {
                     };
                     let r = match fast {
                         Some(v) => v,
-                        None => self.dyadic(op, av, bv)?,
+                        None => self.special_dyad(op, av, bv)?,
                     };
                     self.data.push(r);
                 }
@@ -2036,15 +2040,193 @@ impl<'a> Engine<'a> {
         Ok(Passage::Along(pc))
     }
 
+    fn special_method(&self, value: &Value, place: usize) -> Option<Rc<Routine>> {
+        let Value::Object(object) = value else { return None };
+        object.class.method(self.lang.class_special.get(place)?).cloned()
+    }
+
+    fn special_fault(&self) -> String {
+        self.lang.special_amiss.first().cloned().unwrap_or_default()
+    }
+
+    fn special_call(&mut self, value: &Value, place: usize, args: Vec<Value>) -> Res<Option<Value>> {
+        let Some(method) = self.special_method(value, place) else { return Ok(None) };
+        let mut given = vec![value.clone()];
+        given.extend(args);
+        match self.invoke(&method, given) {
+            Ok(()) => Ok(Some(self.drop_top().map_err(|_| self.special_fault())?)),
+            Err(Fault::Note(words)) => Err(words),
+            Err(other) => {
+                self.carried = Some(other);
+                Err(self.special_fault())
+            }
+        }
+    }
+
+    fn special_text(&mut self, value: &Value, representation: bool) -> Res<String> {
+        if self.lang.class_special.is_empty() { return Ok(value.display(&self.wording())); }
+        if let Value::Object(object) = value {
+            let place = if representation || self.special_method(value, 0).is_none() { 1 } else { 0 };
+            return match self.special_call(value, place, Vec::new())? {
+                Some(Value::Text(text)) => Ok(text.to_string()),
+                Some(_) => Err(self.special_fault()),
+                None => Ok(format!("<{} object>", object.class.name)),
+            };
+        }
+        match value {
+            Value::Array(items) => {
+                let mut parts = Vec::new();
+                for item in items.iter() { parts.push(self.special_text(item, true)?); }
+                Ok(format!("[{}]", parts.join(", ")))
+            }
+            Value::Map(items) => {
+                let mut parts = Vec::new();
+                for (key, item) in items.iter() {
+                    parts.push(format!("{}: {}", self.special_text(key, true)?, self.special_text(item, true)?));
+                }
+                Ok(format!("{{{}}}", parts.join(", ")))
+            }
+            Value::Text(_) if representation => self.rem_repr(value),
+            _ => Ok(value.display(&self.wording())),
+        }
+    }
+
+    fn special_truth(&mut self, value: &Value) -> Res<bool> {
+        if let Some(answer) = self.special_call(value, 9, Vec::new())? {
+            return match answer { Value::Flag(flag) => Ok(flag), _ => Err(self.special_fault()) };
+        }
+        if let Some(answer) = self.special_call(value, 10, Vec::new())? {
+            return match answer {
+                Value::Small(n) if n >= 0 => Ok(n != 0),
+                Value::Huge(n) if *n >= BigInt::from(0) => Ok(*n != BigInt::from(0)),
+                _ => Err(self.special_fault()),
+            };
+        }
+        Ok(self.truth(value))
+    }
+
+    fn special_dyad(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if self.lang.class_special.is_empty() { return self.dyadic(op, a, b); }
+        let places = match op {
+            Action::Eq => Some((2, 2)), Action::Ne => Some((3, 3)),
+            Action::Lt => Some((4, 6)), Action::Le => Some((5, 7)),
+            Action::Gt => Some((6, 4)), Action::Ge => Some((7, 5)),
+            Action::Add => Some((18, 26)), Action::Sub => Some((19, 27)),
+            Action::Mul => Some((20, 28)), Action::Div => Some((21, 29)),
+            Action::IntDiv => Some((22, 30)), Action::Mod => Some((23, 31)),
+            Action::Power => Some((24, 32)),
+            Action::At | Action::Apart | Action::Toward => Some((11, usize::MAX)),
+            _ => None,
+        };
+        if let Some((direct, reflected)) = places {
+            if let Some(answer) = self.special_call(a, direct, vec![b.clone()])? { return Ok(answer); }
+            if let Some(answer) = self.special_call(b, reflected, vec![a.clone()])? { return Ok(answer); }
+            if matches!(op, Action::Ne) && self.special_method(a, 2).is_some() {
+                let equal = self.special_call(a, 2, vec![b.clone()])?.unwrap();
+                return Ok(Value::Flag(!self.special_truth(&equal)?));
+            }
+        }
+        if matches!(op, Action::Contains | Action::Lacks) {
+            if let Some(answer) = self.special_call(b, 14, vec![a.clone()])? {
+                return Ok(Value::Flag(self.special_truth(&answer)? != matches!(op, Action::Lacks)));
+            }
+        }
+        if let (Action::At, Value::Map(entries)) = (op, a) {
+            for (key, value) in entries.iter() {
+                let equal = self.special_dyad(&Action::Eq, key, b)?;
+                if self.special_truth(&equal)? { return Ok(value.clone()); }
+            }
+        }
+        self.dyadic(op, a, b)
+    }
+
+    fn special_builtin(&mut self, op: Builtin, args: &[Value]) -> Res<Option<Value>> {
+        if self.lang.class_special.is_empty() { return Ok(None); }
+        let first = args.first();
+        let answer = match op {
+            Builtin::Repr if args.len() == 1 => Value::text(&self.special_text(&args[0], true)?),
+            Builtin::ToText if args.len() == 1 => Value::text(&self.special_text(&args[0], false)?),
+            Builtin::Bool if args.len() <= 1 => Value::Flag(match first { Some(v) => self.special_truth(v)?, None => false }),
+            Builtin::Length if args.len() == 1 && self.special_method(&args[0], 10).is_some() => {
+                let answer = self.special_call(&args[0], 10, Vec::new())?.unwrap();
+                match answer {
+                    Value::Small(n) if n >= 0 => Value::Small(n),
+                    Value::Huge(ref n) if **n >= BigInt::from(0) => answer,
+                    _ => return Err(self.special_fault()),
+                }
+            }
+            Builtin::Hash if args.len() == 1 => {
+                if let Some(answer) = self.special_call(&args[0], 8, Vec::new())? {
+                    if !matches!(answer, Value::Small(_) | Value::Huge(_)) { return Err(self.special_fault()); }
+                    answer
+                } else {
+                    match &args[0] {
+                        Value::Object(object) if self.special_method(&args[0], 2).is_none() => Value::Small(object.mark as i64),
+                        Value::Small(_) | Value::Huge(_) => args[0].clone(),
+                        Value::Flag(flag) => Value::Small(i64::from(*flag)),
+                        _ => return Err(self.special_fault()),
+                    }
+                }
+            }
+            Builtin::Sorted if args.len() == 1 => {
+                let mut items = self.special_items(&args[0])?;
+                for next in 1..items.len() {
+                    let mut at = next;
+                    while at > 0 {
+                        let less = self.special_dyad(&Action::Lt, &items[at], &items[at - 1])?;
+                        if !self.special_truth(&less)? { break; }
+                        items.swap(at, at - 1);
+                        at -= 1;
+                    }
+                }
+                Value::array(items)
+            }
+            Builtin::List if args.len() == 1 => Value::array(self.special_items(&args[0])?),
+            Builtin::Iter if args.len() == 1 => {
+                if let Some(answer) = self.special_call(&args[0], 15, Vec::new())? { answer }
+                else { Value::Walk(Rc::new(RefCell::new((self.comprehension_items(&args[0])?, 0)))) }
+            }
+            Builtin::Next if args.len() == 1 => {
+                if let Value::Walk(walk) = &args[0] {
+                    let mut walk = walk.borrow_mut();
+                    let value = walk.0.get(walk.1).cloned().ok_or_else(|| self.special_fault())?;
+                    walk.1 += 1;
+                    value
+                } else { self.special_call(&args[0], 16, Vec::new())?.ok_or_else(|| self.special_fault())? }
+            }
+            Builtin::IsInstance if args.len() == 2 => {
+                let Value::Class(class) = &args[1] else { return Err(self.special_fault()) };
+                Value::Flag(matches!(&args[0], Value::Object(o) if o.class.named(&class.name, false)))
+            }
+            Builtin::Repr | Builtin::Hash | Builtin::Bool | Builtin::Sorted | Builtin::Iter | Builtin::Next | Builtin::IsInstance => return Err(self.special_fault()),
+            _ => return Ok(None),
+        };
+        Ok(Some(answer))
+    }
+
+    fn special_items(&mut self, value: &Value) -> Res<Vec<Value>> {
+        if let Value::Walk(walk) = value {
+            let mut walk = walk.borrow_mut();
+            let tail = walk.0[walk.1..].to_vec();
+            walk.1 = walk.0.len();
+            return Ok(tail);
+        }
+        if let Some(iterator) = self.special_call(value, 15, Vec::new())? {
+            if matches!(&iterator, Value::Object(_)) { return Err(self.special_fault()); }
+            return self.special_items(&iterator);
+        }
+        self.comprehension_items(value)
+    }
+
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
         let result = match op {
             Action::Not => {
                 let held = self.drop_top()?;
-                Value::Flag(!self.truth(&held))
+                Value::Flag(!self.special_truth(&held)?)
             }
             Action::AsBool => {
                 let held = self.drop_top()?;
-                Value::Flag(self.truth(&held))
+                Value::Flag(self.special_truth(&held)?)
             }
             // A name worked out while the run goes stands for the
             // binding of that name among the outermost ones, since only
@@ -2261,6 +2443,10 @@ impl<'a> Engine<'a> {
             Action::Negate => {
                 // 0 - x, so a real keeps its precision.
                 let v = self.drop_top()?;
+                if let Some(answer) = self.special_call(&v, 25, Vec::new())? {
+                    self.data.push(answer);
+                    return Ok(());
+                }
                 // Text turned about is text taken times minus one, which
                 // is how a language that reads a number out of text does
                 // it: the number the text opens with is turned about, and
@@ -2295,6 +2481,12 @@ impl<'a> Engine<'a> {
                         let mut given = vec![Value::Object(object)];
                         given.extend(args);
                         self.invoke(&method, given)
+                    }
+                    Value::Object(object) if !self.lang.class_special.is_empty() => {
+                        let args = self.drop_many(argc - 1)?;
+                        let answer = self.special_call(&Value::Object(object), 17, args)?.ok_or_else(|| self.special_fault())?;
+                        self.data.push(answer);
+                        Ok(())
                     }
                     Value::Class(c) if self.lang.explicit_this => {
                         let args = self.drop_many(argc - 1)?;
@@ -2576,9 +2768,14 @@ impl<'a> Engine<'a> {
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
                     _ => false,
                 };
-                Value::Flag(field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                Value::Flag(field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             Action::Grab(name) => match self.drop_top()? {
+                Value::Class(c) if self.lang.class_special.get(37).map_or(false, |n| n == name.as_ref()) => Value::text(&c.name),
+                Value::Object(o) if self.lang.class_special.get(35).map_or(false, |n| n == name.as_ref()) => Value::Class(o.class.clone()),
+                Value::Object(o) if self.lang.class_special.get(36).map_or(false, |n| n == name.as_ref()) => {
+                    Value::Map(Rc::new(o.fields.borrow().iter().map(|(n, v)| (Value::text(n), v.clone())).collect()))
+                }
                 Value::Class(c) if self.lang.member_pipes => {
                     if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
                         Value::Routine(method.clone())
@@ -3145,7 +3342,7 @@ impl<'a> Engine<'a> {
             dyadic => {
                 let b = self.drop_top()?;
                 let a = self.drop_top()?;
-                self.dyadic(dyadic, &a, &b)?
+                self.special_dyad(dyadic, &a, &b)?
             }
         };
         self.data.push(result);
@@ -4151,7 +4348,9 @@ impl<'a> Engine<'a> {
                     return Err(Self::named_fault(&self.lang.call_unknown, &key));
                 }
             }
-            let text = args.iter().map(|v| v.display(&self.wording())).collect::<Vec<_>>().join(&between) + &ending;
+            let mut parts = Vec::new();
+            for value in &args { parts.push(self.special_text(value, false)?); }
+            let text = parts.join(&between) + &ending;
             if error { eprint!("{}", text); } else { self.utter(&text); }
             return Ok(Value::Null);
         }
@@ -4209,6 +4408,7 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if let Some(answer) = self.special_builtin(builtin, args)? { return Ok(answer); }
         let sp = self.wording();
         let arity = |n: usize| -> Res<()> {
             if args.len() == n {
@@ -4217,6 +4417,7 @@ impl<'a> Engine<'a> {
             Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
         };
         Ok(match builtin {
+            Builtin::Repr | Builtin::Hash | Builtin::Bool | Builtin::Sorted | Builtin::Iter | Builtin::Next | Builtin::IsInstance => return Err(self.special_fault()),
             Builtin::Echo => {
                 arity(1)?;
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };

@@ -394,6 +394,8 @@ pub struct Lang {
     pub tuple_marks: Vec<String>,
     pub class_bases_open: Vec<String>,
     pub class_bases_close: Vec<String>,
+    pub class_special: Vec<String>,
+    pub special_amiss: Vec<String>,
     pub class_unready: Vec<String>,
     pub del_words: Vec<String>,
     pub nonlocal_words: Vec<String>,
@@ -797,7 +799,7 @@ b system.flag.counts
 
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
-const EXT_LABELS: &str = "
+const EXT_LABELS: &str = "w ext.stmt.class.special | w ext.stmt.class.special.amiss | w ext.builtin.repr | w ext.builtin.hash | w ext.builtin.bool | w ext.builtin.sorted | w ext.builtin.iter | w ext.builtin.next | w ext.builtin.isinstance | 
 w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready
 
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
@@ -1292,6 +1294,13 @@ impl Lang {
 
         let mut natives = HashMap::new();
         for (tag, native) in [
+            ("ext.builtin.repr", Builtin::Repr),
+            ("ext.builtin.hash", Builtin::Hash),
+            ("ext.builtin.bool", Builtin::Bool),
+            ("ext.builtin.sorted", Builtin::Sorted),
+            ("ext.builtin.iter", Builtin::Iter),
+            ("ext.builtin.next", Builtin::Next),
+            ("ext.builtin.isinstance", Builtin::IsInstance),
             ("ext.builtin.sum", Builtin::Sum), ("ext.builtin.list", Builtin::List), ("ext.builtin.any", Builtin::Any),
             ("builtin.emit", Builtin::Echo), ("builtin.print", Builtin::Say), ("builtin.write", Builtin::Out),
             ("builtin.len", Builtin::Length), ("builtin.char_at", Builtin::CharAtIndex), ("builtin.ord", Builtin::CodeOf),
@@ -1596,6 +1605,8 @@ impl Lang {
             tuple_marks: r.strings("ext.op.tuple")?,
             class_bases_open: r.strings("ext.stmt.class.bases.open")?,
             class_bases_close: r.strings("ext.stmt.class.bases.close")?,
+            class_special: r.strings("ext.stmt.class.special")?,
+            special_amiss: r.strings("ext.stmt.class.special.amiss")?,
             class_unready: r.strings("ext.stmt.class.unready")?,
             del_words: r.strings("ext.stmt.del")?,
             nonlocal_words: r.strings("ext.stmt.nonlocal")?,
