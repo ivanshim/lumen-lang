@@ -2960,10 +2960,10 @@ impl<'a> Compiler<'a> {
         let appending = matches!(target.last(), Some(Instr::Act(Action::AtEnd, 1)));
         // A slice write works out its value before it asks for bounds.
         let was_waiting = self.waiting.clone();
-        if compound.is_some() && target.iter().any(|w| matches!(w, Instr::Act(Action::Slice, 3))) {
+        if compound.is_some() && keys.iter().any(|key| matches!(key.last(), Some(Instr::Act(Action::Slice, 3)))) {
             self.act(Action::SliceUnavailable, 0);
         }
-        if compound.is_none() && target.iter().any(|w| matches!(w, Instr::Act(Action::Slice, 3))) {
+        if compound.is_none() && keys.iter().any(|key| matches!(key.last(), Some(Instr::Act(Action::Slice, 3)))) {
             let value = self.gensym("slice_value");
             self.value_written(None)?;
             self.write(&value);
