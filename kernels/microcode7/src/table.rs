@@ -551,7 +551,9 @@ impl Table {
         if self.has_any("ext.stmt.switch") && (!self.has_any("ext.stmt.case") || !self.has_any("ext.stmt.case.mark")) {
             return Err("ext.stmt.switch needs ext.stmt.case and ext.stmt.case.mark".to_string());
         }
-        if self.has_any("ext.stmt.class") && (!self.has_any("ext.op.member") || !self.has_any("ext.stmt.class.new")) {
+        // Only the object-class reader requires these operations.
+        if self.has_any("ext.stmt.class") && !self.has_any("ext.stmt.class.bases.open")
+            && (!self.has_any("ext.op.member") || !self.has_any("ext.stmt.class.new")) {
             return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
         }
         if self.has_any("stmt.foreach") && !self.has_any("stmt.foreach.as") {
