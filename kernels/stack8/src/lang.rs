@@ -337,6 +337,8 @@ pub struct Lang {
     pub nonlocal_unrun: String,
     pub nonlocal_words: Vec<String>,
     pub del_words: Vec<String>,
+    pub binding_unrun: String,
+    pub del_unrun: String,
     pub with_as_words: Vec<String>,
     pub with_words: Vec<String>,
     pub decorator_words: Vec<String>,
@@ -656,7 +658,7 @@ b system.flag.counts
 const EXT_LABELS: &str = "
 w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
-w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | b ext.stmt.loop.else | w ext.stmt.async | w ext.op.await | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
+w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.del.unrun | w ext.stmt.binding.unrun | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | b ext.stmt.loop.else | w ext.stmt.async | w ext.op.await | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
 w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
 w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.request.amiss.boundary.wrong | w ext.system.request.amiss.part | w ext.system.request.amiss.body.large | w ext.system.request.body
@@ -1393,6 +1395,8 @@ impl Lang {
             nonlocal_unrun: r.head("ext.stmt.nonlocal.unrun")?.unwrap_or_default(),
             nonlocal_words: r.strings("ext.stmt.nonlocal")?,
             del_words: r.strings("ext.stmt.del")?,
+            binding_unrun: r.head("ext.stmt.binding.unrun")?.unwrap_or_default(),
+            del_unrun: r.head("ext.stmt.del.unrun")?.unwrap_or_default(),
             with_as_words: r.strings("ext.stmt.with.as")?,
             with_words: r.strings("ext.stmt.with")?,
             decorator_words: r.strings("ext.stmt.decorator")?,

@@ -313,6 +313,8 @@
   "system.kind.boolean": [],
   "system.kind.array": [],
   "system.kind.null": [],
+  "ext.stmt.del.unrun": ["This deletion cannot be run"],
+  "ext.stmt.binding.unrun": ["This binding target cannot be run"],
   "ext.block.lone_statement": true,
   "ext.op.await": ["await"],
   "ext.stmt.async": ["async"],

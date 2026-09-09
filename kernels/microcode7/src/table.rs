@@ -90,7 +90,7 @@ ext.stmt.async:L \
 ext.stmt.loop.else:B \
 ext.stmt.nonlocal.unrun:L \
 ext.stmt.nonlocal:L \
-ext.stmt.del:L \
+ext.stmt.del.unrun:L ext.stmt.binding.unrun:L ext.stmt.del:L \
 ext.stmt.with.as:L \
 ext.stmt.with:L \
 ext.lexical.epilogue:L ext.builtin.echo:L ext.syntax.call.bare:B ext.op.increment:L ext.op.decrement:L \

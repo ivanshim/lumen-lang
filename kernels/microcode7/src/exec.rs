@@ -1784,6 +1784,13 @@ impl<'a> Machine<'a> {
                 };
                 let mut inside = cell.borrow_mut();
                 let left = match &*inside {
+                    Value::Vector(items) if self.table.has_any("ext.stmt.del") => {
+                        let offset = at.as_big()?.to_i64().ok_or_else(|| self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string())?;
+                        let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
+                        if !(0..items.len() as i64).contains(&position) { return Err(self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string().into()); }
+                        let retained = items.iter().enumerate().filter(|(j, _)| *j != position as usize).map(|(_, v)| v.clone()).collect();
+                        Value::Vector(Rc::new(retained))
+                    }
                     Value::Vector(items) => {
                         let i = as_index(&at)?;
                         Value::Dict(Rc::new(
@@ -3755,6 +3762,13 @@ impl<'a> Machine<'a> {
             Prim::Erase => {
                 n(2)?;
                 match &v[0] {
+                    Value::Vector(items) if self.table.has_any("ext.stmt.del") => {
+                        let offset = v[1].as_big()?.to_i64().ok_or_else(|| self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string())?;
+                        let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
+                        if !(0..items.len() as i64).contains(&position) { return Err(self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string().into()); }
+                        let retained = items.iter().enumerate().filter(|(j, _)| *j != position as usize).map(|(_, v)| v.clone()).collect();
+                        Value::Vector(Rc::new(retained))
+                    }
                     Value::Vector(items) => {
                         let i = as_index(&v[1])?;
                         let kept: Vec<(Value, Value)> = items

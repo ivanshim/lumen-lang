@@ -1978,6 +1978,14 @@ impl<'a> Engine<'a> {
                 };
                 let mut inside = cell.borrow_mut();
                 let left = match &*inside {
+                    Value::Array(items) if !self.lang.del_words.is_empty() => {
+                        let raw = at.as_big()?.to_i64().ok_or_else(|| self.lang.del_unrun.clone())?;
+                        let i = if raw < 0 { items.len() as i64 + raw } else { raw };
+                        if i < 0 || i as usize >= items.len() { return Err(self.lang.del_unrun.clone().into()); }
+                        let mut left = items.as_ref().clone();
+                        left.remove(i as usize);
+                        Value::array(left)
+                    }
                     Value::Array(items) => {
                         let i = as_index(&at)?;
                         Value::Map(Rc::new(
@@ -4244,6 +4252,14 @@ impl<'a> Engine<'a> {
                 arity(2)?;
                 let at = self.key_quietly(&args.pop().expect("the place"));
                 match args.pop().expect("the array") {
+                    Value::Array(items) if !self.lang.del_words.is_empty() => {
+                        let raw = at.as_big()?.to_i64().ok_or_else(|| self.lang.del_unrun.clone())?;
+                        let i = if raw < 0 { items.len() as i64 + raw } else { raw };
+                        if i < 0 || i as usize >= items.len() { return Err(self.lang.del_unrun.clone().into()); }
+                        let mut left = items.as_ref().clone();
+                        left.remove(i as usize);
+                        Value::array(left)
+                    }
                     Value::Array(items) => {
                         let i = as_index(&at)?;
                         let kept: Vec<(Value, Value)> = items
