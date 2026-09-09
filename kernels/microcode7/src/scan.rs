@@ -10,6 +10,7 @@ pub enum Shape {
     Quoted,
     Numeral,
     Quote,
+    Unready,
     Sign,
     LineEnd,
     Lead,
@@ -86,6 +87,16 @@ fn drop_comments(source: &str, table: &Table) -> String {
             let reach = folded(ahead, table).map_or(ahead.len(), |(_, _, far)| far);
             kept.push_str(&ahead[..reach]);
             ahead = &ahead[reach..];
+        } else if !table.strings("ext.lexical.string.long").is_empty() && (quotes.contains(&c) || ["ext.lexical.string.prefix.raw", "ext.lexical.string.prefix.plain", "ext.lexical.string.prefix.bytes", "ext.lexical.string.prefix.format"].iter().any(|k| table.spells(k, &c.to_string()))) {
+            let letters: Vec<char> = ahead.chars().collect();
+            if let Some((_, _, over, _, _)) = marked_span(&letters, 0, table) {
+                let bytes = letters[..over].iter().map(|c| c.len_utf8()).sum::<usize>();
+                kept.push_str(&ahead[..bytes]);
+                ahead = &ahead[bytes..];
+            } else {
+                kept.push(c);
+                ahead = &ahead[w..];
+            }
         } else if quotes.contains(&c) {
             inside = Some(c);
             kept.push(c);
@@ -585,6 +596,27 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             pos += 1;
             continue;
         }
+        if table.spells("ext.lexical.line_continuation", &c.to_string()) {
+            pos += 1;
+            if src.get(pos) == Some(&'\r') { pos += 1; }
+            if src.get(pos) != Some(&'\n') { return Err(table.single("ext.lexical.line_continuation.amiss").unwrap_or_default().to_string()); }
+            row += 1;
+            pos += 1;
+            continue;
+        }
+        if let Some((body, end, over, plain, withheld)) = marked_span(&src, pos, table) {
+            if over == end { return Err(table.single("ext.lexical.string.amiss").unwrap_or_default().to_string()); }
+            let decoded = marked_text(&src[body..end], plain, table)?;
+            let result = if withheld { None } else { decoded };
+            let token = match result {
+                Some(value) => tok(Shape::Quote, value, row),
+                None => tok(Shape::Unready, table.single("ext.lexical.string.unready").unwrap_or_default().to_string(), row),
+            };
+            row += src[pos..over].iter().filter(|c| **c == '\n').count() as u32;
+            tokens.push(token);
+            pos = over;
+            continue;
+        }
         if quotes.contains(&c) {
             let is_raw = raw.contains(&c);
             let woven = weaving.contains(&c);
@@ -790,6 +822,23 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
         }
         tokens = joined;
     }
+    if table.flag("ext.lexical.string.adjacent") {
+        let mut combined: Vec<Token> = Vec::new();
+        for part in tokens {
+            let previous = combined.last_mut();
+            match previous {
+                Some(prior) if matches!(prior.shape, Shape::Quote | Shape::Unready) && matches!(part.shape, Shape::Quote | Shape::Unready) => {
+                    match (prior.shape, part.shape) {
+                        (_, Shape::Unready) => *prior = part,
+                        (Shape::Quote, _) => prior.lexeme += &part.lexeme,
+                        _ => {}
+                    }
+                }
+                _ => combined.push(part),
+            }
+        }
+        tokens = combined;
+    }
     tokens.push(tok(Shape::Finish, "EOF".into(), row));
     Ok(tokens)
 }
@@ -968,4 +1017,80 @@ fn weave(s: &str, plain: &[usize], table: &Table, row: u32, tokens: &mut Vec<Tok
     }
     tokens.push(sign(close));
     Ok(())
+}
+
+/// Find the opening and closing places of a marked string. The comment
+/// pass and the scanner ask the same question so a hash within stays text.
+fn marked_span(source: &[char], start: usize, table: &Table) -> Option<(usize, usize, usize, bool, bool)> {
+    if table.strings("ext.lexical.string.long").is_empty() { return None; }
+    let mut opening = start;
+    let mut raw = false;
+    let mut withheld = false;
+    while opening < source.len() && opening - start < 2 {
+        let letter = source[opening].to_string();
+        if table.spells("ext.lexical.string.prefix.raw", &letter) { raw = true; }
+        else if table.spells("ext.lexical.string.prefix.bytes", &letter) || table.spells("ext.lexical.string.prefix.format", &letter) { withheld = true; }
+        else if !table.spells("ext.lexical.string.prefix.plain", &letter) { break; }
+        opening += 1;
+    }
+    let quote = *source.get(opening)?;
+    if !table.letters("lexical.string_quotes").contains(&quote) { return None; }
+    let tail: String = source[opening..].iter().take(3).collect();
+    let size = table.strings("ext.lexical.string.long").iter().find(|word| tail.starts_with(word.as_str())).map_or(1, |word| word.chars().count());
+    let contents = opening + size;
+    let mut end = contents;
+    while end < source.len() {
+        if source.get(end..end + size).map_or(false, |part| part.iter().all(|c| *c == quote)) {
+            return Some((contents, end, end + size, raw, withheld));
+        }
+        end += if source[end] == '\\' && end + 1 < source.len() { 2 } else { 1 };
+    }
+    Some((contents, end, end, raw, withheld))
+}
+
+fn marked_text(letters: &[char], raw: bool, table: &Table) -> Result<Option<String>, String> {
+    if raw { return Ok(Some(letters.iter().collect())); }
+    let mut answer = String::new();
+    let mut at = 0;
+    let mut withheld = false;
+    while at < letters.len() {
+        let c = letters[at];
+        at += 1;
+        if c != '\\' { answer.push(c); continue; }
+        let Some(&escaped) = letters.get(at) else { return Err(table.single("ext.lexical.string.amiss").unwrap_or_default().to_string()); };
+        at += 1;
+        let scalar = match escaped {
+            'a' => Some('\u{7}'), 'b' => Some('\u{8}'), 'f' => Some('\u{c}'),
+            'v' => Some('\u{b}'), 't' => Some('\t'), 'r' => Some('\r'), 'n' => Some('\n'),
+            '\\' | '"' | '\'' => Some(escaped),
+            '\n' => None,
+            '\r' if letters.get(at) == Some(&'\n') => { at += 1; None },
+            '0'..='7' => {
+                let stop = (at + 2).min(letters.len());
+                let mut number = escaped.to_digit(8).unwrap();
+                while at < stop {
+                    match letters[at].to_digit(8) {
+                        Some(d) => { number = (number << 3) + d; at += 1; },
+                        None => break,
+                    }
+                }
+                char::from_u32(number)
+            },
+            'x' | 'u' | 'U' => {
+                let count = if escaped == 'x' { 2 } else if escaped == 'u' { 4 } else { 8 };
+                let end = at + count;
+                let digits = letters.get(at..end).ok_or_else(|| table.single("ext.lexical.escape.codepoint.amiss").unwrap_or_default().to_string())?;
+                let mut number = 0u32;
+                for c in digits { number = (number << 4) + c.to_digit(16).ok_or_else(|| table.single("ext.lexical.escape.codepoint.amiss").unwrap_or_default().to_string())?; }
+                at = end;
+                let value = char::from_u32(number);
+                withheld |= value.is_none();
+                value
+            },
+            'N' => { withheld = true; None },
+            other => { answer.push('\\'); Some(other) },
+        };
+        if let Some(c) = scalar { answer.push(c); }
+    }
+    Ok(if withheld { None } else { Some(answer) })
 }

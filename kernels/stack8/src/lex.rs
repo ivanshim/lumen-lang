@@ -12,6 +12,7 @@ pub enum Shape {
     Quoted,
     Numeral,
     Quote,
+    Unready,
     Sign,
     LineEnd,
     /// The indentation of a line that has something on it.
@@ -108,6 +109,12 @@ fn drop_comments(source: &str, lang: &Lang) -> String {
                 let over = heredoc_at(ahead, lang).map_or(ahead.len(), |here| here.done);
                 kept.push_str(&ahead[..over]);
                 ahead = &ahead[over..];
+            }
+            None if string_head(ahead, lang).is_some() => {
+                let (before, mark, _, _) = string_head(ahead, lang).unwrap();
+                let end = string_reach(ahead, before, &mark);
+                kept.push_str(&ahead[..end]);
+                ahead = &ahead[end..];
             }
             None if lang.quotes.contains(&c) => {
                 quote = Some(c);
@@ -807,6 +814,14 @@ impl<'a> Cursor<'a> {
                 self.step();
             } else if lang.heredoc.as_deref().map_or(false, |mark| at_word(&self.text, self.at, mark)) {
                 self.heredoc()?;
+            } else if lang.line_continuations.iter().any(|m| at_word(&self.text, self.at, m)) {
+                let mark = lang.line_continuations.iter().find(|m| at_word(&self.text, self.at, m)).unwrap();
+                for _ in mark.chars() { self.step(); }
+                if self.look(0) == Some('\r') { self.step(); }
+                if self.look(0) != Some('\n') { return Err(lang.continuation_amiss.first().cloned().unwrap_or_default()); }
+                self.step();
+            } else if let Some((before, mark, raw, unready)) = string_head(&self.text[self.at..].iter().take(8).collect::<String>(), lang) {
+                self.marked_string(before, &mark, raw, unready)?;
             } else if lang.quotes.contains(&c) {
                 self.string(c)?;
             } else if c.is_ascii_digit() {
@@ -856,6 +871,20 @@ pub fn lex_at(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)> 
                 depth == 0 || !matches!(token.shape, Shape::Lead | Shape::LineEnd)
             });
         }
+    }
+    if lang.adjacent_strings {
+        let mut joined: Vec<Token> = Vec::new();
+        for token in out {
+            if matches!(token.shape, Shape::Quote | Shape::Unready) {
+                if let Some(last) = joined.last_mut().filter(|t| matches!(t.shape, Shape::Quote | Shape::Unready)) {
+                    if token.shape == Shape::Unready { *last = token; }
+                    else if last.shape == Shape::Quote { last.lexeme.push_str(&token.lexeme); }
+                    continue;
+                }
+            }
+            joined.push(token);
+        }
+        out = joined;
     }
     out.push(Token { shape: Shape::Finish, lexeme: "EOF".to_string(), width: 0, row: 1, column: 1 });
     Ok(out)
@@ -1041,4 +1070,104 @@ fn at_word(chars: &[char], at: usize, mark: &str) -> bool {
 /// stands nowhere after it.
 fn word_at(chars: &[char], from: usize, mark: &str) -> Option<usize> {
     (from..chars.len()).find(|at| at_word(chars, *at, mark))
+}
+
+/// The marks of a quoted run, including the letters before its quote.
+/// A prefix is a word only when no quote follows it.
+fn string_head(text: &str, lang: &Lang) -> Option<(usize, String, bool, bool)> {
+    if lang.long_quotes.is_empty() { return None; }
+    let mut offset = 0;
+    let (mut raw, mut unready) = (false, false);
+    for _ in 0..2 {
+        let part = &text[offset..];
+        let found = [&lang.raw_prefixes, &lang.plain_prefixes, &lang.byte_prefixes, &lang.format_prefixes]
+            .into_iter().enumerate().find_map(|(kind, words)| words.iter().find(|p| part.starts_with(p.as_str())).map(|p| (kind, p)));
+        let Some((kind, word)) = found else { break };
+        raw |= kind == 0;
+        unready |= kind >= 2;
+        offset += word.len();
+    }
+    let rest = &text[offset..];
+    let quote = rest.chars().next().filter(|c| lang.quotes.contains(c))?;
+    let mark = lang.long_quotes.iter().find(|m| rest.starts_with(m.as_str())).cloned().unwrap_or_else(|| quote.to_string());
+    Some((offset, mark, raw, unready))
+}
+
+/// The whole spelling, for the pass which removes comments. Escaped
+/// closing marks belong to the string, even where the string is raw.
+fn string_reach(text: &str, before: usize, mark: &str) -> usize {
+    let mut pos = before + mark.len();
+    while pos < text.len() {
+        if text[pos..].starts_with(mark) { return pos + mark.len(); }
+        let c = text[pos..].chars().next().unwrap();
+        pos += c.len_utf8();
+        if c == '\\' && pos < text.len() {
+            pos += text[pos..].chars().next().unwrap().len_utf8();
+        }
+    }
+    pos
+}
+
+impl Cursor<'_> {
+    fn marked_string(&mut self, before: usize, mark: &str, raw: bool, mut unready: bool) -> Result<(), String> {
+        let (line, col) = (self.row, self.column);
+        for _ in 0..before + mark.chars().count() { self.step(); }
+        let mut text = String::new();
+        loop {
+            if at_word(&self.text, self.at, mark) {
+                for _ in mark.chars() { self.step(); }
+                break;
+            }
+            let Some(c) = self.look(0) else { return Err(self.lang.string_amiss.first().cloned().unwrap_or_default()) };
+            if c != '\\' {
+                text.push(self.step());
+                continue;
+            }
+            self.step();
+            let Some(next) = self.look(0) else { return Err(self.lang.string_amiss.first().cloned().unwrap_or_default()) };
+            self.step();
+            if raw {
+                text.push('\\');
+                text.push(next);
+                continue;
+            }
+            match next {
+                '\n' => {},
+                '\r' if self.look(0) == Some('\n') => { self.step(); },
+                'a' => text.push('\x07'), 'b' => text.push('\x08'),
+                'f' => text.push('\x0c'), 'v' => text.push('\x0b'),
+                'r' => text.push('\r'), 'n' => text.push('\n'), 't' => text.push('\t'),
+                '\\' | '\'' | '"' => text.push(next),
+                'x' | 'u' | 'U' => {
+                    let digits = match next { 'x' => 2, 'u' => 4, _ => 8 };
+                    let mut number = 0u32;
+                    for _ in 0..digits {
+                        let d = self.look(0).and_then(|c| c.to_digit(16)).ok_or_else(|| self.lang.codepoint_amiss.clone().unwrap_or_default())?;
+                        self.step();
+                        number = number * 16 + d;
+                    }
+                    if let Some(made) = char::from_u32(number) { text.push(made); }
+                    else { unready = true; }
+                },
+                '0'..='7' => {
+                    let mut value = next.to_digit(8).unwrap();
+                    for _ in 0..2 {
+                        let Some(digit) = self.look(0).and_then(|d| d.to_digit(8)) else { break };
+                        self.step();
+                        value = value * 8 + digit;
+                    }
+                    text.push(char::from_u32(value).unwrap());
+                },
+                'N' => { unready = true; },
+                _ => { text.push('\\'); text.push(next); },
+            }
+        }
+        if unready {
+            let said = self.lang.string_unready.first().cloned().unwrap_or_default();
+            self.push(Shape::Unready, said, 0, line, col);
+        } else {
+            self.push(Shape::Quote, text, 0, line, col);
+        }
+        Ok(())
+    }
 }

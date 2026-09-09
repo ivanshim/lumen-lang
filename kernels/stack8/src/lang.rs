@@ -47,6 +47,17 @@ pub struct Lang {
     pub line_comments: Vec<String>,
     pub block_comments: Vec<(String, String)>,
     pub quotes: Vec<char>,
+    pub string_amiss: Vec<String>,
+    pub continuation_amiss: Vec<String>,
+    pub long_quotes: Vec<String>,
+    pub raw_prefixes: Vec<String>,
+    pub plain_prefixes: Vec<String>,
+    pub byte_prefixes: Vec<String>,
+    pub format_prefixes: Vec<String>,
+    pub adjacent_strings: bool,
+    pub string_unready: Vec<String>,
+    pub line_continuations: Vec<String>,
+
     pub raw_quotes: Vec<char>,
     pub escape_letters: Vec<char>,
     /// The letter that, after the escape mark, begins a character
@@ -704,6 +715,8 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+w ext.lexical.string.amiss | w ext.lexical.line_continuation.amiss
+w ext.lexical.string.long | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.format | b ext.lexical.string.adjacent | w ext.lexical.string.unready | w ext.lexical.line_continuation
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
 w ext.op.comprehension.async | w ext.op.comprehension.async.unavailable | w ext.op.comprehension.target.unavailable | w ext.builtin.sum.non_number | w ext.builtin.range.non_integer | w ext.builtin.range.zero_step
 
@@ -1441,6 +1454,17 @@ impl Lang {
             decrements: r.strings("ext.op.decrement")?,
             interpolating: r.letters("ext.lexical.interpolating_quotes")?,
             heredoc: r.head("ext.lexical.heredoc")?,
+            string_amiss: r.strings("ext.lexical.string.amiss")?,
+            continuation_amiss: r.strings("ext.lexical.line_continuation.amiss")?,
+            long_quotes: r.strings("ext.lexical.string.long")?,
+            raw_prefixes: r.strings("ext.lexical.string.prefix.raw")?,
+            plain_prefixes: r.strings("ext.lexical.string.prefix.plain")?,
+            byte_prefixes: r.strings("ext.lexical.string.prefix.bytes")?,
+            format_prefixes: r.strings("ext.lexical.string.prefix.format")?,
+            adjacent_strings: r.flag("ext.lexical.string.adjacent")?,
+            string_unready: r.strings("ext.lexical.string.unready")?,
+            line_continuations: r.strings("ext.lexical.line_continuation")?,
+
             octal_escapes: r.flag("ext.lexical.escape.octal")?,
             prologue_brief: r.head("ext.lexical.prologue.brief")?,
             prologue_brief_setting: r.head("ext.lexical.prologue.brief.setting")?,
@@ -1735,6 +1759,7 @@ impl Lang {
             }
         }
         let mut lists: Vec<&Vec<String>> = vec![
+            &self.long_quotes, &self.line_continuations,
             &self.comprehension_async, &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread,
             &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks,
             &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open,

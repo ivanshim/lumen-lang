@@ -4161,6 +4161,11 @@ impl<'a> Compiler<'a> {
                 let v = parse_number(&tok.lexeme, lang)?;
                 self.constant(v);
             }
+            Shape::Unready => {
+                self.take();
+                self.constant(Value::text(&tok.lexeme));
+                self.act(Action::Builtin(Builtin::Raise, Rc::from("string")), 1);
+            }
             Shape::Quote => {
                 self.take();
                 self.constant(Value::text(&tok.lexeme));

@@ -246,6 +246,22 @@ only. The extension labels so far, all from PHP:
   in; the scanner turns such a string into a bracketed concatenation
   (`op.concat` inside `syntax.group`) starting from the empty string, so
   the result is always text. `\$` is a literal sigil.
+- `ext.lexical.string.long` names repeated quote marks which enclose one
+  string across lines. The four `ext.lexical.string.prefix.raw`, `.plain`,
+  `.bytes` and `.format` lists name letters before a quote; a raw letter
+  keeps every backslash, and a plain letter leaves the text unchanged.
+  Raw may stand beside bytes or format. `ext.lexical.string.adjacent`
+  joins neighbouring string tokens. The small reading here carries byte
+  and formatted strings to the run, where `ext.lexical.string.unready`
+  says that their values cannot yet be represented. The same words serve
+  for a named character or half of a Unicode pair. Ordinary numbered
+  escapes yield their characters; `.amiss` says that a string was not
+  closed, and `ext.lexical.escape.codepoint.amiss` speaks of bad figures.
+  The fuller string reading is held in the separate string piece.
+- `ext.lexical.line_continuation` names a mark outside strings which
+  joins its line to the following line. A mark followed by anything but
+  a line end raises `ext.lexical.line_continuation.amiss`. Indentation
+  after that line end belongs to the continued line, not a fresh block.
 - `ext.lexical.heredoc`: the mark that opens a string written over lines,
   PHP's `<<<`. After it stands a label — a name, or a name in string
   quotes, with spaces or tabs about it if the program likes — and then a
@@ -1798,7 +1814,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.epilogue` | - | - | - | - | `?>` | - | - | - | - | - |
 | `ext.lexical.escape.byte` | - | - | - | - | `x` | - | - | - | - | - |
 | `ext.lexical.escape.codepoint` | - | - | - | - | `u` | - | - | - | - | - |
-| `ext.lexical.escape.codepoint.amiss` | - | - | - | - | `Invalid UTF-8 codepoint escape sequence` | - | - | - | - | - |
+| `ext.lexical.escape.codepoint.amiss` | - | - | `invalid Unicode escape` | - | `Invalid UTF-8 codepoint escape sequence` | - | - | - | - | - |
 | `ext.lexical.escape.codepoint.beyond` | - | - | - | - | `Invalid UTF-8 codepoint escape sequence: Codepoint too large` | - | - | - | - | - |
 | `ext.lexical.escape.codepoint.close` | - | - | - | - | `}` | - | - | - | - | - |
 | `ext.lexical.escape.codepoint.open` | - | - | - | - | `{` | - | - | - | - | - |
@@ -1806,6 +1822,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.heredoc` | - | - | - | - | `<<<` | - | - | - | - | - |
 | `ext.lexical.interpolating.index.amiss` | - | - | - | - | `string content, expecting "-" or identifier or variable or number` | - | - | - | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | `"` | - | - | - | - | - |
+| `ext.lexical.line_continuation` | - | - | `\` | - | - | - | - | - | - | - |
+| `ext.lexical.line_continuation.amiss` | - | - | `unexpected character after line continuation character` | - | - | - | - | - | - | - |
 | `ext.lexical.name_lead` | - | - | - | - | `\` | - | - | - | - | - |
 | `ext.lexical.number.amiss` | - | - | - | - | `Invalid numeric literal` | - | - | - | - | - |
 | `ext.lexical.number.binary_prefix` | - | - | - | - | `0b` `0B` | - | - | - | - | - |
@@ -1817,6 +1835,14 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.prologue.brief.setting` | - | - | - | - | `short_open_tag` | - | - | - | - | - |
 | `ext.lexical.prologue.echo` | - | - | - | - | `<?=` | - | - | - | - | - |
 | `ext.lexical.prologue.folded` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.lexical.string.adjacent` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.lexical.string.amiss` | - | - | `invalid string literal` | - | - | - | - | - | - | - |
+| `ext.lexical.string.long` | - | - | `"""` `'''` | - | - | - | - | - | - | - |
+| `ext.lexical.string.prefix.bytes` | - | - | `b` `B` | - | - | - | - | - | - | - |
+| `ext.lexical.string.prefix.format` | - | - | `f` `F` | - | - | - | - | - | - | - |
+| `ext.lexical.string.prefix.plain` | - | - | `u` `U` | - | - | - | - | - | - | - |
+| `ext.lexical.string.prefix.raw` | - | - | `r` `R` | - | - | - | - | - | - | - |
+| `ext.lexical.string.unready` | - | - | `NotImplementedError: this string cannot be represented` | - | - | - | - | - | - | - |
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | - | - | `true` | - | - | - | - | - |

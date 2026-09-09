@@ -3949,6 +3949,10 @@ impl<'a> Builder<'a> {
                 self.advance();
                 constant(numeral(&t.lexeme, table)?)
             }
+            Shape::Unready => {
+                self.advance();
+                prim_call(Prim::Raise, vec![constant(Value::text(&t.lexeme))])
+            }
             Shape::Quote => {
                 self.advance();
                 constant(Value::text(&t.lexeme))
