@@ -970,7 +970,7 @@ impl<'a> Machine<'a> {
     /// A number as a real of the language's own width.
     fn as_wide_real(&self, v: &Value) -> Value {
         match math::ratio_of(v) {
-            Some(r) => math::make_number(r.above, r.beneath, Some(self.real_figures())),
+            Some(r) => math::make_number(r.above, r.beneath, Some(self.real_figures())).keeping_point(r.pointed),
             None => v.clone(),
         }
     }
@@ -2819,7 +2819,7 @@ impl<'a> Machine<'a> {
             let mut written = String::new();
             for (at, item) in positional.iter().enumerate() {
                 if at != 0 { written.push_str(&join); }
-                written.push_str(&item.render(self.wording()));
+                written.push_str(&self.show(std::slice::from_ref(item)));
             }
             written.push_str(&tail);
             match channel {
@@ -3464,7 +3464,47 @@ impl<'a> Machine<'a> {
         let n = |k: usize| -> Result<(), String> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
         };
+        if self.table.flag("ext.op.bit.whole") && matches!(op,
+            Prim::BitsOver | Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::BitsUp | Prim::BitsDown)
+        {
+            let fault = || self.table.single("ext.system.fault.operands").unwrap_or("Working on bits needs a whole number").to_string();
+            let number = |value: &Value| {
+                match value.kind() {
+                    Some(Kind::Whole) | Some(Kind::Truth) => value.as_big(),
+                    _ => Err(fault()),
+                }
+            };
+            let left = number(&v[0])?;
+            if op == Prim::BitsOver {
+                return Ok(Value::from_big(!left));
+            }
+            let right = number(&v[1])?;
+            let answer = if matches!(op, Prim::BitsUp | Prim::BitsDown) {
+                if right.sign() == num_bigint::Sign::Minus {
+                    return Err(self.table.single("ext.system.fault.shift").unwrap_or("Bit shift by a negative number").to_string());
+                }
+                match op {
+                    Prim::BitsDown if right >= BigInt::from(left.bits()) => BigInt::from(i32::from(left.sign() == num_bigint::Sign::Minus) * -1),
+                    _ if left == BigInt::from(0) => left,
+                    Prim::BitsUp => left << right.to_usize().ok_or_else(fault)?,
+                    _ => left >> right.to_usize().ok_or_else(fault)?,
+                }
+            } else {
+                match op {
+                    Prim::BitsOne => left ^ right,
+                    Prim::BitsBoth => left & right,
+                    _ => left | right,
+                }
+            };
+            let flags = v.iter().all(|x| x.kind() == Some(Kind::Truth));
+            return Ok(if flags && !matches!(op, Prim::BitsUp | Prim::BitsDown) {
+                Value::Flag(answer != BigInt::from(0))
+            } else {
+                Value::from_big(answer)
+            });
+        }
         Ok(match op {
+            Prim::Pointed => v[0].clone().keeping_point(true),
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
             // A step onward or back adds or takes away one, save on text
@@ -4439,7 +4479,7 @@ impl<'a> Machine<'a> {
                 // A nought turned about is the other nought.
                 match (&v[0], &turned) {
                     (Value::Frac(was), Value::Frac(now)) if num_traits::Zero::is_zero(&now.above) => {
-                        math::made_number(now.above.clone(), now.beneath.clone(), now.places, !was.under)
+                        math::made_number(now.above.clone(), now.beneath.clone(), now.places, !was.under).keeping_point(was.pointed)
                     }
                     // The lowest whole number turned about lies one past
                     // the width, so it comes back a real, as a sum that
@@ -5280,6 +5320,13 @@ impl<'a> Machine<'a> {
 
     fn show(&self, v: &[Value]) -> String {
         let w = self.wording();
+        let argument = |x: &Value| {
+            let text = x.render(w);
+            match (self.table.flag("ext.builtin.print.real_point"), x.point_kept()) {
+                (true, true) if text.trim_start_matches('-').bytes().all(|c| c.is_ascii_digit()) => format!("{}.0", text),
+                _ => text,
+            }
+        };
         let holes = self.table.strings("builtin.print.placeholder");
         let find = |s: &str| holes.iter().filter_map(|h| s.find(h.as_str()).map(|p| (p, h.len()))).min();
         if let (Some(Value::Text(t)), true) = (v.first(), v.len() > 1) {
@@ -5290,7 +5337,7 @@ impl<'a> Machine<'a> {
                 while let Some((p, k)) = find(s) {
                     out.push_str(&s[..p]);
                     match rest.next() {
-                        Some(x) => out.push_str(&x.render(w)),
+                        Some(x) => out.push_str(&argument(x)),
                         None => out.push_str(&s[p..p + k]),
                     }
                     s = &s[p + k..];
@@ -5299,7 +5346,7 @@ impl<'a> Machine<'a> {
                 return out;
             }
         }
-        v.iter().map(|x| x.render(w)).collect::<Vec<_>>().join(" ")
+        v.iter().map(argument).collect::<Vec<_>>().join(" ")
     }
 }
 

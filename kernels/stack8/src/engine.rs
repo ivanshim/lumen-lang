@@ -953,6 +953,14 @@ impl<'a> Engine<'a> {
     /// A value with no places at all cannot be walked. A language with
     /// a word for a warning is told so and walks it no times, rather
     /// than having the run stopped over it.
+    fn whole_for_bits(&self, v: &Value) -> Res<BigInt> {
+        if matches!(v.sort(), Some(Sort::Integer | Sort::Boolean)) {
+            v.as_big()
+        } else {
+            Err(self.lang.operand_fault.clone().unwrap_or_else(|| "Working on bits needs a whole number".to_string()))
+        }
+    }
+
     /// The bits of a value, with a word said where a real is too wide
     /// for the whole numbers this language holds and working on its bits
     /// means taking something else. A language with no word for a
@@ -2038,6 +2046,7 @@ impl<'a> Engine<'a> {
 
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
         let result = match op {
+            Action::KeepPoint => self.drop_top()?.with_point(true),
             Action::Not => {
                 let held = self.drop_top()?;
                 Value::Flag(!self.truth(&held))
@@ -2251,6 +2260,7 @@ impl<'a> Engine<'a> {
             Action::BitTurn => {
                 let v = self.drop_top()?;
                 match &v {
+                    _ if self.lang.whole_bits => Value::of_big(!self.whole_for_bits(&v)?),
                     Value::Text(s) => {
                         let out: Vec<u8> = self.lang.bytes_of(s).iter().map(|c| !c).collect();
                         Value::text(&self.lang.text_of(&out))
@@ -2277,7 +2287,7 @@ impl<'a> Engine<'a> {
                 // A nought turned about is the other nought.
                 match (&v, &turned) {
                     (Value::Real(was), Value::Real(now)) if num_traits::Zero::is_zero(&now.p) => {
-                        arith::shape_signed(now.p.clone(), now.q.clone(), Some(now.places), !was.below)
+                        arith::shape_signed(now.p.clone(), now.q.clone(), Some(now.places), !was.below).with_point(was.point)
                     }
                     // Turning the lowest whole number about takes it past
                     // the width the language holds, as adding to the
@@ -3437,6 +3447,35 @@ impl<'a> Engine<'a> {
             // is what a language that spells these operators means by
             // them; the shorter side decides the length, save for `or`,
             // where the longer one stands on as it is.
+            Action::BitBoth | Action::BitEither | Action::BitOne | Action::BitUp | Action::BitDown if self.lang.whole_bits => {
+                let (x, y) = (self.whole_for_bits(a)?, self.whole_for_bits(b)?);
+                let joined = match op {
+                    Action::BitBoth => x & y,
+                    Action::BitEither => x | y,
+                    Action::BitOne => x ^ y,
+                    _ => {
+                        if y < BigInt::from(0) {
+                            return Err(self.lang.fault_shift.clone().unwrap_or_else(|| "Bit shift by a negative number".to_string()));
+                        }
+                        if matches!(op, Action::BitDown) && y >= BigInt::from(x.bits()) {
+                            BigInt::from(if x < BigInt::from(0) { -1 } else { 0 })
+                        } else if x == BigInt::from(0) {
+                            x
+                        } else {
+                            let by = y.to_usize().ok_or_else(|| self.lang.operand_fault.clone()
+                                .unwrap_or_else(|| "Bit shift count is too large".to_string()))?;
+                            if matches!(op, Action::BitUp) { x << by } else { x >> by }
+                        }
+                    }
+                };
+                if matches!((a, b), (Value::Flag(_), Value::Flag(_)))
+                    && matches!(op, Action::BitBoth | Action::BitEither | Action::BitOne)
+                {
+                    Value::Flag(joined != BigInt::from(0))
+                } else {
+                    Value::of_big(joined)
+                }
+            }
             Action::BitBoth | Action::BitEither | Action::BitOne if matches!(a, Value::Text(_)) && matches!(b, Value::Text(_)) => {
                 let (x, y) = (a.display(&sp), b.display(&sp));
                 let (x, y) = (self.lang.bytes_of(&x), self.lang.bytes_of(&y));
@@ -4093,6 +4132,15 @@ impl<'a> Engine<'a> {
     /// the definition's placeholders filled from the rest.
     fn render(&self, values: &[Value]) -> String {
         let sp = self.wording();
+        let printed = |v: &Value| {
+            let mut said = v.display(&sp);
+            if self.lang.print_real_point && v.keeps_point()
+                && said.chars().all(|c| c.is_ascii_digit() || c == '-')
+            {
+                said.push_str(".0");
+            }
+            said
+        };
         let holes = &self.lang.holes;
         let hole_in = |s: &str| holes.iter().filter_map(|h| s.find(h.as_str()).map(|at| (at, h.len()))).min();
         if let (Some(Value::Text(template)), true) = (values.first(), values.len() > 1) {
@@ -4103,7 +4151,7 @@ impl<'a> Engine<'a> {
                 while let Some((at, width)) = hole_in(s) {
                     out.push_str(&s[..at]);
                     match fill.next() {
-                        Some(v) => out.push_str(&v.display(&sp)),
+                        Some(v) => out.push_str(&printed(v)),
                         None => out.push_str(&s[at..at + width]),
                     }
                     s = &s[at + width..];
@@ -4112,7 +4160,7 @@ impl<'a> Engine<'a> {
                 return out;
             }
         }
-        values.iter().map(|v| v.display(&sp)).collect::<Vec<_>>().join(" ")
+        values.iter().map(printed).collect::<Vec<_>>().join(" ")
     }
 
     /// Builtins take the same opened arguments as a declared routine,
@@ -4151,7 +4199,7 @@ impl<'a> Engine<'a> {
                     return Err(Self::named_fault(&self.lang.call_unknown, &key));
                 }
             }
-            let text = args.iter().map(|v| v.display(&self.wording())).collect::<Vec<_>>().join(&between) + &ending;
+            let text = args.iter().map(|v| self.render(std::slice::from_ref(v))).collect::<Vec<_>>().join(&between) + &ending;
             if error { eprint!("{}", text); } else { self.utter(&text); }
             return Ok(Value::Null);
         }

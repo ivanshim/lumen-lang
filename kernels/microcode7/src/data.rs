@@ -67,6 +67,9 @@ pub struct Ratio {
     /// on to the minus: a real of a width has two noughts, and a
     /// language holding reals to a width writes each its own way.
     pub under: bool,
+    /// Whether this real came through a form which writes the point
+    /// even when no figures follow it but nought.
+    pub pointed: bool,
 }
 
 impl Ratio {
@@ -180,6 +183,22 @@ pub struct Names<'a> {
 }
 
 impl Value {
+    pub fn point_kept(&self) -> bool {
+        match self {
+            Self::Frac(e) => e.pointed,
+            Self::Shared(held) => held.borrow().point_kept(),
+            _ => false,
+        }
+    }
+
+    pub fn keeping_point(mut self, wanted: bool) -> Value {
+        match &mut self {
+            Self::Frac(e) if wanted && e.places.is_some() => Rc::make_mut(e).pointed = true,
+            _ => {}
+        }
+        self
+    }
+
     pub fn from_big(n: BigInt) -> Value {
         match n.to_i64() {
             Some(i) => Value::Small(i),
@@ -692,7 +711,7 @@ pub fn past_the_numbers(x: f64, figures: usize) -> Value {
         (_, true) => -BigInt::one(),
         _ => BigInt::one(),
     };
-    Value::Frac(Rc::new(Ratio { above, beneath: BigInt::zero(), places: Some(figures), under: false }))
+    Value::Frac(Rc::new(Ratio { above, beneath: BigInt::zero(), places: Some(figures), under: false, pointed: false }))
 }
 
 /// What a binary real is worth, held as a ratio: so many halves,
@@ -735,7 +754,7 @@ pub fn at_binary_width(v: Value, bits: Option<usize>, figures: usize) -> Value {
     let Value::Frac(e) = &v else { return v };
     match binary_worth(nearest_binary(&e.above, &e.beneath)) {
         // A nought under nought holds its minus at any width.
-        Some((above, beneath)) => crate::math::made_number(above, beneath, Some(figures), e.under),
+        Some((above, beneath)) => crate::math::made_number(above, beneath, Some(figures), e.under).keeping_point(e.pointed),
         None => v,
     }
 }

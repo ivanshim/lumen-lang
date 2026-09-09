@@ -4130,6 +4130,15 @@ impl<'a> Compiler<'a> {
         self.store_into(from, keep, compound, &assign)
     }
 
+    /// The newer compound forms keep a real's point; a plain working
+    /// keeps the spelling it had before these forms were read.
+    fn compound_act(&mut self, op: Action) {
+        self.act(op, 2);
+        if self.lang.print_real_point && self.stepping.is_none() {
+            self.act(Action::KeepPoint, 1);
+        }
+    }
+
     /// The store itself, the sign that asked for it already read.
     fn store_into(&mut self, from: usize, keep: Option<&str>, compound: Option<Action>, assign: &str) -> Res<()> {
         // The target came out as a load; turn it into a store.
@@ -4204,7 +4213,7 @@ impl<'a> Compiler<'a> {
                     self.read(&name);
                     self.stood_before();
                     self.addend()?;
-                    self.act(op, 2);
+                    self.compound_act(op);
                     self.kept(keep);
                 } else {
                     self.value_written(keep)?;
@@ -4261,7 +4270,7 @@ impl<'a> Compiler<'a> {
                     self.act(Action::Toward, 2);
                     self.stood_before();
                     self.addend()?;
-                    self.act(op, 2);
+                    self.compound_act(op);
                     self.kept(keep);
                     self.write(&value);
                 }
@@ -4335,7 +4344,7 @@ impl<'a> Compiler<'a> {
                     self.act(Action::Toward, 2);
                     self.stood_before();
                     self.addend()?;
-                    self.act(op, 2);
+                    self.compound_act(op);
                     self.kept(keep);
                     self.write(&value);
                 }
@@ -4379,7 +4388,7 @@ impl<'a> Compiler<'a> {
                 self.act(Action::Grab(member.clone()), 1);
                 self.stood_before();
                 self.addend()?;
-                self.act(op, 2);
+                self.compound_act(op);
                 self.kept(keep);
                 let value = self.gensym("value");
                 self.write(&value);
@@ -4402,7 +4411,7 @@ impl<'a> Compiler<'a> {
                 self.act(Action::Reach(member.clone()), 1);
                 self.stood_before();
                 self.addend()?;
-                self.act(op, 2);
+                self.compound_act(op);
                 self.kept(keep);
                 let value = self.gensym("value");
                 self.write(&value);
@@ -4427,7 +4436,7 @@ impl<'a> Compiler<'a> {
                 self.act(Action::Named, 1);
                 self.stood_before();
                 self.addend()?;
-                self.act(op, 2);
+                self.compound_act(op);
                 self.kept(keep);
                 let value = self.gensym("value");
                 self.write(&value);
@@ -7264,13 +7273,28 @@ fn unreadable_number(text: &str, lang: &Lang) -> String {
 }
 
 fn parse_number(text: &str, lang: &Lang) -> Res<Value> {
-    Ok(within_width(read_number(text, lang)?, lang))
+    let newer = text.chars().any(|c| lang.digit_separators.contains(&c) || lang.exponent_letters.contains(&c))
+        || lang.point.map_or(false, |p| text.starts_with(p) || text.ends_with(p));
+    Ok(within_width(read_number(text, lang)?, lang).with_point(lang.print_real_point && newer))
 }
 
 fn read_number(text: &str, lang: &Lang) -> Res<Value> {
     // Marks put between digits to break them up count for nothing.
     let plain: String = text.chars().filter(|c| !lang.digit_separators.contains(c)).collect();
     if plain != text {
+        let (start, radix) = lang.base_prefixes.iter().find(|(p, _)| text.starts_with(p.as_str()))
+            .map_or((0, 10), |(p, base)| (p.chars().count(), *base));
+        let written: Vec<char> = text.chars().collect();
+        for (at, c) in written.iter().enumerate() {
+            if lang.digit_separators.contains(c) {
+                let before = at > start && written[at - 1].is_digit(radix);
+                let after_prefix = start > 0 && at == start && lang.separator_after_prefix;
+                let after = written.get(at + 1).map_or(false, |d| d.is_digit(radix));
+                if !(after && (before || after_prefix)) {
+                    return Err(unreadable_number(text, lang));
+                }
+            }
+        }
         return read_number(&plain, lang);
     }
     for (prefix, base) in &lang.base_prefixes {
@@ -7310,7 +7334,7 @@ fn read_number(text: &str, lang: &Lang) -> Res<Value> {
         let (whole, frac) = (&text[..at], &text[at + point.len_utf8()..]);
         let scale = BigInt::from(10).pow(frac.len() as u32);
         let whole = if whole.is_empty() { BigInt::from(0) } else { decimal(whole, text)? };
-        return Ok(arith::shape_number(whole * &scale + decimal(frac, text)?, scale, Some(precision_of(text))));
+        return Ok(arith::shape_number(whole * &scale + if frac.is_empty() && lang.bare_number_point { BigInt::from(0) } else { decimal(frac, text)? }, scale, Some(precision_of(text))));
     }
     Ok(Value::of_big(decimal(text, text)?))
 }

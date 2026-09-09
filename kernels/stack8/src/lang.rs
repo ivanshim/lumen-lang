@@ -44,6 +44,11 @@ pub struct Lang {
     pub extensions: Vec<String>,
     pub banner: String,
 
+    pub line_continuations: Vec<String>,
+    pub bare_number_point: bool,
+    pub separator_after_prefix: bool,
+    pub whole_bits: bool,
+    pub print_real_point: bool,
     pub with_as: Vec<String>,
     pub with_unready: Vec<String>,
     pub yield_from: Vec<String>,
@@ -798,6 +803,7 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+w ext.lexical.line_continuation | b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole | b ext.builtin.print.real_point
 w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready
 
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
@@ -1380,6 +1386,11 @@ impl Lang {
             ident: name,
             extensions: r.strings("extensions")?,
             banner: prefix,
+            line_continuations: r.strings("ext.lexical.line_continuation")?,
+            bare_number_point: r.flag("ext.lexical.number.point.bare")?,
+            separator_after_prefix: r.flag("ext.lexical.number.separator.after_prefix")?,
+            whole_bits: r.flag("ext.op.bit.whole")?,
+            print_real_point: r.flag("ext.builtin.print.real_point")?,
             with_as: r.strings("ext.stmt.with.as")?,
             with_unready: r.strings("ext.stmt.with.unready")?,
             yield_from: r.strings("ext.stmt.yield.from")?,
@@ -1944,7 +1955,7 @@ impl Lang {
             }
         }
         let mut lists: Vec<&Vec<String>> = vec![
-            &self.comprehension_async, &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread, &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks, &self.if_else_words, &self.lambda_words, &self.identity_not, &self.membership_words, &self.membership_not, &self.expression_assign, &self.ellipsis_words, &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open, &self.long_quotes, &self.tuple_marks, &self.class_bases_open, &self.class_bases_close, &self.del_words, &self.nonlocal_words, &self.with_words, &self.with_as_words, &self.yield_words, &self.yield_from_words, &self.slice_ellipsis, &self.slice_marks, &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words, &self.carries_words, &self.carries_pairs, &self.keyword_only, &self.positional_only, &self.call_spread, &self.call_spread_pairs, &self.stmt_separators, &self.unpack_rest, &self.unpack_words,
+            &self.comprehension_async, &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread, &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks, &self.if_else_words, &self.lambda_words, &self.identity_not, &self.membership_words, &self.membership_not, &self.expression_assign, &self.ellipsis_words, &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open, &self.long_quotes, &self.tuple_marks, &self.class_bases_open, &self.class_bases_close, &self.del_words, &self.nonlocal_words, &self.with_words, &self.with_as_words, &self.yield_words, &self.yield_from_words, &self.slice_ellipsis, &self.slice_marks, &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words, &self.carries_words, &self.carries_pairs, &self.keyword_only, &self.positional_only, &self.call_spread, &self.call_spread_pairs, &self.stmt_separators, &self.unpack_rest, &self.unpack_words, &self.line_continuations,
         ];
         if self.blocks != Blocks::Indented {
             lists.push(&self.block_opens);
