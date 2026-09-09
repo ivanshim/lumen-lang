@@ -95,3 +95,7 @@ covered by this bare-name path.
 nested maps and maps inside arrays. The dictionary comparisons in the
 reference suite require key/value equality, while iteration must retain
 the original insertion order. Array element order still matters.
+
+`17.py` reads and runs the `in` and `not in` comparisons used throughout
+`test_dict.py`, including comprehension filters. Membership checks map
+keys, sequence members or text substrings. Nested maps use content equality.

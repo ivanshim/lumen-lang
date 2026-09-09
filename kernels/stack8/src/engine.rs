@@ -3158,6 +3158,18 @@ impl<'a> Engine<'a> {
             Action::Eq | Action::Ne if self.lang.unordered_maps => {
                 Value::Flag(self.mapping_equality(a, b) == matches!(op, Action::Eq))
             }
+            Action::Contains => {
+                let found = match b {
+                    Value::Map(pairs) => pairs.iter().any(|(key, _)| self.mapping_equality(a, key)),
+                    Value::Array(items) => items.iter().any(|item| self.mapping_equality(a, item)),
+                    Value::Text(text) => match a {
+                        Value::Text(part) => text.contains(part.as_ref()),
+                        _ => return Err(self.lang.collection_unwalkable.first().cloned().unwrap_or_else(|| "Membership needs an iterable".into())),
+                    },
+                    _ => return Err(self.lang.collection_unwalkable.first().cloned().unwrap_or_else(|| "Membership needs an iterable".into())),
+                };
+                Value::Flag(found)
+            }
             Action::Eq => Value::Flag(a.equals(b)),
             Action::Ne => Value::Flag(!a.equals(b)),
             Action::Same => Value::Flag(a.identical(b)),

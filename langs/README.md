@@ -1155,6 +1155,9 @@ only. The extension labels so far, all from PHP:
   lines within their call brackets; a routine's body may also be one
   statement on the line of its header. Without this switch labels retain their
   former meaning, and defaults are worked out when the call begins.
+- `ext.op.contains`: membership in map keys, sequence values or text. The
+  unary negation spelling before this operator negates membership as a
+  two-word comparison (`not in`). It also works in comprehension filters.
 - `ext.op.eq.maps.unordered`: map equality compares keys and values without
   requiring the same insertion order, including maps nested in arrays or
   other maps. Arrays themselves remain ordered, and map iteration keeps
@@ -1744,7 +1747,7 @@ Operator precedence, lowest tier first. Unary operators sit in their own tier.
 
 - **lumen**: `|>` < `or` < `and` < `==` `!=` `<` `>` `<=` `>=` < `..` < `+` `-` < `*` `/` `%` `//` `.` < `**` < `-` `not` `!`
 - **rplumen**: 
-- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` < `|` < `^` < `&` < `<<` `>>` < `+` `-` < `*` `/` `//` `%` < `-` `~` < `**` < `.`
+- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` `in` < `|` < `^` < `&` < `<<` `>>` < `+` `-` < `*` `/` `//` `%` < `-` `~` < `**` < `.`
 - **rust**: `..` < `||` < `&&` < `==` `!=` `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `-` `!` < `.`
 - **php (extra)**: `or` < `and` < `||` < `&&` < `|` < `^` < `&` < `==` `!=` `<>` `===` `!==` < `<` `>` `<=` `>=` `<=>` < `.` < `<<` `>>` < `+` `-` < `*` `/` `%` < `!` `~` `@` < `-` < `**`
 - **c (extra)**: `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `!` `-`
@@ -1871,6 +1874,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.comprehension.in` | - | - | `in` | - | - | - | - | - | - | - |
 | `ext.op.comprehension.target.unavailable` | - | - | `NotImplementedError: indexed comprehension targets are not supported` | - | - | - | - | - | - | - |
 | `ext.op.comprehension.unpack.amiss` | - | - | `ValueError: comprehension target has the wrong number of values` | - | - | - | - | - | - | - |
+| `ext.op.contains` | - | - | `in` | - | - | - | - | - | - | - |
 | `ext.op.decrement` | - | - | - | - | `--` | - | - | - | - | - |
 | `ext.op.decrement.text` | - | - | - | - | `Decrement on non-numeric string has no effect and is deprecated` | - | - | - | - | - |
 | `ext.op.eq.maps.unordered` | - | - | `true` | - | - | - | - | - | - | - |

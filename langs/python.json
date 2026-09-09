@@ -111,7 +111,8 @@
       "<",
       ">",
       "<=",
-      ">="
+      ">=",
+      "in"
     ],
     [
       "|"
@@ -357,6 +358,7 @@
   "ext.op.comprehension.target.unavailable": ["NotImplementedError: indexed comprehension targets are not supported"],
   "ext.op.comprehension.unpack.amiss": ["ValueError: comprehension target has the wrong number of values"],
   "ext.op.tuple": [","],
+  "ext.op.contains": ["in"],
   "ext.op.eq.maps.unordered": true,
   "ext.op.index.slice": [":"],
   "ext.op.index.slice.assign": ["can only assign an iterable"],

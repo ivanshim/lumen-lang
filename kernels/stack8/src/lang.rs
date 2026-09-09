@@ -715,7 +715,7 @@ const EXT_LABELS: &str = "
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
 w ext.op.comprehension.async | w ext.op.comprehension.async.unavailable | w ext.op.comprehension.target.unavailable | w ext.builtin.sum.non_number | w ext.builtin.range.non_integer | w ext.builtin.range.zero_step
 
-w ext.op.comprehension.for | w ext.op.comprehension.in | w ext.op.comprehension.if | b ext.syntax.set | w ext.op.tuple | b ext.op.bit.or.maps | b ext.op.eq.maps.unordered | w ext.builtin.print.separator | w ext.builtin.print.end | w ext.builtin.print.option.type | w ext.builtin.map | w ext.builtin.map.arguments.amiss | w ext.builtin.map.pair.amiss | w ext.syntax.array.spread | w ext.syntax.map.spread | w ext.syntax.collection.unwalkable | w ext.syntax.map.spread.unmapped | w ext.op.comprehension.unpack.amiss | b ext.builtin.range.value | w ext.builtin.sum | w ext.builtin.list | w ext.builtin.any
+w ext.op.comprehension.for | w ext.op.comprehension.in | w ext.op.comprehension.if | b ext.syntax.set | w ext.op.tuple | w ext.op.contains | b ext.op.bit.or.maps | b ext.op.eq.maps.unordered | w ext.builtin.print.separator | w ext.builtin.print.end | w ext.builtin.print.option.type | w ext.builtin.map | w ext.builtin.map.arguments.amiss | w ext.builtin.map.pair.amiss | w ext.syntax.array.spread | w ext.syntax.map.spread | w ext.syntax.collection.unwalkable | w ext.syntax.map.spread.unmapped | w ext.op.comprehension.unpack.amiss | b ext.builtin.range.value | w ext.builtin.sum | w ext.builtin.list | w ext.builtin.any
 
 w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
@@ -1088,7 +1088,7 @@ impl Lang {
         };
         let mut binary = HashMap::new();
         for (tag, op) in [
-            ("op.add", Action::Add), ("op.sub", Action::Sub), ("op.mul", Action::Mul), ("op.div", div),
+            ("ext.op.contains", Action::Contains), ("op.add", Action::Add), ("op.sub", Action::Sub), ("op.mul", Action::Mul), ("op.div", div),
             ("op.quot", Action::IntDiv), ("op.rem", Action::Mod), ("op.pow", Action::Power), ("op.eq", Action::Eq),
             ("op.ne", Action::Ne), ("op.lt", Action::Lt), ("op.le", Action::Le), ("op.gt", Action::Gt), ("op.ge", Action::Ge),
             ("op.and", Action::And), ("op.or", Action::Or), ("op.concat", Action::Join), ("ext.op.compare", Action::Rank),
@@ -1687,6 +1687,7 @@ impl Lang {
             // itself ends in the sign (`==`, whose `===` is another operator).
             let mut compound = HashMap::new();
             for (lex, op) in &lang.dyadic {
+                if matches!(op.action, Action::Contains) { continue; }
                 for assign in &lang.assign_words {
                     let joined = format!("{lex}{assign}");
                     if !lex.ends_with(assign.as_str()) && !lang.dyadic.contains_key(&joined) && !lang.monadic.contains_key(&joined) {

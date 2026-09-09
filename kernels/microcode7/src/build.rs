@@ -3759,6 +3759,17 @@ impl<'a> Builder<'a> {
                 break;
             }
             let text = t.lexeme.clone();
+            if table.spells("op.not", &text) {
+                let next = &self.glance(1).lexeme;
+                if let Some(infix) = table.dyadic.get(next).copied().filter(|entry| entry.prim == Prim::Membership) {
+                    if floor > infix.level { break; }
+                    self.pos += 2;
+                    let collection = self.expr(infix.level + 1)?;
+                    let contains = prim_call(Prim::Membership, vec![left, collection]);
+                    left = prim_call(Prim::Invert, vec![contains]);
+                    continue;
+                }
+            }
             if table.spells("op.pipe", &text) {
                 if table.precedence.get(&text).copied().unwrap_or(0) < floor {
                     break;

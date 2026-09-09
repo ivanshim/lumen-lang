@@ -84,7 +84,7 @@ system.kind.array:L system.kind.null:L \
 const EXT_TAGS: &str = "\
 ext.op.index.slice.ellipsis:L ext.op.index.slice:L ext.op.index.slice.zero:L ext.op.index.slice.bounds:L ext.op.index.slice.unsupported:L ext.op.index.slice.assign:L ext.op.index.slice.length:L ext.op.index.slice.detached:L \
 ext.op.comprehension.async:L ext.op.comprehension.async.unavailable:L ext.op.comprehension.target.unavailable:L ext.builtin.sum.non_number:L ext.builtin.range.non_integer:L ext.builtin.range.zero_step:L \
-ext.op.comprehension.for:L ext.op.comprehension.in:L ext.op.comprehension.if:L ext.syntax.set:B ext.op.tuple:L ext.op.bit.or.maps:B ext.op.eq.maps.unordered:B ext.builtin.print.separator:L ext.builtin.print.end:L ext.builtin.print.option.type:L ext.builtin.map:L ext.builtin.map.arguments.amiss:L ext.builtin.map.pair.amiss:L ext.syntax.array.spread:L ext.syntax.map.spread:L ext.syntax.collection.unwalkable:L ext.syntax.map.spread.unmapped:L ext.op.comprehension.unpack.amiss:L ext.builtin.range.value:B ext.builtin.sum:L ext.builtin.list:L ext.builtin.any:L \
+ext.op.comprehension.for:L ext.op.comprehension.in:L ext.op.comprehension.if:L ext.syntax.set:B ext.op.tuple:L ext.op.contains:L ext.op.bit.or.maps:B ext.op.eq.maps.unordered:B ext.builtin.print.separator:L ext.builtin.print.end:L ext.builtin.print.option.type:L ext.builtin.map:L ext.builtin.map.arguments.amiss:L ext.builtin.map.pair.amiss:L ext.syntax.array.spread:L ext.syntax.map.spread:L ext.syntax.collection.unwalkable:L ext.syntax.map.spread.unmapped:L ext.op.comprehension.unpack.amiss:L ext.builtin.range.value:B ext.builtin.sum:L ext.builtin.list:L ext.builtin.any:L \
 ext.lexical.epilogue:L ext.builtin.echo:L ext.syntax.call.bare:B ext.op.increment:L ext.op.decrement:L \
 ext.lexical.interpolating_quotes:L ext.lexical.heredoc:L ext.stmt.for.c:L ext.op.assign.compound:B ext.stmt.static:L ext.stmt.global:L \
 ext.stmt.import:L ext.stmt.import.from:L ext.stmt.import.as:L ext.system.module.name:L \
@@ -178,8 +178,8 @@ pub const BUILTIN_LABELS: [(&str, Prim); 73] = [
     ("ext.builtin.run.begin", Prim::Raised), ("ext.builtin.run.end", Prim::Laid),
 ];
 
-const BINARY_LABELS: [(&str, Prim); 24] = [
-    ("op.add", Prim::Plus), ("op.sub", Prim::Minus), ("op.mul", Prim::Times), ("op.div", Prim::Over), ("op.quot", Prim::IntDiv),
+const BINARY_LABELS: [(&str, Prim); 25] = [
+    ("ext.op.contains", Prim::Membership), ("op.add", Prim::Plus), ("op.sub", Prim::Minus), ("op.mul", Prim::Times), ("op.div", Prim::Over), ("op.quot", Prim::IntDiv),
     ("op.rem", Prim::Mod), ("op.pow", Prim::Power), ("op.eq", Prim::Eq), ("op.ne", Prim::Ne), ("op.lt", Prim::Lt), ("op.le", Prim::Le),
     ("op.gt", Prim::Gt), ("op.ge", Prim::Ge), ("op.and", Prim::Both), ("op.or", Prim::Either), ("op.concat", Prim::Join),
     ("ext.op.compare", Prim::Rank), ("ext.op.bit.and", Prim::BitsBoth), ("ext.op.bit.or", Prim::BitsEither),
@@ -536,6 +536,7 @@ impl Table {
             // not end in the sign (`==`, so `===` stays an operator).
             for assign in self.strings("stmt.assign").to_vec() {
                 for (lex, op) in &self.dyadic {
+                    if op.prim == Prim::Membership { continue; }
                     let spelled = format!("{lex}{assign}");
                     if !lex.ends_with(assign.as_str()) && !self.dyadic.contains_key(&spelled) && !self.monadic.contains_key(&spelled) {
                         self.compound.insert(spelled, op.prim);

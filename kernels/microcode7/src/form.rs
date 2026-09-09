@@ -36,6 +36,7 @@ pub enum Callee {
 /// forms for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prim {
+    Membership,
     Dictionary,
     /// Gather the parts naming a span within brackets.
     SliceBounds,

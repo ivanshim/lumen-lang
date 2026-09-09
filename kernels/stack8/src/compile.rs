@@ -3914,6 +3914,18 @@ impl<'a> Compiler<'a> {
                 break;
             }
             let text = t.lexeme.clone();
+            if lang.monadic.get(&text).map_or(false, |op| matches!(op.action, Action::Not)) {
+                let following = self.look_ahead(1).lexeme.clone();
+                if let Some(op) = lang.dyadic.get(&following).filter(|op| matches!(op.action, Action::Contains)).cloned() {
+                    if op.level < floor { break; }
+                    self.take();
+                    self.take();
+                    self.expr(op.level + 1)?;
+                    self.act(Action::Contains, 2);
+                    self.act(Action::Not, 1);
+                    continue;
+                }
+            }
             if Lang::spells(&lang.pipe_words, &text) {
                 if lang.precedence.get(&text).copied().unwrap_or(0) < floor {
                     break;

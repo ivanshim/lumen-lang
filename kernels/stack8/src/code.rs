@@ -70,6 +70,7 @@ pub struct Cell {
 /// Kernel operations a language can spell. `Apply` names one of these.
 #[derive(Debug, Clone)]
 pub enum Action {
+    Contains,
     Add,
     /// A step onward or back (`++`, `--`), which is adding or taking
     /// away one save where a language steps text along its letters.

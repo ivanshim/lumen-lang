@@ -4198,6 +4198,17 @@ impl<'a> Machine<'a> {
             Prim::Eq | Prim::Ne if self.table.flag("ext.op.eq.maps.unordered") => {
                 Value::Flag(self.equal_contents(&v[0], &v[1]) != (op == Prim::Ne))
             }
+            Prim::Membership => {
+                n(2)?;
+                let present = if let (Value::Text(needle), Value::Text(text)) = (&v[0], &v[1]) {
+                    text.contains(needle.as_ref())
+                } else if matches!(&v[1], Value::Text(_)) {
+                    return Err(self.table.single("ext.syntax.collection.unwalkable").unwrap_or("Membership needs an iterable").to_string());
+                } else {
+                    self.gathered_members(&v[1])?.iter().any(|item| self.equal_contents(&v[0], item))
+                };
+                Value::Flag(present)
+            }
             Prim::Eq => Value::Flag(v[0].equals(&v[1])),
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
             Prim::Selfsame => Value::Flag(v[0].selfsame(&v[1])),
