@@ -1,3 +1,6 @@
-class Generic[T: (int, str) = int, *Ts, **P]:
+class Bounded[T: (int, str) = int]:
     def method(self, value: T):
         return value
+
+class Variadic[*Ts, **P]:
+    pass

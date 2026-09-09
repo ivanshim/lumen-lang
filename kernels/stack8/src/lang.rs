@@ -1779,6 +1779,9 @@ impl Lang {
         if !lang.try_words.is_empty() && lang.catch_words.is_empty() {
             return Err("ext.stmt.try needs ext.stmt.catch".to_string());
         }
+        if lang.type_params_open.is_empty() != lang.type_params_close.is_empty() {
+            return Err("ext.stmt.type_params needs both opening and closing brackets".into());
+        }
         let read_class = !lang.class_bases_open.is_empty() && !lang.class_bases_close.is_empty() && !lang.class_unready.is_empty();
         if !lang.class_words.is_empty() && (lang.member_mark.is_none() || (lang.new_words.is_empty() && !read_class)) {
             return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());

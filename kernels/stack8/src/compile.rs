@@ -926,10 +926,8 @@ impl<'a> Compiler<'a> {
             if !self.on_any(&lang.function_words) && !self.on_any(&lang.for_words) && !self.on_any(&lang.with_words) {
                 return Err(lang.parameters_amiss.first().cloned().unwrap_or_default());
             }
-            let from = self.mark();
-            self.stmt()?;
-            self.piece().instrs.truncate(from);
             self.refuse_reading(&lang.async_unready);
+            self.stmt()?;
             return Ok(());
         }
         if self.on_any(&lang.nonlocal_words) {
@@ -1086,7 +1084,7 @@ impl<'a> Compiler<'a> {
     /// declaration says plainly why it cannot yet be run.
     fn with_reading(&mut self) -> Res<()> {
         self.take();
-        let from = self.mark();
+        self.refuse_reading(&self.lang.with_unready.clone());
         let group = self.lang.grouping.clone().unwrap();
         let enclosed = self.at_symbol(&group.open);
         if enclosed { self.take(); }
@@ -1102,8 +1100,6 @@ impl<'a> Compiler<'a> {
         }
         if enclosed { self.want_sign(&group.close, "after the context managers")?; }
         self.body()?;
-        self.piece().instrs.truncate(from);
-        self.refuse_reading(&self.lang.with_unready.clone());
         Ok(())
     }
 
@@ -1133,7 +1129,7 @@ impl<'a> Compiler<'a> {
     fn class_reading(&mut self) -> Res<()> {
         self.take();
         self.want_name("after the class word")?;
-        let from = self.mark();
+        self.refuse_reading(&self.lang.class_unready.clone());
         if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
         if self.on_any(&self.lang.class_bases_open) {
             self.take();
@@ -1142,8 +1138,6 @@ impl<'a> Compiler<'a> {
             self.arguments(&call)?;
         }
         self.body()?;
-        self.piece().instrs.truncate(from);
-        self.refuse_reading(&self.lang.class_unready.clone());
         Ok(())
     }
 
@@ -1155,7 +1149,7 @@ impl<'a> Compiler<'a> {
             if self.on_any(&lang.carries_pairs) || self.on_any(&lang.carries_words) { self.take(); }
             let name = self.want_name("as a type parameter")?;
             if !names.insert(name) { return Err(lang.parameters_amiss.first().cloned().unwrap_or_default()); }
-            if self.on_any(&lang.annotation_marks) { self.take(); self.expr(0)?; }
+            if self.on_any(&lang.annotation_marks) { self.take(); self.expr_at(0, false)?; }
             if self.on_assign() { self.take(); self.expr(0)?; }
             if !self.on_any(&lang.tuple_marks) { break; }
             self.take();
@@ -2211,6 +2205,7 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         self.take();
         if !lang.tuple_marks.is_empty() && !(self.look().shape == Shape::Instr && Lang::spells(&lang.in_words, &self.look_ahead(1).lexeme)) {
+            self.refuse_reading(&lang.for_target_unready);
             let from = self.mark();
             loop {
                 if self.on_any(&lang.array_spread) { self.take(); }
@@ -2227,8 +2222,6 @@ impl<'a> Compiler<'a> {
             self.body()?;
             let end = self.mark();
             self.leave_cycle(end);
-            self.piece().instrs.truncate(from);
-            self.refuse_reading(&lang.for_target_unready);
             return Ok(());
         }
         let var = self.want_name("as the loop variable")?;

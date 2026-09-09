@@ -2500,7 +2500,7 @@ impl<'a> Builder<'a> {
             let parameter = self.need_word("among the type parameters")?;
             if declared.contains(&parameter) { return Err(table.single("ext.stmt.function.parameters.amiss").unwrap_or_default().into()); }
             declared.push(parameter);
-            if self.on_any("ext.stmt.annotation") { self.advance(); self.expr(0)?; }
+            if self.on_any("ext.stmt.annotation") { self.advance(); self.expr_at(0, false)?; }
             if self.on_assign() { self.advance(); self.expr(0)?; }
             if self.on_any("ext.stmt.type_params.close") { break; }
             self.need_sign(table.single("syntax.call.separator").unwrap(), "between type parameters")?;

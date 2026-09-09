@@ -585,6 +585,10 @@ impl Table {
         if self.has_any("ext.stmt.switch") && (!self.has_any("ext.stmt.case") || !self.has_any("ext.stmt.case.mark")) {
             return Err("ext.stmt.switch needs ext.stmt.case and ext.stmt.case.mark".to_string());
         }
+        let type_open = self.has_any("ext.stmt.type_params.open");
+        if type_open != self.has_any("ext.stmt.type_params.close") {
+            return Err("ext.stmt.type_params needs both opening and closing brackets".into());
+        }
         let enclosed_class = ["ext.stmt.class.bases.open", "ext.stmt.class.bases.close", "ext.stmt.class.unready"].iter().all(|k| self.has_any(k));
         if self.has_any("ext.stmt.class") && (!self.has_any("ext.op.member") || (!self.has_any("ext.stmt.class.new") && !enclosed_class)) {
             return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
