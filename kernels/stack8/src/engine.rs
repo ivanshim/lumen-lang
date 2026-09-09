@@ -2079,6 +2079,12 @@ impl<'a> Engine<'a> {
                 let callee = self.what_it_spells(top);
                 return match callee {
                     Value::Routine(p) => self.invoke_top(&p, argc - 1),
+                    Value::Method(object, method) => {
+                        let args = self.drop_many(argc - 1)?;
+                        let mut given = vec![Value::Object(object)];
+                        given.extend(args);
+                        self.invoke(&method, given)
+                    }
                     Value::Class(c) if self.lang.explicit_this => {
                         let args = self.drop_many(argc - 1)?;
                         self.data.push(Value::Class(c));
@@ -2088,7 +2094,7 @@ impl<'a> Engine<'a> {
                     // A pair of a thing and a method's name stands for
                     // that method of that thing, which is how a language
                     // hands one routine over where any other would do.
-                    Value::Array(pair) if (self.lang.spelled_stands || self.lang.explicit_this) && pair.len() == 2 => {
+                    Value::Array(pair) if self.lang.spelled_stands && pair.len() == 2 => {
                         let sp = self.wording();
                         let called: Rc<str> = Rc::from(pair[1].display(&sp).as_str());
                         // The thing may stand in the pair through a cell
@@ -2291,7 +2297,7 @@ impl<'a> Engine<'a> {
             }
             Action::Grab(name) => match self.drop_top()? {
                 Value::Class(c) if self.lang.member_pipes => {
-                    if let Some(method) = c.method(name) {
+                    if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
                         Value::Routine(method.clone())
                     } else {
                         self.data.push(Value::Class(c));
@@ -2318,7 +2324,8 @@ impl<'a> Engine<'a> {
                             return self.perform(&Action::Reach(name.clone()), 1);
                         }
                         None if self.lang.member_pipes && o.class.method(name).is_some() => {
-                            Value::array(vec![Value::Object(o), Value::text(name)])
+                            let method = o.class.method(name).expect("the member exists").clone();
+                            Value::Method(o, method)
                         }
                         None if self.reads_for(&o).is_some() => {
                             let method = self.reads_for(&o).expect("the method");
@@ -2467,7 +2474,7 @@ impl<'a> Engine<'a> {
                 let subject = args.remove(0);
                 if self.lang.member_pipes {
                     if let Value::Class(c) = &subject {
-                        if let Some(method) = c.method(name) {
+                        if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
                             return self.invoke(&method.clone(), args);
                         }
                     }

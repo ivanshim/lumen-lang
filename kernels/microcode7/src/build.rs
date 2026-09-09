@@ -1624,7 +1624,7 @@ impl<'a> Builder<'a> {
             self.need_sign(end, "after the bases")?;
         }
         let previous = self.within.replace((named.clone(), parent.as_ref().map(|s| s.ident.to_string())));
-        self.skip_lead_word();
+        self.need_intro()?;
         let on_one_line = !self.on_stmt_end() && self.look().shape != Shape::Open;
         if !on_one_line {
             self.skip_line_ends();
@@ -4402,23 +4402,27 @@ impl<'a> Builder<'a> {
             }
             let named = self.need_word("after the member mark")?;
             let calling = table.single("syntax.call.open").map_or(false, |o| self.sign(o));
-            if reaching && calling && table.flag("ext.op.member.pipes") {
+            if reaching && table.flag("ext.op.member.pipes") && (calling || !self.on_writing()) {
                 let target = match &node { Form::Read(slot) => Some(slot.clone()), _ => None };
                 let held = self.gensym("subject");
                 let save = Form::Write(held.clone(), Box::new(node));
                 let test = prim_call(Prim::HasMember, vec![Form::Read(held.clone()), constant(Value::text(&named))]);
                 let begin = self.pos;
                 let yes = self.limb(Traps::Naught, |r| {
-                    r.advance();
                     let mut args = vec![Form::Read(held.clone()), constant(Value::text(&named))];
-                    args.extend(r.args("syntax.call.close", "syntax.call.separator")?);
-                    Ok(prim_call(Prim::Ask, args))
+                    if calling {
+                        r.advance();
+                        args.extend(r.args("syntax.call.close", "syntax.call.separator")?);
+                    }
+                    Ok(prim_call(if calling { Prim::Ask } else { Prim::Of }, args))
                 })?;
                 self.pos = begin;
                 let no = self.limb(Traps::Naught, |r| {
-                    r.advance();
                     let mut args = vec![Form::Read(held.clone())];
-                    args.extend(r.args("syntax.call.close", "syntax.call.separator")?);
+                    if calling {
+                        r.advance();
+                        args.extend(r.args("syntax.call.close", "syntax.call.separator")?);
+                    }
                     let fallback = r.named_call(&named, args)?;
                     if matches!(table.prims.get(&named), Some(Prim::Append | Prim::Replace)) {
                         return Ok(match &target {

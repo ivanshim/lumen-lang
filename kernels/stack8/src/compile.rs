@@ -2297,7 +2297,7 @@ impl<'a> Compiler<'a> {
             self.want_sign(&close, "after the bases")?;
         }
         let outer = self.within.replace((name.clone(), base.clone()));
-        self.skip_intro();
+        self.expect_intro()?;
         let inline = !self.on_sep() && self.look().shape != Shape::Open;
         if !inline {
             self.skip_seps();
@@ -4776,7 +4776,7 @@ impl<'a> Compiler<'a> {
             }
             let named = self.want_name("after the member mark")?;
             let call = lang.calling.clone().filter(|c| self.at_symbol(&c.open));
-            if member && lang.member_pipes && call.is_some() {
+            if member && lang.member_pipes && (call.is_some() || !self.on_writing()) {
                 let resume = self.pos;
                 let target = match &self.piece().instrs[from..] {
                     [Instr::Read(slot)] => Some(slot.ident.to_string()),
@@ -4788,24 +4788,29 @@ impl<'a> Compiler<'a> {
                 self.act(Action::HasMember(named.as_str().into()), 1);
                 let fallback = self.skip();
                 self.read(&held);
-                let brackets = call.clone().expect("a call");
-                self.take();
-                let argc = self.arguments_of(&named, &brackets)?;
-                self.act(Action::Send(named.as_str().into()), argc + 1);
+                if let Some(brackets) = &call {
+                    self.take();
+                    let argc = self.arguments_of(&named, brackets)?;
+                    self.act(Action::Send(named.as_str().into()), argc + 1);
+                } else { self.act(Action::Grab(named.as_str().into()), 1); }
                 let finish = self.leap();
                 self.land(fallback);
-                self.pos = resume - 1;
-                let left = self.mark();
-                self.read(&held);
-                self.pipe_target(left)?;
-                if matches!(lang.builtins.get(&named), Some(Builtin::Append | Builtin::Replace)) {
-                    if let Some(target) = target {
+                self.pos = resume;
+                let native = lang.builtins.get(&named).copied();
+                let changes = matches!(native, Some(Builtin::Append | Builtin::Replace));
+                if !changes { self.read(&held); }
+                let argc = if let Some(brackets) = &call {
+                    self.take();
+                    self.arguments(brackets)?
+                } else { 0 };
+                if changes {
+                    let needed = if native == Some(Builtin::Append) { 1 } else { 2 };
+                    if let (Some(target), true) = (target, argc == needed) {
+                        self.mutation(&named, &held, argc + 1)?;
                         self.read(&held);
                         self.write(&target);
-                    } else {
-                        self.class_cannot_run();
-                    }
-                }
+                    } else { self.class_cannot_run(); }
+                } else { self.call(&named, argc + 1)?; }
                 self.land(finish);
                 continue;
             }

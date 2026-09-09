@@ -1986,6 +1986,11 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if let Value::Method(body, object) = &stands {
+                    let mut given = vec![Value::Thing(object.clone())];
+                    given.extend(self.value_list(args, frame)?);
+                    return self.invoke(body.clone(), self.outermost.clone(), given).map_err(Escape::from);
+                }
                 if let Some(done) = self.paired_call(&stands, args, frame) {
                     return done;
                 }
@@ -2445,7 +2450,7 @@ impl<'a> Machine<'a> {
         }
         if let Some(value) = class.constant(name) { return Some(value.clone()); }
         class.program(name).map(|body| match value {
-            Value::Thing(_) => Value::Vector(Rc::new(vec![value.clone(), Value::text(name)])),
+            Value::Thing(o) => Value::Method(body.clone(), o.clone()),
             _ => Value::Routine(body.clone()),
         })
     }
@@ -2466,7 +2471,7 @@ impl<'a> Machine<'a> {
     }
 
     fn paired_call(&mut self, stands: &Value, args: &[Form], frame: &Rc<Env>) -> Option<Res<Value>> {
-        if !self.spelled_stands && !self.table.flag("ext.stmt.class.this.explicit") {
+        if !self.spelled_stands {
             return None;
         }
         let Value::Vector(pair) = stands else { return None };
@@ -2512,6 +2517,12 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if let Value::Method(body, object) = &stands {
+                    let mut given = self.value_list(args, frame)?;
+                    given.insert(0, Value::Thing(object.clone()));
+                    let value = self.invoke(body.clone(), self.outermost.clone(), given)?;
+                    return Ok(Next::Value(value));
+                }
                 if let Some(done) = self.paired_call(&stands, args, frame) {
                     return Ok(Next::Value(done?));
                 }
