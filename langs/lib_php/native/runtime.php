@@ -377,7 +377,22 @@ function restore_exception_handler() {
     __uncaught_handler(null);
     return true;
 }
-function extension_loaded($name) { return false; }
+// What this run carries beyond the language itself. Each name here
+// answers to a body of work written in PHP under the library, so a
+// program asking after one is told the truth: the words it would then
+// go on to use are there. Anything not named is not carried, however
+// ordinary it may be elsewhere. The reference does not mind how a name
+// is spelled, so neither does this.
+function __carried() {
+    return array("core", "standard", "date", "json", "pcre", "session", "hash", "random");
+}
+function extension_loaded($name) {
+    return in_array(strtolower($name), __carried(), true);
+}
+function get_loaded_extensions($zend_extensions = false) {
+    if ($zend_extensions) { return array(); }
+    return __carried();
+}
 // The classes this run has bound, and the routines. Everything this PHP
 // has of its own is written in PHP, so there are no functions from
 // outside the language to list beside them.
