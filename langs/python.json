@@ -313,5 +313,7 @@
   "system.kind.boolean": [],
   "system.kind.array": [],
   "system.kind.null": [],
+  "ext.stmt.decorator": ["@"],
+  "ext.stmt.decorator.amiss": ["A decorator must stand on its own line before a function definition"],
   "ext.stmt.for.collection": true
 }

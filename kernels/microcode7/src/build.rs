@@ -1100,7 +1100,7 @@ impl<'a> Builder<'a> {
     }
 
     fn plain_or_kind(&mut self) -> Res<Form> {
-        if self.look().shape == Shape::Bare {
+        if self.look().shape == Shape::Bare || self.on_any("ext.stmt.decorator") {
             if self.key("stmt.let") {
                 return self.bind();
             }
@@ -1234,6 +1234,9 @@ impl<'a> Builder<'a> {
             if self.key("ext.stmt.global") {
                 return self.global_names();
             }
+            if self.on_any("ext.stmt.decorator") {
+                return self.decorate();
+            }
             if self.key("ext.stmt.static") {
                 return self.static_names();
             }
@@ -1252,6 +1255,54 @@ impl<'a> Builder<'a> {
             return Ok(invoke(program, Vec::new()));
         }
         self.plain_stmt()
+    }
+
+    /// The writes before the definition gather its decorators. Those
+    /// after it rebind the name, taking the gathered values backwards.
+    fn decorate(&mut self) -> Res<Form> {
+        let mut forms = Vec::new();
+        let mut decorators = Vec::new();
+        loop {
+            let mark = self.advance().lexeme;
+            let value = self.expr(0)?;
+            let mut cell = self.gensym("adornment");
+            // A complaint names the mark the reader wrote, though the
+            // value lives in a cell the program cannot name.
+            cell.ident = Rc::from(mark.as_str());
+            forms.push(Form::Write(cell.clone(), Box::new(value)));
+            decorators.push(cell);
+            match self.look().shape {
+                Shape::LineEnd => {
+                    self.advance();
+                    while self.look().shape == Shape::LineEnd {
+                        self.advance();
+                    }
+                }
+                _ => return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string()),
+            }
+            if !self.on_any("ext.stmt.decorator") {
+                break;
+            }
+        }
+        if !self.key("stmt.function") {
+            return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
+        }
+        self.advance();
+        let shared = self.skip_reference();
+        let named = self.need_word("after the function keyword")?;
+        self.giving_cells.push(shared);
+        let definition = self.func(named.clone(), true);
+        self.giving_cells.pop();
+        forms.push(definition?);
+        let binding = match self.table.flag("ext.stmt.function.outermost") {
+            true => self.global_address(&named),
+            false => self.address_to_write(&named),
+        };
+        while let Some(saved) = decorators.pop() {
+            let answer = invoke(Form::Read(saved), vec![Form::Read(binding.clone())]);
+            forms.push(Form::Write(binding.clone(), Box::new(answer)));
+        }
+        Ok(sequence(forms))
     }
 
     /// `global a, b;`: the names mean the globals inside this function.

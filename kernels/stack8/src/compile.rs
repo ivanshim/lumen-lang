@@ -890,7 +890,7 @@ impl<'a> Compiler<'a> {
                 self.put(Instr::Line(row));
             }
         }
-        if self.look().shape == Shape::Instr {
+        if self.look().shape == Shape::Instr || self.on_any(&lang.decorator_words) {
             let w = self.look().lexeme.clone();
             if !lang.let_words.is_empty() && Lang::spells(&lang.let_words, &w) {
                 return self.binding();
@@ -968,6 +968,9 @@ impl<'a> Compiler<'a> {
             if Lang::spells(&lang.global_words, &w) {
                 return self.global_stmt();
             }
+            if Lang::spells(&lang.decorator_words, &w) {
+                return self.decorated_function();
+            }
             if Lang::spells(&lang.static_words, &w) {
                 return self.static_stmt();
             }
@@ -1013,6 +1016,46 @@ impl<'a> Compiler<'a> {
     fn write_global(&mut self, name: &str) {
         let slot = Cell { ident: Rc::from(name), near: Vec::new(), far: self.registry.slot(name), moving: false };
         self.put(Instr::Write(slot));
+    }
+
+    /// Keep each value before binding the routine, then pass the bound
+    /// routine through them from the last written to the first.
+    fn decorated_function(&mut self) -> Res<()> {
+        let lang = self.lang;
+        let amiss = || lang.decorator_amiss.clone().unwrap_or_default();
+        let mut held = Vec::new();
+        while self.on_any(&lang.decorator_words) {
+            self.take();
+            self.expr(0)?;
+            if self.look().shape != Shape::LineEnd {
+                return Err(amiss());
+            }
+            let name = self.gensym("decorator");
+            self.write(&name);
+            held.push(name);
+            while self.look().shape == Shape::LineEnd {
+                self.take();
+            }
+        }
+        if !self.on_keyword(&lang.function_words) {
+            return Err(amiss());
+        }
+        self.take();
+        let gives_cell = self.skip_reference();
+        let name = self.want_name("after the function keyword")?;
+        self.function(name.clone(), gives_cell)?;
+        for decorator in held.into_iter().rev() {
+            let bound = if lang.routines_outermost {
+                Cell { ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false }
+            } else {
+                self.cell_to_write(&name)
+            };
+            self.put(Instr::Read(bound.clone()));
+            self.read_taking(&decorator);
+            self.act(Action::Invoke(Rc::from(lang.decorator_words[0].as_str())), 2);
+            self.put(Instr::Write(bound));
+        }
+        Ok(())
     }
 
     /// `global a, b;`: the names mean the globals in this unit.

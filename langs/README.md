@@ -273,6 +273,15 @@ only. The extension labels so far, all from PHP:
   makes x a name for a hidden global set when the function is defined,
   so the value lasts from call to call; `global a, b;` makes the names
   mean the globals.
+- `ext.stmt.decorator`: marks before a function definition, each followed
+  by an expression on its own line. The expressions are worked out in
+  the order written and kept until the function is bound to its name.
+  Each kept value is then called with the function as its one argument,
+  nearest to the definition first, and the answer is bound to that name
+  in turn. Brackets may carry an expression across lines; only the line
+  end after it is whole ends the decorator. Another decorator or a
+  function definition must follow. `ext.stmt.decorator.amiss` holds the
+  words said when the line does not end there or what follows is neither.
 - `ext.stmt.static.read_in`: a switch; a `static` written at the top of
   text read in while the run was already going — text handed to the word
   that reads text, or a file asked for part way through — is a plain
@@ -1730,6 +1739,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.uses.alias` | - | - | - | - | `as` | - | - | - | - | - |
 | `ext.stmt.class.writer` | - | - | - | - | `__set` | - | - | - | - | - |
 | `ext.stmt.const` | - | - | - | - | `const` | - | - | - | - | - |
+| `ext.stmt.decorator` | - | - | `@` | - | - | - | - | - | - | - |
+| `ext.stmt.decorator.amiss` | - | - | `A decorator must stand on its own line before a function definition` | - | - | - | - | - | - | - |
 | `ext.stmt.default` | - | - | - | - | `default` | - | - | - | - | - |
 | `ext.stmt.do` | - | - | - | - | `do` | - | - | - | - | - |
 | `ext.stmt.finally` | - | - | - | - | `finally` | - | - | - | - | - |
