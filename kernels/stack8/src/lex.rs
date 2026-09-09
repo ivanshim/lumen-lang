@@ -440,10 +440,10 @@ impl<'a> Cursor<'a> {
     }
 
     fn string(&mut self, quote: char) -> Result<(), String> {
-        self.string_mode(quote, false)
+        self.string_mode(quote, false, false)
     }
 
-    fn string_mode(&mut self, quote: char, plain: bool) -> Result<(), String> {
+    fn string_mode(&mut self, quote: char, plain: bool, prefixed: bool) -> Result<(), String> {
         let (line, col) = (self.row, self.column);
         let mark = self.lang.long_quotes.iter().find(|mark| at_word(&self.text, self.at, mark))
             .cloned().unwrap_or_else(|| quote.to_string());
@@ -460,6 +460,7 @@ impl<'a> Cursor<'a> {
             woven,
         };
         let mut s = String::new();
+        let mut deferred = false;
         // Char positions in s that came escaped: text, never code.
         let mut shielded: Vec<usize> = Vec::new();
         loop {
@@ -477,6 +478,8 @@ impl<'a> Cursor<'a> {
                 continue;
             }
             if c == '\\' && self.look(1).is_some() {
+                deferred |= !raw && (prefixed || mark.len() > 1)
+                    && self.look(1).map_or(false, |letter| self.lang.deferred_escapes.contains(&letter));
                 self.escape(&how, &mut s, &mut shielded)?;
                 continue;
             }
@@ -486,6 +489,7 @@ impl<'a> Cursor<'a> {
         if woven {
             return self.woven(s, &shielded, line, col);
         }
+        if deferred { self.push(Shape::PendingQuote, self.lang.escape_unavailable.clone().unwrap_or_default(), 0, line, col); }
         self.push(Shape::Quote, s, 0, line, col);
         Ok(())
     }
@@ -509,7 +513,7 @@ impl<'a> Cursor<'a> {
 
     fn prefixed_text(&mut self, count: usize, raw: bool, bytes: bool, formatted: bool) -> Result<(), String> {
         for _ in 0..count { self.step(); }
-        self.string_mode(self.look(0).unwrap(), raw)?;
+        self.string_mode(self.look(0).unwrap(), raw, true)?;
         if !bytes && !formatted { return Ok(()); }
         let quoted = self.out.pop().unwrap();
         let words = if bytes { &self.lang.bytes_unready } else { &self.lang.format_unready };

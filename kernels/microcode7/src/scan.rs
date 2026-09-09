@@ -602,7 +602,8 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             lead += 1;
             if src.get(lead).map_or(false, |c| quotes.contains(c)) { break; }
         }
-        if lead > pos && src.get(lead).map_or(false, |c| quotes.contains(c)) { pos = lead; }
+        let prefixed_literal = lead > pos && src.get(lead).map_or(false, |c| quotes.contains(c));
+        if prefixed_literal { pos = lead; }
         else { raw_prefix = false; bytes_prefix = false; format_prefix = false; }
         let c = src[pos];
         if c == '\n' {
@@ -638,6 +639,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             // Positions in s that were escaped, so never open a variable.
             let mut plain: Vec<usize> = Vec::new();
             let (mut s, mut k, mut closed) = (String::new(), pos + ending.len(), false);
+            let mut waiting_escape = false;
             while k < src.len() {
                 if src[k..].starts_with(&ending) {
                     k += ending.len(); closed = true; break;
@@ -650,6 +652,8 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                     s.push(d); s.push(src[k + 1]); k += 2; continue;
                 }
                 if d == '\\' && k + 1 < src.len() {
+                    waiting_escape |= !is_raw && (prefixed_literal || ending.len() > 1)
+                        && table.spells("ext.lexical.escape.deferred", &src[k + 1].to_string());
                     k = slash.reads(&src, k, &mut s, &mut plain)?;
                     continue;
                 }
@@ -661,6 +665,9 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             }
             if !closed {
                 return Err(format!("Unterminated {} string", c));
+            }
+            if waiting_escape {
+                tokens.push(tok(Shape::PendingQuote, table.single("ext.lexical.escape.unavailable").unwrap_or_default().into(), row));
             }
             if format_prefix {
                 tokens.push(tok(Shape::PendingQuote, table.single("ext.lexical.string.prefix.format.unready").unwrap_or_default().into(), row));

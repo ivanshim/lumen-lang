@@ -1122,6 +1122,9 @@ impl<'a> Compiler<'a> {
                 self.take();
             }
         }
+        if lang.class_unready.is_some() && self.on_keyword(&lang.class_words) {
+            return self.class_decl();
+        }
         if !self.on_keyword(&lang.function_words) {
             return Err(amiss());
         }
@@ -5485,7 +5488,7 @@ impl<'a> Compiler<'a> {
                 self.constant(Value::text(&said));
                 self.act(Action::Builtin(Builtin::Raise, Rc::from("comprehension")), 1);
             }
-            self.expr(0)?;
+            self.expr(1)?;
             self.act(Action::ComprehensionItems, 1);
             let bag = self.gensym("comprehension_source");
             self.write(&bag);
@@ -5524,7 +5527,7 @@ impl<'a> Compiler<'a> {
             self.land(done);
         } else if self.on_any(&self.lang.comprehension_if) {
             self.take();
-            self.expr(0)?;
+            self.expr(1)?;
             let rejected = self.skip();
             self.comprehension_clause(head, result, map)?;
             self.land(rejected);

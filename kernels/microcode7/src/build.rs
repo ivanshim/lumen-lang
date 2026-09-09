@@ -1448,6 +1448,10 @@ impl<'a> Builder<'a> {
                 break;
             }
         }
+        if self.key("ext.stmt.class") && self.table.single("ext.stmt.class.unready").is_some() {
+            forms.push(self.class_decl()?);
+            return Ok(sequence(forms));
+        }
         if !self.key("stmt.function") {
             return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
         }
@@ -4967,7 +4971,7 @@ impl<'a> Builder<'a> {
     fn gather_tail(&mut self, expression_at: usize, answer: &str, dictionary: bool) -> Res<Form> {
         if self.on_any("ext.op.comprehension.if") {
             self.advance();
-            let condition = self.expr(0)?;
+            let condition = self.expr(1)?;
             let accepted = self.gather_tail(expression_at, answer, dictionary)?;
             return Ok(self.choose(condition, accepted, constant(Value::Nil)));
         }
@@ -5018,7 +5022,7 @@ impl<'a> Builder<'a> {
         if !self.on_any("ext.op.comprehension.in") { return Err("Expected the word before a comprehension source".into()); }
         self.advance();
         let unavailable = targets.iter().any(Option::is_none);
-        let source = self.expr(0)?;
+        let source = self.expr(1)?;
         let source_name = self.gather_name("gather_source");
         let hold = self.write(&source_name, prim_call(Prim::Iterated, vec![source]));
         let cursor = self.gather_name("gather_cursor");

@@ -283,6 +283,9 @@ only. The extension labels so far, all from PHP:
   end after it is whole ends the decorator. Another decorator or a
   function definition must follow. `ext.stmt.decorator.amiss` holds the
   words said when the line does not end there or what follows is neither.
+  Where `ext.stmt.class.unready` is given, a class may follow as well:
+  its whole body is read, but reaching the class gives that complaint
+  before any decorator can be applied to it.
 - `ext.stmt.static.read_in`: a switch; a `static` written at the top of
   text read in while the run was already going — text handed to the word
   that reads text, or a file asked for part way through — is a plain
@@ -503,6 +506,8 @@ only. The extension labels so far, all from PHP:
 - `ext.op.if_else`: two words, the first before a condition and the
   second before its other value. The condition is worked out first and
   only the chosen value runs, though it may be written before the test.
+  Comprehension sources and filters admit this form within brackets;
+  their own filter word remains a clause boundary.
 - `ext.op.identical.negated`: a word after the sameness word reversing
   the answer. Where present, sameness asks identity and ordinary equality
   keeps its former rules. Nothing and flags have known identities;
@@ -562,6 +567,11 @@ only. The extension labels so far, all from PHP:
   parts of an exception group. The clause is read whole, but reaching the
   attempt stops with `ext.stmt.catch.group.unsupported`, since the kernels
   cannot yet part such groups.
+- `ext.lexical.escape.deferred`: escape letters whose meaning is not
+  yet provided in long or prefixed text. The string is read whole, but
+  using it says `ext.lexical.escape.unavailable`; such escapes are never
+  handed back as though their backslashes were ordinary text. Raw text
+  keeps them as written.
 - `ext.lexical.string.prefix.raw` and `.plain`: letters before quotes
   keeping backslashes as written or leaving the text ordinary. `.bytes`
   and `.format` distinguish byte and formatted literals. Their respective
@@ -1866,7 +1876,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.escape.codepoint.close` | - | - | - | - | `}` | - | - | - | - | - |
 | `ext.lexical.escape.codepoint.open` | - | - | - | - | `{` | - | - | - | - | - |
 | `ext.lexical.escape.continued` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.lexical.escape.deferred` | - | - | `u` `U` `N` `x` `0` `1` `2` `3` `4` `5` `6` `7` `r` `a` `b` `f` `v` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.octal` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.lexical.escape.unavailable` | - | - | `NotImplementedError: this string escape is not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.heredoc` | - | - | - | - | `<<<` | - | - | - | - | - |
 | `ext.lexical.interpolating.index.amiss` | - | - | - | - | `string content, expecting "-" or identifier or variable or number` | - | - | - | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | `"` | - | - | - | - | - |

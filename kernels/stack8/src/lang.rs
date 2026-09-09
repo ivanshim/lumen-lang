@@ -663,6 +663,8 @@ pub struct Lang {
     pub in_unready: Vec<String>,
     pub if_else: Vec<String>,
     pub assign_chain: bool,
+    pub deferred_escapes: Vec<char>,
+    pub escape_unavailable: Option<String>,
     pub class_unready: Option<String>,
     pub catch_group: Option<String>,
     pub catch_group_unsupported: Option<String>,
@@ -754,7 +756,7 @@ w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.destruct
 w ext.op.walk.class | w ext.op.walk.rewind | w ext.op.walk.more | w ext.op.walk.this | w ext.op.walk.key
 w ext.op.walk.onward | w ext.op.walk.giver.class | w ext.op.walk.giver | w ext.op.walk.no_cell | w ext.op.walk.key.no_cell | b ext.op.walk.live | w ext.builtin.array.front | w ext.stmt.class.modifier | w ext.stmt.class.hidden | w ext.stmt.class.guarded | w ext.stmt.class.shared
 w ext.op.member | w ext.op.scope | w ext.op.instanceof | w ext.stmt.class.parent
-w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.assert | w ext.stmt.assert.kind | w ext.stmt.catch.invalid | w ext.stmt.catch.as | w ext.stmt.catch.tuple.open | w ext.stmt.catch.tuple.close | w ext.lexical.string.long | b ext.lexical.string.adjacent | b ext.lexical.escape.continued | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.with.unready | w ext.stmt.del | w ext.stmt.del.unrun | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | b ext.op.member.pipes | w ext.op.tuple | w ext.op.tuple.unready | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.format | w ext.lexical.string.prefix.bytes.unready | w ext.lexical.string.prefix.format.unready | w ext.lexical.string.amiss | w ext.op.identical.negated | w ext.op.identical.unsupported | w ext.op.in | w ext.op.in.negated | w ext.op.in.unsupported | w ext.op.if_else | b ext.stmt.assign.chain | w ext.stmt.class.unready | w ext.stmt.catch.group | w ext.stmt.catch.group.unsupported | b ext.stmt.try.else | w ext.stmt.throw.from | w ext.stmt.throw.empty | w ext.stmt.try | w ext.stmt.catch
+w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.assert | w ext.stmt.assert.kind | w ext.stmt.catch.invalid | w ext.stmt.catch.as | w ext.stmt.catch.tuple.open | w ext.stmt.catch.tuple.close | w ext.lexical.string.long | b ext.lexical.string.adjacent | b ext.lexical.escape.continued | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.with.unready | w ext.stmt.del | w ext.stmt.del.unrun | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | b ext.op.member.pipes | w ext.op.tuple | w ext.op.tuple.unready | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.format | w ext.lexical.string.prefix.bytes.unready | w ext.lexical.string.prefix.format.unready | w ext.lexical.string.amiss | w ext.op.identical.negated | w ext.op.identical.unsupported | w ext.op.in | w ext.op.in.negated | w ext.op.in.unsupported | w ext.op.if_else | b ext.stmt.assign.chain | w ext.lexical.escape.deferred | w ext.lexical.escape.unavailable | w ext.stmt.class.unready | w ext.stmt.catch.group | w ext.stmt.catch.group.unsupported | b ext.stmt.try.else | w ext.stmt.throw.from | w ext.stmt.throw.empty | w ext.stmt.try | w ext.stmt.catch
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
 w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | w ext.system.request.settings | b ext.op.index.absent | w ext.op.index.scalar | w ext.op.index.nothing | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
@@ -1684,6 +1686,8 @@ impl Lang {
             in_unready: r.strings("ext.op.in.unsupported")?,
             if_else: r.strings("ext.op.if_else")?,
             assign_chain: r.flag("ext.stmt.assign.chain")?,
+            deferred_escapes: r.letters("ext.lexical.escape.deferred")?,
+            escape_unavailable: r.head("ext.lexical.escape.unavailable")?,
             class_unready: r.head("ext.stmt.class.unready")?,
             catch_group: r.head("ext.stmt.catch.group")?,
             catch_group_unsupported: r.head("ext.stmt.catch.group.unsupported")?,
@@ -1717,6 +1721,9 @@ impl Lang {
         };
         if !lang.try_words.is_empty() && lang.catch_words.is_empty() {
             return Err("ext.stmt.try needs ext.stmt.catch".to_string());
+        }
+        if !lang.if_else.is_empty() && lang.if_else.len() != 2 {
+            return Err("ext.op.if_else needs two words".to_string());
         }
         if !lang.class_words.is_empty() && (lang.member_mark.is_none() || (lang.new_words.is_empty() && lang.class_unready.is_none())) {
             return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
