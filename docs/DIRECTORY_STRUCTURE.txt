@@ -17,10 +17,10 @@ lumen-lang/
     langs/rplumen.json               built in; reverse Polish Lumen, the postfix block style
     langs/python.json                built in
     langs/rust.json                  built in
-    langs/extras/c.json              read from disk at run time with --lang <path>
+    langs/php.json                   read from disk at run time with --lang <path>
+    langs/extras/c.json              read from disk too
     langs/extras/javascript.json
     langs/extras/pascal.json
-    langs/extras/php.json
     langs/extras/ruby.json
     langs/extras/swift.json
 

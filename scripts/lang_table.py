@@ -14,7 +14,10 @@ ROOT = Path(__file__).resolve().parent.parent
 LANGS = ROOT / "langs"
 README = LANGS / "README.md"
 START, END = "<!-- table:start -->", "<!-- table:end -->"
-FIRST = ["lumen", "rplumen", "python", "rust"]
+# The definitions the kernels take in at build time, in the order they
+# are shown. Every other definition is read from disk at run time and is
+# marked as such, whichever directory under langs/ it happens to sit in.
+BUILT_IN = ["lumen", "rplumen", "python", "rust"]
 
 
 def code(s: str) -> str:
@@ -45,10 +48,10 @@ def tiers(value) -> str:
 
 
 def main() -> int:
-    built_in = sorted(LANGS.glob("*.json"), key=lambda p: (FIRST.index(p.stem) if p.stem in FIRST else len(FIRST), p.stem))
-    extras = sorted((LANGS / "extras").glob("*.json"))
-    langs = {p.stem: json.loads(p.read_text(encoding="utf-8")) for p in built_in}
-    langs.update({f"{p.stem} (extra)": json.loads(p.read_text(encoding="utf-8")) for p in extras})
+    here = sorted(LANGS.glob("*.json"), key=lambda p: (BUILT_IN.index(p.stem) if p.stem in BUILT_IN else len(BUILT_IN), p.stem))
+    beside = sorted((LANGS / "extras").glob("*.json"))
+    named = lambda p: p.stem if p.stem in BUILT_IN else f"{p.stem} (extra)"
+    langs = {named(p): json.loads(p.read_text(encoding="utf-8")) for p in here + beside}
     # Core labels must agree in name and order; ext.* labels are optional
     # extensions a definition may add, read by the full kernels only.
     orders = {name: [k for k in data if not k.startswith("$") and not k.startswith("ext.")] for name, data in langs.items()}

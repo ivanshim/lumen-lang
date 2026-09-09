@@ -12,7 +12,7 @@ T=${TMPDIR:-/tmp}/lumen-translate
 mkdir -p "$T"
 flag_for() {
     case "$1" in
-        php) echo "--lang langs/extras/php.json" ;; rb) echo "--lang langs/extras/ruby.json" ;;
+        php) echo "--lang langs/php.json" ;; rb) echo "--lang langs/extras/ruby.json" ;;
         pas) echo "--lang langs/extras/pascal.json" ;; c) echo "--lang langs/extras/c.json" ;;
         js) echo "--lang langs/extras/javascript.json" ;; swift) echo "--lang langs/extras/swift.json" ;;
     esac

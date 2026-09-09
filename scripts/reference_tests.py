@@ -207,7 +207,7 @@ def run_phpt(path, kernel):
     # cannot run says nothing either way, and the test runs, since a test
     # that shows what is missing is worth more than one passed over.
     if "SKIPIF" in s:
-        code, out, err = run(kernel, ["--lang", "langs/extras/php.json"], s["SKIPIF"], ".skip.php", beside=path)
+        code, out, err = run(kernel, ["--lang", "langs/php.json"], s["SKIPIF"], ".skip.php", beside=path)
         if code == 0 and out.strip().lower().startswith("skip"):
             return "skipped", out.strip()[:80]
     expected = s.get("EXPECT", s.get("EXPECTF", s.get("EXPECTREGEX")))
@@ -216,7 +216,7 @@ def run_phpt(path, kernel):
     # run-tests.php hands the words of an --ARGS-- section to the program
     # as its own arguments, so a test that reads them reads them here too.
     given = s.get("ARGS", "").split()
-    code, out, err = run(kernel, ["--lang", "langs/extras/php.json"], s["FILE"], ".php", web_request(s), beside=path, given=given)
+    code, out, err = run(kernel, ["--lang", "langs/php.json"], s["FILE"], ".php", web_request(s), beside=path, given=given)
     # php-src's own run-tests.php trims both ends before comparing, and
     # a complaint is written with a blank line before it, so the same
     # trim is what the reference expects.
@@ -226,7 +226,7 @@ def run_phpt(path, kernel):
     # whatever the test left beside itself. What it prints is nobody's
     # business and whether it worked changes nothing.
     if "CLEAN" in s:
-        run(kernel, ["--lang", "langs/extras/php.json"], s["CLEAN"], ".clean.php", beside=path)
+        run(kernel, ["--lang", "langs/php.json"], s["CLEAN"], ".clean.php", beside=path)
     # run-tests.php compares what was written and does not look at the
     # exit status at all, save where a test asks for one outright. PHP
     # itself leaves with 255 on a fatal error, so a test whose expected
