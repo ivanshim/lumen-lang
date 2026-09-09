@@ -1112,8 +1112,105 @@ impl<'a> Builder<'a> {
         self.plain_or_kind()
     }
 
+    fn scope_unrun(&self, label: &str) -> Form {
+        prim_call(Prim::Raise, vec![constant(Value::text(self.table.single(label).unwrap_or("")))])
+    }
+
+    /// The body's names are read within a layer that cannot escape it.
+    fn class_scope(&mut self) -> Res<Form> {
+        self.advance();
+        let name = self.need_word("as the class name")?;
+        if self.on_any("ext.stmt.class.bases.open") {
+            self.advance();
+            loop {
+                if self.on_any("ext.stmt.class.bases.close") { break; }
+                let _base = self.expr(0)?;
+                if !self.on_any("ext.op.tuple") { break; }
+                self.advance();
+            }
+            self.need_sign(self.table.single("ext.stmt.class.bases.close").ok_or("Class bases need an end")?, "after bases")?;
+        }
+        let _members = self.routine(&name, Holds::Every, Traps::Naught, Vec::new(), 0, |b| b.body())?;
+        Ok(self.scope_unrun("ext.stmt.class.unready"))
+    }
+
+    /// No short routine is run until it can keep the names it closes over.
+    fn lambda_scope(&mut self) -> Res<Form> {
+        self.advance();
+        let mut arguments = Vec::new();
+        while !self.on_any("block.intro") {
+            let named = self.need_word("in the lambda head")?;
+            if arguments.iter().any(|prior| prior == &named) {
+                return Err("Duplicate lambda parameter".into());
+            }
+            arguments.push(named);
+            if self.on_assign() {
+                self.advance();
+                let _default = self.expr(0)?;
+            }
+            if !self.on_any("ext.op.tuple") { break; }
+            self.advance();
+        }
+        self.need_sign(self.table.single("block.intro").ok_or("Lambda needs a body mark")?, "before its expression")?;
+        let arity = arguments.len();
+        let _routine = self.routine(ANONYMOUS, Holds::Every, Traps::Naught, arguments, arity, |b| b.expr(0))?;
+        Ok(self.scope_unrun("ext.system.scope.unready"))
+    }
+
+    fn comma_value(&mut self) -> Res<Form> {
+        let first = self.expr_at(0, false)?;
+        self.comma_tail(first)
+    }
+
+    /// A trailing comma still makes a tuple; a call's commas never enter here.
+    fn comma_tail(&mut self, first: Form) -> Res<Form> {
+        if !self.on_any("ext.op.tuple") { return Ok(first); }
+        loop {
+            self.advance();
+            if self.on_stmt_end() || self.on_assign() || self.on_any("syntax.group.close")
+                || matches!(self.look().shape, Shape::Finish | Shape::Close) { break; }
+            let _item = self.expr_at(0, false)?;
+            if !self.on_any("ext.op.tuple") { break; }
+        }
+        Ok(self.scope_unrun("ext.system.scope.unready"))
+    }
+
+    fn scope_statement(&mut self) -> Res<Form> {
+        let head = self.advance().lexeme;
+        if self.table.spells("ext.stmt.nonlocal", &head) {
+            loop {
+                self.need_word("as a nonlocal name")?;
+                if !self.on_any("ext.op.tuple") { break; }
+                self.advance();
+            }
+            return Ok(self.scope_unrun("ext.stmt.nonlocal.unrun"));
+        }
+        if self.table.spells("ext.stmt.with", &head) {
+            loop {
+                let _manager = self.expr(0)?;
+                if self.key("ext.stmt.with.as") {
+                    self.advance();
+                    self.need_word("after the context binding word")?;
+                }
+                if !self.on_any("ext.op.tuple") { break; }
+                self.advance();
+            }
+            let _suite = self.body()?;
+            return Ok(self.scope_unrun("ext.system.scope.unready"));
+        }
+        let yields = self.table.spells("ext.stmt.yield", &head);
+        if yields && self.key("ext.stmt.yield.from") { self.advance(); }
+        if !self.on_stmt_end() && !matches!(self.look().shape, Shape::Finish | Shape::Close) {
+            let _value = self.comma_value()?;
+        }
+        Ok(self.scope_unrun(if yields { "ext.stmt.yield.unrun" } else { "ext.system.scope.unready" }))
+    }
+
     fn plain_or_kind(&mut self) -> Res<Form> {
         if self.look().shape == Shape::Bare || self.on_any("ext.stmt.decorator") {
+            if ["ext.stmt.nonlocal", "ext.stmt.yield", "ext.stmt.del", "ext.stmt.with"].iter().any(|label| self.key(label)) {
+                return self.scope_statement();
+            }
             if self.key("stmt.let") {
                 return self.bind();
             }
@@ -1186,7 +1283,7 @@ impl<'a> Builder<'a> {
                 } else if by_cell {
                     vec![self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.given").to_vec(), true, None)?]
                 } else {
-                    vec![self.expr(0)?]
+                    vec![if self.table.has_any("ext.op.tuple") { self.comma_value()? } else { self.expr(0)? }]
                 };
                 return Ok(prim_call(Prim::Yield, value));
             }
@@ -1217,6 +1314,7 @@ impl<'a> Builder<'a> {
                 return self.bag_decl();
             }
             if self.key("ext.stmt.class") || self.key("ext.stmt.class.interface") {
+                if self.table.has_any("ext.stmt.class.bases.open") { return self.class_scope(); }
                 return self.class_decl();
             }
             // A class may be marked before it is named: `abstract class C`.
@@ -3172,6 +3270,11 @@ impl<'a> Builder<'a> {
             }
         });
         let expr = self.expr_at(0, false)?;
+        if self.on_any("ext.op.tuple") {
+            let _target = self.comma_tail(expr)?;
+            if self.on_assign() { self.advance(); let _value = self.comma_value()?; }
+            return Ok(self.scope_unrun("ext.system.scope.unready"));
+        }
         if boundary && self.on_any("ext.stmt.annotation") {
             return self.with_annotation(expr, began);
         }
@@ -3294,7 +3397,7 @@ impl<'a> Builder<'a> {
             // source of its own after the sign.
             (Some(by), _, None) => constant(Value::Small(by)),
             (None, Some(cell), None) => self.read(&cell),
-            (None, None, None) => self.expr(0)?,
+            (None, None, None) => if self.table.has_any("ext.op.tuple") { self.comma_value()? } else { self.expr(0)? },
         };
         // The value comes before the bounds of a slice assignment.
         let before_bounds = if plain && slice_target(&expr) {
@@ -3863,6 +3966,7 @@ impl<'a> Builder<'a> {
     }
 
     fn monadic_piece(&mut self) -> Res<Form> {
+        if self.key("ext.op.lambda") { return self.lambda_scope(); }
         let table = self.table;
         let t = self.look().clone();
         // `list($a, $b) = v`: the places named on the left each take
@@ -4077,7 +4181,9 @@ impl<'a> Builder<'a> {
                     let inner = match self.ahead_in_item("ext.op.comprehension.for") {
                         Some(at) => self.gather_comprehension(at, table.single("syntax.group.close").unwrap(), false)?,
                         None => {
-                            let expression = self.expr(0)?;
+                            let expression = if !table.has_any("ext.op.tuple") { self.expr(0)? }
+                                else if self.on_any("syntax.group.close") { self.scope_unrun("ext.system.scope.unready") }
+                                else { self.comma_value()? };
                             self.need_sign(table.single("syntax.group.close").unwrap(), "to close a group")?;
                             expression
                         }
