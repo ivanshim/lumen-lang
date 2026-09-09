@@ -457,6 +457,26 @@ only. The extension labels so far, all from PHP:
   classes themselves are declared in the language's own library, not
   here: the kernel is told only which class stands for each and what the
   methods are called.
+- `ext.op.walk.live`: a switch; a walk that hands out the items' own
+  cells for writing (`foreach ($a as &$v)`) keeps its place by the item
+  it handed out and not by counting. Such a walk goes over the array as
+  it stands, so the body may move the item it holds, and the walk moves
+  with it: the pass after looks for that item where it left it and then
+  everywhere else, and goes on from one place past where it now lies. An
+  item taken out from under the walk leaves its place to whatever came
+  after it, and that is where the walk goes on, so an array shortened in
+  front of the walk hands out every item and one lengthened in front of
+  it hands out none twice. A walk that hands out copies counts its
+  places as it always did, and so does a walk over a thing, whose
+  members stay where they are. With the switch off a walk of either
+  kind counts.
+- `ext.builtin.array.front`: a builtin putting values before everything
+  a named array holds, the places after them moving along (PHP's
+  `array_unshift`). A place named by a whole number is named anew from
+  nought, the newcomers taking the first numbers; a place named by a
+  word keeps its word. The answer is how many places the array holds
+  afterwards. The array is worked on where it lives, so a place a walk
+  was handed is the same place still.
 - `ext.system.args.list` and `ext.system.args.count`: the arguments the
   run was started with as a list, the file the run was started with first
   in it, and how many there are. Where `system.args` gives them as one
@@ -1366,6 +1386,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.args.count` | - | - | - | - | - | - | - | `func_num_args` | - | - |
 | `ext.builtin.args.count.outside` | - | - | - | - | - | - | - | `func_num_args() must be called from a function context` | - | - |
 | `ext.builtin.array` | - | - | - | - | - | - | - | `array` | - | - |
+| `ext.builtin.array.front` | - | - | - | - | - | - | - | `array_unshift` | - | - |
 | `ext.builtin.at_end` | - | - | - | - | - | - | - | `__at_end` | - | - |
 | `ext.builtin.calls` | - | - | - | - | - | - | - | `__calls` | - | - |
 | `ext.builtin.class.beneath` | - | - | - | - | - | - | - | `__class_beneath` | - | - |
@@ -1466,6 +1487,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.walk.giver.unwalkable` | - | - | - | - | - | - | - | `Objects returned by` `must be traversable or implement interface Iterator` | - | - |
 | `ext.op.walk.key` | - | - | - | - | - | - | - | `key` | - | - |
 | `ext.op.walk.key.no_cell` | - | - | - | - | - | - | - | `Key element cannot be a reference` | - | - |
+| `ext.op.walk.live` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.walk.more` | - | - | - | - | - | - | - | `valid` | - | - |
 | `ext.op.walk.no_cell` | - | - | - | - | - | - | - | `An iterator cannot be used with foreach by reference` | - | - |
 | `ext.op.walk.onward` | - | - | - | - | - | - | - | `next` | - | - |

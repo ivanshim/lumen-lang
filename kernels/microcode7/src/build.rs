@@ -589,7 +589,7 @@ fn inert(node: &Form) -> bool {
             _ => true,
         }),
         Form::Apply(Callee::Prim(op, _), args) => {
-            !matches!(op, Prim::Echo | Prim::Say | Prim::Out | Prim::Tell | Prim::Dump | Prim::Define | Prim::Gather | Prim::Raise | Prim::External | Prim::Append | Prim::Replace | Prim::Yield | Prim::Leave | Prim::Resume | Prim::Choose | Prim::Both | Prim::Either | Prim::Seq)
+            !matches!(op, Prim::Echo | Prim::Say | Prim::Out | Prim::Tell | Prim::Dump | Prim::Define | Prim::Gather | Prim::Raise | Prim::External | Prim::Append | Prim::Replace | Prim::Front | Prim::Yield | Prim::Leave | Prim::Resume | Prim::Choose | Prim::Both | Prim::Either | Prim::Seq)
                 && args.iter().all(inert)
         }
         _ => false,
@@ -1862,6 +1862,14 @@ impl<'a> Builder<'a> {
         let at = self.gensym("at");
         let at_name = at.ident.to_string();
         let start = Form::Write(at, Box::new(constant(Value::Small(0))));
+        // A language may have the walk keep its place by the item it
+        // handed out and not by counting. The cell of that item is tied
+        // to a name of the walk's own, which holds nothing at all until
+        // the first pass has handed one out.
+        let by_hand = shares.is_some() && self.table.flag("ext.op.walk.live");
+        let kept = by_hand.then(|| self.gensym("held"));
+        let kept_name = kept.as_ref().map(|k| k.ident.to_string());
+        let empty = kept.map(|k| Form::Write(k, Box::new(constant(Value::Nil))));
         if let Some(k) = &key {
             self.address_to_write(k);
         }
@@ -1877,6 +1885,7 @@ impl<'a> Builder<'a> {
         let (test_at, test_over) = (at_name.clone(), over.clone());
         let (walk, walk_at) = (over.clone(), at_name.clone());
         let (step_at, step_over) = (at_name, over);
+        let (body_kept, step_kept) = (kept_name.clone(), kept_name.clone());
         // Only a language with things to take members off need ask
         // whether the place a pass has reached still holds one.
         let things = self.table.single("ext.stmt.class").is_some();
@@ -1897,6 +1906,15 @@ impl<'a> Builder<'a> {
                         let held = r.address_to_read(named);
                         let tied = r.address_to_write(&item);
                         items.push(Form::Tie(tied, Box::new(Form::ShareItem(held, Box::new(at)))));
+                        // The walk's own name takes the same cell: a
+                        // place asked twice for its cell answers with
+                        // the one it was made into the first time.
+                        if let Some(mine) = &body_kept {
+                            let at = r.read(&walk_at);
+                            let held = r.address_to_read(named);
+                            let ours = r.address_to_write(mine);
+                            items.push(Form::Tie(ours, Box::new(Form::ShareItem(held, Box::new(at)))));
+                        }
                     }
                     None => {
                         let (bag, at) = (r.read(&walk), r.read(&walk_at));
@@ -1946,17 +1964,40 @@ impl<'a> Builder<'a> {
                 Ok(r.choose(there, pass, constant(Value::Nil)))
             },
             Some(move |r: &mut Self| {
-                let here = r.read(&step_at);
-                let next = prim_call(Prim::Plus, vec![here, constant(Value::Small(1))]);
+                let next = match &step_kept {
+                    // One past where the item handed out now lies: the
+                    // body may have carried it further along the array,
+                    // or taken it out from under the walk altogether.
+                    Some(mine) => {
+                        let (walking, here) = (r.read(&step_over), r.read(&step_at));
+                        let ours = r.address_to_write(mine);
+                        prim_call(Prim::PastHeld, vec![walking, here, Form::Share(ours)])
+                    }
+                    None => {
+                        let here = r.read(&step_at);
+                        prim_call(Prim::Plus, vec![here, constant(Value::Small(1))])
+                    }
+                };
                 let counted = r.write(&step_at, next);
                 let walking = r.read(&step_over);
                 Ok(sequence(vec![counted, prim_call(Prim::StepOn, vec![walking])]))
             }),
         )?;
-        Ok(match alone {
-            Some(asked) => sequence(vec![asked, hold, start, looped]),
-            None => sequence(vec![hold, start, looped]),
-        })
+        // Once the walk is over it lets its last item go, so that the
+        // place holding it counts as shared only while a name of the
+        // program's own still holds it.
+        let loosed = kept_name.map(|mine| {
+            let ours = self.address_to_write(&mine);
+            Form::Forget(ours)
+        });
+        let mut all = Vec::new();
+        all.extend(alone);
+        all.push(hold);
+        all.push(start);
+        all.extend(empty);
+        all.push(looped);
+        all.extend(loosed);
+        Ok(sequence(all))
     }
 
     /// `for (init; test; step) body`: the init, then a cycle whose step
@@ -2092,7 +2133,7 @@ impl<'a> Builder<'a> {
                 // what follows however it is written, so brackets after
                 // it group rather than hold what it is given.
                 Some(Prim::Out) if self.table.flag("ext.builtin.write.operator") => true,
-                Some(Prim::Append | Prim::Replace | Prim::Define | Prim::Gather | Prim::Erase | Prim::Standing | Prim::Hollow) | None => false,
+                Some(Prim::Append | Prim::Replace | Prim::Front | Prim::Define | Prim::Gather | Prim::Erase | Prim::Standing | Prim::Hollow) | None => false,
                 Some(_) => !bracketed,
             };
             if bare {
@@ -4218,6 +4259,11 @@ impl<'a> Builder<'a> {
 
     fn named_call(&mut self, name: &str, args: Vec<Form>) -> Res<Form> {
         match self.table.prims.get(name).copied() {
+            // What is put in front of may be a name standing for a
+            // shared cell, since the library of a language may spell it
+            // as a routine taking one, so the place it names is looked
+            // for while the run goes and not here.
+            Some(Prim::Front) => Ok(Form::Apply(Callee::Prim(Prim::Front, Rc::from(name)), args)),
             Some(op @ (Prim::Append | Prim::Replace)) => {
                 if !matches!(args.first(), Some(Form::Read(_))) {
                     return Err(format!("First argument to {}() must be an array variable name", name));

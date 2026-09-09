@@ -19,16 +19,16 @@ is listed, since the full kernels are meant to behave alike.
 |---|---|---|---|
 | `php/basic` | 114 | pass 98, differs 4, error 2, skipped 10 | pass 98, differs 4, error 2, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
-| `php/lang` | 213 | pass 198, differs 10, error 0, skipped 5 | pass 198, differs 10, error 0, skipped 5 |
+| `php/lang` | 213 | pass 200, differs 8, error 0, skipped 5 | pass 200, differs 8, error 0, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 54, differs 4, error 0, skipped 6 | pass 54, differs 4, error 0, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 376, differs 19, error 2, skipped 25 | pass 376, differs 19, error 2, skipped 25 |
+| all | 422 | pass 378, differs 17, error 2, skipped 25 | pass 378, differs 17, error 2, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 19 |
+| ran, printed something else | 17 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | skip php-cgi not available | 2 |
@@ -440,9 +440,9 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/foreachLoop.010.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.011.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.012.phpt` | pass | pass |  |
-| `php/lang/foreachLoop.013.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoop.013.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.014.phpt` | pass | pass |  |
-| `php/lang/foreachLoop.015.phpt` | differs | differs | ran, printed something else |
+| `php/lang/foreachLoop.015.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.016.phpt` | pass | pass |  |
 | `php/lang/foreachLoop.017.phpt` | pass | pass |  |
 | `php/lang/foreachLoopIterator.001.phpt` | pass | pass |  |

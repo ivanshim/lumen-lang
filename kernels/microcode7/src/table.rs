@@ -94,7 +94,7 @@ ext.stmt.catch:L ext.stmt.finally:L ext.stmt.throw:L ext.stmt.catch.separator:L 
 ext.system.request.query:L ext.system.request.form:L ext.system.request.cookies:L ext.system.request.server:L \
 ext.system.request.env:L ext.system.request.files:L ext.system.request.all:L ext.system.request.settings:L ext.op.index.absent:B ext.op.index.scalar:L ext.op.index.nothing:L ext.stmt.class.destructor:L ext.stmt.class.reader:L ext.stmt.class.writer:L ext.stmt.class.caller:L \
 ext.system.args.list:L ext.system.args.count:L ext.op.walk.class:L ext.op.walk.rewind:L ext.op.walk.more:L ext.op.walk.this:L ext.op.walk.key:L \
-ext.op.walk.onward:L ext.op.walk.giver.class:L ext.op.walk.giver:L ext.op.walk.no_cell:L ext.op.walk.key.no_cell:L ext.stmt.case.mark.instead:L \
+ext.op.walk.onward:L ext.op.walk.giver.class:L ext.op.walk.giver:L ext.op.walk.no_cell:L ext.op.walk.key.no_cell:L ext.op.walk.live:B ext.builtin.array.front:L ext.stmt.case.mark.instead:L \
 ext.stmt.function.carries:L ext.stmt.function.short:L ext.stmt.class.trait:L ext.stmt.class.uses:L ext.stmt.class.uses.alias:L ext.stmt.class.interface:L ext.stmt.class.implements:L ext.op.compare:L ext.builtin.unset:L ext.lexical.template:B ext.lexical.prologue.echo:L ext.lexical.prologue.folded:B \
 ext.op.otherwise:L ext.op.bit.and:L ext.op.bit.or:L ext.op.bit.xor:L ext.op.bit.not:L \
 ext.op.bit.left:L ext.op.bit.right:L ext.op.identical:L ext.op.not_identical:L ext.system.kind.spelled:B ext.builtin.args.all:L \
@@ -139,7 +139,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 59] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 60] = [
     ("builtin.emit", Prim::Echo), ("builtin.print", Prim::Say), ("builtin.write", Prim::Out), ("builtin.len", Prim::Length),
     ("builtin.char_at", Prim::CharAtIndex), ("builtin.ord", Prim::CodeOf), ("builtin.chr", Prim::CharOf), ("builtin.typeof", Prim::SortOf),
     ("builtin.error", Prim::Raise), ("builtin.extern", Prim::External), ("builtin.range", Prim::Span), ("builtin.real", Prim::MakeReal),
@@ -147,7 +147,7 @@ pub const BUILTIN_LABELS: [(&str, Prim); 59] = [
     ("builtin.to_real", Prim::AsReal), ("builtin.num", Prim::Numer), ("builtin.den", Prim::Denom), ("builtin.push", Prim::Append),
     ("builtin.get", Prim::Fetch), ("builtin.put", Prim::Replace), ("ext.builtin.echo", Prim::Tell),
     ("ext.builtin.define", Prim::Define), ("ext.builtin.var_dump", Prim::Dump), ("ext.builtin.array", Prim::Gather),
-    ("ext.builtin.print_r", Prim::Portray), ("ext.builtin.unset", Prim::Erase), ("ext.builtin.isset", Prim::Standing), ("ext.builtin.empty", Prim::Hollow), ("ext.builtin.exit", Prim::Quit),
+    ("ext.builtin.print_r", Prim::Portray), ("ext.builtin.unset", Prim::Erase), ("ext.builtin.array.front", Prim::Front), ("ext.builtin.isset", Prim::Standing), ("ext.builtin.empty", Prim::Hollow), ("ext.builtin.exit", Prim::Quit),
     ("ext.builtin.args.all", Prim::Handed), ("ext.builtin.args.count", Prim::HowMany),
     ("ext.builtin.args.at", Prim::HandedAt), ("ext.builtin.time_limit", Prim::Clock),
     ("ext.builtin.eval", Prim::Weigh), ("ext.builtin.include", Prim::Bring), ("ext.builtin.include.once", Prim::BringOnce),

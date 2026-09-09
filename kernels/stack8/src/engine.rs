@@ -2514,6 +2514,27 @@ impl<'a> Engine<'a> {
                 }
                 Value::Null
             }
+            // Where a walk keeps its place by the item it handed out,
+            // the pass after it looks for that item where it left it and
+            // then everywhere else, since the body may have moved it.
+            // A thing's places stay where they are, so a walk over one
+            // counts them as it always did.
+            Action::WalkPast => {
+                let three = self.drop_many(3)?;
+                let at = as_index(&three[1])?;
+                let onward = match (&three[0], &three[2]) {
+                    (Value::Object(_), _) => at + 1,
+                    (walked, Value::Bond(cell)) => match lies_at(walked, cell, at) {
+                        Some(found) => found + 1,
+                        // The item is gone from the array altogether, so
+                        // the place it stood at now holds whatever came
+                        // after it, and that is where the walk goes on.
+                        None => at,
+                    },
+                    _ => at + 1,
+                };
+                Value::Small(onward as i64)
+            }
             Action::WalkMore => {
                 let pair = self.drop_many(2)?;
                 match self.walk_asked(&pair[0], self.lang.walk_more.clone())? {
@@ -3895,6 +3916,36 @@ impl<'a> Engine<'a> {
             // Asking is done where the program is put together, since
             // what is asked about is a name and not its value.
             Builtin::Held | Builtin::Hollow => return Err("Only a name or a place in an array can be asked about".into()),
+            Builtin::Lead => {
+                if args.len() < 2 {
+                    return Err(format!("{}() expects an array and a value at least", name));
+                }
+                let target = args.pop().expect("the array");
+                // A place a whole number names is named anew from
+                // nought, the ones put in front taking the first
+                // numbers; a place a word names keeps its word.
+                let mut counted = -1i64;
+                let mut number = || {
+                    counted += 1;
+                    Value::Small(counted)
+                };
+                let mut kept: Vec<(Value, Value)> = args.drain(..).map(|v| (number(), v)).collect();
+                match target {
+                    Value::Array(items) => kept.extend(items.iter().map(|v| (number(), v.clone()))),
+                    Value::Map(pairs) => kept.extend(pairs.iter().map(|(k, v)| match k {
+                        Value::Text(_) => (k.clone(), v.clone()),
+                        _ => (number(), v.clone()),
+                    })),
+                    v => return Err(format!("{}() cannot put a value in front of {}", name, v.plain())),
+                }
+                // Where every place is named by its own number in turn,
+                // the array is the plain one it looks like.
+                let plain = kept.iter().enumerate().all(|(i, (k, _))| matches!(k, Value::Small(n) if *n == i as i64));
+                match plain {
+                    true => Value::array(kept.into_iter().map(|(_, v)| v).collect()),
+                    false => Value::Map(Rc::new(kept)),
+                }
+            }
             Builtin::Erase => {
                 // Taking a place out of an array: the array is given back
                 // without it.
@@ -4144,6 +4195,28 @@ fn laid_out(v: &Value, indent: usize, sp: &Wording) -> String {
     }
     out.push_str(&format!("{pad})\n"));
     out
+}
+
+/// Where an array now holds the cell a walk handed out. The place it
+/// was handed out at is looked at first, since it is where the item
+/// still is unless the body has moved it; nothing at all is answered
+/// where the item is no longer in the array.
+fn lies_at(walked: &Value, cell: &Rc<RefCell<Value>>, was: usize) -> Option<usize> {
+    let same = |v: &Value| matches!(v, Value::Bond(other) if Rc::ptr_eq(other, cell));
+    let held: &[Value] = match walked {
+        Value::Array(items) => items,
+        Value::Map(pairs) => {
+            if pairs.get(was).map_or(false, |(_, v)| same(v)) {
+                return Some(was);
+            }
+            return pairs.iter().position(|(_, v)| same(v));
+        }
+        _ => return None,
+    };
+    if held.get(was).map_or(false, same) {
+        return Some(was);
+    }
+    held.iter().position(same)
 }
 
 /// The place an array holds, made a shared cell so that a name fastened

@@ -610,6 +610,10 @@
   "ext.op.walk.key.no_cell": [
     "Key element cannot be a reference"
   ],
+  "ext.op.walk.live": true,
+  "ext.builtin.array.front": [
+    "array_unshift"
+  ],
   "ext.stmt.class.modifier": [
     "public",
     "private",

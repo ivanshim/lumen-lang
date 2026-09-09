@@ -110,6 +110,11 @@ pub enum Action {
     /// thing that is its own walk has no such cells, and a language with
     /// words for that says so and stops.
     WalkAlone,
+    /// Where a walk that keeps its place by the item it handed out goes
+    /// on from. Below the cell of that item stand the place the pass was
+    /// at and the array as it now stands, since the body may have moved
+    /// the item, or taken it away altogether.
+    WalkPast,
     /// Which of two values comes first: below, alike, or above.
     Rank,
     /// Whether two values are the very same: of one kind, and alike
@@ -263,6 +268,12 @@ pub enum Builtin {
     Leave,
     /// Take a binding, or a place in an array, away (ext.builtin.unset).
     Erase,
+    /// Put values at the head of a named array, the places after them
+    /// moving along to make room (ext.builtin.array.front). What a place
+    /// is called by a whole number is called anew from nought; what it
+    /// is called by a word keeps that word. The answer is how many
+    /// places the array holds afterwards.
+    Lead,
     /// Whether each of those bindings, or places in an array, holds
     /// something other than nothing, asking without minding that a
     /// binding was never written or a place is not there

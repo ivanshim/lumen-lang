@@ -959,7 +959,7 @@ impl<'a> Compiler<'a> {
                 // what follows however it is written, so brackets after
                 // it group rather than hold what it is given.
                 Some(Builtin::Out) if lang.writes_as_operator => return self.bare_call(w),
-                Some(Builtin::Append) | Some(Builtin::Replace) | Some(Builtin::Define) | Some(Builtin::Pack) | Some(Builtin::Erase) | None => {}
+                Some(Builtin::Append) | Some(Builtin::Replace) | Some(Builtin::Define) | Some(Builtin::Pack) | Some(Builtin::Erase) | Some(Builtin::Lead) | None => {}
                 Some(_) if !bracketed => return self.bare_call(w),
                 Some(_) => {}
             }
@@ -1288,6 +1288,15 @@ impl<'a> Compiler<'a> {
         let at = self.gensym("at");
         self.constant(Value::Small(0));
         self.write(&at);
+        // Where the language keeps a walk's place by the item it handed
+        // out, the cell of that item is kept here too, so that the pass
+        // after can ask where the item has got to. It holds nothing
+        // until the first item is handed out.
+        let held = (shared && lang.walk_alive).then(|| self.gensym("held"));
+        if let Some(held) = &held {
+            self.constant(Value::Null);
+            self.write(held);
+        }
         let to_test = self.leap();
         let top = self.mark();
         self.enter_cycle(None);
@@ -1313,10 +1322,20 @@ impl<'a> Compiler<'a> {
         if shared {
             // The name is fastened to the item's own cell.
             self.read(&at);
-            let held = self.cell_to_read(bag, false);
-            self.put(Instr::BondItem(held));
+            let from = self.cell_to_read(bag, false);
+            self.put(Instr::BondItem(from));
             let name = self.cell_to_write(value);
             self.put(Instr::Fasten(name));
+            // The walk's own name is fastened to it as well: asking the
+            // place for its cell a second time answers with the very
+            // same one, since a place already shared is shared already.
+            if let Some(held) = &held {
+                self.read(&at);
+                let again = self.cell_to_read(bag, false);
+                self.put(Instr::BondItem(again));
+                let keep = self.cell_to_write(held);
+                self.put(Instr::Fasten(keep));
+            }
         } else {
             self.read(&over);
             self.read(&at);
@@ -1344,10 +1363,26 @@ impl<'a> Compiler<'a> {
         }
         self.body()?;
         let again = self.mark();
-        self.read(&at);
-        self.constant(Value::Small(1));
-        self.act(Action::Add, 2);
-        self.write(&at);
+        match &held {
+            // The place the walk goes on from is the one past where the
+            // item it handed out now lies, which is not where it lay
+            // before if the body has moved it along or shortened the
+            // array in front of it.
+            Some(held) => {
+                self.read(&over);
+                self.read(&at);
+                let keep = self.cell_to_write(held);
+                self.put(Instr::Bond(keep));
+                self.act(Action::WalkPast, 3);
+                self.write(&at);
+            }
+            None => {
+                self.read(&at);
+                self.constant(Value::Small(1));
+                self.act(Action::Add, 2);
+                self.write(&at);
+            }
+        }
         self.read(&over);
         self.act(Action::WalkOnward, 1);
         self.put_away();
@@ -1357,6 +1392,13 @@ impl<'a> Compiler<'a> {
         self.act(Action::WalkMore, 2);
         self.loop_back(top);
         self.leave_cycle(again);
+        // The walk lets its last item go once it is over, so that the
+        // place holding it is a place two names share only while some
+        // name of the program's own still holds it.
+        if let Some(held) = &held {
+            let keep = self.cell_to_write(held);
+            self.put(Instr::Forget(keep));
+        }
         Ok(())
     }
 
@@ -3604,6 +3646,20 @@ impl<'a> Compiler<'a> {
                                 }
                                 let argc = self.arguments(&call)?;
                                 self.mutation(&tok.lexeme, &target, argc + 1)?;
+                            } else if native == Some(Builtin::Lead) {
+                                // The array put in front of is named, as
+                                // the one pushed onto is.
+                                let target = match self.look().shape {
+                                    Shape::Instr => self.take().lexeme,
+                                    _ => return Err(format!("First argument to {}() must be an array variable name", tok.lexeme)),
+                                };
+                                if let Some(sep) = &call.between {
+                                    if self.at_symbol(sep) {
+                                        self.take();
+                                    }
+                                }
+                                let argc = self.arguments(&call)?;
+                                self.leading(&tok.lexeme, &target, argc)?;
                             } else if native == Some(Builtin::Erase) {
                                 self.forget(&call)?;
                             } else if native == Some(Builtin::Held) {
@@ -4567,7 +4623,7 @@ impl<'a> Compiler<'a> {
     /// the definition, or the program bound to the name.
     fn call(&mut self, name: &str, argc: usize) -> Res<()> {
         match self.lang.builtins.get(name).copied() {
-            Some(Builtin::Append) | Some(Builtin::Replace) => {
+            Some(Builtin::Append) | Some(Builtin::Replace) | Some(Builtin::Lead) => {
                 Err(format!("First argument to {}() must be an array variable name", name))
             }
             Some(Builtin::Pack) => Err(format!("{}() is a literal, not a call", name)),
@@ -4595,6 +4651,22 @@ impl<'a> Compiler<'a> {
         self.act(Action::Builtin(native, Rc::from(name)), argc);
         self.restore(target);
         self.constant(Value::Null);
+        Ok(())
+    }
+
+    /// Putting values at the head of a named array: the values first,
+    /// then the array itself, taken out of its slot and put back with
+    /// them in front. How many places it holds afterwards is the answer,
+    /// so the array is read once more for its extent.
+    fn leading(&mut self, name: &str, target: &str, argc: usize) -> Res<()> {
+        if argc == 0 {
+            return Err(format!("{}() expects an array and a value at least", name));
+        }
+        self.read_taking(target);
+        self.act(Action::Builtin(Builtin::Lead, Rc::from(name)), argc + 1);
+        self.restore(target);
+        self.read(target);
+        self.act(Action::Extent, 1);
         Ok(())
     }
 

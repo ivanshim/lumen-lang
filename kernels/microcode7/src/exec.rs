@@ -477,6 +477,25 @@ impl<'a> Machine<'a> {
                 self.walk_asked(&v[0], self.table.single("ext.op.walk.onward").map(str::to_string))?;
                 Value::Nil
             }
+            // Where the item handed out has got to, and one place past
+            // it. A thing keeps its members where they are while it is
+            // walked, so a walk over one goes on counting.
+            Prim::PastHeld => {
+                n(3)?;
+                let stood = as_index(&v[1])?;
+                let gone_on = match (&v[0], &v[2]) {
+                    (Value::Thing(_), _) => stood + 1,
+                    (walked, Value::Shared(cell)) => match found_at(walked, cell, stood) {
+                        Some(now) => now + 1,
+                        // The item is out of the array, so what came
+                        // after it stands where it stood, and that is
+                        // where the walk takes up.
+                        None => stood,
+                    },
+                    _ => stood + 1,
+                };
+                Value::Small(gone_on as i64)
+            }
             _ => return Err(Escape::Error(format!("{}() is no step of a walk", name))),
         })
     }
@@ -1891,7 +1910,7 @@ impl<'a> Machine<'a> {
                     let (p, env) = self.pick(args, frame)?;
                     self.invoke(p, env, Vec::new())
                 }
-                Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn => {
+                Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn | Prim::PastHeld => {
                     let v = self.value_list(args, frame)?;
                     self.walking(op, name, &v)
                 }
@@ -2084,6 +2103,48 @@ impl<'a> Machine<'a> {
                     let mut slots = f.cells.borrow_mut();
                     written_into(&mut slots[i], key, value, &self.no_places(), self.builds_places, letter)?;
                     Ok(Value::Nil)
+                }
+                // Values put before everything the named array holds.
+                // The array is worked on where it lives, so a place
+                // handed out to a walk is still the place it was.
+                Prim::Front => {
+                    let Some(first) = args.first() else {
+                        return Err(format!("First argument to {}() must be an array variable name", name).into());
+                    };
+                    // A name handed over as a cell is worked on through
+                    // that cell, wherever the array behind it lives.
+                    let through = match first {
+                        Form::Read(_) => None,
+                        other => match self.value_list(std::slice::from_ref(other), frame)?.pop() {
+                            Some(Value::Shared(cell)) => Some(cell),
+                            _ => return Err(format!("First argument to {}() must be an array variable name", name).into()),
+                        },
+                    };
+                    let coming = self.value_list(&args[1..], frame)?;
+                    if coming.is_empty() {
+                        return Err(format!("{}() expects an array and a value at least", name).into());
+                    }
+                    if let Some(cell) = through {
+                        let mut inside = cell.borrow_mut();
+                        return Ok(Value::Small(put_before(&mut inside, coming, name)? as i64));
+                    }
+                    let Form::Read(slot) = first else { unreachable!("a name read in place") };
+                    let (f, i) = self.locate(slot, frame)?;
+                    let shared = match &f.cells.borrow()[i] {
+                        Value::Shared(cell) => Some(cell.clone()),
+                        _ => None,
+                    };
+                    let many = match shared {
+                        Some(cell) => {
+                            let mut held = cell.borrow_mut();
+                            put_before(&mut held, coming, name)?
+                        }
+                        None => {
+                            let mut slots = f.cells.borrow_mut();
+                            put_before(&mut slots[i], coming, name)?
+                        }
+                    };
+                    Ok(Value::Small(many as i64))
                 }
                 // A language may say the run is over where it stands.
                 // Text given is written out first; a number is not.
@@ -2863,7 +2924,7 @@ impl<'a> Machine<'a> {
             Prim::AtEnd => return Err("An empty index belongs on the left of an assignment".to_string()),
             // The steps of a walk that a thing may answer for itself are
             // worked out where a call can be made, not here.
-            Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn => {
+            Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn | Prim::PastHeld => {
                 return Err(format!("{}() is worked out where a call can be made", name))
             }
             Prim::Kept => {
@@ -3936,7 +3997,7 @@ impl<'a> Machine<'a> {
                 x.clone()
             }
             Prim::Seq | Prim::Choose | Prim::Both | Prim::Either | Prim::Yield | Prim::Leave | Prim::Resume | Prim::Append | Prim::Replace
-            | Prim::Spawn | Prim::Ask | Prim::Bid | Prim::Hurl | Prim::Otherwise => unreachable!("handled in eval"),
+            | Prim::Front | Prim::Spawn | Prim::Ask | Prim::Bid | Prim::Hurl | Prim::Otherwise => unreachable!("handled in eval"),
         })
     }
 
@@ -4330,6 +4391,56 @@ fn letter_put(had: &str, at: &Value, put: &str) -> Result<Value, String> {
     }
     letters[step] = letter;
     Ok(Value::text(&letters.into_iter().collect::<String>()))
+}
+
+/// Where the cell a walk handed out is to be found in the array now.
+/// The place it was handed out at is tried first, since the body will
+/// mostly have left it there; nothing is answered where the item is no
+/// longer in the array at all.
+fn found_at(walked: &Value, cell: &Rc<RefCell<Value>>, stood: usize) -> Option<usize> {
+    let itself = |x: &Value| matches!(x, Value::Shared(other) if Rc::ptr_eq(other, cell));
+    match walked {
+        Value::Vector(items) => match items.get(stood).map_or(false, &itself) {
+            true => Some(stood),
+            false => items.iter().position(itself),
+        },
+        Value::Dict(entries) => match entries.get(stood).map_or(false, |(_, x)| itself(x)) {
+            true => Some(stood),
+            false => entries.iter().position(|(_, x)| itself(x)),
+        },
+        _ => None,
+    }
+}
+
+/// Values put before everything an array holds, in the order given.
+/// The places keep their words where they are named by words, and are
+/// numbered afresh from nought where they are named by numbers, the
+/// newcomers taking the first numbers. The answer is how many places
+/// there are afterwards.
+fn put_before(held: &mut Value, coming: Vec<Value>, name: &str) -> Result<usize, String> {
+    let mut numbered = 0i64;
+    let mut afresh = |k: Option<&Value>| match k {
+        Some(Value::Text(word)) => Value::Text(word.clone()),
+        _ => {
+            numbered += 1;
+            Value::Small(numbered - 1)
+        }
+    };
+    let mut all: Vec<(Value, Value)> = coming.into_iter().map(|x| (afresh(None), x)).collect();
+    match &*held {
+        Value::Vector(items) => all.extend(items.iter().map(|x| (afresh(None), x.clone()))),
+        Value::Dict(entries) => all.extend(entries.iter().map(|(k, x)| (afresh(Some(k)), x.clone()))),
+        other => return Err(format!("{}() cannot put a value in front of {}", name, other.bare())),
+    }
+    let many = all.len();
+    // Where the places run nought, one, two and so on, the array is
+    // the plain one it looks like and is given back as such.
+    let plain = all.iter().enumerate().all(|(at, (k, _))| matches!(k, Value::Small(n) if *n == at as i64));
+    *held = match plain {
+        true => Value::Vector(Rc::new(all.into_iter().map(|(_, x)| x).collect())),
+        false => Value::Dict(Rc::new(all)),
+    };
+    Ok(many)
 }
 
 fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &str, builds: bool, letter: Option<String>) -> Result<(), String> {

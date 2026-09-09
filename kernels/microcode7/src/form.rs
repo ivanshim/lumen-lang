@@ -246,6 +246,16 @@ pub enum Prim {
     /// that is its own walk keeps no such cells, and a language with
     /// words for that says so and stops.
     AloneWalk,
+    /// The place a walk that keeps its place by the item it handed out
+    /// takes up again: what is walked, the place the pass stood at, and
+    /// the cell of the item handed out there, which the body may have
+    /// carried elsewhere in the array or taken out of it.
+    PastHeld,
+    /// Put values before everything a named array holds, the places
+    /// after them moving along (ext.builtin.array.front). A place named
+    /// by a whole number is named anew from nought; one named by a word
+    /// keeps its word. The answer is how many places there are then.
+    Front,
     /// `a[]`, a place only a store reaches.
     AtEnd,
     /// A thing of the class given, its maker run over the rest.
