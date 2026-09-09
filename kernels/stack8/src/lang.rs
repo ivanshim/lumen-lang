@@ -225,6 +225,10 @@ pub struct Lang {
     /// neither, the kernel's own words stand.
     pub fault_modulo: Option<String>,
     pub fault_shift: Option<String>,
+    /// Whether the two shifts read each side for the number it is
+    /// worth, the way arithmetic reads one, rather than reading it
+    /// straight as bits.
+    pub shift_by_number: bool,
     /// Whether dividing two whole numbers evenly gives a whole one.
     pub div_stays_whole: bool,
     /// The remainder is taken between whole numbers, whatever it is
@@ -587,7 +591,7 @@ w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.try | w ext.stmt.ca
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
 w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | w ext.system.request.settings | b ext.op.index.absent | w ext.op.index.scalar | w ext.op.index.nothing | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
-w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right
+w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right | b ext.op.bit.shift.numbers
 w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at
 w ext.builtin.args.all.outside | w ext.builtin.args.count.outside | w ext.builtin.args.at.outside
@@ -601,7 +605,7 @@ w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.dro
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
 w ext.system.fault.operands | w ext.op.increment.text | w ext.op.decrement.text
 w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind | w ext.system.fault.class.value | w ext.system.fault.class.walk | w ext.op.walk.giver.unwalkable
-w ext.system.fault.modulo | w ext.system.fault.shift
+w ext.system.fault.modulo | w ext.system.fault.shift | b ext.op.bit.shift.numbers
 w ext.op.name_by_value | b ext.op.cast | w ext.stmt.unpack
 w ext.system.source.routine | w ext.system.source.class | w ext.system.source.method
 b ext.op.member.by_value | b ext.op.index.text | w ext.system.globals
@@ -1229,6 +1233,7 @@ impl Lang {
             operand_fault: r.head("ext.system.fault.operands")?,
             fault_modulo: r.head("ext.system.fault.modulo")?,
             fault_shift: r.head("ext.system.fault.shift")?,
+            shift_by_number: r.flag("ext.op.bit.shift.numbers")?,
             div_stays_whole,
             mod_whole: r.flag("op.mod.whole")?,
             step_up_text: r.head("ext.op.increment.text")?,

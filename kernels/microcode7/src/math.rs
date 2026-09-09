@@ -165,6 +165,23 @@ fn precise(op: Calc, a: &Ratio, b: &Ratio) -> Result<Value, String> {
     }
 }
 
+/// A whole number's bits carried so many places upward or downward.
+/// Nothing comes back for a count under nought, that being no carrying
+/// at all, and the language then says of it whatever it says. Past
+/// sixty-four places nothing of the number is left, save the sign on
+/// the way down: what stood under nought settles at -1.
+pub fn carried_bits(bits: i64, places: i64, upward: bool) -> Option<i64> {
+    if places < 0 {
+        return None;
+    }
+    let far = places.min(64) as u32;
+    if upward {
+        return Some(bits.checked_shl(far).unwrap_or(0));
+    }
+    let emptied = if bits < 0 { -1 } else { 0 };
+    Some(bits.checked_shr(far).unwrap_or(emptied))
+}
+
 pub fn below(a: &Value, b: &Value) -> Option<bool> {
     if let (Value::Small(x), Value::Small(y)) = (a, b) {
         return Some(x < y);

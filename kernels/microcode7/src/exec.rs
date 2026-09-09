@@ -964,7 +964,7 @@ impl<'a> Machine<'a> {
             _ if told_of("ext.system.fault.modulo") => Some("ext.system.fault.class.division"),
             _ if told_of("ext.system.fault.shift") => Some("ext.system.fault.class.arithmetic"),
             _ if told.starts_with("Division by zero") => Some("ext.system.fault.class.division"),
-            _ if told.starts_with("Bit shift by") => Some("ext.system.fault.class.arithmetic"),
+            _ if told.starts_with("Bit shift by") || told_of("ext.system.fault.shift") => Some("ext.system.fault.class.arithmetic"),
             _ if told.starts_with("Cannot coerce") => Some("ext.system.fault.class.kind"),
             // An argument that is not of the class its parameter takes.
             _ if told.contains(" must be of type ") => Some("ext.system.fault.class.kind"),
@@ -3519,23 +3519,6 @@ impl<'a> Machine<'a> {
                     _ => left ^ right,
                 })
             }
-            Prim::BitsUp | Prim::BitsDown => {
-                let (bits, by) = (self.bits_told(&v[0])?, self.bits_told(&v[1])?);
-                if by < 0 {
-                    // A language may have words of its own for it, and
-                    // those are what its own programs are told.
-                    let told = self.table.single("ext.system.fault.shift");
-                    return Err(told.unwrap_or("Bit shift by a negative number").to_string());
-                }
-                // Past sixty-four places nothing of the number is left,
-                // save the sign when the bits go down.
-                let far = by.min(64) as u32;
-                Value::Small(if op == Prim::BitsUp {
-                    bits.checked_shl(far).unwrap_or(0)
-                } else {
-                    bits.checked_shr(far).unwrap_or(if bits < 0 { -1 } else { 0 })
-                })
-            }
             // Text turned about is text taken times minus one, the way a
             // language reading a number out of text does it: the number
             // the text opens with is turned about, and text opening with
@@ -3688,10 +3671,13 @@ impl<'a> Machine<'a> {
             // spells none is worth nothing; a language with a word for a
             // warning hears of both instead of being stopped.
             Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power
-            | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge
+            | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::BitsUp | Prim::BitsDown
                 // Only where every piece of text will give up a number,
-                // so that what is worked out below is never text again.
+                // so that what is worked out below is never text again,
+                // and, for the two shifts, only where the language has
+                // them read each side for a number at all.
                 if (matches!(v[0], Value::Text(_)) || matches!(v[1], Value::Text(_)))
+                    && (!matches!(op, Prim::BitsUp | Prim::BitsDown) || self.table.flag("ext.op.bit.shift.numbers"))
                     && [&v[0], &v[1]].iter().all(|x| {
                         !matches!(x, Value::Text(_))
                             || number_spelled_in(x).is_some()
@@ -3731,6 +3717,21 @@ impl<'a> Machine<'a> {
                 };
                 let pair = [worth(&v[0]), worth(&v[1])];
                 return self.prim(op, name, &pair);
+            }
+            // Carrying the bits along. Each side is read as a whole
+            // number of sixty-four bits, sign and all, save where the
+            // reading above has already made numbers of them.
+            Prim::BitsUp | Prim::BitsDown => {
+                let (bits, by) = (self.bits_told(&v[0])?, self.bits_told(&v[1])?);
+                match math::carried_bits(bits, by, op == Prim::BitsUp) {
+                    Some(carried) => Value::Small(carried),
+                    // Carrying by a count under nought is no carrying,
+                    // and a language may have its own words for that.
+                    None => match self.table.single("ext.system.fault.shift") {
+                        Some(words) => return Err(words.to_string()),
+                        None => return Err("Bit shift by a negative number".to_string()),
+                    },
+                }
             }
             // A language whose remainder is taken between whole numbers
             // brings what it is given to one first, the way it brings a

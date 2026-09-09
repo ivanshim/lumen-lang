@@ -771,6 +771,7 @@
   "ext.op.bit.right": [
     ">>"
   ],
+  "ext.op.bit.shift.numbers": true,
   "ext.op.hush": ["@"],
   "ext.op.name_by_value": [
     "$"

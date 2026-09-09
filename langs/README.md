@@ -1065,12 +1065,31 @@ only. The extension labels so far, all from PHP:
   A value is read as a whole number of sixty-four bits, sign and all:
   what lies past a decimal point is dropped towards nothing, so -1.5
   stands for -1, and text that spells no number stands for zero. Moving
-  by a negative count is an error, and moving by sixty-four places or
+  by a negative count is an error, whose words are
+  `ext.system.fault.shift`, and moving by sixty-four places or
   more leaves nothing, save that moving down keeps the sign. Two pieces
   of text meet letter by letter instead, the shorter one saying how far
-  it goes save where either bit will do. Like any operator these take
-  their tiers from `op.precedence`, and a kernel that does not read the
-  labels reads past those tiers too.
+  it goes save where either bit will do; the two shifts never do this,
+  and read both sides as numbers however they were written. Like any
+  operator these take their tiers from `op.precedence`, and a kernel
+  that does not read the labels reads past those tiers too.
+- `ext.op.bit.shift.numbers`: a switch; the two shifts read each side
+  for the number it is worth, the way arithmetic reads one, rather than
+  reading it straight as bits. Text that spells a number stands for it,
+  text that spells one and then says more is worth what it opens with
+  and is complained of the same way arithmetic complains of it, and text
+  that spells none at all is refused with `ext.system.fault.operands`
+  instead of standing for nought — so `"3.4a" << "1.2"` is 6 and
+  `"abc" << 1` is a fault. The other bit operations are unmoved: two
+  pieces of text still meet letter by letter there. The switch tells
+  only where the language also names a word for a warning
+  (`ext.system.complaint.warning`), that being the reading which always
+  hands a number back and never text again.
+- `ext.system.fault.shift`: the words a language says of a shift by a
+  count below nought, `Bit shift by negative number`. The fault is
+  raised under the class `ext.system.fault.class.arithmetic` names,
+  working on bits being arithmetic. Where a definition names no such
+  words the kernel says them in its own way.
 - `ext.builtin.unset`: takes a binding away, leaving it as though
   nothing were ever written to it, or takes a place out of an array.
 - `ext.op.reference`: the sign that makes one name stand for another's
@@ -1451,6 +1470,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.bit.not` | - | - | - | - | - | - | - | `~` | - | - |
 | `ext.op.bit.or` | - | - | - | - | - | - | - | `\|` | - | - |
 | `ext.op.bit.right` | - | - | - | - | - | - | - | `>>` | - | - |
+| `ext.op.bit.shift.numbers` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.bit.xor` | - | - | - | - | - | - | - | `^` | - | - |
 | `ext.op.cast` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.op.compare` | - | - | - | - | - | - | - | `<=>` | - | - |

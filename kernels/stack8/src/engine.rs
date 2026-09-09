@@ -2801,27 +2801,31 @@ impl<'a> Engine<'a> {
             }
             // Working on the bits reads each side as a whole number of
             // sixty-four bits, sign and all, whatever it was written as.
-            Action::BitBoth | Action::BitEither | Action::BitOne | Action::BitUp | Action::BitDown => {
+            // A language whose shifts read each side for the number it
+            // is worth stands apart: there text is left to the reading
+            // further down — the reading a language with a word for a
+            // warning gets, and the only one that never hands text back
+            // — and this arm works on the numbers it gives.
+            Action::BitBoth | Action::BitEither | Action::BitOne | Action::BitUp | Action::BitDown
+                if !(self.lang.shift_by_number
+                    && self.lang.warns_of_unwritten
+                    && matches!(op, Action::BitUp | Action::BitDown)
+                    && (matches!(a, Value::Text(_)) || matches!(b, Value::Text(_)))) =>
+            {
                 let (x, y) = (self.bits_said(a)?, self.bits_said(b)?);
                 Value::Small(match op {
                     Action::BitBoth => x & y,
                     Action::BitEither => x | y,
                     Action::BitOne => x ^ y,
-                    _ => {
-                        if y < 0 {
-                            // A language may have its own words for it,
-                            // which is what its own programs are told.
-                            let told = self.lang.fault_shift.clone();
-                            return Err(told.unwrap_or_else(|| "Bit shift by a negative number".to_string()));
-                        }
-                        let places = y.min(64) as u32;
-                        match op {
-                            Action::BitUp => x.checked_shl(places).unwrap_or(0),
-                            // Moving down keeps the sign, so a negative
-                            // number falls to -1 rather than to 0.
-                            _ => x.checked_shr(places).unwrap_or(if x < 0 { -1 } else { 0 }),
-                        }
-                    }
+                    _ => match arith::moved_bits(matches!(op, Action::BitUp), x, y) {
+                        Some(moved) => moved,
+                        // A shift by a count below nought is no shift,
+                        // and the language says so in its own words.
+                        None => match &self.lang.fault_shift {
+                            Some(words) => return Err(words.clone().into()),
+                            None => return Err("Bit shift by a negative number".to_string()),
+                        },
+                    },
                 })
             }
             // A step onward or back is adding or taking away one, save
@@ -2893,7 +2897,10 @@ impl<'a> Engine<'a> {
                     }
                 };
                 let (x, y) = (worth(x, a), worth(y, b));
-                return self.dyadic_numbers(op, &x, &y);
+                // Whatever is left is a number, so the whole question
+                // is asked again: an operation the reading stood aside
+                // for, a shift among them, now finds its own arm.
+                return self.dyadic(op, &x, &y);
             }
             _ => return self.dyadic_numbers(op, a, b),
         })

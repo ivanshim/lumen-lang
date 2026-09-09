@@ -22,13 +22,13 @@ is listed, since the full kernels are meant to behave alike.
 | `php/lang` | 213 | pass 200, differs 8, error 0, skipped 5 | pass 200, differs 8, error 0, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
-| `php/lang/operators` | 64 | pass 54, differs 4, error 0, skipped 6 | pass 54, differs 4, error 0, skipped 6 |
+| `php/lang/operators` | 64 | pass 57, differs 1, error 0, skipped 6 | pass 57, differs 1, error 0, skipped 6 |
 | `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 378, differs 17, error 2, skipped 25 | pass 378, differs 17, error 2, skipped 25 |
+| all | 422 | pass 381, differs 14, error 2, skipped 25 | pass 381, differs 14, error 2, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 17 |
+| ran, printed something else | 14 |
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | skip php-cgi not available | 2 |
@@ -492,11 +492,11 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/bitwiseOr_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseOr_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseShiftLeft_basiclong_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/bitwiseShiftLeft_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/bitwiseShiftLeft_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseShiftLeft_variationStr2.phpt` | pass | pass |  |
-| `php/lang/operators/bitwiseShiftLeft_variationStr_64bit.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/bitwiseShiftLeft_variationStr_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseShiftRight_basiclong_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/bitwiseShiftRight_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/bitwiseShiftRight_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseShiftRight_variationStr2.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseXor_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseXor_variationStr.phpt` | pass | pass |  |

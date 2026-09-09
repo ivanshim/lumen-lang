@@ -204,6 +204,23 @@ fn precise(calc: Operation, a: &Exact, b: &Exact) -> Result<Value, String> {
     })
 }
 
+/// The bits of a whole number moved along, up or down, by so many
+/// places. A count below nought is no move at all and answers with
+/// nothing, for the language to say what it says of such a shift.
+/// Sixty-four places or more leave nothing of the number behind, save
+/// that moving down keeps the sign, so one below nought falls to -1
+/// rather than to 0.
+pub fn moved_bits(up: bool, bits: i64, by: i64) -> Option<i64> {
+    if by < 0 {
+        return None;
+    }
+    let places = by.min(64) as u32;
+    Some(match up {
+        true => bits.checked_shl(places).unwrap_or(0),
+        false => bits.checked_shr(places).unwrap_or(if bits < 0 { -1 } else { 0 }),
+    })
+}
+
 /// The order of two numbers, or None when either is not one.
 pub fn order_values(a: &Value, b: &Value) -> Option<Ordering> {
     if let (Value::Small(x), Value::Small(y)) = (a, b) {
