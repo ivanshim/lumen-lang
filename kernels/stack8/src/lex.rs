@@ -703,7 +703,7 @@ impl<'a> Cursor<'a> {
                 for _ in 0..digits_at {
                     s.push(self.step());
                 }
-                while let Some(c) = self.look(0).filter(|c| c.is_ascii_digit() || broken(c)) {
+                while let Some(c) = self.look(0).filter(|c| c.is_ascii_digit() || (lang.number_strict && broken(c))) {
                     s.push(c);
                     self.step();
                 }

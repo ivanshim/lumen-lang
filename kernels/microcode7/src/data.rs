@@ -174,7 +174,7 @@ impl Value {
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) => return None,
+            Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Imaginary { .. } => return None,
         })
     }
 

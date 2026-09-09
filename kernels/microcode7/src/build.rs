@@ -5492,8 +5492,7 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
             if Some(c) == dot { '.' } else if letters.contains(&c) { 'e' } else { c }
         }).collect();
         let x = normalized.parse::<f64>().map_err(|_| unreadable_numeral(text, table))?;
-        let (a, b) = crate::data::binary_worth(x).unwrap_or_else(|| (BigInt::from(if x.is_nan() { 0 } else if x < 0.0 { -1 } else { 1 }), BigInt::from(0)));
-        return Ok(math::made_number(a, b, Some(17), x.is_sign_negative()));
+        return Ok(crate::data::worth_of_binary(x, 17));
     }
     for (key, radix) in [
         ("lexical.number.hex_prefix", 16u32),

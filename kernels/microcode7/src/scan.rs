@@ -669,7 +669,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                 let sign_len = usize::from(matches!(at(k + 1), Some('+') | Some('-')));
                 if at(k).map_or(false, |c| powers.contains(&c)) && (strict || at(k + 1 + sign_len).map_or(false, |x| x.is_ascii_digit())) {
                     k += 1 + sign_len;
-                    while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
+                    while k < src.len() && (src[k].is_ascii_digit() || (strict && apart.contains(&src[k]))) {
                         k += 1;
                     }
                 }
