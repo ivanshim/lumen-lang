@@ -86,6 +86,19 @@ fn drop_comments(source: &str, table: &Table) -> String {
             let reach = folded(ahead, table).map_or(ahead.len(), |(_, _, far)| far);
             kept.push_str(&ahead[..reach]);
             ahead = &ahead[reach..];
+        } else if let Some(delimiter) = table.strings("ext.lexical.string.long").iter().find(|q| ahead.starts_with(q.as_str())) {
+            let mut cursor = delimiter.len();
+            loop {
+                if cursor == ahead.len() { break; }
+                if ahead[cursor..].starts_with(delimiter) { cursor += delimiter.len(); break; }
+                let letter = ahead[cursor..].chars().next().unwrap();
+                cursor += letter.len_utf8();
+                if letter == '\\' && cursor < ahead.len() {
+                    cursor += ahead[cursor..].chars().next().unwrap().len_utf8();
+                }
+            }
+            kept.push_str(&ahead[..cursor]);
+            ahead = &ahead[cursor..];
         } else if quotes.contains(&c) {
             inside = Some(c);
             kept.push(c);
@@ -586,6 +599,9 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             continue;
         }
         if quotes.contains(&c) {
+            let ending: Vec<char> = table.strings("ext.lexical.string.long").iter()
+                .map(|q| q.chars().collect::<Vec<_>>()).find(|q| src[pos..].starts_with(q))
+                .unwrap_or_else(|| vec![c]);
             let is_raw = raw.contains(&c);
             let woven = weaving.contains(&c);
             let slash = Backslash {
@@ -603,18 +619,20 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             };
             // Positions in s that were escaped, so never open a variable.
             let mut plain: Vec<usize> = Vec::new();
-            let (mut s, mut k, mut closed) = (String::new(), pos + 1, false);
+            let (mut s, mut k, mut closed) = (String::new(), pos + ending.len(), false);
             while k < src.len() {
+                if src[k..].starts_with(&ending) {
+                    k += ending.len(); closed = true; break;
+                }
                 let d = src[k];
+                if table.flag("ext.lexical.escape.continued") && d == '\\' && src.get(k + 1) == Some(&'\n') {
+                    k += 2; row += 1; continue;
+                }
                 if d == '\\' && k + 1 < src.len() {
                     k = slash.reads(&src, k, &mut s, &mut plain)?;
                     continue;
                 }
                 k += 1;
-                if d == c {
-                    closed = true;
-                    break;
-                }
                 if d == '\n' {
                     row += 1;
                 }

@@ -1749,6 +1749,16 @@ impl<'a> Builder<'a> {
         let table = self.table;
         let word = self.advance().lexeme;
         let name = self.need_word("as the class name")?;
+        if let Some(words) = table.single("ext.stmt.class.unready") {
+            if self.on_any("syntax.call.open") {
+                self.advance();
+                self.arguments_of(&name, "syntax.call.close", "syntax.call.separator")?;
+            }
+            // A class keeps its members together while they are read;
+            // the run must wait until its own binding rules are known.
+            self.routine(&name, Holds::Every, Traps::Naught, Vec::new(), 0, |r| r.body())?;
+            return Ok(prim_call(Prim::Raise, vec![constant(Value::text(words))]));
+        }
         // A class of method names only may be built on several at once;
         // a class is built on one and answers to any number.
         let bare = table.spells("ext.stmt.class.interface", &word);
@@ -3951,7 +3961,11 @@ impl<'a> Builder<'a> {
             }
             Shape::Quote => {
                 self.advance();
-                constant(Value::text(&t.lexeme))
+                let mut joined = t.lexeme.clone();
+                if table.flag("ext.lexical.string.adjacent") {
+                    while self.look().shape == Shape::Quote { joined += &self.advance().lexeme; }
+                }
+                constant(Value::text(&joined))
             }
             Shape::Bare if table.spells("ext.stmt.class.new", &t.lexeme) => {
                 self.advance();

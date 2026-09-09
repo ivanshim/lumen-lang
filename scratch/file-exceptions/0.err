@@ -1,1 +1,1 @@
-NotImplementedError: class bodies are not supported
+PythonError: NotImplementedError: class bodies are not supported

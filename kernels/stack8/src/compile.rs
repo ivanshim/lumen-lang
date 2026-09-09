@@ -2479,6 +2479,21 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let word = self.take().lexeme;
         let name = self.want_name("as the class name")?;
+        if let Some(said) = &lang.class_unready {
+            let said = said.clone();
+            if let Some(call) = lang.calling.clone() {
+                if self.at_symbol(&call.open) {
+                    self.take();
+                    self.arguments_of(&name, &call)?;
+                }
+            }
+            // Read each member in a scope of its own. Making the class
+            // awaits the rules for its namespace and its ancestors.
+            self.routine(&name, Vec::new(), 0, false, |a| a.body())?;
+            self.constant(Value::text(&said));
+            self.act(Action::Builtin(Builtin::Raise, Rc::from(name.as_str())), 1);
+            return Ok(());
+        }
         // A class of method names only may stand on several at once; a
         // class stands on one and answers to any number.
         let bare = Lang::spells(&lang.interface_words, &word);
@@ -4163,7 +4178,11 @@ impl<'a> Compiler<'a> {
             }
             Shape::Quote => {
                 self.take();
-                self.constant(Value::text(&tok.lexeme));
+                let mut text = tok.lexeme.clone();
+                while lang.adjacent_strings && self.look().shape == Shape::Quote {
+                    text.push_str(&self.take().lexeme);
+                }
+                self.constant(Value::text(&text));
             }
             Shape::Instr if Lang::spells(&lang.new_words, &tok.lexeme) => {
                 self.take();

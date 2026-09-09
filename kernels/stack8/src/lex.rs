@@ -109,6 +109,20 @@ fn drop_comments(source: &str, lang: &Lang) -> String {
                 kept.push_str(&ahead[..over]);
                 ahead = &ahead[over..];
             }
+            None if lang.long_quotes.iter().any(|mark| ahead.starts_with(mark)) => {
+                let mark = lang.long_quotes.iter().find(|mark| ahead.starts_with(mark.as_str())).unwrap();
+                let mut end = mark.len();
+                while end < ahead.len() && !ahead[end..].starts_with(mark) {
+                    let d = ahead[end..].chars().next().unwrap();
+                    end += d.len_utf8();
+                    if d == '\\' {
+                        if let Some(next) = ahead[end..].chars().next() { end += next.len_utf8(); }
+                    }
+                }
+                end = (end + mark.len()).min(ahead.len());
+                kept.push_str(&ahead[..end]);
+                ahead = &ahead[end..];
+            }
             None if lang.quotes.contains(&c) => {
                 quote = Some(c);
                 kept.push(c);
@@ -426,7 +440,9 @@ impl<'a> Cursor<'a> {
 
     fn string(&mut self, quote: char) -> Result<(), String> {
         let (line, col) = (self.row, self.column);
-        self.step();
+        let mark = self.lang.long_quotes.iter().find(|mark| at_word(&self.text, self.at, mark))
+            .cloned().unwrap_or_else(|| quote.to_string());
+        for _ in mark.chars() { self.step(); }
         let raw = self.lang.raw_quotes.contains(&quote);
         let woven = self.lang.interpolating.contains(&quote);
         let how = Escapes {
@@ -443,14 +459,19 @@ impl<'a> Cursor<'a> {
         let mut shielded: Vec<usize> = Vec::new();
         loop {
             let Some(c) = self.look(0) else { return Err(format!("Unterminated {} string", quote)) };
+            if at_word(&self.text, self.at, &mark) {
+                for _ in mark.chars() { self.step(); }
+                break;
+            }
+            if self.lang.continued_strings && c == '\\' && self.look(1) == Some('\n') {
+                self.step(); self.step();
+                continue;
+            }
             if c == '\\' && self.look(1).is_some() {
                 self.escape(&how, &mut s, &mut shielded)?;
                 continue;
             }
             self.step();
-            if c == quote {
-                break;
-            }
             s.push(c);
         }
         if woven {

@@ -493,6 +493,11 @@ only. The extension labels so far, all from PHP:
   first clause whose class takes it holding it, and a last part that runs
   however the body ended, a return through it included. What no clause
   takes is raised again.
+- `ext.stmt.class.unready`: words said when a class body cannot yet be
+  made into a namespace. With `ext.stmt.class` spelled, the name, base
+  arguments and every statement of the body are read in full. Reaching
+  the declaration says these words. This narrow reading leaves class
+  construction to the fuller account of classes.
 - `ext.stmt.catch.as`: the word before the name holding a caught value.
   Where spelled, a clause needs no outer group and may take every raised
   value by naming no class. An unbound class name takes nothing and says
@@ -514,6 +519,13 @@ only. The extension labels so far, all from PHP:
   parts of an exception group. The clause is read whole, but reaching the
   attempt stops with `ext.stmt.catch.group.unsupported`, since the kernels
   cannot yet part such groups.
+- `ext.lexical.string.long`: quote marks enclosing text over many lines.
+  Quotes shorter than the opening mark and comment signs within it are
+  ordinary text. The closing mark must match the whole opening mark.
+- `ext.lexical.string.adjacent`: a switch; quoted pieces standing next to
+  one another form a single string, in their written order.
+- `ext.lexical.escape.continued`: a switch; a backslash followed by a line
+  end within quoted text contributes neither character to the string.
 - `ext.lexical.name_lead`: signs a name may be led by that say nothing,
   PHP's `\TypeError`.
 - `ext.lexical.template`: a switch; the source is text with code in it.
@@ -1802,6 +1814,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.escape.codepoint.beyond` | - | - | - | - | `Invalid UTF-8 codepoint escape sequence: Codepoint too large` | - | - | - | - | - |
 | `ext.lexical.escape.codepoint.close` | - | - | - | - | `}` | - | - | - | - | - |
 | `ext.lexical.escape.codepoint.open` | - | - | - | - | `{` | - | - | - | - | - |
+| `ext.lexical.escape.continued` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.octal` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.lexical.heredoc` | - | - | - | - | `<<<` | - | - | - | - | - |
 | `ext.lexical.interpolating.index.amiss` | - | - | - | - | `string content, expecting "-" or identifier or variable or number` | - | - | - | - | - |
@@ -1817,6 +1830,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.prologue.brief.setting` | - | - | - | - | `short_open_tag` | - | - | - | - | - |
 | `ext.lexical.prologue.echo` | - | - | - | - | `<?=` | - | - | - | - | - |
 | `ext.lexical.prologue.folded` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.lexical.string.adjacent` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.lexical.string.long` | - | - | `"""` `'''` | - | - | - | - | - | - | - |
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | - | - | `true` | - | - | - | - | - |
@@ -1903,7 +1918,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.catch.separator` | - | - | `,` | - | `\|` | - | - | - | - | - |
 | `ext.stmt.catch.tuple.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.tuple.open` | - | - | `(` | - | - | - | - | - | - | - |
-| `ext.stmt.class` | - | - | - | - | `class` | - | - | - | - | - |
+| `ext.stmt.class` | - | - | `class` | - | `class` | - | - | - | - | - |
 | `ext.stmt.class.caller` | - | - | - | - | `__call` | - | - | - | - | - |
 | `ext.stmt.class.constructor` | - | - | - | - | `__construct` | - | - | - | - | - |
 | `ext.stmt.class.destructor` | - | - | - | - | `__destruct` | - | - | - | - | - |
@@ -1920,6 +1935,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.shared` | - | - | - | - | `static` | - | - | - | - | - |
 | `ext.stmt.class.this` | - | - | - | - | `$this` | - | - | - | - | - |
 | `ext.stmt.class.trait` | - | - | - | - | `trait` | - | - | - | - | - |
+| `ext.stmt.class.unready` | - | - | `NotImplementedError: class bodies are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.class.uses` | - | - | - | - | `use` | - | - | - | - | - |
 | `ext.stmt.class.uses.alias` | - | - | - | - | `as` | - | - | - | - | - |
 | `ext.stmt.class.writer` | - | - | - | - | `__set` | - | - | - | - | - |
