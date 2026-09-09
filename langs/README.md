@@ -223,6 +223,11 @@ the examples to the core. An extension label is optional: absent means
 empty, or `false` for a switch. The porter and the emitter use the core
 only. The extension labels so far, all from PHP:
 
+- `ext.lexical.line_continuation`: marks which, immediately before a line
+  end outside a string or comment, join the next line to this one. The
+  mark and line end say nothing, and the next line's indentation opens
+  no block. A backslash so spelled also drops an escaped line end in a
+  string whose escapes are read. A comment never carries a line on.
 - `ext.lexical.epilogue`: a closing marker dropped from the very end of
   the source (`?>`), the mirror of `lexical.prologue`.
 - `ext.builtin.echo`: a builtin that prints each argument's text with
@@ -1762,6 +1767,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.heredoc` | - | - | - | - | `<<<` | - | - | - | - | - |
 | `ext.lexical.interpolating.index.amiss` | - | - | - | - | `string content, expecting "-" or identifier or variable or number` | - | - | - | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | `"` | - | - | - | - | - |
+| `ext.lexical.line_continuation` | - | - | `\` | - | - | - | - | - | - | - |
 | `ext.lexical.name_lead` | - | - | - | - | `\` | - | - | - | - | - |
 | `ext.lexical.number.amiss` | - | - | - | - | `Invalid numeric literal` | - | - | - | - | - |
 | `ext.lexical.number.binary_prefix` | - | - | - | - | `0b` `0B` | - | - | - | - | - |

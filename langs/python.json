@@ -317,6 +317,7 @@
   "system.kind.array": [],
   "system.kind.null": [],
   "ext.block.lone_statement": true,
+  "ext.lexical.line_continuation": ["\\"],
   "ext.op.assign.compound": true,
   "ext.op.bit.or": ["|"],
   "ext.op.index.slice": [":"],
