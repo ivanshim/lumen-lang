@@ -2983,6 +2983,13 @@ impl<'a> Machine<'a> {
                 };
                 return self.prim(plain, name, v);
             }
+            Prim::TupleJoined => match (&v[0], &v[1]) {
+                (Value::Vector(left), Value::Vector(right)) => {
+                    let joined = left.iter().chain(right.iter()).cloned().collect();
+                    Value::Vector(Rc::new(joined))
+                }
+                _ => return Err("Tuple portion is not an array".to_string()),
+            },
             Prim::Partition(wanted, star) => {
                 let mut values: Vec<Value> = match &v[0] {
                     Value::Text(s) => s.chars().map(|letter| Value::text(&letter.to_string())).collect(),

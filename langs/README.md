@@ -1115,7 +1115,9 @@ only. The extension labels so far, all from PHP:
   then written into each place from left to right.
 - `ext.stmt.unpack.rest`: the signs before a place taking all values
   left between the places before and after it, as an array. Only one
-  such place may stand in each taking-apart. Where `ext.op.tuple` is
+  such place may stand in each taking-apart. In a tuple expression the
+  same sign before a value puts all its items into the tuple, and may
+  stand more than once (`return 1, *rest`). Where `ext.op.tuple` is
   spelt, `ext.stmt.unpack` may name the array's opening bracket; bare
   tuples and grouped tuples may then stand as targets too, within one
   another and as a loop's target. The value is taken apart before its

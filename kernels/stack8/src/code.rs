@@ -81,6 +81,8 @@ pub enum Action {
     Apart,
     /// Check the extent, gathering the starred place before writes begin.
     Unpack(usize, Option<usize>),
+    /// Join the gathered portions of a tuple.
+    TupleJoin,
     /// What a value holds at that place, read so that what comes of it
     /// may be written back there. A value with no places at all is no
     /// place to write, so it is refused as a write to one is.

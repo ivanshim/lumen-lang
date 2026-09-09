@@ -338,6 +338,8 @@ pub enum Prim {
     Apart,
     /// Make one value for each target, gathering the starred middle.
     Partition(usize, Option<usize>),
+    /// Gather consecutive portions of one comma expression.
+    TupleJoined,
     /// What a value holds at that place, read so that what comes of it
     /// may be written back there. A value with no places at all is no
     /// place to write, so it is turned down as a write to one is.

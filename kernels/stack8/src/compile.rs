@@ -2867,21 +2867,34 @@ impl<'a> Compiler<'a> {
     /// A comma joins complete expressions, never the arguments within
     /// a call. The last comma may stand before a closing mark or line.
     fn tuple_value(&mut self) -> Res<()> {
-        self.expr(0)?;
-        let mut count = 1;
-        let mut joined = false;
-        while self.look().shape == Shape::Sign && Lang::spells(&self.lang.tuple_marks, &self.look().lexeme) {
-            joined = true;
+        let first_spreads = self.tuple_piece()?;
+        if !self.on_any(&self.lang.tuple_marks) {
+            if first_spreads { return Err(self.lang.unpack_amiss.clone().unwrap_or_default()); }
+            return Ok(());
+        }
+        if !first_spreads { self.act(Action::MakeArray, 1); }
+        while self.on_any(&self.lang.tuple_marks) {
             self.take();
             let closes = [&self.lang.grouping, &self.lang.array_brackets, &self.lang.map_brackets].into_iter().flatten()
                 .any(|p| self.at_symbol(&p.close));
             if closes || self.on_sep() || self.exhausted() || self.look().shape == Shape::Close
                 || self.on_any(&self.lang.block_intros) { break; }
-            self.expr(0)?;
-            count += 1;
+            if !self.tuple_piece()? { self.act(Action::MakeArray, 1); }
+            self.act(Action::TupleJoin, 2);
         }
-        if joined { self.act(Action::MakeArray, count); }
         Ok(())
+    }
+
+    fn tuple_piece(&mut self) -> Res<bool> {
+        let spread = !self.lang.tuple_marks.is_empty() && self.on_any(&self.lang.unpack_rest);
+        if spread { self.take(); }
+        self.expr(0)?;
+        if spread {
+            self.act(Action::Unpack(1, Some(0)), 1);
+            self.constant(Value::Small(0));
+            self.act(Action::Apart, 2);
+        }
+        Ok(spread)
     }
 
     /// Give a held value to a target's places. The source spans are
@@ -2975,6 +2988,12 @@ impl<'a> Compiler<'a> {
     /// An assignment, an indexed assignment, or an expression statement.
     fn assign_or_expr(&mut self) -> Res<()> {
         if self.tuple_assignment()? { return Ok(()); }
+        if !self.lang.tuple_marks.is_empty() && !self.outer_marks(self.pos, self.tokens.len(), &self.lang.tuple_marks).0.is_empty() {
+            self.tuple_value()?;
+            self.piece().result_touched = true;
+            self.write(RESULT_CELL);
+            return Ok(());
+        }
         // The running result is emptied before the statement is worked
         // out rather than written over after it. A slot still holding
         // what the statement before came to keeps that value alive for
@@ -2987,16 +3006,6 @@ impl<'a> Compiler<'a> {
         let done = if self.on_writing() {
             self.assignment(from, None)
         } else {
-            if !self.lang.tuple_marks.is_empty() && self.on_any(&self.lang.tuple_marks) {
-                let mut count = 1;
-                while self.on_any(&self.lang.tuple_marks) {
-                    self.take();
-                    if self.on_sep() || self.exhausted() { break; }
-                    self.expr(0)?;
-                    count += 1;
-                }
-                self.act(Action::MakeArray, count);
-            }
             self.piece().result_touched = true;
             self.write(RESULT_CELL);
             Ok(())
@@ -4823,7 +4832,7 @@ impl<'a> Compiler<'a> {
             }
             self.take();
             let began = self.mark();
-            self.expr(0)?;
+            self.tuple_value()?;
             self.want_sign(&index.close, "after array index")?;
             keyed.push(began);
             self.act(Action::At, 2);

@@ -2146,6 +2146,15 @@ impl<'a> Engine<'a> {
                     }
                 };
             }
+            Action::TupleJoin => {
+                let portions = self.drop_many(2)?;
+                let mut together = Vec::new();
+                for portion in portions {
+                    let Value::Array(items) = portion else { return Err("Tuple portion is not an array".to_string().into()); };
+                    together.extend(items.iter().cloned());
+                }
+                Value::array(together)
+            }
             Action::Unpack(count, rest) => {
                 let source = self.drop_top()?;
                 let mut items = match source {

@@ -2848,19 +2848,35 @@ impl<'a> Builder<'a> {
     }
 
     fn comma_value(&mut self) -> Res<Form> {
-        let first = self.expr(0)?;
-        if !self.on_any("ext.op.tuple") { return Ok(first); }
-        let mut values = vec![first];
+        let (first, spreads) = self.comma_part()?;
+        if !self.on_any("ext.op.tuple") {
+            return if spreads { Err(self.table.single("ext.stmt.unpack.amiss").unwrap_or("Invalid tuple").to_string()) }
+                else { Ok(first) };
+        }
+        let mut whole = if spreads { first } else { prim_call(Prim::MakeArray, vec![first]) };
         loop {
             self.advance();
             let ended = self.on_stmt_end() || self.exhausted() || self.look().shape == Shape::Close
                 || self.on_any("block.intro") || self.on_any("syntax.group.close")
                 || self.on_any("syntax.array.close") || self.on_any("syntax.map.close");
             if ended { break; }
-            values.push(self.expr(0)?);
+            let (part, spread) = self.comma_part()?;
+            let portion = if spread { part } else { prim_call(Prim::MakeArray, vec![part]) };
+            whole = prim_call(Prim::TupleJoined, vec![whole, portion]);
             if !self.on_any("ext.op.tuple") { break; }
         }
-        Ok(prim_call(Prim::MakeArray, values))
+        Ok(whole)
+    }
+
+    fn comma_part(&mut self) -> Res<(Form, bool)> {
+        let star = self.table.single("ext.op.tuple").is_some() && self.on_any("ext.stmt.unpack.rest");
+        if star { self.advance(); }
+        let value = self.expr(0)?;
+        let gathered = if star {
+            let partition = prim_call(Prim::Partition(1, Some(0)), vec![value]);
+            prim_call(Prim::Apart, vec![partition, constant(Value::Small(0))])
+        } else { value };
+        Ok((gathered, star))
     }
 
     /// A target is read afresh at its turn, after the whole right hand
@@ -2957,17 +2973,11 @@ impl<'a> Builder<'a> {
 
     fn write_or_expr(&mut self) -> Res<Form> {
         if let Some(write) = self.chained_places()? { return Ok(write); }
+        if !self.divided_at(self.pos, self.tokens.len(), "ext.op.tuple").is_empty() {
+            return self.comma_value();
+        }
         let expr = self.expr_at(0, false)?;
         if !self.on_writing() {
-            if self.on_any("ext.op.tuple") {
-                let mut items = vec![expr];
-                while self.on_any("ext.op.tuple") {
-                    self.advance();
-                    if self.on_stmt_end() || self.exhausted() { break; }
-                    items.push(self.expr(0)?);
-                }
-                return Ok(prim_call(Prim::MakeArray, items));
-            }
             return Ok(expr);
         }
         self.written(expr, false)
