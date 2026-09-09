@@ -394,6 +394,9 @@ pub struct Lang {
     pub tuple_marks: Vec<String>,
     pub class_bases_open: Vec<String>,
     pub class_bases_close: Vec<String>,
+    pub special_stop: Vec<String>,
+    pub special_declined: Vec<String>,
+    pub special_unready: Vec<String>,
     pub class_special: Vec<String>,
     pub special_amiss: Vec<String>,
     pub class_unready: Vec<String>,
@@ -799,7 +802,7 @@ b system.flag.counts
 
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
-const EXT_LABELS: &str = "w ext.stmt.class.special | w ext.stmt.class.special.amiss | w ext.builtin.repr | w ext.builtin.hash | w ext.builtin.bool | w ext.builtin.sorted | w ext.builtin.iter | w ext.builtin.next | w ext.builtin.isinstance | 
+const EXT_LABELS: &str = "w ext.stmt.class.special.unready | w ext.stmt.class.special.declined | w ext.stmt.class.special.stop | w ext.stmt.class.special | w ext.stmt.class.special.amiss | w ext.builtin.repr | w ext.builtin.hash | w ext.builtin.bool | w ext.builtin.sorted | w ext.builtin.iter | w ext.builtin.next | w ext.builtin.isinstance |
 w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready
 
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
@@ -1605,6 +1608,9 @@ impl Lang {
             tuple_marks: r.strings("ext.op.tuple")?,
             class_bases_open: r.strings("ext.stmt.class.bases.open")?,
             class_bases_close: r.strings("ext.stmt.class.bases.close")?,
+            special_stop: r.strings("ext.stmt.class.special.stop")?,
+            special_declined: r.strings("ext.stmt.class.special.declined")?,
+            special_unready: r.strings("ext.stmt.class.special.unready")?,
             class_special: r.strings("ext.stmt.class.special")?,
             special_amiss: r.strings("ext.stmt.class.special.amiss")?,
             class_unready: r.strings("ext.stmt.class.unready")?,

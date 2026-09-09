@@ -737,6 +737,15 @@
   "ext.stmt.class.special.amiss": [
     "TypeError: special method returned an invalid value"
   ],
+  "ext.stmt.class.special.declined": [
+    "NotImplemented"
+  ],
+  "ext.stmt.class.special.stop": [
+    "StopIteration"
+  ],
+  "ext.stmt.class.special.unready": [
+    "NotImplementedError: this special operation cannot run yet"
+  ],
   "ext.stmt.class.this.explicit": true,
   "ext.stmt.class.unready": [
     "NotImplementedError: this class form cannot run yet"

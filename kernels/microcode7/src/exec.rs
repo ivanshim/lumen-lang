@@ -438,6 +438,9 @@ impl<'a> Machine<'a> {
             Prim::Walked => {
                 n(1)?;
                 let mut walking = v[0].clone();
+                if self.table.has_any("ext.stmt.class.special") && matches!(walking, Value::Thing(_) | Value::Cursor(_)) {
+                    walking = Value::Vector(Rc::new(self.object_members(&walking)?));
+                }
                 // Asking a thing what it hands over runs a piece of the
                 // program standing elsewhere. The walk is written where
                 // it is written, and is spoken of as standing there, so
@@ -1880,6 +1883,11 @@ impl<'a> Machine<'a> {
             Form::ForgetWithin(under, place) => {
                 let holder = self.value_of(under, frame)?;
                 let named = self.value_of(place, frame)?;
+                let target = match &holder { Value::Shared(c) => c.borrow().clone(), value => value.clone() };
+                if self.appointed(&target, 13).is_some() {
+                    self.ask_special(&target, 13, &[named])?;
+                    return Ok(Value::Nil);
+                }
                 let at = self.as_key_spoken(&named);
                 let Value::Shared(cell) = holder else {
                     return Err("Cannot take a place out of something that is not an array".to_string().into());
@@ -1988,7 +1996,7 @@ impl<'a> Machine<'a> {
                     holds: RefCell::new(vec![("message".to_string(), held)]),
                 }))))
             }
-            Form::Attempt { body, clauses, last, otherwise } => {
+            Form::Attempt { context, body, clauses, last, otherwise } => {
                 if clauses.iter().any(|part| part.grouped) {
                     return Err(self.table.single("ext.stmt.catch.group.unsupported").unwrap_or_default().to_string().into());
                 }
@@ -2000,6 +2008,18 @@ impl<'a> Machine<'a> {
                     },
                     result => result,
                 };
+                if let Some(address) = context {
+                    let manager = self.fetch(address, frame)?;
+                    let arguments = if let Err(Escape::Thrown(v)) = &body_result {
+                        let kind = match v { Value::Thing(t) => Value::Blueprint(t.of.clone()), _ => Value::Nil };
+                        vec![kind, v.clone(), Value::Nil]
+                    } else { vec![Value::Nil; 3] };
+                    let answer = self.ask_special(&manager, 34, &arguments)?.ok_or_else(|| self.bad_answer())?;
+                    return match body_result {
+                        Err(Escape::Thrown(_)) if self.object_truth(&answer)? => Ok(Value::Nil),
+                        outcome => outcome,
+                    };
+                }
                 let ending = match body_result {
                     Ok(value) => match otherwise {
                         Some(limb) => self.value_of(limb, frame),
@@ -2258,6 +2278,10 @@ impl<'a> Machine<'a> {
                 Prim::Hurl => {
                     let values = self.value_list(args, frame)?;
                     let raised = values.into_iter().next().ok_or_else(|| format!("{}() needs a value to raise", name))?;
+                    let raised = match raised {
+                        Value::Blueprint(class) if self.table.has_any("ext.stmt.class.special") => self.make_instance(class, Vec::new())?,
+                        other => other,
+                    };
                     self.raised_on = self.row;
                     Err(Escape::Thrown(raised))
                 }
@@ -2384,6 +2408,11 @@ impl<'a> Machine<'a> {
                     let mut values = values;
                     let value = values.pop().unwrap();
                     let key = values.pop().map(|k| self.as_key_spoken(&k));
+                    let target = self.fetch(slot, frame)?;
+                    if let (Some(index), true) = (&key, self.appointed(&target, 12).is_some()) {
+                        self.ask_special(&target, 12, &[index.clone(), value])?;
+                        return Ok(Value::Nil);
+                    }
                     if let Some(Value::Span(bounds)) = &key {
                         let old = f.cells.borrow()[i].clone();
                         match old {
@@ -3505,8 +3534,17 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn carries_instance(value: &Value) -> bool {
+        match value {
+            Value::Thing(_) => true,
+            Value::Vector(v) => v.iter().any(Self::carries_instance),
+            Value::Dict(d) => d.iter().flat_map(|(k, v)| [k, v]).any(Self::carries_instance),
+            _ => false,
+        }
+    }
+
     fn object_words(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
-        if self.table.strings("ext.stmt.class.special").is_empty() { return Ok(subject.render(self.wording())); }
+        if self.table.strings("ext.stmt.class.special").is_empty() || (!quoted && !Self::carries_instance(subject)) { return Ok(subject.render(self.wording())); }
         match subject {
             Value::Thing(t) => {
                 let chosen = usize::from(quoted || self.appointed(subject, 0).is_none());
@@ -3543,6 +3581,7 @@ impl<'a> Machine<'a> {
     }
 
     fn object_truth(&mut self, subject: &Value) -> Result<bool, String> {
+        if matches!(subject, Value::Refusal(_)) { return Err(self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_string()); }
         match self.ask_special(subject, 9, &[])? {
             Some(Value::Flag(b)) => return Ok(b),
             Some(_) => return Err(self.bad_answer()),
@@ -3566,7 +3605,19 @@ impl<'a> Machine<'a> {
             }
             Value::Thing(_) => {
                 let other = self.ask_special(subject, 15, &[])?.ok_or_else(|| self.bad_answer())?;
-                if matches!(other, Value::Thing(_)) { return Err(self.bad_answer()); }
+                if matches!(other, Value::Thing(_)) {
+                    let body = self.appointed(&other, 16).ok_or_else(|| self.bad_answer())?;
+                    let mut members = Vec::new();
+                    loop {
+                        let step = self.invoke(body.clone(), self.outermost.clone(), vec![other.clone()]);
+                        match step {
+                            Ok(item) => members.push(item),
+                            Err(Escape::Thrown(Value::Thing(t))) if self.table.strings("ext.stmt.class.special.stop").iter().any(|n| t.of.goes_by(n, false)) => return Ok(members),
+                            Err(Escape::Error(s)) => return Err(s),
+                            Err(other) => { self.got_away = Some(other); return Err(self.bad_answer()); }
+                        }
+                    }
+                }
                 self.object_members(&other)
             }
             _ => self.gathered_members(subject),
@@ -3585,7 +3636,9 @@ impl<'a> Machine<'a> {
         };
         if let (Some((forward, reverse)), [left, right]) = (pair, operands) {
             for (subject, index, argument) in [(left, forward, right), (right, reverse, left)] {
-                if let Some(result) = self.ask_special(subject, index, std::slice::from_ref(argument))? { return Ok(Some(result)); }
+                if let Some(result) = self.ask_special(subject, index, std::slice::from_ref(argument))? {
+                    if !matches!(result, Value::Refusal(_)) { return Ok(Some(result)); }
+                }
             }
             if operation == Prim::Ne {
                 if let Some(equal) = self.ask_special(left, 2, std::slice::from_ref(right))? {
@@ -3626,6 +3679,21 @@ impl<'a> Machine<'a> {
                     _ => return Err(self.bad_answer()),
                 },
             },
+            (Prim::DistinctObjects, [Value::Vector(members)]) => {
+                let mut result: Vec<Value> = Vec::new();
+                for candidate in members.iter() {
+                    let mut duplicate = false;
+                    if matches!(candidate, Value::Thing(_)) {
+                        self.user_operation(Prim::SpecialHash, std::slice::from_ref(candidate))?;
+                        for old in &result {
+                            let test = self.prim(Prim::Eq, "", &[old.clone(), candidate.clone()])?;
+                            if self.object_truth(&test)? { duplicate = true; break; }
+                        }
+                    }
+                    if !duplicate { result.push(candidate.clone()); }
+                }
+                Value::Vector(Rc::new(result))
+            }
             (Prim::SpecialSorted, [one]) => {
                 let input = self.object_members(one)?;
                 let mut ordered: Vec<Value> = Vec::new();
@@ -3640,7 +3708,7 @@ impl<'a> Machine<'a> {
                 }
                 Value::Vector(Rc::new(ordered))
             }
-            (Prim::Listed, [one]) => Value::Vector(Rc::new(self.object_members(one)?)),
+            (Prim::Listed | Prim::Iterated, [one]) => Value::Vector(Rc::new(self.object_members(one)?)),
             (Prim::SpecialIter, [one]) => match self.ask_special(one, 15, &[])? {
                 Some(iterator) => iterator,
                 None => Value::Cursor(Rc::new(RefCell::new(self.gathered_members(one)?.into_iter().collect()))),
@@ -3663,7 +3731,7 @@ impl<'a> Machine<'a> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
         };
         Ok(match op {
-            Prim::SpecialRepr | Prim::SpecialHash | Prim::SpecialBool | Prim::SpecialSorted | Prim::SpecialIter | Prim::SpecialNext | Prim::SpecialIsInstance => return Err(self.bad_answer()),
+            Prim::DistinctObjects | Prim::SpecialRepr | Prim::SpecialHash | Prim::SpecialBool | Prim::SpecialSorted | Prim::SpecialIter | Prim::SpecialNext | Prim::SpecialIsInstance => return Err(self.bad_answer()),
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
             // A step onward or back adds or takes away one, save on text

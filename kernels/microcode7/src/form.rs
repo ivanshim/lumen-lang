@@ -36,6 +36,7 @@ pub enum Callee {
 /// forms for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prim {
+    DistinctObjects,
     SpecialRepr, SpecialHash, SpecialBool, SpecialSorted, SpecialIter, SpecialNext, SpecialIsInstance,
     /// Whether a member, rather than the pipe, takes the name.
     HasMember,
@@ -400,7 +401,7 @@ pub enum Form {
     /// part that runs however the body ends.
     Again,
     Assert { condition: Box<Form>, message: Box<Form> },
-    Attempt { body: Box<Form>, clauses: Vec<Clause>, last: Option<Box<Form>>, otherwise: Option<Box<Form>> },
+    Attempt { context: Option<Address>, body: Box<Form>, clauses: Vec<Clause>, last: Option<Box<Form>>, otherwise: Option<Box<Form>> },
     /// Whether the call left this binding without a value.
     Missing(Address),
     /// A statement together with the line of the source it was written

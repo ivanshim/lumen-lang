@@ -651,6 +651,11 @@ only. The extension labels so far, all from PHP:
   `ext.stmt.class.special.amiss` gives the words for a method answering
   with a value of the wrong kind. An object with neither text method is
   shown as `<C object>`, where C is its class name.
+- `ext.stmt.class.special.declined` names the single value with which a
+  method declines an operation, leaving the other operand to answer.
+  `ext.stmt.class.special.stop` names the fault which ends a walk.
+  `ext.stmt.class.special.unready` gives the words for a special operation
+  whose meaning the run cannot yet honour.
 - `ext.builtin.repr`, `ext.builtin.hash`, `ext.builtin.bool`,
   `ext.builtin.sorted`, `ext.builtin.iter`, `ext.builtin.next` and
   `ext.builtin.isinstance`: lists naming representation, hashing, truth,
@@ -2329,6 +2334,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.shared` | - | - | - | - | `static` | - | - | - | - | - |
 | `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.amiss` | - | - | `TypeError: special method returned an invalid value` | - | - | - | - | - | - | - |
+| `ext.stmt.class.special.declined` | - | - | `NotImplemented` | - | - | - | - | - | - | - |
+| `ext.stmt.class.special.stop` | - | - | `StopIteration` | - | - | - | - | - | - | - |
+| `ext.stmt.class.special.unready` | - | - | `NotImplementedError: this special operation cannot run yet` | - | - | - | - | - | - | - |
 | `ext.stmt.class.this` | - | - | - | - | `$this` | - | - | - | - | - |
 | `ext.stmt.class.this.explicit` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.class.trait` | - | - | - | - | `trait` | - | - | - | - | - |

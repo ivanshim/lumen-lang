@@ -1576,8 +1576,19 @@ impl<'a> Builder<'a> {
         }
         if enclosed { self.advance(); }
         let mut steps = Vec::new();
+        let mut contexts = Vec::new();
         loop {
-            let value = self.expr(0)?;
+            let mut value = self.expr(0)?;
+            if let Some(method) = table.strings("ext.stmt.class.special").get(33) {
+                let manager = self.gensym("manager");
+                let manager_read = Form::Read(manager.clone());
+                steps.push(Form::Write(manager.clone(), Box::new(value)));
+                value = Form::Apply(Callee::Code(Box::new(prim_call(Prim::Of, vec![manager_read, Form::Const(Value::text(method))]))), Vec::new());
+                let entered = self.gensym("entered");
+                steps.push(Form::Write(entered.clone(), Box::new(value)));
+                value = Form::Read(entered);
+                contexts.push((steps.len(), manager));
+            }
             if self.key("ext.stmt.with.as") {
                 self.advance();
                 let place = self.gensym("with");
@@ -1591,6 +1602,10 @@ impl<'a> Builder<'a> {
         }
         if enclosed { self.need_sign(close, "after the with items")?; }
         steps.push(self.body()?);
+        for (from, manager) in contexts.into_iter().rev() {
+            let enclosed = sequence(steps.split_off(from));
+            steps.push(Form::Attempt { context: Some(manager), body: Box::new(enclosed), clauses: Vec::new(), last: None, otherwise: None });
+        }
         Ok(sequence(steps))
     }
 
@@ -1962,7 +1977,7 @@ impl<'a> Builder<'a> {
         if clauses.is_empty() && (last.is_none() || otherwise.is_some()) {
             return Err("A try needs a catch or a last part".to_string());
         }
-        Ok(Form::Attempt { body: Box::new(body), clauses, last, otherwise })
+        Ok(Form::Attempt { context: None, body: Box::new(body), clauses, last, otherwise })
     }
 
     /// A class and what it holds: properties, constants, values kept by
@@ -4725,6 +4740,18 @@ impl<'a> Builder<'a> {
             self.reading_yield = previous_yield;
             return Ok(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.stmt.yield.unrun").unwrap_or_default()))]));
         }
+        if table.spells("ext.stmt.class.special.declined", &t.lexeme) {
+            self.advance();
+            return self.subscript(constant(Value::Refusal(Rc::from(t.lexeme.as_str()))));
+        }
+        if table.spells("ext.stmt.class.special.stop", &t.lexeme) {
+            self.advance();
+            let plan = crate::data::Blueprint {
+                name: t.lexeme.clone(), under: None, methods: vec![], shared: std::cell::RefCell::new(vec![]),
+                fields: vec![], constants: vec![], reaches: vec![], answers: vec![],
+            };
+            return self.subscript(constant(Value::Blueprint(Rc::new(plan))));
+        }
         if table.spells("ext.literal.ellipsis", &t.lexeme) {
             self.advance();
             return self.subscript(constant(Value::Ellipsis));
@@ -5787,6 +5814,7 @@ impl<'a> Builder<'a> {
             self.need_sign(&separator, "between parts of a literal")?;
         }
         self.advance();
+        if family == "map" && !mapped && self.table.has_any("ext.stmt.class.special") { value = prim_call(Prim::DistinctObjects, vec![value]); }
         Ok(value)
     }
 
