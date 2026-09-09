@@ -52,6 +52,7 @@ pub struct Lang {
     pub match_cases: Vec<String>,
     pub type_alias_words: Vec<String>,
     pub type_parameters: bool,
+    pub pipe_attribute: bool,
     pub whole_bits: bool,
     pub line_comments: Vec<String>,
     pub block_comments: Vec<(String, String)>,
@@ -758,7 +759,7 @@ b system.flag.counts
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
 w ext.lexical.number.imaginary | w ext.lexical.number.imaginary.unready | w ext.op.await | w ext.stmt.async | w ext.stmt.match | w ext.stmt.match.case | w ext.stmt.type_alias | b ext.stmt.type_parameters
-b ext.op.bit.whole
+b ext.op.bit.whole | b ext.op.pipe.attribute
 w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready
 
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
@@ -1336,6 +1337,7 @@ impl Lang {
             match_cases: r.strings("ext.stmt.match.case")?,
             type_alias_words: r.strings("ext.stmt.type_alias")?,
             type_parameters: r.flag("ext.stmt.type_parameters")?,
+            pipe_attribute: r.flag("ext.op.pipe.attribute")?,
             whole_bits: r.flag("ext.op.bit.whole")?,
             line_comments: r.strings("lexical.comment_line")?,
             block_comments: comment_opens.into_iter().zip(comment_closes).collect(),

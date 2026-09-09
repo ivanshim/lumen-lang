@@ -588,6 +588,12 @@ only. The extension labels so far, all from PHP:
   bound to its name, so `new C`, `C::CONST` and `catch (C $e)` are
   ordinary reads of it. Objects are handles: naming one twice names one
   object.
+- `ext.op.pipe.attribute`: a switch; a bare name after the pipe denotes
+  an attribute, rather than a call with no further arguments. Indices
+  and slices may follow that attribute or a method call. Keeping an
+  attribute or bound method as a value is still owed, so reaching a
+  bare attribute says `ext.system.scope.unready`; in particular, a
+  builtin method named without call brackets is never called by mistake.
 - `ext.op.member` and `ext.op.scope`: `object->member` and
   `class::member`, each reading a property, a constant or a method, and
   `class::class` giving the class's name.
@@ -2050,6 +2056,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.name_by_value` | - | - | - | - | `$` | - | - | - | - | - |
 | `ext.op.not_identical` | - | - | - | - | `!==` | - | - | - | - | - |
 | `ext.op.otherwise` | - | - | - | - | `??` | - | - | - | - | - |
+| `ext.op.pipe.attribute` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.plus` | - | - | `+` | - | `+` | - | - | - | - | - |
 | `ext.op.reference` | - | - | - | - | `&` | - | - | - | - | - |
 | `ext.op.reference.unshared.given` | - | - | - | - | `Only variable references should be returned by reference` | - | - | - | - | - |

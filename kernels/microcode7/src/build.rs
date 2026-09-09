@@ -4089,6 +4089,11 @@ impl<'a> Builder<'a> {
                     left = invoke(self.read(&name), vec![left]);
                     break;
                 }
+                let attribute = table.flag("ext.op.pipe.attribute");
+                if attribute && !self.on_any("syntax.call.open") {
+                    left = self.subscript(self.scope_unrun("ext.system.scope.unready"))?;
+                    continue;
+                }
                 let mut args = vec![left];
                 if let Some(open) = table.single("syntax.call.open") {
                     if self.sign(open) {
@@ -4097,6 +4102,7 @@ impl<'a> Builder<'a> {
                     }
                 }
                 left = self.named_call(&name, args)?;
+                if attribute { left = self.subscript(left)?; }
                 continue;
             }
             if table.single("ext.op.otherwise").map_or(false, |m| self.sign(m)) {

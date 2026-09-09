@@ -521,6 +521,7 @@
   "ext.op.lambda.unsupported": [
     "Lambda keyword parameters are not supported"
   ],
+  "ext.op.pipe.attribute": true,
   "ext.op.plus": [
     "+"
   ],

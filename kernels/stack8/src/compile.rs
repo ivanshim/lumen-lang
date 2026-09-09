@@ -4283,6 +4283,7 @@ impl<'a> Compiler<'a> {
                 }
                 self.take();
                 self.pipe_target(from)?;
+                if lang.pipe_attribute { self.indexing(from)?; }
                 continue;
             }
             if lang.otherwise_mark.as_ref().map_or(false, |m| self.at_symbol(m)) {
@@ -4460,6 +4461,11 @@ impl<'a> Compiler<'a> {
             // The statement reader will speak of the unsupported place;
             // its member name must not be mistaken for a builtin call.
             self.read(&name);
+            return Ok(());
+        }
+        if self.lang.pipe_attribute && !self.lang.calling.as_ref().map_or(false, |pair| self.at_symbol(&pair.open)) {
+            self.piece().instrs.truncate(left);
+            self.scope_fault(&self.lang.scope_unready.clone());
             return Ok(());
         }
         let native = self.lang.builtins.get(&name).copied();
