@@ -233,8 +233,9 @@ impl Value {
             // both count as true, though the top of the one is nought.
             Value::Real(r) => r.outside() || !r.p.is_zero(),
             Value::Text(s) => !s.is_empty(),
+            Value::Tuple(items) => !items.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
-            Value::Generator(_) | Value::Tuple(_) | Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::SortOf(_) => true,
+            Value::Generator(_) | Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::SortOf(_) => true,
             Value::Bond(shared) => shared.borrow().is_true(),
             Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
         }
@@ -339,6 +340,10 @@ impl Value {
                 false => sp.false_word.to_string(),
             },
             Value::Null | Value::Blank | Value::Gap | Value::Fence => sp.null_word.to_string(),
+            Value::Tuple(items) => {
+                let shown = items.iter().map(|v| v.string_field(sp, "", "r")).collect::<Vec<_>>().join(", ");
+                format!("({}{})", shown, if items.len() == 1 { "," } else { "" })
+            }
             Value::Array(items) => {
                 let shown: Vec<String> = items.iter().map(|v| v.display(sp)).collect();
                 format!("[{}]", shown.join(", "))

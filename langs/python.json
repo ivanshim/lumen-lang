@@ -47,7 +47,7 @@
     ":"
   ],
   "block.indent_size": 4,
-  "stmt.terminator": [";"],
+  "stmt.terminator": [],
   "syntax.notation": "infix",
   "syntax.group.open": [
     "("

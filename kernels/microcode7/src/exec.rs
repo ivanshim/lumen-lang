@@ -1753,7 +1753,10 @@ impl<'a> Machine<'a> {
                         let form = |input| match input { Input::Form(f) => *f, Input::Address(a) => Form::Read(a), Input::Const(v) => Form::Const(v) };
                         state.owed.push(Owed::Find(Form::Apply(Callee::Prim(op, name), vec![form(a), form(b)])));
                     }
-                    other => state.found.push(self.value_of(&other, &frame)?),
+                    other => {
+                        if suspension_within(&other) { return Err(self.generator_words("unsupported").into()); }
+                        state.found.push(self.value_of(&other, &frame)?);
+                    }
                 },
                 Owed::Store(place) => self.store(&place, &frame, state.found.last().cloned().unwrap_or(Value::Nil))?,
                 Owed::Drop => { state.found.pop(); }
@@ -3551,7 +3554,14 @@ impl<'a> Machine<'a> {
             }
             Prim::Iterated => Value::Vector(Rc::new(self.gathered_members(&v[0])?)),
             Prim::CheckUnpack(count) => {
-                let values = self.gathered_members(&v[0])?;
+                let values = if let Value::Generator(generator) = &v[0] {
+                    let mut taken = Vec::new();
+                    for _ in 0..=count {
+                        let item = self.resume(generator, Value::Nil).map_err(|fault| self.suspension_fault(fault))?;
+                        if let Some(item) = item { taken.push(item); } else { break; }
+                    }
+                    taken
+                } else { self.gathered_members(&v[0])? };
                 if values.len() != count {
                     return Err(self.table.single("ext.op.comprehension.unpack.amiss").unwrap_or("Comprehension target and item have different lengths").into());
                 }
@@ -4799,11 +4809,31 @@ impl<'a> Machine<'a> {
             }
             Prim::SomeTrue => {
                 n(1)?;
+                if self.table.flag("ext.stmt.yield.suspends") {
+                    let Value::Generator(walk) = self.make_iterator(v[0].clone()).map_err(|fault| self.suspension_fault(fault))? else { unreachable!() };
+                    loop {
+                        match self.resume(&walk, Value::Nil).map_err(|fault| self.suspension_fault(fault))? {
+                            None => return Ok(Value::Flag(false)),
+                            Some(item) if self.stands_true(&item) => return Ok(Value::Flag(true)),
+                            _ => {}
+                        }
+                    }
+                }
                 let members = self.gathered_members(&v[0])?;
                 Value::Flag(members.iter().any(|item| self.stands_true(item)))
             }
             Prim::Total => {
                 if !(1..=2).contains(&v.len()) { return Err(format!("{}() expects one or two arguments", name)); }
+                if self.table.flag("ext.stmt.yield.suspends") {
+                    let Value::Generator(walk) = self.make_iterator(v[0].clone()).map_err(|fault| self.suspension_fault(fault))? else { unreachable!() };
+                    let counted = |value| if let Value::Flag(flag) = value { Value::Small(flag as i64) } else { value };
+                    let mut answer = counted(v.get(1).cloned().unwrap_or(Value::Small(0)));
+                    loop {
+                        let item = self.resume(&walk, Value::Nil).map_err(|fault| self.suspension_fault(fault))?;
+                        let Some(item) = item else { return Ok(answer) };
+                        answer = math::compute(Calc::Plus, &answer, &counted(item)).unwrap_or_else(|| Err(self.table.single("ext.builtin.sum.non_number").unwrap_or_default().to_string()))?;
+                    }
+                }
                 let members = self.gathered_members(&v[0])?;
                 let start = v.get(1).cloned().unwrap_or(Value::Small(0));
                 let number = |x| match x { Value::Flag(flag) => Value::Small(flag as i64), x => x };
@@ -5929,5 +5959,23 @@ fn unwrapped_arm(form: Form) -> Form {
     match form {
         Form::Const(Value::Routine(program)) if program.frameless => program.body.clone(),
         other => other,
+    }
+}
+
+fn suspension_within(form: &Form) -> bool {
+    match form {
+        Form::Apply(Callee::Prim(Prim::Suspend | Prim::Delegate, _), _) => true,
+        Form::Apply(Callee::Prim(_, _), args) => args.iter().any(suspension_within),
+        Form::Apply(Callee::Code(target), args) => suspension_within(target) || args.iter().any(suspension_within),
+        Form::Const(Value::Routine(body)) if body.frameless => suspension_within(&body.body),
+        Form::Write(_, inner) | Form::OnLine(_, inner) | Form::Muted(inner) | Form::Silenced(inner) => suspension_within(inner),
+        Form::Cycle { test, body, step, otherwise, .. } => suspension_within(test) || suspension_within(body)
+            || step.as_deref().map_or(false, suspension_within) || otherwise.as_deref().map_or(false, suspension_within),
+        Form::Attempt { body, clauses, last, otherwise } => suspension_within(body)
+            || clauses.iter().any(|c| suspension_within(&c.body) || c.choices.as_ref().map_or(false, |parts| parts.iter().any(suspension_within)))
+            || last.as_deref().map_or(false, suspension_within) || otherwise.as_deref().map_or(false, suspension_within),
+        Form::Assert { condition, message } => suspension_within(condition) || suspension_within(message),
+        Form::Dyad { a, b, .. } => [a, b].iter().any(|input| matches!(input, Input::Form(f) if suspension_within(f))),
+        _ => false,
     }
 }

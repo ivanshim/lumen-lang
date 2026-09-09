@@ -1238,7 +1238,7 @@ impl<'a> Compiler<'a> {
             let closing = t.shape == Shape::Sign && (self.lang.grouping.as_ref().map_or(false, |p| t.lexeme == p.close)
                 || self.lang.array_brackets.as_ref().map_or(false, |p| t.lexeme == p.close));
             if depth == 0 {
-                if (enclosed && closing) || (!enclosed && Lang::spells(&self.lang.in_words, &t.lexeme)) { break; }
+                if (enclosed && closing) || (!enclosed && (Lang::spells(&self.lang.in_words, &t.lexeme) || Lang::spells(&self.lang.assign_words, &t.lexeme))) { break; }
                 if self.lang.calling.as_ref().and_then(|p| p.between.as_ref()).map_or(false, |s| t.lexeme == *s) {
                     comma = true;
                     seen = false;
@@ -1256,6 +1256,12 @@ impl<'a> Compiler<'a> {
     }
 
     fn binding_size(&mut self, held: &str, count: usize, starred: bool) {
+        if !starred && self.lang.yield_suspends {
+            self.read(held);
+            self.act(Action::UnpackCount(count), 1);
+            self.write(held);
+            return;
+        }
         if !starred {
             self.read(held);
             self.act(Action::Builtin(Builtin::Length, Rc::from("")), 1);
@@ -3355,7 +3361,7 @@ impl<'a> Compiler<'a> {
                     }
                 }
             }
-            if lang.bind_names && Lang::spells(&lang.block_intros, &a.look().lexeme)
+            if lang.bind_names && !lang.yield_suspends && Lang::spells(&lang.block_intros, &a.look().lexeme)
                 && a.look_ahead(1).shape != Shape::LineEnd {
                 a.take();
                 a.stmt()
@@ -3676,6 +3682,18 @@ impl<'a> Compiler<'a> {
         self.expr_at(0, false)?;
         if self.on_any(&self.lang.tuple_marks) {
             self.scope_tail(from)?;
+            if self.on_assign() && self.lang.yield_suspends {
+                self.piece().instrs.truncate(from);
+                self.take();
+                self.scope_value()?;
+                let held = self.gensym("unpacked");
+                self.write(&held);
+                let after = self.pos;
+                self.pos = target_at;
+                self.bind_for_targets(&held)?;
+                self.pos = after;
+                return Ok(());
+            }
             if self.on_assign() { self.take(); self.scope_value()?; }
             self.piece().instrs.truncate(from);
             self.scope_fault(&self.lang.scope_unready.clone());
@@ -4989,7 +5007,7 @@ impl<'a> Compiler<'a> {
                                 tuple = true;
                                 self.take();
                             }
-                            if tuple { self.act(Action::MakeArray, count); }
+                            if tuple { self.act(if lang.yield_suspends { Action::MakeTuple } else { Action::MakeArray }, count); }
                             self.want_sign(&group.close, "to close a group")?;
                         } else {
                         if let Some(clause) = self.comprehension_ahead() {

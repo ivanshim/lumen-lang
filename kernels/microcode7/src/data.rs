@@ -187,6 +187,7 @@ impl Value {
             // both count as true, though the top of the one is nought.
             Value::Frac(e) => e.past_numbers() || !e.above.is_zero(),
             Value::Text(s) => !s.is_empty(),
+            Value::Tuple(parts) => !parts.is_empty(),
             Value::Nil | Value::Unset => false,
             _ => true,
         }
@@ -293,6 +294,10 @@ impl Value {
             Value::Flag(true) => w.truth.to_string(),
             Value::Flag(false) => w.falsity.to_string(),
             Value::Nil | Value::Unset => w.nil.to_string(),
+            Value::Tuple(parts) => {
+                let inside = parts.iter().map(|part| part.in_field(w, "", "r")).collect::<Vec<_>>().join(", ");
+                format!("({}{})", inside, if parts.len() == 1 { "," } else { "" })
+            }
             Value::Vector(items) => format!("[{}]", items.iter().map(|v| v.render(w)).collect::<Vec<_>>().join(", ")),
             Value::Dict(entries) => {
                 format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.render(w), v.render(w))).collect::<Vec<_>>().join(", "))

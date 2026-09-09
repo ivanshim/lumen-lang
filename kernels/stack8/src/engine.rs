@@ -4654,12 +4654,27 @@ impl<'a> Engine<'a> {
             }
             Builtin::Any => {
                 arity(1)?;
+                if self.lang.yield_suspends {
+                    let Value::Generator(walk) = self.iterator(args[0].clone()).map_err(|f| f.told(&self.wording()))? else { unreachable!() };
+                    while let Some(item) = self.resume_generator(&walk, Value::Null).map_err(|f| f.told(&self.wording()))? {
+                        if self.truth(&item) { return Ok(Value::Flag(true)); }
+                    }
+                    return Ok(Value::Flag(false));
+                }
                 Value::Flag(self.comprehension_items(&args[0])?.iter().any(|v| self.truth(v)))
             }
             Builtin::Sum => {
                 if args.is_empty() || args.len() > 2 { return Err(format!("{}() expects one or two arguments", name)); }
                 let mut total = args.get(1).cloned().unwrap_or(Value::Small(0));
                 if let Value::Flag(b) = total { total = Value::Small(i64::from(b)); }
+                if self.lang.yield_suspends {
+                    let Value::Generator(walk) = self.iterator(args[0].clone()).map_err(|f| f.told(&self.wording()))? else { unreachable!() };
+                    while let Some(item) = self.resume_generator(&walk, Value::Null).map_err(|f| f.told(&self.wording()))? {
+                        let number = match item { Value::Flag(flag) => Value::Small(i64::from(flag)), other => other };
+                        total = arith::calculate(Operation::Plus, &total, &number).ok_or_else(|| self.lang.sum_non_number[0].clone())??;
+                    }
+                    return Ok(total);
+                }
                 for item in self.comprehension_items(&args[0])? {
                     let item = match item { Value::Flag(b) => Value::Small(i64::from(b)), other => other };
                     total = arith::calculate(Operation::Plus, &total, &item).ok_or_else(|| self.lang.sum_non_number.first().cloned().unwrap_or_else(|| "Invalid collection argument".to_string()))??;

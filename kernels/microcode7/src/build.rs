@@ -1590,7 +1590,7 @@ impl<'a> Builder<'a> {
             let opens = token.shape == Shape::Sign && (self.table.spells("syntax.group.open", &token.lexeme) || self.table.spells("syntax.array.open", &token.lexeme));
             let closes = token.shape == Shape::Sign && (self.table.spells("syntax.group.close", &token.lexeme) || self.table.spells("syntax.array.close", &token.lexeme));
             if nesting == 0 {
-                if (bracketed && closes) || (!bracketed && self.table.spells("stmt.for.in", &token.lexeme)) { break; }
+                if (bracketed && closes) || (!bracketed && (self.table.spells("stmt.for.in", &token.lexeme) || self.table.spells("stmt.assign", &token.lexeme))) { break; }
                 if self.table.spells("syntax.call.separator", &token.lexeme) {
                     separated = true;
                     new_item = true;
@@ -1609,6 +1609,10 @@ impl<'a> Builder<'a> {
     fn require_items(&mut self, source: &str, width: usize, spread: bool) -> Form {
         let refusal = prim_call(Prim::Raise, vec![constant(Value::text(self.table.single("ext.stmt.binding.unrun").unwrap_or_default()))]);
         if spread { return refusal; }
+        if self.table.flag("ext.stmt.yield.suspends") {
+            let value = self.read(source);
+            return self.write(source, prim_call(Prim::CheckUnpack(width), vec![value]));
+        }
         let value = self.read(source);
         let size = prim_call(Prim::Length, vec![value]);
         let right = prim_call(Prim::Eq, vec![size, constant(Value::Small(width as i64))]);
@@ -3244,7 +3248,7 @@ impl<'a> Builder<'a> {
                     }
                 }
             }
-            let same_line = keep_defaults && table.spells("block.intro", &r.look().lexeme)
+            let same_line = keep_defaults && !table.flag("ext.stmt.yield.suspends") && table.spells("block.intro", &r.look().lexeme)
                 && r.glance(1).shape != Shape::LineEnd;
             if same_line {
                 r.advance();
@@ -3565,6 +3569,18 @@ impl<'a> Builder<'a> {
         let expr = self.expr_at(0, false)?;
         if self.on_any("ext.op.tuple") {
             let _target = self.comma_tail(expr)?;
+            if self.on_assign() && self.table.flag("ext.stmt.yield.suspends") {
+                self.advance();
+                let value = self.comma_value()?;
+                let held = self.gensym("unpacked");
+                let name = held.ident.to_string();
+                let mut parts = vec![Form::Write(held, Box::new(value))];
+                let after = self.pos;
+                self.pos = began;
+                parts.extend(self.loop_targets(&name)?);
+                self.pos = after;
+                return Ok(sequence(parts));
+            }
             if self.on_assign() { self.advance(); let _value = self.comma_value()?; }
             return Ok(self.scope_unrun("ext.system.scope.unready"));
         }
@@ -4641,7 +4657,7 @@ impl<'a> Builder<'a> {
                             tuple = true;
                             self.advance();
                         }
-                        let value = if tuple { prim_call(Prim::MakeArray, values) } else { values.pop().unwrap() };
+                        let value = if tuple { prim_call(if table.flag("ext.stmt.yield.suspends") { Prim::MakeTuple } else { Prim::MakeArray }, values) } else { values.pop().unwrap() };
                         self.need_sign(table.single("syntax.group.close").unwrap(), "to close a group")?;
                         value
                     } else {
