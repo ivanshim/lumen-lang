@@ -19,6 +19,8 @@
   "ext.lexical.string.raw_prefix": ["r", "R"],
   "ext.lexical.string.text_prefix": ["u", "U"],
   "ext.syntax.string.adjacent": true,
+  "ext.op.identity": ["is"],
+  "ext.op.identity.unsupported": ["NotImplementedError: identity of unboxed integers is not retained"],
   "lexical.string_escapes": [
     "n",
     "t",
@@ -111,6 +113,7 @@
     ],
     [
       "==",
+      "is",
       "!=",
       "<",
       ">",

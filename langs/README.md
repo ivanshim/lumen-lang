@@ -238,6 +238,12 @@ only. The extension labels so far, all from PHP:
   whole of the piece it stands before, which is why PHP's
   `print ($a == $b) ? 'yes' : 'no';` writes one word or the other and not
   the answer to the comparison.
+- `ext.op.identity`: whether two operands are one object. The ordinary
+  negation word may follow it, as in `is not`. The operands are read in
+  order, and shared values are compared by their handles. Null, flags
+  and builtin kinds are singletons. Equal unboxed whole numbers stop
+  in `ext.op.identity.unsupported` words:
+  those values do not yet retain separate object identities.
 - `ext.op.increment`, `ext.op.decrement`: `++` and `--`, as statements
   and in expressions, before or after the name (`++$i` is the stepped
   value, `$i++` the value before).
@@ -1754,7 +1760,7 @@ Operator precedence, lowest tier first. Unary operators sit in their own tier.
 
 - **lumen**: `|>` < `or` < `and` < `==` `!=` `<` `>` `<=` `>=` < `..` < `+` `-` < `*` `/` `%` `//` `.` < `**` < `-` `not` `!`
 - **rplumen**: 
-- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` < `|` < `+` `-` < `*` `/` `//` `%` < `-` < `**` < `.`
+- **python**: `or` < `and` < `not` < `==` `is` `!=` `<` `>` `<=` `>=` < `|` < `+` `-` < `*` `/` `//` `%` < `-` < `**` < `.`
 - **rust**: `..` < `||` < `&&` < `==` `!=` `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `-` `!` < `.`
 - **php (extra)**: `or` < `and` < `||` < `&&` < `|` < `^` < `&` < `==` `!=` `<>` `===` `!==` < `<` `>` `<=` `>=` `<=>` < `.` < `<<` `>>` < `+` `-` < `*` `/` `%` < `!` `~` `@` < `-` < `**`
 - **c (extra)**: `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `!` `-`
@@ -1868,6 +1874,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.decrement.text` | - | - | - | - | `Decrement on non-numeric string has no effect and is deprecated` | - | - | - | - | - |
 | `ext.op.hush` | - | - | - | - | `@` | - | - | - | - | - |
 | `ext.op.identical` | - | - | - | - | `===` | - | - | - | - | - |
+| `ext.op.identity` | - | - | `is` | - | - | - | - | - | - | - |
+| `ext.op.identity.unsupported` | - | - | `NotImplementedError: identity of unboxed integers is not retained` | - | - | - | - | - | - | - |
 | `ext.op.increment` | - | - | - | - | `++` | - | - | - | - | - |
 | `ext.op.increment.text` | - | - | - | - | `Increment on non-numeric string is deprecated, use str_increment() instead` | - | - | - | - | - |
 | `ext.op.index.absent` | - | - | - | - | `true` | - | - | - | - | - |

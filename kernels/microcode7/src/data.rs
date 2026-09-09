@@ -244,6 +244,34 @@ impl Value {
         }
     }
 
+    /// Shared storage and singleton values can answer identity. Equal
+    /// unboxed numbers have no address left for that question.
+    pub fn one_object(&self, other: &Value) -> Option<bool> {
+        use Value::*;
+        Some(match (self, other) {
+            (Shared(one), value) => return one.borrow().one_object(value),
+            (value, Shared(two)) => return value.one_object(&two.borrow()),
+            (Nil, Nil) => true,
+            (Flag(one), Flag(two)) => one == two,
+            (KindOf(one), KindOf(two)) => one == two,
+            (Small(one), Small(two)) => {
+                if one == two { return None; }
+                false
+            }
+            (Vector(one), Vector(two)) => Rc::ptr_eq(one, two),
+            (Text(one), Text(two)) => Rc::ptr_eq(one, two),
+            (Dict(one), Dict(two)) => Rc::ptr_eq(one, two),
+            (Span(one), Span(two)) => Rc::ptr_eq(one, two),
+            (Huge(one), Huge(two)) => Rc::ptr_eq(one, two),
+            (Frac(one), Frac(two)) => Rc::ptr_eq(one, two),
+            (Blueprint(one), Blueprint(two)) => Rc::ptr_eq(one, two),
+            (Thing(one), Thing(two)) => Rc::ptr_eq(one, two),
+            (Routine(one), Routine(two)) => Rc::ptr_eq(one, two),
+            (Bound(one, frame), Bound(two, other_frame)) => Rc::ptr_eq(one, two) && Rc::ptr_eq(frame, other_frame),
+            _ => false,
+        })
+    }
+
     /// One and the same, which asks more than being equal: the two must
     /// also be of one kind, so a whole number and a decimal standing for
     /// the same amount are equal and yet not the same. Values that hold

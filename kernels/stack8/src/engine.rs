@@ -3120,6 +3120,7 @@ impl<'a> Engine<'a> {
             Action::Eq => Value::Flag(a.equals(b)),
             Action::Ne => Value::Flag(!a.equals(b)),
             Action::Same => Value::Flag(a.identical(b)),
+            Action::Identity => Value::Flag(a.identity(b).ok_or_else(|| self.lang.identity_unready.clone().unwrap_or_else(|| "These values retain no identity".into()))?),
             Action::Unsame => Value::Flag(!a.identical(b)),
             Action::Join => joined(),
             Action::At => self.element(a, b, Reading::Plain)?,

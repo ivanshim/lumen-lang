@@ -4117,6 +4117,10 @@ impl<'a> Machine<'a> {
             Prim::Eq => Value::Flag(v[0].equals(&v[1])),
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
             Prim::Selfsame => Value::Flag(v[0].selfsame(&v[1])),
+            Prim::OneObject => {
+                let answer = v[0].one_object(&v[1]);
+                Value::Flag(answer.ok_or_else(|| self.table.single("ext.op.identity.unsupported").unwrap_or("These values retain no identity").to_string())?)
+            }
             Prim::Unlike => Value::Flag(!v[0].selfsame(&v[1])),
             Prim::Join => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),
             Prim::At => self.element(&v[0], &v[1], Reading::Plain)?,

@@ -259,6 +259,31 @@ impl Value {
         }
     }
 
+    /// Whether two handles point to one value. An unboxed number keeps
+    /// no handle, so equal such numbers leave the question unanswered.
+    pub fn identity(&self, other: &Value) -> Option<bool> {
+        let answer = match (self, other) {
+            (Value::Bond(cell), b) => return cell.borrow().identity(b),
+            (a, Value::Bond(cell)) => return a.identity(&cell.borrow()),
+            (Value::Small(a), Value::Small(b)) if a == b => return None,
+            (Value::Null, Value::Null) => true,
+            (Value::Flag(a), Value::Flag(b)) => a == b,
+            (Value::SortOf(a), Value::SortOf(b)) => a == b,
+            (Value::Array(a), Value::Array(b)) => Rc::ptr_eq(a, b),
+            (Value::Map(a), Value::Map(b)) => Rc::ptr_eq(a, b),
+            (Value::Text(a), Value::Text(b)) => Rc::ptr_eq(a, b),
+            (Value::Huge(a), Value::Huge(b)) => Rc::ptr_eq(a, b),
+            (Value::Frac(a), Value::Frac(b)) => Rc::ptr_eq(a, b),
+            (Value::Real(a), Value::Real(b)) => Rc::ptr_eq(a, b),
+            (Value::Slice(a), Value::Slice(b)) => Rc::ptr_eq(a, b),
+            (Value::Class(a), Value::Class(b)) => Rc::ptr_eq(a, b),
+            (Value::Object(a), Value::Object(b)) => Rc::ptr_eq(a, b),
+            (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a, b),
+            _ => false,
+        };
+        Some(answer)
+    }
+
     /// Whether two values are the very same. Equal is not enough: they
     /// must be of one kind, so a whole number and a real that stand for
     /// the same amount are equal but not the same. An array is the same
@@ -798,4 +823,3 @@ fn laid_flat(figures: &str, power: i32) -> String {
     }
     format!("{}.{}", &figures[..point], &figures[point..])
 }
-

@@ -4163,6 +4163,13 @@ impl<'a> Compiler<'a> {
             self.take();
             let right_floor = if infix.right_assoc { infix.level } else { infix.level + 1 };
             match infix.action {
+                Action::Identity => {
+                    let negate = lang.monadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Not));
+                    if negate { self.take(); }
+                    self.expr(right_floor)?;
+                    self.act(Action::Identity, 2);
+                    if negate { self.act(Action::Not, 1); }
+                }
                 Action::And | Action::Or => {
                     // The right side runs only when the left leaves it open.
                     self.write(TEMP_CELL);

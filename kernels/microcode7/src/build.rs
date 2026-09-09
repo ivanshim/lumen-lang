@@ -3990,6 +3990,12 @@ impl<'a> Builder<'a> {
             self.advance();
             let floor_right = if op.right_assoc { op.level } else { op.level + 1 };
             left = match op.prim {
+                Prim::OneObject => {
+                    let inverted = table.monadic.get(&self.look().lexeme).map_or(false, |word| word.prim == Prim::Invert);
+                    if inverted { self.advance(); }
+                    let comparison = prim_call(Prim::OneObject, vec![left, self.expr(floor_right)?]);
+                    if inverted { prim_call(Prim::Invert, vec![comparison]) } else { comparison }
+                }
                 // The right side is a program, run only when the left leaves it open.
                 Prim::Both | Prim::Either => {
                     let lazy = self.limb(Traps::Naught, |r| r.expr(floor_right))?;
