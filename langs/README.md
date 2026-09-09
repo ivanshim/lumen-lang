@@ -747,6 +747,12 @@ only. The extension labels so far, all from PHP:
   read, write and remove an instance's named fields. `ext.builtin.vars`
   is read but refuses to run until a live map of fields can be handed out.
   Descriptor methods and bound method values remain wanting.
+- `ext.builtin.core.integer`, `.not_iterator` and `.dict.sequence`
+  hold words about a kind that cannot give an integer, a value that is
+  no cursor, and the numbered dictionary row that cannot give a pair.
+  `ext.builtin.core.power.integer` says that a modular power needs whole
+  numbers. `ext.builtin.core.attribute.name` surrounds the kind of a
+  field name which is not text.
 - `ext.builtin.core.unindexable` and `.immutable` put the kind between
   the words for reading an unindexed value and writing an immutable one.
   `ext.builtin.core.power.zero` and `.power.overflow` say that a negative
@@ -758,11 +764,13 @@ only. The extension labels so far, all from PHP:
   builtin name. The first three refuse a value of the wrong kind; the
   next refuses a working the kernel cannot yet perform honestly.
   `ext.builtin.core.attribute` holds three pieces around the class and
-  field names. `ext.builtin.core.attribute.name`, `.vars`, `.exhausted`,
+  field names. `ext.builtin.core.vars`, `.exhausted`,
   `.isinstance.amiss`, `.zero`, `.mod.zero`, `.inverse`, `.default.many`
-  and `.dict.pair` give the plain complaints for a bad field name, absent
-  field map, finished walk, bad kind, division by nought, zero modulus,
-  missing inverse, misplaced default and ill-shaped pair respectively.
+  give the plain complaints for an absent field map, finished walk,
+  bad kind, division by nought, zero modulus,
+  missing inverse and misplaced default respectively.
+  `ext.builtin.core.dict.pair` places the row number and its length
+  between three pieces of the complaint for an ill-shaped pair.
 - `ext.op.walk.class` and its family: a thing may be its own walk.
   `ext.op.walk.class` is the class of method names saying so (PHP's
   `Iterator`), and `ext.op.walk.rewind`, `.more`, `.this`, `.key` and
@@ -2013,15 +2021,19 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.core.arity.exact` | - | - | `TypeError: ` ` expected ` ` arguments, got ` | - | - | - | - | - | - | - |
 | `ext.builtin.core.arity.one` | - | - | `TypeError: ` `() takes exactly one argument (` ` given)` | - | - | - | - | - | - | - |
 | `ext.builtin.core.attribute` | - | - | `AttributeError: '` `' object has no attribute '` `'` | - | - | - | - | - | - | - |
-| `ext.builtin.core.attribute.name` | - | - | `TypeError: attribute name must be string` | - | - | - | - | - | - | - |
+| `ext.builtin.core.attribute.name` | - | - | `TypeError: attribute name must be string, not '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.default.many` | - | - | `TypeError: Cannot specify a default for min() or max() with multiple positional arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.core.dict.pair` | - | - | `ValueError: dictionary update sequence element #` ` has length ` `; 2 is required` | - | - | - | - | - | - | - |
+| `ext.builtin.core.dict.sequence` | - | - | `TypeError: cannot convert dictionary update sequence element #` ` to a sequence` | - | - | - | - | - | - | - |
 | `ext.builtin.core.empty` | - | - | `ValueError: ` `() iterable argument is empty` | - | - | - | - | - | - | - |
 | `ext.builtin.core.exhausted` | - | - | `StopIteration` | - | - | - | - | - | - | - |
 | `ext.builtin.core.immutable` | - | - | `TypeError: '` `' object does not support item assignment` | - | - | - | - | - | - | - |
+| `ext.builtin.core.integer` | - | - | `TypeError: '` `' object cannot be interpreted as an integer` | - | - | - | - | - | - | - |
 | `ext.builtin.core.inverse` | - | - | `ValueError: base is not invertible for the given modulus` | - | - | - | - | - | - | - |
 | `ext.builtin.core.isinstance.amiss` | - | - | `TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union` | - | - | - | - | - | - | - |
 | `ext.builtin.core.mod.zero` | - | - | `ValueError: pow() 3rd argument cannot be 0` | - | - | - | - | - | - | - |
+| `ext.builtin.core.not_iterator` | - | - | `TypeError: '` `' object is not an iterator` | - | - | - | - | - | - | - |
+| `ext.builtin.core.power.integer` | - | - | `TypeError: pow() 3rd argument not allowed unless all arguments are integers` | - | - | - | - | - | - | - |
 | `ext.builtin.core.power.overflow` | - | - | `OverflowError: math range error` | - | - | - | - | - | - | - |
 | `ext.builtin.core.power.zero` | - | - | `ZeroDivisionError: 0.0 cannot be raised to a negative power` | - | - | - | - | - | - | - |
 | `ext.builtin.core.uncallable` | - | - | `TypeError: '` `' object is not callable` | - | - | - | - | - | - | - |

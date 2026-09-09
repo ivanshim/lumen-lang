@@ -3851,9 +3851,10 @@ impl<'a> Engine<'a> {
 
     fn read_slice(&self, target: &Value, parts: &[Value; 3]) -> Res<Value> {
         match target {
-            Value::Array(items) | Value::Tuple(items) | Value::Set(items) => {
+            Value::Array(items) | Value::Tuple(items) => {
                 let (_, _, _, places) = self.slice_places(parts, items.len())?;
-                Ok(Value::array(places.into_iter().map(|i| items[i].clone()).collect()))
+                let selected = places.into_iter().map(|i| items[i].clone()).collect();
+                Ok(if matches!(target, Value::Tuple(_)) { Value::Tuple(Rc::new(selected)) } else { Value::array(selected) })
             }
             Value::Text(text) if self.lang.text_indexable => {
                 let letters: Vec<char> = text.chars().collect();
@@ -5646,7 +5647,7 @@ impl Engine<'_> {
     }
 
     fn core_step(&mut self, walk: &Value) -> Res<Option<Value>> {
-        let Value::Cursor(cell) = walk else { return Err(self.core_fault("core.unready", "next")); };
+        let Value::Cursor(cell) = walk else { return Err(self.core_fault("core.not_iterator", &walk.core_kind())); };
         let mut source = {
             let mut state = cell.borrow_mut();
             if state.busy { return Err(self.core_fault("core.unready", "next")); }
@@ -5721,7 +5722,7 @@ impl Engine<'_> {
     }
 
     fn core_isinstance(&self, value: &Value, kind: &Value) -> Res<bool> {
-        if let Value::Array(types) | Value::Tuple(types) = kind {
+        if let Value::Tuple(types) = kind {
             for t in types.iter() { if self.core_isinstance(value, t)? { return Ok(true); } }
             return Ok(false);
         }
@@ -5757,7 +5758,10 @@ impl Engine<'_> {
             let spells = |label: &str| self.lang.core_words.get(label).map_or(false, |words| Lang::spells(words, &word));
             if b == Builtin::Dict { dict_kw.push((Value::text(&word), value)); continue; }
             if matches!(b, Builtin::Sorted | Builtin::Minimum | Builtin::Maximum) && spells("key") { key = value; continue; }
-            if b == Builtin::Sorted && spells("reverse") { reverse = self.truth(&value); continue; }
+            if b == Builtin::Sorted && spells("reverse") {
+                if !matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.core_fault("core.integer", &value.core_kind())); }
+                reverse = self.truth(&value); continue;
+            }
             if matches!(b, Builtin::Minimum | Builtin::Maximum) && spells("default") { default = Some(value); continue; }
             let place = match b {
                 Builtin::Enumerate if spells("start") => 1,
@@ -5781,7 +5785,7 @@ impl Engine<'_> {
                     else { self.core_fault(label,name) })
             };
         let number = |v: &Value| match v { Value::Flag(b) => Value::Small(i64::from(*b)), other => other.clone() };
-        let integer = |v: &Value| match v { Value::Small(_) | Value::Huge(_) | Value::Flag(_) => v.as_big(), _ => Err(self.core_fault("core.unready", name)) };
+        let integer = |v: &Value| match v { Value::Small(_) | Value::Huge(_) | Value::Flag(_) => v.as_big(), _ => Err(self.core_fault("core.integer", &v.core_kind())) };
         let result = match b {
             Builtin::InstanceOf => { arity(2, 2)?; Value::Flag(self.core_isinstance(&args[0], &args[1])?) }
             Builtin::Bool => { arity(0, 1)?; Value::Flag(args.first().map_or(false, |v| self.truth(v))) }
@@ -5827,7 +5831,7 @@ impl Engine<'_> {
                     Some(v) => {
                         let mut pairs = Vec::new();
                         for (at,item) in self.core_members(v)?.into_iter().enumerate() {
-                            let row = self.core_members(&item)?;
+                            let row = self.core_members(&item).map_err(|_| self.core_fault("core.dict.sequence", &at.to_string()))?;
                             if row.len() != 2 { let w = &self.lang.core_words["core.dict.pair"]; return Err(format!("{}{}{}{}{}", w[0],at,w[1],row.len(),w[2])); }
                             pairs.push((row[0].clone(), row[1].clone()));
                         }
@@ -5945,6 +5949,7 @@ impl Engine<'_> {
             Builtin::Power => {
                 arity(2, 3)?;
                 if args.len() == 3 && !matches!(args[2], Value::Null) {
+                    if args.iter().any(|v| !matches!(v, Value::Small(_) | Value::Huge(_) | Value::Flag(_))) { return Err(self.core_fault("core.power.integer", "")); }
                     let (mut a, mut exp, modulus) = (integer(&args[0])?, integer(&args[1])?, integer(&args[2])?);
                     if modulus.is_zero() { return Err(self.core_fault("core.mod.zero", "")); }
                     let positive = modulus.abs();
@@ -5992,19 +5997,20 @@ impl Engine<'_> {
                     else {
                         let text = format!("{:.*}", digits.max(0) as usize, rounded);
                         let numerator = text.replace('.', "").parse::<BigInt>().map_err(|_| self.core_fault("core.unready", name))?;
-                        arith::shape_number(numerator, BigInt::from(10).pow(digits.max(0) as u32), Some(arith::DEFAULT_PLACES))
+                        arith::shape_signed(numerator, BigInt::from(10).pow(digits.max(0) as u32), Some(arith::DEFAULT_PLACES), rounded.is_sign_negative())
                     }
                 }
             }
             Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars => {
                 arity(if b == Builtin::Vars { 1 } else { 2 }, if matches!(b, Builtin::SetAttr | Builtin::GetAttr) { 3 } else if b == Builtin::Vars { 1 } else { 2 })?;
+                if b != Builtin::Vars && !matches!(args[1], Value::Text(_)) { return Err(self.core_fault("core.attribute.name", &args[1].core_kind())); }
                 let Value::Object(o) = &args[0] else {
                     if b == Builtin::HasAttr { return Ok(Value::Flag(false)); }
                     if b == Builtin::GetAttr && args.len() == 3 { return Ok(args[2].clone()); }
                     return Err(self.core_fault(if b == Builtin::Vars { "core.vars" } else { "core.unready" }, if b == Builtin::Vars { "" } else { name }));
                 };
                 if b == Builtin::Vars { return Err(self.core_fault("core.unready", name)); }
-                let Value::Text(attr) = &args[1] else { return Err(self.core_fault("core.attribute.name", "")); };
+                let Value::Text(attr) = &args[1] else { return Err(self.core_fault("core.attribute.name", &args[1].core_kind())); };
                 let mut fields = o.fields.borrow_mut();
                 let at = fields.iter().position(|(k,_)| k == attr.as_ref());
                 if b == Builtin::GetAttr && at.is_none() && o.class.method(attr).is_some() { return Err(self.core_fault("core.unready", name)); }

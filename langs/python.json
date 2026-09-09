@@ -359,7 +359,8 @@
     "'"
   ],
   "ext.builtin.core.attribute.name": [
-    "TypeError: attribute name must be string"
+    "TypeError: attribute name must be string, not '",
+    "'"
   ],
   "ext.builtin.core.default.many": [
     "TypeError: Cannot specify a default for min() or max() with multiple positional arguments"
@@ -368,6 +369,10 @@
     "ValueError: dictionary update sequence element #",
     " has length ",
     "; 2 is required"
+  ],
+  "ext.builtin.core.dict.sequence": [
+    "TypeError: cannot convert dictionary update sequence element #",
+    " to a sequence"
   ],
   "ext.builtin.core.empty": [
     "ValueError: ",
@@ -380,6 +385,10 @@
     "TypeError: '",
     "' object does not support item assignment"
   ],
+  "ext.builtin.core.integer": [
+    "TypeError: '",
+    "' object cannot be interpreted as an integer"
+  ],
   "ext.builtin.core.inverse": [
     "ValueError: base is not invertible for the given modulus"
   ],
@@ -388,6 +397,13 @@
   ],
   "ext.builtin.core.mod.zero": [
     "ValueError: pow() 3rd argument cannot be 0"
+  ],
+  "ext.builtin.core.not_iterator": [
+    "TypeError: '",
+    "' object is not an iterator"
+  ],
+  "ext.builtin.core.power.integer": [
+    "TypeError: pow() 3rd argument not allowed unless all arguments are integers"
   ],
   "ext.builtin.core.power.overflow": [
     "OverflowError: math range error"

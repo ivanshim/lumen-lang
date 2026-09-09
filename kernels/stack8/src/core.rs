@@ -39,7 +39,7 @@ impl Value {
                         '\n' => out.push_str("\\n"), '\r' => out.push_str("\\r"), '\t' => out.push_str("\\t"),
                         '\\' => out.push_str("\\\\"),
                         c if c == quote => { out.push('\\'); out.push(c); }
-                        c if c.is_control() || c == '\u{a0}' => {
+                        c if c.is_control() || c.is_whitespace() && c != ' ' => {
                             let n = c as u32;
                             out.push_str(&if n < 256 { format!("\\x{:02x}", n) } else if n < 65536 { format!("\\u{:04x}", n) } else { format!("\\U{:08x}", n) });
                         }
@@ -58,6 +58,7 @@ impl Value {
             Value::Flag(b) => if *b { "True" } else { "False" }.into(),
             Value::Bond(c) => c.borrow().core_repr(),
             Value::Real(r) => {
+                if r.below && r.p == BigInt::from(0) { return "-0.0".into(); }
                 let number = crate::value::as_binary(&r.p, &r.q);
                 if number.is_nan() { "nan".into() } else if number == f64::INFINITY { "inf".into() }
                 else if number == f64::NEG_INFINITY { "-inf".into() } else { format!("{:?}", number) }

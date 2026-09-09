@@ -5872,7 +5872,7 @@ impl Machine<'_> {
     }
 
     fn next_value(&mut self, iterator: &Value) -> Result<Option<Value>, String> {
-        let Value::Iterator(cell) = iterator else { return Err(self.core_complaint("core.unready", "next")); };
+        let Value::Iterator(cell) = iterator else { return Err(self.core_complaint("core.not_iterator", &iterator.kind_word())); };
         let mut kind = {
             let mut held = cell.borrow_mut();
             if held.done { return Ok(None); }
@@ -5950,7 +5950,7 @@ impl Machine<'_> {
 
     fn core_belongs(&self, item: &Value, expected: &Value) -> Result<bool, String> {
         match expected {
-            Value::Tuple(kinds) | Value::Vector(kinds) => {
+            Value::Tuple(kinds) => {
                 for kind in kinds.iter() { if self.core_belongs(item, kind)? { return Ok(true); } }
                 Ok(false)
             }
@@ -5988,7 +5988,10 @@ impl Machine<'_> {
             match op {
                 Dictionary => { additions.push((Value::text(&label), value)); continue; }
                 Ordered | Least | Greatest if is("key") => { ordering = Some(value); continue; }
-                Ordered if is("reverse") => { descending = self.stands_true(&value); continue; }
+                Ordered if is("reverse") => {
+                    if !matches!(value, Value::Flag(_) | Value::Huge(_) | Value::Small(_)) { return Err(self.core_complaint("core.integer", &value.kind_word())); }
+                    descending = self.stands_true(&value); continue;
+                }
                 Least | Greatest if is("default") => { fallback = Some(value); continue; }
                 _ => (),
             }
@@ -6019,7 +6022,7 @@ impl Machine<'_> {
         };
         let as_number = |v: &Value| if let Value::Flag(b) = v { Value::Small(*b as i64) } else { v.clone() };
         let whole = |v: &Value| -> Result<BigInt, String> {
-            if matches!(v, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { v.as_big() } else { Err(self.core_complaint("core.unready", name)) }
+            if matches!(v, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { v.as_big() } else { Err(self.core_complaint("core.integer", &v.kind_word())) }
         };
         let cursor = |values: Vec<Value>| Self::make_iterator(IteratorKind::Stored(values.into_iter().collect()));
         match op {
@@ -6073,7 +6076,7 @@ impl Machine<'_> {
                     if let Value::Dict(pairs) = source { incoming.extend(pairs.iter().cloned()); }
                     else {
                         for (position,row) in self.core_collect(source)?.into_iter().enumerate() {
-                            let fields = self.core_collect(&row)?;
+                            let fields = self.core_collect(&row).map_err(|_| self.core_complaint("core.dict.sequence", &position.to_string()))?;
                             if fields.len() != 2 {
                                 let parts = self.table.strings("ext.builtin.core.dict.pair");
                                 return Err(format!("{}{}{}{}{}",parts[0],position,parts[1],fields.len(),parts[2]));
@@ -6097,10 +6100,7 @@ impl Machine<'_> {
             }
             NextItem => {
                 require(1, 2)?;
-                match &input[0] {
-                    Value::Iterator(_) => self.next_value(&input[0])?.or_else(|| input.get(1).cloned()).ok_or_else(|| self.core_complaint("core.exhausted", "")),
-                    _ => Err(self.core_complaint("core.unready", name)),
-                }
+                self.next_value(&input[0])?.or_else(|| input.get(1).cloned()).ok_or_else(|| self.core_complaint("core.exhausted", ""))
             }
             Backwards => {
                 require(1, 1)?;
@@ -6217,6 +6217,7 @@ impl Machine<'_> {
                     }
                     return math::compute(Calc::Power, &base, &exponent).ok_or_else(|| self.core_complaint("core.unready", name))?;
                 }
+                if input.iter().any(|v| !matches!(v, Value::Flag(_) | Value::Small(_) | Value::Huge(_))) { return Err(self.core_complaint("core.power.integer", "")); }
                 let modulus = whole(&input[2])?;
                 if modulus.is_zero() { return Err(self.core_complaint("core.mod.zero", "")); }
                 let m = modulus.abs();
@@ -6258,12 +6259,13 @@ impl Machine<'_> {
                     let decimal = format!("{:.*}", places.max(0) as usize, rounded);
                     let above: BigInt = decimal.chars().filter(|c| *c != '.').collect::<String>().parse().map_err(|_| self.core_complaint("core.unready", name))?;
                     let beneath = BigInt::from(10).pow(places.max(0) as u32);
-                    Ok(math::make_number(above, beneath, Some(math::DEFAULT_PLACES)))
+                    Ok(math::made_number(above, beneath, Some(math::DEFAULT_PLACES), rounded.is_sign_negative()))
                 }
             }
             HasMember | GetMember | SetMember | DropMember | MembersOf => {
                 let count = if op == MembersOf { 1 } else { 2 };
                 require(count, if matches!(op, GetMember | SetMember) { 3 } else { count })?;
+                if op != MembersOf && !matches!(input[1], Value::Text(_)) { return Err(self.core_complaint("core.attribute.name", &input[1].kind_word())); }
                 let Value::Thing(thing) = &input[0] else {
                     if op == HasMember { return Ok(Value::Flag(false)); }
                     if op == GetMember && input.len() == 3 { return Ok(input[2].clone()); }
@@ -6271,7 +6273,7 @@ impl Machine<'_> {
                 };
                 let mut members = thing.holds.borrow_mut();
                 if op == MembersOf { return Err(self.core_complaint("core.unready", name)); }
-                let Value::Text(word) = &input[1] else { return Err(self.core_complaint("core.attribute.name", "")); };
+                let Value::Text(word) = &input[1] else { return Err(self.core_complaint("core.attribute.name", &input[1].kind_word())); };
                 let position = members.iter().position(|(n,_)| n == word.as_ref());
                 if op == GetMember && position.is_none() && thing.of.program(word).is_some() { return Err(self.core_complaint("core.unready", name)); }
                 if op == HasMember { return Ok(Value::Flag(position.is_some() || thing.of.program(word).is_some())); }

@@ -44,7 +44,7 @@ impl Value {
                     if letter == mark || letter == '\\' { quoted.push('\\'); quoted.push(letter); continue; }
                     let escaped = match letter {
                         '\t' => String::from("\\t"), '\n' => String::from("\\n"), '\r' => String::from("\\r"),
-                        c if c.is_control() || c == '\u{a0}' => match c as u32 {
+                        c if c.is_control() || c.is_whitespace() && c != ' ' => match c as u32 {
                             n @ 0..=255 => format!("\\x{n:02x}"), n @ 256..=65535 => format!("\\u{n:04x}"), n => format!("\\U{n:08x}"),
                         },
                         c => c.to_string(),
@@ -56,6 +56,7 @@ impl Value {
             }
             Self::Shared(cell) => cell.borrow().quoted(),
             Self::Frac(r) if r.places.is_some() => {
+                if r.under && r.above == BigInt::from(0) { return String::from("-0.0"); }
                 let f = crate::data::nearest_binary(&r.above, &r.beneath);
                 match f { f if f.is_nan() => "nan".to_owned(), f if f.is_infinite() => if f.is_sign_negative() { "-inf" } else { "inf" }.to_owned(), f => format!("{f:?}") }
             }
