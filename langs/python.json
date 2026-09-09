@@ -46,9 +46,7 @@
     ":"
   ],
   "block.indent_size": 4,
-  "stmt.terminator": [
-    ";"
-  ],
+  "stmt.terminator": [],
   "syntax.notation": "infix",
   "syntax.group.open": [
     "("
@@ -330,6 +328,7 @@
   "system.kind.boolean": [],
   "system.kind.array": [],
   "system.kind.null": [],
+  "ext.builtin.print.real_point": true,
   "ext.lexical.line_continuation": [
     "\\"
   ],

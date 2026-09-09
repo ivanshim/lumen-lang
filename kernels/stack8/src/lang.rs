@@ -48,6 +48,7 @@ pub struct Lang {
     pub bare_number_point: bool,
     pub separator_after_prefix: bool,
     pub whole_bits: bool,
+    pub print_real_point: bool,
     pub line_comments: Vec<String>,
     pub block_comments: Vec<(String, String)>,
     pub quotes: Vec<char>,
@@ -647,7 +648,7 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
-w ext.lexical.line_continuation | b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole
+w ext.lexical.line_continuation | b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole | b ext.builtin.print.real_point
 w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
@@ -1209,6 +1210,7 @@ impl Lang {
             bare_number_point: r.flag("ext.lexical.number.point.bare")?,
             separator_after_prefix: r.flag("ext.lexical.number.separator.after_prefix")?,
             whole_bits: r.flag("ext.op.bit.whole")?,
+            print_real_point: r.flag("ext.builtin.print.real_point")?,
             line_comments: r.strings("lexical.comment_line")?,
             block_comments: comment_opens.into_iter().zip(comment_closes).collect(),
             quotes,

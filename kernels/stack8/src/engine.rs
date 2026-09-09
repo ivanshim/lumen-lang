@@ -3481,6 +3481,15 @@ impl<'a> Engine<'a> {
     /// the definition's placeholders filled from the rest.
     fn render(&self, values: &[Value]) -> String {
         let sp = self.wording();
+        let printed = |v: &Value| {
+            let mut said = v.display(&sp);
+            if self.lang.print_real_point && v.sort() == Some(Sort::Real)
+                && said.chars().all(|c| c.is_ascii_digit() || c == '-')
+            {
+                said.push_str(".0");
+            }
+            said
+        };
         let holes = &self.lang.holes;
         let hole_in = |s: &str| holes.iter().filter_map(|h| s.find(h.as_str()).map(|at| (at, h.len()))).min();
         if let (Some(Value::Text(template)), true) = (values.first(), values.len() > 1) {
@@ -3491,7 +3500,7 @@ impl<'a> Engine<'a> {
                 while let Some((at, width)) = hole_in(s) {
                     out.push_str(&s[..at]);
                     match fill.next() {
-                        Some(v) => out.push_str(&v.display(&sp)),
+                        Some(v) => out.push_str(&printed(v)),
                         None => out.push_str(&s[at..at + width]),
                     }
                     s = &s[at + width..];
@@ -3500,7 +3509,7 @@ impl<'a> Engine<'a> {
                 return out;
             }
         }
-        values.iter().map(|v| v.display(&sp)).collect::<Vec<_>>().join(" ")
+        values.iter().map(printed).collect::<Vec<_>>().join(" ")
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {

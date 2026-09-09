@@ -4510,6 +4510,13 @@ impl<'a> Machine<'a> {
 
     fn show(&self, v: &[Value]) -> String {
         let w = self.wording();
+        let argument = |x: &Value| {
+            let text = x.render(w);
+            match (self.table.flag("ext.builtin.print.real_point"), x.kind()) {
+                (true, Some(Kind::Decimal)) if text.trim_start_matches('-').bytes().all(|c| c.is_ascii_digit()) => format!("{}.0", text),
+                _ => text,
+            }
+        };
         let holes = self.table.strings("builtin.print.placeholder");
         let find = |s: &str| holes.iter().filter_map(|h| s.find(h.as_str()).map(|p| (p, h.len()))).min();
         if let (Some(Value::Text(t)), true) = (v.first(), v.len() > 1) {
@@ -4520,7 +4527,7 @@ impl<'a> Machine<'a> {
                 while let Some((p, k)) = find(s) {
                     out.push_str(&s[..p]);
                     match rest.next() {
-                        Some(x) => out.push_str(&x.render(w)),
+                        Some(x) => out.push_str(&argument(x)),
                         None => out.push_str(&s[p..p + k]),
                     }
                     s = &s[p + k..];
@@ -4529,7 +4536,7 @@ impl<'a> Machine<'a> {
                 return out;
             }
         }
-        v.iter().map(|x| x.render(w)).collect::<Vec<_>>().join(" ")
+        v.iter().map(argument).collect::<Vec<_>>().join(" ")
     }
 }
 
