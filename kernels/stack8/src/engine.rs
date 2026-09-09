@@ -3805,12 +3805,13 @@ impl<'a> Engine<'a> {
     /// but each names its own few places, where the definition spells them.
     fn builtin_call(&mut self, builtin: Builtin, name: &str, items: Vec<(Option<String>, Value)>) -> Res<Value> {
         let mut args = Vec::new();
-        let mut named = HashMap::new();
+        let mut named: Vec<(String, Value)> = Vec::new();
         for (key, value) in items {
             if let Some(key) = key {
-                if named.insert(key.clone(), value).is_some() {
+                if named.iter().any(|(seen, _)| seen == &key) {
                     return Err(Self::named_fault(&self.lang.call_duplicate, &key));
                 }
+                named.push((key, value));
             } else { args.push(value); }
         }
         if builtin == Builtin::Say && !self.lang.print_sep.is_empty() {
