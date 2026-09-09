@@ -430,6 +430,7 @@
   "ext.syntax.call.amiss.missing": ["TypeError: missing required argument '", "'"],
   "ext.syntax.call.amiss.unknown": ["TypeError: unexpected keyword argument '", "'"],
   "ext.syntax.call.bind_names": true,
+  "ext.syntax.call.chained": true,
   "ext.syntax.call.spread": ["*"],
   "ext.syntax.call.spread.amiss": ["TypeError: argument after * must be an iterable"],
   "ext.syntax.call.spread.pairs": ["**"],

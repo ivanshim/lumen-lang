@@ -92,6 +92,12 @@ reading. An indexed ellipsis keeps the slice piece's own meaning.
 
 ## Spellings in this piece
 
+`33.py` checks repeated calls in a decorator and calls mixed with indices
+and grouping. Each call answers `42`; a further uncalled routine checks
+the grammar suite's decorator with repeated attribute access. The switch
+`ext.syntax.call.chained` is true. Calls use the ordinary call machinery,
+with the callee kept before reading its arguments.
+
 `30.py` reads the grammar suite's bare tuple statements and assignment
 values, including a trailing comma. `31.py` and `32.py` reach those forms
 and give the tuple-value complaint. Both use the existing `ext.op.tuple`
@@ -178,6 +184,7 @@ tiers are shown whole, lowest first.
 | `ext.stmt.with.unready` | list | `["NotImplementedError: context managers are not supported"]` |
 | `ext.system.fault.operands` | list | `["unsupported operand type(s)"]` |
 | `ext.system.fault.shift` | list | `["negative shift count"]` |
+| `ext.syntax.call.chained` | switch | `true` |
 
 The borrowed lexical reading is from `a3d8d6c`;
 the borrowed string reading is from `ab5ff7c`. The class, tuple, context, and

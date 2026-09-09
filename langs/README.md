@@ -1425,6 +1425,9 @@ only. The extension labels so far, all from PHP:
 - `ext.op.assign.expression`: a mark between a binding name and the
   expression whose value is both stored there and answered with. The mark
   is read at the lowest expression tier, including in a decorator.
+- `ext.syntax.call.chained`: allows another call after the value a call
+  or an index gives back, with further calls and indices read in order.
+  Each callee is kept before its arguments are worked out.
 - `ext.op.matrix`: the matrix product sign, taking its place among the
   binary operators by `op.precedence`. The compound assignment switch
   gives it a writing form as well. Both operands are read whole; where
@@ -2041,6 +2044,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.syntax.call.amiss.unknown` | - | - | `TypeError: unexpected keyword argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.bare` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.syntax.call.bind_names` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.syntax.call.chained` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.syntax.call.spread` | - | - | `*` | - | - | - | - | - | - | - |
 | `ext.syntax.call.spread.amiss` | - | - | `TypeError: argument after * must be an iterable` | - | - | - | - | - | - | - |
 | `ext.syntax.call.spread.pairs` | - | - | `**` | - | - | - | - | - | - | - |

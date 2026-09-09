@@ -4851,6 +4851,9 @@ impl<'a> Builder<'a> {
     }
 
     fn subscript(&mut self, mut node: Form) -> Res<Form> {
+        if self.table.flag("ext.syntax.call.chained") {
+            node = self.called_on_value(node)?;
+        }
         node = self.members(node)?;
         let (Some(open), Some(close)) = (self.table.single("op.index.open"), self.table.single("op.index.close")) else { return Ok(node) };
         while self.sign(open) {
@@ -4881,6 +4884,9 @@ impl<'a> Builder<'a> {
                 node = invoke(node, args);
             }
             node = self.members(node)?;
+        }
+        if self.table.flag("ext.syntax.call.chained") && self.on_any("syntax.call.open") {
+            return self.subscript(node);
         }
         Ok(node)
     }
