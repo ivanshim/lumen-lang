@@ -551,8 +551,18 @@ impl Table {
         if self.has_any("ext.stmt.switch") && (!self.has_any("ext.stmt.case") || !self.has_any("ext.stmt.case.mark")) {
             return Err("ext.stmt.switch needs ext.stmt.case and ext.stmt.case.mark".to_string());
         }
-        if self.has_any("ext.stmt.class") && (!self.has_any("ext.op.member") || !self.has_any("ext.stmt.class.new")) {
-            return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
+        let bases = self.strings("ext.stmt.class.bases.open");
+        let ends = self.strings("ext.stmt.class.bases.close");
+        match (bases.is_empty(), ends.is_empty()) {
+            (true, true) => {
+                if self.has_any("ext.stmt.class") && (!self.has_any("ext.op.member") || !self.has_any("ext.stmt.class.new")) {
+                    return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
+                }
+            }
+            _ if bases.len() != ends.len() || !self.has_any("ext.stmt.class.unready") => {
+                return Err("Class scope reading needs paired base marks and ext.stmt.class.unready".into());
+            }
+            _ => {}
         }
         if self.has_any("stmt.foreach") && !self.has_any("stmt.foreach.as") {
             return Err("stmt.foreach needs stmt.foreach.as".to_string());

@@ -1688,7 +1688,11 @@ impl Lang {
         if !lang.try_words.is_empty() && lang.catch_words.is_empty() {
             return Err("ext.stmt.try needs ext.stmt.catch".to_string());
         }
-        if !lang.class_words.is_empty() && (lang.member_mark.is_none() || lang.new_words.is_empty()) {
+        if !lang.class_bases_open.is_empty() || !lang.class_bases_close.is_empty() {
+            if lang.class_bases_open.len() != lang.class_bases_close.len() || lang.class_unready.is_empty() {
+                return Err("Class scope reading needs paired base marks and ext.stmt.class.unready".to_string());
+            }
+        } else if !lang.class_words.is_empty() && (lang.member_mark.is_none() || lang.new_words.is_empty()) {
             return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
         }
         if !lang.foreach_words.is_empty() && lang.foreach_as_words.is_empty() {
