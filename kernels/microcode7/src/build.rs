@@ -1219,7 +1219,7 @@ impl<'a> Builder<'a> {
             }
             if self.key("ext.stmt.throw") {
                 self.advance();
-                if table.single("ext.stmt.throw.from").is_some()
+                if self.table.single("ext.stmt.throw.from").is_some()
                     && matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish)
                 {
                     return Ok(Form::Again);
