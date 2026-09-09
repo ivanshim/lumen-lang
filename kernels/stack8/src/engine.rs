@@ -4797,6 +4797,9 @@ impl<'a> Engine<'a> {
             Builtin::AsReal if self.lang.to_real_text && matches!(args.first(), Some(Value::Text(_))) => {
                 arity(1)?;
                 let Value::Text(text) = &args[0] else { unreachable!() };
+                if let Some(number) = text.trim().to_ascii_lowercase().parse::<f64>().ok().filter(|n| !n.is_finite()) {
+                    return Ok(crate::value::outside_number(number, arith::DEFAULT_PLACES));
+                }
                 let number = number_spelled(text).ok_or_else(|| self.lang.to_real_text_amiss[0].clone())?;
                 arith::to_real(&number, arith::DEFAULT_PLACES).ok_or_else(|| self.lang.to_real_text_amiss[0].clone())?
             }

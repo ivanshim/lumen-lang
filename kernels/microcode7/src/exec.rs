@@ -4852,6 +4852,11 @@ impl<'a> Machine<'a> {
             Prim::AsReal if self.table.flag("ext.builtin.to_real.text") && (v.is_empty() || matches!(v.first(), Some(Value::Text(_)))) => {
                 if v.len() > 1 { return Err(self.argument_fault("ext.syntax.call.amiss", None)); }
                 let failure = || self.argument_fault("ext.builtin.to_real.text.amiss", None);
+                if let Some(Value::Text(chars)) = v.first() {
+                    if let Ok(binary) = chars.trim().to_ascii_lowercase().parse::<f64>() {
+                        if !binary.is_finite() { return Ok(crate::data::past_the_numbers(binary, math::DEFAULT_PLACES)); }
+                    }
+                }
                 let worth = if v.is_empty() { Value::Small(0) } else { number_spelled_in(&v[0]).ok_or_else(failure)? };
                 math::to_decimal(&worth, math::DEFAULT_PLACES).ok_or_else(failure)?
             }

@@ -744,6 +744,8 @@ only. The extension labels so far, all from PHP:
   `.as_integer_ratio`: the width of a whole number's magnitude, whether
   a number is whole, a real's hexadecimal spelling, and a number's
   exact ratio. Real ratios and hexadecimal forms use binary doubles.
+  The existing `ext.builtin.to_real.text` also admits nonfinite text
+  values, so these methods can answer for infinities and NaNs.
 - `ext.builtin.method.error.arguments`, `.attribute`, `.separator`,
   `.substring`, `.pop`, `.index`, `.remove`, `.list_index` and `.fill`:
   lists holding the complaints for bad arguments, an absent method, an
