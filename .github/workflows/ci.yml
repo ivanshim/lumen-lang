@@ -38,3 +38,58 @@ jobs:
             build.log
             test.log
           if-no-files-found: ignore
+
+  reference:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install PHP CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y php-cli
+          test -x /usr/bin/php
+      - name: Build reference suites
+        run: |
+          cargo build --release
+      - name: Run reference suites
+        run: |
+          python3 scripts/reference_tests.py 2>&1 | tee reference.log
+          test "${PIPESTATUS[0]}" -eq 0
+      - name: Check kernel disagreements
+        run: |
+          test "$(grep -c 'Kernel disagreements' tests/REPORT.md)" -eq 0
+      - name: Check reference regressions
+        run: |
+          set +e
+          git diff tests/REPORT.md | grep -E '^-.*\| pass \| pass \|'
+          statuses=("${PIPESTATUS[@]}")
+          set -e
+          test "${statuses[0]}" -eq 0
+          test "${statuses[1]}" -eq 1
+      - name: Summarize reference results
+        if: always()
+        run: |
+          {
+            echo '```markdown'
+            grep -E '^\| all \||^\| `python` \|' tests/REPORT.md
+            echo ''
+            sed -n '/^## Python:/,/^### Reserved words/{
+              /^## Python:/d
+              /^### Reserved words/d
+              p
+            }' tests/REPORT.md
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload reference report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reference-report
+          path: |
+            tests/REPORT.md
+            reference.log
+          if-no-files-found: ignore
