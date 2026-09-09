@@ -2164,6 +2164,7 @@ impl<'a> Builder<'a> {
             if on_one_line && self.on_stmt_end() { break; }
             if self.on_any("ext.stmt.decorator") {
                 let (word, address) = self.member_adornments(&mut setup)?;
+                cannot |= table.single("ext.stmt.class.constructor") == Some(word.as_str());
                 methods.retain(|(n, _)| n != &word);
                 if let Some(index) = attributes.iter().position(|n| n == &word) {
                     attributes.remove(index);

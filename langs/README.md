@@ -652,6 +652,8 @@ only. The extension labels so far, all from PHP:
   member mark which give that property a writer. A write calls it with
   the instance and the new value. A property without a writer, or a
   descriptor used in a way not yet provided, gives `ext.stmt.class.unready`.
+  Decorated constructors are read but give that complaint as well; their
+  call through the making of an object is not yet provided.
 - `ext.op.member.pipes`: a switch; a mark shared by the pipe and member
   signs reads a member when the object or class holds that name, and pipes
   otherwise. A method takes its object before the written arguments; a
@@ -698,17 +700,6 @@ only. The extension labels so far, all from PHP:
   returns and loop targets are read. They never stand for mutable arrays.
   A loop over `ext.builtin.range.value` walks that value, including a
   range given a single bound or a step.
-- `ext.stmt.class.static`: words after a decorator mark which keep the
-  decorated value from taking an object when reached through an instance.
-- `ext.stmt.class.classmethod`: words after a decorator mark which give
-  the class as the first argument, through a class or through its object.
-- `ext.stmt.class.property`: words after a decorator mark which make an
-  instance's read call the getter with that instance. The class itself
-  keeps the property value without calling it.
-- `ext.stmt.class.property.setter`: words after a property's name and
-  member mark which give that property a writer. A write calls it with
-  the instance and the new value. A property without a writer, or a
-  descriptor used in a way not yet provided, gives `ext.stmt.class.unready`.
 - `ext.op.member.pipes`: a switch; builtin names after the member mark
   retain their pipe spelling. Other names name members. Class creation
   must remain guarded until the receiver can choose between the two.

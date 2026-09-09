@@ -2950,6 +2950,7 @@ impl<'a> Compiler<'a> {
         while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
             if self.on_any(&lang.decorator_words) {
                 let (named, slot) = self.adorned_member()?;
+                if lang.constructor.as_ref() == Some(&named) { unready = true; }
                 methods.retain(|(old, _)| old != &named);
                 shared.retain(|(old, _)| old != &named);
                 shared.push((named, slot));

@@ -2057,8 +2057,8 @@ impl<'a> Engine<'a> {
         })
     }
 
-    fn descriptor_read(&mut self, d: &Descriptor, subject: Value) -> Flow<Value> {
-        match d {
+    fn descriptor_read(&mut self, d: &Rc<Descriptor>, subject: Value) -> Flow<Value> {
+        match d.as_ref() {
             Descriptor::Static(f) => Ok(f.clone()),
             Descriptor::Class(f) => {
                 let class = match subject { Value::Object(o) => Value::Class(o.class.clone()), other => other };
@@ -2070,7 +2070,7 @@ impl<'a> Engine<'a> {
                 self.perform(&Action::Invoke(Rc::from("property")), 2)?;
                 Ok(self.drop_top()?)
             }
-            _ => Ok(Value::Descriptor(Rc::new(d.clone()))),
+            _ => Ok(Value::Descriptor(d.clone())),
         }
     }
 

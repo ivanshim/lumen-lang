@@ -2685,7 +2685,9 @@ impl<'a> Machine<'a> {
                         })),
                         _ => x.clone(),
                     },
-                    (Value::Thing(object), Value::Routine(body) | Value::Bound(body, _)) => Value::Method(body.clone(), object.clone()),
+                    (Value::Thing(object), Value::Routine(_) | Value::Bound(..)) => Value::Adorned(Rc::new(Adornment {
+                        manner: 'b', target: x.clone(), extra: Some(Value::Thing(object.clone())),
+                    })),
                     _ => x.clone(),
                 }
             });
