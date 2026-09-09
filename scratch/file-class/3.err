@@ -1,1 +1,1 @@
-NotImplementedError: bit operations require integers
+PythonError: NotImplementedError: bit operations require integers

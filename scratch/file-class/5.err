@@ -1,1 +1,1 @@
-NotImplementedError: matrix multiplication is not supported
+PythonError: NotImplementedError: matrix multiplication is not supported
