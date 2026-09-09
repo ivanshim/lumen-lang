@@ -1109,6 +1109,7 @@ impl<'a> Builder<'a> {
 
     fn plain_or_kind(&mut self) -> Res<Form> {
         if self.look().shape == Shape::Bare || self.on_any("ext.stmt.decorator") {
+            if self.key("ext.stmt.with") { return self.with_stmt(); }
             if self.key("stmt.let") {
                 return self.bind();
             }
@@ -1738,6 +1739,61 @@ impl<'a> Builder<'a> {
         }
         self.need_lexeme(&close)?;
         Ok(())
+    }
+
+    fn context_names(&mut self) -> Res<()> {
+        let paired = [("syntax.group.open", "syntax.group.close"), ("syntax.array.open", "syntax.array.close")]
+            .iter().find(|(open, _)| self.on_any(open)).map(|(_, close)| *close);
+        match paired {
+            None => { self.need_word("as the context binding")?; }
+            Some(close) => {
+                self.advance();
+                while !self.on_any(close) {
+                    self.context_names()?;
+                    if !self.on_any("syntax.call.separator") { break; }
+                    self.advance();
+                }
+                self.need_sign(self.table.single(close).unwrap(), "after the binding places")?;
+            }
+        }
+        Ok(())
+    }
+
+    fn with_stmt(&mut self) -> Res<Form> {
+        self.advance();
+        let table = self.table;
+        let open = table.single("syntax.group.open").ok_or("A context statement needs group marks")?;
+        let close = table.single("syntax.group.close").ok_or("A context statement needs group marks")?;
+        let wrapped = if self.sign(open) {
+            let mut level = 0i32;
+            let mut closes_before_body = false;
+            for distance in 0..self.tokens.len() - self.pos {
+                let next = self.glance(distance);
+                if next.shape == Shape::Sign && next.lexeme == open { level += 1; }
+                if next.shape == Shape::Sign && next.lexeme == close {
+                    level -= 1;
+                    if level == 0 {
+                        closes_before_body = table.spells("block.intro", &self.glance(distance + 1).lexeme);
+                        break;
+                    }
+                }
+            }
+            closes_before_body
+        } else { false };
+        if wrapped { self.advance(); }
+        let message = table.single("ext.stmt.with.unready").unwrap_or_default();
+        let mut steps = vec![prim_call(Prim::Raise, vec![constant(Value::text(message))])];
+        loop {
+            steps.push(self.expr(0)?);
+            if self.on_any("ext.stmt.with.as") { self.advance(); self.context_names()?; }
+            if !self.on_any("syntax.call.separator") { break; }
+            self.advance();
+            if wrapped && self.sign(close) { break; }
+        }
+        if wrapped { self.need_sign(close, "after the context managers")?; }
+        if !self.on_any("block.intro") { return Err("Expected a block introduction after context managers".into()); }
+        steps.push(self.body()?);
+        Ok(sequence(steps))
     }
 
     fn class_decl(&mut self) -> Res<Form> {

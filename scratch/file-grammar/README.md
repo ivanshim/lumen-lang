@@ -2,11 +2,11 @@
 
 `0.py` takes the continued sum from `test_backslash` in the grammar
 suite. It must print `2`. The base reader stops at the backslash;
-The lexical piece owns the full account of continued lines.
+the lexical piece owns the full account of continued lines.
 
 The continued-line reading is taken from that branch, under its own
-`ext.lexical.line_continuation` label (a list spelling `\`). No numeric
-reading or other lexical work from that branch is brought in. The
+`ext.lexical.line_continuation` label (a list spelling `\`). The
+numeric reading brought in beside it is described below. The
 coordinator should keep its fuller account when the branches meet.
 
 `1.py` carries a string across a line end and leaves a backslash in a
@@ -23,7 +23,7 @@ limit of this stage rather than claiming a scalar product has a value.
 
 `5.py` takes the six bit operators from the grammar suite and prints
 `1`, `0`, `1`, `2`, `0`, and `-2`. Their whole-number reading is taken
-from the lexical branch, without its numeric scanner. The existing
+from the lexical branch. The existing
 `ext.op.bit.and`, `.left`, `.not`, `.right`, and `.xor` lists spell
 `&`, `<<`, `~`, `>>`, and `^`; `.or` already spelled `|`.
 `ext.op.bit.whole` is the switch keeping arbitrary-width whole numbers
@@ -73,3 +73,12 @@ specification. `19.py` refuses a named Unicode escape through
 spellings are described beside the string paragraphs in the language
 definitions. The coordinator should keep the string piece's reading
 and these honest limits wherever fuller running remains wanting.
+
+`20.py` reads one manager, several managers, grouped managers and
+nested binding names in an uncalled routine, then prints `read`.
+`21.py` reaches a context statement and stops with
+`NotImplementedError: context managers are not supported`, before
+its body can print. The existing block-piece spellings are
+`ext.stmt.with` (`with`) and `ext.stmt.with.as` (`as`), both lists;
+`ext.stmt.with.unready` holds the complaint as a list. The body is
+read whole; entry and exit calls remain for the block piece.

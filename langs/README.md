@@ -495,6 +495,13 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.print_r`: a builtin writing a value over lines, as PHP's
   `print_r` does: a scalar on its own, an array as `Array` and its places
   in brackets, each array within eight spaces further along.
+- `ext.stmt.with` and `ext.stmt.with.as`: the word before one or more
+  context managers and the word before the names each binds. Managers
+  may stand within grouping brackets; binding names may be grouped or
+  nested lists of names. The body is read as an ordinary suite, with its
+  enclosing loops and returns kept. `ext.stmt.with.unready` supplies
+  the complaint raised before any manager or body is worked out; the
+  block piece remains responsible for the context protocol.
 - `ext.stmt.class.unready`: the words for a class body whose reading
   is known but whose running is not. With indented blocks the class
   header takes ordinary call arguments for its bases, and the body is
@@ -2005,6 +2012,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.try` | - | - | `try` | - | `try` | - | - | - | - | - |
 | `ext.stmt.try.else` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack` | - | - | - | - | `list` | - | - | - | - | - |
+| `ext.stmt.with` | - | - | `with` | - | - | - | - | - | - | - |
+| `ext.stmt.with.as` | - | - | `as` | - | - | - | - | - | - | - |
+| `ext.stmt.with.unready` | - | - | `NotImplementedError: context managers are not supported` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss` | - | - | `TypeError: invalid arguments` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.builtin` | - | - | `TypeError: keyword arguments for this builtin are not supported` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.duplicate` | - | - | `TypeError: multiple values for argument '` `'` | - | - | - | - | - | - | - |

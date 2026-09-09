@@ -956,6 +956,7 @@ impl<'a> Compiler<'a> {
                 let name = self.want_name("after the function keyword")?;
                 return self.function(name, gives_cell);
             }
+            if Lang::spells(&lang.with_words, &w) { return self.with_stmt(); }
             if Lang::spells(&lang.pass_words, &w) {
                 self.take();
                 return Ok(());
@@ -2470,6 +2471,58 @@ impl<'a> Compiler<'a> {
     /// A class and its members: properties, constants, the values it
     /// keeps for itself, and its methods. The class becomes a value
     /// bound to its name, so `new C` and `C::X` are ordinary reads.
+    fn with_target(&mut self) -> Res<()> {
+        let lang = self.lang;
+        let pair = [&lang.grouping, &lang.array_brackets].into_iter().flatten()
+            .find(|p| self.at_symbol(&p.open)).cloned();
+        if let Some(pair) = pair {
+            self.take();
+            while !self.at_symbol(&pair.close) {
+                self.with_target()?;
+                if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
+                self.take();
+            }
+            self.want_sign(&pair.close, "after the binding places")?;
+        } else { self.want_name("as the context binding")?; }
+        Ok(())
+    }
+
+    /// The whole suite is read, but no manager is entered by this read.
+    fn with_stmt(&mut self) -> Res<()> {
+        self.take();
+        let lang = self.lang;
+        self.constant(Value::text(lang.with_unready.as_deref().unwrap_or_default()));
+        self.act(Action::Builtin(Builtin::Raise, Rc::from("with")), 1);
+        let group = lang.grouping.clone().ok_or("A context statement needs group marks")?;
+        let mut enclosed = false;
+        if self.at_symbol(&group.open) {
+            let mut depth = 0usize;
+            for ahead in 0..self.tokens.len() - self.pos {
+                let t = self.look_ahead(ahead);
+                if t.is_lexeme(Shape::Sign, &group.open) { depth += 1; }
+                if t.is_lexeme(Shape::Sign, &group.close) {
+                    depth -= 1;
+                    if depth == 0 {
+                        enclosed = Lang::spells(&lang.block_intros, &self.look_ahead(ahead + 1).lexeme);
+                        break;
+                    }
+                }
+            }
+        }
+        if enclosed { self.take(); }
+        loop {
+            self.expr(0)?;
+            self.discard();
+            if self.on_any(&lang.with_as_words) { self.take(); self.with_target()?; }
+            if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
+            self.take();
+            if enclosed && self.at_symbol(&group.close) { break; }
+        }
+        if enclosed { self.want_sign(&group.close, "after the context managers")?; }
+        if !self.on_any(&lang.block_intros) { return Err("Expected a block introduction after context managers".into()); }
+        self.body()
+    }
+
     fn class_decl(&mut self) -> Res<()> {
         let lang = self.lang;
         let word = self.take().lexeme;
