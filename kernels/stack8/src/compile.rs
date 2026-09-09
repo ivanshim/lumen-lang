@@ -2206,13 +2206,12 @@ impl<'a> Compiler<'a> {
             self.loop_names()?;
             if !self.on_keyword(&lang.in_words) { return Err("Expected a loop source after its targets".into()); }
             self.take();
-            let from = self.mark();
+            self.scope_fault(&lang.scope_unready.clone());
             self.scope_value()?;
             self.enter_cycle(None);
             self.body()?;
-            self.leave_cycle(self.mark());
-            self.piece().instrs.truncate(from);
-            self.scope_fault(&lang.scope_unready.clone());
+            let after = self.mark();
+            self.leave_cycle(after);
             return Ok(());
         }
         let var = self.want_name("as the loop variable")?;
