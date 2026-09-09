@@ -4718,8 +4718,8 @@ impl<'a> Compiler<'a> {
             let word = &tok.lexeme;
             if depth == 0 && Lang::spells(&self.lang.comprehension_for, word) { return Some(at); }
             let opens = [&self.lang.grouping, &self.lang.array_brackets, &self.lang.map_brackets];
-            if opens.iter().flatten().any(|b| b.open == *word) { depth += 1; }
-            else if opens.iter().flatten().any(|b| b.close == *word) {
+            if opens.into_iter().flatten().any(|b| b.open == *word) { depth += 1; }
+            else if opens.into_iter().flatten().any(|b| b.close == *word) {
                 if depth == 0 { return None; }
                 depth -= 1;
             } else if depth == 0 && self.lang.calling.as_ref().and_then(|b| b.between.as_ref()) == Some(word) {
@@ -4736,8 +4736,8 @@ impl<'a> Compiler<'a> {
             if !matches!(tok.shape, Shape::Instr | Shape::Sign) { continue; }
             if depth == 0 && self.lang.pair_mark.as_ref() == Some(&tok.lexeme) { return true; }
             let brackets = [&self.lang.grouping, &self.lang.array_brackets, &self.lang.map_brackets];
-            if brackets.iter().flatten().any(|b| b.open == tok.lexeme) { depth += 1; }
-            else if brackets.iter().flatten().any(|b| b.close == tok.lexeme) {
+            if brackets.into_iter().flatten().any(|b| b.open == tok.lexeme) { depth += 1; }
+            else if brackets.into_iter().flatten().any(|b| b.close == tok.lexeme) {
                 if depth == 0 { break; }
                 depth -= 1;
             } else if depth == 0 && (pair.between.as_ref() == Some(&tok.lexeme) || Lang::spells(&self.lang.comprehension_for, &tok.lexeme)) { break; }
