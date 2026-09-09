@@ -121,6 +121,10 @@
       "|"
     ],
     [
+      "<<",
+      ">>"
+    ],
+    [
       "+",
       "-"
     ],
@@ -429,12 +433,34 @@
     "f",
     "v"
   ],
+  "ext.lexical.escape.deferred": [
+    "u",
+    "U",
+    "N",
+    "x",
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "r",
+    "a",
+    "b",
+    "f",
+    "v"
+  ],
   "ext.lexical.escape.named": [
     "N"
   ],
   "ext.lexical.escape.octal": true,
   "ext.lexical.escape.unavailable": [
     "Unicode escape cannot be represented"
+  ],
+  "ext.lexical.number.separator": [
+    "_"
   ],
   "ext.lexical.string.adjacent": true,
   "ext.lexical.string.amiss": [
@@ -448,9 +474,15 @@
     "b",
     "B"
   ],
+  "ext.lexical.string.prefix.bytes.unready": [
+    "NotImplementedError: bytes literals are not supported"
+  ],
   "ext.lexical.string.prefix.format": [
     "f",
     "F"
+  ],
+  "ext.lexical.string.prefix.format.unready": [
+    "NotImplementedError: formatted strings are not supported"
   ],
   "ext.lexical.string.prefix.plain": [
     "u",
@@ -470,8 +502,14 @@
   "ext.op.await": [
     "await"
   ],
+  "ext.op.bit.left": [
+    "<<"
+  ],
   "ext.op.bit.or": [
     "|"
+  ],
+  "ext.op.bit.right": [
+    ">>"
   ],
   "ext.op.compare.chained": true,
   "ext.op.comprehension.async": [
@@ -551,6 +589,10 @@
   "ext.op.lambda.unsupported": [
     "Lambda keyword parameters are not supported"
   ],
+  "ext.op.member": [
+    "."
+  ],
+  "ext.op.member.pipes": true,
   "ext.op.plus": [
     "+"
   ],
@@ -563,6 +605,9 @@
   "ext.op.rem.formats_text": true,
   "ext.op.tuple": [
     ","
+  ],
+  "ext.op.tuple.unready": [
+    "NotImplementedError: tuples are not supported"
   ],
   "ext.stmt.annotation": [
     ":"
@@ -579,6 +624,7 @@
   "ext.stmt.assert.kind": [
     "AssertionError"
   ],
+  "ext.stmt.assign.chain": true,
   "ext.stmt.async": [
     "async"
   ],
@@ -698,6 +744,9 @@
   ],
   "ext.stmt.with.as": [
     "as"
+  ],
+  "ext.stmt.with.unready": [
+    "NotImplementedError: context managers are not supported"
   ],
   "ext.stmt.yield": [
     "yield"

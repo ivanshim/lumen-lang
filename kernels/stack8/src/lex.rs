@@ -275,7 +275,8 @@ impl<'a> Cursor<'a> {
             j += 1;
         }
         let end = self.text[j..].iter().position(|c| *c == '\n').map_or(self.text.len(), |p| j + p);
-        if self.text[j..end].iter().all(|c| c.is_whitespace()) {
+        if self.text[j..end].iter().all(|c| c.is_whitespace())
+            || self.lang.line_comments.iter().any(|mark| at_word(&self.text, j, mark)) {
             while self.at < end {
                 self.step();
             }

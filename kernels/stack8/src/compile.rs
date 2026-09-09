@@ -970,13 +970,9 @@ impl<'a> Compiler<'a> {
         if self.on_any(&self.lang.class_bases_open) {
             self.take();
             let from = self.mark();
-            let close = self.lang.class_bases_close.first().cloned().ok_or("Class bases need a closing mark")?;
-            while !self.at_symbol(&close) {
-                self.expr(0)?;
-                if !self.on_any(&self.lang.tuple_marks) { break; }
-                self.take();
-            }
-            self.want_sign(&close, "after the class bases")?;
+            let mut call = self.lang.calling.clone().ok_or("Class bases need call marks")?;
+            call.close = self.lang.class_bases_close.first().cloned().ok_or("Class bases need a closing mark")?;
+            self.arguments_of(&named, &call)?;
             self.piece().instrs.truncate(from);
         }
         let _body = self.routine(&named, Vec::new(), 0, true, |a| a.body())?;
@@ -1430,6 +1426,7 @@ impl<'a> Compiler<'a> {
                 self.take();
             }
         }
+        if self.on_any(&lang.class_words) && !lang.class_unready.is_empty() { return self.scoped_class(); }
         if self.on_keyword(&lang.async_words) { self.take(); }
         if !self.on_keyword(&lang.function_words) {
             return Err(amiss());
@@ -2442,6 +2439,7 @@ impl<'a> Compiler<'a> {
             let tier = lang.range_marks.iter().filter_map(|r| lang.precedence.get(r)).min().copied().unwrap_or(0);
             let from = self.mark();
             self.expr(tier + 1)?;
+            self.scope_tail(from)?;
             if !(self.look().shape == Shape::Sign && Lang::spells(&lang.range_marks, &self.look().lexeme)) {
                 // Not a range: what was read is a thing to walk through.
                 if !lang.for_collections {
@@ -3629,7 +3627,7 @@ impl<'a> Compiler<'a> {
             ends.extend(call.between.iter().cloned());
         }
         self.annotation_expression(&ends)?;
-        if piped && lang.member_mark.is_none() {
+        if piped && (lang.member_mark.is_none() || lang.member_pipes) {
             self.piece().instrs.truncate(from);
             if self.on_assign() {
                 self.take();
@@ -3673,6 +3671,27 @@ impl<'a> Compiler<'a> {
                     || Lang::spells(&self.lang.block_intros, &before.lexeme)))
         };
         self.expr_at(0, false)?;
+        if self.lang.assign_chain && self.on_assign()
+            && self.look_ahead(1).shape == Shape::Instr
+            && self.look_ahead(2).shape == Shape::Sign
+            && Lang::spells(&self.lang.assign_words, &self.look_ahead(2).lexeme) {
+            if let [Instr::Read(first)] = &self.piece().instrs[from..] {
+                let mut names = vec![first.ident.to_string()];
+                self.piece().instrs.truncate(from);
+                while self.on_assign() && self.look_ahead(1).shape == Shape::Instr
+                    && self.look_ahead(2).shape == Shape::Sign
+                    && Lang::spells(&self.lang.assign_words, &self.look_ahead(2).lexeme) {
+                    self.take();
+                    names.push(self.take().lexeme);
+                }
+                self.take();
+                self.scope_value()?;
+                let value = self.gensym("chain");
+                self.write(&value);
+                for name in names { self.read(&value); self.write(&name); }
+                return Ok(());
+            }
+        }
         if self.on_any(&self.lang.tuple_marks) {
             self.scope_tail(from)?;
             if self.on_assign() { self.take(); self.scope_value()?; }
@@ -3787,6 +3806,15 @@ impl<'a> Compiler<'a> {
     fn assignment(&mut self, from: usize, keep: Option<&str>) -> Res<()> {
         let compound = self.lang.compound.get(&self.look().lexeme).filter(|_| self.look().shape == Shape::Sign).cloned();
         let assign = self.take().lexeme;
+        let words = self.lang.scope_unready.first().cloned();
+        if matches!(&self.piece().instrs[from..],
+            [Instr::Const(Value::Text(message)), Instr::Act(Action::Builtin(Builtin::Raise, _), 1)]
+            if words.as_ref().map_or(false, |s| message.as_ref() == s)) {
+            self.scope_value()?;
+            self.piece().instrs.truncate(from);
+            self.scope_fault(&self.lang.scope_unready.clone());
+            return Ok(());
+        }
         self.store_into(from, keep, compound, &assign)
     }
 
@@ -5722,6 +5750,9 @@ impl<'a> Compiler<'a> {
             if !member && !scope {
                 break;
             }
+            if member && lang.member_pipes && lang.builtins.contains_key(&self.look_ahead(1).lexeme)
+                && lang.calling.as_ref().map_or(false, |pair| self.look_ahead(2).is_lexeme(Shape::Sign, &pair.open))
+                && matches!(&self.piece().instrs[from..], [Instr::Read(_)]) { return Ok(()); }
             self.take();
             // A value may stand where a member's name stands: the
             // member is the one that value spells, worked out while the

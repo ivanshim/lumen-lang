@@ -44,6 +44,20 @@ pub struct Lang {
     pub extensions: Vec<String>,
     pub banner: String,
 
+    pub with_as: Vec<String>,
+    pub with_unready: Vec<String>,
+    pub yield_from: Vec<String>,
+    pub member_pipes: bool,
+    pub tuple_unready: Vec<String>,
+    pub bytes_unready: Vec<String>,
+    pub format_unready: Vec<String>,
+    pub identity_unready: Vec<String>,
+    pub in_values: Vec<String>,
+    pub in_not: Vec<String>,
+    pub in_unready: Vec<String>,
+    pub if_else: Vec<String>,
+    pub assign_chain: bool,
+    pub deferred_escapes: Vec<char>,
     pub line_comments: Vec<String>,
     pub block_comments: Vec<(String, String)>,
     pub quotes: Vec<char>,
@@ -838,6 +852,14 @@ w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.l
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 w ext.system.real.figures | w ext.system.real.figures.shown
 b ext.stmt.function.own_names | b ext.stmt.static.read_in
+
+w ext.stmt.with.unready
+b ext.op.member.pipes
+w ext.op.tuple.unready
+w ext.lexical.string.prefix.bytes.unready
+w ext.lexical.string.prefix.format.unready
+b ext.stmt.assign.chain
+w ext.lexical.escape.deferred
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -1345,6 +1367,20 @@ impl Lang {
             ident: name,
             extensions: r.strings("extensions")?,
             banner: prefix,
+            with_as: r.strings("ext.stmt.with.as")?,
+            with_unready: r.strings("ext.stmt.with.unready")?,
+            yield_from: r.strings("ext.stmt.yield.from")?,
+            member_pipes: r.flag("ext.op.member.pipes")?,
+            tuple_unready: r.strings("ext.op.tuple.unready")?,
+            bytes_unready: r.strings("ext.lexical.string.prefix.bytes.unready")?,
+            format_unready: r.strings("ext.lexical.string.prefix.format.unready")?,
+            identity_unready: r.strings("ext.op.identical.unsupported")?,
+            in_values: r.strings("ext.op.in")?,
+            in_not: r.strings("ext.op.in.negated")?,
+            in_unready: r.strings("ext.op.in.unsupported")?,
+            if_else: r.strings("ext.op.if_else")?,
+            assign_chain: r.flag("ext.stmt.assign.chain")?,
+            deferred_escapes: r.letters("ext.lexical.escape.deferred")?,
             line_comments: r.strings("lexical.comment_line")?,
             block_comments: comment_opens.into_iter().zip(comment_closes).collect(),
             quotes,

@@ -1167,13 +1167,7 @@ impl<'a> Builder<'a> {
         let name = self.need_word("as the class name")?;
         if self.on_any("ext.stmt.class.bases.open") {
             self.advance();
-            loop {
-                if self.on_any("ext.stmt.class.bases.close") { break; }
-                let _base = self.expr(0)?;
-                if !self.on_any("ext.op.tuple") { break; }
-                self.advance();
-            }
-            self.need_sign(self.table.single("ext.stmt.class.bases.close").ok_or("Class bases need an end")?, "after bases")?;
+            let _bases = self.arguments_of(&name, "ext.stmt.class.bases.close", "syntax.call.separator")?;
         }
         let _members = self.routine(&name, Holds::Every, Traps::Naught, Vec::new(), 0, |b| b.body())?;
         Ok(self.scope_unrun("ext.stmt.class.unready"))
@@ -1510,6 +1504,7 @@ impl<'a> Builder<'a> {
                 break;
             }
         }
+        if self.key("ext.stmt.class") && self.table.has_any("ext.stmt.class.bases.open") { forms.push(self.class_scope()?); return Ok(sequence(forms)); }
         if self.key("ext.stmt.async") { self.advance(); }
         if !self.key("stmt.function") {
             return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
@@ -2854,7 +2849,8 @@ impl<'a> Builder<'a> {
             (start, end)
         } else {
             let tier = table.strings("op.range").iter().filter_map(|r| table.precedence.get(r.as_str())).min().copied().unwrap_or(0);
-            let start = self.expr(tier + 1)?;
+            let item = self.expr(tier + 1)?;
+            let start = self.comma_tail(item)?;
             if !(self.look().shape == Shape::Sign && table.spells("op.range", &self.look().lexeme)) {
                 // No range mark: what was read is something to walk through.
                 if !table.flag("ext.stmt.for.collection") {
@@ -3527,7 +3523,7 @@ impl<'a> Builder<'a> {
         }
         self.advance();
         self.put_by_annotation(&["stmt.assign", "ext.stmt.annotation", "syntax.call.separator"])?;
-        if through_pipe && !table.has_any("ext.op.member") {
+        if through_pipe && (!table.has_any("ext.op.member") || table.flag("ext.op.member.pipes")) {
             let mut steps = Vec::new();
             if self.on_assign() {
                 self.advance();
@@ -3560,6 +3556,20 @@ impl<'a> Builder<'a> {
             }
         });
         let expr = self.expr_at(0, false)?;
+        let follows = |reader: &Self| reader.on_assign() && reader.glance(1).shape == Shape::Bare
+            && reader.glance(2).shape == Shape::Sign && reader.table.spells("stmt.assign", &reader.glance(2).lexeme);
+        if self.table.flag("ext.stmt.assign.chain") && follows(self) {
+            if let Form::Read(first) = &expr {
+                let mut destinations = vec![first.ident.to_string()];
+                while follows(self) { self.advance(); destinations.push(self.advance().lexeme); }
+                self.advance();
+                let answer = self.comma_value()?;
+                let saved = self.gensym("chain_value");
+                let mut steps = vec![Form::Write(saved.clone(), Box::new(answer))];
+                for destination in destinations { steps.push(self.write(&destination, Form::Read(saved.clone()))); }
+                return Ok(sequence(steps));
+            }
+        }
         if self.on_any("ext.op.tuple") {
             let _target = self.comma_tail(expr)?;
             if self.on_assign() { self.advance(); let _value = self.comma_value()?; }
@@ -3602,6 +3612,13 @@ impl<'a> Builder<'a> {
     fn written(&mut self, expr: Form, gives_back: bool) -> Res<Form> {
         let compound = if self.look().shape == Shape::Sign { self.table.compound.get(&self.look().lexeme).copied() } else { None };
         let assign = self.advance();
+        let refused_tuple = matches!(&expr, Form::Apply(Callee::Prim(Prim::Raise, _), parts)
+            if matches!(parts.as_slice(), [Form::Const(Value::Text(words))]
+                if self.table.single("ext.system.scope.unready") == Some(words.as_ref())));
+        if refused_tuple {
+            let _ = self.comma_value()?;
+            return Ok(expr);
+        }
         self.write_into(expr, gives_back, compound, assign)
     }
 
@@ -5198,6 +5215,9 @@ impl<'a> Builder<'a> {
             if !reaching && !owning {
                 return Ok(node);
             }
+            let pipe_call = self.glance(2).shape == Shape::Sign && table.spells("syntax.call.open", &self.glance(2).lexeme);
+            if !owning && table.flag("ext.op.member.pipes") && pipe_call
+                && table.prims.contains_key(&self.glance(1).lexeme) && matches!(&node, Form::Read(_)) { return Ok(node); }
             self.advance();
             // A value may stand where a member's name stands: the member
             // is the one that value spells, worked out as the run goes.

@@ -834,7 +834,8 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                 k += 1;
             }
             let line_end = src[k..].iter().position(|c| *c == '\n').map_or(src.len(), |p| k + p);
-            if src[k..line_end].iter().all(|c| c.is_whitespace()) {
+            if src[k..line_end].iter().all(|c| c.is_whitespace())
+                || table.strings("lexical.comment_line").iter().any(|mark| src[k..].starts_with(&mark.chars().collect::<Vec<_>>())) {
                 if line_end < src.len() {
                     row += 1;
                 }
