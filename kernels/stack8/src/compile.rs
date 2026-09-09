@@ -6150,7 +6150,7 @@ impl<'a> Compiler<'a> {
             }
             let named = self.want_name("after the member mark")?;
             let call = lang.calling.clone().filter(|c| self.at_symbol(&c.open));
-            if member && lang.member_pipes && (call.is_some() || !self.on_writing()) {
+            if member && lang.member_pipes && !Lang::spells(&lang.format_method, &named) && (call.is_some() || !self.on_writing()) {
                 let resume = self.pos;
                 let target = match &self.piece().instrs[from..] {
                     [Instr::Read(slot)] => Some(slot.ident.to_string()),

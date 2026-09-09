@@ -1035,6 +1035,9 @@ impl<'a> Machine<'a> {
     }
 
     fn text_remainder(&self, pattern: &str, rhs: &Value) -> Result<String, String> {
+        if self.table.has_any("ext.builtin.format") {
+            return crate::formatting::Layout { table: self.table, names: self.wording() }.remainder(pattern, rhs);
+        }
         let unsupported = self.table.single("ext.op.rem.format.unsupported").unwrap_or_default();
         let mismatch = self.table.single("ext.op.rem.format.arguments").unwrap_or_default();
         let supplied = match rhs { Value::Vector(list) => list.as_slice(), _ => std::slice::from_ref(rhs) };
@@ -2316,6 +2319,13 @@ impl<'a> Machine<'a> {
                     }
                     let subject = values.remove(0);
                     let called = values.remove(0).bare();
+                    if self.table.spells("ext.text.format", &called) {
+                        if let Value::Text(pattern) = &subject {
+                            let (positions, keywords) = self.open_arguments(values)?;
+                            let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
+                            return Ok(Value::text(&layout.interpolate(pattern, &positions, &keywords)?));
+                        }
+                    }
                     if self.table.flag("ext.op.member.pipes") {
                         if let Some(target) = self.attribute(&subject, &called) {
                             let expressions: Vec<Form> = values.into_iter().map(Form::Const).collect();
@@ -4557,7 +4567,22 @@ impl<'a> Machine<'a> {
             // holding only itself.
             Prim::AsChars => Value::text(&v[0].render(w)),
             Prim::UnheldText => return Err(v[0].bare()),
-            Prim::RenderField => Value::text(&v[0].in_field(w, &v[1].bare(), &v[2].bare())),
+            Prim::RenderField => {
+                let result = if self.table.has_any("ext.builtin.format") {
+                    crate::formatting::Layout { table: self.table, names: w }.present(&v[0], &v[1].bare(), &v[2].bare())?
+                } else { v[0].in_field(w, &v[1].bare(), &v[2].bare()) };
+                Value::text(&result)
+            }
+            Prim::FormatValue => {
+                let layout = crate::formatting::Layout { table: self.table, names: w };
+                if v.is_empty() || v.len() > 2 { return Err(self.table.single("ext.syntax.call.amiss").unwrap_or_default().to_owned()); }
+                let spec = match v.get(1) {
+                    Some(Value::Text(s)) => s.as_ref(),
+                    Some(item) => return Err(layout.complain("ext.text.format.spec.type", &[layout.typename(item)])),
+                    None => "",
+                };
+                Value::text(&layout.present(&v[0], spec, "")?)
+            }
             Prim::AsTruth => Value::Flag(self.stands_true(&v[0])),
             Prim::AsNothing => Value::Nil,
             Prim::AsVector => match v[0].clone() {

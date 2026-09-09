@@ -2764,6 +2764,13 @@ impl<'a> Engine<'a> {
             Action::Send(name) => {
                 let mut args = self.drop_many(argc)?;
                 let subject = args.remove(0);
+                if let Value::Text(text) = &subject {
+                    if Lang::spells(&self.lang.format_method, name) {
+                        let args = self.call_items(args)?;
+                        let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+                        return Ok(Value::text(&writer.template(text, &args)?));
+                    }
+                }
                 if self.lang.member_pipes {
                     if let Value::Class(c) = &subject {
                         if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
@@ -3114,7 +3121,12 @@ impl<'a> Engine<'a> {
                 let conversion = self.drop_top()?.plain();
                 let specification = self.drop_top()?.plain();
                 let value = self.drop_top()?;
-                Value::text(&value.string_field(&self.wording(), &specification, &conversion))
+                if self.lang.format_builtin.is_empty() {
+                    Value::text(&value.string_field(&self.wording(), &specification, &conversion))
+                } else {
+                    let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+                    Value::text(&writer.field(&value, &specification, &conversion)?)
+                }
             }
             Action::Builtin(builtin, name) => {
                 if self.data.len() < argc {
@@ -3219,6 +3231,9 @@ impl<'a> Engine<'a> {
     /// Remainder over text fills one mark at a time. A list supplies
     /// the marks in order; every other value supplies just one.
     fn rem_text(&self, template: &str, arguments: &Value) -> Res<String> {
+        if !self.lang.format_builtin.is_empty() {
+            return crate::formatting::Writer { lang: self.lang, words: self.wording() }.percent(template, arguments);
+        }
         let bad = || self.lang.format_unsupported.clone().unwrap_or_default();
         let wrong = || self.lang.format_arguments.clone().unwrap_or_default();
         let values: Vec<&Value> = match arguments {
@@ -4217,6 +4232,16 @@ impl<'a> Engine<'a> {
             Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
         };
         Ok(match builtin {
+            Builtin::Format => {
+                if args.is_empty() || args.len() > 2 { return Err(self.lang.call_amiss[0].clone()); }
+                let writer = crate::formatting::Writer { lang: self.lang, words: sp };
+                let spec = match args.get(1) {
+                    None => "",
+                    Some(Value::Text(s)) => s.as_ref(),
+                    Some(v) => return Err(writer.fault("ext.text.format.spec.type", &[writer.kind(v)])),
+                };
+                Value::text(&writer.field(&args[0], spec, "")?)
+            }
             Builtin::Echo => {
                 arity(1)?;
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };

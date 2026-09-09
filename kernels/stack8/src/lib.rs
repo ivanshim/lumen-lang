@@ -7,6 +7,8 @@
 // a word for is a shape made of these five. This crate never imports the
 // other kernels; they meet only in the host.
 
+mod formatting;
+
 pub mod compile;
 pub mod lang;
 pub mod engine;

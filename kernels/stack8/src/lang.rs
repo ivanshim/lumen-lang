@@ -40,6 +40,40 @@ pub enum Complaint {
 }
 
 pub struct Lang {
+    pub format_builtin: Vec<String>,
+    pub format_method: Vec<String>,
+    pub fmt_text_format_invalid: Vec<String>,
+    pub fmt_text_format_unknown: Vec<String>,
+    pub fmt_text_format_kinds: Vec<String>,
+    pub fmt_text_format_unready: Vec<String>,
+    pub fmt_text_format_precision_integer: Vec<String>,
+    pub fmt_text_format_precision_missing: Vec<String>,
+    pub fmt_text_format_sign_string: Vec<String>,
+    pub fmt_text_format_alternate_string: Vec<String>,
+    pub fmt_text_format_align_string: Vec<String>,
+    pub fmt_text_format_sign_character: Vec<String>,
+    pub fmt_text_format_alternate_character: Vec<String>,
+    pub fmt_text_format_character: Vec<String>,
+    pub fmt_text_format_spec_type: Vec<String>,
+    pub fmt_text_format_numbered_auto: Vec<String>,
+    pub fmt_text_format_numbered_manual: Vec<String>,
+    pub fmt_text_format_index: Vec<String>,
+    pub fmt_text_format_key: Vec<String>,
+    pub fmt_text_format_brace_open: Vec<String>,
+    pub fmt_text_format_brace_close: Vec<String>,
+    pub fmt_text_format_conversion: Vec<String>,
+    pub fmt_text_format_recursion: Vec<String>,
+    pub fmt_op_rem_format_few: Vec<String>,
+    pub fmt_op_rem_format_many: Vec<String>,
+    pub fmt_op_rem_format_mapping: Vec<String>,
+    pub fmt_op_rem_format_number: Vec<String>,
+    pub fmt_op_rem_format_integer: Vec<String>,
+    pub fmt_op_rem_format_real: Vec<String>,
+    pub fmt_op_rem_format_character: Vec<String>,
+    pub fmt_op_rem_format_star: Vec<String>,
+    pub fmt_op_rem_format_incomplete: Vec<String>,
+    pub fmt_op_rem_format_code: Vec<String>,
+
     pub ident: String,
     pub extensions: Vec<String>,
     pub banner: String,
@@ -798,6 +832,8 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+w ext.builtin.format | w ext.text.format | w ext.text.format.invalid | w ext.text.format.unknown | w ext.text.format.kinds | w ext.text.format.unready | w ext.text.format.precision.integer | w ext.text.format.precision.missing | w ext.text.format.sign.string | w ext.text.format.alternate.string | w ext.text.format.align.string | w ext.text.format.sign.character | w ext.text.format.alternate.character | w ext.text.format.character | w ext.text.format.spec.type | w ext.text.format.numbered.auto | w ext.text.format.numbered.manual | w ext.text.format.index | w ext.text.format.key | w ext.text.format.brace.open | w ext.text.format.brace.close | w ext.text.format.conversion | w ext.text.format.recursion | w ext.op.rem.format.few | w ext.op.rem.format.many | w ext.op.rem.format.mapping | w ext.op.rem.format.number | w ext.op.rem.format.integer | w ext.op.rem.format.real | w ext.op.rem.format.character | w ext.op.rem.format.star | w ext.op.rem.format.incomplete | w ext.op.rem.format.code
+
 w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready
 
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
@@ -1292,7 +1328,7 @@ impl Lang {
 
         let mut natives = HashMap::new();
         for (tag, native) in [
-            ("ext.builtin.sum", Builtin::Sum), ("ext.builtin.list", Builtin::List), ("ext.builtin.any", Builtin::Any),
+            ("ext.builtin.format", Builtin::Format), ("ext.builtin.sum", Builtin::Sum), ("ext.builtin.list", Builtin::List), ("ext.builtin.any", Builtin::Any),
             ("builtin.emit", Builtin::Echo), ("builtin.print", Builtin::Say), ("builtin.write", Builtin::Out),
             ("builtin.len", Builtin::Length), ("builtin.char_at", Builtin::CharAtIndex), ("builtin.ord", Builtin::CodeOf),
             ("builtin.chr", Builtin::CharOf), ("builtin.typeof", Builtin::SortOf), ("builtin.error", Builtin::Raise),
@@ -1386,6 +1422,39 @@ impl Lang {
             member_pipes: r.flag("ext.op.member.pipes")?,
             tuple_unready: r.strings("ext.op.tuple.unready")?,
             bytes_unready: r.strings("ext.lexical.string.prefix.bytes.unready")?,
+            format_builtin: r.strings("ext.builtin.format")?,
+            format_method: r.strings("ext.text.format")?,
+            fmt_text_format_invalid: r.strings("ext.text.format.invalid")?,
+            fmt_text_format_unknown: r.strings("ext.text.format.unknown")?,
+            fmt_text_format_kinds: r.strings("ext.text.format.kinds")?,
+            fmt_text_format_unready: r.strings("ext.text.format.unready")?,
+            fmt_text_format_precision_integer: r.strings("ext.text.format.precision.integer")?,
+            fmt_text_format_precision_missing: r.strings("ext.text.format.precision.missing")?,
+            fmt_text_format_sign_string: r.strings("ext.text.format.sign.string")?,
+            fmt_text_format_alternate_string: r.strings("ext.text.format.alternate.string")?,
+            fmt_text_format_align_string: r.strings("ext.text.format.align.string")?,
+            fmt_text_format_sign_character: r.strings("ext.text.format.sign.character")?,
+            fmt_text_format_alternate_character: r.strings("ext.text.format.alternate.character")?,
+            fmt_text_format_character: r.strings("ext.text.format.character")?,
+            fmt_text_format_spec_type: r.strings("ext.text.format.spec.type")?,
+            fmt_text_format_numbered_auto: r.strings("ext.text.format.numbered.auto")?,
+            fmt_text_format_numbered_manual: r.strings("ext.text.format.numbered.manual")?,
+            fmt_text_format_index: r.strings("ext.text.format.index")?,
+            fmt_text_format_key: r.strings("ext.text.format.key")?,
+            fmt_text_format_brace_open: r.strings("ext.text.format.brace.open")?,
+            fmt_text_format_brace_close: r.strings("ext.text.format.brace.close")?,
+            fmt_text_format_conversion: r.strings("ext.text.format.conversion")?,
+            fmt_text_format_recursion: r.strings("ext.text.format.recursion")?,
+            fmt_op_rem_format_few: r.strings("ext.op.rem.format.few")?,
+            fmt_op_rem_format_many: r.strings("ext.op.rem.format.many")?,
+            fmt_op_rem_format_mapping: r.strings("ext.op.rem.format.mapping")?,
+            fmt_op_rem_format_number: r.strings("ext.op.rem.format.number")?,
+            fmt_op_rem_format_integer: r.strings("ext.op.rem.format.integer")?,
+            fmt_op_rem_format_real: r.strings("ext.op.rem.format.real")?,
+            fmt_op_rem_format_character: r.strings("ext.op.rem.format.character")?,
+            fmt_op_rem_format_star: r.strings("ext.op.rem.format.star")?,
+            fmt_op_rem_format_incomplete: r.strings("ext.op.rem.format.incomplete")?,
+            fmt_op_rem_format_code: r.strings("ext.op.rem.format.code")?,
             format_unready: r.strings("ext.lexical.string.prefix.format.unready")?,
             identity_unready: r.strings("ext.op.identical.unsupported")?,
             in_values: r.strings("ext.op.in")?,

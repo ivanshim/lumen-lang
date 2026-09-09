@@ -5588,7 +5588,7 @@ impl<'a> Builder<'a> {
             }
             let named = self.need_word("after the member mark")?;
             let calling = table.single("syntax.call.open").map_or(false, |o| self.sign(o));
-            if reaching && table.flag("ext.op.member.pipes") && (calling || !self.on_writing()) {
+            if reaching && table.flag("ext.op.member.pipes") && !table.spells("ext.text.format", &named) && (calling || !self.on_writing()) {
                 let target = match &node { Form::Read(slot) => Some(slot.clone()), _ => None };
                 let held = self.gensym("subject");
                 let save = Form::Write(held.clone(), Box::new(node));

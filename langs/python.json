@@ -328,6 +328,9 @@
   "ext.builtin.any": [
     "any"
   ],
+  "ext.builtin.format": [
+    "format"
+  ],
   "ext.builtin.list": [
     "list"
   ],
@@ -599,6 +602,44 @@
   "ext.op.rem.format.arguments": [
     "String format arguments do not match"
   ],
+  "ext.op.rem.format.character": [
+    "TypeError: %c requires int or char"
+  ],
+  "ext.op.rem.format.code": [
+    "ValueError: unsupported format character '",
+    "' (0x",
+    ") at index ",
+    ""
+  ],
+  "ext.op.rem.format.few": [
+    "TypeError: not enough arguments for format string"
+  ],
+  "ext.op.rem.format.incomplete": [
+    "ValueError: incomplete format"
+  ],
+  "ext.op.rem.format.integer": [
+    "TypeError: %",
+    " format: an integer is required, not ",
+    ""
+  ],
+  "ext.op.rem.format.many": [
+    "TypeError: not all arguments converted during string formatting"
+  ],
+  "ext.op.rem.format.mapping": [
+    "TypeError: format requires a mapping"
+  ],
+  "ext.op.rem.format.number": [
+    "TypeError: %",
+    " format: a real number is required, not ",
+    ""
+  ],
+  "ext.op.rem.format.real": [
+    "TypeError: must be real number, not ",
+    ""
+  ],
+  "ext.op.rem.format.star": [
+    "TypeError: * wants int"
+  ],
   "ext.op.rem.format.unsupported": [
     "Unsupported string format"
   ],
@@ -836,5 +877,84 @@
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"
   ],
-  "ext.system.untrue.empty_array": true
+  "ext.system.untrue.empty_array": true,
+  "ext.text.format": [
+    "format"
+  ],
+  "ext.text.format.align.string": [
+    "ValueError: '=' alignment not allowed in string format specifier"
+  ],
+  "ext.text.format.alternate.character": [
+    "ValueError: Alternate form (#) not allowed with integer format specifier 'c'"
+  ],
+  "ext.text.format.alternate.string": [
+    "ValueError: Alternate form (#) not allowed in string format specifier"
+  ],
+  "ext.text.format.brace.close": [
+    "ValueError: Single '}' encountered in format string"
+  ],
+  "ext.text.format.brace.open": [
+    "ValueError: expected '}' before end of string"
+  ],
+  "ext.text.format.character": [
+    "OverflowError: %c arg not in range(0x110000)"
+  ],
+  "ext.text.format.conversion": [
+    "ValueError: Unknown conversion specifier ",
+    ""
+  ],
+  "ext.text.format.index": [
+    "IndexError: Replacement index ",
+    " out of range for positional args tuple"
+  ],
+  "ext.text.format.invalid": [
+    "ValueError: Invalid format specifier"
+  ],
+  "ext.text.format.key": [
+    "KeyError: '",
+    "'"
+  ],
+  "ext.text.format.kinds": [
+    "int",
+    "float",
+    "str",
+    "bool",
+    "list",
+    "dict",
+    "NoneType",
+    "object"
+  ],
+  "ext.text.format.numbered.auto": [
+    "ValueError: cannot switch from manual field specification to automatic field numbering"
+  ],
+  "ext.text.format.numbered.manual": [
+    "ValueError: cannot switch from automatic field numbering to manual field specification"
+  ],
+  "ext.text.format.precision.integer": [
+    "ValueError: Precision not allowed in integer format specifier"
+  ],
+  "ext.text.format.precision.missing": [
+    "ValueError: Format specifier missing precision"
+  ],
+  "ext.text.format.recursion": [
+    "ValueError: Max string recursion exceeded"
+  ],
+  "ext.text.format.sign.character": [
+    "ValueError: Sign not allowed with integer format specifier 'c'"
+  ],
+  "ext.text.format.sign.string": [
+    "ValueError: Sign not allowed in string format specifier"
+  ],
+  "ext.text.format.spec.type": [
+    "TypeError: format() argument 2 must be str, not ",
+    ""
+  ],
+  "ext.text.format.unknown": [
+    "ValueError: Unknown format code '",
+    "' for object of type '",
+    "'"
+  ],
+  "ext.text.format.unready": [
+    "NotImplementedError: this format cannot be represented"
+  ]
 }
