@@ -2712,6 +2712,16 @@ impl<'a> Engine<'a> {
                 self.data.pop();
                 Value::array(items)
             }
+            Action::StringFault => {
+                let message = self.drop_top()?.plain();
+                return Err(message.into());
+            }
+            Action::StringRender => {
+                let conversion = self.drop_top()?.plain();
+                let specification = self.drop_top()?.plain();
+                let value = self.drop_top()?;
+                Value::text(&value.string_field(&self.wording(), &specification, &conversion))
+            }
             Action::Builtin(builtin, name) => {
                 if self.data.len() < argc {
                     return Err("Stack underflow".to_string().into());

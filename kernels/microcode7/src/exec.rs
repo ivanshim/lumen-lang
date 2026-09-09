@@ -3923,6 +3923,8 @@ impl<'a> Machine<'a> {
             // with, and anything that is not an array becomes an array
             // holding only itself.
             Prim::AsChars => Value::text(&v[0].render(w)),
+            Prim::UnheldText => return Err(v[0].bare()),
+            Prim::RenderField => Value::text(&v[0].in_field(w, &v[1].bare(), &v[2].bare())),
             Prim::AsTruth => Value::Flag(self.stands_true(&v[0])),
             Prim::AsNothing => Value::Nil,
             Prim::AsVector => match v[0].clone() {

@@ -301,6 +301,54 @@ impl Value {
         }
     }
 
+    /// Common field presentations, with the ordinary spelling kept for
+    /// those whose further rules the machine does not yet know.
+    pub fn in_field(&self, names: Names, pattern: &str, manner: &str) -> String {
+        let mut result = self.render(names);
+        if matches!(manner, "a" | "r") {
+            if let Value::Text(chars) = self {
+                let delimiter = match (chars.contains('\''), chars.contains('"')) { (true, false) => '"', _ => '\'' };
+                let mut body = String::new();
+                for letter in chars.chars() {
+                    if letter == delimiter || letter == '\\' { body.push('\\'); body.push(letter); continue; }
+                    let escaped = match letter { '\n' => Some("\\n"), '\t' => Some("\\t"), '\r' => Some("\\r"), _ => None };
+                    if let Some(escape) = escaped { body.push_str(escape); continue; }
+                    if letter.is_control() || manner == "a" && !letter.is_ascii() {
+                        let ordinal = u32::from(letter);
+                        body.push_str(&match ordinal {
+                            0..=0xff => format!("\\x{:02x}", ordinal),
+                            0x100..=0xffff => format!("\\u{:04x}", ordinal),
+                            _ => format!("\\U{:08x}", ordinal),
+                        });
+                    } else { body.push(letter); }
+                }
+                result = format!("{delimiter}{body}{delimiter}");
+            }
+        }
+        if manner.is_empty() && !matches!(self, Value::Text(_)) && pattern.starts_with('.') && pattern.ends_with('f') {
+            let precision = pattern[1..pattern.len() - 1].parse::<usize>();
+            if let (Ok(digits), Ok(number)) = (precision, result.parse::<f64>()) {
+                if digits <= 1000 { return format!("{:.*}", digits, number); }
+            }
+        }
+        let mut marks = pattern.chars();
+        let Some(first) = marks.next() else { return result; };
+        let (padding, direction, rest) = if ['<', '^', '>'].contains(&first) {
+            (' ', first, marks.as_str())
+        } else {
+            let Some(second) = marks.next().filter(|c| ['<', '^', '>'].contains(c)) else { return result; };
+            (first, second, marks.as_str())
+        };
+        let Ok(target) = rest.parse::<usize>() else { return result; };
+        if target > 100000 { return result; }
+        let extra = target.saturating_sub(result.chars().count());
+        let before = if direction == '<' { 0 } else if direction == '^' { extra / 2 } else { extra };
+        let mut padded = padding.to_string().repeat(before);
+        padded.push_str(&result);
+        padded.push_str(&padding.to_string().repeat(extra - before));
+        padded
+    }
+
     pub fn bare(&self) -> String {
         match self {
             Value::Small(n) => n.to_string(),

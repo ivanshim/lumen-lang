@@ -52,6 +52,10 @@ pub enum Action {
     And,
     Or,
     Join,
+    /// A field rendered with its specification and conversion.
+    StringRender,
+    /// Text whose reading succeeded but whose value cannot be held.
+    StringFault,
     At,
     Not,
     Negate,
