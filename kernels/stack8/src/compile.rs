@@ -1438,15 +1438,18 @@ impl<'a> Compiler<'a> {
                 self.take();
             }
         }
-        if self.on_any(&lang.class_words) && !lang.class_unready.is_empty() { return if lang.explicit_this { self.class_decl() } else { self.scoped_class() }; }
-        if self.on_keyword(&lang.async_words) { self.take(); }
-        if !self.on_keyword(&lang.function_words) {
-            return Err(amiss());
+        let name;
+        if self.on_any(&lang.class_words) {
+            name = self.look_ahead(1).lexeme.clone();
+            self.class_decl()?;
+        } else {
+            if self.on_keyword(&lang.async_words) { self.take(); }
+            if !self.on_keyword(&lang.function_words) { return Err(amiss()); }
+            self.take();
+            let gives_cell = self.skip_reference();
+            name = self.want_name("after the function keyword")?;
+            self.function(name.clone(), gives_cell)?;
         }
-        self.take();
-        let gives_cell = self.skip_reference();
-        let name = self.want_name("after the function keyword")?;
-        self.function(name.clone(), gives_cell)?;
         for decorator in held.into_iter().rev() {
             let bound = if lang.routines_outermost {
                 Cell { ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false }
@@ -2846,6 +2849,61 @@ impl<'a> Compiler<'a> {
 
     /// A class whose methods name their object themselves. Its first base
     /// is kept once, so the parent's name may be an expression as well.
+    fn adorned_member(&mut self) -> Res<(String, String)> {
+        let lang = self.lang;
+        let mut saved = Vec::new();
+        while self.on_any(&lang.decorator_words) {
+            self.take();
+            let word = self.look().lexeme.clone();
+            let kind = if self.look_ahead(1).shape == Shape::LineEnd {
+                if Lang::spells(&lang.class_static, &word) { 1 }
+                else if Lang::spells(&lang.class_method, &word) { 2 }
+                else if Lang::spells(&lang.class_property, &word) { 3 }
+                else { 0 }
+            } else if lang.member_mark.as_ref() == Some(&self.look_ahead(1).lexeme)
+                && Lang::spells(&lang.property_setter, &self.look_ahead(2).lexeme)
+                && self.look_ahead(3).shape == Shape::LineEnd { 4 } else { 0 };
+            let held = self.gensym("adornment");
+            if kind == 4 {
+                self.read(&word);
+                self.write(&held);
+                self.take(); self.take(); self.take();
+            } else if kind == 0 {
+                self.expr(0)?;
+                self.write(&held);
+            } else { self.take(); }
+            if self.look().shape != Shape::LineEnd { return Err(lang.decorator_amiss.clone().unwrap_or_default()); }
+            while self.look().shape == Shape::LineEnd { self.take(); }
+            saved.push((kind, held));
+        }
+        let named;
+        if self.on_keyword(&lang.class_words) {
+            named = self.look_ahead(1).lexeme.clone();
+            self.explicit_class()?;
+            self.read(&named);
+        } else {
+            if self.on_keyword(&lang.async_words) { self.take(); }
+            if !self.on_keyword(&lang.function_words) { return Err(lang.decorator_amiss.clone().unwrap_or_default()); }
+            self.take();
+            named = self.want_name("as the method name")?;
+            let body = self.method(&named)?;
+            self.constant(Value::Routine(body));
+        }
+        for (kind, held) in saved.into_iter().rev() {
+            if kind == 0 {
+                self.read(&held);
+                self.act(Action::Invoke(Rc::from(lang.decorator_words[0].as_str())), 2);
+            } else {
+                if kind == 4 { self.read(&held); }
+                self.act(Action::Adorn(kind), if kind == 4 { 2 } else { 1 });
+            }
+        }
+        let slot = self.gensym("decorated_member");
+        self.write(&slot);
+        self.class_names.last_mut().expect("a class body").1.insert(named.clone(), slot.clone());
+        Ok((named, slot))
+    }
+
     fn explicit_class(&mut self) -> Res<()> {
         let lang = self.lang;
         self.take();
@@ -2890,7 +2948,12 @@ impl<'a> Compiler<'a> {
         let mut shared: Vec<(String, String)> = Vec::new();
         let body_at = self.mark();
         while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
-            if self.on_keyword(&lang.function_words) {
+            if self.on_any(&lang.decorator_words) {
+                let (named, slot) = self.adorned_member()?;
+                methods.retain(|(old, _)| old != &named);
+                shared.retain(|(old, _)| old != &named);
+                shared.push((named, slot));
+            } else if self.on_keyword(&lang.function_words) {
                 self.take();
                 let named = self.want_name("as the method name")?;
                 let method = self.method(&named)?;

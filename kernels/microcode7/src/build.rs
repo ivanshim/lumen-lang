@@ -1511,18 +1511,24 @@ impl<'a> Builder<'a> {
                 break;
             }
         }
-        if self.key("ext.stmt.class") && self.table.has_any("ext.stmt.class.bases.open") { forms.push(if self.table.flag("ext.stmt.class.this.explicit") { self.class_decl()? } else { self.class_scope()? }); return Ok(sequence(forms)); }
-        if self.key("ext.stmt.async") { self.advance(); }
-        if !self.key("stmt.function") {
-            return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
-        }
-        self.advance();
-        let shared = self.skip_reference();
-        let named = self.need_word("after the function keyword")?;
-        self.giving_cells.push(shared);
-        let definition = self.func(named.clone(), true);
-        self.giving_cells.pop();
-        forms.push(definition?);
+        let named = if self.key("ext.stmt.class") {
+            let word = self.glance(1).lexeme.clone();
+            forms.push(self.class_decl()?);
+            word
+        } else {
+            if self.key("ext.stmt.async") { self.advance(); }
+            if !self.key("stmt.function") {
+                return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
+            }
+            self.advance();
+            let shared = self.skip_reference();
+            let word = self.need_word("after the function keyword")?;
+            self.giving_cells.push(shared);
+            let definition = self.func(word.clone(), true);
+            self.giving_cells.pop();
+            forms.push(definition?);
+            word
+        };
         let binding = match self.table.flag("ext.stmt.function.outermost") {
             true => self.global_address(&named),
             false => self.address_to_write(&named),
@@ -2050,6 +2056,65 @@ impl<'a> Builder<'a> {
 
     /// The class header encloses expressions for bases. Only the first
     /// is taken as a parent; the others are read without being run.
+    fn member_adornments(&mut self, setup: &mut Vec<Form>) -> Res<(String, Address)> {
+        let mut waiting = Vec::new();
+        while self.on_any("ext.stmt.decorator") {
+            self.advance();
+            let mut manner = 'd';
+            if self.glance(1).shape == Shape::LineEnd {
+                for (label, mark) in [("ext.stmt.class.static", 's'), ("ext.stmt.class.classmethod", 'c'), ("ext.stmt.class.property", 'p')] {
+                    if self.table.spells(label, &self.look().lexeme) { manner = mark; }
+                }
+            }
+            let setter = self.table.spells("ext.op.member", &self.glance(1).lexeme)
+                && self.table.spells("ext.stmt.class.property.setter", &self.glance(2).lexeme)
+                && self.glance(3).shape == Shape::LineEnd;
+            let kept = match (manner, setter) {
+                (_, true) => {
+                    manner = 'w';
+                    let word = self.advance().lexeme;
+                    self.pos += 2;
+                    Some(self.read(&word))
+                }
+                ('d', false) => Some(self.expr(0)?),
+                _ => { self.advance(); None }
+            };
+            let slot = self.gensym("decoration");
+            if let Some(value) = kept { setup.push(Form::Write(slot.clone(), Box::new(value))); }
+            waiting.push((manner, slot));
+            if self.look().shape != Shape::LineEnd {
+                return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
+            }
+            self.skip_line_ends();
+        }
+        let word;
+        let mut decorated;
+        if self.key("ext.stmt.class") {
+            word = self.glance(1).lexeme.clone();
+            setup.push(self.class_with_receiver()?);
+            decorated = self.read(&word);
+        } else {
+            if self.key("ext.stmt.async") { self.advance(); }
+            if !self.key("stmt.function") {
+                return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
+            }
+            self.advance();
+            word = self.need_word("as the method name")?;
+            decorated = constant(Value::Routine(self.method(&word)?));
+        }
+        while let Some((manner, slot)) = waiting.pop() {
+            decorated = match manner {
+                'd' => invoke(Form::Read(slot), vec![decorated]),
+                'w' => prim_call(Prim::Adorn('w'), vec![Form::Read(slot), decorated]),
+                other => prim_call(Prim::Adorn(other), vec![decorated]),
+            };
+        }
+        let address = self.gensym("adorned_method");
+        setup.push(Form::Write(address.clone(), Box::new(decorated)));
+        self.class_bindings.last_mut().expect("the class namespace").1.insert(word.clone(), address.clone());
+        Ok((word, address))
+    }
+
     fn class_with_receiver(&mut self) -> Res<Form> {
         self.advance();
         let named = self.need_word("as the class name")?;
@@ -2097,7 +2162,16 @@ impl<'a> Builder<'a> {
         let before_body = setup.len();
         while !matches!(self.look().shape, Shape::Finish | Shape::Close) {
             if on_one_line && self.on_stmt_end() { break; }
-            if self.key("stmt.function") {
+            if self.on_any("ext.stmt.decorator") {
+                let (word, address) = self.member_adornments(&mut setup)?;
+                methods.retain(|(n, _)| n != &word);
+                if let Some(index) = attributes.iter().position(|n| n == &word) {
+                    attributes.remove(index);
+                    values.remove(index + usize::from(parent.is_some()));
+                }
+                attributes.push(word);
+                values.push(Form::Read(address));
+            } else if self.key("stmt.function") {
                 self.advance();
                 let method_name = self.need_word("as the method name")?;
                 let body = self.method(&method_name)?;

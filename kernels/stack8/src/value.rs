@@ -140,6 +140,7 @@ pub enum Value {
     Tie(Rc<(Value, Value)>),
     Routine(Rc<Routine>),
     Method(Rc<Instance>, Rc<Routine>),
+    Descriptor(Rc<Descriptor>),
     SortOf(Sort),
     /// A slot nothing was stored in.
     Blank,
@@ -147,6 +148,15 @@ pub enum Value {
     Gap,
     /// The bottom of an array literal being gathered.
     Fence,
+}
+
+/// What a decorated member does when reached or called.
+#[derive(Debug, Clone)]
+pub enum Descriptor {
+    Static(Value),
+    Class(Value),
+    Property(Value, Option<Value>),
+    Bound(Value, Value),
 }
 
 /// How a language spells the literal values when printing.
@@ -234,7 +244,7 @@ impl Value {
             Value::Real(r) => r.outside() || !r.p.is_zero(),
             Value::Text(s) => !s.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
-            Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
+            Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::Descriptor(_) | Value::SortOf(_) => true,
             Value::Bond(shared) => shared.borrow().is_true(),
             Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
         }
@@ -257,7 +267,7 @@ impl Value {
             Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
-            Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
+            Value::Descriptor(_) | Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
@@ -282,6 +292,7 @@ impl Value {
             (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
             (Value::SortOf(a), Value::SortOf(b)) => a == b,
             (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a, b),
+            (Value::Descriptor(a), Value::Descriptor(b)) => Rc::ptr_eq(a, b),
             (Value::Method(a, p), Value::Method(b, q)) => Rc::ptr_eq(a, b) && Rc::ptr_eq(p, q),
             (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Map(a), Value::Map(b)) => {
@@ -433,6 +444,7 @@ impl Value {
                 format!("[{}]", shown.join(", "))
             }
             Value::Tie(pair) => format!("{} => {}", pair.0.plain(), pair.1.plain()),
+            Value::Descriptor(_) => "<descriptor>".to_string(),
             Value::Routine(p) | Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
             Value::Bond(shared) => shared.borrow().plain(),
             Value::Class(c) => format!("<class {}>", c.name),
@@ -471,6 +483,7 @@ impl Value {
                 pair.1.memo_key(into);
                 into.push(')');
             }
+            Value::Descriptor(d) => { let _ = write!(into, "d{:p}", Rc::as_ptr(d)); }
             Value::Method(o, p) => {
                 let _ = write!(into, "m{:p}:{:p}", Rc::as_ptr(o), Rc::as_ptr(p));
             }

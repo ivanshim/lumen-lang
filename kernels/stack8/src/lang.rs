@@ -617,6 +617,10 @@ pub struct Lang {
     pub bases_open: Option<String>,
     pub bases_close: Option<String>,
     pub explicit_this: bool,
+    pub class_static: Vec<String>,
+    pub class_method: Vec<String>,
+    pub class_property: Vec<String>,
+    pub property_setter: Vec<String>,
     pub extends_words: Vec<String>,
     pub new_words: Vec<String>,
     /// The name a method knows its own object by.
@@ -855,7 +859,7 @@ w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.l
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 w ext.system.real.figures | w ext.system.real.figures.shown
 w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | b ext.stmt.class.this.explicit
-b ext.op.member.pipes | w ext.stmt.class.unready
+b ext.op.member.pipes | w ext.stmt.class.static | w ext.stmt.class.classmethod | w ext.stmt.class.property | w ext.stmt.class.property.setter | w ext.stmt.class.unready
 b ext.stmt.function.own_names | b ext.stmt.static.read_in
 
 w ext.stmt.with.unready
@@ -1724,6 +1728,10 @@ impl Lang {
             bases_open: r.head("ext.stmt.class.bases.open")?,
             bases_close: r.head("ext.stmt.class.bases.close")?,
             explicit_this: r.flag("ext.stmt.class.this.explicit")?,
+            class_static: r.strings("ext.stmt.class.static")?,
+            class_method: r.strings("ext.stmt.class.classmethod")?,
+            class_property: r.strings("ext.stmt.class.property")?,
+            property_setter: r.strings("ext.stmt.class.property.setter")?,
             extends_words: r.strings("ext.stmt.class.extends")?,
             new_words: r.strings("ext.stmt.class.new")?,
             this_word: r.head("ext.stmt.class.this")?,
