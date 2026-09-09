@@ -28,6 +28,13 @@ pub fn make_number(above: BigInt, beneath: BigInt, places: Option<usize>) -> Val
 /// The same, said besides whether a nought came of working with
 /// something under nought, which a real of a width holds on to.
 pub fn made_number(above: BigInt, beneath: BigInt, places: Option<usize>, under: bool) -> Value {
+    // Nought beneath marks a worth standing past the numbers. Nothing
+    // there can be brought down to lowest terms, and the top is held to
+    // its sign alone, so that two got by different roads are one worth.
+    if beneath.is_zero() {
+        let places = places.or(Some(DEFAULT_PLACES));
+        return Value::Frac(Rc::new(Ratio { above: above.signum(), beneath, places, under: false }));
+    }
     if above.is_zero() {
         return match places {
             Some(d) => Value::Frac(Rc::new(Ratio { above, beneath: BigInt::one(), places: Some(d), under })),
@@ -76,7 +83,36 @@ pub fn compute(op: Calc, a: &Value, b: &Value) -> Option<Result<Value, String>> 
             return Some(Ok(Value::Small(r)));
         }
     }
-    Some(precise(op, &ratio_of(a)?, &ratio_of(b)?))
+    let (x, y) = (ratio_of(a)?, ratio_of(b)?);
+    // Where either side stands past the numbers there is nothing exact
+    // left to keep hold of, so the whole working is done at the width,
+    // and what the width answers is what the language answers.
+    if x.past_numbers() || y.past_numbers() {
+        return Some(at_the_width(op, &x, &y));
+    }
+    Some(precise(op, &x, &y))
+}
+
+/// A working done at the width itself, each side brought to the nearest
+/// real of the width before it is worked.
+fn at_the_width(op: Calc, a: &Ratio, b: &Ratio) -> Result<Value, String> {
+    // Dividing by nought is dividing by nought still, and is stopped as
+    // one, whatever stands on the other hand of it.
+    if matches!(op, Calc::Over | Calc::OverReal | Calc::IntDiv) && !b.past_numbers() && b.above.is_zero() {
+        return Err("Division by zero".to_string());
+    }
+    let one = crate::data::nearest_binary(&a.above, &a.beneath);
+    let two = crate::data::nearest_binary(&b.above, &b.beneath);
+    let got = match op {
+        Calc::Plus => one + two,
+        Calc::Minus => one - two,
+        Calc::Times => one * two,
+        Calc::Over | Calc::OverReal => one / two,
+        Calc::IntDiv => (one / two).trunc(),
+        Calc::Remainder => one % two,
+        Calc::Power => one.powf(two),
+    };
+    Ok(crate::data::worth_of_binary(got, a.places.or(b.places).unwrap_or(DEFAULT_PLACES)))
 }
 
 fn precise(op: Calc, a: &Ratio, b: &Ratio) -> Result<Value, String> {
@@ -134,5 +170,79 @@ pub fn below(a: &Value, b: &Value) -> Option<bool> {
         return Some(x < y);
     }
     let (a, b) = (ratio_of(a)?, ratio_of(b)?);
+    if a.past_numbers() || b.past_numbers() {
+        // What nothing is equal to comes before nothing and after
+        // nothing. What lies past every number stands on its own hand:
+        // above or below all the numbers, and level with its like.
+        if a.answers_none() || b.answers_none() {
+            return Some(false);
+        }
+        let hand = |e: &Ratio| match e.past_numbers() {
+            true => e.above.signum().to_i64().unwrap_or(0),
+            false => 0,
+        };
+        return Some(hand(&a) < hand(&b));
+    }
     Some((&a.above * &b.beneath).cmp(&(&b.above * &a.beneath)) == Ordering::Less)
+}
+
+/// Whether one of two worths is the one nothing is equal to, which
+/// leaves the pair in no order whatever: every question of which comes
+/// first is answered no, put whichever way round.
+pub fn no_order(a: &Value, b: &Value) -> bool {
+    let loose = |v: &Value| matches!(v, Value::Frac(e) if e.answers_none());
+    loose(a) || loose(b)
+}
+
+/// What lies before the point, cut towards nothing. A worth past the
+/// numbers has nothing there and comes to nought, which is what a
+/// language holding its reals to a width makes of it.
+pub fn whole_part(v: &Value) -> Option<BigInt> {
+    let e = ratio_of(v)?;
+    Some(match e.past_numbers() {
+        true => BigInt::zero(),
+        false => e.above / e.beneath,
+    })
+}
+
+/// A real-valued working named by word, over the reals of the width:
+/// what it gives, or nothing at all where no working goes by that name.
+pub fn worked(named: &str, one: f64, two: f64) -> Option<f64> {
+    Some(match named {
+        "atan2" => one.atan2(two),
+        "hypot" => one.hypot(two),
+        "pow" => one.powf(two),
+        // Dividing at the width answers with what lies past every
+        // number instead of stopping the run, which is the whole of why
+        // a language asks for it here.
+        "fdiv" => one / two,
+        "sqrt" => one.sqrt(),
+        "exp" => one.exp(),
+        "expm1" => one.exp_m1(),
+        "log" => one.ln(),
+        "log1p" => one.ln_1p(),
+        "log10" => one.log10(),
+        "log2" => one.log2(),
+        "sin" => one.sin(),
+        "cos" => one.cos(),
+        "tan" => one.tan(),
+        "asin" => one.asin(),
+        "acos" => one.acos(),
+        "atan" => one.atan(),
+        "sinh" => one.sinh(),
+        "cosh" => one.cosh(),
+        "tanh" => one.tanh(),
+        "asinh" => one.asinh(),
+        "acosh" => one.acosh(),
+        "atanh" => one.atanh(),
+        _ => return None,
+    })
+}
+
+/// How many worths a working is handed after its name.
+pub fn worked_takes(named: &str) -> usize {
+    match named {
+        "atan2" | "hypot" | "pow" | "fdiv" => 2,
+        _ => 1,
+    }
 }

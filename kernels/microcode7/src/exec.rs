@@ -312,6 +312,12 @@ impl<'a> Machine<'a> {
         // Two numbers are set against each other at the width the
         // language holds them in, as they are worked at it.
         let plainly = |x: &Value, y: &Value| -> Result<bool, String> {
+            // The worth nothing is equal to comes before nothing and
+            // after nothing, so it is out of the question before the
+            // two are brought to the width at all.
+            if math::no_order(x, y) {
+                return Ok(false);
+            }
             let (x, y) = match self.holds_reals_to_width() && (self.a_real(x) || self.a_real(y)) {
                 true => (self.at_width(self.as_wide_real(x)), self.at_width(self.as_wide_real(y))),
                 false => (x.clone(), y.clone()),
@@ -933,6 +939,11 @@ impl<'a> Machine<'a> {
             // Words the definition itself gave for a place outside the
             // range a value may take are known by being those very words.
             _ if told_of("ext.builtin.args.at.below") || told_of("ext.builtin.args.at.beyond") => Some("ext.system.fault.class.value"),
+            // Words a definition gave for the remainder by nought and
+            // for a shift below nought are known by being those very
+            // words, each a fault of the kind the kernel words itself.
+            _ if told_of("ext.system.fault.modulo") => Some("ext.system.fault.class.division"),
+            _ if told_of("ext.system.fault.shift") => Some("ext.system.fault.class.arithmetic"),
             _ if told.starts_with("Division by zero") => Some("ext.system.fault.class.division"),
             _ if told.starts_with("Bit shift by") => Some("ext.system.fault.class.arithmetic"),
             _ if told.starts_with("Cannot coerce") => Some("ext.system.fault.class.kind"),
@@ -3238,6 +3249,43 @@ impl<'a> Machine<'a> {
                 let gone = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
                 Value::Small(gone.map_or(0, |since| since.as_secs() as i64))
             }
+            // The roots, the curves and the angles, worked over the
+            // reals of the width and named by the first worth handed
+            // over. They are worked at the width and nowhere else: a
+            // root is hardly ever a ratio, and holding one exactly
+            // would mean choosing beforehand how many figures to keep.
+            Prim::Reckon => {
+                let Some(working) = v.first().map(|x| x.render(w)) else {
+                    return Err(format!("{}() wants the name of a working first of all", name));
+                };
+                let takes = math::worked_takes(&working);
+                if v.len() != takes + 1 {
+                    return Err(format!("{}('{}') expects {} argument(s) after the name, got {}", name, working, takes, v.len() - 1));
+                }
+                let width = |at: usize| -> f64 {
+                    let worth = self.worth_of(&v[at]);
+                    // A nought under nought is a nought of its own at
+                    // the width, and some of these workings answer
+                    // differently for it, so the minus is put back.
+                    if let Value::Frac(e) = &worth {
+                        if e.under && num_traits::Zero::is_zero(&e.above) {
+                            return -0.0;
+                        }
+                    }
+                    match math::ratio_of(&worth) {
+                        Some(r) => crate::data::nearest_binary(&r.above, &r.beneath),
+                        None => f64::NAN,
+                    }
+                };
+                let two = match takes {
+                    2 => width(2),
+                    _ => 0.0,
+                };
+                match math::worked(&working, width(1), two) {
+                    Some(got) => crate::data::worth_of_binary(got, self.real_figures()),
+                    None => return Err(format!("{}(): there is no working called '{}'", name, working)),
+                }
+            }
             Prim::OutBegun => {
                 n(0)?;
                 Value::Flag(self.written_out.get())
@@ -3413,7 +3461,10 @@ impl<'a> Machine<'a> {
             Prim::BitsUp | Prim::BitsDown => {
                 let (bits, by) = (self.bits_told(&v[0])?, self.bits_told(&v[1])?);
                 if by < 0 {
-                    return Err("Bit shift by a negative number".to_string());
+                    // A language may have words of its own for it, and
+                    // those are what its own programs are told.
+                    let told = self.table.single("ext.system.fault.shift");
+                    return Err(told.unwrap_or("Bit shift by a negative number").to_string());
                 }
                 // Past sixty-four places nothing of the number is left,
                 // save the sign when the bits go down.
@@ -3450,6 +3501,11 @@ impl<'a> Machine<'a> {
                     _ => self.at_width(turned),
                 }
             }
+            // Nothing stands in any order beside the worth nothing is
+            // equal to, so each of the four is answered no, whichever
+            // way round it is put: the wider three are asked here and
+            // not deeper down, being the narrow one turned about.
+            Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge if v.len() == 2 && math::no_order(&v[0], &v[1]) => Value::Flag(false),
             // Which of two comes first is asked just as loosely, so an
             // array, a flag, nothing and text spelling no number are
             // each set against the other the way such a language sets
@@ -3476,6 +3532,12 @@ impl<'a> Machine<'a> {
                 let (left, right) = (&v[0], &v[1]);
                 let alike = match (left, right) {
                     (Value::Flag(_), _) | (_, Value::Flag(_)) => self.stands_true(left) == self.stands_true(right),
+                    // Nothing whatever is equal to the worth nothing is
+                    // equal to, itself least of all, and text spelling
+                    // its name no more than anything else. A flag is
+                    // asked first, since a flag turns the question into
+                    // whether the other side is true, and it is.
+                    (x, y) if math::no_order(x, y) => false,
                     (one, other) | (other, one) if empty(one) && counts(other) => !self.stands_true(other),
                     (one, Value::Text(s)) | (Value::Text(s), one) if empty(one) => s.is_empty(),
                     (one, Value::Vector(items)) | (Value::Vector(items), one) if empty(one) => items.is_empty(),
@@ -3531,8 +3593,8 @@ impl<'a> Machine<'a> {
             },
             Prim::AsWhole => {
                 let worth = self.worth_of(&v[0]);
-                let r = math::ratio_of(&worth).unwrap_or(crate::data::Ratio { above: BigInt::from(0), beneath: BigInt::from(1), places: None, under: false });
-                self.at_width(Value::from_big(&r.above / &r.beneath))
+                let whole = math::whole_part(&worth).unwrap_or_else(|| BigInt::from(0));
+                self.at_width(Value::from_big(whole))
             }
             Prim::AsDecimal => {
                 let worth = self.worth_of(&v[0]);
@@ -3653,6 +3715,14 @@ impl<'a> Machine<'a> {
                     false => (v[0].clone(), v[1].clone()),
                 };
                 let worked = match math::compute(sum, &left, &right) {
+                    // A language may tell the remainder by nought apart
+                    // from the division by it and word that its own
+                    // way. The kind of fault is the same for both, so
+                    // it is the wording alone that is stood in.
+                    Some(Err(told)) if sum == Calc::Remainder && told == "Division by zero" => {
+                        let its_own = self.table.single("ext.system.fault.modulo");
+                        return Err(its_own.map_or(told, str::to_string));
+                    }
                     Some(r) => r?,
                     None => match sum {
                         Calc::Plus => Value::from_big(left.as_big()? + right.as_big()?),
@@ -3741,8 +3811,8 @@ impl<'a> Machine<'a> {
             }
             Prim::AsInt => {
                 n(1)?;
-                let e = math::ratio_of(&v[0]).ok_or_else(|| format!("{}() requires a number argument", name))?;
-                Value::from_big(e.above / e.beneath)
+                let whole = math::whole_part(&v[0]).ok_or_else(|| format!("{}() requires a number argument", name))?;
+                Value::from_big(whole)
             }
             Prim::AsReal => {
                 n(1)?;
@@ -4512,12 +4582,12 @@ fn sixty_four(v: &Value) -> Result<i64, String> {
         },
         other => other.clone(),
     };
-    match math::ratio_of(&number) {
+    match math::whole_part(&number) {
         // Dividing whole numbers cuts towards nothing, which is what
         // dropping what lies past the point comes to. A number too wide
         // for the bits at all comes to the lowest of them, as it does on
         // a machine that holds numbers to a width.
-        Some(r) => Ok((&r.above / &r.beneath).to_i64().unwrap_or(i64::MIN)),
+        Some(n) => Ok(n.to_i64().unwrap_or(i64::MIN)),
         None => Err("Working on bits needs a whole number".to_string()),
     }
 }

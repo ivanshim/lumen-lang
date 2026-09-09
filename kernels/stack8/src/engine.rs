@@ -770,6 +770,12 @@ impl<'a> Engine<'a> {
             // Words the definition itself gave for a place outside the
             // range a value may take are known by being those very words.
             _ if self.lang.args_below.as_deref() == Some(told) || self.lang.args_beyond.as_deref() == Some(told) => &self.lang.fault_value,
+            // The words a definition gave for the remainder by nought
+            // and for a shift below nought are known by being those
+            // very words; each is a fault of the same kind as the one
+            // the kernel words for itself.
+            _ if self.lang.fault_modulo.as_deref() == Some(told) => &self.lang.fault_division,
+            _ if self.lang.fault_shift.as_deref() == Some(told) => &self.lang.fault_arithmetic,
             _ if told.starts_with("Division by zero") => &self.lang.fault_division,
             _ if told.starts_with("Bit shift by") => &self.lang.fault_arithmetic,
             _ if told.starts_with("Cannot coerce") => &self.lang.fault_kind,
@@ -1923,8 +1929,8 @@ impl<'a> Engine<'a> {
                     },
                     Sort::Integer => {
                         let worth = self.as_number(&v);
-                        let (p, q) = arith::parts(&worth).unwrap_or((BigInt::from(0), BigInt::from(1)));
-                        self.within_width(Value::of_big(p / q))
+                        let whole = arith::whole_of(&worth).unwrap_or_else(|| BigInt::from(0));
+                        self.within_width(Value::of_big(whole))
                     }
                     Sort::Real | Sort::Rational => {
                         let worth = self.as_number(&v);
@@ -2639,6 +2645,12 @@ impl<'a> Engine<'a> {
         Ok(match op {
             Action::And => Value::Flag(self.truth(a) && self.truth(b)),
             Action::Or => Value::Flag(self.truth(a) || self.truth(b)),
+            // The one no number answers to comes before nothing and
+            // after nothing, so every question of which of two comes
+            // first is answered no, whichever way it is put. It is
+            // answered here rather than deeper down because the wider
+            // questions are asked as the narrow one turned about.
+            Action::Lt | Action::Le | Action::Gt | Action::Ge if a.no_number() || b.no_number() => Value::Flag(false),
             // Where a language has an operator for being the very same,
             // being equal is the looser question: text that spells a
             // number stands for that number, and a number met by text
@@ -2663,6 +2675,12 @@ impl<'a> Engine<'a> {
                     // whether the other side is true, and nothing
                     // counts as untrue.
                     (Value::Flag(_), _) | (_, Value::Flag(_)) => self.truth(a) == self.truth(b),
+                    // Nothing whatever is equal to the one no number
+                    // answers to, itself least of all, and text that
+                    // spells its name no more than the rest. A flag is
+                    // asked first, since a flag turns the question into
+                    // whether the other side is true, and it is.
+                    (x, y) if x.no_number() || y.no_number() => false,
                     (one, other) | (other, one) if nothing(one) && numeric(other) => !self.truth(other),
                     (one, Value::Text(s)) | (Value::Text(s), one) if nothing(one) => s.is_empty(),
                     (one, other) | (other, one) if nothing(one) && matches!(other, Value::Array(_) | Value::Map(_)) => !self.truth(other) || {
@@ -2770,7 +2788,10 @@ impl<'a> Engine<'a> {
                     Action::BitOne => x ^ y,
                     _ => {
                         if y < 0 {
-                            return Err("Bit shift by a negative number".to_string());
+                            // A language may have its own words for it,
+                            // which is what its own programs are told.
+                            let told = self.lang.fault_shift.clone();
+                            return Err(told.unwrap_or_else(|| "Bit shift by a negative number".to_string()));
                         }
                         let places = y.min(64) as u32;
                         match op {
@@ -2929,6 +2950,13 @@ impl<'a> Engine<'a> {
                     _ => Operation::Raise,
                 };
                 match arith::calculate(calc, a, b) {
+                    // A language may tell taking the remainder by
+                    // nought apart from dividing by it, and word the
+                    // one its own way. The class is the same either
+                    // way, so it is the words alone that are put in.
+                    Some(Err(told)) if matches!(op, Action::Mod) && told == "Division by zero" => {
+                        return Err(self.lang.fault_modulo.clone().unwrap_or(told).into())
+                    }
                     Some(r) => r?,
                     // The closed operations coerce booleans and null.
                     None => match calc {
@@ -2945,6 +2973,11 @@ impl<'a> Engine<'a> {
             Action::Lt | Action::Le | Action::Gt | Action::Ge => {
                 // From less-than alone: a > b is b < a, a <= b is not b < a.
                 let below = |x: &Value, y: &Value| -> Res<bool> {
+                    // Nothing comes before what no number answers to,
+                    // and it comes before nothing.
+                    if x.no_number() || y.no_number() {
+                        return Ok(false);
+                    }
                     match arith::order_values(x, y) {
                         Some(order) => Ok(order == std::cmp::Ordering::Less),
                         None => Ok(x.as_big()? < y.as_big()?),
@@ -3479,6 +3512,69 @@ impl<'a> Engine<'a> {
                 let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
                 Value::Small(since.map_or(0, |gone| gone.as_secs() as i64))
             }
+            // The roots, the curves and the angles, worked over the
+            // reals of the width and named by the first thing given.
+            // They are worked where the width is worked and nowhere
+            // else, since a root is seldom a ratio and would otherwise
+            // have to be held to some chosen count of figures.
+            Builtin::Math => {
+                let Some(working) = args.first().map(|v| v.display(&sp)) else {
+                    return Err(format!("{}() wants the name of a working first of all", name));
+                };
+                let wants = match working.as_str() {
+                    "atan2" | "hypot" | "pow" | "fdiv" => 2,
+                    _ => 1,
+                };
+                if args.len() != wants + 1 {
+                    return Err(format!("{}('{}') expects {} argument(s) after the name, got {}", name, working, wants, args.len() - 1));
+                }
+                let given = |at: usize| -> f64 {
+                    let worth = self.as_number(&args[at]);
+                    // The nought below nought is a nought of its own at
+                    // the width, and some of these answer differently
+                    // for it, so the minus is put back on.
+                    if let Value::Real(r) = &worth {
+                        if r.below && num_traits::Zero::is_zero(&r.p) {
+                            return -0.0;
+                        }
+                    }
+                    match arith::Exact::from_value(&worth) {
+                        Some(e) => crate::value::as_binary(&e.p, &e.q),
+                        None => f64::NAN,
+                    }
+                };
+                let (x, y) = (given(1), if wants == 2 { given(2) } else { 0.0 });
+                let got = match working.as_str() {
+                    "sqrt" => x.sqrt(),
+                    "exp" => x.exp(),
+                    "expm1" => x.exp_m1(),
+                    "log" => x.ln(),
+                    "log10" => x.log10(),
+                    "log2" => x.log2(),
+                    "log1p" => x.ln_1p(),
+                    "sin" => x.sin(),
+                    "cos" => x.cos(),
+                    "tan" => x.tan(),
+                    "asin" => x.asin(),
+                    "acos" => x.acos(),
+                    "atan" => x.atan(),
+                    "sinh" => x.sinh(),
+                    "cosh" => x.cosh(),
+                    "tanh" => x.tanh(),
+                    "asinh" => x.asinh(),
+                    "acosh" => x.acosh(),
+                    "atanh" => x.atanh(),
+                    "atan2" => x.atan2(y),
+                    "hypot" => x.hypot(y),
+                    "pow" => x.powf(y),
+                    // Dividing at the width answers with what lies past
+                    // every number rather than stopping the run, which
+                    // is the whole of why it is asked for here.
+                    "fdiv" => x / y,
+                    _ => return Err(format!("{}(): there is no working called '{}'", name, working)),
+                };
+                crate::value::real_of(got, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES))
+            }
             Builtin::OutBegun => {
                 arity(0)?;
                 Value::Flag(self.written_out.get())
@@ -3610,8 +3706,8 @@ impl<'a> Engine<'a> {
             }
             Builtin::ToInt => {
                 arity(1)?;
-                let (p, q) = arith::parts(&args[0]).ok_or_else(|| format!("{}() requires a number argument", name))?;
-                Value::of_big(p / q)
+                let whole = arith::whole_of(&args[0]).ok_or_else(|| format!("{}() requires a number argument", name))?;
+                Value::of_big(whole)
             }
             Builtin::AsReal => {
                 arity(1)?;
@@ -3756,7 +3852,7 @@ impl<'a> Engine<'a> {
                     };
                     let at = match as_index(&at) {
                         Ok(at) => at,
-                        Err(_) => match arith::parts(&at).map(|(p, q)| &p / &q).and_then(|n| n.to_i64()) {
+                        Err(_) => match arith::whole_of(&at).and_then(|n| n.to_i64()) {
                             // A place counted from the end.
                             Some(back) if back < 0 && (-back as usize) <= letters.len() => letters.len() - (-back as usize),
                             _ => return Err("A place in text is named by a whole number".to_string()),
@@ -4262,12 +4358,12 @@ fn bits_of(v: &Value) -> Res<i64> {
     if let Value::Huge(n) = &whole {
         return Ok(n.to_i64().unwrap_or(i64::MIN));
     }
-    match arith::Exact::from_value(&whole) {
+    match arith::whole_of(&whole) {
         // Dividing whole numbers cuts towards nothing, which is what
         // dropping what lies past the point comes to. A number too wide
         // to be held in the bits at all comes to the lowest of them,
         // which is what a machine holding numbers to a width gives.
-        Some(exact) => Ok((&exact.p / &exact.q).to_i64().unwrap_or(i64::MIN)),
+        Some(n) => Ok(n.to_i64().unwrap_or(i64::MIN)),
         None => Err("Working on bits needs a whole number".to_string()),
     }
 }

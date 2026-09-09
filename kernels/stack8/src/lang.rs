@@ -219,6 +219,12 @@ pub struct Lang {
     /// The words a language puts before naming what an arithmetic step
     /// was handed, where one of them can take no part in it.
     pub operand_fault: Option<String>,
+    /// The words for taking the remainder by nought, where a language
+    /// tells that apart from dividing by nought, and the words for
+    /// shifting bits by a number below nought. Where a language gives
+    /// neither, the kernel's own words stand.
+    pub fault_modulo: Option<String>,
+    pub fault_shift: Option<String>,
     /// Whether dividing two whole numbers evenly gives a whole one.
     pub div_stays_whole: bool,
     /// The remainder is taken between whole numbers, whatever it is
@@ -586,10 +592,11 @@ w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.co
 w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
-w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.spelled | w ext.builtin.class.beneath | w ext.builtin.class.methods | w ext.builtin.class.properties | b ext.builtin.write.operator | w ext.system.kind.loose | w ext.builtin.clock | w ext.stmt.class.trait | w ext.stmt.class.uses | w ext.stmt.class.uses.alias | w ext.stmt.function.carries | w ext.stmt.function.short
+w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.spelled | w ext.builtin.class.beneath | w ext.builtin.math | w ext.builtin.class.methods | w ext.builtin.class.properties | b ext.builtin.write.operator | w ext.system.kind.loose | w ext.builtin.clock | w ext.stmt.class.trait | w ext.stmt.class.uses | w ext.stmt.class.uses.alias | w ext.stmt.function.carries | w ext.stmt.function.short
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
 w ext.system.fault.operands | w ext.op.increment.text | w ext.op.decrement.text
 w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind | w ext.system.fault.class.value | w ext.system.fault.class.walk | w ext.op.walk.giver.unwalkable
+w ext.system.fault.modulo | w ext.system.fault.shift
 w ext.op.name_by_value | b ext.op.cast | w ext.stmt.unpack
 w ext.system.source.routine | w ext.system.source.class | w ext.system.source.method
 b ext.op.member.by_value | b ext.op.index.text | w ext.system.globals
@@ -1030,7 +1037,7 @@ impl Lang {
             ("ext.builtin.calls", Builtin::Calls),
             ("ext.builtin.uncaught", Builtin::Untaken),
             ("ext.builtin.classes", Builtin::ClassesBound), ("ext.builtin.routines", Builtin::RoutinesBound), ("ext.builtin.spelled", Builtin::Spelled), ("ext.builtin.class.methods", Builtin::ClassMethods), ("ext.builtin.class.properties", Builtin::ClassProperties),
-            ("ext.builtin.class.beneath", Builtin::ClassBeneath),
+            ("ext.builtin.class.beneath", Builtin::ClassBeneath), ("ext.builtin.math", Builtin::Math),
             ("ext.builtin.clock", Builtin::Clock),
             ("ext.builtin.file.read", Builtin::FileRead), ("ext.builtin.file.write", Builtin::FileWrite),
             ("ext.builtin.file.exists", Builtin::FileThere), ("ext.builtin.file.remove", Builtin::FileGone),
@@ -1214,6 +1221,8 @@ impl Lang {
             fault_value: r.head("ext.system.fault.class.value")?,
             fault_walk: r.head("ext.system.fault.class.walk")?,
             operand_fault: r.head("ext.system.fault.operands")?,
+            fault_modulo: r.head("ext.system.fault.modulo")?,
+            fault_shift: r.head("ext.system.fault.shift")?,
             div_stays_whole,
             mod_whole: r.flag("op.mod.whole")?,
             step_up_text: r.head("ext.op.increment.text")?,

@@ -15,13 +15,23 @@ define("PHP_MAJOR_VERSION", 8);
 define("PHP_MINOR_VERSION", 4);
 define("PHP_OS", "Linux");
 define("PHP_BUILD_DATE", "Sep  8 2026 00:00:00");
-define("INF", 1.0e400);
+// What lies past every number, and what no number answers to, both got
+// by dividing at the width, which is the one division that answers with
+// them instead of stopping the run.
+define("INF", __math("fdiv", 1, 0));
+define("NAN", __math("fdiv", 0, 0));
 define("PHP_OS_FAMILY", "Linux");
 define("PHP_ZTS", 0);
 define("PHP_DEBUG", 0);
 define("DIRECTORY_SEPARATOR", "/");
 define("M_PI", 3.14159265358979323846);
 define("M_E", 2.71828182845904523536);
+define("M_SQRT2", 1.41421356237309504880);
+// The step between one real of the width and the next above one, and
+// the smallest and largest the width holds with all their figures.
+define("PHP_FLOAT_EPSILON", 2.220446049250313E-16);
+define("PHP_FLOAT_MIN", 2.2250738585072014E-308);
+define("PHP_FLOAT_MAX", 1.7976931348623157E+308);
 define("E_ERROR", 1);
 define("E_WARNING", 2);
 define("E_PARSE", 4);
@@ -758,6 +768,54 @@ function str_ends_with($haystack, $needle) { return ends_with($haystack, $needle
 function strrev($text) { return reverse_characters($text); }
 function ucfirst($text) { return capitalize_first_word($text); }
 function ucwords($text) { return capitalize_words($text); }
+// The roots, the curves and the angles. Each is the kernel's one word
+// for working at the width, asked for by the name of the working; what
+// is written here is how PHP spells them and what PHP asks of them
+// before it works. None of them stops the run: an argument out of reach
+// answers with the value no number answers to, as PHP's own do.
+
+function sqrt($num) { return __math("sqrt", $num); }
+function exp($num) { return __math("exp", $num); }
+function expm1($num) { return __math("expm1", $num); }
+function log1p($num) { return __math("log1p", $num); }
+function log10($num) { return __math("log10", $num); }
+function log2($num) { return __math("log2", $num); }
+function sin($num) { return __math("sin", $num); }
+function cos($num) { return __math("cos", $num); }
+function tan($num) { return __math("tan", $num); }
+function asin($num) { return __math("asin", $num); }
+function acos($num) { return __math("acos", $num); }
+function atan($num) { return __math("atan", $num); }
+function sinh($num) { return __math("sinh", $num); }
+function cosh($num) { return __math("cosh", $num); }
+function tanh($num) { return __math("tanh", $num); }
+function asinh($num) { return __math("asinh", $num); }
+function acosh($num) { return __math("acosh", $num); }
+function atanh($num) { return __math("atanh", $num); }
+function atan2($y, $x) { return __math("atan2", $y, $x); }
+function hypot($x, $y) { return __math("hypot", $x, $y); }
+function fdiv($num1, $num2) { return __math("fdiv", $num1, $num2); }
+function pi() { return M_PI; }
+
+// A log to a base of its own is worked as PHP works it: ten and two
+// have their own workings, since going by way of the natural log would
+// answer with figures a shade off theirs.
+function log($num, $base = M_E) {
+    if ($base == 10) { return __math("log10", $num); }
+    if ($base == 2) { return __math("log2", $num); }
+    if ($base <= 0) { throw new ValueError("log(): Argument #2 (\$base) must be greater than 0"); }
+    if ($base == 1) { return NAN; }
+    if ($base == M_E) { return __math("log", $num); }
+    return __math("log", $num) / __math("log", $base);
+}
+
+// Nothing is equal to the value no number answers to, itself least of
+// all, which is the whole of what asking after it comes to. What lies
+// past every number is what stands outside the largest the width holds.
+function is_nan($num) { return $num != $num; }
+function is_infinite($num) { return $num > PHP_FLOAT_MAX || $num < -PHP_FLOAT_MAX; }
+function is_finite($num) { return !is_nan($num) && !is_infinite($num); }
+
 function abs($n) { if ($n < 0) { return 0 - $n; } return $n; }
 function intdiv($a, $b) { return intval($a / $b); }
 

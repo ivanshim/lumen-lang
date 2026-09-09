@@ -339,6 +339,12 @@ pub enum Builtin {
     /// The name of the class the one above stands on, where it stands on
     /// any: a thing is asked of its own class (ext.builtin.class.beneath).
     ClassBeneath,
+    /// A working over the reals of the width, named by the first thing
+    /// it is given and worked on the rest (ext.builtin.math): the roots,
+    /// the curves and the angles a width of bits can be asked for but a
+    /// definition has no words of its own for. One label for all of
+    /// them, since it is the one power the kernel is lending.
+    Math,
     /// Whether anything has gone out of the run yet: what is held back
     /// in a piece of output kept aside has not (ext.builtin.output.begun).
     OutBegun,

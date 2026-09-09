@@ -158,6 +158,12 @@ pub enum Prim {
     /// The name of the class the one above stands on, where it stands on
     /// any: a thing is asked of its own class (ext.builtin.class.beneath).
     ClassBeneath,
+    /// A working over the reals of the width, named by the first worth
+    /// handed over and worked on the rest (ext.builtin.math): the roots,
+    /// the curves and the angles a width of bits can be asked for and a
+    /// definition has no words of its own for. One label covers them
+    /// all, since the one power lent is the working at the width.
+    Reckon,
     /// Whether anything has gone out of the run yet: what is held back
     /// in a piece of output kept aside has not (ext.builtin.output.begun).
     OutBegun,

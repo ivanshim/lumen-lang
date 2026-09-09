@@ -977,5 +977,14 @@
   ],
   "ext.builtin.clock": [
     "__clock"
+  ],
+  "ext.builtin.math": [
+    "__math"
+  ],
+  "ext.system.fault.modulo": [
+    "Modulo by zero"
+  ],
+  "ext.system.fault.shift": [
+    "Bit shift by negative number"
   ]
 }

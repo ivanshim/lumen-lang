@@ -318,6 +318,20 @@ only. The extension labels so far, all from PHP:
   class the one it is given stands on, a thing being asked of the class
   it is of, and nothing where it stands on none. PHP's
   `get_parent_class` is written on it.
+- `ext.builtin.math`: a builtin working out the roots, the curves and
+  the angles over the reals of the language's width. The first thing it
+  is given is the name of the working and the rest are what it works on:
+  `sqrt`, `exp`, `expm1`, `log`, `log1p`, `log10`, `log2`, `sin`, `cos`,
+  `tan`, `asin`, `acos`, `atan`, `sinh`, `cosh`, `tanh`, `asinh`,
+  `acosh`, `atanh` take one; `atan2`, `hypot`, `pow` and `fdiv` take two.
+  One label covers them all because the one power being lent is the
+  working at the width itself, which a definition has no way of spelling
+  and a kernel holding numbers exactly has no other cause to do. None of
+  them stops the run: a working asked for outside its reach answers with
+  the worth no number answers to, and dividing by nought answers with
+  what lies past every number. PHP's `sqrt`, `log`, `sin`, `atan2`,
+  `hypot`, `fdiv` and the rest of them are written on it, and so are its
+  `NAN` and `INF`.
 - `ext.builtin.output.begun`: a builtin answering whether anything has
   gone out of the run yet. What is held back in a piece of output kept
   aside has not gone out. PHP's `headers_sent` and
@@ -503,8 +517,14 @@ only. The extension labels so far, all from PHP:
   the way such a language writes one: shown with its kind, it is the
   fewest figures that read back as the same number, with a power of ten
   after them where it stands very high or very low, and a number past
-  every one of that width is written `INF`. Where a language says
-  nothing, its numbers are exact and unbounded, as Lumen's own are.
+  every one of that width is written `INF`. A width also brings with it
+  two worths no exact number answers to: the one nothing whatever is
+  equal to, itself least of all, written `NAN`, and the one lying past
+  every number on either hand, written `INF` and `-INF`. Working with
+  either of them gives one of them back, every question of which of two
+  comes first is answered no where the first of them is on either side,
+  and both count as true. Where a language says nothing, its numbers are
+  exact and unbounded, as Lumen's own are.
 - `ext.system.complaint.warning`, `.notice`, `.deprecated` and
   `.fatal`: the word a language uses for each kind of complaint. Where
   a language has a word for a warning, a binding never written, a place
@@ -731,6 +751,15 @@ only. The extension labels so far, all from PHP:
   opens with, and is only complained of. The fault is raised under the
   class `ext.system.fault.class.kind` names, that being the kind of
   thing it is.
+- `ext.system.fault.modulo` and `ext.system.fault.shift`: the words a
+  language uses for taking the remainder by nought, where it tells that
+  apart from dividing by nought, and for shifting bits by a number below
+  nought. Where a language gives neither, the kernel's own words stand,
+  and dividing by nought is worded the same as either way. The faults
+  are raised under the classes `ext.system.fault.class.division` and
+  `ext.system.fault.class.arithmetic` name, whichever words are used,
+  since the words change nothing about the kind of thing it is — PHP
+  says `Modulo by zero` and `Bit shift by negative number`.
 - `ext.lexical.escape.codepoint`, `.open` and `.close`: a character
   written by its number rather than by itself. After the escape mark the
   letter, then the number in sixteens between the two brackets, and the
@@ -1359,6 +1388,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.include` | - | - | - | - | - | - | - | `include` `require` | - | - |
 | `ext.builtin.include.once` | - | - | - | - | - | - | - | `include_once` `require_once` | - | - |
 | `ext.builtin.isset` | - | - | - | - | - | - | - | `isset` | - | - |
+| `ext.builtin.math` | - | - | - | - | - | - | - | `__math` | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | - | - | - | `__output_begun` | - | - |
 | `ext.builtin.output.depth` | - | - | - | - | - | - | - | `__output_depth` | - | - |
 | `ext.builtin.output.drop` | - | - | - | - | - | - | - | `__output_drop` | - | - |
@@ -1503,7 +1533,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class.reading` | - | - | - | - | - | - | - | `ParseError` | - | - |
 | `ext.system.fault.class.value` | - | - | - | - | - | - | - | `ValueError` | - | - |
 | `ext.system.fault.class.walk` | - | - | - | - | - | - | - | `Exception` | - | - |
+| `ext.system.fault.modulo` | - | - | - | - | - | - | - | `Modulo by zero` | - | - |
 | `ext.system.fault.operands` | - | - | - | - | - | - | - | `Unsupported operand types` | - | - |
+| `ext.system.fault.shift` | - | - | - | - | - | - | - | `Bit shift by negative number` | - | - |
 | `ext.system.globals` | - | - | - | - | - | - | - | `$GLOBALS` | - | - |
 | `ext.system.integer.bits` | - | - | - | - | - | - | - | `64` | - | - |
 | `ext.system.kind.brief` | - | - | - | - | - | - | - | `int` `-` `float` `string` `bool` `array` `null` | - | - |
