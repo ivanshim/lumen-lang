@@ -607,7 +607,9 @@ only. The extension labels so far, all from PHP:
   grew from C.
 - `ext.lexical.number.separator`: marks a program may write between the
   digits of a number to break them up (`1_000_000`), which count for
-  nothing when the number is read.
+  nothing when the number is read. A mark with no digit on either hand
+  is refused with `ext.lexical.number.amiss`, save where
+  `ext.lexical.number.separator.after_prefix` allows the first one.
 - `ext.system.integer.bits` and `ext.system.real.bits`: how many bits
   wide a language holds a whole number and a real in. A whole number
   that outgrows its width becomes a real, literal or worked out, and a
@@ -1672,7 +1674,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.interpolating_quotes` | - | - | - | - | `"` | - | - | - | - | - |
 | `ext.lexical.line_continuation` | - | - | `\` | - | - | - | - | - | - | - |
 | `ext.lexical.name_lead` | - | - | - | - | `\` | - | - | - | - | - |
-| `ext.lexical.number.amiss` | - | - | - | - | `Invalid numeric literal` | - | - | - | - | - |
+| `ext.lexical.number.amiss` | - | - | `invalid numeric literal` | - | `Invalid numeric literal` | - | - | - | - | - |
 | `ext.lexical.number.binary_prefix` | - | - | `0b` `0B` | - | `0b` `0B` | - | - | - | - | - |
 | `ext.lexical.number.exponent` | - | - | `e` `E` | - | `e` `E` | - | - | - | - | - |
 | `ext.lexical.number.octal_lead` | - | - | - | - | `true` | - | - | - | - | - |

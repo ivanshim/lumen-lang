@@ -332,6 +332,9 @@
   "ext.lexical.line_continuation": [
     "\\"
   ],
+  "ext.lexical.number.amiss": [
+    "invalid numeric literal"
+  ],
   "ext.lexical.number.binary_prefix": [
     "0b",
     "0B"
