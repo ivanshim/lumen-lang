@@ -3537,6 +3537,35 @@ impl<'a> Engine<'a> {
                 let sp = self.wording();
                 Value::Flag(std::fs::remove_file(args[0].display(&sp)).is_ok())
             }
+            // A command put before the host's own shell. It travels as
+            // the bytes its text stands for, and everything the shell
+            // wrote where a run writes is read back from bytes the same
+            // way, the break of line ending it kept as it came. What
+            // the shell said in complaint is left to go where this
+            // run's own complaints go. A command that wrote nothing at
+            // all answers with nothing, and a shell that would not
+            // start at all answers false.
+            Builtin::ShellSaid => {
+                arity(1)?;
+                let sp = self.wording();
+                let told = self.lang.bytes_of(&args[0].display(&sp));
+                // What this run has written goes out before the shell
+                // writes anything, so that the two stand in the order
+                // they were said.
+                use std::io::Write as _;
+                use std::os::unix::ffi::OsStrExt as _;
+                let _ = std::io::stdout().flush();
+                let asked = std::process::Command::new(HOST_SHELL)
+                    .arg(SHELL_TAKES_A_COMMAND)
+                    .arg(std::ffi::OsStr::from_bytes(&told))
+                    .stderr(std::process::Stdio::inherit())
+                    .output();
+                match asked {
+                    Err(_) => Value::Flag(false),
+                    Ok(done) if done.stdout.is_empty() => Value::Null,
+                    Ok(done) => Value::text(&self.lang.text_of(&done.stdout)),
+                }
+            }
             Builtin::TimeLimit => {
                 arity(1)?;
                 let seconds = as_index(&args[0])?;
@@ -4187,6 +4216,11 @@ fn as_index(v: &Value) -> Res<usize> {
 /// themselves. Where the language gives a dressing for a reader of
 /// markup the opening wears it; where it gives none the plain words
 /// stand.
+/// The shell the host keeps, and the switch that hands it a command
+/// written out rather than a file to read it from.
+const HOST_SHELL: &str = "/bin/sh";
+const SHELL_TAKES_A_COMMAND: &str = "-c";
+
 pub fn complaint_opening(lang: &Lang, word: &str, message: &str) -> String {
     match &lang.markup_kind {
         Some((ahead, before, after)) => format!("{}\n{}{}{}{}", ahead, before, word, after, message),

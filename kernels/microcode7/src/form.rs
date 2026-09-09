@@ -108,6 +108,11 @@ pub enum Prim {
     Spill,
     There,
     Gone,
+    /// Everything the host's own shell wrote out, having been handed a
+    /// command to run (ext.builtin.shell). Starting a second program
+    /// beside this one is something only a language spelling this may
+    /// ask for.
+    Shelled,
     /// How long the run may take from here, counted in seconds; nought
     /// takes the limit away (ext.builtin.time_limit).
     Clock,

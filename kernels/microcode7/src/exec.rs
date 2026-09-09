@@ -23,6 +23,11 @@ use crate::table::Table;
 use crate::form::{Input, Traps, Form, Prim, Routine, Address, Callee};
 use crate::data::{Blueprint, Env, Kind, Names, Reach, Thing, Value};
 
+/// Which shell the host keeps, and the switch by which it is handed a
+/// command spelled out instead of a file holding one.
+const THE_HOSTS_SHELL: &str = "/bin/sh";
+const A_COMMAND_FOLLOWS: &str = "-c";
+
 /// The label under which a language spells each kind of complaint.
 pub const COMPLAINT_LABELS: [(&str, &str); 4] = [
     ("warning", "ext.system.complaint.warning"),
@@ -3317,6 +3322,35 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 let w = self.wording();
                 Value::Flag(std::fs::remove_file(v[0].render(w)).is_ok())
+            }
+            // The host's shell, handed a command and asked afterwards
+            // for all it put where a run puts what it writes. Both ways
+            // the words travel as the bytes their text stands for: the
+            // command as it goes out, the answer as it is read back in,
+            // with whatever break of line ended it left where it fell.
+            // Anything the shell said in complaint goes out beside this
+            // run's own complaints and is not gathered. Where the shell
+            // put out nothing whatever the answer is nothing; where no
+            // shell could be started the answer is false.
+            Prim::Shelled => {
+                n(1)?;
+                let w = self.wording();
+                let order = self.table.raw_of(&v[0].render(w));
+                // Whatever this run has written already is let go first,
+                // so the shell's words fall after it and not before.
+                {
+                    use std::io::Write as _;
+                    let _ = std::io::stdout().flush();
+                }
+                let spelled = <std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(&order);
+                let mut shell = std::process::Command::new(THE_HOSTS_SHELL);
+                shell.args([std::ffi::OsStr::new(A_COMMAND_FOLLOWS), spelled]);
+                shell.stderr(std::process::Stdio::inherit());
+                match shell.output() {
+                    Ok(said) if !said.stdout.is_empty() => Value::text(&self.table.said_of(&said.stdout)),
+                    Ok(_) => Value::Nil,
+                    Err(_) => Value::Flag(false),
+                }
             }
             Prim::Clock => {
                 n(1)?;

@@ -312,6 +312,11 @@ pub enum Builtin {
     FileWrite,
     FileThere,
     FileGone,
+    /// A command handed to the host's own shell, answering with all
+    /// that the shell wrote where a run writes (ext.builtin.shell).
+    /// Only a language that spells this may start another program at
+    /// all.
+    ShellSaid,
     /// How long the run may take from here, in seconds; nought lifts
     /// the limit (ext.builtin.time_limit).
     TimeLimit,

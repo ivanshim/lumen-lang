@@ -991,6 +991,9 @@
   "ext.builtin.file.remove": [
     "unlink"
   ],
+  "ext.builtin.shell": [
+    "shell_exec"
+  ],
   "ext.builtin.eval": [
     "eval"
   ],

@@ -11,10 +11,20 @@
 // (`langs/php.json`), which is read at run time.
 // Nothing here knows how any kernel works, and the kernels never see
 // each other.
+//
+// Three switches of the reference implementation's own are taken as it
+// takes them, before the file and not after: `-d setting=worth` gives
+// the run a setting, which goes where the surroundings put the same
+// setting; `-n` asks for no file of settings behind the run, which is
+// how the host stands anyway; and `-v` has the run say what it is and
+// stop. Whatever the settings name for the run to load beside itself is
+// reached for before any of this, and what came of the reaching is said.
 
 use std::collections::HashSet;
 use std::env;
+use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::process;
 
@@ -201,7 +211,7 @@ fn source_of(written: Vec<u8>, as_bytes: bool) -> String {
 }
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    let args: Vec<OsString> = env::args_os().collect();
     let inv = parse_args(&args);
 
     let written = fs::read(&inv.file).unwrap_or_else(|e| {
@@ -311,7 +321,7 @@ fn main() {
 
 fn usage(program: &str) -> ! {
     eprintln!(
-        "Usage: {} [--kernel stream35|microcode11|microcode4|microcode7|stack5|stack8] [--lang <name|extension|definition.json>] [--emit <name|extension|definition.json>] [--serve <address|port>] <file> [program args...]",
+        "Usage: {} [--kernel stream35|microcode11|microcode4|microcode7|stack5|stack8] [--lang <name|extension|definition.json>] [--emit <name|extension|definition.json>] [--serve <address|port>] [-d setting=worth] [-n] [-v] <file> [program args...]",
         program
     );
     process::exit(1);
@@ -373,24 +383,106 @@ fn accepted_language_words(languages: &[(String, Vec<String>)]) -> Vec<String> {
     words
 }
 
-fn parse_args(args: &[String]) -> Invocation {
-    let program = args.first().map(String::as_str).unwrap_or("lumen-lang");
-    let mut rest: &[String] = &args[1..];
+/// A setting the run was started with, put where the run's surroundings
+/// put one: under its own name with PHP_INI_ before it, which is the
+/// road by which the host already reads a setting. The name is the
+/// bytes before the first mark of equals and the worth the bytes after
+/// it; a name with no such mark stands at one, as the reference has it.
+fn settle_setting(given: &[u8]) {
+    let (name, worth) = match given.iter().position(|b| *b == b'=') {
+        Some(at) => (&given[..at], &given[at + 1..]),
+        None => (given, b"1".as_slice()),
+    };
+    if name.is_empty() {
+        return;
+    }
+    let named = format!("PHP_INI_{}", String::from_utf8_lossy(name));
+    env::set_var(named, OsStr::from_bytes(worth));
+}
+
+/// Whatever the run was told to load beside itself, reached for as it
+/// was told. This host carries nothing it can take in while it runs, so
+/// nothing can come of the reaching; what is said here is what actually
+/// happened when the file was reached for, named by the very path that
+/// was tried, and nothing at all is said where nothing was tried.
+fn extensions_reached_for() {
+    let Some(named) = env::var_os("PHP_INI_extension") else { return };
+    let named = named.as_bytes().to_vec();
+    if named.is_empty() {
+        return;
+    }
+    let held = env::var_os("PHP_INI_extension_dir").map(|d| d.as_bytes().to_vec()).unwrap_or_default();
+    let mut tried: Vec<u8> = Vec::new();
+    // The bare name first, and then the name wearing the ending a
+    // shared library wears, which is the pair the reference tries.
+    for (nth, ending) in [b"".as_slice(), b".so".as_slice()].into_iter().enumerate() {
+        let mut path = held.clone();
+        if !path.is_empty() && !path.ends_with(b"/") {
+            path.push(b'/');
+        }
+        path.extend_from_slice(&named);
+        path.extend_from_slice(ending);
+        let stood = match fs::File::open(OsStr::from_bytes(&path)) {
+            Err(e) => plainly(&e),
+            Ok(_) => "found, but this host takes nothing in while it runs".to_string(),
+        };
+        if nth > 0 {
+            tried.extend_from_slice(b", ");
+        }
+        tried.extend_from_slice(&path);
+        tried.extend_from_slice(format!(" ({stood})").as_bytes());
+    }
+    // The words go where the run writes, which is where the reference
+    // puts a complaint it is telling on the page. A path may be spelled
+    // with bytes that spell no letter, so the whole is put together as
+    // bytes and written out as bytes.
+    let mut said: Vec<u8> = b"\nWarning: PHP Startup: Unable to load dynamic library '".to_vec();
+    said.extend_from_slice(&named);
+    said.extend_from_slice(b"' (tried: ");
+    said.extend_from_slice(&tried);
+    said.extend_from_slice(b") in Unknown on line 0\n");
+    use std::io::Write as _;
+    let mut out = std::io::stdout().lock();
+    let _ = out.write_all(&said);
+    let _ = out.flush();
+}
+
+/// What the host said went wrong, without the number it puts after the
+/// words, which says the same thing over again in figures.
+fn plainly(e: &std::io::Error) -> String {
+    let said = e.to_string();
+    match said.find(" (os error ") {
+        Some(at) => said[..at].to_string(),
+        None => said,
+    }
+}
+
+fn parse_args(args: &[OsString]) -> Invocation {
+    let held = args.first().map(|a| a.to_string_lossy().into_owned()).unwrap_or_else(|| "lumen-lang".to_string());
+    let program = held.as_str();
+    let mut rest: &[OsString] = &args[1..];
 
     let mut kernel = DEFAULT_KERNEL.to_string();
     let mut serve: Option<String> = None;
     let mut language: Option<Language> = None;
     let mut emit: Option<Language> = None;
     let mut file: Option<String> = None;
+    // Whether the run was asked only to name itself and stop.
+    let mut names_itself = false;
+
+    // An argument as text, for the switches that take one. Bytes
+    // spelling no letter stand for the letter of doubt, since a name
+    // this host must reach for is a name it must be able to say.
+    let said = |a: &OsString| a.to_string_lossy().into_owned();
 
     // Options may precede the file; `--lang` may also follow it directly.
     loop {
-        match rest.first().map(String::as_str) {
+        match rest.first().and_then(|a| a.to_str()) {
             Some("--kernel") if file.is_none() => {
                 if rest.len() < 2 {
                     usage(program);
                 }
-                kernel = rest[1].to_lowercase();
+                kernel = said(&rest[1]).to_lowercase();
                 if !KERNELS.contains(&kernel.as_str()) {
                     eprintln!("Error: Unknown kernel '{}'. Use one of: {}", kernel, KERNELS.join(", "));
                     process::exit(1);
@@ -399,10 +491,10 @@ fn parse_args(args: &[String]) -> Invocation {
             }
             Some("--lang") | Some("--language") => {
                 if rest.len() < 2 {
-                    eprintln!("Error: {} requires an argument", rest[0]);
+                    eprintln!("Error: {} requires an argument", said(&rest[0]));
                     process::exit(1);
                 }
-                language = Some(language_from_flag(&rest[1]));
+                language = Some(language_from_flag(&said(&rest[1])));
                 rest = &rest[2..];
             }
             Some("--serve") => {
@@ -410,23 +502,64 @@ fn parse_args(args: &[String]) -> Invocation {
                     eprintln!("Error: --serve requires an address or a port");
                     process::exit(1);
                 }
-                serve = Some(rest[1].clone());
+                serve = Some(said(&rest[1]));
                 rest = &rest[2..];
+            }
+            // A setting given where the run starts, spelled as the
+            // reference spells one, and written either as two words or
+            // as one. It is put where the surroundings put the same
+            // setting, under its own name with PHP_INI_ before it, so
+            // that one road serves them both; a setting named with
+            // nothing after it stands at one. These three switches are
+            // the reference's own, and like its own they are looked for
+            // only before the file: what stands after the file belongs
+            // to the program and is left to it.
+            Some("-d") if file.is_none() => {
+                if rest.len() < 2 {
+                    eprintln!("Error: -d requires a setting");
+                    process::exit(1);
+                }
+                settle_setting(rest[1].as_bytes());
+                rest = &rest[2..];
+            }
+            Some(joined) if file.is_none() && joined.len() > 2 && joined.starts_with("-d") => {
+                settle_setting(&rest[0].as_bytes()[2..]);
+                rest = &rest[1..];
+            }
+            // The run asked only to say what it is.
+            Some("-v") | Some("--version") if file.is_none() => {
+                names_itself = true;
+                rest = &rest[1..];
+            }
+            // The run asked to start with no file of settings behind
+            // it. This host reads no such file whatever it is told, so
+            // the asking is taken and nothing follows from it.
+            Some("-n") if file.is_none() => {
+                rest = &rest[1..];
             }
             Some("--emit") => {
                 if rest.len() < 2 {
                     eprintln!("Error: --emit requires an argument");
                     process::exit(1);
                 }
-                emit = Some(language_from_flag(&rest[1]));
+                emit = Some(language_from_flag(&said(&rest[1])));
                 rest = &rest[2..];
             }
-            Some(_) if file.is_none() => {
-                file = Some(rest[0].clone());
+            Some(_) | None if file.is_none() && !rest.is_empty() => {
+                file = Some(said(&rest[0]));
                 rest = &rest[1..];
             }
             _ => break,
         }
+    }
+
+    // Whatever the run was told to load beside itself is reached for
+    // here, before anything else it was told to do, as the reference
+    // reaches for one at its own start.
+    extensions_reached_for();
+    if names_itself {
+        println!("{} {} (kernel {})", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"), kernel);
+        process::exit(0);
     }
 
     let file = file.unwrap_or_else(|| usage(program));
@@ -434,7 +567,7 @@ fn parse_args(args: &[String]) -> Invocation {
         Language::Named(language_from_extension(&file).unwrap_or_else(|| DEFAULT_LANGUAGE.to_string()))
     });
 
-    Invocation { kernel, file, serve, language, emit, program_args: rest.to_vec() }
+    Invocation { kernel, file, serve, language, emit, program_args: rest.iter().map(said).collect() }
 }
 
 /// The language whose embedded definition claims the file's extension.

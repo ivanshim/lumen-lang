@@ -690,6 +690,20 @@ only. The extension labels so far, all from PHP:
   each of these answers that it has no way to do what was asked, in the
   words the reference uses for a wrapper it has not got, and nothing
   else in a run is changed.
+- `ext.builtin.shell`: a builtin that hands one piece of text to the
+  host's own shell as a command and answers with everything that
+  command wrote where a run writes, the break of line ending it kept as
+  it came. What the command wrote in complaint is not gathered and goes
+  out beside the run's own complaints. A command that wrote nothing at
+  all answers with nothing rather than with empty text, and a shell
+  that could not be started at all answers false; what the command
+  itself made of its work is not looked at. The command goes out as the
+  bytes its text stands for and the answer comes back read from bytes
+  the same way, so that a language holding text as bytes
+  (`ext.system.text.bytes`) may say a command and read an answer that
+  no letters spell. This is the one label by which a language may start
+  a second program beside its own run, and only the full kernels read
+  it.
 - `ext.op.hush`: a mark written before a piece of a program, keeping
   quiet whatever that piece has to say about itself while its value is
   found. The value is the one the piece would have come to anyway; only
@@ -1597,6 +1611,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.room.most.forget` | - | - | - | - | `__room_most_forget` | - | - | - | - | - |
 | `ext.builtin.room.used` | - | - | - | - | `__room_used` | - | - | - | - | - |
 | `ext.builtin.routines` | - | - | - | - | `__routines_bound` | - | - | - | - | - |
+| `ext.builtin.shell` | - | - | - | - | `shell_exec` | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.time_limit` | - | - | - | - | `set_time_limit` | - | - | - | - | - |
 | `ext.builtin.uncaught` | - | - | - | - | `__uncaught_handler` | - | - | - | - | - |

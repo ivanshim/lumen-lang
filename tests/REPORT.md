@@ -17,14 +17,14 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 102, differs 0, error 2, skipped 10 | pass 102, differs 0, error 2, skipped 10 |
+| `php/basic` | 114 | pass 103, differs 0, error 1, skipped 10 | pass 103, differs 0, error 1, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
 | `php/lang` | 213 | pass 210, differs 0, error 0, skipped 3 | pass 210, differs 0, error 0, skipped 3 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 58, differs 0, error 0, skipped 6 | pass 58, differs 0, error 0, skipped 6 |
 | `php/lang/string` | 9 | pass 9, differs 0, error 0, skipped 0 | pass 9, differs 0, error 0, skipped 0 |
-| all | 422 | pass 397, differs 0, error 2, skipped 23 | pass 397, differs 0, error 2, skipped 23 |
+| all | 422 | pass 398, differs 0, error 1, skipped 23 | pass 398, differs 0, error 1, skipped 23 |
 
 | Reason | Tests |
 |---|---|
@@ -32,7 +32,6 @@ is listed, since the full kernels are meant to behave alike.
 | skip Windows only test | 5 |
 | skip php-cgi not available | 2 |
 | Fatal error: Uncaught Error: Undefined variable: PHP_CLI_SERVER_ADDRESS in <file> | 1 |
-| Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> | 1 |
 | skip locale needed for this test is not supported on this platform | 1 |
 | skip for Windows only | 1 |
 | skip Run only on Windows | 1 |
@@ -213,7 +212,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/bug61000.phpt` | pass | pass |  |
 | `php/basic/bug67198.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: PHP_CLI_SERVER_ADDRESS in <file> |
 | `php/basic/bug67988.phpt` | pass | pass |  |
-| `php/basic/bug71273.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> |
+| `php/basic/bug71273.phpt` | pass | pass |  |
 | `php/basic/bug73969.phpt` | pass | pass |  |
 | `php/basic/bug78236.phpt` | pass | pass |  |
 | `php/basic/bug78929.phpt` | pass | pass |  |
