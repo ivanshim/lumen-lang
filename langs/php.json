@@ -994,6 +994,18 @@
   "ext.builtin.shell": [
     "shell_exec"
   ],
+  "ext.builtin.wait": [
+    "__wait"
+  ],
+  "ext.builtin.net.ask": [
+    "__net_ask"
+  ],
+  "ext.builtin.run.begin": [
+    "__run_begin"
+  ],
+  "ext.builtin.run.end": [
+    "__run_end"
+  ],
   "ext.builtin.eval": [
     "eval"
   ],

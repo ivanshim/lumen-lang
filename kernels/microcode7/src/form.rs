@@ -113,6 +113,10 @@ pub enum Prim {
     /// beside this one is something only a language spelling this may
     /// ask for.
     Shelled,
+    Reached,
+    Bided,
+    Raised,
+    Laid,
     /// How long the run may take from here, counted in seconds; nought
     /// takes the limit away (ext.builtin.time_limit).
     Clock,

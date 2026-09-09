@@ -107,6 +107,18 @@ function php_cli_server_settings($args) {
 //
 // Answers true where a server is up and answering, and false where none
 // could be started — having said why.
+// The switches the run was started with beyond the program itself, as
+// the runner named them. Nothing where it named none.
+function php_cli_server_passed_on() {
+    $said = getenv("TEST_PHP_ARGS");
+    if ($said === false || trim($said) === "") { return array(); }
+    $out = array();
+    foreach (preg_split('/\s+/', trim($said)) as $one) {
+        if ($one !== "") { $out[] = trim($one, "'\""); }
+    }
+    return $out;
+}
+
 function php_cli_server_start($code = 'echo "Hello world";', $router = null, $args = array()) {
     global $php_cli_server_running;
     if (!php_cli_server_available()) {
@@ -119,7 +131,14 @@ function php_cli_server_start($code = 'echo "Hello world";', $router = null, $ar
     $port = php_cli_server_free_port();
     $address = PHP_CLI_SERVER_HOSTNAME . ":" . $port;
     $named = php_cli_server_settings($args);
-    $begun = __run_begin(PHP_BINARY, array("--serve", $address, $where), $named);
+    // The switches this run was itself started with are handed on, so
+    // that the server reads its program under the same definition. The
+    // reference's own runner passes its extra switches along the same
+    // way, under the same name.
+    $carried = array("--serve", $address);
+    foreach (php_cli_server_passed_on() as $one) { $carried[] = $one; }
+    $carried[] = $where;
+    $begun = __run_begin(PHP_BINARY, $carried, $named);
     if ($begun === false) {
         echo "cannot start a server: the program would not begin\n";
         return false;

@@ -835,8 +835,16 @@ function ob_clean() {
     return true;
 }
 function flush() { return null; }
-function usleep($micro) { return null; }
-function sleep($seconds) { return 0; }
+// Standing still. Where the kernel has no word for waiting these can
+// only answer at once, which is what they used to do always.
+function usleep($micro) {
+    if (function_exists("__wait") && $micro > 0) { __wait((int) $micro); }
+    return null;
+}
+function sleep($seconds) {
+    if (function_exists("__wait") && $seconds > 0) { __wait((int) ($seconds * 1000000)); }
+    return 0;
+}
 
 function getenv($name = null) {
     if ($name === null) { return $_ENV; }

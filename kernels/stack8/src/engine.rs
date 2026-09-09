@@ -66,6 +66,9 @@ pub struct Engine<'a> {
     /// How long the run may take, in seconds, and when the count began;
     /// nought is no limit at all.
     limit: std::cell::Cell<usize>,
+    /// The runs begun beside this one, each under the number it
+    /// was begun with, so that it may be stopped again later.
+    beside: std::cell::RefCell<HashMap<i64, std::process::Child>>,
     began: std::cell::Cell<Option<std::time::Instant>>,
     /// How much room the run may take, in bytes; nought is no limit at
     /// all. What the run has taken is not kept here: the tally of it
@@ -217,6 +220,7 @@ impl<'a> Engine<'a> {
             nothing: Value::Null,
             hurled_at: std::cell::Cell::new(0),
             limit: std::cell::Cell::new(0),
+            beside: std::cell::RefCell::new(HashMap::new()),
             began: std::cell::Cell::new(None),
             ceiling: std::cell::Cell::new(0),
             hushed: std::cell::Cell::new(0),
@@ -3566,6 +3570,101 @@ impl<'a> Engine<'a> {
                     Ok(done) => Value::text(&self.lang.text_of(&done.stdout)),
                 }
             }
+            // A connection made to a host and a port, written on
+            // once and then read until the far end closes it. That is
+            // the whole of what a request saying the connection is to
+            // be closed needs, and nothing here answers otherwise.
+            // Standing still for so many millionths of a second. A run
+            // that is waiting on something outside itself must be able
+            // to wait, or it asks after it as fast as it can and calls
+            // the first refusal final.
+            Builtin::Waited => {
+                arity(1)?;
+                let millionths = as_index(&args[0])?;
+                std::thread::sleep(std::time::Duration::from_micros(millionths as u64));
+                Value::Null
+            }
+            Builtin::NetAsk => {
+                arity(4)?;
+                use std::io::{Read as _, Write as _};
+                let sp = self.wording();
+                let host = args[0].display(&sp);
+                let port = as_index(&args[1])?;
+                let sent = self.lang.bytes_of(&args[2].display(&sp));
+                let seconds = as_index(&args[3])?;
+                let waiting = match seconds {
+                    0 => None,
+                    n => Some(std::time::Duration::from_secs(n as u64)),
+                };
+                let reached = |mut joined: std::net::TcpStream| -> std::io::Result<Vec<u8>> {
+                    joined.set_read_timeout(waiting)?;
+                    joined.set_write_timeout(waiting)?;
+                    joined.write_all(&sent)?;
+                    joined.flush()?;
+                    let mut came = Vec::new();
+                    joined.read_to_end(&mut came)?;
+                    Ok(came)
+                };
+                let named = format!("{}:{}", host, port);
+                let joined = match waiting {
+                    None => std::net::TcpStream::connect(&named),
+                    Some(how_long) => std::net::ToSocketAddrs::to_socket_addrs(&named)
+                        .and_then(|mut each| {
+                            each.next().ok_or_else(|| {
+                                std::io::Error::new(std::io::ErrorKind::NotFound, "no such host")
+                            })
+                        })
+                        .and_then(|one| std::net::TcpStream::connect_timeout(&one, how_long)),
+                };
+                match joined.and_then(reached) {
+                    Ok(came) => Value::text(&self.lang.text_of(&came)),
+                    Err(_) => Value::Flag(false),
+                }
+            }
+            // A program started beside this one, whose own writing goes
+            // nowhere: this is for raising something that answers on a
+            // connection, not for reading what a program says.
+            Builtin::RunBegin => {
+                arity(3)?;
+                use std::os::unix::ffi::OsStrExt as _;
+                let sp = self.wording();
+                let program = self.lang.bytes_of(&args[0].display(&sp));
+                let mut asked = std::process::Command::new(std::ffi::OsStr::from_bytes(&program));
+                for word in one_after_another(&args[1]) {
+                    let word = self.lang.bytes_of(&word.display(&sp));
+                    asked.arg(std::ffi::OsStr::from_bytes(&word));
+                }
+                for (name, worth) in named_pairs(&args[2]) {
+                    let name = self.lang.bytes_of(&name.display(&sp));
+                    let worth = self.lang.bytes_of(&worth.display(&sp));
+                    asked.env(std::ffi::OsStr::from_bytes(&name), std::ffi::OsStr::from_bytes(&worth));
+                }
+                let begun = asked
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn();
+                match begun {
+                    Err(_) => Value::Flag(false),
+                    Ok(child) => {
+                        let which = child.id() as i64;
+                        self.beside.borrow_mut().insert(which, child);
+                        Value::Small(which)
+                    }
+                }
+            }
+            Builtin::RunEnd => {
+                arity(1)?;
+                let which = as_index(&args[0])? as i64;
+                match self.beside.borrow_mut().remove(&which) {
+                    None => Value::Flag(false),
+                    Some(mut child) => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        Value::Flag(true)
+                    }
+                }
+            }
             Builtin::TimeLimit => {
                 arity(1)?;
                 let seconds = as_index(&args[0])?;
@@ -4261,6 +4360,33 @@ fn text_width(s: &str, as_bytes: bool) -> usize {
     match as_bytes {
         true => s.chars().count(),
         false => s.len(),
+    }
+}
+
+/// The worths a value holds in a row, however it happens to hold them:
+/// a list keeps them plainly, a thing of keys and worths keeps them
+/// under their keys, and a cell that names share is looked through.
+fn one_after_another(v: &Value) -> Vec<Value> {
+    match v {
+        Value::Bond(shared) => one_after_another(&shared.borrow()),
+        Value::Array(items) => items.as_ref().clone(),
+        Value::Map(pairs) => pairs.iter().map(|(_, worth)| worth.clone()).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The keys and worths a value holds, for a value that holds any. A
+/// list stands for the numbers it is counted by.
+fn named_pairs(v: &Value) -> Vec<(Value, Value)> {
+    match v {
+        Value::Bond(shared) => named_pairs(&shared.borrow()),
+        Value::Map(pairs) => pairs.as_ref().clone(),
+        Value::Array(items) => items
+            .iter()
+            .enumerate()
+            .map(|(at, worth)| (Value::Small(at as i64), worth.clone()))
+            .collect(),
+        _ => Vec::new(),
     }
 }
 

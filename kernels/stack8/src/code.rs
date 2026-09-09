@@ -317,6 +317,10 @@ pub enum Builtin {
     /// Only a language that spells this may start another program at
     /// all.
     ShellSaid,
+    NetAsk,
+    Waited,
+    RunBegin,
+    RunEnd,
     /// How long the run may take from here, in seconds; nought lifts
     /// the limit (ext.builtin.time_limit).
     TimeLimit,

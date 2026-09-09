@@ -147,6 +147,9 @@ pub struct Machine<'a> {
     /// How many seconds the run may take and when the count began;
     /// nought is no limit at all.
     allowed: usize,
+    /// Every run raised alongside this one, filed under the
+    /// number it was raised with so it may be laid to rest.
+    alongside: HashMap<i64, std::process::Child>,
     started: Option<std::time::Instant>,
     /// How many bytes of room the run may take; nought is no mark at
     /// all. What it has taken is not written down here — that tally is
@@ -255,6 +258,7 @@ impl<'a> Machine<'a> {
             row: 0,
             raised_on: 0,
             allowed: 0,
+            alongside: HashMap::new(),
             started: None,
             ceiling: 0,
             written_in: Rc::from(""),
@@ -3350,6 +3354,100 @@ impl<'a> Machine<'a> {
                     Ok(said) if !said.stdout.is_empty() => Value::text(&self.table.said_of(&said.stdout)),
                     Ok(_) => Value::Nil,
                     Err(_) => Value::Flag(false),
+                }
+            }
+            // Reaching another host: the connection is made, what was
+            // handed over goes on it whole, and what comes back is read
+            // until the far end shuts it. A request that asks for the
+            // connection to be shut wants no more than that.
+            // Biding a while, counted in millionths of a second. Without
+            // it a run watching for something to come ready spins as
+            // fast as it can and takes the first no for the last one.
+            Prim::Bided => {
+                n(1)?;
+                let tiny = as_index(&v[0])?;
+                std::thread::sleep(std::time::Duration::from_micros(tiny as u64));
+                Value::Nil
+            }
+            Prim::Reached => {
+                n(4)?;
+                use std::io::{Read as _, Write as _};
+                let w = self.wording();
+                let (host, port) = (v[0].render(w), as_index(&v[1])?);
+                let carried = self.table.raw_of(&v[2].render(w));
+                let patience = match as_index(&v[3])? {
+                    0 => None,
+                    wait => Some(std::time::Duration::from_secs(wait as u64)),
+                };
+                let door = format!("{}:{}", host, port);
+                let opened = match patience {
+                    None => std::net::TcpStream::connect(&door),
+                    Some(waiting) => match std::net::ToSocketAddrs::to_socket_addrs(&door) {
+                        Err(e) => Err(e),
+                        Ok(mut every) => match every.next() {
+                            None => Err(std::io::Error::new(std::io::ErrorKind::NotFound, "nowhere")),
+                            Some(one) => std::net::TcpStream::connect_timeout(&one, waiting),
+                        },
+                    },
+                };
+                let spoken = |mut line: std::net::TcpStream| -> std::io::Result<Vec<u8>> {
+                    line.set_write_timeout(patience)?;
+                    line.set_read_timeout(patience)?;
+                    line.write_all(&carried)?;
+                    line.flush()?;
+                    let mut back = Vec::new();
+                    line.read_to_end(&mut back)?;
+                    Ok(back)
+                };
+                match opened.and_then(spoken) {
+                    Err(_) => Value::Flag(false),
+                    Ok(back) => Value::text(&self.table.said_of(&back)),
+                }
+            }
+            // A program raised alongside this one. Nothing it writes is
+            // kept: it is raised to answer on a connection, and what it
+            // would otherwise say is let fall.
+            Prim::Raised => {
+                n(3)?;
+                use std::os::unix::ffi::OsStrExt as _;
+                let w = self.wording();
+                let named = self.table.raw_of(&v[0].render(w));
+                let mut raising = std::process::Command::new(std::ffi::OsStr::from_bytes(&named));
+                if let Value::Vector(words) = &v[1] {
+                    for word in words.iter() {
+                        let word = self.table.raw_of(&word.render(w));
+                        raising.arg(std::ffi::OsStr::from_bytes(&word));
+                    }
+                }
+                if let Value::Dict(pairs) = &v[2] {
+                    for (called, worth) in pairs.iter() {
+                        let called = self.table.raw_of(&called.render(w));
+                        let worth = self.table.raw_of(&worth.render(w));
+                        raising.env(std::ffi::OsStr::from_bytes(&called), std::ffi::OsStr::from_bytes(&worth));
+                    }
+                }
+                raising.stdin(std::process::Stdio::null());
+                raising.stdout(std::process::Stdio::null());
+                raising.stderr(std::process::Stdio::null());
+                match raising.spawn() {
+                    Err(_) => Value::Flag(false),
+                    Ok(begun) => {
+                        let mark = begun.id() as i64;
+                        self.alongside.insert(mark, begun);
+                        Value::Small(mark)
+                    }
+                }
+            }
+            Prim::Laid => {
+                n(1)?;
+                let mark = as_index(&v[0])? as i64;
+                match self.alongside.remove(&mark) {
+                    None => Value::Flag(false),
+                    Some(mut begun) => {
+                        let _ = begun.kill();
+                        let _ = begun.wait();
+                        Value::Flag(true)
+                    }
                 }
             }
             Prim::Clock => {

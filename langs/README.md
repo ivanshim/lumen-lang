@@ -666,9 +666,14 @@ only. The extension labels so far, all from PHP:
   run only by spelling these, and only the full kernels read them. What
   cannot be done answers false rather than stopping the run, which is
   what a language spelling them expects.
+- `ext.builtin.wait`: a word for standing still so many millionths of a
+  second. A run that waits on something outside itself — a thing it has
+  begun, a host it has reached for — must be able to wait, or it asks
+  again as fast as it can and takes the first refusal for the last word.
+  Where a language names no such word, standing still is standing still
+  for no time at all, which is what it was before.
 - `ext.builtin.net.ask`, `ext.builtin.run.begin` and `ext.builtin.run.end`:
-  three builtins that are wanted and are not written yet, said here so
-  that whoever writes them knows what is being waited for. The first
+  three words a run needs to speak to something outside itself. The first
   opens a connection to a host and a port, writes what it was handed on
   it whole, reads back what comes until the far end closes, and answers
   those bytes — or false where the connection could not be made, could
@@ -683,11 +688,11 @@ only. The extension labels so far, all from PHP:
   it would not begin; what such a run writes goes nowhere, since this is
   for starting a thing that answers on a connection. The third stops a
   run begun under such a number. PHP's library is written against all
-  three already: `langs/lib_php/native/network.php` builds and reads a
+  three: `langs/lib_php/native/network.php` builds and reads a
   web request and asks only for `__net_ask` to carry it, and the support
   file under `tests/php/sapi/cli/tests/` starts this implementation as a
-  server and asks only for the other two. Until the labels are bound
-  each of these answers that it has no way to do what was asked, in the
+  server and asks only for the other two. Where a language binds none of them
+  each answers that it has no way to do what was asked, in the
   words the reference uses for a wrapper it has not got, and nothing
   else in a run is changed.
 - `ext.builtin.shell`: a builtin that hands one piece of text to the
@@ -1600,6 +1605,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.include.once` | - | - | - | - | `include_once` `require_once` | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.math` | - | - | - | - | `__math` | - | - | - | - | - |
+| `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
 | `ext.builtin.output.depth` | - | - | - | - | `__output_depth` | - | - | - | - | - |
 | `ext.builtin.output.drop` | - | - | - | - | `__output_drop` | - | - | - | - | - |
@@ -1611,12 +1617,15 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.room.most.forget` | - | - | - | - | `__room_most_forget` | - | - | - | - | - |
 | `ext.builtin.room.used` | - | - | - | - | `__room_used` | - | - | - | - | - |
 | `ext.builtin.routines` | - | - | - | - | `__routines_bound` | - | - | - | - | - |
+| `ext.builtin.run.begin` | - | - | - | - | `__run_begin` | - | - | - | - | - |
+| `ext.builtin.run.end` | - | - | - | - | `__run_end` | - | - | - | - | - |
 | `ext.builtin.shell` | - | - | - | - | `shell_exec` | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.time_limit` | - | - | - | - | `set_time_limit` | - | - | - | - | - |
 | `ext.builtin.uncaught` | - | - | - | - | `__uncaught_handler` | - | - | - | - | - |
 | `ext.builtin.unset` | - | - | - | - | `unset` | - | - | - | - | - |
 | `ext.builtin.var_dump` | - | - | - | - | `var_dump` | - | - | - | - | - |
+| `ext.builtin.wait` | - | - | - | - | `__wait` | - | - | - | - | - |
 | `ext.builtin.write.operator` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.lexical.epilogue` | - | - | - | - | `?>` | - | - | - | - | - |
 | `ext.lexical.escape.byte` | - | - | - | - | `x` | - | - | - | - | - |

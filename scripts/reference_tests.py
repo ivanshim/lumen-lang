@@ -95,6 +95,7 @@ def run(kernel, args, source, suffix, request=None, beside=None, given=()):
     # compare the two.
     setting = {**os.environ, "TEST_PHP_EXECUTABLE": str(BINARY),
                "TEST_PHP_EXECUTABLE_ESCAPED": shlex.quote(str(BINARY)),
+               "TEST_PHP_ARGS": "--lang " + shlex.quote(str(ROOT / "langs" / "php.json")),
                **(request or {}).get("env", {})}
     body = (request or {}).get("body", "")
     try:
