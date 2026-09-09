@@ -4772,8 +4772,9 @@ impl<'a> Builder<'a> {
             if !reaching && !owning {
                 return Ok(node);
             }
-            if !owning && table.flag("ext.op.member.pipes") && table.prims.contains_key(&self.glance(1).lexeme)
-                && matches!(&node, Form::Read(_)) { return Ok(node); }
+            let pipe_call = self.glance(2).shape == Shape::Sign && table.spells("syntax.call.open", &self.glance(2).lexeme);
+            if !owning && table.flag("ext.op.member.pipes") && pipe_call
+                && table.prims.contains_key(&self.glance(1).lexeme) && matches!(&node, Form::Read(_)) { return Ok(node); }
             self.advance();
             // A value may stand where a member's name stands: the member
             // is the one that value spells, worked out as the run goes.

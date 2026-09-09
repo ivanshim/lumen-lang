@@ -149,5 +149,17 @@ pub fn layout(tokens: Vec<Token>, lang: &Lang, before: usize) -> Result<Vec<Toke
             _ => out.push(tok),
         }
     }
+    if lang.adjacent_strings {
+        let mut merged: Vec<Token> = Vec::with_capacity(out.len());
+        for token in out {
+            let quoted = matches!(token.shape, Shape::Quote | Shape::Unready);
+            if quoted && merged.last().map_or(false, |prior| matches!(prior.shape, Shape::Quote | Shape::Unready)) {
+                let prior = merged.last_mut().unwrap();
+                if token.shape == Shape::Unready { *prior = token; }
+                else if prior.shape == Shape::Quote { prior.lexeme.push_str(&token.lexeme); }
+            } else { merged.push(token); }
+        }
+        out = merged;
+    }
     Ok(out)
 }

@@ -5235,6 +5235,7 @@ impl<'a> Compiler<'a> {
                 break;
             }
             if member && lang.member_pipes && lang.builtins.contains_key(&self.look_ahead(1).lexeme)
+                && lang.calling.as_ref().map_or(false, |pair| self.look_ahead(2).is_lexeme(Shape::Sign, &pair.open))
                 && matches!(&self.piece().instrs[from..], [Instr::Read(_)]) {
                 return Ok(());
             }

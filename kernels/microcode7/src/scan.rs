@@ -87,16 +87,9 @@ fn drop_comments(source: &str, table: &Table) -> String {
             let reach = folded(ahead, table).map_or(ahead.len(), |(_, _, far)| far);
             kept.push_str(&ahead[..reach]);
             ahead = &ahead[reach..];
-        } else if !table.strings("ext.lexical.string.long").is_empty() && (quotes.contains(&c) || ["ext.lexical.string.prefix.raw", "ext.lexical.string.prefix.plain", "ext.lexical.string.prefix.bytes", "ext.lexical.string.prefix.format"].iter().any(|k| table.spells(k, &c.to_string()))) {
-            let letters: Vec<char> = ahead.chars().collect();
-            if let Some((_, _, over, _, _)) = marked_span(&letters, 0, table) {
-                let bytes = letters[..over].iter().map(|c| c.len_utf8()).sum::<usize>();
-                kept.push_str(&ahead[..bytes]);
-                ahead = &ahead[bytes..];
-            } else {
-                kept.push(c);
-                ahead = &ahead[w..];
-            }
+        } else if let Some(reach) = marked_source_width(ahead, table) {
+            kept.push_str(&ahead[..reach]);
+            ahead = &ahead[reach..];
         } else if quotes.contains(&c) {
             inside = Some(c);
             kept.push(c);
@@ -1100,4 +1093,21 @@ fn marked_text(letters: &[char], raw: bool, table: &Table) -> Result<Option<Stri
         if let Some(c) = scalar { answer.push(c); }
     }
     Ok(if withheld { None } else { Some(answer) })
+}
+
+/// Find the end in the source itself; copying the whole remaining file
+/// for every possible prefix would make a long table of strings costly.
+fn marked_source_width(text: &str, table: &Table) -> Option<usize> {
+    if !table.has_any("ext.lexical.string.long") { return None; }
+    let lead: Vec<char> = text.chars().take(5).collect();
+    let (body, _, _, _, _) = marked_span(&lead, 0, table)?;
+    let start = lead.iter().position(|c| table.letters("lexical.string_quotes").contains(c))?;
+    let end_mark: String = lead[start..body].iter().collect();
+    let mut shielded = false;
+    for (offset, letter) in text[body..].char_indices() {
+        if shielded { shielded = false; }
+        else if text[body + offset..].starts_with(&end_mark) { return Some(body + offset + end_mark.len()); }
+        else if letter == '\\' { shielded = true; }
+    }
+    Some(text.len())
 }

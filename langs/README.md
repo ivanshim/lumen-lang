@@ -260,8 +260,10 @@ only. The extension labels so far, all from PHP:
   fuller meaning. These three class labels supply the reading in place
   of a separate `ext.stmt.class.new` word. Decorators before a class or
   an asynchronous declaration are read before its deferred body.
-  `ext.op.member.pipes` keeps the old builtin pipe for
-  a plain named receiver, while other member forms use `ext.op.member`.
+  `ext.op.member.pipes` keeps the old builtin pipe for a call on a
+  plain named receiver; a member without call brackets remains a member,
+  even when its name also spells a builtin. Other member forms use
+  `ext.op.member`.
 - `ext.op.in` asks whether its left value is in its right; the preceding
   `ext.op.in.negated` word reverses the question. Both operands are read
   before `ext.op.in.unready` refuses the operation at the run.
@@ -305,7 +307,8 @@ only. The extension labels so far, all from PHP:
   `.bytes` and `.format` lists name letters before a quote; a raw letter
   keeps every backslash, and a plain letter leaves the text unchanged.
   Raw may stand beside bytes or format. `ext.lexical.string.adjacent`
-  joins neighbouring string tokens. The small reading here carries byte
+  joins neighbouring string tokens, after line ends within brackets
+  have been removed as well as on one line. The small reading here carries byte
   and formatted strings to the run, where `ext.lexical.string.unready`
   says that their values cannot yet be represented. The same words serve
   for a named character or half of a Unicode pair. Ordinary numbered

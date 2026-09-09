@@ -146,5 +146,22 @@ pub fn indent(tokens: Vec<Token>, table: &Table, ahead: u32) -> Result<Vec<Token
             _ => out.push(t),
         }
     }
+    if table.flag("ext.lexical.string.adjacent") {
+        let mut result: Vec<Token> = Vec::new();
+        for next in out {
+            match result.last_mut() {
+                Some(previous) if matches!(previous.shape, Shape::Quote | Shape::Unready)
+                    && matches!(next.shape, Shape::Quote | Shape::Unready) => {
+                    match (previous.shape, next.shape) {
+                        (_, Shape::Unready) => *previous = next,
+                        (Shape::Quote, Shape::Quote) => previous.lexeme += &next.lexeme,
+                        _ => {}
+                    }
+                }
+                _ => result.push(next),
+            }
+        }
+        return Ok(result);
+    }
     Ok(out)
 }
