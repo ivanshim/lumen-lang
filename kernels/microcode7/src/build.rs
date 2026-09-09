@@ -1138,6 +1138,10 @@ impl<'a> Builder<'a> {
             self.advance();
             loop {
                 if self.on_any("ext.stmt.class.bases.close") { break; }
+                if self.look().shape == Shape::Bare && self.table.spells("stmt.assign", &self.glance(1).lexeme) {
+                    self.advance();
+                    self.advance();
+                }
                 let _base = self.expr(0)?;
                 if !self.on_any("ext.op.tuple") { break; }
                 self.advance();
@@ -1159,8 +1163,9 @@ impl<'a> Builder<'a> {
         if !self.on_any("ext.op.tuple") { return Ok(first); }
         loop {
             self.advance();
-            if self.on_stmt_end() || self.on_assign() || self.on_any("syntax.group.close")
+            if self.on_stmt_end() || self.on_assign() || self.on_any("block.intro") || self.on_any("syntax.group.close")
                 || matches!(self.look().shape, Shape::Finish | Shape::Close) { break; }
+            if self.on_any("ext.syntax.array.spread") { self.advance(); }
             let _item = self.expr_at(0, false)?;
             if !self.on_any("ext.op.tuple") { break; }
         }
@@ -1491,6 +1496,9 @@ impl<'a> Builder<'a> {
             if !self.on_any("ext.stmt.decorator") {
                 break;
             }
+        }
+        if self.table.has_any("ext.stmt.class.bases.open") && self.key("ext.stmt.class") {
+            return self.class_scope();
         }
         if !self.key("stmt.function") {
             return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
@@ -2623,6 +2631,13 @@ impl<'a> Builder<'a> {
         let table = self.table;
         self.advance();
         let var = self.need_word("as the loop variable")?;
+        let mut unpacked = false;
+        while self.on_any("ext.op.tuple") {
+            unpacked = true;
+            self.advance();
+            if self.key("stmt.for.in") { break; }
+            self.need_word("as a loop target")?;
+        }
         if !self.key("stmt.for.in") {
             return Err(format!("Expected '{}' after for loop variable, got: {}", table.single("stmt.for.in").unwrap_or("in"), self.look().lexeme));
         }
@@ -2650,7 +2665,9 @@ impl<'a> Builder<'a> {
                     return Err("A for loop needs a range: start..end".to_string());
                 }
                 self.address_to_write(&var);
-                return self.walk(start, None, var, None, None);
+                let source = self.comma_tail(start)?;
+                let walking = self.walk(source, None, var, None, None)?;
+                return Ok(if unpacked { self.scope_unrun("ext.system.scope.unready") } else { walking });
             }
             self.advance();
             let end = self.expr(tier + 1)?;
@@ -3977,6 +3994,7 @@ impl<'a> Builder<'a> {
                     }
                 }
                 left = self.named_call(&name, args)?;
+                if table.has_any("ext.op.tuple") { left = self.subscript(left)?; }
                 continue;
             }
             if table.single("ext.op.otherwise").map_or(false, |m| self.sign(m)) {

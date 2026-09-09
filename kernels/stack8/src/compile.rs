@@ -940,6 +940,9 @@ impl<'a> Compiler<'a> {
             let from = self.mark();
             let close = self.lang.class_bases_close.first().cloned().ok_or("Class bases need a closing mark")?;
             while !self.at_symbol(&close) {
+                if self.look().shape == Shape::Instr && Lang::spells(&lang.assign_words, &self.look_ahead(1).lexeme) {
+                    self.take(); self.take();
+                }
                 self.expr(0)?;
                 if !self.on_any(&self.lang.tuple_marks) { break; }
                 self.take();
@@ -964,8 +967,9 @@ impl<'a> Compiler<'a> {
         while self.on_any(&self.lang.tuple_marks) {
             self.take();
             if self.on_sep() || matches!(self.look().shape, Shape::Close | Shape::Finish)
-                || self.on_assign()
+                || self.on_assign() || self.on_any(&self.lang.block_intros)
                 || self.lang.grouping.as_ref().map_or(false, |g| self.at_symbol(&g.close)) { break; }
+            if self.on_any(&self.lang.array_spread) { self.take(); }
             self.expr_at(0, false)?;
         }
         self.piece().instrs.truncate(from);
@@ -1195,6 +1199,7 @@ impl<'a> Compiler<'a> {
     fn decorated_function(&mut self) -> Res<()> {
         let lang = self.lang;
         let amiss = || lang.decorator_amiss.clone().unwrap_or_default();
+        let beginning = self.mark();
         let mut held = Vec::new();
         while self.on_any(&lang.decorator_words) {
             self.take();
@@ -1208,6 +1213,10 @@ impl<'a> Compiler<'a> {
             while self.look().shape == Shape::LineEnd {
                 self.take();
             }
+        }
+        if !lang.class_bases_open.is_empty() && self.on_keyword(&lang.class_words) {
+            self.piece().instrs.truncate(beginning);
+            return self.scoped_class();
         }
         if !self.on_keyword(&lang.function_words) {
             return Err(amiss());
@@ -2180,7 +2189,14 @@ impl<'a> Compiler<'a> {
     fn for_stmt(&mut self) -> Res<()> {
         let lang = self.lang;
         self.take();
+        let beginning = self.mark();
         let var = self.want_name("as the loop variable")?;
+        let unpacked = self.on_any(&lang.tuple_marks);
+        while self.on_any(&lang.tuple_marks) {
+            self.take();
+            if self.on_keyword(&lang.in_words) { break; }
+            self.want_name("as a loop target")?;
+        }
         if !self.on_keyword(&lang.in_words) {
             return Err(format!("Expected '{}' after for loop variable, got: {}", lang.in_words[0], self.look().lexeme));
         }
@@ -2209,13 +2225,19 @@ impl<'a> Compiler<'a> {
                 if !lang.for_collections {
                     return Err("A for loop needs a range: start..end".to_string());
                 }
+                if !lang.tuple_marks.is_empty() { self.scope_tail(from)?; }
                 let bag = self.gensym("bag");
                 let source: Vec<Instr> = self.piece().instrs.drain(from..).collect();
                 for w in relocated(source, -(from as i64) + self.mark() as i64) {
                     self.put(w);
                 }
                 self.write(&bag);
-                return self.walk(&bag, None, &var, false, None);
+                self.walk(&bag, None, &var, false, None)?;
+                if unpacked {
+                    self.piece().instrs.truncate(beginning);
+                    self.scope_fault(&lang.scope_unready);
+                }
+                return Ok(());
             }
             self.take();
             self.write(&var);
@@ -4140,6 +4162,7 @@ impl<'a> Compiler<'a> {
                 }
                 self.take();
                 self.pipe_target(from)?;
+                if !lang.tuple_marks.is_empty() { self.indexing(from)?; }
                 continue;
             }
             if lang.otherwise_mark.as_ref().map_or(false, |m| self.at_symbol(m)) {

@@ -514,6 +514,18 @@ only. The extension labels so far, all from PHP:
   digits on either hand, though not on both (`.5`, `1.`, `1.e2`).
   The numeric suites use these beside ordinary fractions; their reading
   follows the lexical piece. `scratch/file-float/1.py` witnesses them.
+- The numeric files also need small readings of forms whose full account
+  belongs to the tuple and class pieces. Under `ext.op.tuple`, a loop
+  may name several targets or a comma-joined source, and a tuple target
+  may hold a starred name spelled by `ext.syntax.array.spread`. Their
+  present run says `ext.system.scope.unready`; witnesses are
+  `scratch/file-float/7.py`, `9.py` and `12.py`. The class bases named by
+  `ext.stmt.class.bases.open` may carry keyword arguments, and
+  `ext.stmt.decorator` may stand before a class. These still say
+  `ext.stmt.class.unready`; `8.py` and `11.py` witness them. A pipe's
+  result may be indexed under `ext.op.tuple`, using the ordinary index
+  reading and running; `10.py` reads the condition found in the float
+  suite. No new word is needed for these readings.
 - `ext.lexical.number.imaginary`: suffix letters for an imaginary
   decimal numeral (`1j`, `.5J`, `2.e-3j`). The coefficient is read whole,
   including its point and exponent. The run cannot yet hold a complex
