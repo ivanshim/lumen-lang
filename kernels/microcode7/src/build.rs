@@ -665,7 +665,7 @@ impl<'a> Builder<'a> {
 
     fn on_stmt_end(&self) -> bool {
         let t = self.look();
-        t.shape == Shape::LineEnd || (t.shape == Shape::Sign && self.table.spells("stmt.terminator", &t.lexeme))
+        t.shape == Shape::LineEnd || (t.shape == Shape::Sign && self.table.separates(&t.lexeme))
     }
 
     /// Whether a block opens here, past any line ends before it, so
@@ -1015,7 +1015,7 @@ impl<'a> Builder<'a> {
         // the whole body, and nothing runs each pass.
         if self.table.flag("ext.block.lone_statement")
             && self.look().shape == Shape::Sign
-            && self.table.spells("stmt.terminator", &self.look().lexeme)
+            && self.table.separates(&self.look().lexeme)
         {
             self.advance();
             return Ok(constant(Value::Nil));
@@ -1025,7 +1025,7 @@ impl<'a> Builder<'a> {
             && !self.on_stmt_end() && !matches!(self.look().shape, Shape::Open | Shape::Close | Shape::Finish);
         if same_line {
             let mut body = vec![self.stmt()?];
-            while self.look().shape == Shape::Sign && self.table.spells("stmt.terminator", &self.look().lexeme) {
+            while self.look().shape == Shape::Sign && self.table.separates(&self.look().lexeme) {
                 self.advance();
                 if matches!(self.look().shape, Shape::Finish | Shape::Close | Shape::LineEnd) { break; }
                 body.push(self.stmt()?);
@@ -2338,7 +2338,7 @@ impl<'a> Builder<'a> {
             self.body_limb(Traps::Naught)?
         };
         let mut ahead = 0;
-        while self.glance(ahead).shape == Shape::LineEnd || (self.glance(ahead).shape == Shape::Sign && self.table.spells("stmt.terminator", &self.glance(ahead).lexeme)) {
+        while self.glance(ahead).shape == Shape::LineEnd || (self.glance(ahead).shape == Shape::Sign && self.table.separates(&self.glance(ahead).lexeme)) {
             ahead += 1;
         }
         let next = self.glance(ahead);
@@ -2579,7 +2579,7 @@ impl<'a> Builder<'a> {
                     self.advance();
                 }
             }
-            if self.look().shape == Shape::Sign && table.spells("stmt.terminator", &self.look().lexeme) {
+            if self.look().shape == Shape::Sign && table.separates(&self.look().lexeme) {
                 self.advance();
             }
         }
@@ -2650,7 +2650,7 @@ impl<'a> Builder<'a> {
         // time anybody calls it.
         let carried = self.carried_names()?;
         let taken = carried.clone();
-        let declared = self.look().shape == Shape::Sign && table.spells("stmt.terminator", &self.look().lexeme);
+        let declared = self.look().shape == Shape::Sign && table.separates(&self.look().lexeme);
         let statics_before = self.statics.len();
         let program = self.routine(&name, Holds::Every, Traps::Yields, params, least, |r| {
             // The names taken away sit in the slots after the
@@ -2840,7 +2840,7 @@ impl<'a> Builder<'a> {
             let word = &self.tokens[i];
             if depth.is_empty() {
                 if matches!(word.shape, Shape::Finish | Shape::Close | Shape::LineEnd) { break; }
-                if word.shape == Shape::Sign && t.spells("stmt.terminator", &word.lexeme) { break; }
+                if word.shape == Shape::Sign && t.separates(&word.lexeme) { break; }
                 if matches!(word.shape, Shape::Bare | Shape::Sign) && t.spells(label, &word.lexeme) { cuts.push(i); }
             }
             if word.shape == Shape::Sign {
@@ -4631,7 +4631,7 @@ impl<'a> Builder<'a> {
         let mut stack = Vec::new();
         loop {
             if run == Mode::Single {
-                while self.look().shape == Shape::Sign && self.table.spells("stmt.terminator", &self.look().lexeme) {
+                while self.look().shape == Shape::Sign && self.table.separates(&self.look().lexeme) {
                     self.advance();
                 }
             } else {
@@ -4803,7 +4803,7 @@ impl<'a> Builder<'a> {
         let mut ahead = 0;
         loop {
             let t = &self.tokens[(self.pos + ahead).min(self.tokens.len() - 1)];
-            let separator = t.shape == Shape::LineEnd || (t.shape == Shape::Sign && self.table.spells("stmt.terminator", &t.lexeme));
+            let separator = t.shape == Shape::LineEnd || (t.shape == Shape::Sign && self.table.separates(&t.lexeme));
             if !separator {
                 if t.shape == Shape::Bare && self.table.spells("stmt.else", &t.lexeme) {
                     self.pos += ahead + 1;

@@ -109,6 +109,7 @@ pub struct Lang {
     pub block_closes: Vec<String>,
     pub block_intros: Vec<String>,
     pub stmt_ends: Vec<String>,
+    pub stmt_separators: Vec<String>,
     pub grouping: Option<Brackets>,
     pub calling: Option<Brackets>,
     pub argument_labels: Vec<String>,
@@ -692,7 +693,7 @@ w ext.stmt.unpack.short | w ext.stmt.unpack.long | w ext.stmt.unpack.unwalkable 
 w ext.system.source.routine | w ext.system.source.class | w ext.system.source.method
 b ext.op.member.by_value | b ext.op.index.text | w ext.op.index.text.first | w ext.system.globals
 w ext.op.reference.unshared.written | w ext.op.reference.unshared.given | w ext.op.reference.unshared.handed
-b ext.stmt.terminator.only
+b ext.stmt.terminator.only | w ext.stmt.separator
 w ext.stmt.block.instead | w ext.stmt.block.instead.close | b ext.op.spelled | b ext.system.class.folded
 w ext.lexical.escape.codepoint | w ext.lexical.escape.codepoint.open | w ext.lexical.escape.codepoint.close
 w ext.lexical.escape.codepoint.amiss | w ext.lexical.escape.codepoint.beyond | w ext.lexical.number.amiss
@@ -1248,6 +1249,7 @@ impl Lang {
             block_closes: closers,
             block_intros: r.strings("block.intro")?,
             stmt_ends: r.strings("stmt.terminator")?,
+            stmt_separators: r.strings("ext.stmt.separator")?,
             grouping: r.brackets("syntax.group.open", "syntax.group.close", None)?,
             calling: call,
             argument_labels: call_labels,
@@ -1623,7 +1625,7 @@ impl Lang {
             }
         }
         let mut lists: Vec<&Vec<String>> = vec![
-            &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.return_marks,
+            &self.block_intros, &self.assign_words, &self.stmt_ends, &self.stmt_separators, &self.argument_labels, &self.type_marks, &self.return_marks,
             &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open,
             &self.tuple_marks, &self.unpack_rest, &self.unpack_words,
             &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words,
@@ -1664,7 +1666,7 @@ impl Lang {
     }
 
     pub fn ends_stmt(&self, lex: &str) -> bool {
-        Lang::spells(&self.stmt_ends, lex)
+        Lang::spells(&self.stmt_ends, lex) || Lang::spells(&self.stmt_separators, lex)
     }
 
     /// Whether a kind written before a parameter names a class: a word
