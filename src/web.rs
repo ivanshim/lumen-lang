@@ -40,6 +40,18 @@ const CGI_VARS: [&str; 14] = [
 
 /// The request this run was given: what stands in the environment, and
 /// the body on the input when the request says one is coming.
+/// Everything the run was started among, by name. What the host was
+/// given need not be text a program can hold: a name or a worth may
+/// carry bytes that spell no letter, and asking for those as text
+/// outright stops the run. Each is taken as far as it reads and the
+/// rest of it left behind, so that one such name cannot keep a program
+/// from starting at all.
+fn named_around() -> Vec<(String, String)> {
+    env::vars_os()
+        .map(|(name, worth)| (name.to_string_lossy().into_owned(), worth.to_string_lossy().into_owned()))
+        .collect()
+}
+
 pub fn gathered() -> Request {
     let mut request = Request::new();
     // A run may be told which of the groups to gather at all, each by a
@@ -83,14 +95,14 @@ pub fn gathered() -> Request {
         }
     }
     if takes('E') {
-        for (name, value) in env::vars() {
+        for (name, value) in named_around() {
             request.push(("ENV".to_string(), name, value, false));
         }
     }
     // What the run was started with, each under its own name. It is told
     // apart from the rest because a run may be told to gather none of
     // the groups and must still know what it was started with.
-    for (name, value) in env::vars() {
+    for (name, value) in named_around() {
         if let Some(named) = name.strip_prefix("PHP_INI_") {
             request.push(("SETTINGS".to_string(), named.to_string(), value, false));
         }
