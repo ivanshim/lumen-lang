@@ -2855,7 +2855,7 @@ impl<'a> Compiler<'a> {
                 self.formal_kinds.push(kind.clone());
                 kinded.push(kind);
                 formals.push(self.want_name("as a parameter name")?);
-                if self.on_any(&lang.annotation_marks) {
+                if !self.at_symbol(&call.close) && self.on_any(&lang.annotation_marks) {
                     self.take();
                     let mut ends = lang.assign_words.clone();
                     ends.push(call.close.clone());
@@ -3914,6 +3914,16 @@ impl<'a> Compiler<'a> {
     fn expr_at(&mut self, floor: u32, may_write: bool) -> Res<()> {
         let lang = self.lang;
         let from = self.mark();
+        if floor == 0 && self.look().shape == Shape::Instr
+            && Lang::spells(&lang.expression_assign, &self.look_ahead(1).lexeme) {
+            let name = self.take().lexeme;
+            self.take();
+            self.cell_to_write(&name);
+            self.expr(0)?;
+            self.write(&name);
+            self.read(&name);
+            return Ok(());
+        }
         self.prefix()?;
         if floor == 0 && may_write && lang.assign_gives_value && self.on_writing() {
             let keep = self.gensym("written");
@@ -4185,6 +4195,17 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let from = self.mark();
         let tok = self.look().clone();
+        if Lang::spells(&lang.lambda_words, &tok.lexeme) {
+            self.take();
+            let mut head = lang.calling.clone().ok_or("A lambda needs parameter separators")?;
+            head.close = lang.block_intros.first().cloned().ok_or("A lambda needs a body mark")?;
+            let (formals, spares, _) = self.parameters(ANONYMOUS, &head)?;
+            let least = formals.len() - spares.len();
+            self.routine(ANONYMOUS, formals, least, true, |a| a.expr(0))?;
+            self.constant(Value::text(lang.lambda_unready.as_deref().unwrap_or_default()));
+            self.act(Action::Builtin(Builtin::Raise, Rc::from("lambda")), 1);
+            return self.indexing(from);
+        }
         if Lang::spells(&lang.ellipsis_words, &tok.lexeme) {
             self.take();
             self.constant(Value::text(lang.ellipsis_unready.as_deref().unwrap_or_default()));

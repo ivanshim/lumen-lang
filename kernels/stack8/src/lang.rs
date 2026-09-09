@@ -51,6 +51,9 @@ pub struct Lang {
     pub whole_bits: bool,
     pub ellipsis_words: Vec<String>,
     pub ellipsis_unready: Option<String>,
+    pub lambda_words: Vec<String>,
+    pub lambda_unready: Option<String>,
+    pub expression_assign: Vec<String>,
     pub with_words: Vec<String>,
     pub with_as_words: Vec<String>,
     pub with_unready: Option<String>,
@@ -717,7 +720,7 @@ b system.flag.counts
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
-b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | w ext.literal.ellipsis | w ext.literal.ellipsis.unready | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.with.unready | w ext.op.tuple | w ext.op.tuple.unready | w ext.stmt.class.unready | b ext.op.bit.whole | w ext.op.matrix | w ext.op.matrix.unready | w ext.lexical.line_continuation | w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
+b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | w ext.op.lambda | w ext.op.lambda.unready | w ext.op.assign.expression | w ext.literal.ellipsis | w ext.literal.ellipsis.unready | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.with.unready | w ext.op.tuple | w ext.op.tuple.unready | w ext.stmt.class.unready | b ext.op.bit.whole | w ext.op.matrix | w ext.op.matrix.unready | w ext.lexical.line_continuation | w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
 w ext.stmt.import | w ext.stmt.import.from | w ext.stmt.import.as | w ext.system.module.name
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
@@ -1462,6 +1465,9 @@ impl Lang {
             whole_bits: r.flag("ext.op.bit.whole")?,
             ellipsis_words: r.strings("ext.literal.ellipsis")?,
             ellipsis_unready: r.head("ext.literal.ellipsis.unready")?,
+            lambda_words: r.strings("ext.op.lambda")?,
+            lambda_unready: r.head("ext.op.lambda.unready")?,
+            expression_assign: r.strings("ext.op.assign.expression")?,
             with_words: r.strings("ext.stmt.with")?,
             with_as_words: r.strings("ext.stmt.with.as")?,
             with_unready: r.head("ext.stmt.with.unready")?,
@@ -1767,7 +1773,7 @@ impl Lang {
         let mut lists: Vec<&Vec<String>> = vec![
             &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks,
             &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open,
-            &self.slice_ellipsis, &self.slice_marks, &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words, &self.line_continuations, &self.matrix_words, &self.tuple_marks, &self.ellipsis_words, &self.with_words, &self.with_as_words,
+            &self.slice_ellipsis, &self.slice_marks, &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words, &self.line_continuations, &self.matrix_words, &self.tuple_marks, &self.ellipsis_words, &self.lambda_words, &self.expression_assign, &self.with_words, &self.with_as_words,
             &self.carries_words, &self.carries_pairs, &self.keyword_only, &self.positional_only, &self.call_spread, &self.call_spread_pairs,
         ];
         if self.blocks != Blocks::Indented {

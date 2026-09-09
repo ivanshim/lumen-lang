@@ -1416,6 +1416,14 @@ only. The extension labels so far, all from PHP:
   for the words said when a tuple value is reached; its members are
   read whole but not worked out. The tuple piece supplies the fuller
   account of values, stores, and taking apart.
+- `ext.op.lambda`: the word introducing unbracketed parameters and one
+  expression, with `block.intro` between them. The parameter rules are
+  those of a function, without annotations. `ext.op.lambda.unready`
+  supplies the complaint when a lambda value is reached; its parameters,
+  defaults and body are read whole, but this small reading makes no value.
+- `ext.op.assign.expression`: a mark between a binding name and the
+  expression whose value is both stored there and answered with. The mark
+  is read at the lowest expression tier, including in a decorator.
 - `ext.op.matrix`: the matrix product sign, taking its place among the
   binary operators by `op.precedence`. The compound assignment switch
   gives it a writing form as well. Both operands are read whole; where
@@ -1882,6 +1890,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.literal.ellipsis` | - | - | `...` | - | - | - | - | - | - | - |
 | `ext.literal.ellipsis.unready` | - | - | `NotImplementedError: ellipsis values are not supported` | - | - | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
+| `ext.op.assign.expression` | - | - | `:=` | - | - | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.bit.and` | - | - | `&` | - | `&` | - | - | - | - | - |
 | `ext.op.bit.left` | - | - | `<<` | - | `<<` | - | - | - | - | - |
@@ -1916,6 +1925,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.index.text` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.text.first` | - | - | - | - | `Only the first byte will be assigned to the string offset` | - | - | - | - | - |
 | `ext.op.instanceof` | - | - | - | - | `instanceof` | - | - | - | - | - |
+| `ext.op.lambda` | - | - | `lambda` | - | - | - | - | - | - | - |
+| `ext.op.lambda.unready` | - | - | `NotImplementedError: lambda values are not supported` | - | - | - | - | - | - | - |
 | `ext.op.matrix` | - | - | `@` | - | - | - | - | - | - | - |
 | `ext.op.matrix.unready` | - | - | `NotImplementedError: matrix multiplication is not supported` | - | - | - | - | - | - | - |
 | `ext.op.member` | - | - | - | - | `->` | - | - | - | - | - |

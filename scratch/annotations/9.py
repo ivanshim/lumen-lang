@@ -1,1 +1,4 @@
-lambda x: x
+def lambda_expression():
+    return lambda x: x
+
+print("read")

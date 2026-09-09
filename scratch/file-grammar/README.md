@@ -92,6 +92,20 @@ reading. An indexed ellipsis keeps the slice piece's own meaning.
 
 ## Spellings in this piece
 
+`26.py` reads lambda parameters, nested defaults and bodies, and a lambda
+decorator. `27.py` reaches a lambda and gives the explicit value complaint;
+`29.py` refuses duplicate parameter names. `28.py` checks that assignment
+expressions bind and answer with their value, including in a decorator.
+`ext.op.lambda` spells `lambda`, `ext.op.lambda.unready` spells
+`NotImplementedError: lambda values are not supported`, and
+`ext.op.assign.expression` spells `:=`; all three are lists.
+
+`scratch/annotations/9.py` keeps its former `lambda x: x` in an uncalled
+routine and prints `read`, as the reference does. `9.out` replaces the
+old colon-reader error. The fixture now checks reading the parameter/body
+boundary without requiring lambda values, whose execution belongs to the
+expression piece.
+
 `24.py` reads the grammar suite's comma-separated return values, including
 a trailing comma, and checks that single and empty returns still answer
 `7` and `None`. `25.py` reaches such a tuple return and gives the same
@@ -140,6 +154,9 @@ tiers are shown whole, lowest first.
 | `ext.literal.ellipsis` | list | `["..."]` |
 | `ext.literal.ellipsis.unready` | list | `["NotImplementedError: ellipsis values are not supported"]` |
 | `ext.op.bit.and` | list | `["&"]` |
+| `ext.op.assign.expression` | list | `[":="]` |
+| `ext.op.lambda` | list | `["lambda"]` |
+| `ext.op.lambda.unready` | list | `["NotImplementedError: lambda values are not supported"]` |
 | `ext.op.bit.left` | list | `["<<"]` |
 | `ext.op.bit.not` | list | `["~"]` |
 | `ext.op.bit.right` | list | `[">>"]` |

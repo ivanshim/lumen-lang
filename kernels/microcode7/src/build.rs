@@ -2678,8 +2678,12 @@ impl<'a> Builder<'a> {
 
     /// The parameters of a function or a method, up to the closing bracket.
     fn parameters(&mut self, named: &str) -> Res<(Vec<String>, Vec<(usize, usize)>, Vec<String>, Vec<Form>)> {
+        let end = self.table.single("syntax.call.close").unwrap().to_string();
+        self.parameters_to(named, end, true)
+    }
+
+    fn parameters_to(&mut self, named: &str, close: String, annotated: bool) -> Res<(Vec<String>, Vec<(usize, usize)>, Vec<String>, Vec<Form>)> {
         let table = self.table;
-        let close = table.single("syntax.call.close").unwrap().to_string();
         let typed = table.flag("stmt.let.type_first");
         let mut params = Vec::new();
         let bind = table.flag("ext.syntax.call.bind_names");
@@ -2766,7 +2770,7 @@ impl<'a> Builder<'a> {
                 }
                 self.formal_kinds.push(kind);
                 params.push(self.need_word("as a parameter name")?);
-                if self.on_any("ext.stmt.annotation") {
+                if annotated && self.on_any("ext.stmt.annotation") {
                     self.advance();
                     self.put_by_annotation(&["stmt.assign", "syntax.call.close", "syntax.call.separator"])?;
                 } else if self.look().shape == Shape::Sign && table.spells("stmt.let.annotation", &self.look().lexeme) {
@@ -3789,6 +3793,14 @@ impl<'a> Builder<'a> {
     /// statement, which is read as a statement.
     fn expr_at(&mut self, floor: u32, may_write: bool) -> Res<Form> {
         let table = self.table;
+        if floor == 0 && self.look().shape == Shape::Bare
+            && table.spells("ext.op.assign.expression", &self.glance(1).lexeme) {
+            let word = self.advance().lexeme;
+            self.advance();
+            let target = self.address_to_write(&word);
+            let expression = self.expr(0)?;
+            return Ok(sequence(vec![Form::Write(target.clone(), Box::new(expression)), Form::Read(target)]));
+        }
         let mut left = self.monadic_expr()?;
         if floor == 0 && may_write && table.flag("ext.op.assign.value") && self.on_writing() {
             return self.written(left, true);
@@ -3972,6 +3984,15 @@ impl<'a> Builder<'a> {
             let words = table.single("ext.literal.ellipsis.unready").unwrap_or_default();
             let refused = prim_call(Prim::Raise, vec![constant(Value::text(words))]);
             return self.subscript(refused);
+        }
+        if table.spells("ext.op.lambda", &t.lexeme) {
+            self.advance();
+            let end = table.single("block.intro").ok_or("A lambda needs a body mark")?.to_string();
+            let (names, defaults, _, _) = self.parameters_to(ANONYMOUS, end, false)?;
+            let needed = names.len() - defaults.len();
+            self.routine(ANONYMOUS, Holds::Every, Traps::Yields, names, needed, |r| r.expr(0))?;
+            let words = table.single("ext.op.lambda.unready").unwrap_or_default();
+            return Ok(prim_call(Prim::Raise, vec![constant(Value::text(words))]));
         }
         // `list($a, $b) = v`: the places named on the left each take
         // the matching place of the value on the right.
