@@ -47,8 +47,14 @@ fn never_shut(table: &Table, opener: &str, from: u32, upto: u32) -> String {
 pub fn indent(tokens: Vec<Token>, table: &Table, ahead: u32) -> Result<Vec<Token>, (String, u32)> {
     let by_indent = table.blocks == Blocks::Indented;
     let unit = table.count("block.indent_size").unwrap_or(4);
-    let opens: Vec<&str> = ["syntax.group.open", "syntax.call.open", "syntax.array.open"].iter().filter_map(|k| table.single(k)).collect();
-    let closes: Vec<&str> = ["syntax.group.close", "syntax.call.close", "syntax.array.close"].iter().filter_map(|k| table.single(k)).collect();
+    let mut opens: Vec<&str> = ["syntax.group.open", "syntax.call.open", "syntax.array.open"].iter().filter_map(|k| table.single(k)).collect();
+    let mut closes: Vec<&str> = ["syntax.group.close", "syntax.call.close", "syntax.array.close"].iter().filter_map(|k| table.single(k)).collect();
+    if table.flag("ext.syntax.set") {
+        if let (Some(open), Some(close)) = (table.single("syntax.map.open"), table.single("syntax.map.close")) {
+            opens.push(open);
+            closes.push(close);
+        }
+    }
     let ends = paired(table);
     let held = table.around("ext.system.reading.unclosed").is_some() && table.around("ext.system.reading.unmatched").is_some();
     // Each bracket still owed an answer: what opened it, what would

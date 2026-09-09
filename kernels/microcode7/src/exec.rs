@@ -2983,6 +2983,32 @@ impl<'a> Machine<'a> {
                 };
                 return self.prim(plain, name, v);
             }
+            Prim::Iterated => Value::Vector(Rc::new(self.gathered_members(&v[0])?)),
+            Prim::CheckUnpack(count) => {
+                let values = self.gathered_members(&v[0])?;
+                if values.len() != count {
+                    return Err(self.table.single("ext.op.comprehension.unpack.amiss").unwrap_or("Comprehension target and item have different lengths").into());
+                }
+                Value::Vector(Rc::new(values))
+            }
+            Prim::ExtendLiteral(dictionary, expanded) => {
+                if !dictionary {
+                    let Value::Vector(prior) = &v[0] else { unreachable!() };
+                    let mut next = prior.to_vec();
+                    next.extend(if expanded { self.gathered_members(&v[1])? } else { vec![v[1].clone()] });
+                    Value::Vector(Rc::new(next))
+                } else {
+                    let Value::Dict(prior) = &v[0] else { unreachable!() };
+                    let incoming = match &v[1] {
+                        Value::Couple(pair) if !expanded => vec![pair.as_ref().clone()],
+                        Value::Dict(entries) if expanded => entries.to_vec(),
+                        _ => return Err(self.table.single("ext.syntax.map.spread.unmapped").unwrap_or("A map spread needs a map").into()),
+                    };
+                    let mut combined = prior.to_vec();
+                    for entry in incoming { set_key(&mut combined, entry.0, entry.1); }
+                    Value::Dict(Rc::new(combined))
+                }
+            }
             Prim::MakeArray => assembled(v.to_vec(), false, self.plain_keys),
             Prim::MakeMap => assembled(v.to_vec(), true, self.plain_keys),
             Prim::Couple => {
@@ -4142,6 +4168,47 @@ impl<'a> Machine<'a> {
                 }
                 Value::Nil
             }
+            Prim::Listed => {
+                match v.len() {
+                    0 => Value::Vector(Rc::new(Vec::new())),
+                    1 => Value::Vector(Rc::new(self.gathered_members(&v[0])?)),
+                    _ => return Err(format!("{}() expects 1 argument, got {}", name, v.len())),
+                }
+            }
+            Prim::SomeTrue => {
+                n(1)?;
+                let members = self.gathered_members(&v[0])?;
+                Value::Flag(members.iter().any(|item| self.stands_true(item)))
+            }
+            Prim::Total => {
+                if !(1..=2).contains(&v.len()) { return Err(format!("{}() expects one or two arguments", name)); }
+                let members = self.gathered_members(&v[0])?;
+                let start = v.get(1).cloned().unwrap_or(Value::Small(0));
+                let number = |x| match x { Value::Flag(flag) => Value::Small(flag as i64), x => x };
+                members.into_iter().try_fold(number(start), |prior, item| {
+                    math::compute(Calc::Plus, &prior, &number(item)).unwrap_or_else(|| Err(self.table.single("ext.builtin.sum.non_number").unwrap_or("Invalid collection argument").into()))
+                })?
+            }
+            Prim::Span if self.table.flag("ext.builtin.range.value") => {
+                if !(1..=3).contains(&v.len()) { return Err(format!("{}() expects one to three arguments", name)); }
+                let integer = |x: &Value| match x {
+                    Value::Small(k) => Ok(BigInt::from(*k)),
+                    Value::Huge(k) => Ok(k.as_ref().clone()),
+                    Value::Flag(flag) => Ok(BigInt::from(*flag as i64)),
+                    _ => Err(self.table.single("ext.builtin.range.non_integer").unwrap_or("Invalid collection argument").to_string()),
+                };
+                let stop = integer(&v[if v.len() == 1 { 0 } else { 1 }])?;
+                let mut now = if v.len() == 1 { BigInt::from(0) } else { integer(&v[0])? };
+                let stride = match v.get(2) { Some(x) => integer(x)?, None => BigInt::from(1) };
+                let direction = stride.cmp(&BigInt::from(0));
+                if direction == std::cmp::Ordering::Equal { return Err(self.table.single("ext.builtin.range.zero_step").unwrap_or("Invalid collection argument").into()); }
+                let mut values = Vec::new();
+                while now.cmp(&stop) == direction.reverse() {
+                    values.push(Value::from_big(now.clone()));
+                    now += &stride;
+                }
+                Value::Vector(Rc::new(values))
+            }
             Prim::Span => return Err(format!("{}() spells a range, which belongs in a for loop", name)),
             Prim::MakeReal => {
                 if v.is_empty() || v.len() > 2 {
@@ -4467,6 +4534,16 @@ impl<'a> Machine<'a> {
             }
             _ => Err(self.no_places()),
         }
+    }
+
+    fn gathered_members(&self, source: &Value) -> Result<Vec<Value>, String> {
+        Ok(match source {
+            Value::Text(word) => word.chars().map(|letter| Value::text(&String::from(letter))).collect(),
+            Value::Vector(values) => values.to_vec(),
+            Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
+            Value::Shared(held) => return self.gathered_members(&held.borrow()),
+            _ => return Err(self.table.single("ext.syntax.collection.unwalkable").unwrap_or("Cannot gather members from this value").to_string()),
+        })
     }
 
     fn show(&self, v: &[Value]) -> String {
