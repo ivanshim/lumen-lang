@@ -77,9 +77,14 @@ impl Writer<'_> {
                 for (k, v) in pairs.iter() { parts.push(format!("{}: {}", self.representation(k, ascii)?, self.representation(v, ascii)?)); }
                 Ok(format!("{{{}}}", parts.join(", ")))
             }
-            Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Flag(_) | Value::Null | Value::Ellipsis => Ok(value.display(&self.words)),
+            Value::Real(r) => {
+                let mut text = value.display(&self.words);
+                if !r.outside() && !text.contains(['.', 'e', 'E']) { text.push_str(".0"); }
+                Ok(text)
+            }
+            Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Null | Value::Ellipsis => Ok(value.display(&self.words)),
             Value::Bond(cell) => self.representation(&cell.borrow(), ascii),
-            _ => Err(self.fault("ext.text.format.unready", &[])),
+            _ => Err(self.lang.format_unsupported.clone().unwrap_or_default()),
         }
     }
 
@@ -150,7 +155,7 @@ impl Writer<'_> {
     }
 
     fn representation_plain(&self, value: &Value) -> Result<String> {
-        match value { Value::Text(s) => Ok(s.to_string()), _ => self.representation(value, false) }
+        match value { Value::Text(s) => Ok(s.to_string()), Value::Real(_) => Ok(value.display(&self.words)), _ => self.representation(value, false) }
     }
 
     fn unknown(&self, value: &Value, code: char) -> String {
@@ -211,11 +216,11 @@ impl Writer<'_> {
             if chars.get(at) == Some(&c) { out.push(c); at += 1; continue; }
             if c == '}' { return Err(self.fault("ext.text.format.brace.close", &[])); }
             let from = at;
-            let mut brackets = 0usize;
+            let mut brackets = false;
             while let Some(&c) = chars.get(at) {
-                if c == '[' { brackets += 1; }
-                if c == ']' { brackets = brackets.saturating_sub(1); }
-                if brackets == 0 && matches!(c, '!' | ':' | '}') { break; }
+                if c == '[' { brackets = true; }
+                if c == ']' { brackets = false; }
+                if !brackets && matches!(c, '!' | ':' | '}') { break; }
                 at += 1;
             }
             let name: String = chars[from..at].iter().collect();
@@ -358,7 +363,7 @@ impl Writer<'_> {
                 return Err(self.fault("ext.op.rem.format.code", &[&code.to_string(), &format!("{:x}", code as u32), &(at - 1).to_string()]));
             }
             let result = if matches!(code, 's' | 'r' | 'a') {
-                let shown = if code == 's' { self.representation_plain(value)? } else { self.representation(value, code == 'a')? };
+                let shown = if code == 's' && matches!(value, Value::Text(_)) { self.representation_plain(value)? } else { self.representation(value, code == 'a')? };
                 let shown: String = shown.chars().take(rule.precision.unwrap_or(usize::MAX)).collect();
                 rule.fill = ' '; if rule.align == '=' { rule.align = '>'; }
                 rule.pad("", &shown, '>')
@@ -501,4 +506,39 @@ fn decimal(number: f64, rule: &Rule) -> String {
         body = format!("{before}e{}{:02}", if power < 0 { '-' } else { '+' }, power.unsigned_abs());
     }
     body
+}
+
+pub fn names_fault(lang: &Lang, text: &str) -> bool {
+    [
+        &lang.fmt_text_format_invalid,
+        &lang.fmt_text_format_unknown,
+        &lang.fmt_text_format_unready,
+        &lang.fmt_text_format_precision_integer,
+        &lang.fmt_text_format_precision_missing,
+        &lang.fmt_text_format_sign_string,
+        &lang.fmt_text_format_alternate_string,
+        &lang.fmt_text_format_align_string,
+        &lang.fmt_text_format_sign_character,
+        &lang.fmt_text_format_alternate_character,
+        &lang.fmt_text_format_character,
+        &lang.fmt_text_format_spec_type,
+        &lang.fmt_text_format_numbered_auto,
+        &lang.fmt_text_format_numbered_manual,
+        &lang.fmt_text_format_index,
+        &lang.fmt_text_format_key,
+        &lang.fmt_text_format_brace_open,
+        &lang.fmt_text_format_brace_close,
+        &lang.fmt_text_format_conversion,
+        &lang.fmt_text_format_recursion,
+        &lang.fmt_op_rem_format_few,
+        &lang.fmt_op_rem_format_many,
+        &lang.fmt_op_rem_format_mapping,
+        &lang.fmt_op_rem_format_number,
+        &lang.fmt_op_rem_format_integer,
+        &lang.fmt_op_rem_format_real,
+        &lang.fmt_op_rem_format_character,
+        &lang.fmt_op_rem_format_star,
+        &lang.fmt_op_rem_format_incomplete,
+        &lang.fmt_op_rem_format_code,
+    ].iter().any(|parts| parts.first().map_or(false, |start| !start.is_empty() && text.starts_with(start)))
 }

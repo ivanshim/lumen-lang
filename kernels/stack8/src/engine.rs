@@ -2768,7 +2768,8 @@ impl<'a> Engine<'a> {
                     if Lang::spells(&self.lang.format_method, name) {
                         let args = self.call_items(args)?;
                         let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
-                        return Ok(Value::text(&writer.template(text, &args)?));
+                        self.data.push(Value::text(&writer.template(text, &args)?));
+                        return Ok(());
                     }
                 }
                 if self.lang.member_pipes {

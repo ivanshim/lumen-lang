@@ -48,8 +48,12 @@ impl Layout<'_> {
                 for entry in entries.iter() { rendered.push(self.quote(entry, escaped)?); }
                 format!("[{}]", rendered.join(", "))
             }
-            Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Flag(_) | Value::Nil | Value::Ellipsis => item.render(self.names),
-            _ => return Err(self.refused()),
+            Value::Frac(r) => {
+                let said = item.render(self.names);
+                if r.past_numbers() || said.contains(['.', 'e', 'E']) { said } else { said + ".0" }
+            }
+            Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Nil | Value::Ellipsis => item.render(self.names),
+            _ => return Err(self.table.single("ext.op.rem.format.unsupported").unwrap_or_default().to_string()),
         })
     }
 
@@ -113,7 +117,10 @@ impl Layout<'_> {
             };
             return self.present(&Value::text(&rendered), pattern, "");
         }
-        if pattern.is_empty() { return self.plain(item); }
+        if pattern.is_empty() {
+            if matches!(item, Value::Frac(_)) { return Ok(item.render(self.names)); }
+            return self.plain(item);
+        }
         let mut shape = self.description(pattern)?;
         let unknown = || self.complain("ext.text.format.unknown", &[&shape.letter.unwrap_or('\0').to_string(), self.typename(item)]);
         if shape.letter == Some('n') { return Err(self.refused()); }
@@ -504,4 +511,10 @@ impl Presentation {
         if mode == '%' { raw.push('%'); }
         raw
     }
+}
+
+pub fn is_complaint(table: &Table, message: &str) -> bool {
+    let labels = "ext.text.format.invalid ext.text.format.unknown ext.text.format.unready ext.text.format.precision.integer ext.text.format.precision.missing ext.text.format.sign.string ext.text.format.alternate.string ext.text.format.align.string ext.text.format.sign.character ext.text.format.alternate.character ext.text.format.character ext.text.format.spec.type ext.text.format.numbered.auto ext.text.format.numbered.manual ext.text.format.index ext.text.format.key ext.text.format.brace.open ext.text.format.brace.close ext.text.format.conversion ext.text.format.recursion ext.op.rem.format.few ext.op.rem.format.many ext.op.rem.format.mapping ext.op.rem.format.number ext.op.rem.format.integer ext.op.rem.format.real ext.op.rem.format.character ext.op.rem.format.star ext.op.rem.format.incomplete ext.op.rem.format.code";
+    labels.split_whitespace().filter_map(|label| table.single(label))
+        .any(|opening| !opening.is_empty() && message.starts_with(opening))
 }
