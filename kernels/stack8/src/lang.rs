@@ -343,6 +343,8 @@ pub struct Lang {
     pub type_params_open: Vec<String>,
     pub type_params_close: Vec<String>,
     pub type_alias_words: Vec<String>,
+    pub class_suite_words: Vec<String>,
+    pub class_suite_unsupported: Vec<String>,
     pub with_words: Vec<String>,
     pub with_as: Vec<String>,
     pub with_open: Vec<String>,
@@ -708,6 +710,7 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+w ext.stmt.class.suite | w ext.stmt.class.suite.unsupported
 w ext.stmt.type_params.open | w ext.stmt.type_params.close | w ext.stmt.type_alias | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.with.group.open | w ext.stmt.with.group.close | w ext.stmt.with.unsupported | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unsupported | w ext.stmt.delete | w ext.stmt.delete.unsupported | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unsupported | w ext.syntax.tuple.separator | w ext.syntax.tuple.unsupported | w ext.syntax.value.spread | w ext.syntax.value.spread.unsupported | w ext.op.index.spread.unsupported | w ext.op.conditional | b ext.stmt.function.short.bare
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
 w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
@@ -1455,6 +1458,8 @@ impl Lang {
             type_params_open: r.strings("ext.stmt.type_params.open")?,
             type_params_close: r.strings("ext.stmt.type_params.close")?,
             type_alias_words: r.strings("ext.stmt.type_alias")?,
+            class_suite_words: r.strings("ext.stmt.class.suite")?,
+            class_suite_unsupported: r.strings("ext.stmt.class.suite.unsupported")?,
             with_words: r.strings("ext.stmt.with")?,
             with_as: r.strings("ext.stmt.with.as")?,
             with_open: r.strings("ext.stmt.with.group.open")?,
@@ -1719,7 +1724,7 @@ impl Lang {
             place(question);
             place(mark);
         }
-        for words in [&self.type_params_open, &self.type_params_close, &self.type_alias_words, &self.with_words, &self.with_as, &self.with_open, &self.with_close, &self.nonlocal_words, &self.delete_words, &self.yield_words, &self.yield_from, &self.tuple_separator, &self.value_spread, &self.conditional_words] {
+        for words in [&self.class_suite_words, &self.type_params_open, &self.type_params_close, &self.type_alias_words, &self.with_words, &self.with_as, &self.with_open, &self.with_close, &self.nonlocal_words, &self.delete_words, &self.yield_words, &self.yield_from, &self.tuple_separator, &self.value_spread, &self.conditional_words] {
             for lex in words { place(lex); }
         }
         for lex in &self.plus_words {

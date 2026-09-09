@@ -1181,6 +1181,7 @@ impl<'a> Builder<'a> {
                 self.put_by_annotation(&[])?;
                 return Ok(constant(Value::Nil));
             }
+            if self.key("ext.stmt.class.suite") { return self.suite_class(); }
             if self.key("ext.stmt.with") { return self.context_statement(); }
             if self.key("ext.stmt.nonlocal") {
                 self.advance();
@@ -1422,12 +1423,16 @@ impl<'a> Builder<'a> {
                 break;
             }
         }
+        if self.key("ext.stmt.class.suite") {
+            return self.suite_class();
+        }
         if !self.key("stmt.function") {
             return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
         }
         self.advance();
         let shared = self.skip_reference();
         let named = self.need_word("after the function keyword")?;
+        self.type_names()?;
         self.giving_cells.push(shared);
         let definition = self.func(named.clone(), true);
         self.giving_cells.pop();
@@ -2597,6 +2602,20 @@ impl<'a> Builder<'a> {
             self.need_sign(end, "after type parameters")?;
         }
         Ok(())
+    }
+
+    /// Read the header as call arguments and the suite as a separate unit.
+    fn suite_class(&mut self) -> Res<Form> {
+        self.advance();
+        let named = self.need_word("as the class name")?;
+        self.type_names()?;
+        if self.on_any("syntax.call.open") {
+            self.advance();
+            self.args("syntax.call.close", "syntax.call.separator")?;
+        }
+        self.routine(&named, Holds::Every, Traps::Naught, Vec::new(), 0,
+            |reader| reader.watched_body())?;
+        Ok(self.unavailable("ext.stmt.class.suite.unsupported"))
     }
 
     /// Commas join a row; each item is still read when the run lacks tuples.

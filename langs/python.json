@@ -342,6 +342,8 @@
   "ext.stmt.catch.separator": [","],
   "ext.stmt.catch.tuple.close": [")"],
   "ext.stmt.catch.tuple.open": ["("],
+  "ext.stmt.class.suite": ["class"],
+  "ext.stmt.class.suite.unsupported": ["NotImplementedError: class suites are not supported"],
   "ext.stmt.decorator": ["@"],
   "ext.stmt.decorator.amiss": ["A decorator must stand on its own line before a function definition"],
   "ext.stmt.delete": ["del"],

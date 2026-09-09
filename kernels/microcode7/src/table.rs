@@ -82,6 +82,7 @@ system.kind.array:L system.kind.null:L \
 /// Extension labels beyond the core: optional, an absent one is empty
 /// (or off). The reference kernels skip them; this one reads them.
 const EXT_TAGS: &str = "\
+ext.stmt.class.suite:L ext.stmt.class.suite.unsupported:L \
 ext.stmt.type_params.open:L ext.stmt.type_params.close:L ext.stmt.type_alias:L ext.stmt.with:L ext.stmt.with.as:L ext.stmt.with.group.open:L ext.stmt.with.group.close:L ext.stmt.with.unsupported:L ext.stmt.nonlocal:L ext.stmt.nonlocal.unsupported:L ext.stmt.delete:L ext.stmt.delete.unsupported:L ext.stmt.yield:L ext.stmt.yield.from:L ext.stmt.yield.unsupported:L ext.syntax.tuple.separator:L ext.syntax.tuple.unsupported:L ext.syntax.value.spread:L ext.syntax.value.spread.unsupported:L ext.op.index.spread.unsupported:L ext.op.conditional:L ext.stmt.function.short.bare:B \
 ext.op.index.slice.ellipsis:L ext.op.index.slice:L ext.op.index.slice.zero:L ext.op.index.slice.bounds:L ext.op.index.slice.unsupported:L ext.op.index.slice.assign:L ext.op.index.slice.length:L ext.op.index.slice.detached:L \
 ext.lexical.epilogue:L ext.builtin.echo:L ext.syntax.call.bare:B ext.op.increment:L ext.op.decrement:L \
@@ -598,7 +599,7 @@ impl Table {
             "syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close", "stmt.foreach", "stmt.foreach.as",
             "ext.stmt.function.carries", "ext.stmt.function.carries.pairs", "ext.stmt.function.keyword_only", "ext.stmt.function.positional_only", "ext.syntax.call.spread", "ext.syntax.call.spread.pairs",
             "ext.stmt.terminator", "ext.stmt.annotation", "ext.stmt.function.returns", "ext.op.member", "ext.op.scope", "ext.stmt.class", "ext.stmt.class.extends",
-            "ext.stmt.class.new", "ext.stmt.class.modifier", "ext.stmt.class.shared", "ext.op.instanceof",
+            "ext.stmt.class.suite", "ext.stmt.class.new", "ext.stmt.class.modifier", "ext.stmt.class.shared", "ext.op.instanceof",
             "ext.stmt.class.parent", "ext.stmt.class.self", "ext.stmt.class.interface", "ext.stmt.class.implements",
             "ext.stmt.assert", "ext.stmt.catch.as", "ext.stmt.catch.tuple.open", "ext.stmt.catch.tuple.close", "ext.stmt.catch.group", "ext.stmt.throw.from", "ext.stmt.try", "ext.stmt.catch", "ext.stmt.finally",
             "ext.stmt.throw", "ext.stmt.catch.separator", "ext.op.reference", "ext.op.otherwise", "ext.op.hush", "ext.op.name_by_value", "ext.stmt.unpack"];

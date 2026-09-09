@@ -970,6 +970,7 @@ impl<'a> Compiler<'a> {
                 self.expect_assign("after the alias name")?;
                 return self.annotation_expression(&[]);
             }
+            if Lang::spells(&lang.class_suite_words, &w) { return self.class_suite(); }
             if Lang::spells(&lang.with_words, &w) { return self.with_statement(); }
             if Lang::spells(&lang.nonlocal_words, &w) {
                 self.take();
@@ -1113,6 +1114,7 @@ impl<'a> Compiler<'a> {
     /// routine through them from the last written to the first.
     fn decorated_function(&mut self) -> Res<()> {
         let lang = self.lang;
+        let began = self.mark();
         let amiss = || lang.decorator_amiss.clone().unwrap_or_default();
         let mut held = Vec::new();
         while self.on_any(&lang.decorator_words) {
@@ -1128,12 +1130,19 @@ impl<'a> Compiler<'a> {
                 self.take();
             }
         }
+        if self.on_keyword(&lang.class_suite_words) {
+            self.class_suite()?;
+            self.piece().instrs.truncate(began);
+            self.unready(&lang.class_suite_unsupported);
+            return Ok(());
+        }
         if !self.on_keyword(&lang.function_words) {
             return Err(amiss());
         }
         self.take();
         let gives_cell = self.skip_reference();
         let name = self.want_name("after the function keyword")?;
+        self.type_parameters()?;
         self.function(name.clone(), gives_cell)?;
         for decorator in held.into_iter().rev() {
             let bound = if lang.routines_outermost {
@@ -2214,6 +2223,25 @@ impl<'a> Compiler<'a> {
         self.take();
         self.annotation_expression(&lang.type_params_close)?;
         self.want_sign(lang.type_params_close.first().map_or("", String::as_str), "after type parameters")
+    }
+
+    /// A class whose body is an ordinary suite, read in its own scope.
+    fn class_suite(&mut self) -> Res<()> {
+        let lang = self.lang;
+        self.take();
+        let name = self.want_name("as the class name")?;
+        self.type_parameters()?;
+        let began = self.mark();
+        if let Some(call) = &lang.calling {
+            if self.at_symbol(&call.open) {
+                self.take();
+                self.arguments(call)?;
+            }
+        }
+        self.piece().instrs.truncate(began);
+        self.routine(&name, Vec::new(), 0, false, |a| a.attempt_body())?;
+        self.unready(&lang.class_suite_unsupported);
+        Ok(())
     }
 
     /// A row is read to its end even where tuples cannot yet be kept.

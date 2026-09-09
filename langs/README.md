@@ -516,6 +516,14 @@ only. The extension labels so far, all from PHP:
   soft word before an alias name and a write sign; a call using the same
   word remains a call. The alias's type expression is read and put by;
   this stage keeps no alias value.
+- `ext.stmt.class.suite`: a class introduced by a name, optional type
+  parameters and call-shaped bases and keywords, then an ordinary suite.
+  Decorators may precede it. The header and whole body are read, with the
+  body's bindings and nested routines kept apart from the enclosing run.
+  Reaching the definition stops in `ext.stmt.class.suite.unsupported`
+  words before decorators, bases or body run; building its namespace and
+  class value is still wanting. Decorated routines take type parameters
+  just as undecorated routines do.
 - `ext.stmt.with`, `ext.stmt.with.as`: a context statement and the word
   binding what a context gives. `ext.stmt.with.group.open` and `.close`
   enclose a row of contexts, with a last comma allowed. Contexts, targets
@@ -1926,6 +1934,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.reader` | - | - | - | - | `__get` | - | - | - | - | - |
 | `ext.stmt.class.self` | - | - | - | - | `self` | - | - | - | - | - |
 | `ext.stmt.class.shared` | - | - | - | - | `static` | - | - | - | - | - |
+| `ext.stmt.class.suite` | - | - | `class` | - | - | - | - | - | - | - |
+| `ext.stmt.class.suite.unsupported` | - | - | `NotImplementedError: class suites are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.class.this` | - | - | - | - | `$this` | - | - | - | - | - |
 | `ext.stmt.class.trait` | - | - | - | - | `trait` | - | - | - | - | - |
 | `ext.stmt.class.uses` | - | - | - | - | `use` | - | - | - | - | - |
