@@ -37,7 +37,7 @@ pub enum Callee {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prim {
     /// Gather the parts naming a span within brackets.
-    Span,
+    SliceBounds,
     /// A step onward or back (`++`, `--`): adding or taking away one,
     /// save where a language walks text along its letters instead.
     Onward(bool),

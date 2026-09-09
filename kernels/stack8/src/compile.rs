@@ -2958,6 +2958,14 @@ impl<'a> Compiler<'a> {
             _ => None,
         };
         let appending = matches!(target.last(), Some(Instr::Act(Action::AtEnd, 1)));
+        // A slice write works out its value before it asks for bounds.
+        let was_waiting = self.waiting.clone();
+        if compound.is_none() && target.iter().any(|w| matches!(w, Instr::Act(Action::Slice, 3))) {
+            let value = self.gensym("slice_value");
+            self.value_written(None)?;
+            self.write(&value);
+            self.waiting = Some(value);
+        }
         let done = match target.as_slice() {
             // `b = &a`: b is fastened to a's cell, not given a copy.
             [Instr::Read(slot)]
@@ -3355,7 +3363,7 @@ impl<'a> Compiler<'a> {
                     && self.lang.reference_mark.as_ref().map_or(false, |m| self.at_symbol(m)) =>
             {
                 let name = slot.ident.to_string();
-                for w in relocated(index.to_vec(), -1) {
+                for w in relocated(index.to_vec(), self.mark() as i64 - from as i64 - 1) {
                     self.put(w);
                 }
                 self.take();
@@ -3371,7 +3379,7 @@ impl<'a> Compiler<'a> {
             }
             [Instr::Read(slot), index @ .., Instr::Act(Action::At, 2)] if !slot.moving => {
                 let name = slot.ident.to_string();
-                for w in relocated(index.to_vec(), -1) {
+                for w in relocated(index.to_vec(), self.mark() as i64 - from as i64 - 1) {
                     self.put(w);
                 }
                 // Where a language writes into text, only the thing
@@ -3399,6 +3407,7 @@ impl<'a> Compiler<'a> {
             }
             _ => Err(format!("Invalid assignment target before '{}'", assign)),
         };
+        self.waiting = was_waiting;
         if hushed || silenced {
             self.put(match silenced {
                 true => Instr::Mute(false),

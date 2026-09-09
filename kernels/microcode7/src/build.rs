@@ -2923,6 +2923,16 @@ impl<'a> Builder<'a> {
             (None, Some(cell), None) => self.read(&cell),
             (None, None, None) => self.expr(0)?,
         };
+        // The value comes before the bounds of a slice assignment.
+        let before_bounds = if plain && slice_target(&expr) {
+            self.gensyms += 1;
+            let saved = format!("#slice_value{}", self.gensyms);
+            let first = self.write(&saved, value);
+            value = self.read(&saved);
+            Some(first)
+        } else {
+            None
+        };
         // Where a language writes into text, a place there holds one
         // letter and no more, so a write into a single named place is
         // worth the letter that went in and not the whole of what was
@@ -3299,6 +3309,10 @@ impl<'a> Builder<'a> {
                 }
             }
             _ => return Err(format!("Invalid assignment target before '{}'", assign.lexeme)),
+        };
+        let made = match before_bounds {
+            Some(first) => sequence(vec![first, made]),
+            None => made,
         };
         Ok(match keep {
             Some(cell) => sequence(vec![made, self.read(&cell)]),
@@ -4312,7 +4326,7 @@ impl<'a> Builder<'a> {
             }
             let key = if spanning {
                 parts.resize_with(3, || constant(Value::Nil));
-                prim_call(Prim::Span, parts)
+                prim_call(Prim::SliceBounds, parts)
             } else {
                 parts.pop().expect("the single place")
             };
@@ -5147,4 +5161,14 @@ fn radix_number(text: &str, mark: char, point: Option<char>, expo: Option<char>)
         above *= BigInt::from(radix).pow(e);
     }
     Ok((above, beneath))
+}
+
+/// Whether the path being written includes a span of places.
+fn slice_target(place: &Form) -> bool {
+    match place {
+        Form::Apply(Callee::Prim(Prim::At, _), given) if given.len() == 2 => {
+            matches!(&given[1], Form::Apply(Callee::Prim(Prim::SliceBounds, _), _)) || slice_target(&given[0])
+        }
+        _ => false,
+    }
 }
