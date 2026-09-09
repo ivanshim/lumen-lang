@@ -1,1 +1,2 @@
-print("""This module tests SyntaxErrors.""")
+print(""">>> ru"\t"
+""")

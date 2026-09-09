@@ -48,23 +48,7 @@ pub struct Lang {
     pub block_comments: Vec<(String, String)>,
     pub quotes: Vec<char>,
     pub raw_quotes: Vec<char>,
-    pub long_quotes: Vec<String>,
-    pub raw_prefixes: Vec<char>,
-    pub byte_prefixes: Vec<char>,
-    pub plain_prefixes: Vec<char>,
-    pub format_prefixes: Vec<char>,
-    pub adjacent_strings: bool,
-    pub string_amiss: Option<String>,
-    pub string_unready: Option<String>,
-    pub byte_digits: Option<usize>,
-    pub codepoint_digits: Option<usize>,
-    pub wide_letter: Option<char>,
-    pub wide_digits: Option<usize>,
-    pub named_letter: Option<char>,
-    pub escape_unavailable: Option<String>,
     pub escape_letters: Vec<char>,
-    pub control_escapes: Vec<char>,
-    pub continued_strings: bool,
     /// The letter that, after the escape mark, begins a character
     /// named by its number, and the brackets that number stands in.
     pub codepoint_letter: Option<char>,
@@ -746,9 +730,7 @@ b ext.op.member.by_value | b ext.op.index.text | w ext.op.index.text.first | w e
 w ext.op.reference.unshared.written | w ext.op.reference.unshared.given | w ext.op.reference.unshared.handed
 b ext.stmt.terminator.only
 w ext.stmt.block.instead | w ext.stmt.block.instead.close | b ext.op.spelled | b ext.system.class.folded
-
-w ext.lexical.string.value.unready | w ext.lexical.string.long | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.format | b ext.lexical.string.adjacent | w ext.lexical.string.amiss | n ext.lexical.escape.byte.digits | n ext.lexical.escape.codepoint.digits | w ext.lexical.escape.codepoint.wide | n ext.lexical.escape.codepoint.wide.digits | w ext.lexical.escape.named | w ext.lexical.escape.unavailable
-b ext.lexical.escape.continued | w ext.lexical.escape.controls | w ext.lexical.escape.codepoint | w ext.lexical.escape.codepoint.open | w ext.lexical.escape.codepoint.close
+w ext.lexical.escape.codepoint | w ext.lexical.escape.codepoint.open | w ext.lexical.escape.codepoint.close
 w ext.lexical.escape.codepoint.amiss | w ext.lexical.escape.codepoint.beyond | w ext.lexical.number.amiss
 w ext.lexical.escape.byte | w ext.lexical.interpolating.index.amiss | w ext.builtin.eval.place
 w ext.system.reading.unexpected | w ext.system.reading.unexpected.character | w ext.system.fault.class.reading
@@ -1267,23 +1249,7 @@ impl Lang {
             block_comments: comment_opens.into_iter().zip(comment_closes).collect(),
             quotes,
             raw_quotes,
-            long_quotes: r.strings("ext.lexical.string.long")?,
-            raw_prefixes: r.letters("ext.lexical.string.prefix.raw")?,
-            byte_prefixes: r.letters("ext.lexical.string.prefix.bytes")?,
-            plain_prefixes: r.letters("ext.lexical.string.prefix.plain")?,
-            format_prefixes: r.letters("ext.lexical.string.prefix.format")?,
-            adjacent_strings: r.flag("ext.lexical.string.adjacent")?,
-            string_amiss: r.head("ext.lexical.string.amiss")?,
-            string_unready: r.head("ext.lexical.string.value.unready")?,
-            byte_digits: r.count("ext.lexical.escape.byte.digits")?,
-            codepoint_digits: r.count("ext.lexical.escape.codepoint.digits")?,
-            wide_letter: r.letter("ext.lexical.escape.codepoint.wide")?,
-            wide_digits: r.count("ext.lexical.escape.codepoint.wide.digits")?,
-            named_letter: r.letter("ext.lexical.escape.named")?,
-            escape_unavailable: r.head("ext.lexical.escape.unavailable")?,
             escape_letters: escapes,
-            control_escapes: r.letters("ext.lexical.escape.controls")?,
-            continued_strings: r.flag("ext.lexical.escape.continued")?,
             codepoint_letter: r.letter("ext.lexical.escape.codepoint")?,
             codepoint_open: r.letter("ext.lexical.escape.codepoint.open")?,
             codepoint_close: r.letter("ext.lexical.escape.codepoint.close")?,
@@ -1706,9 +1672,6 @@ impl Lang {
         }
         if let Some((question, mark)) = &self.ternary {
             place(question);
-            place(mark);
-        }
-        for mark in &self.long_quotes {
             place(mark);
         }
         for lex in &self.plus_words {

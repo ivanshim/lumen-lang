@@ -1,1 +1,2 @@
-This module tests SyntaxErrors.
+>>> ru"	"
+

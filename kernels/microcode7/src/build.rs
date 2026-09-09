@@ -3857,27 +3857,6 @@ impl<'a> Builder<'a> {
         Ok(piece)
     }
 
-    fn quotation(&mut self) -> Res<Form> {
-        let start = self.advance();
-        if start.shape == Shape::Quote { return Ok(constant(Value::text(&start.lexeme))); }
-        if start.shape == Shape::Unheld { return Ok(prim_call(Prim::UnheldText, vec![constant(Value::text(&start.lexeme))])); }
-        if start.shape != Shape::Woven {
-            return Err(self.table.single("ext.lexical.string.amiss").unwrap_or("Invalid string literal").to_owned());
-        }
-        let mut result = constant(Value::text(""));
-        loop {
-            if self.look().shape == Shape::WovenEnd { self.advance(); break; }
-            let piece = if self.look().shape == Shape::Field {
-                let conversion = self.advance().lexeme;
-                let value = self.expr(0)?;
-                let spec = self.quotation()?;
-                prim_call(Prim::RenderField, vec![value, spec, constant(Value::text(&conversion))])
-            } else { self.quotation()? };
-            result = prim_call(Prim::Join, vec![result, piece]);
-        }
-        Ok(result)
-    }
-
     fn monadic_piece(&mut self) -> Res<Form> {
         let table = self.table;
         let t = self.look().clone();
@@ -3965,14 +3944,9 @@ impl<'a> Builder<'a> {
                 self.advance();
                 constant(numeral(&t.lexeme, table)?)
             }
-            Shape::Quote | Shape::Woven | Shape::Unheld => {
-                let mut text = self.quotation()?;
-                if table.flag("ext.lexical.string.adjacent") {
-                    while matches!(self.look().shape, Shape::Quote | Shape::Woven | Shape::Unheld) {
-                        text = prim_call(Prim::Join, vec![text, self.quotation()?]);
-                    }
-                }
-                text
+            Shape::Quote => {
+                self.advance();
+                constant(Value::text(&t.lexeme))
             }
             Shape::Bare if table.spells("ext.stmt.class.new", &t.lexeme) => {
                 self.advance();

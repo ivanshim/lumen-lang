@@ -4105,18 +4105,6 @@ impl<'a> Machine<'a> {
             // with, and anything that is not an array becomes an array
             // holding only itself.
             Prim::AsChars => Value::text(&v[0].render(w)),
-            Prim::UnheldText => return Err(v[0].bare()),
-            Prim::RenderField => {
-                let manner = v[2].bare();
-                let ordinary = manner.is_empty() || manner == "s";
-                let count = matches!(&v[0], Value::Small(_) | Value::Huge(_));
-                let scalar = matches!(&v[0], Value::Small(_) | Value::Huge(_) | Value::Text(_) | Value::Flag(_) | Value::Nil);
-                if scalar && v[1].bare().is_empty() && (ordinary || count) {
-                    Value::text(&v[0].render(w))
-                } else {
-                    return Err(self.table.single("ext.lexical.string.value.unready").unwrap_or("").to_owned());
-                }
-            }
             Prim::AsTruth => Value::Flag(self.stands_true(&v[0])),
             Prim::AsNothing => Value::Nil,
             Prim::AsVector => match v[0].clone() {
