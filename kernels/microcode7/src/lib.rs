@@ -165,8 +165,33 @@ fn lines_before(request: &[(String, String, String, bool)]) -> u32 {
         .unwrap_or(0)
 }
 
+/// A prologue which names an import belongs beside the words that
+/// followed it in the file. The host has set the library between them;
+/// its count of added lines tells where those words now begin.
+fn import_rejoined(text: &str, table: &Table, added: u32) -> Option<String> {
+    let marker = table.single("lexical.prologue")?;
+    let head = marker.split_whitespace().next()?;
+    if !table.spells("ext.stmt.import", head) || added == 0 {
+        return None;
+    }
+    let rows: Vec<&str> = text.split_inclusive('\n').collect();
+    let opening = rows.first()?.strip_suffix('\n')?;
+    if opening.trim_start() != marker || rows.len() <= added as usize {
+        return None;
+    }
+    let mut joined = String::from("\n");
+    rows[1..added as usize].iter().for_each(|row| joined.push_str(row));
+    joined.push_str(opening);
+    for row in &rows[added as usize..] {
+        joined.push_str(row);
+    }
+    Some(joined)
+}
+
 fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     let ahead = lines_before(request);
+    let joined = import_rejoined(source, table, ahead);
+    let source = joined.as_deref().unwrap_or(source);
     let read = scan::scan_at(source, table).map_err(|(said, row)| cannot_read(table, &said, row, request, ahead, false));
     let shaped = indent::indent(read?, table, ahead).map_err(|(said, row)| cannot_read(table, &said, row, request, ahead, false));
     let tokens = shaped?;

@@ -1,5 +1,5 @@
 {
-  "$comment": "Python: indentation blocks introduced by a colon, word-form logic operators, true division yielding a real, floor division, method calls on builtins (arr.append(x)) as the pipe spelled with a dot, and indexing into strings. sys.stdout.write is emit, the string-only writer, and sys.exit the error; the `import sys` line that makes them Python is the prologue the kernel drops. str, int and float are the conversions. Dictionary literals are omitted until the kernel has a map type; everything listed is Python.",
+  "$comment": "Python: indentation blocks introduced by a colon, word-form logic operators, true division yielding a real, floor division, method calls on builtins (arr.append(x)) as the pipe spelled with a dot, and indexing into strings. sys.stdout.write is emit, the string-only writer, and sys.exit the error; the `import sys` line that makes them Python is the prologue the reference kernels drop; the full kernels read imports and bind their names to null for now. str, int and float are the conversions. Dictionary literals are omitted until the kernel has a map type; everything listed is Python.",
   "format_version": 1,
   "language": "python",
   "extensions": [
