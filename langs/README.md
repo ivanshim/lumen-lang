@@ -499,6 +499,33 @@ only. The extension labels so far, all from PHP:
   block may be opened in one run and closed in another, which is how a
   page is written around a loop. One line end straight after the closing
   marker belongs to it.
+- `ext.op.comprehension.for`, `ext.op.comprehension.in` and
+  `ext.op.comprehension.if`: the words after a literal's first expression
+  that bind names over a collection and keep only the passes whose
+  conditions hold. More than one walk or condition may follow. Names
+  belong to the comprehension alone; a comma in its target takes an
+  item apart into names, with optional grouping. Brackets gather a list,
+  braces with pairs gather a map, and parentheses gather eagerly into
+  an array, even where they stand as the sole argument of a call.
+  `ext.op.comprehension.unpack.amiss` says that an item has the wrong
+  number of parts for its target.
+- `ext.syntax.set`: a switch; a brace literal without pairs is read as
+  an array, keeping order and repeated items. An empty brace literal
+  remains a map. This stage does not provide a distinct set value.
+- `ext.syntax.array.spread` and `ext.syntax.map.spread`: a mark before
+  a literal item takes all its members; the former takes array items,
+  letters of text or map keys, the latter takes map pairs, later keys
+  replacing earlier ones. `ext.syntax.collection.unwalkable` gives
+  the words for a value having no such members, and
+  `ext.syntax.map.spread.unmapped` for spreading pairs from no map.
+- `ext.system.collection.literal`: a switch; printed collections use
+  literal brackets and pairs, with text quoted inside them.
+- `ext.builtin.range.value`: a switch; a call of the range builtin
+  yields an eager array from one, two or three whole-number bounds,
+  the last a nonzero step. Without it the range remains loop syntax.
+  `ext.builtin.list` gathers one collection into an array;
+  `ext.builtin.sum` adds its members to an optional starting value,
+  and `ext.builtin.any` asks whether any member holds true.
 - `ext.op.walk.class` and its family: a thing may be its own walk.
   `ext.op.walk.class` is the class of method names saying so (PHP's
   `Iterator`), and `ext.op.walk.rewind`, `.more`, `.this`, `.key` and
@@ -1578,6 +1605,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | Label | lumen | rplumen | python | rust | php (extra) | c (extra) | javascript (extra) | pascal (extra) | ruby (extra) | swift (extra) |
 |---|---|---|---|---|---|---|---|---|---|---|
 | `ext.block.lone_statement` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.builtin.any` | - | - | `any` | - | - | - | - | - | - | - |
 | `ext.builtin.args.all` | - | - | - | - | `func_get_args` | - | - | - | - | - |
 | `ext.builtin.args.all.outside` | - | - | - | - | `func_get_args() cannot be called from the global scope` | - | - | - | - | - |
 | `ext.builtin.args.at` | - | - | - | - | `func_get_arg` | - | - | - | - | - |
@@ -1613,6 +1641,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.include.demanded.missing` | - | - | - | - | `Failed opening required '` `' (include_path='.')` | - | - | - | - | - |
 | `ext.builtin.include.once` | - | - | - | - | `include_once` `require_once` | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
+| `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | - | - | `__math` | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
@@ -1621,6 +1650,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.output.held` | - | - | - | - | `__output_held` | - | - | - | - | - |
 | `ext.builtin.output.hold` | - | - | - | - | `__output_hold` | - | - | - | - | - |
 | `ext.builtin.print_r` | - | - | - | - | `print_r` | - | - | - | - | - |
+| `ext.builtin.range.value` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.room.limit` | - | - | - | - | `__room_limit` | - | - | - | - | - |
 | `ext.builtin.room.most` | - | - | - | - | `__room_most` | - | - | - | - | - |
 | `ext.builtin.room.most.forget` | - | - | - | - | `__room_most_forget` | - | - | - | - | - |
@@ -1630,6 +1660,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.run.end` | - | - | - | - | `__run_end` | - | - | - | - | - |
 | `ext.builtin.shell` | - | - | - | - | `shell_exec` | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
+| `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
 | `ext.builtin.time_limit` | - | - | - | - | `set_time_limit` | - | - | - | - | - |
 | `ext.builtin.uncaught` | - | - | - | - | `__uncaught_handler` | - | - | - | - | - |
 | `ext.builtin.unset` | - | - | - | - | `unset` | - | - | - | - | - |
@@ -1670,6 +1701,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.bit.xor` | - | - | - | - | `^` | - | - | - | - | - |
 | `ext.op.cast` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.compare` | - | - | - | - | `<=>` | - | - | - | - | - |
+| `ext.op.comprehension.for` | - | - | `for` | - | - | - | - | - | - | - |
+| `ext.op.comprehension.if` | - | - | `if` | - | - | - | - | - | - | - |
+| `ext.op.comprehension.in` | - | - | `in` | - | - | - | - | - | - | - |
+| `ext.op.comprehension.unpack.amiss` | - | - | `ValueError: comprehension target has the wrong number of values` | - | - | - | - | - | - | - |
 | `ext.op.decrement` | - | - | - | - | `--` | - | - | - | - | - |
 | `ext.op.decrement.text` | - | - | - | - | `Decrement on non-numeric string has no effect and is deprecated` | - | - | - | - | - |
 | `ext.op.hush` | - | - | - | - | `@` | - | - | - | - | - |
@@ -1760,10 +1795,16 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.throw` | - | - | - | - | `throw` | - | - | - | - | - |
 | `ext.stmt.try` | - | - | - | - | `try` | - | - | - | - | - |
 | `ext.stmt.unpack` | - | - | - | - | `list` | - | - | - | - | - |
+| `ext.syntax.array.spread` | - | - | `*` | - | - | - | - | - | - | - |
 | `ext.syntax.call.bare` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.syntax.collection.unwalkable` | - | - | `TypeError: value is not iterable` | - | - | - | - | - | - | - |
+| `ext.syntax.map.spread` | - | - | `**` | - | - | - | - | - | - | - |
+| `ext.syntax.map.spread.unmapped` | - | - | `TypeError: value is not a mapping` | - | - | - | - | - | - | - |
+| `ext.syntax.set` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.system.args.count` | - | - | - | - | `$argc` | - | - | - | - | - |
 | `ext.system.args.list` | - | - | - | - | `$argv` | - | - | - | - | - |
 | `ext.system.class.folded` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.system.collection.literal` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.system.complaint.deprecated` | - | - | - | - | `Deprecated` | - | - | - | - | - |
 | `ext.system.complaint.fatal` | - | - | - | - | `Fatal error` | - | - | - | - | - |
 | `ext.system.complaint.markup.kind` | - | - | - | - | `<br />` `<b>` `</b>:  ` | - | - | - | - | - |

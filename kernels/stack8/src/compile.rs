@@ -116,6 +116,7 @@ pub struct Compiler<'a> {
     registry: &'a mut Registry,
     pieces: Vec<Piece>,
     counter: usize,
+    comprehension_names: Vec<(String, String)>,
     /// The class being read, and what it stands on: what `self` and
     /// `parent` mean inside a method.
     within: Option<(String, Option<String>)>,
@@ -260,7 +261,7 @@ pub fn compile_within(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new() };
+    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new() };
     if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;
@@ -524,6 +525,8 @@ impl<'a> Compiler<'a> {
     }
 
     fn cell_to_read(&mut self, name: &str, moving: bool) -> Cell {
+        let renamed = self.comprehension_names.iter().rev().find(|(n, _)| n == name).map(|(_, own)| own.clone());
+        let name = renamed.as_deref().unwrap_or(name);
         if let Some(cell) = self.global_cell(name) {
             return Cell { moving, ..cell };
         }
@@ -542,6 +545,8 @@ impl<'a> Compiler<'a> {
     /// a name outside every block is global; inside a block it is the
     /// block's own, forgotten on leaving.
     fn cell_to_write(&mut self, name: &str) -> Cell {
+        let renamed = self.comprehension_names.iter().rev().find(|(n, _)| n == name).map(|(_, own)| own.clone());
+        let name = renamed.as_deref().unwrap_or(name);
         if let Some(cell) = self.global_cell(name) {
             return cell;
         }
@@ -3896,8 +3901,12 @@ impl<'a> Compiler<'a> {
                 if let Some(group) = lang.grouping.clone() {
                     if tok.lexeme == group.open {
                         self.take();
-                        self.expr(0)?;
-                        self.want_sign(&group.close, "to close a group")?;
+                        if let Some(clause) = self.comprehension_ahead() {
+                            self.comprehension(&group, clause, false)?;
+                        } else {
+                            self.expr(0)?;
+                            self.want_sign(&group.close, "to close a group")?;
+                        }
                         self.called_on_value()?;
                         return self.indexing(from);
                     }
@@ -3905,16 +3914,24 @@ impl<'a> Compiler<'a> {
                 if let Some(array) = lang.array_brackets.clone() {
                     if tok.lexeme == array.open {
                         self.take();
-                        let count = self.elements(&array)?;
+                        if !lang.comprehension_for.is_empty() || !lang.array_spread.is_empty() {
+                            self.extended_literal(&array, false)?;
+                        } else {
+                            let count = self.elements(&array)?;
                         self.act(Action::MakeArray, count);
+                        }
                         return self.indexing(from);
                     }
                 }
                 if let Some(map) = lang.map_brackets.clone() {
                     if tok.lexeme == map.open {
                         self.take();
-                        let count = self.elements(&map)?;
+                        if !lang.comprehension_for.is_empty() || !lang.map_spread.is_empty() || lang.set_literals {
+                            self.extended_literal(&map, true)?;
+                        } else {
+                            let count = self.elements(&map)?;
                         self.act(Action::MakeMap, count);
+                        }
                         return self.indexing(from);
                     }
                 }
@@ -4692,6 +4709,161 @@ impl<'a> Compiler<'a> {
 
     /// The elements of a literal: expressions as `arguments` reads them,
     /// except that `k => v` makes one tied value of the two.
+    /// Look beyond the first expression, keeping nested brackets whole.
+    fn comprehension_ahead(&self) -> Option<usize> {
+        if self.lang.comprehension_for.is_empty() { return None; }
+        let mut depth = 0usize;
+        for (at, tok) in self.tokens.iter().enumerate().skip(self.pos) {
+            if !matches!(tok.shape, Shape::Instr | Shape::Sign) { continue; }
+            let word = &tok.lexeme;
+            if depth == 0 && Lang::spells(&self.lang.comprehension_for, word) { return Some(at); }
+            let opens = [&self.lang.grouping, &self.lang.array_brackets, &self.lang.map_brackets];
+            if opens.iter().flatten().any(|b| b.open == *word) { depth += 1; }
+            else if opens.iter().flatten().any(|b| b.close == *word) {
+                if depth == 0 { return None; }
+                depth -= 1;
+            } else if depth == 0 && self.lang.calling.as_ref().and_then(|b| b.between.as_ref()) == Some(word) {
+                return None;
+            }
+        }
+        None
+    }
+
+    fn literal_is_map(&self, pair: &Brackets) -> bool {
+        if self.at_symbol(&pair.close) || self.on_any(&self.lang.map_spread) { return true; }
+        let mut depth = 0usize;
+        for tok in self.tokens.iter().skip(self.pos) {
+            if !matches!(tok.shape, Shape::Instr | Shape::Sign) { continue; }
+            if depth == 0 && self.lang.pair_mark.as_ref() == Some(&tok.lexeme) { return true; }
+            let brackets = [&self.lang.grouping, &self.lang.array_brackets, &self.lang.map_brackets];
+            if brackets.iter().flatten().any(|b| b.open == tok.lexeme) { depth += 1; }
+            else if brackets.iter().flatten().any(|b| b.close == tok.lexeme) {
+                if depth == 0 { break; }
+                depth -= 1;
+            } else if depth == 0 && (pair.between.as_ref() == Some(&tok.lexeme) || Lang::spells(&self.lang.comprehension_for, &tok.lexeme)) { break; }
+        }
+        false
+    }
+
+    /// Each part is worked out before the literal is enlarged by it.
+    fn extended_literal(&mut self, pair: &Brackets, braces: bool) -> Res<()> {
+        let map = braces && (!self.lang.set_literals || self.literal_is_map(pair));
+        if let Some(clause) = self.comprehension_ahead() {
+            return self.comprehension(pair, clause, map);
+        }
+        self.act(if map { Action::MakeMap } else { Action::MakeArray }, 0);
+        while !self.at_symbol(&pair.close) {
+            let spread = if map { self.on_any(&self.lang.map_spread) } else { self.on_any(&self.lang.array_spread) };
+            if spread { self.take(); }
+            self.expr(0)?;
+            if map && !spread {
+                let mark = self.lang.pair_mark.clone().expect("map pair mark");
+                self.want_sign(&mark, "between a map key and value")?;
+                self.expr(0)?;
+                self.act(Action::Tie, 2);
+            }
+            self.act(Action::GatherItem { map, spread }, 2);
+            if self.at_symbol(&pair.close) { break; }
+            if let Some(sep) = &pair.between { self.want_sign(sep, "between literal items")?; }
+            else { return Err("Expected a literal separator".to_string()); }
+        }
+        self.want_sign(&pair.close, "after a literal")
+    }
+
+    fn comprehension(&mut self, pair: &Brackets, clause: usize, map: bool) -> Res<()> {
+        let head = self.pos;
+        let bindings = self.comprehension_names.len();
+        let result = self.gensym("comprehension");
+        self.act(if map { Action::MakeMap } else { Action::MakeArray }, 0);
+        self.write(&result);
+        self.pos = clause;
+        self.comprehension_clause(head, &result, map)?;
+        self.comprehension_names.truncate(bindings);
+        self.want_sign(&pair.close, "after a comprehension")?;
+        self.read(&result);
+        Ok(())
+    }
+
+    /// The head is read last, once all its names have their own cells.
+    fn comprehension_clause(&mut self, head: usize, result: &str, map: bool) -> Res<()> {
+        if self.on_any(&self.lang.comprehension_for) {
+            self.take();
+            let group = self.lang.grouping.clone();
+            let grouped = group.as_ref().map_or(false, |g| self.at_symbol(&g.open));
+            if grouped { self.take(); }
+            let mut names = vec![self.want_name("in a comprehension target")?];
+            let separator = self.lang.calling.as_ref().and_then(|c| c.between.clone());
+            let mut unpack = false;
+            while separator.as_ref().map_or(false, |s| self.at_symbol(s)) {
+                self.take();
+                unpack = true;
+                if self.on_any(&self.lang.comprehension_in) || group.as_ref().map_or(false, |g| self.at_symbol(&g.close)) { break; }
+                names.push(self.want_name("in a comprehension target")?);
+            }
+            if grouped { self.want_sign(&group.expect("target group").close, "after comprehension names")?; }
+            if !self.on_any(&self.lang.comprehension_in) { return Err("Expected the comprehension's collection word".to_string()); }
+            self.take();
+            self.expr(0)?;
+            self.act(Action::ComprehensionItems, 1);
+            let bag = self.gensym("comprehension_source");
+            self.write(&bag);
+            let at = self.gensym("comprehension_place");
+            self.constant(Value::Small(0));
+            self.write(&at);
+            let test = self.mark();
+            self.read(&at);
+            self.read(&bag);
+            self.act(Action::Extent, 1);
+            self.act(Action::Lt, 2);
+            let done = self.skip();
+            self.read(&bag);
+            self.read(&at);
+            self.act(Action::At, 2);
+            let item = self.gensym("comprehension_item");
+            if unpack { self.act(Action::UnpackCount(names.len()), 1); }
+            self.write(&item);
+            for (i, name) in names.into_iter().enumerate() {
+                let own = self.gensym("comprehension_name");
+                self.read(&item);
+                if unpack {
+                    self.constant(Value::Small(i as i64));
+                    self.act(Action::At, 2);
+                }
+                self.write(&own);
+                self.comprehension_names.push((name, own));
+            }
+            self.comprehension_clause(head, result, map)?;
+            self.read(&at);
+            self.constant(Value::Small(1));
+            self.act(Action::Add, 2);
+            self.write(&at);
+            self.constant(Value::Flag(false));
+            self.put(Instr::Skip(test));
+            self.land(done);
+        } else if self.on_any(&self.lang.comprehension_if) {
+            self.take();
+            self.expr(0)?;
+            let rejected = self.skip();
+            self.comprehension_clause(head, result, map)?;
+            self.land(rejected);
+        } else {
+            let tail = self.pos;
+            self.pos = head;
+            self.read(result);
+            self.expr(0)?;
+            if map {
+                let mark = self.lang.pair_mark.clone().expect("map pair mark");
+                self.want_sign(&mark, "between a comprehension key and value")?;
+                self.expr(0)?;
+                self.act(Action::Tie, 2);
+            }
+            self.act(Action::GatherItem { map, spread: false }, 2);
+            self.write(result);
+            self.pos = tail;
+        }
+        Ok(())
+    }
+
     fn elements(&mut self, pair: &Brackets) -> Res<usize> {
         let mark = self.lang.pair_mark.clone();
         let mut count = 0;
@@ -4765,6 +4937,10 @@ impl<'a> Compiler<'a> {
     /// Expressions up to the closing bracket, consumed; a tag before an
     /// argument is dropped. Returns how many.
     fn arguments(&mut self, pair: &Brackets) -> Res<usize> {
+        if let Some(clause) = self.comprehension_ahead() {
+            self.comprehension(pair, clause, false)?;
+            return Ok(1);
+        }
         let mut count = 0;
         while !self.at_symbol(&pair.close) {
             if self.exhausted() {

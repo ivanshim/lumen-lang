@@ -36,6 +36,9 @@ pub enum Callee {
 /// forms for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prim {
+    Total,
+    Listed,
+    SomeTrue,
     /// A step onward or back (`++`, `--`): adding or taking away one,
     /// save where a language walks text along its letters instead.
     Onward(bool),
@@ -341,6 +344,10 @@ pub enum Prim {
     /// place to write, so it is turned down as a write to one is.
     Toward,
     MakeArray,
+    /// The growing literal and the next part of it.
+    ExtendLiteral(bool, bool),
+    Iterated,
+    CheckUnpack(usize),
     // control
     Seq,
     Choose,

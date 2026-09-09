@@ -2146,6 +2146,37 @@ impl<'a> Engine<'a> {
                     }
                 };
             }
+            Action::ComprehensionItems => {
+                let source = self.drop_top()?;
+                Value::array(self.comprehension_items(&source)?)
+            }
+            Action::UnpackCount(wanted) => {
+                let source = self.drop_top()?;
+                let parts = self.comprehension_items(&source)?;
+                if parts.len() != *wanted {
+                    return Err(self.lang.comprehension_unpack_amiss.first().cloned().unwrap_or_else(|| "Wrong number of parts in a comprehension target".to_string()).into());
+                }
+                Value::array(parts)
+            }
+            Action::GatherItem { map, spread } => {
+                let mut both = self.drop_many(2)?.into_iter();
+                let gathered_so_far = both.next().expect("growing literal");
+                let next = both.next().expect("literal item");
+                if *map {
+                    let mut pairs = match gathered_so_far { Value::Map(p) => p.as_ref().clone(), _ => unreachable!() };
+                    let new_pairs = match (spread, next) {
+                        (true, Value::Map(p)) => p.as_ref().clone(),
+                        (false, Value::Tie(p)) => vec![(p.0.clone(), p.1.clone())],
+                        _ => return Err(self.lang.spread_unmapped.first().cloned().unwrap_or_else(|| "Value has no map pairs".to_string()).into()),
+                    };
+                    for (key, value) in new_pairs { put_key(&mut pairs, key, value); }
+                    Value::Map(Rc::new(pairs))
+                } else {
+                    let mut items = match gathered_so_far { Value::Array(a) => a.as_ref().clone(), _ => unreachable!() };
+                    if *spread { items.extend(self.comprehension_items(&next)?); } else { items.push(next); }
+                    Value::array(items)
+                }
+            }
             Action::MakeArray => gathered(self.drop_many(argc)?, false, self.lang.plain_keys),
             Action::MakeMap => gathered(self.drop_many(argc)?, true, self.lang.plain_keys),
             Action::Tie => {
@@ -3441,7 +3472,46 @@ impl<'a> Engine<'a> {
 
     /// print and write: the values joined by spaces, or a template holding
     /// the definition's placeholders filled from the rest.
+    /// The collections this reader can walk without asking a protocol.
+    fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {
+        match value {
+            Value::Array(items) => Ok(items.as_ref().clone()),
+            Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
+            Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
+            Value::Bond(cell) => self.comprehension_items(&cell.borrow()),
+            _ => Err(self.lang.collection_unwalkable.first().cloned().unwrap_or_else(|| "Value has no members to gather".to_string())),
+        }
+    }
+
+    fn literal_shown(&self, value: &Value, inside: bool) -> String {
+        match value {
+            Value::Array(items) => format!("[{}]", items.iter().map(|v| self.literal_shown(v, true)).collect::<Vec<_>>().join(", ")),
+            Value::Map(pairs) => format!("{{{}}}", pairs.iter().map(|(k, v)| format!("{}: {}", self.literal_shown(k, true), self.literal_shown(v, true))).collect::<Vec<_>>().join(", ")),
+            Value::Text(text) if inside => {
+                let quote = if text.contains('\'') && !text.contains('"') { '"' } else { '\'' };
+                let mut out = String::new();
+                out.push(quote);
+                for c in text.chars() {
+                    match c {
+                        '\n' => out.push_str("\\n"), '\r' => out.push_str("\\r"), '\t' => out.push_str("\\t"),
+                        '\\' => out.push_str("\\\\"),
+                        c if c == quote => { out.push('\\'); out.push(c); }
+                        c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
+                        c => out.push(c),
+                    }
+                }
+                out.push(quote);
+                out
+            }
+            Value::Bond(cell) => self.literal_shown(&cell.borrow(), inside),
+            _ => value.display(&self.wording()),
+        }
+    }
+
     fn render(&self, values: &[Value]) -> String {
+        if self.lang.collection_literal {
+            return values.iter().map(|v| self.literal_shown(v, false)).collect::<Vec<_>>().join(" ");
+        }
         let sp = self.wording();
         let holes = &self.lang.holes;
         let hole_in = |s: &str| holes.iter().filter_map(|h| s.find(h.as_str()).map(|at| (at, h.len()))).min();
@@ -3983,6 +4053,37 @@ impl<'a> Engine<'a> {
                     self.utter(&format!("{}\n", dumped(v, 0, self.lang.real_bits.is_some(), &self.wording())));
                 }
                 Value::Null
+            }
+            Builtin::List => {
+                if args.is_empty() { return Ok(Value::array(Vec::new())); }
+                arity(1)?;
+                Value::array(self.comprehension_items(&args[0])?)
+            }
+            Builtin::Any => {
+                arity(1)?;
+                Value::Flag(self.comprehension_items(&args[0])?.iter().any(|v| self.truth(v)))
+            }
+            Builtin::Sum => {
+                if args.is_empty() || args.len() > 2 { return Err(format!("{}() expects one or two arguments", name)); }
+                let mut total = args.get(1).cloned().unwrap_or(Value::Small(0));
+                for item in self.comprehension_items(&args[0])? {
+                    total = arith::calculate(Operation::Plus, &total, &item).ok_or_else(|| "TypeError: sum needs numbers".to_string())??;
+                }
+                total
+            }
+            Builtin::Span if self.lang.range_value => {
+                if args.is_empty() || args.len() > 3 { return Err(format!("{}() expects one to three arguments", name)); }
+                let bounds = args.iter().map(|v| match v {
+                    Value::Small(n) => Ok(BigInt::from(*n)), Value::Huge(n) => Ok(n.as_ref().clone()),
+                    _ => Err("TypeError: range needs whole-number bounds".to_string()),
+                }).collect::<Res<Vec<_>>>()?;
+                let (mut at, end) = if bounds.len() == 1 { (BigInt::from(0), bounds[0].clone()) } else { (bounds[0].clone(), bounds[1].clone()) };
+                let step = bounds.get(2).cloned().unwrap_or_else(|| BigInt::from(1));
+                if step == BigInt::from(0) { return Err("ValueError: range step must not be zero".to_string()); }
+                let forward = step > BigInt::from(0);
+                let mut items = Vec::new();
+                while if forward { at < end } else { at > end } { items.push(Value::of_big(at.clone())); at += &step; }
+                Value::array(items)
             }
             Builtin::Span => return Err(format!("{}() spells a range, which belongs in a for loop", name)),
             Builtin::MakeReal => {

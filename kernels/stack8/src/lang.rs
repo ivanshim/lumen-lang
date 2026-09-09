@@ -492,6 +492,18 @@ pub struct Lang {
     pub append_index: bool,
     /// `for v in a` walks what a holds when a is not a range.
     pub for_collections: bool,
+    pub comprehension_for: Vec<String>,
+    pub comprehension_in: Vec<String>,
+    pub comprehension_if: Vec<String>,
+    pub set_literals: bool,
+    pub array_spread: Vec<String>,
+    pub map_spread: Vec<String>,
+    pub collection_unwalkable: Vec<String>,
+    pub spread_unmapped: Vec<String>,
+    pub comprehension_unpack_amiss: Vec<String>,
+    pub collection_literal: bool,
+    pub range_value: bool,
+
 
     /// Classes and their objects.
     pub class_words: Vec<String>,
@@ -643,6 +655,8 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+w ext.op.comprehension.for | w ext.op.comprehension.in | w ext.op.comprehension.if | b ext.syntax.set | w ext.syntax.array.spread | w ext.syntax.map.spread | w ext.syntax.collection.unwalkable | w ext.syntax.map.spread.unmapped | w ext.op.comprehension.unpack.amiss | b ext.system.collection.literal | b ext.builtin.range.value | w ext.builtin.sum | w ext.builtin.list | w ext.builtin.any
+
 w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
@@ -1113,6 +1127,7 @@ impl Lang {
 
         let mut natives = HashMap::new();
         for (tag, native) in [
+            ("ext.builtin.sum", Builtin::Sum), ("ext.builtin.list", Builtin::List), ("ext.builtin.any", Builtin::Any),
             ("builtin.emit", Builtin::Echo), ("builtin.print", Builtin::Say), ("builtin.write", Builtin::Out),
             ("builtin.len", Builtin::Length), ("builtin.char_at", Builtin::CharAtIndex), ("builtin.ord", Builtin::CodeOf),
             ("builtin.chr", Builtin::CharOf), ("builtin.typeof", Builtin::SortOf), ("builtin.error", Builtin::Raise),
@@ -1453,6 +1468,18 @@ impl Lang {
             template: r.flag("ext.lexical.template")?,
             append_index: r.flag("ext.op.index.append")?,
             for_collections: r.flag("ext.stmt.for.collection")?,
+            comprehension_for: r.strings("ext.op.comprehension.for")?,
+            comprehension_in: r.strings("ext.op.comprehension.in")?,
+            comprehension_if: r.strings("ext.op.comprehension.if")?,
+            set_literals: r.flag("ext.syntax.set")?,
+            array_spread: r.strings("ext.syntax.array.spread")?,
+            map_spread: r.strings("ext.syntax.map.spread")?,
+            collection_unwalkable: r.strings("ext.syntax.collection.unwalkable")?,
+            spread_unmapped: r.strings("ext.syntax.map.spread.unmapped")?,
+            comprehension_unpack_amiss: r.strings("ext.op.comprehension.unpack.amiss")?,
+            collection_literal: r.flag("ext.system.collection.literal")?,
+            range_value: r.flag("ext.builtin.range.value")?,
+
             class_words: r.strings("ext.stmt.class")?,
             extends_words: r.strings("ext.stmt.class.extends")?,
             new_words: r.strings("ext.stmt.class.new")?,
@@ -1607,6 +1634,7 @@ impl Lang {
             }
         }
         let mut lists: Vec<&Vec<String>> = vec![
+            &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread,
             &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.return_marks,
             &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open,
             &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words,

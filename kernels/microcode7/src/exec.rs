@@ -2983,6 +2983,32 @@ impl<'a> Machine<'a> {
                 };
                 return self.prim(plain, name, v);
             }
+            Prim::Iterated => Value::Vector(Rc::new(self.gathered_members(&v[0])?)),
+            Prim::CheckUnpack(count) => {
+                let values = self.gathered_members(&v[0])?;
+                if values.len() != count {
+                    return Err(self.table.single("ext.op.comprehension.unpack.amiss").unwrap_or("Comprehension target and item have different lengths").into());
+                }
+                Value::Vector(Rc::new(values))
+            }
+            Prim::ExtendLiteral(dictionary, expanded) => {
+                if !dictionary {
+                    let Value::Vector(prior) = &v[0] else { unreachable!() };
+                    let mut next = prior.to_vec();
+                    next.extend(if expanded { self.gathered_members(&v[1])? } else { vec![v[1].clone()] });
+                    Value::Vector(Rc::new(next))
+                } else {
+                    let Value::Dict(prior) = &v[0] else { unreachable!() };
+                    let incoming = match &v[1] {
+                        Value::Couple(pair) if !expanded => vec![pair.as_ref().clone()],
+                        Value::Dict(entries) if expanded => entries.to_vec(),
+                        _ => return Err(self.table.single("ext.syntax.map.spread.unmapped").unwrap_or("A map spread needs a map").into()),
+                    };
+                    let mut combined = prior.to_vec();
+                    for entry in incoming { set_key(&mut combined, entry.0, entry.1); }
+                    Value::Dict(Rc::new(combined))
+                }
+            }
             Prim::MakeArray => assembled(v.to_vec(), false, self.plain_keys),
             Prim::MakeMap => assembled(v.to_vec(), true, self.plain_keys),
             Prim::Couple => {
@@ -4142,6 +4168,45 @@ impl<'a> Machine<'a> {
                 }
                 Value::Nil
             }
+            Prim::Listed => {
+                match v.len() {
+                    0 => Value::Vector(Rc::new(Vec::new())),
+                    1 => Value::Vector(Rc::new(self.gathered_members(&v[0])?)),
+                    _ => return Err(format!("{}() expects 1 argument, got {}", name, v.len())),
+                }
+            }
+            Prim::SomeTrue => {
+                n(1)?;
+                let members = self.gathered_members(&v[0])?;
+                Value::Flag(members.iter().any(|item| self.stands_true(item)))
+            }
+            Prim::Total => {
+                if !(1..=2).contains(&v.len()) { return Err(format!("{}() expects one or two arguments", name)); }
+                let members = self.gathered_members(&v[0])?;
+                let start = v.get(1).cloned().unwrap_or(Value::Small(0));
+                members.into_iter().try_fold(start, |prior, item| {
+                    math::compute(Calc::Plus, &prior, &item).unwrap_or_else(|| Err("TypeError: sum needs numbers".into()))
+                })?
+            }
+            Prim::Span if self.table.flag("ext.builtin.range.value") => {
+                if !(1..=3).contains(&v.len()) { return Err(format!("{}() expects one to three arguments", name)); }
+                let integer = |x: &Value| match x {
+                    Value::Small(k) => Ok(BigInt::from(*k)),
+                    Value::Huge(k) => Ok(k.as_ref().clone()),
+                    _ => Err("TypeError: range needs whole-number bounds".to_string()),
+                };
+                let stop = integer(&v[if v.len() == 1 { 0 } else { 1 }])?;
+                let mut now = if v.len() == 1 { BigInt::from(0) } else { integer(&v[0])? };
+                let stride = match v.get(2) { Some(x) => integer(x)?, None => BigInt::from(1) };
+                let direction = stride.cmp(&BigInt::from(0));
+                if direction == std::cmp::Ordering::Equal { return Err("ValueError: range step must not be zero".into()); }
+                let mut values = Vec::new();
+                while now.cmp(&stop) == direction.reverse() {
+                    values.push(Value::from_big(now.clone()));
+                    now += &stride;
+                }
+                Value::Vector(Rc::new(values))
+            }
             Prim::Span => return Err(format!("{}() spells a range, which belongs in a for loop", name)),
             Prim::MakeReal => {
                 if v.is_empty() || v.len() > 2 {
@@ -4469,7 +4534,53 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn gathered_members(&self, source: &Value) -> Result<Vec<Value>, String> {
+        Ok(match source {
+            Value::Text(word) => word.chars().map(|letter| Value::text(&String::from(letter))).collect(),
+            Value::Vector(values) => values.to_vec(),
+            Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
+            Value::Shared(held) => return self.gathered_members(&held.borrow()),
+            _ => return Err(self.table.single("ext.syntax.collection.unwalkable").unwrap_or("Cannot gather members from this value").to_string()),
+        })
+    }
+
+    /// Text within a collection keeps its quotes; text outside speaks
+    /// plainly. Maps use the marks by which they were written.
+    fn collection_text(&self, held: &Value, quoted: bool) -> String {
+        let joined = |parts: Vec<String>| parts.join(", ");
+        match held {
+            Value::Dict(entries) => {
+                let parts = entries.iter().map(|(key, item)| {
+                    [self.collection_text(key, true), self.collection_text(item, true)].join(": ")
+                }).collect();
+                format!("{{{}}}", joined(parts))
+            }
+            Value::Vector(values) => {
+                format!("[{}]", joined(values.iter().map(|item| self.collection_text(item, true)).collect()))
+            }
+            Value::Shared(cell) => self.collection_text(&cell.borrow(), quoted),
+            Value::Text(s) if quoted => {
+                let mark = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
+                let mut text = mark.to_string();
+                for letter in s.chars() {
+                    if letter == mark || letter == '\\' { text.push('\\'); text.push(letter); }
+                    else if letter == '\n' { text.push_str("\\n"); }
+                    else if letter == '\t' { text.push_str("\\t"); }
+                    else if letter == '\r' { text.push_str("\\r"); }
+                    else if letter.is_control() { text.push_str(&format!("\\x{:02x}", letter as u32)); }
+                    else { text.push(letter); }
+                }
+                text.push(mark);
+                text
+            }
+            _ => held.render(self.wording()),
+        }
+    }
+
     fn show(&self, v: &[Value]) -> String {
+        if self.table.flag("ext.system.collection.literal") {
+            return v.iter().map(|item| self.collection_text(item, false)).collect::<Vec<_>>().join(" ");
+        }
         let w = self.wording();
         let holes = self.table.strings("builtin.print.placeholder");
         let find = |s: &str| holes.iter().filter_map(|h| s.find(h.as_str()).map(|p| (p, h.len()))).min();
