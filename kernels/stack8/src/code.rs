@@ -92,6 +92,10 @@ pub enum Action {
     And,
     Or,
     Join,
+    /// A field rendered with its specification and conversion.
+    StringRender,
+    /// Text whose reading succeeded but whose value cannot be held.
+    StringFault,
     At,
     /// The three bounds of a span, kept until its array is known.
     Slice,

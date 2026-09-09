@@ -2943,6 +2943,20 @@ impl<'a> Engine<'a> {
                 self.data.pop();
                 Value::array(items)
             }
+            Action::StringFault => {
+                let message = self.drop_top()?.plain();
+                return Err(message.into());
+            }
+            Action::StringRender => {
+                let conversion = self.drop_top()?.plain();
+                let specification = self.drop_top()?.plain();
+                let value = self.drop_top()?;
+                let scalar = matches!(value.sort(), Some(Sort::Integer | Sort::Text | Sort::Boolean | Sort::Null));
+                if !scalar || !specification.is_empty() || !matches!(conversion.as_str(), "" | "s") {
+                    return Err(self.lang.string_unready.clone().unwrap_or_default().into());
+                }
+                Value::text(&value.display(&self.wording()))
+            }
             Action::Builtin(builtin, name) => {
                 if self.data.len() < argc {
                     return Err("Stack underflow".to_string().into());

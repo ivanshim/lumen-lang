@@ -82,6 +82,10 @@ pub enum Prim {
     AsDecimal,
     /// The value made text.
     AsChars,
+    /// The value, specification and conversion of a field in text.
+    RenderField,
+    /// Stop upon reaching a character the run cannot represent.
+    UnheldText,
     /// The value made a flag.
     AsTruth,
     /// The value made an array; anything that is not one becomes an

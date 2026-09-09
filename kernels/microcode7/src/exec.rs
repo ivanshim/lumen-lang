@@ -4148,6 +4148,15 @@ impl<'a> Machine<'a> {
             // with, and anything that is not an array becomes an array
             // holding only itself.
             Prim::AsChars => Value::text(&v[0].render(w)),
+            Prim::UnheldText => return Err(v[0].bare()),
+            Prim::RenderField => {
+                let plain = matches!(v[0].kind(), Some(Kind::Whole | Kind::Chars | Kind::Truth | Kind::Nothing))
+                    && v[1].bare().is_empty() && ["", "s"].contains(&v[2].bare().as_str());
+                if !plain {
+                    return Err(self.table.single("ext.lexical.string.unready").unwrap_or_default().to_owned());
+                }
+                Value::text(&v[0].render(w))
+            }
             Prim::AsTruth => Value::Flag(self.stands_true(&v[0])),
             Prim::AsNothing => Value::Nil,
             Prim::AsVector => match v[0].clone() {

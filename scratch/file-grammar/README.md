@@ -59,3 +59,17 @@ It prints `read`. `13.py` reaches a tuple and says
 The existing `ext.op.tuple` list spells `,`; its `.unready` list holds
 those words. This is the small read needed by the grammar file; the
 tuple piece remains responsible for tuple values and taking them apart.
+
+The string piece supplies the scanning and field reading used here.
+Its byte-as-text and unsupported-format fallbacks are not brought in:
+`ext.lexical.string.unready` is a list spelling
+`NotImplementedError: this string form is not supported`.
+`14.py` prints a three-line quoted string. `15.py` prints raw text,
+adjacent strings, and numbered characters. `16.py` prints a plain
+formatted field, then reads richer fields in an uncalled function and
+prints `read`. `17.py` refuses byte text; `18.py` refuses a format
+specification. `19.py` refuses a named Unicode escape through
+`ext.lexical.escape.unavailable`. These labels and their counts and
+spellings are described beside the string paragraphs in the language
+definitions. The coordinator should keep the string piece's reading
+and these honest limits wherever fuller running remains wanting.
