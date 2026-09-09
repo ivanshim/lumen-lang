@@ -657,7 +657,8 @@ only. The extension labels so far, all from PHP:
   written in a base of its own, alongside the core
   `lexical.number.hex_prefix`. Each is a digit and one letter (`0b`,
   `0o`), and a language may list more than one spelling of the letter so
-  that `0B` and `0O` are read too.
+  that `0B` and `0O` are read too. Python's byte masks use this
+  eightfold writing: `0o377` has its lowest eight bits set.
 - `ext.lexical.number.octal_lead`: a switch; a nought before more digits
   means those digits are read in base eight, as in the languages that
   grew from C.
@@ -1826,7 +1827,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.number.binary_prefix` | - | - | - | - | `0b` `0B` | - | - | - | - | - |
 | `ext.lexical.number.exponent` | - | - | - | - | `e` `E` | - | - | - | - | - |
 | `ext.lexical.number.octal_lead` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.lexical.number.octal_prefix` | - | - | - | - | `0o` `0O` | - | - | - | - | - |
+| `ext.lexical.number.octal_prefix` | - | - | `0o` `0O` | - | `0o` `0O` | - | - | - | - | - |
 | `ext.lexical.number.separator` | - | - | - | - | `_` | - | - | - | - | - |
 | `ext.lexical.prologue.brief` | - | - | - | - | `<?` | - | - | - | - | - |
 | `ext.lexical.prologue.brief.setting` | - | - | - | - | `short_open_tag` | - | - | - | - | - |

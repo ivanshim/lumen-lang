@@ -336,6 +336,7 @@
   "ext.lexical.escape.octal": true,
   "ext.lexical.escape.unavailable": ["Unicode escape cannot be represented"],
   "ext.lexical.line_continuation": ["\\"],
+  "ext.lexical.number.octal_prefix": ["0o", "0O"],
   "ext.lexical.string.adjacent": true,
   "ext.lexical.string.amiss": ["invalid string literal"],
   "ext.lexical.string.bytes.unavailable": ["bytes literals are not supported"],
