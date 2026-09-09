@@ -5921,7 +5921,7 @@ impl<'a> Compiler<'a> {
         if let Some(clause) = self.comprehension_ahead() {
             return self.comprehension(pair, clause, map);
         }
-        self.act(if map { Action::MakeMap } else { Action::MakeArray }, 0);
+        self.act(if map { Action::MakeMap } else if self.lang.set_literals && self.lang.map_brackets.iter().any(|p| p.close == pair.close) { Action::MakeSet } else { Action::MakeArray }, 0);
         while !self.at_symbol(&pair.close) {
             let spread = if map { self.on_any(&self.lang.map_spread) } else { self.on_any(&self.lang.array_spread) };
             if spread { self.take(); }
@@ -5944,7 +5944,7 @@ impl<'a> Compiler<'a> {
         let head = self.pos;
         let bindings = self.comprehension_names.len();
         let result = self.gensym("comprehension");
-        self.act(if map { Action::MakeMap } else { Action::MakeArray }, 0);
+        self.act(if map { Action::MakeMap } else if self.lang.set_literals && self.lang.map_brackets.iter().any(|p| p.close == pair.close) { Action::MakeSet } else { Action::MakeArray }, 0);
         self.write(&result);
         self.pos = clause;
         self.comprehension_clause(head, &result, map)?;

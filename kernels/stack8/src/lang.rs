@@ -590,6 +590,7 @@ pub struct Lang {
     pub comprehension_in: Vec<String>,
     pub comprehension_if: Vec<String>,
     pub set_literals: bool,
+    pub set_words: HashMap<String, Vec<String>>,
     pub array_spread: Vec<String>,
     pub map_spread: Vec<String>,
     pub collection_unwalkable: Vec<String>,
@@ -780,7 +781,7 @@ w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
 w ext.op.comprehension.async | w ext.op.comprehension.async.unavailable | w ext.op.comprehension.target.unavailable | w ext.builtin.sum.non_number | w ext.builtin.range.non_integer | w ext.builtin.range.zero_step
 
-w ext.op.comprehension.for | w ext.op.comprehension.in | w ext.op.comprehension.if | b ext.syntax.set | w ext.syntax.array.spread | w ext.syntax.map.spread | w ext.syntax.collection.unwalkable | w ext.syntax.map.spread.unmapped | w ext.op.comprehension.unpack.amiss | b ext.builtin.range.value | w ext.builtin.sum | w ext.builtin.list | w ext.builtin.any
+w ext.op.comprehension.for | w ext.op.comprehension.in | w ext.op.comprehension.if | b ext.syntax.set | w ext.builtin.set | w ext.builtin.set.add | w ext.builtin.set.remove | w ext.builtin.set.discard | w ext.builtin.set.pop | w ext.builtin.set.clear | w ext.builtin.set.copy | w ext.builtin.set.update | w ext.builtin.set.union | w ext.builtin.set.intersection | w ext.builtin.set.difference | w ext.builtin.set.symmetric_difference | w ext.builtin.set.issubset | w ext.builtin.set.issuperset | w ext.builtin.set.isdisjoint | w ext.builtin.set.intersection_update | w ext.builtin.set.difference_update | w ext.builtin.set.symmetric_difference_update | w ext.builtin.set.sorted | w ext.builtin.set.unhashable | w ext.builtin.set.missing | w ext.builtin.set.empty | w ext.builtin.set.operands | w ext.builtin.set.arguments | w ext.builtin.set.unsupported | w ext.builtin.set.unsortable | w ext.syntax.array.spread | w ext.syntax.map.spread | w ext.syntax.collection.unwalkable | w ext.syntax.map.spread.unmapped | w ext.op.comprehension.unpack.amiss | b ext.builtin.range.value | w ext.builtin.sum | w ext.builtin.list | w ext.builtin.any
 
 w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
@@ -1257,6 +1258,7 @@ impl Lang {
 
         let mut natives = HashMap::new();
         for (tag, native) in [
+            ("ext.builtin.set", Builtin::SetMake), ("ext.builtin.set.add", Builtin::SetAdd), ("ext.builtin.set.remove", Builtin::SetRemove), ("ext.builtin.set.discard", Builtin::SetDiscard), ("ext.builtin.set.pop", Builtin::SetPop), ("ext.builtin.set.clear", Builtin::SetClear), ("ext.builtin.set.copy", Builtin::SetCopy), ("ext.builtin.set.update", Builtin::SetUpdate), ("ext.builtin.set.union", Builtin::SetUnion), ("ext.builtin.set.intersection", Builtin::SetIntersection), ("ext.builtin.set.difference", Builtin::SetDifference), ("ext.builtin.set.symmetric_difference", Builtin::SetSymmetric), ("ext.builtin.set.issubset", Builtin::SetSubset), ("ext.builtin.set.issuperset", Builtin::SetSuperset), ("ext.builtin.set.isdisjoint", Builtin::SetDisjoint), ("ext.builtin.set.intersection_update", Builtin::SetMeetUpdate), ("ext.builtin.set.difference_update", Builtin::SetLessUpdate), ("ext.builtin.set.symmetric_difference_update", Builtin::SetXorUpdate), ("ext.builtin.set.sorted", Builtin::SetSorted),
             ("ext.builtin.sum", Builtin::Sum), ("ext.builtin.list", Builtin::List), ("ext.builtin.any", Builtin::Any),
             ("builtin.emit", Builtin::Echo), ("builtin.print", Builtin::Say), ("builtin.write", Builtin::Out),
             ("builtin.len", Builtin::Length), ("builtin.char_at", Builtin::CharAtIndex), ("builtin.ord", Builtin::CodeOf),
@@ -1673,6 +1675,7 @@ impl Lang {
             comprehension_in: r.strings("ext.op.comprehension.in")?,
             comprehension_if: r.strings("ext.op.comprehension.if")?,
             set_literals: r.flag("ext.syntax.set")?,
+            set_words: ["ext.builtin.set","ext.builtin.set.add","ext.builtin.set.remove","ext.builtin.set.discard","ext.builtin.set.pop","ext.builtin.set.clear","ext.builtin.set.copy","ext.builtin.set.update","ext.builtin.set.union","ext.builtin.set.intersection","ext.builtin.set.difference","ext.builtin.set.symmetric_difference","ext.builtin.set.issubset","ext.builtin.set.issuperset","ext.builtin.set.isdisjoint","ext.builtin.set.intersection_update","ext.builtin.set.difference_update","ext.builtin.set.symmetric_difference_update","ext.builtin.set.sorted","ext.builtin.set.unhashable","ext.builtin.set.missing","ext.builtin.set.empty","ext.builtin.set.operands","ext.builtin.set.arguments","ext.builtin.set.unsupported","ext.builtin.set.unsortable"].into_iter().map(|label| Ok((label.to_string(), r.strings(label)?))).collect::<Result<_, String>>()?,
             array_spread: r.strings("ext.syntax.array.spread")?,
             map_spread: r.strings("ext.syntax.map.spread")?,
             collection_unwalkable: r.strings("ext.syntax.collection.unwalkable")?,

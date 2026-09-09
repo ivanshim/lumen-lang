@@ -2227,6 +2227,7 @@ impl<'a> Engine<'a> {
                 let v = self.drop_top()?;
                 let sp = self.wording();
                 match kind {
+                    Sort::Set => Value::Set(Rc::new(RefCell::new(self.set_from(self.comprehension_items(&v)?)?))),
                     Sort::Text => Value::text(&v.display(&sp)),
                     Sort::Boolean => Value::Flag(self.truth(&v)),
                     Sort::Null => Value::Null,
@@ -2373,7 +2374,11 @@ impl<'a> Engine<'a> {
                 let mut both = self.drop_many(2)?.into_iter();
                 let gathered_so_far = both.next().expect("growing literal");
                 let next = both.next().expect("literal item");
-                if *map {
+                if let Value::Set(cell) = gathered_so_far {
+                    let incoming = if *spread { self.comprehension_items(&next)? } else { vec![next] };
+                    for item in incoming { cell.borrow_mut().insert(self.set_key(&item)?, item); }
+                    Value::Set(cell)
+                } else if *map {
                     let mut pairs = match gathered_so_far { Value::Map(p) => p.as_ref().clone(), _ => unreachable!() };
                     let new_pairs = match (spread, next) {
                         (true, Value::Map(p)) => p.as_ref().clone(),
@@ -2388,6 +2393,7 @@ impl<'a> Engine<'a> {
                     Value::array(items)
                 }
             }
+            Action::MakeSet => Value::Set(Rc::new(RefCell::new(self.set_from(Vec::new())?))),
             Action::MakeArray => gathered(self.drop_many(argc)?, false, self.lang.plain_keys),
             Action::MakeMap => gathered(self.drop_many(argc)?, true, self.lang.plain_keys),
             Action::Tie => {
@@ -2401,6 +2407,7 @@ impl<'a> Engine<'a> {
                 let at = as_index(&pair[1])?;
                 let key = matches!(op, Action::KeyAt);
                 match &pair[0] {
+                    Value::Set(s) => s.borrow().items().get(at).cloned().ok_or_else(|| self.set_said(".missing", &at.to_string()))?,
                     Value::Counted(r) => if key { Value::Small(at as i64) } else {
                         r.at(BigInt::from(at)).ok_or_else(|| self.lang.range_index[0].clone())?
                     },
@@ -3175,6 +3182,21 @@ impl<'a> Engine<'a> {
             let held = shared.borrow().clone();
             return self.dyadic(op, a, &held);
         }
+        if matches!(a, Value::Set(_)) || matches!(b, Value::Set(_)) {
+            let how = match op { Action::BitEither => Some(0), Action::BitBoth => Some(1), Action::Sub => Some(2), Action::BitOne => Some(3), _ => None };
+            if how.is_some() || matches!(op, Action::Lt | Action::Le | Action::Gt | Action::Ge) {
+                let (Value::Set(left), Value::Set(right)) = (a, b) else { return Err(self.set_said(".operands", "")); };
+                let (left, right) = (left.borrow(), right.borrow());
+                if let Some(how) = how { return Ok(Value::Set(Rc::new(RefCell::new(left.combine(&right, how))))); }
+                let answer = match op {
+                    Action::Le => left.beneath(&right),
+                    Action::Lt => left.held.len() < right.held.len() && left.beneath(&right),
+                    Action::Ge => right.beneath(&left),
+                    _ => right.held.len() < left.held.len() && right.beneath(&left),
+                };
+                return Ok(Value::Flag(answer));
+            }
+        }
         let sp = self.wording();
         let joined = || Value::text(&format!("{}{}", a.display(&sp), b.display(&sp)));
         Ok(match op {
@@ -3248,6 +3270,7 @@ impl<'a> Engine<'a> {
             Action::Ne => Value::Flag(!a.equals(b)),
             Action::Contains | Action::Lacks => {
                 let found = match b {
+                    Value::Set(s) => s.borrow().held.contains_key(&self.set_key(a)?),
                     Value::Array(items) => items.iter().any(|v| a.equals(v)),
                     Value::Map(items) => items.iter().any(|(key, _)| a.equals(key)),
                     Value::Text(haystack) => match a {
@@ -3961,9 +3984,97 @@ impl<'a> Engine<'a> {
 
     // ---------- builtins ----------
 
+    fn set_said(&self, label: &str, piece: &str) -> String {
+        let words = &self.lang.set_words[&format!("ext.builtin.set{}", label)];
+        format!("{}{}{}", words.first().map_or("", String::as_str), piece, words.get(1).map_or("", String::as_str))
+    }
+
+    fn set_key(&self, value: &Value) -> Res<String> {
+        value.member_key().map_err(|kind| self.set_said(if kind.is_empty() { ".unsupported" } else { ".unhashable" }, kind))
+    }
+
+    fn set_from(&self, items: Vec<Value>) -> Res<crate::value::Members> {
+        let mut set = crate::value::Members::empty(self.lang.set_words["ext.builtin.set"].first().cloned().unwrap_or_default());
+        for item in items { set.insert(self.set_key(&item)?, item); }
+        Ok(set)
+    }
+
+    fn set_builtin(&self, op: Builtin, args: &[Value]) -> Res<Value> {
+        use Builtin::*;
+        if op == SetMake {
+            if args.len() > 1 { return Err(self.set_said(".arguments", "")); }
+            let items = if args.is_empty() { Vec::new() } else { self.comprehension_items(&args[0])? };
+            return Ok(Value::Set(Rc::new(RefCell::new(self.set_from(items)?))));
+        }
+        if op == SetSorted {
+            if args.len() != 1 { return Err(self.set_said(".arguments", "")); }
+            let mut items = self.comprehension_items(&args[0])?;
+            for next in 1..items.len() {
+                let mut at = next;
+                while at > 0 {
+                    let order = match (&items[at], &items[at - 1]) {
+                        (Value::Text(a), Value::Text(b)) => a.cmp(b),
+                        (a, b) => arith::order_values(a, b).ok_or_else(|| self.set_said(".unsortable", ""))?,
+                    };
+                    if order != std::cmp::Ordering::Less { break; }
+                    items.swap(at, at - 1);
+                    at -= 1;
+                }
+            }
+            return Ok(Value::array(items));
+        }
+        let Some(Value::Set(cell)) = args.first() else { return Err(self.set_said(".operands", "")); };
+        let unary = matches!(op, SetPop | SetClear | SetCopy);
+        let many = matches!(op, SetUpdate | SetUnion | SetIntersection | SetDifference | SetMeetUpdate | SetLessUpdate);
+        if (unary && args.len() != 1) || (!unary && !many && args.len() != 2) {
+            return Err(self.set_said(".arguments", ""));
+        }
+        if matches!(op, SetAdd | SetRemove | SetDiscard) {
+            let key = self.set_key(&args[1])?;
+            if op == SetAdd { cell.borrow_mut().insert(key, args[1].clone()); }
+            else if cell.borrow_mut().remove(&key).is_none() && op == SetRemove {
+                return Err(self.set_said(".missing", &args[1].string_field(&self.wording(), "", "r")));
+            }
+            return Ok(Value::Null);
+        }
+        if op == SetPop {
+            let key = cell.borrow().row.first().cloned().ok_or_else(|| self.set_said(".empty", ""))?;
+            return Ok(cell.borrow_mut().remove(&key).unwrap());
+        }
+        if op == SetClear {
+            let mut set = cell.borrow_mut();
+            set.row.clear();
+            set.held.clear();
+            return Ok(Value::Null);
+        }
+        let mut result = cell.borrow().clone();
+        for other in &args[1..] {
+            let rhs = self.set_from(self.comprehension_items(other)?)?;
+            let comparison = match op {
+                SetSubset => Some(result.beneath(&rhs)),
+                SetSuperset => Some(rhs.beneath(&result)),
+                SetDisjoint => Some(result.held.keys().all(|k| !rhs.held.contains_key(k))),
+                _ => None,
+            };
+            if let Some(answer) = comparison { return Ok(Value::Flag(answer)); }
+            let how = match op {
+                SetIntersection | SetMeetUpdate => 1,
+                SetDifference | SetLessUpdate => 2,
+                SetSymmetric | SetXorUpdate => 3,
+                _ => 0,
+            };
+            result = result.combine(&rhs, how);
+        }
+        if matches!(op, SetUpdate | SetMeetUpdate | SetLessUpdate | SetXorUpdate) {
+            *cell.borrow_mut() = result;
+            Ok(Value::Null)
+        } else { Ok(Value::Set(Rc::new(RefCell::new(result)))) }
+    }
+
     /// The collections this reader can walk without asking a protocol.
     fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {
         match value {
+            Value::Set(s) => Ok(s.borrow().items()),
             Value::Array(items) => Ok(items.as_ref().clone()),
             Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
             Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
@@ -4110,6 +4221,7 @@ impl<'a> Engine<'a> {
             Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
         };
         Ok(match builtin {
+            Builtin::SetMake | Builtin::SetAdd | Builtin::SetRemove | Builtin::SetDiscard | Builtin::SetPop | Builtin::SetClear | Builtin::SetCopy | Builtin::SetUpdate | Builtin::SetUnion | Builtin::SetIntersection | Builtin::SetDifference | Builtin::SetSymmetric | Builtin::SetSubset | Builtin::SetSuperset | Builtin::SetDisjoint | Builtin::SetMeetUpdate | Builtin::SetLessUpdate | Builtin::SetXorUpdate | Builtin::SetSorted => self.set_builtin(builtin, args)?,
             Builtin::Echo => {
                 arity(1)?;
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
@@ -4706,6 +4818,7 @@ impl<'a> Engine<'a> {
                 arity(1)?;
                 match &args[0] {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
+                    Value::Set(s) => Value::Small(s.borrow().held.len() as i64),
                     Value::Array(items) => Value::Small(items.len() as i64),
                     Value::Map(pairs) => Value::Small(pairs.len() as i64),
                     Value::Counted(r) => Value::of_big(r.length()),

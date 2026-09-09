@@ -681,11 +681,43 @@ only. The extension labels so far, all from PHP:
   are provided.
   `ext.op.comprehension.unpack.amiss` says that an item has the wrong
   number of parts for its target.
-- `ext.syntax.set`: a switch; a brace literal without pairs is read as
-  an array, keeping order and repeated items. An empty brace literal
-  remains a map. Line ends within these braces are space. This stage
-  does not provide a distinct set value. These arrays and maps keep
-  the kernel's accustomed printed form: `[1, hello]` and `[a => 1]`.
+- `ext.syntax.set`: a switch; braces without pairs gather a set, each
+  member held once and found by its hash. An empty brace literal remains
+  a map. Set comprehensions gather the same value. Sets are written in
+  braces, in the order their members first came, and an empty set as the
+  first word of `ext.builtin.set` followed by empty parentheses.
+- `ext.builtin.set`: gather an iterable into a fresh set, or make an empty
+  one when given nothing. A second spelling may name an immutable set;
+  at present it yields the same mutable value. `ext.builtin.set.add`,
+  `ext.builtin.set.remove` and `ext.builtin.set.discard` put in or take
+  out one member; only remove complains when the member is absent.
+  `ext.builtin.set.pop` takes and answers one member, `ext.builtin.set.clear`
+  empties the set, and `ext.builtin.set.copy` gives an independent copy.
+  `ext.builtin.set.update` takes the members of each iterable given.
+- `ext.builtin.set.union`, `ext.builtin.set.intersection`,
+  `ext.builtin.set.difference` and `ext.builtin.set.symmetric_difference`
+  gather all members, shared members, those on the first side alone,
+  or those on either side alone. Their operator forms use the existing
+  bit-or, bit-and, subtraction and bit-xor labels and require two sets.
+  `ext.builtin.set.intersection_update`, `ext.builtin.set.difference_update`
+  and `ext.builtin.set.symmetric_difference_update` write the answer into
+  the first set, as do compound operators. Other names for that set see
+  the writing. The methods accept iterables; union, intersection and
+  difference may be given more than one.
+- `ext.builtin.set.issubset`, `ext.builtin.set.issuperset` and
+  `ext.builtin.set.isdisjoint` ask whether all members lie on the other
+  side, all of that side lie here, or none are shared. Ordered comparisons
+  between sets ask containment, strict where the comparison is strict.
+  Equality disregards order. `ext.builtin.set.sorted` gathers an iterable
+  into an array ordered by its members, stopping if they cannot be ordered.
+- `ext.builtin.set.unhashable` surrounds the name of an unhashable kind;
+  `ext.builtin.set.missing` surrounds the representation of an absent
+  member. `ext.builtin.set.empty`, `ext.builtin.set.operands`,
+  `ext.builtin.set.arguments`, `ext.builtin.set.unsupported` and
+  `ext.builtin.set.unsortable` give the plain complaints for an empty pop,
+  operands that are not sets, an ill-shaped call, a hash not yet provided,
+  and members with no ordering. Lists, maps and sets have no member hash;
+  the class hashing protocol is not yet provided.
 - `ext.syntax.array.spread` and `ext.syntax.map.spread`: a mark before
   a literal item takes all its members; the former takes array items,
   letters of text or map keys, the latter takes map pairs, later keys
@@ -1908,7 +1940,7 @@ Operator precedence, lowest tier first. Unary operators sit in their own tier.
 
 - **lumen**: `|>` < `or` < `and` < `==` `!=` `<` `>` `<=` `>=` < `..` < `+` `-` < `*` `/` `%` `//` `.` < `**` < `-` `not` `!`
 - **rplumen**: 
-- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` `is` `in` < `|` < `+` `-` < `*` `/` `//` `%` < `-` < `**` < `.`
+- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` `is` `in` < `|` < `^` < `&` < `+` `-` < `*` `/` `//` `%` < `-` < `**` < `.`
 - **rust**: `..` < `||` < `&&` < `==` `!=` `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `-` `!` < `.`
 - **php (extra)**: `or` < `and` < `||` < `&&` < `|` < `^` < `&` < `==` `!=` `<>` `===` `!==` < `<` `>` `<=` `>=` `<=>` < `.` < `<<` `>>` < `+` `-` < `*` `/` `%` < `!` `~` `@` < `-` < `**`
 - **c (extra)**: `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `!` `-`
@@ -1989,6 +2021,32 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.routines` | - | - | - | - | `__routines_bound` | - | - | - | - | - |
 | `ext.builtin.run.begin` | - | - | - | - | `__run_begin` | - | - | - | - | - |
 | `ext.builtin.run.end` | - | - | - | - | `__run_end` | - | - | - | - | - |
+| `ext.builtin.set` | - | - | `set` `frozenset` | - | - | - | - | - | - | - |
+| `ext.builtin.set.add` | - | - | `add` | - | - | - | - | - | - | - |
+| `ext.builtin.set.arguments` | - | - | `TypeError: invalid arguments to set operation` | - | - | - | - | - | - | - |
+| `ext.builtin.set.clear` | - | - | `clear` | - | - | - | - | - | - | - |
+| `ext.builtin.set.copy` | - | - | `copy` | - | - | - | - | - | - | - |
+| `ext.builtin.set.difference` | - | - | `difference` | - | - | - | - | - | - | - |
+| `ext.builtin.set.difference_update` | - | - | `difference_update` | - | - | - | - | - | - | - |
+| `ext.builtin.set.discard` | - | - | `discard` | - | - | - | - | - | - | - |
+| `ext.builtin.set.empty` | - | - | `KeyError: 'pop from an empty set'` | - | - | - | - | - | - | - |
+| `ext.builtin.set.intersection` | - | - | `intersection` | - | - | - | - | - | - | - |
+| `ext.builtin.set.intersection_update` | - | - | `intersection_update` | - | - | - | - | - | - | - |
+| `ext.builtin.set.isdisjoint` | - | - | `isdisjoint` | - | - | - | - | - | - | - |
+| `ext.builtin.set.issubset` | - | - | `issubset` | - | - | - | - | - | - | - |
+| `ext.builtin.set.issuperset` | - | - | `issuperset` | - | - | - | - | - | - | - |
+| `ext.builtin.set.missing` | - | - | `KeyError: ` `` | - | - | - | - | - | - | - |
+| `ext.builtin.set.operands` | - | - | `TypeError: set operands must be sets` | - | - | - | - | - | - | - |
+| `ext.builtin.set.pop` | - | - | `pop` | - | - | - | - | - | - | - |
+| `ext.builtin.set.remove` | - | - | `remove` | - | - | - | - | - | - | - |
+| `ext.builtin.set.sorted` | - | - | `sorted` | - | - | - | - | - | - | - |
+| `ext.builtin.set.symmetric_difference` | - | - | `symmetric_difference` | - | - | - | - | - | - | - |
+| `ext.builtin.set.symmetric_difference_update` | - | - | `symmetric_difference_update` | - | - | - | - | - | - | - |
+| `ext.builtin.set.unhashable` | - | - | `TypeError: unhashable type: '` `'` | - | - | - | - | - | - | - |
+| `ext.builtin.set.union` | - | - | `union` | - | - | - | - | - | - | - |
+| `ext.builtin.set.unsortable` | - | - | `TypeError: set members cannot be ordered` | - | - | - | - | - | - | - |
+| `ext.builtin.set.unsupported` | - | - | `NotImplementedError: hashing this value is not provided` | - | - | - | - | - | - | - |
+| `ext.builtin.set.update` | - | - | `update` | - | - | - | - | - | - | - |
 | `ext.builtin.shell` | - | - | - | - | `shell_exec` | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
@@ -2052,13 +2110,13 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.assign.expression` | - | - | `:=` | - | - | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.await` | - | - | `await` | - | - | - | - | - | - | - |
-| `ext.op.bit.and` | - | - | - | - | `&` | - | - | - | - | - |
+| `ext.op.bit.and` | - | - | `&` | - | `&` | - | - | - | - | - |
 | `ext.op.bit.left` | - | - | - | - | `<<` | - | - | - | - | - |
 | `ext.op.bit.not` | - | - | - | - | `~` | - | - | - | - | - |
 | `ext.op.bit.or` | - | - | `\|` | - | `\|` | - | - | - | - | - |
 | `ext.op.bit.right` | - | - | - | - | `>>` | - | - | - | - | - |
 | `ext.op.bit.shift.numbers` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.op.bit.xor` | - | - | - | - | `^` | - | - | - | - | - |
+| `ext.op.bit.xor` | - | - | `^` | - | `^` | - | - | - | - | - |
 | `ext.op.cast` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.compare` | - | - | - | - | `<=>` | - | - | - | - | - |
 | `ext.op.compare.chained` | - | - | `true` | - | - | - | - | - | - | - |

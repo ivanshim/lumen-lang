@@ -20,6 +20,7 @@ pub enum Sort {
     Text,
     Boolean,
     Array,
+    Set,
     Null,
 }
 
@@ -32,6 +33,7 @@ impl Sort {
             Sort::Text => "STRING",
             Sort::Boolean => "BOOLEAN",
             Sort::Array => "ARRAY",
+            Sort::Set => "SET",
             Sort::Null => "NULL",
         }
     }
@@ -126,6 +128,7 @@ pub enum Value {
     Null,
     Ellipsis,
     Array(Rc<Vec<Value>>),
+    Set(Rc<RefCell<Members>>),
     /// Bounds of an index span; nothing stands for an omitted bound.
     Slice(Rc<[Value; 3]>),
     /// Keys and their values, in the order they were put there.
@@ -146,6 +149,62 @@ pub enum Value {
     Gap,
     /// The bottom of an array literal being gathered.
     Fence,
+}
+
+/// The hash finds a member; the row remembers when it first came.
+#[derive(Debug, Clone)]
+pub struct Members {
+    pub row: Vec<String>,
+    pub held: std::collections::HashMap<String, Value>,
+    pub word: String,
+}
+
+impl Members {
+    pub fn empty(word: String) -> Self {
+        Self { row: Vec::new(), held: std::collections::HashMap::new(), word }
+    }
+
+    pub fn insert(&mut self, key: String, value: Value) {
+        if !self.held.contains_key(&key) {
+            self.row.push(key.clone());
+            self.held.insert(key, value);
+        }
+    }
+
+    pub fn remove(&mut self, key: &str) -> Option<Value> {
+        let found = self.held.remove(key);
+        if found.is_some() { self.row.retain(|k| k != key); }
+        found
+    }
+
+    pub fn items(&self) -> Vec<Value> {
+        self.row.iter().map(|k| self.held[k].clone()).collect()
+    }
+
+    pub fn beneath(&self, other: &Self) -> bool {
+        self.held.keys().all(|k| other.held.contains_key(k))
+    }
+
+    pub fn combine(&self, other: &Self, how: u8) -> Self {
+        let mut result = Self::empty(self.word.clone());
+        for key in &self.row {
+            let shared = other.held.contains_key(key);
+            if how == 0 || (how == 1 && shared) || (how >= 2 && !shared) {
+                result.insert(key.clone(), self.held[key].clone());
+            }
+        }
+        if how == 0 || how == 3 {
+            for key in &other.row {
+                if !self.held.contains_key(key) { result.insert(key.clone(), other.held[key].clone()); }
+            }
+        }
+        result
+    }
+
+    pub fn show(&self, shown: impl Fn(&Value) -> String) -> String {
+        if self.row.is_empty() { return format!("{}()", self.word); }
+        format!("{{{}}}", self.row.iter().map(|k| shown(&self.held[k])).collect::<Vec<_>>().join(", "))
+    }
 }
 
 /// How a language spells the literal values when printing.
@@ -176,6 +235,25 @@ impl Value {
         Value::Text(Rc::from(s))
     }
 
+    pub fn member_key(&self) -> Result<String, &'static str> {
+        if let Some((p, q)) = crate::arith::parts(self) {
+            if q.is_zero() { return Err(""); }
+            let common = p.gcd(&q);
+            return Ok(format!("n{}/{}", p / &common, q / common));
+        }
+        match self {
+            Value::Flag(b) => Ok(format!("n{}/1", u8::from(*b))),
+            Value::Text(s) => Ok(format!("s{}", s)),
+            Value::Null => Ok("nil".into()),
+            Value::Ellipsis => Ok("dots".into()),
+            Value::Array(_) => Err("list"),
+            Value::Map(_) => Err("dict"),
+            Value::Set(_) => Err("set"),
+            Value::Bond(cell) => cell.borrow().member_key(),
+            _ => Err(""),
+        }
+    }
+
     pub fn of_big(n: BigInt) -> Value {
         match n.to_i64() {
             Some(i) => Value::Small(i),
@@ -195,6 +273,7 @@ impl Value {
             Value::Text(_) => Sort::Text,
             Value::Flag(_) => Sort::Boolean,
             Value::Array(_) | Value::Map(_) => Sort::Array,
+            Value::Set(_) => Sort::Set,
             Value::Bond(shared) => return shared.borrow().sort(),
             Value::Class(_) | Value::Object(_) => return None,
             Value::Null | Value::SortOf(_) => Sort::Null,
@@ -223,6 +302,7 @@ impl Value {
 
     pub fn is_true(&self) -> bool {
         match self {
+            Value::Set(s) => !s.borrow().held.is_empty(),
             Value::Stream(_) => true,
             Value::Counted(r) => !r.length().is_zero(),
             Value::Flag(b) => *b,
@@ -257,7 +337,7 @@ impl Value {
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
             Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
-            Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
+            Value::Set(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
@@ -271,6 +351,10 @@ impl Value {
             return order == std::cmp::Ordering::Equal;
         }
         match (self, other) {
+            (Value::Set(a), Value::Set(b)) => {
+                let (a, b) = (a.borrow(), b.borrow());
+                a.held.len() == b.held.len() && a.beneath(&b)
+            }
             (Value::Stream(a), Value::Stream(b)) => a == b,
             (Value::Counted(a), Value::Counted(b)) => {
                 let length = a.length();
@@ -333,6 +417,7 @@ impl Value {
             // A cell two names share is written as what it holds: the
             // sharing is between the names and not in the value.
             Value::Bond(shared) => shared.borrow().display(sp),
+            Value::Set(s) => s.borrow().show(|v| v.string_field(sp, "", "r")),
             Value::Flag(true) => match sp.flag_counts {
                 true => "1".to_string(),
                 false => sp.true_word.to_string(),
@@ -410,6 +495,7 @@ impl Value {
     /// The machine's own text for a value.
     pub fn plain(&self) -> String {
         match self {
+            Value::Set(s) => s.borrow().show(Value::plain),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
                 else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },

@@ -112,6 +112,7 @@ pub enum Action {
     Execute,
     /// The arguments as an array.
     MakeArray,
+    MakeSet,
     /// A literal grows by one item, or by all the items of a spread.
     GatherItem { map: bool, spread: bool },
     /// The values walked by a comprehension, with maps handing out keys.
@@ -315,6 +316,26 @@ pub enum Action {
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    SetMake,
+    SetAdd,
+    SetRemove,
+    SetDiscard,
+    SetPop,
+    SetClear,
+    SetCopy,
+    SetUpdate,
+    SetUnion,
+    SetIntersection,
+    SetDifference,
+    SetSymmetric,
+    SetSubset,
+    SetSuperset,
+    SetDisjoint,
+    SetMeetUpdate,
+    SetLessUpdate,
+    SetXorUpdate,
+    SetSorted,
+
     Sum,
     List,
     Any,

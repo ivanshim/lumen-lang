@@ -5389,7 +5389,7 @@ impl<'a> Builder<'a> {
         if let Some(next) = self.ahead_in_item("ext.op.comprehension.for") {
             return self.gather_comprehension(next, &closing, mapped);
         }
-        let mut value = prim_call(if mapped { Prim::MakeMap } else { Prim::MakeArray }, vec![]);
+        let mut value = prim_call(if mapped { Prim::MakeMap } else if family == "map" { Prim::EmptySet } else { Prim::MakeArray }, vec![]);
         while !self.sign(&closing) {
             let spreading = self.on_any(if mapped { "ext.syntax.map.spread" } else { "ext.syntax.array.spread" });
             if spreading { self.advance(); }
@@ -5412,7 +5412,7 @@ impl<'a> Builder<'a> {
         self.pos = first_for;
         let old_names = self.gather_names.len();
         let name = self.gather_name("gathered");
-        let empty = prim_call(if dictionary { Prim::MakeMap } else { Prim::MakeArray }, Vec::new());
+        let empty = prim_call(if dictionary { Prim::MakeMap } else if self.table.flag("ext.syntax.set") && self.table.spells("syntax.map.close", end) { Prim::EmptySet } else { Prim::MakeArray }, Vec::new());
         let start = self.write(&name, empty);
         let work = self.gather_tail(expression_at, &name, dictionary)?;
         self.gather_names.truncate(old_names);

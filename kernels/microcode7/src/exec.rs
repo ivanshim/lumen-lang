@@ -3395,7 +3395,26 @@ impl<'a> Machine<'a> {
         let n = |k: usize| -> Result<(), String> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
         };
+        if v.len() == 2 && v.iter().any(|item| matches!(item, Value::Set(_))) {
+            let rule = match op { Prim::BitsEither => Some(0), Prim::BitsBoth => Some(1), Prim::Sub => Some(2), Prim::BitsOne => Some(3), _ => None };
+            if rule.is_some() || matches!(op, Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
+                let (Value::Set(x), Value::Set(y)) = (&v[0], &v[1]) else { return Err(self.set_complaint("operands", "")); };
+                let x = x.borrow();
+                let y = y.borrow();
+                return Ok(match rule {
+                    Some(rule) => Value::Set(Rc::new(RefCell::new(x.merge(&y, rule)))),
+                    None => Value::Flag(match op {
+                        Prim::Lt => x.keys.len() < y.keys.len() && x.keys.is_subset(&y.keys),
+                        Prim::Le => x.keys.is_subset(&y.keys),
+                        Prim::Gt => x.keys.len() > y.keys.len() && x.keys.is_superset(&y.keys),
+                        _ => x.keys.is_superset(&y.keys),
+                    }),
+                });
+            }
+        }
         Ok(match op {
+            Prim::SetCall(which) => self.work_set(which, v)?,
+            Prim::EmptySet => Value::Set(Rc::new(RefCell::new(self.gather_set(None)?))),
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
             // A step onward or back adds or takes away one, save on text
@@ -3433,7 +3452,11 @@ impl<'a> Machine<'a> {
                 Value::Vector(Rc::new(values))
             }
             Prim::ExtendLiteral(dictionary, expanded) => {
-                if !dictionary {
+                if let Value::Set(kept) = &v[0] {
+                    let additions = if expanded { self.gathered_members(&v[1])? } else { vec![v[1].clone()] };
+                    for addition in additions { kept.borrow_mut().put(self.hash_for_set(&addition)?, addition); }
+                    v[0].clone()
+                } else if !dictionary {
                     let Value::Vector(prior) = &v[0] else { unreachable!() };
                     let mut next = prior.to_vec();
                     next.extend(if expanded { self.gathered_members(&v[1])? } else { vec![v[1].clone()] });
@@ -3465,6 +3488,7 @@ impl<'a> Machine<'a> {
                         if wants_key { Value::Small(at as i64) }
                         else { walk.item(&BigInt::from(at)).ok_or_else(|| self.argument_fault("ext.builtin.range.index", None))? }
                     }
+                    Value::Set(members) => members.borrow().values().get(at).cloned().ok_or_else(|| self.set_complaint("missing", &at.to_string()))?,
                     Value::Vector(items) => match items.get(at) {
                         Some(_) if wants_key => Value::Small(at as i64),
                         Some(x) => x.clone(),
@@ -4386,6 +4410,7 @@ impl<'a> Machine<'a> {
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
             Prim::Contains | Prim::Absent => {
                 let present = match (&v[0], &v[1]) {
+                    (item, Value::Set(hay)) => hay.borrow().keys.contains(&self.hash_for_set(item)?),
                     (needle, Value::Vector(hay)) => hay.iter().any(|item| needle.equals(item)),
                     (key, Value::Dict(entries)) => entries.iter().any(|(k, _)| key.equals(k)),
                     (Value::Text(part), Value::Text(text)) => text.contains(part.as_ref()),
@@ -4741,6 +4766,7 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 match &v[0] {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
+                    Value::Set(members) => Value::Small(members.borrow().keys.len() as i64),
                     Value::Vector(l) => Value::Small(l.len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
                     Value::Progression(p) => Value::from_big(p.count()),
@@ -5135,9 +5161,109 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn set_complaint(&self, suffix: &str, insert: &str) -> String {
+        let label = format!("ext.builtin.set.{suffix}");
+        let parts = self.table.strings(&label);
+        let mut words = parts.first().cloned().unwrap_or_default();
+        words.push_str(insert);
+        if let Some(end) = parts.get(1) { words.push_str(end); }
+        words
+    }
+
+    fn hash_for_set(&self, item: &Value) -> Result<String, String> {
+        match item.hash_address() {
+            Ok(address) => Ok(address),
+            Err("") => Err(self.set_complaint("unsupported", "")),
+            Err(kind) => Err(self.set_complaint("unhashable", kind)),
+        }
+    }
+
+    fn gather_set(&self, source: Option<&Value>) -> Result<crate::data::SetStore, String> {
+        let mut gathered = crate::data::SetStore::new(self.table.single("ext.builtin.set").unwrap_or(""));
+        if let Some(source) = source {
+            for item in self.gathered_members(source)? { gathered.put(self.hash_for_set(&item)?, item); }
+        }
+        Ok(gathered)
+    }
+
+    fn work_set(&mut self, which: u8, values: &[Value]) -> Result<Value, String> {
+        let wrong = || self.set_complaint("arguments", "");
+        if which == 0 {
+            if values.len() > 1 { return Err(wrong()); }
+            return self.gather_set(values.first()).map(|items| Value::Set(Rc::new(RefCell::new(items))));
+        }
+        if which == 18 {
+            if values.len() != 1 { return Err(wrong()); }
+            let mut row = self.gathered_members(&values[0])?;
+            let mut fault = false;
+            row.sort_by(|a, b| {
+                if let (Value::Text(x), Value::Text(y)) = (a, b) { return x.cmp(y); }
+                match (math::ratio_of(a), math::ratio_of(b)) {
+                    (Some(x), Some(y)) if !x.past_numbers() && !y.past_numbers() => (x.above * y.beneath).cmp(&(y.above * x.beneath)),
+                    _ => { fault = true; std::cmp::Ordering::Equal }
+                }
+            });
+            if fault { return Err(self.set_complaint("unsortable", "")); }
+            return Ok(Value::Vector(Rc::new(row)));
+        }
+        let Some(Value::Set(target)) = values.first() else { return Err(self.set_complaint("operands", "")); };
+        match which {
+            4..=6 if values.len() != 1 => return Err(wrong()),
+            1..=3 | 11..=14 | 17 if values.len() != 2 => return Err(wrong()),
+            _ => (),
+        }
+        match which {
+            1..=3 => {
+                let address = self.hash_for_set(&values[1])?;
+                if which == 1 { target.borrow_mut().put(address, values[1].clone()); }
+                else {
+                    let taken = target.borrow_mut().take(&address);
+                    if taken.is_none() && which == 2 {
+                        let member = values[1].in_field(self.wording(), "", "r");
+                        return Err(self.set_complaint("missing", &member));
+                    }
+                }
+                Ok(Value::Nil)
+            }
+            4 => {
+                let first = target.borrow().entries.first().map(|(k, _)| k.clone());
+                match first {
+                    Some(address) => Ok(target.borrow_mut().take(&address).unwrap()),
+                    None => Err(self.set_complaint("empty", "")),
+                }
+            }
+            5 => {
+                let mut contents = target.borrow_mut();
+                contents.entries.clear();
+                contents.keys.clear();
+                Ok(Value::Nil)
+            }
+            _ => {
+                let mut answer = target.borrow().clone();
+                for source in values.iter().skip(1) {
+                    let operand = self.gather_set(Some(source))?;
+                    let truth = match which {
+                        12 => Some(answer.keys.is_subset(&operand.keys)),
+                        13 => Some(answer.keys.is_superset(&operand.keys)),
+                        14 => Some(answer.keys.is_disjoint(&operand.keys)),
+                        _ => None,
+                    };
+                    if let Some(truth) = truth { return Ok(Value::Flag(truth)); }
+                    let operation = match which { 9 | 15 => 1, 10 | 16 => 2, 11 | 17 => 3, _ => 0 };
+                    answer = answer.merge(&operand, operation);
+                }
+                if matches!(which, 7 | 15..=17) {
+                    *target.borrow_mut() = answer;
+                    Ok(Value::Nil)
+                } else { Ok(Value::Set(Rc::new(RefCell::new(answer)))) }
+            }
+        }
+    }
+
     fn gathered_members(&self, source: &Value) -> Result<Vec<Value>, String> {
         Ok(match source {
             Value::Text(word) => word.chars().map(|letter| Value::text(&String::from(letter))).collect(),
+            Value::Set(items) => items.borrow().values(),
             Value::Vector(values) => values.to_vec(),
             Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
             Value::Progression(walk) => {

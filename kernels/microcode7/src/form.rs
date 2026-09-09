@@ -36,6 +36,7 @@ pub enum Callee {
 /// forms for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prim {
+    SetCall(u8),
     /// Gather the parts naming a span within brackets.
     SliceBounds,
     /// A slice form kept readable while its running remains wanting.
@@ -354,6 +355,7 @@ pub enum Prim {
     /// place to write, so it is turned down as a write to one is.
     Toward,
     MakeArray,
+    EmptySet,
     /// The growing literal and the next part of it.
     ExtendLiteral(bool, bool),
     Iterated,
