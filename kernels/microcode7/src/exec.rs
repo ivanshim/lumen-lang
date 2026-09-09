@@ -1881,6 +1881,13 @@ impl<'a> Machine<'a> {
                 };
                 let mut inside = cell.borrow_mut();
                 let left = match &*inside {
+                    Value::Vector(items) if self.table.has_any("ext.stmt.del") => {
+                        let offset = (match &at { Value::Flag(b) => Some(if *b { 1 } else { 0 }), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None }).ok_or_else(|| self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string())?;
+                        let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
+                        if !(0..items.len() as i64).contains(&position) { return Err(self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string().into()); }
+                        let retained = items.iter().enumerate().filter(|(j, _)| *j != position as usize).map(|(_, v)| v.clone()).collect();
+                        Value::Vector(Rc::new(retained))
+                    }
                     Value::Vector(items) => {
                         let i = as_index(&at)?;
                         Value::Dict(Rc::new(
@@ -1892,7 +1899,13 @@ impl<'a> Machine<'a> {
                                 .collect(),
                         ))
                     }
-                    Value::Dict(pairs) => Value::Dict(Rc::new(pairs.iter().filter(|(k, _)| !k.equals(&at)).cloned().collect())),
+                    Value::Dict(pairs) => {
+                        let present = pairs.iter().any(|entry| entry.0.equals(&at));
+                        if self.table.has_any("ext.stmt.del") && !present {
+                            return Err(self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string().into());
+                        }
+                        Value::Dict(Rc::new(pairs.iter().filter(|(k, _)| !k.equals(&at)).cloned().collect()))
+                    },
                     held => return Err(format!("Cannot take a place out of {}", held.bare()).into()),
                 };
                 *inside = left;
@@ -2077,7 +2090,8 @@ impl<'a> Machine<'a> {
                     shared: RefCell::new(shared),
                 })))
             }
-            Form::Cycle { test, body, step, after } => {
+            Form::Cycle { test, body, step, after, otherwise } => {
+                let mut broken = false;
                 loop {
                     // A pass of a loop is a fair place to look at the
                     // clock as well as a statement is, since a loop whose
@@ -2100,7 +2114,7 @@ impl<'a> Machine<'a> {
                     }
                     match self.value_of(body, frame) {
                         Ok(_) | Err(Escape::Resume(1)) => {}
-                        Err(Escape::Leave(1)) => break,
+                        Err(Escape::Leave(1)) => { broken = true; break; },
                         Err(Escape::Leave(n)) => return Err(Escape::Leave(n - 1)),
                         Err(Escape::Resume(n)) => return Err(Escape::Resume(n - 1)),
                         Err(other) => return Err(other),
@@ -2114,6 +2128,9 @@ impl<'a> Machine<'a> {
                             break;
                         }
                     }
+                }
+                if !broken {
+                    if let Some(arm) = otherwise { self.value_of(arm, frame)?; }
                 }
                 Ok(Value::Nil)
             }
@@ -3446,9 +3463,11 @@ impl<'a> Machine<'a> {
                         // way counts places, and closing one up would
                         // draw every later member back a step beneath it.
                         let mut holds = thing.holds.borrow_mut();
-                        if let Some(at) = self.member_place(&holds, &called) {
-                            holds[at].1 = Value::Unset;
+                        let place = self.member_place(&holds, &called);
+                        if self.table.has_any("ext.stmt.del") && place.map_or(true, |at| matches!(holds[at].1, Value::Unset)) {
+                            return Err(self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string());
                         }
+                        if let Some(at) = place { holds[at].1 = Value::Unset; }
                         Value::Nil
                     }
                     other => return Err(format!("Cannot take property '{}' off {}", called, other.bare())),
@@ -4071,6 +4090,13 @@ impl<'a> Machine<'a> {
             Prim::Erase => {
                 n(2)?;
                 match &v[0] {
+                    Value::Vector(items) if self.table.has_any("ext.stmt.del") => {
+                        let offset = (match &v[1] { Value::Flag(b) => Some(if *b { 1 } else { 0 }), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None }).ok_or_else(|| self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string())?;
+                        let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
+                        if !(0..items.len() as i64).contains(&position) { return Err(self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string().into()); }
+                        let retained = items.iter().enumerate().filter(|(j, _)| *j != position as usize).map(|(_, v)| v.clone()).collect();
+                        Value::Vector(Rc::new(retained))
+                    }
                     Value::Vector(items) => {
                         let i = as_index(&v[1])?;
                         let kept: Vec<(Value, Value)> = items
@@ -4083,6 +4109,9 @@ impl<'a> Machine<'a> {
                     }
                     Value::Dict(entries) => {
                         let at = self.as_key(&v[1]);
+                        if self.table.has_any("ext.stmt.del") && entries.iter().all(|entry| !entry.0.equals(&at)) {
+                            return Err(self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string());
+                        }
                         let kept: Vec<(Value, Value)> = entries.iter().filter(|(k, _)| !k.equals(&at)).cloned().collect();
                         Value::Dict(Rc::new(kept))
                     }

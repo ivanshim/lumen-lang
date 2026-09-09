@@ -403,6 +403,9 @@
   "ext.op.assign.expression": [
     ":="
   ],
+  "ext.op.await": [
+    "await"
+  ],
   "ext.op.bit.or": [
     "|"
   ],
@@ -512,6 +515,12 @@
   "ext.stmt.assert.kind": [
     "AssertionError"
   ],
+  "ext.stmt.async": [
+    "async"
+  ],
+  "ext.stmt.binding.unrun": [
+    "This binding target cannot be run"
+  ],
   "ext.stmt.catch": [
     "except"
   ],
@@ -557,6 +566,9 @@
   "ext.stmt.del": [
     "del"
   ],
+  "ext.stmt.del.unrun": [
+    "This deletion cannot be run"
+  ],
   "ext.stmt.finally": [
     "finally"
   ],
@@ -594,6 +606,7 @@
   "ext.stmt.import.from": [
     "from"
   ],
+  "ext.stmt.loop.else": true,
   "ext.stmt.nonlocal": [
     "nonlocal"
   ],

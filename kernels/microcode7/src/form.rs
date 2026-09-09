@@ -380,7 +380,7 @@ pub enum Form {
     Apply(Callee, Vec<Form>),
     /// A loop as a form, run in the frame it appears in, instead
     /// of a program that calls itself. `after` tests after the body.
-    Cycle { test: Box<Form>, body: Box<Form>, step: Option<Box<Form>>, after: bool },
+    Cycle { test: Box<Form>, body: Box<Form>, step: Option<Box<Form>>, after: bool, otherwise: Option<Box<Form>> },
     /// An operation of two operands, evaluated without a vector
     /// of arguments.
     Dyad { op: Prim, name: Rc<str>, a: Input, b: Input },

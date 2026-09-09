@@ -309,6 +309,35 @@ only. The extension labels so far, all from PHP:
   makes x a name for a hidden global set when the function is defined,
   so the value lasts from call to call; `global a, b;` makes the names
   mean the globals.
+- `ext.stmt.with` and `ext.stmt.with.as`: work out each value, bind it
+  where an `as` target follows, then run the block. Several items may
+  be separated as call arguments are, with brackets about the whole.
+  In this stage no `__enter__` or `__exit__` method is called.
+- `ext.stmt.del`: takes names, indexed places and properties away, as
+  `ext.builtin.unset` does, with commas between targets and no call
+  brackets required. Lists close the gap left by a deleted place; maps
+  keep their keys. `ext.stmt.del.unrun` holds the words for a deletion
+  whose target cannot yet be taken away, including slices.
+  `ext.stmt.binding.unrun` holds the words for a binding target the
+  kernels cannot yet fill, including starred targets, or a value with
+  the wrong number of items to take apart.
+- `ext.stmt.nonlocal`: reads the names of bindings belonging to the
+  nearest enclosing function. The full kernels do not yet carry those
+  cells into inner functions; reaching this statement stops the run.
+  `ext.stmt.nonlocal.unrun` holds the plain words said then.
+- `ext.stmt.loop.else`: a switch; the `stmt.else` block after a for or
+  while loop runs when its test ends the loop, including an empty walk.
+  A break leaves that block behind; a continue does not.
+- `ext.stmt.async` and `ext.op.await`: the former is read before a
+  function, for loop or with block and dropped. The latter hands back
+  the value of its operand. Neither schedules nor suspends a run in
+  this stage; an await may stand outside a function too.
+- `ext.stmt.yield` and `ext.stmt.yield.from`: read a yield with no value,
+  with values, or with a source to yield from, wherever an expression
+  may stand. Defining such a function is allowed, but calling it stops
+  before its body runs, even when the yield lies in an untaken arm.
+  `ext.stmt.yield.unrun` holds the plain words said, since the kernels
+  cannot yet keep a generator's suspended run.
 - `ext.stmt.class.bases.open` and `ext.stmt.class.bases.close` enclose
   the expressions naming a class's bases. With these marks the body is
   read as an ordinary suite in a scope of its own, including functions
@@ -1961,6 +1990,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.expression` | - | - | `:=` | - | - | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.op.await` | - | - | `await` | - | - | - | - | - | - | - |
 | `ext.op.bit.and` | - | - | - | - | `&` | - | - | - | - | - |
 | `ext.op.bit.left` | - | - | - | - | `<<` | - | - | - | - | - |
 | `ext.op.bit.not` | - | - | - | - | `~` | - | - | - | - | - |
@@ -2044,6 +2074,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.annotation.target.unready` | - | - | `NotImplementedError: annotated attribute targets are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.assert` | - | - | `assert` | - | - | - | - | - | - | - |
 | `ext.stmt.assert.kind` | - | - | `AssertionError` | - | - | - | - | - | - | - |
+| `ext.stmt.async` | - | - | `async` | - | - | - | - | - | - | - |
+| `ext.stmt.binding.unrun` | - | - | `This binding target cannot be run` | - | - | - | - | - | - | - |
 | `ext.stmt.block.instead` | - | - | - | - | `:` | - | - | - | - | - |
 | `ext.stmt.block.instead.close` | - | - | - | - | `endif` `endwhile` `endfor` `endforeach` `endswitch` | - | - | - | - | - |
 | `ext.stmt.break.levels` | - | - | - | - | `true` | - | - | - | - | - |
@@ -2086,6 +2118,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.decorator.amiss` | - | - | `A decorator must stand on its own line before a function definition` | - | - | - | - | - | - | - |
 | `ext.stmt.default` | - | - | - | - | `default` | - | - | - | - | - |
 | `ext.stmt.del` | - | - | `del` | - | - | - | - | - | - | - |
+| `ext.stmt.del.unrun` | - | - | `This deletion cannot be run` | - | - | - | - | - | - | - |
 | `ext.stmt.do` | - | - | - | - | `do` | - | - | - | - | - |
 | `ext.stmt.finally` | - | - | `finally` | - | `finally` | - | - | - | - | - |
 | `ext.stmt.for.c` | - | - | - | - | `for` | - | - | - | - | - |
@@ -2105,6 +2138,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.import` | - | - | `import` | - | - | - | - | - | - | - |
 | `ext.stmt.import.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.import.from` | - | - | `from` | - | - | - | - | - | - | - |
+| `ext.stmt.loop.else` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.nonlocal` | - | - | `nonlocal` | - | - | - | - | - | - | - |
 | `ext.stmt.nonlocal.unrun` | - | - | `Nonlocal bindings cannot be run without enclosing function cells` | - | - | - | - | - | - | - |
 | `ext.stmt.static` | - | - | - | - | `static` | - | - | - | - | - |
