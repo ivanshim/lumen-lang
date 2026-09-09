@@ -3345,6 +3345,27 @@ impl<'a> Compiler<'a> {
                     || Lang::spells(&self.lang.block_intros, &before.lexeme)))
         };
         self.expr_at(0, false)?;
+        if self.lang.assign_chain && self.on_assign()
+            && self.look_ahead(1).shape == Shape::Instr
+            && self.look_ahead(2).shape == Shape::Sign
+            && Lang::spells(&self.lang.assign_words, &self.look_ahead(2).lexeme) {
+            if let [Instr::Read(first)] = &self.piece().instrs[from..] {
+                let mut names = vec![first.ident.to_string()];
+                self.piece().instrs.truncate(from);
+                while self.on_assign() && self.look_ahead(1).shape == Shape::Instr
+                    && self.look_ahead(2).shape == Shape::Sign
+                    && Lang::spells(&self.lang.assign_words, &self.look_ahead(2).lexeme) {
+                    self.take();
+                    names.push(self.take().lexeme);
+                }
+                self.take();
+                self.listed_value()?;
+                let value = self.gensym("chain");
+                self.write(&value);
+                for name in names { self.read(&value); self.write(&name); }
+                return Ok(());
+            }
+        }
         self.tuple_tail(from)?;
         if self.on_writing() && matches!(self.piece().instrs.last(), Some(Instr::Act(Action::Builtin(Builtin::Raise, name), 1)) if name.as_ref() == "tuple") {
             self.take();

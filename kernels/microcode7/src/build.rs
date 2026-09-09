@@ -3239,6 +3239,20 @@ impl<'a> Builder<'a> {
             }
         });
         let expr = self.expr_at(0, false)?;
+        let follows = |reader: &Self| reader.on_assign() && reader.glance(1).shape == Shape::Bare
+            && reader.glance(2).shape == Shape::Sign && reader.table.spells("stmt.assign", &reader.glance(2).lexeme);
+        if self.table.flag("ext.stmt.assign.chain") && follows(self) {
+            if let Form::Read(first) = &expr {
+                let mut destinations = vec![first.ident.to_string()];
+                while follows(self) { self.advance(); destinations.push(self.advance().lexeme); }
+                self.advance();
+                let answer = self.listed_value()?;
+                let saved = self.gensym("chain_value");
+                let mut steps = vec![Form::Write(saved.clone(), Box::new(answer))];
+                for destination in destinations { steps.push(self.write(&destination, Form::Read(saved.clone()))); }
+                return Ok(sequence(steps));
+            }
+        }
         let expr = self.listed_tail(expr)?;
         let tuple = matches!(&expr, Form::Apply(Callee::Prim(Prim::Raise, _), args)
             if matches!(args.first(), Some(Form::Const(Value::Text(words))) if Some(words.as_ref()) == self.table.single("ext.op.tuple.unready")));
@@ -3909,7 +3923,7 @@ impl<'a> Builder<'a> {
                     }
                 }
             };
-            if reversed || inverse { left = prim_call(Prim::Not, vec![left]); }
+            if reversed || inverse { left = prim_call(Prim::Invert, vec![left]); }
         }
         Ok(left)
     }

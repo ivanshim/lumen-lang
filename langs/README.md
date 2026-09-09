@@ -496,6 +496,10 @@ only. The extension labels so far, all from PHP:
 - `ext.op.bit.left` and `ext.op.bit.right` are also spelled by the
   indented definition, with the existing whole-number shift operations.
   Its `ext.lexical.number.separator` admits underscores between digits.
+- `ext.stmt.assign.chain`: a switch; plain names joined by assignment
+  signs take the final value once, from left to right. This narrow
+  reading leaves chains through members and indices to the fuller
+  assignment account.
 - `ext.op.if_else`: two words, the first before a condition and the
   second before its other value. The condition is worked out first and
   only the chosen value runs, though it may be written before the test.
@@ -1967,6 +1971,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.annotation.target.unready` | - | - | `NotImplementedError: annotated attribute targets are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.assert` | - | - | `assert` | - | - | - | - | - | - | - |
 | `ext.stmt.assert.kind` | - | - | `AssertionError` | - | - | - | - | - | - | - |
+| `ext.stmt.assign.chain` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.block.instead` | - | - | - | - | `:` | - | - | - | - | - |
 | `ext.stmt.block.instead.close` | - | - | - | - | `endif` `endwhile` `endfor` `endforeach` `endswitch` | - | - | - | - | - |
 | `ext.stmt.break.levels` | - | - | - | - | `true` | - | - | - | - | - |

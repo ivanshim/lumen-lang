@@ -374,6 +374,7 @@
   "ext.stmt.annotation": [":"],
   "ext.stmt.annotation.amiss": ["invalid syntax"],
   "ext.stmt.annotation.target.unready": ["NotImplementedError: annotated attribute targets are not supported"],
+  "ext.stmt.assign.chain": true,
   "ext.stmt.assert": ["assert"],
   "ext.stmt.assert.kind": ["AssertionError"],
   "ext.stmt.catch": ["except"],
