@@ -938,7 +938,12 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             let at = |k: usize| src.get(k).copied();
             let opened = in_base
                 .iter()
-                .find(|(d, l, radix)| k - pos == 1 && src[pos] == *d && at(k) == Some(*l) && at(k + 1).map_or(false, |x| x.is_digit(*radix)))
+                .find(|(d, l, radix)| {
+                    let digit = |offset| at(k + offset).map_or(false, |x| x.is_digit(*radix));
+                    let divided = table.flag("ext.lexical.number.separator.after_prefix")
+                        && at(k + 1).map_or(false, |x| apart.contains(&x)) && digit(2);
+                    k == pos + 1 && src[pos] == *d && at(k) == Some(*l) && (digit(1) || divided)
+                })
                 .copied();
             if let Some((_, _, radix)) = opened {
                 k += 1;

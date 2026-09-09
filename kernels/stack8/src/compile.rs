@@ -1430,6 +1430,9 @@ impl<'a> Compiler<'a> {
                 self.take();
             }
         }
+        if !lang.class_bases_open.is_empty() && self.on_keyword(&lang.class_words) {
+            return self.scoped_class();
+        }
         if self.on_keyword(&lang.async_words) { self.take(); }
         if !self.on_keyword(&lang.function_words) {
             return Err(amiss());
@@ -6856,6 +6859,19 @@ fn read_number(text: &str, lang: &Lang) -> Res<Value> {
     // Marks put between digits to break them up count for nothing.
     let plain: String = text.chars().filter(|c| !lang.digit_separators.contains(c)).collect();
     if plain != text {
+        let (start, radix) = lang.base_prefixes.iter().find(|(p, _)| text.starts_with(p.as_str()))
+            .map_or((0, 10), |(p, base)| (p.chars().count(), *base));
+        let written: Vec<char> = text.chars().collect();
+        for (at, c) in written.iter().enumerate() {
+            if lang.digit_separators.contains(c) {
+                let before = at > start && written[at - 1].is_digit(radix);
+                let after_prefix = start > 0 && at == start && lang.separator_after_prefix;
+                let after = written.get(at + 1).map_or(false, |d| d.is_digit(radix));
+                if !(after && (before || after_prefix)) {
+                    return Err(unreadable_number(text, lang));
+                }
+            }
+        }
         return read_number(&plain, lang);
     }
     for (prefix, base) in &lang.base_prefixes {

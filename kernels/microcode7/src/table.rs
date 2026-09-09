@@ -111,7 +111,7 @@ ext.builtin.shell:L ext.builtin.wait:L ext.builtin.net.ask:L ext.builtin.run.beg
 ext.system.reading.unexpected:L ext.system.reading.unexpected.character:L ext.system.fault.class.reading:L \
 ext.system.reading.unclosed:L ext.system.reading.unclosed.line:L ext.system.reading.unclosed.mismatch:L ext.system.reading.unmatched:L \
 ext.lexical.number.binary_prefix:L ext.lexical.number.octal_prefix:L ext.lexical.number.octal_lead:B \
-ext.lexical.number.separator:L ext.system.integer.bits:N ext.system.real.bits:N ext.system.real.digits:N \
+ext.lexical.number.separator:L ext.lexical.number.separator.after_prefix:B ext.op.bit.whole:B ext.system.integer.bits:N ext.system.real.bits:N ext.system.real.digits:N \
 ext.system.real.figures:L ext.system.real.figures.shown:L \
 ext.stmt.function.own_names:B ext.stmt.static.read_in:B \
 ext.system.complaint.markup.setting:L ext.system.complaint.markup.kind:L ext.system.complaint.markup.place:L ext.system.complaint.markup.line:L ext.system.complaint.markup.reference:L \

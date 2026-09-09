@@ -3265,6 +3265,45 @@ impl<'a> Machine<'a> {
         let n = |k: usize| -> Result<(), String> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
         };
+        if self.table.flag("ext.op.bit.whole") && matches!(op,
+            Prim::BitsOver | Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::BitsUp | Prim::BitsDown)
+        {
+            let fault = || self.table.single("ext.system.fault.operands").unwrap_or("Working on bits needs a whole number").to_string();
+            let number = |value: &Value| {
+                match value.kind() {
+                    Some(Kind::Whole) | Some(Kind::Truth) => value.as_big(),
+                    _ => Err(fault()),
+                }
+            };
+            let left = number(&v[0])?;
+            if op == Prim::BitsOver {
+                return Ok(Value::from_big(!left));
+            }
+            let right = number(&v[1])?;
+            let answer = if matches!(op, Prim::BitsUp | Prim::BitsDown) {
+                if right.sign() == num_bigint::Sign::Minus {
+                    return Err(self.table.single("ext.system.fault.shift").unwrap_or("Bit shift by a negative number").to_string());
+                }
+                match op {
+                    Prim::BitsDown if right >= BigInt::from(left.bits()) => BigInt::from(i32::from(left.sign() == num_bigint::Sign::Minus) * -1),
+                    _ if left == BigInt::from(0) => left,
+                    Prim::BitsUp => left << right.to_usize().ok_or_else(fault)?,
+                    _ => left >> right.to_usize().ok_or_else(fault)?,
+                }
+            } else {
+                match op {
+                    Prim::BitsOne => left ^ right,
+                    Prim::BitsBoth => left & right,
+                    _ => left | right,
+                }
+            };
+            let flags = v.iter().all(|x| x.kind() == Some(Kind::Truth));
+            return Ok(if flags && !matches!(op, Prim::BitsUp | Prim::BitsDown) {
+                Value::Flag(answer != BigInt::from(0))
+            } else {
+                Value::from_big(answer)
+            });
+        }
         Ok(match op {
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),

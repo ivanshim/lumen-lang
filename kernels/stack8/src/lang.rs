@@ -93,6 +93,9 @@ pub struct Lang {
     /// Marks a program may put between the digits of a number to break
     /// them up, which count for nothing.
     pub digit_separators: Vec<char>,
+    /// A separator may follow a base prefix; checked marks must part digits.
+    pub separator_after_prefix: bool,
+    pub whole_bits: bool,
     /// How many bits wide a whole number is, where a language says: a
     /// result that outgrows that width becomes a real instead.
     pub integer_bits: Option<usize>,
@@ -812,7 +815,7 @@ w ext.lexical.escape.codepoint.amiss | w ext.lexical.escape.codepoint.beyond | w
 w ext.lexical.escape.byte | w ext.lexical.interpolating.index.amiss | w ext.builtin.eval.place
 w ext.system.reading.unexpected | w ext.system.reading.unexpected.character | w ext.system.fault.class.reading
 w ext.system.reading.unclosed | w ext.system.reading.unclosed.line | w ext.system.reading.unclosed.mismatch | w ext.system.reading.unmatched
-w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
+w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 w ext.system.real.figures | w ext.system.real.figures.shown
 b ext.stmt.function.own_names | b ext.stmt.static.read_in
@@ -1358,6 +1361,8 @@ impl Lang {
             base_prefixes,
             octal_lead: r.flag("ext.lexical.number.octal_lead")?,
             digit_separators: r.letters("ext.lexical.number.separator")?,
+            separator_after_prefix: r.flag("ext.lexical.number.separator.after_prefix")?,
+            whole_bits: r.flag("ext.op.bit.whole")?,
             integer_bits: r.count("ext.system.integer.bits")?,
             real_bits: r.count("ext.system.real.bits")?,
             real_digits: r.count("ext.system.real.digits")?,

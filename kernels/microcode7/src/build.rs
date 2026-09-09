@@ -1510,6 +1510,10 @@ impl<'a> Builder<'a> {
                 break;
             }
         }
+        if self.key("ext.stmt.class") && self.table.has_any("ext.stmt.class.bases.open") {
+            forms.push(self.class_scope()?);
+            return Ok(sequence(forms));
+        }
         if self.key("ext.stmt.async") { self.advance(); }
         if !self.key("stmt.function") {
             return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
@@ -6239,6 +6243,26 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
     let apart = table.letters("ext.lexical.number.separator");
     let plain: String = text.chars().filter(|c| !apart.contains(c)).collect();
     if plain != text {
+        let mut base = 10;
+        let mut begins = 0;
+        for (label, worth) in [("lexical.number.hex_prefix", 16), ("ext.lexical.number.octal_prefix", 8), ("ext.lexical.number.binary_prefix", 2)] {
+            if let Some(prefix) = table.strings(label).iter().find(|p| text.starts_with(p.as_str())) {
+                base = worth;
+                begins = prefix.len();
+                break;
+            }
+        }
+        for (offset, mark) in text.char_indices().filter(|(_, c)| apart.contains(c)) {
+            let next_digit = text[offset + mark.len_utf8()..].chars().next().map_or(false, |c| c.is_digit(base));
+            let follows = if offset == begins && begins != 0 {
+                table.flag("ext.lexical.number.separator.after_prefix")
+            } else {
+                text[..offset].chars().next_back().map_or(false, |c| c.is_digit(base))
+            };
+            if !follows || !next_digit {
+                return Err(unreadable_numeral(text, table));
+            }
+        }
         return read_numeral(&plain, table);
     }
     for (key, radix) in [
