@@ -47,6 +47,13 @@ only names what its language spells; the floor is the same for all.
 | Control | branch, loop, call, return, break, continue | `until` is `while not`; `for v in a..b` is a counted loop, the range being loop syntax rather than a value; `elif`, `else if` and the pipe are spellings |
 | Effects and the boundary | `emit`, `error`, `extern`, `kind`, the system bindings | `to_string`, `to_int` and `to_real` are the one-name conversions other languages have; Lumen derives them in its library |
 
+`ext.op.tuple` names the separator that makes a parenthesized sequence a
+tuple in the full kernels. Empty parentheses and a trailing separator are
+accepted, as are spread members. Tuples currently use the array value, as
+sets do; this extends reading without supplying tuple-specific identity,
+immutability or rendering. A parenthesized expression without a separator
+keeps its value.
+
 ## Format rules
 
 1. A file is one flat JSON object. Every file carries the same labels in the
@@ -1872,6 +1879,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.scope` | - | - | - | - | `::` | - | - | - | - | - |
 | `ext.op.spelled` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.ternary` | - | - | - | - | `?` `:` | - | - | - | - | - |
+| `ext.op.tuple` | - | - | `,` | - | - | - | - | - | - | - |
 | `ext.op.walk.class` | - | - | - | - | `Iterator` | - | - | - | - | - |
 | `ext.op.walk.giver` | - | - | - | - | `getIterator` | - | - | - | - | - |
 | `ext.op.walk.giver.class` | - | - | - | - | `IteratorAggregate` | - | - | - | - | - |

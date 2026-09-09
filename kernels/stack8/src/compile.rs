@@ -4334,6 +4334,38 @@ impl<'a> Compiler<'a> {
                         self.take();
                         if let Some(clause) = self.comprehension_ahead() {
                             self.comprehension(&group, clause, false)?;
+                        } else if let Some(separator) = &lang.tuple_separator {
+                            if self.at_symbol(&group.close) {
+                                self.take();
+                                self.act(Action::MakeArray, 0);
+                            } else {
+                                let spread = self.on_any(&lang.array_spread);
+                                if spread { self.take(); }
+                                self.expr(0)?;
+                                if self.at_symbol(separator) {
+                                    // The first comma distinguishes a tuple from a group.
+                                    if spread {
+                                        let first = self.gensym("tuple_head");
+                                        self.write(&first);
+                                        self.act(Action::MakeArray, 0);
+                                        self.read(&first);
+                                        self.act(Action::GatherItem { map: false, spread: true }, 2);
+                                    } else {
+                                        self.act(Action::MakeArray, 1);
+                                    }
+                                    while self.at_symbol(separator) {
+                                        self.take();
+                                        if self.at_symbol(&group.close) { break; }
+                                        let spread = self.on_any(&lang.array_spread);
+                                        if spread { self.take(); }
+                                        self.expr(0)?;
+                                        self.act(Action::GatherItem { map: false, spread }, 2);
+                                    }
+                                } else if spread {
+                                    return Err("Expected a tuple separator after a spread".to_string());
+                                }
+                                self.want_sign(&group.close, "to close a group")?;
+                            }
                         } else {
                             self.expr(0)?;
                             self.want_sign(&group.close, "to close a group")?;

@@ -1,5 +1,5 @@
 {
-  "$comment": "Python: indentation blocks introduced by a colon, word-form logic operators, true division yielding a real, floor division, method calls on builtins (arr.append(x)) as the pipe spelled with a dot, and indexing into strings. sys.stdout.write is emit, the string-only writer, and sys.exit the error; the `import sys` line that makes them Python is the prologue the reference kernels drop; the full kernels read imports and bind their names to null for now. str, int and float are the conversions. Comprehensions and generator expressions gather eagerly; sets stand as arrays in this stage.",
+  "$comment": "Python: indentation blocks introduced by a colon, word-form logic operators, true division yielding a real, floor division, method calls on builtins (arr.append(x)) as the pipe spelled with a dot, and indexing into strings. sys.stdout.write is emit, the string-only writer, and sys.exit the error; the `import sys` line that makes them Python is the prologue the reference kernels drop; the full kernels read imports and bind their names to null for now. str, int and float are the conversions. Comprehensions and generator expressions gather eagerly; sets and tuples stand as arrays in this stage.",
   "format_version": 1,
   "language": "python",
   "extensions": [
@@ -333,6 +333,7 @@
   "ext.op.comprehension.in": ["in"],
   "ext.op.comprehension.target.unavailable": ["NotImplementedError: indexed comprehension targets are not supported"],
   "ext.op.comprehension.unpack.amiss": ["ValueError: comprehension target has the wrong number of values"],
+  "ext.op.tuple": [","],
   "ext.op.index.slice": [":"],
   "ext.op.index.slice.assign": ["can only assign an iterable"],
   "ext.op.index.slice.bounds": ["slice indices must be integers or None or have an __index__ method"],

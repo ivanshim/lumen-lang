@@ -4076,6 +4076,29 @@ impl<'a> Builder<'a> {
                     self.advance();
                     let inner = match self.ahead_in_item("ext.op.comprehension.for") {
                         Some(at) => self.gather_comprehension(at, table.single("syntax.group.close").unwrap(), false)?,
+                        None if table.has_any("ext.op.tuple") => {
+                            let end = table.single("syntax.group.close").unwrap();
+                            let mut parts = Vec::new();
+                            let mut comma = false;
+                            while !self.sign(end) {
+                                let expanded = self.on_any("ext.syntax.array.spread");
+                                if expanded { self.advance(); }
+                                parts.push((expanded, self.expr(0)?));
+                                if !self.on_any("ext.op.tuple") { break; }
+                                comma = true;
+                                self.advance();
+                            }
+                            self.need_sign(end, "to close a group")?;
+                            if parts.len() == 1 && !comma {
+                                let (expanded, item) = parts.pop().unwrap();
+                                if expanded { return Err("Expected a tuple separator after a spread".to_string()); }
+                                item
+                            } else {
+                                parts.into_iter().fold(prim_call(Prim::MakeArray, Vec::new()), |items, (expanded, item)| {
+                                    prim_call(Prim::ExtendLiteral(false, expanded), vec![items, item])
+                                })
+                            }
+                        }
                         None => {
                             let expression = self.expr(0)?;
                             self.need_sign(table.single("syntax.group.close").unwrap(), "to close a group")?;
