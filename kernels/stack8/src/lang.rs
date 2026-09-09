@@ -63,6 +63,7 @@ pub struct Lang {
     pub escape_unavailable: Option<String>,
     pub escape_letters: Vec<char>,
     pub control_escapes: Vec<char>,
+    pub continued_strings: bool,
     /// The letter that, after the escape mark, begins a character
     /// named by its number, and the brackets that number stands in.
     pub codepoint_letter: Option<char>,
@@ -701,7 +702,7 @@ b ext.stmt.terminator.only
 w ext.stmt.block.instead | w ext.stmt.block.instead.close | b ext.op.spelled | b ext.system.class.folded
 
 w ext.lexical.string.long | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.format | b ext.lexical.string.adjacent | w ext.lexical.string.amiss | n ext.lexical.escape.byte.digits | n ext.lexical.escape.codepoint.digits | w ext.lexical.escape.codepoint.wide | n ext.lexical.escape.codepoint.wide.digits | w ext.lexical.escape.named | w ext.lexical.escape.unavailable
-w ext.lexical.escape.controls | w ext.lexical.escape.codepoint | w ext.lexical.escape.codepoint.open | w ext.lexical.escape.codepoint.close
+b ext.lexical.escape.continued | w ext.lexical.escape.controls | w ext.lexical.escape.codepoint | w ext.lexical.escape.codepoint.open | w ext.lexical.escape.codepoint.close
 w ext.lexical.escape.codepoint.amiss | w ext.lexical.escape.codepoint.beyond | w ext.lexical.number.amiss
 w ext.lexical.escape.byte | w ext.lexical.interpolating.index.amiss | w ext.builtin.eval.place
 w ext.system.reading.unexpected | w ext.system.reading.unexpected.character | w ext.system.fault.class.reading
@@ -1235,6 +1236,7 @@ impl Lang {
             escape_unavailable: r.head("ext.lexical.escape.unavailable")?,
             escape_letters: escapes,
             control_escapes: r.letters("ext.lexical.escape.controls")?,
+            continued_strings: r.flag("ext.lexical.escape.continued")?,
             codepoint_letter: r.letter("ext.lexical.escape.codepoint")?,
             codepoint_open: r.letter("ext.lexical.escape.codepoint.open")?,
             codepoint_close: r.letter("ext.lexical.escape.codepoint.close")?,

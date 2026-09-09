@@ -632,7 +632,11 @@ impl Quotation<'_> {
         }
         let mut letters = table.letters("lexical.string_escapes");
         letters.extend(table.letters("ext.lexical.escape.controls"));
-        if ch == '\n' && letters.contains(&ch) { self.forward(2); return Ok(()); }
+        if table.flag("ext.lexical.escape.continued") && (ch == '\r' || ch == '\n') {
+            self.forward(2);
+            if ch == '\r' && self.here() == Some('\n') { self.forward(1); }
+            return Ok(());
+        }
         // A wide numbered alphabet keeps all three octal figures.
         if !bytes && table.flag("ext.lexical.escape.octal") && table.count("ext.lexical.escape.codepoint.digits").is_some() && ch.is_digit(8) {
             self.forward(1);

@@ -266,8 +266,9 @@ only. The extension labels so far, all from PHP:
   exactly this many figures, instead of taking one or two as it may.
 - `ext.lexical.escape.controls`: further escape letters for the full
   readers: `a` for bell, `b` for backspace, `f` for form feed, `v` for
-  vertical tab, and a line end for a continued string. The older readers
-  keep their smaller alphabet of escapes.
+  vertical tab. The older readers keep their smaller alphabet of escapes.
+- `ext.lexical.escape.continued`: whether a backslash and the line end
+  after it join the two lines of a string, standing for no character.
 - `ext.lexical.escape.named`: the letter before a character name between
   braces. The name is read whole. The kernels have no book of these
   names, so reaching such a literal stops the run.
@@ -1682,8 +1683,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.escape.codepoint.open` | - | - | - | - | `{` | - | - | - | - | - |
 | `ext.lexical.escape.codepoint.wide` | - | - | `U` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.codepoint.wide.digits` | - | - | `8` | - | - | - | - | - | - | - |
-| `ext.lexical.escape.controls` | - | - | `a` `b` `f` `v` `
-` | - | - | - | - | - | - | - |
+| `ext.lexical.escape.continued` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.lexical.escape.controls` | - | - | `a` `b` `f` `v` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.named` | - | - | `N` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.octal` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.lexical.escape.unavailable` | - | - | `Unicode escape cannot be represented` | - | - | - | - | - | - | - |

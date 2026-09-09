@@ -548,7 +548,11 @@ impl<'a> Cursor<'a> {
             }
         }
         if format && matches!(next, '{' | '}') { text.push(self.step()); return Ok(()); }
-        if next == '\n' && lang.control_escapes.contains(&next) { self.step(); self.step(); return Ok(()); }
+        if lang.continued_strings && matches!(next, '\n' | '\r') {
+            self.step(); self.step();
+            if next == '\r' && self.look(0) == Some('\n') { self.step(); }
+            return Ok(());
+        }
         let letters: Vec<char> = lang.escape_letters.iter().chain(&lang.control_escapes).copied().collect();
         let how = Escapes { letters: &letters, quote: None, numbered: true, woven: false };
         self.escape(&how, text, &mut Vec::new())
