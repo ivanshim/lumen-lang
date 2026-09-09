@@ -62,6 +62,7 @@ pub struct Lang {
     pub named_letter: Option<char>,
     pub escape_unavailable: Option<String>,
     pub escape_letters: Vec<char>,
+    pub control_escapes: Vec<char>,
     /// The letter that, after the escape mark, begins a character
     /// named by its number, and the brackets that number stands in.
     pub codepoint_letter: Option<char>,
@@ -700,7 +701,7 @@ b ext.stmt.terminator.only
 w ext.stmt.block.instead | w ext.stmt.block.instead.close | b ext.op.spelled | b ext.system.class.folded
 
 w ext.lexical.string.long | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.format | b ext.lexical.string.adjacent | w ext.lexical.string.amiss | n ext.lexical.escape.byte.digits | n ext.lexical.escape.codepoint.digits | w ext.lexical.escape.codepoint.wide | n ext.lexical.escape.codepoint.wide.digits | w ext.lexical.escape.named | w ext.lexical.escape.unavailable
-w ext.lexical.escape.codepoint | w ext.lexical.escape.codepoint.open | w ext.lexical.escape.codepoint.close
+w ext.lexical.escape.controls | w ext.lexical.escape.codepoint | w ext.lexical.escape.codepoint.open | w ext.lexical.escape.codepoint.close
 w ext.lexical.escape.codepoint.amiss | w ext.lexical.escape.codepoint.beyond | w ext.lexical.number.amiss
 w ext.lexical.escape.byte | w ext.lexical.interpolating.index.amiss | w ext.builtin.eval.place
 w ext.system.reading.unexpected | w ext.system.reading.unexpected.character | w ext.system.fault.class.reading
@@ -935,7 +936,7 @@ impl Lang {
             return Err(format!("lexical.raw_quotes lists '{q}', which is not in lexical.string_quotes"));
         }
         let escapes = r.letters("lexical.string_escapes")?;
-        if let Some(e) = escapes.iter().find(|e| !matches!(e, 'n' | 't' | 'r' | '0' | 'a' | 'b' | 'f' | 'v' | '\n' | '\\') && !quotes.contains(e)) {
+        if let Some(e) = escapes.iter().find(|e| !matches!(e, 'n' | 't' | 'r' | '0' | '\\') && !quotes.contains(e)) {
             return Err(format!("lexical.string_escapes: unknown escape letter '{e}'"));
         }
         // Each way of writing a number in a base of its own: a digit,
@@ -1233,6 +1234,7 @@ impl Lang {
             named_letter: r.letter("ext.lexical.escape.named")?,
             escape_unavailable: r.head("ext.lexical.escape.unavailable")?,
             escape_letters: escapes,
+            control_escapes: r.letters("ext.lexical.escape.controls")?,
             codepoint_letter: r.letter("ext.lexical.escape.codepoint")?,
             codepoint_open: r.letter("ext.lexical.escape.codepoint.open")?,
             codepoint_close: r.letter("ext.lexical.escape.codepoint.close")?,

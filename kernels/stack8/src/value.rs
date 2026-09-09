@@ -324,7 +324,6 @@ impl Value {
         }
     }
 
-    /// The machine's own text for a value.
     /// A field is rendered after its specification has itself been
     /// worked out. The small common formats are honoured here; the
     /// rest keep the plain rendering until the run knows their rules.
@@ -370,6 +369,7 @@ impl Value {
         shown
     }
 
+    /// The machine's own text for a value.
     pub fn plain(&self) -> String {
         match self {
             Value::Small(n) => n.to_string(),

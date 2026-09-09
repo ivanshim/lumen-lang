@@ -467,6 +467,7 @@ impl<'a> Cursor<'a> {
     /// text until the assembler has read the expression it holds.
     fn rich_string(&mut self, prefix: usize, mark: &str, raw: bool, format: bool) -> Result<(), String> {
         let (line, col) = (self.row, self.column);
+        let bytes = self.text[self.at..self.at + prefix].iter().any(|c| self.lang.byte_prefixes.contains(c));
         for _ in 0..prefix + mark.chars().count() { self.step(); }
         if format { self.push(Shape::StringBegin, String::new(), 0, line, col); }
         let (mut text, mut fault) = (String::new(), false);
@@ -485,7 +486,7 @@ impl<'a> Cursor<'a> {
                     self.string_field(raw)?;
                 } else { return Err(self.string_words()); }
             } else if c == '\\' {
-                self.rich_escape(raw, format, &mut text, &mut fault)?;
+                self.rich_escape(raw, format, bytes, &mut text, &mut fault)?;
             } else { text.push(self.step()); }
         }
         self.string_text(&mut text, &mut fault, line, col);
@@ -493,7 +494,7 @@ impl<'a> Cursor<'a> {
         Ok(())
     }
 
-    fn rich_escape(&mut self, raw: bool, format: bool, text: &mut String, fault: &mut bool) -> Result<(), String> {
+    fn rich_escape(&mut self, raw: bool, format: bool, bytes: bool, text: &mut String, fault: &mut bool) -> Result<(), String> {
         let Some(next) = self.look(1) else { return Err(self.string_words()); };
         if raw {
             text.push(self.step());
@@ -501,6 +502,21 @@ impl<'a> Cursor<'a> {
             return Ok(());
         }
         let lang = self.lang;
+        if bytes && [lang.named_letter, lang.codepoint_letter, lang.wide_letter].contains(&Some(next)) {
+            text.push(self.step()); text.push(self.step());
+            return Ok(());
+        }
+        if bytes && lang.octal_escapes && next.is_digit(8) {
+            self.step();
+            let mut number = 0;
+            for _ in 0..3 {
+                let Some(digit) = self.look(0).and_then(|c| c.to_digit(8)) else { break; };
+                number = number * 8 + digit;
+                self.step();
+            }
+            text.push(char::from((number & 255) as u8));
+            return Ok(());
+        }
         if Some(next) == lang.named_letter && self.look(2) == Some('{') {
             self.step(); self.step(); self.step();
             while self.look(0).map_or(false, |c| c != '}') { self.step(); }
@@ -532,22 +548,36 @@ impl<'a> Cursor<'a> {
             }
         }
         if format && matches!(next, '{' | '}') { text.push(self.step()); return Ok(()); }
-        if next == '\n' && lang.escape_letters.contains(&next) { self.step(); self.step(); return Ok(()); }
-        let how = Escapes { letters: &lang.escape_letters, quote: None, numbered: true, woven: false };
+        if next == '\n' && lang.control_escapes.contains(&next) { self.step(); self.step(); return Ok(()); }
+        let letters: Vec<char> = lang.escape_letters.iter().chain(&lang.control_escapes).copied().collect();
+        let how = Escapes { letters: &letters, quote: None, numbered: true, woven: false };
         self.escape(&how, text, &mut Vec::new())
+    }
+
+    fn field_space(&mut self) -> String {
+        let mut kept = String::new();
+        loop {
+            if self.look(0).map_or(false, |c| c.is_whitespace()) { kept.push(self.step()); }
+            else if self.lang.line_comments.iter().any(|m| at_word(&self.text, self.at, m)) {
+                while self.look(0).map_or(false, |c| c != '\n') { self.step(); }
+            } else { break; }
+        }
+        kept
     }
 
     fn string_field(&mut self, raw: bool) -> Result<(), String> {
         let (line, col) = (self.row, self.column);
         self.step();
-        let first = self.at;
+        let mut expression = String::new();
         let mut brackets = Vec::new();
         loop {
             let Some(c) = self.look(0) else { return Err(self.string_words()); };
             if let Some((prefix, mark, is_raw, format)) = self.string_open() {
                 let saved = self.out.len();
+                let began = self.at;
                 self.rich_string(prefix, &mark, is_raw, format)?;
                 self.out.truncate(saved);
+                expression.extend(self.text[began..self.at].iter());
                 continue;
             }
             if self.lang.line_comments.iter().any(|m| at_word(&self.text, self.at, m)) {
@@ -561,15 +591,13 @@ impl<'a> Cursor<'a> {
                 ')' | ']' | '}' => { if brackets.pop() != Some(c) { return Err(self.string_words()); } }
                 _ => {}
             }
-            self.step();
+            expression.push(self.step());
         }
-        let expression: String = self.text[first..self.at].iter().collect();
         if expression.trim().is_empty() { return Err(self.string_words()); }
         let debug = self.look(0) == Some('=');
         if debug {
             self.step();
-            while self.look(0).map_or(false, |c| c.is_whitespace()) { self.step(); }
-            let shown: String = self.text[first..self.at].iter().collect();
+            let shown = format!("{}={}", expression, self.field_space());
             self.push(Shape::Quote, shown, 0, line, col);
         }
         let mut conversion = String::new();
@@ -577,6 +605,7 @@ impl<'a> Cursor<'a> {
             self.step();
             let Some(c @ ('r' | 's' | 'a')) = self.look(0) else { return Err(self.string_words()); };
             conversion.push(c); self.step();
+            self.field_space();
         } else if debug && self.look(0) != Some(':') { conversion.push('r'); }
         self.push(Shape::StringField, conversion, 0, line, col);
         let group = self.lang.grouping.as_ref().ok_or_else(|| self.string_words())?;
@@ -593,7 +622,7 @@ impl<'a> Cursor<'a> {
                 match self.look(0) {
                     Some('}') => break,
                     Some('{') => { self.string_text(&mut text, &mut fault, line, col); self.string_field(raw)?; }
-                    Some('\\') => self.rich_escape(raw, true, &mut text, &mut fault)?,
+                    Some('\\') => self.rich_escape(raw, true, false, &mut text, &mut fault)?,
                     Some(_) => text.push(self.step()),
                     None => return Err(self.string_words()),
                 }

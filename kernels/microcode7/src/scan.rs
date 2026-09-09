@@ -555,6 +555,8 @@ impl Quotation<'_> {
         *missing = false;
     }
     fn literal(&mut self, body: usize, end: &[char], raw: bool, fields: bool) -> Result<(), String> {
+        let bytes = self.source[self.next..body - end.len()].iter().any(|c|
+            self.table.spells("ext.lexical.string.prefix.bytes", &c.to_string()));
         self.forward(body - self.next);
         if fields { self.token(Shape::Woven, String::new()); }
         let mut saved = String::new();
@@ -563,7 +565,7 @@ impl Quotation<'_> {
             let ch = self.here().ok_or_else(|| self.bad())?;
             match ch {
                 '\n' if end.len() == 1 => return Err(self.bad()),
-                '\\' => self.slash(raw, fields, &mut saved, &mut missing)?,
+                '\\' => self.slash(raw, fields, bytes, &mut saved, &mut missing)?,
                 '{' | '}' if fields => {
                     if self.source.get(self.next + 1) == Some(&ch) {
                         saved.push(ch);
@@ -582,7 +584,7 @@ impl Quotation<'_> {
         if fields { self.token(Shape::WovenEnd, String::new()); }
         Ok(())
     }
-    fn slash(&mut self, raw: bool, fields: bool, text: &mut String, missing: &mut bool) -> Result<(), String> {
+    fn slash(&mut self, raw: bool, fields: bool, bytes: bool, text: &mut String, missing: &mut bool) -> Result<(), String> {
         let begin = self.next;
         let ch = *self.source.get(begin + 1).ok_or_else(|| self.bad())?;
         if raw || fields && matches!(ch, '{' | '}') {
@@ -593,6 +595,11 @@ impl Quotation<'_> {
         }
         let table = self.table;
         let letter = ch.to_string();
+        if bytes && ["ext.lexical.escape.named", "ext.lexical.escape.codepoint", "ext.lexical.escape.codepoint.wide"].iter().any(|key| table.spells(key, &letter)) {
+            text.extend(['\\', ch]);
+            self.forward(2);
+            return Ok(());
+        }
         if table.spells("ext.lexical.escape.named", &letter) && self.source.get(begin + 2) == Some(&'{') {
             self.forward(3);
             while self.here().map_or(false, |c| c != '}') { self.forward(1); }
@@ -623,10 +630,11 @@ impl Quotation<'_> {
                 }
             }
         }
-        let letters = table.letters("lexical.string_escapes");
+        let mut letters = table.letters("lexical.string_escapes");
+        letters.extend(table.letters("ext.lexical.escape.controls"));
         if ch == '\n' && letters.contains(&ch) { self.forward(2); return Ok(()); }
         // A wide numbered alphabet keeps all three octal figures.
-        if table.flag("ext.lexical.escape.octal") && table.count("ext.lexical.escape.codepoint.digits").is_some() && ch.is_digit(8) {
+        if !bytes && table.flag("ext.lexical.escape.octal") && table.count("ext.lexical.escape.codepoint.digits").is_some() && ch.is_digit(8) {
             self.forward(1);
             let mut worth = 0;
             while self.next < begin + 4 {
@@ -649,10 +657,26 @@ impl Quotation<'_> {
         self.forward(after - begin);
         Ok(())
     }
+    fn between_field_marks(&mut self) -> String {
+        let mut whitespace = String::new();
+        while let Some(ch) = self.here() {
+            if ch.is_whitespace() {
+                whitespace.push(ch);
+                self.forward(1);
+                continue;
+            }
+            let comment = self.table.strings("lexical.comment_line").iter().any(|word|
+                self.source[self.next..].starts_with(&word.chars().collect::<Vec<_>>()));
+            if !comment { break; }
+            while self.here().map_or(false, |c| c != '\n') { self.forward(1); }
+        }
+        whitespace
+    }
     fn field(&mut self, raw: bool) -> Result<(), String> {
         self.forward(1);
         let origin = self.next;
         let mut nesting = Vec::new();
+        let mut comments = Vec::new();
         loop {
             let ch = self.here().ok_or_else(|| self.bad())?;
             if let Some((body, end, bare, woven)) = quoted_start(self.source, self.next, self.table) {
@@ -662,7 +686,9 @@ impl Quotation<'_> {
                 continue;
             }
             if self.table.strings("lexical.comment_line").iter().any(|s| self.source[self.next..].starts_with(&s.chars().collect::<Vec<_>>())) {
+                let begins = self.next;
                 while self.here().map_or(false, |c| c != '\n') { self.forward(1); }
+                comments.push(begins..self.next);
                 continue;
             }
             let after = self.source.get(self.next + 1).copied();
@@ -676,18 +702,21 @@ impl Quotation<'_> {
             } else if [')', ']', '}'].contains(&ch) && nesting.pop() != Some(ch) { return Err(self.bad()); }
             self.forward(1);
         }
-        let code = self.source[origin..self.next].iter().collect::<String>();
+        let code: String = (origin..self.next).filter(|i| !comments.iter().any(|r| r.contains(i))).map(|i| self.source[i]).collect();
         if code.trim().is_empty() { return Err(self.bad()); }
         let debugging = self.here() == Some('=');
         if debugging {
             self.forward(1);
-            while self.here().map_or(false, char::is_whitespace) { self.forward(1); }
-            self.token(Shape::Quote, self.source[origin..self.next].iter().collect());
+            let mut label = code.clone();
+            label.push('=');
+            label.push_str(&self.between_field_marks());
+            self.token(Shape::Quote, label);
         }
         let convert = if self.here() == Some('!') {
             self.forward(1);
             let ch = self.here().filter(|c| ['a', 'r', 's'].contains(c)).ok_or_else(|| self.bad())?;
             self.forward(1);
+            self.between_field_marks();
             ch.to_string()
         } else if debugging && self.here() != Some(':') { "r".to_owned() } else { String::new() };
         self.token(Shape::Field, convert);
@@ -705,7 +734,7 @@ impl Quotation<'_> {
             while self.here() != Some('}') {
                 match self.here().ok_or_else(|| self.bad())? {
                     '{' => { self.flush(&mut specification, &mut missing); self.field(raw)?; }
-                    '\\' => self.slash(raw, true, &mut specification, &mut missing)?,
+                    '\\' => self.slash(raw, true, false, &mut specification, &mut missing)?,
                     c => { specification.push(c); self.forward(1); }
                 }
             }

@@ -19,15 +19,10 @@
     "n",
     "t",
     "r",
-    "a",
-    "b",
-    "f",
-    "v",
     "0",
     "\\",
     "\"",
-    "'",
-    "\n"
+    "'"
   ],
   "lexical.prologue": [
     "import sys"
@@ -338,6 +333,13 @@
     "U"
   ],
   "ext.lexical.escape.codepoint.wide.digits": 8,
+  "ext.lexical.escape.controls": [
+    "a",
+    "b",
+    "f",
+    "v",
+    "\n"
+  ],
   "ext.lexical.escape.named": [
     "N"
   ],
