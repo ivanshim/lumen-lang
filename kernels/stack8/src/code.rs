@@ -97,6 +97,8 @@ pub enum Action {
     SliceUnavailable,
     /// A shape read whole whose working is still wanting.
     Unready(Rc<str>),
+    /// A row whose starred items are handed to a walk.
+    GatherItems,
     Not,
     Negate,
     /// Whether a value is true, as a boolean.

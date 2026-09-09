@@ -2381,6 +2381,11 @@ impl<'a> Engine<'a> {
                     _ => return Err("Cannot walk a value that is not an array".to_string().into()),
                 }
             }
+            Action::GatherItems => {
+                let given = self.drop_many(argc)?;
+                let items = self.call_items(given)?;
+                Value::array(items.into_iter().map(|(_, value)| value).collect())
+            }
             Action::Unready(words) => return Err(words.to_string().into()),
             Action::SliceUnavailable => return Err(self.lang.slice_unsupported.clone().unwrap_or_default().into()),
             Action::Slice => {

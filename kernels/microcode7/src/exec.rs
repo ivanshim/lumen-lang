@@ -2150,6 +2150,11 @@ impl<'a> Machine<'a> {
                 // from around it away with it: it is bound to a frame of
                 // its own holding them, and the frame of a call is
                 // filled from that one.
+                Prim::GatherItems => {
+                    let values = self.value_list(args, frame)?;
+                    let (items, _) = self.open_arguments(values)?;
+                    Ok(Value::Vector(Rc::new(items)))
+                }
                 Prim::Carry => {
                     let mut values = self.value_list(args, frame)?;
                     if values.is_empty() {
@@ -4495,7 +4500,7 @@ impl<'a> Machine<'a> {
                 x.clone()
             }
             Prim::Seq | Prim::Choose | Prim::Both | Prim::Either | Prim::Yield | Prim::Leave | Prim::Resume | Prim::Append | Prim::Replace
-            | Prim::Front | Prim::Spawn | Prim::Ask | Prim::Bid | Prim::Hurl | Prim::Otherwise => unreachable!("handled in eval"),
+            | Prim::Front | Prim::Spawn | Prim::Ask | Prim::Bid | Prim::Hurl | Prim::Otherwise | Prim::GatherItems => unreachable!("handled in eval"),
         })
     }
 

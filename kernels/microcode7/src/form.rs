@@ -164,6 +164,8 @@ pub enum Prim {
     Complain,
     /// Words explaining why a read form cannot yet run.
     Unready,
+    /// Gather the sources of a walk after opening their starred parts.
+    GatherItems,
     /// The names of the classes, and of the routines, the run has bound
     /// (ext.builtin.classes, ext.builtin.routines).
     ClassesBound,

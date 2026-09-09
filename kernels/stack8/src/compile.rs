@@ -87,6 +87,7 @@ struct Cycle {
 /// The program being assembled.
 struct Piece {
     outermost: bool,
+    suspends: bool,
     ident: String,
     idents: Vec<String>,
     /// Which slots a bare block declared: found from inside that block
@@ -238,6 +239,7 @@ pub fn compile_within(
     let already = inside.unwrap_or_default();
     let top = Piece {
         outermost: alone,
+        suspends: false,
         ident: "<program>".to_string(),
         declared: vec![false; already.len()],
         idents: already,
@@ -784,6 +786,7 @@ impl<'a> Compiler<'a> {
         formal_kinds.truncate(formals.len());
         self.pieces.push(Piece {
             outermost: false,
+            suspends: false,
             ident: name.to_string(),
             idents: formals.clone(),
             declared: vec![false; formals.len()],
@@ -814,6 +817,9 @@ impl<'a> Compiler<'a> {
         }
         let unit = self.pieces.pop().expect("the unit");
         let instrs = if returns_value && !used { relocated(unit.instrs.into_iter().skip(2).collect(), -2) } else { unit.instrs };
+        let instrs = if unit.suspends {
+            vec![Instr::Act(Action::Unready(Rc::from(self.lang.yield_unsupported.first().map_or("", String::as_str))), 0)]
+        } else { instrs };
         let within = self.within.as_ref().map(|(named, _)| Rc::from(named.as_str()));
         let carried = std::mem::replace(&mut self.carrying, around);
         Ok(Rc::new(Routine { ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), instrs: Rc::new(peephole(instrs)) }))
@@ -979,8 +985,13 @@ impl<'a> Compiler<'a> {
                 self.take();
                 let start = self.mark();
                 self.expression_row()?;
-                self.piece().instrs.truncate(start);
-                self.unready(&lang.delete_unsupported);
+                let read: Vec<Instr> = self.piece().instrs.drain(start..).collect();
+                if let [Instr::Read(cell)] = read.as_slice() {
+                    self.put(Instr::Read(cell.clone()));
+                    self.discard();
+                    let place = self.cell_to_write(&cell.ident);
+                    self.put(Instr::Forget(place));
+                } else { self.unready(&lang.delete_unsupported); }
                 return Ok(());
             }
             if Lang::spells(&lang.pass_words, &w) {
@@ -2110,7 +2121,7 @@ impl<'a> Compiler<'a> {
         } else {
             let tier = lang.range_marks.iter().filter_map(|r| lang.precedence.get(r)).min().copied().unwrap_or(0);
             let from = self.mark();
-            if !lang.tuple_separator.is_empty() { self.expression_row()?; } else { self.expr(tier + 1)?; }
+            if !lang.value_spread.is_empty() { self.walk_values()?; } else { self.expr(tier + 1)?; }
             if !(self.look().shape == Shape::Sign && Lang::spells(&lang.range_marks, &self.look().lexeme)) {
                 // Not a range: what was read is a thing to walk through.
                 if !lang.for_collections {
@@ -2206,6 +2217,29 @@ impl<'a> Compiler<'a> {
     }
 
     /// A row is read to its end even where tuples cannot yet be kept.
+    fn walk_values(&mut self) -> Res<()> {
+        let lang = self.lang;
+        let mut count = 0;
+        let mut row = false;
+        loop {
+            let spread = self.on_any(&lang.value_spread);
+            if spread {
+                self.take();
+                self.constant(Value::Flag(false));
+                row = true;
+            }
+            self.expr(0)?;
+            if spread { self.act(Action::Tie, 2); }
+            count += 1;
+            if !self.on_any(&lang.tuple_separator) { break; }
+            self.take();
+            row = true;
+            if self.on_any(&lang.block_intros) { break; }
+        }
+        if row { self.act(Action::GatherItems, count); }
+        Ok(())
+    }
+
     fn expression_row(&mut self) -> Res<()> {
         let lang = self.lang;
         let from = self.mark();
@@ -4251,6 +4285,7 @@ impl<'a> Compiler<'a> {
         let from = self.mark();
         let tok = self.look().clone();
         if Lang::spells(&lang.yield_words, &tok.lexeme) {
+            self.piece().suspends = true;
             self.take();
             if self.on_keyword(&lang.yield_from) { self.take(); }
             let at = self.mark();
@@ -4559,6 +4594,7 @@ impl<'a> Compiler<'a> {
             }
             _ => return Err("Expected an expression".to_string()),
         }
+        if lang.short_bare { self.called_on_value()?; }
         self.indexing(from)
     }
 

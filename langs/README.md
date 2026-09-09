@@ -527,18 +527,22 @@ only. The extension labels so far, all from PHP:
   At module level it is likewise read and refused when reached.
 - `ext.stmt.delete`: a row of places to remove, including grouped rows,
   members and spans. The places are read without fetching them. Reaching
-  the statement stops in `ext.stmt.delete.unsupported` words; the existing
+  the statement removes a lone name. Other targets stop in
+  `ext.stmt.delete.unsupported` words; the existing
   unset operation does not give every such place its required meaning.
 - `ext.stmt.yield` and `ext.stmt.yield.from`: a value given by a suspended
   routine, or values given from another. The value, including a starred
-  row, is read whole. Reaching it stops with `ext.stmt.yield.unsupported`;
-  these readers do not yet make suspended routines.
+  row, is read whole. Calling a routine containing it stops with
+  `ext.stmt.yield.unsupported` before its body runs; these readers do not
+  yet make suspended routines. At top level reaching it is likewise refused.
 - `ext.syntax.tuple.separator`: the sign joining expressions into a tuple
   in a group, a return, or a loop's source. Empty groups and a last comma
   are read too. `ext.syntax.tuple.unsupported` gives the complaint on
   reaching a tuple, since an array would have a different meaning.
 - `ext.syntax.value.spread`: a sign handing out a value's items in an
-  expression row. Such an expression is read and refused when reached
+  expression row. In a loop source the items are gathered in order and
+  handed to the walk. Elsewhere such an expression is read and refused
+  when reached
   with `ext.syntax.value.spread.unsupported`. In a subscript the complaint
   is `ext.op.index.spread.unsupported`. Call spreading retains the
   working given by `ext.syntax.call.spread`.

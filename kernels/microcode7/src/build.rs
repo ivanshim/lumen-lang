@@ -135,6 +135,7 @@ pub struct Builder<'a> {
     formal_kinds: Vec<Option<Rc<str>>>,
     taking: Option<Vec<char>>,
     tells_place: bool,
+    suspended: Vec<bool>,
 }
 
 pub struct Built {
@@ -240,7 +241,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         layers.push(Layer { holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
     let outer_layers = layers.len();
-    let mut r = Builder { within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { suspended: vec![false], within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
@@ -910,7 +911,11 @@ impl<'a> Builder<'a> {
         formal_kinds.truncate(params.len());
         let param_slots = (0..params.len()).collect();
         self.layers.push(Layer { holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new() });
+        if holds == Holds::Every { self.suspended.push(false); }
         let body = body(self)?;
+        let body = if holds == Holds::Every && self.suspended.pop().unwrap_or(false) {
+            self.unavailable("ext.stmt.yield.unsupported")
+        } else { body };
         let scope = self.layers.pop().unwrap();
         self.naming.pop();
         let carried = std::mem::replace(&mut self.carrying, around);
@@ -1188,8 +1193,11 @@ impl<'a> Builder<'a> {
             }
             if self.key("ext.stmt.delete") {
                 self.advance();
-                self.row_value()?;
-                return Ok(self.unavailable("ext.stmt.delete.unsupported"));
+                let target = self.row_value()?;
+                return Ok(match target {
+                    Form::Read(slot) => sequence(vec![Form::Read(slot.clone()), Form::Forget(slot), constant(Value::Nil)]),
+                    _ => self.unavailable("ext.stmt.delete.unsupported"),
+                });
             }
             if self.key("stmt.return") {
                 self.advance();
@@ -2592,6 +2600,22 @@ impl<'a> Builder<'a> {
     }
 
     /// Commas join a row; each item is still read when the run lacks tuples.
+    fn walk_row(&mut self) -> Res<Form> {
+        let mut parts = Vec::new();
+        let mut opened = false;
+        loop {
+            let starred = self.on_any("ext.syntax.value.spread");
+            if starred { self.advance(); opened = true; }
+            let value = self.expr(0)?;
+            parts.push(if starred { prim_call(Prim::Couple, vec![constant(Value::Flag(false)), value]) } else { value });
+            if !self.on_any("ext.syntax.tuple.separator") { break; }
+            opened = true;
+            self.advance();
+            if self.on_any("block.intro") { break; }
+        }
+        Ok(if opened { prim_call(Prim::GatherItems, parts) } else { parts.remove(0) })
+    }
+
     fn row_value(&mut self) -> Res<Form> {
         if self.on_any("syntax.group.close") {
             return Ok(self.unavailable("ext.syntax.tuple.unsupported"));
@@ -2649,7 +2673,7 @@ impl<'a> Builder<'a> {
             (start, end)
         } else {
             let tier = table.strings("op.range").iter().filter_map(|r| table.precedence.get(r.as_str())).min().copied().unwrap_or(0);
-            let start = if table.has_any("ext.syntax.tuple.separator") { self.row_value()? } else { self.expr(tier + 1)? };
+            let start = if table.has_any("ext.syntax.value.spread") { self.walk_row()? } else { self.expr(tier + 1)? };
             if !(self.look().shape == Shape::Sign && table.spells("op.range", &self.look().lexeme)) {
                 // No range mark: what was read is something to walk through.
                 if !table.flag("ext.stmt.for.collection") {
@@ -4048,6 +4072,7 @@ impl<'a> Builder<'a> {
             return Ok(sequence(steps));
         }
         if self.key("ext.stmt.yield") {
+            if let Some(mark) = self.suspended.last_mut() { *mark = true; }
             self.advance();
             if self.key("ext.stmt.yield.from") { self.advance(); }
             if !self.on_stmt_end() && !self.exhausted() && !self.on_any("syntax.group.close")
@@ -4269,6 +4294,7 @@ impl<'a> Builder<'a> {
             }
             _ => return Err("Expected an expression".to_string()),
         };
+        let node = if table.flag("ext.stmt.function.short.bare") { self.called_on_value(node)? } else { node };
         self.subscript(node)
     }
 
